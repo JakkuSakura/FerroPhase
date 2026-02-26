@@ -1,5 +1,7 @@
 #[unimplemented]
-pub struct HttpClient {}
+pub struct HttpClient {
+    handle: i64,
+}
 
 impl HttpClient {
     pub async fn send(&self, request: HttpRequest) -> HttpResponse {
@@ -8,7 +10,9 @@ impl HttpClient {
 }
 
 #[unimplemented]
-pub struct HttpRequest {}
+pub struct HttpRequest {
+    handle: i64,
+}
 
 impl HttpRequest {
     pub fn get(url: &str) -> HttpRequest {
@@ -21,7 +25,9 @@ impl HttpRequest {
 }
 
 #[unimplemented]
-pub struct HttpResponse {}
+pub struct HttpResponse {
+    handle: i64,
+}
 
 impl HttpResponse {
     pub fn status(&self) -> i64 {

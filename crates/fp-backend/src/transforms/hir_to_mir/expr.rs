@@ -322,6 +322,7 @@ impl MirLowering {
             .saturating_add(1);
 
         let reachable = self.collect_reachable_def_ids(program);
+
         for item in &program.items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
@@ -339,7 +340,9 @@ impl MirLowering {
             program
                 .items
                 .iter()
-                .filter(|item| reachable.contains(&item.def_id))
+                .filter(|item| {
+                    reachable.contains(&item.def_id) || matches!(item.kind, hir::ItemKind::Impl(_))
+                })
                 .collect()
         };
 
@@ -3732,6 +3735,8 @@ impl MirLowering {
                     let fn_name = format!("{}::{}", struct_prefix, function.sig.name.as_str());
                     let fn_ty = self.function_pointer_ty(&sig);
                     let struct_def = method_context.as_ref().and_then(|ctx| ctx.def_id);
+                    let method_tail = terminal_segment(function.sig.name.as_str()).to_string();
+                    let impl_item_tail = terminal_segment(impl_item.name.as_str()).to_string();
                     let info = MethodLoweringInfo {
                         sig: sig.clone(),
                         fn_name: fn_name.clone(),
@@ -3741,11 +3746,15 @@ impl MirLowering {
 
                     self.method_lookup.insert(fn_name.clone(), info.clone());
                     self.method_lookup
-                        .insert(format!("{}::{}", struct_name, impl_item.name), info.clone());
+                        .insert(format!("{}::{}", struct_name, method_tail), info.clone());
+                    self.method_lookup.insert(
+                        format!("{}::{}", struct_name, impl_item_tail),
+                        info.clone(),
+                    );
                     self.struct_methods
                         .entry(struct_name.clone())
                         .or_default()
-                        .insert(String::from(impl_item.name.clone()), info);
+                        .insert(method_tail, info);
                 }
                 hir::ImplItemKind::AssocConst(_const_item) => {
                     // TODO: lower associated constants when needed

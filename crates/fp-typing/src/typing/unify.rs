@@ -4,6 +4,46 @@ use fp_core::ast::*;
 use fp_core::error::{Error, Result};
 use fp_core::module::path::PathPrefix;
 
+fn is_std_task_future_ty(ty: &Ty) -> bool {
+    let Ty::Expr(expr) = ty else {
+        return false;
+    };
+    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        return false;
+    };
+    if path.segments.len() < 3 {
+        return false;
+    }
+    let n = path.segments.len();
+    path.segments[n - 3].ident.as_str() == "std"
+        && path.segments[n - 2].ident.as_str() == "task"
+        && path.segments[n - 1].ident.as_str() == "Future"
+}
+
+fn std_task_future_inner_ty(ty: &Ty) -> Option<Ty> {
+    let Ty::Expr(expr) = ty else {
+        return None;
+    };
+    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        return None;
+    };
+    if path.segments.len() < 3 {
+        return None;
+    }
+    let n = path.segments.len();
+    if path.segments[n - 3].ident.as_str() != "std"
+        || path.segments[n - 2].ident.as_str() != "task"
+        || path.segments[n - 1].ident.as_str() != "Future"
+    {
+        return None;
+    }
+    let future_seg = &path.segments[n - 1];
+    if future_seg.args.len() != 1 {
+        return None;
+    }
+    Some(future_seg.args[0].clone())
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct TypeVar {
     pub(crate) kind: TypeVarKind,
@@ -506,7 +546,21 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             (TypeTerm::Custom(a), TypeTerm::Custom(b)) => {
-                if a == b || quote_item_compatible(&a, &b) {
+                if is_std_task_future_ty(&a) && is_std_task_future_ty(&b) {
+                    let a_inner = std_task_future_inner_ty(&a);
+                    let b_inner = std_task_future_inner_ty(&b);
+                    if let (Some(a_inner), Some(b_inner)) = (a_inner, b_inner) {
+                        if matches!(a_inner, Ty::Nothing(_)) || matches!(b_inner, Ty::Nothing(_)) {
+                            Ok(())
+                        } else {
+                            let a_var = self.type_from_ast_ty(&a_inner)?;
+                            let b_var = self.type_from_ast_ty(&b_inner)?;
+                            self.unify(a_var, b_var)
+                        }
+                    } else {
+                        Ok(())
+                    }
+                } else if a == b || quote_item_compatible(&a, &b) {
                     Ok(())
                 } else if let (Ty::Array(a_arr), Ty::Array(b_arr)) = (&a, &b) {
                     // Be permissive about array lengths during typing; const-eval
@@ -518,6 +572,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     Err(self
                         .error_with_current_span(format!("custom type mismatch: {} vs {}", a, b)))
                 }
+            }
+            (TypeTerm::Custom(custom), TypeTerm::Struct(struct_ty))
+                if is_std_task_future_ty(&custom) && struct_ty.name.as_str() == "Future" =>
+            {
+                Ok(())
+            }
+            (TypeTerm::Struct(struct_ty), TypeTerm::Custom(custom))
+                if struct_ty.name.as_str() == "Future" && is_std_task_future_ty(&custom) =>
+            {
+                Ok(())
             }
             (TypeTerm::Custom(array_ty), TypeTerm::Slice(slice_elem))
                 if matches!(array_ty, Ty::Array(_)) =>
@@ -971,6 +1035,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             if segment.ident.as_str() == "Box" && segment.args.len() == 1 {
                                 let elem_var = self.type_from_ast_ty(&segment.args[0])?;
                                 self.bind(var, TypeTerm::Boxed(elem_var));
+                                return Ok(var);
+                            }
+                            if segment.ident.as_str() == "Future"
+                                && segment.args.len() == 1
+                                && path.segments.len() >= 3
+                                && path.segments[path.segments.len() - 3].ident.as_str() == "std"
+                                && path.segments[path.segments.len() - 2].ident.as_str() == "task"
+                            {
+                                self.bind(var, TypeTerm::Custom(ty.clone()));
                                 return Ok(var);
                             }
                         }

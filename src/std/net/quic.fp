@@ -1,7 +1,9 @@
 use std::net::addr::SocketAddr;
 
 #[unimplemented]
-pub struct QuicConnection {}
+pub struct QuicConnection {
+    handle: i64,
+}
 
 impl QuicConnection {
     pub async fn connect(addr: SocketAddr, server_name: &str) -> QuicConnection {
@@ -14,7 +16,9 @@ impl QuicConnection {
 }
 
 #[unimplemented]
-pub struct QuicListener {}
+pub struct QuicListener {
+    handle: i64,
+}
 
 impl QuicListener {
     pub async fn bind(addr: SocketAddr) -> QuicListener {
@@ -27,7 +31,9 @@ impl QuicListener {
 }
 
 #[unimplemented]
-pub struct QuicStream {}
+pub struct QuicStream {
+    handle: i64,
+}
 
 impl QuicStream {
     pub async fn read(&mut self, buf: &mut [u8]) -> i64 {

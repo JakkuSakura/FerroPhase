@@ -40,6 +40,62 @@ fn default_extern_prelude() -> HashSet<String> {
         .collect()
 }
 
+fn make_std_task_future_ty(inner: Ty) -> Ty {
+    let future_seg = ParameterPathSegment::new(Ident::new("Future"), vec![inner]);
+    let path = ParameterPath::new(
+        PathPrefix::Plain,
+        vec![
+            ParameterPathSegment::new(Ident::new("std"), vec![]),
+            ParameterPathSegment::new(Ident::new("task"), vec![]),
+            future_seg,
+        ],
+    );
+    Ty::locator(Name::ParameterPath(path))
+}
+
+fn is_std_task_future_ty(ty: &Ty) -> bool {
+    let Ty::Expr(expr) = ty else {
+        return false;
+    };
+    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        return false;
+    };
+    if path.segments.len() < 3 {
+        return false;
+    }
+    let n = path.segments.len();
+    path.segments[n - 3].ident.as_str() == "std"
+        && path.segments[n - 2].ident.as_str() == "task"
+        && path.segments[n - 1].ident.as_str() == "Future"
+        && path.segments[n - 1].args.len() == 1
+}
+
+fn std_task_future_inner_ty(ty: &Ty) -> Option<Ty> {
+    let Ty::Expr(expr) = ty else {
+        return None;
+    };
+    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        return None;
+    };
+    if path.segments.len() < 3 {
+        return None;
+    }
+    let n = path.segments.len();
+    if path.segments[n - 3].ident.as_str() != "std"
+        || path.segments[n - 2].ident.as_str() != "task"
+        || path.segments[n - 1].ident.as_str() != "Future"
+        || path.segments[n - 1].args.len() != 1
+    {
+        return None;
+    }
+    Some(path.segments[n - 1].args[0].clone())
+}
+
+fn is_future_like_ty(ty: &Ty) -> bool {
+    is_std_task_future_ty(ty)
+        || matches!(ty, Ty::Struct(struct_ty) if struct_ty.name.as_str() == "Future")
+}
+
 pub trait TypeResolutionHook {
     fn resolve_symbol(&mut self, name: &str) -> bool;
 }
@@ -1584,6 +1640,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn prebind_function_signature(&mut self, func: &ItemDefFunction, fn_var: TypeVarId) {
+        if matches!(func.body.kind(), ExprKind::Async(_))
+            || func
+                .sig
+                .ret_ty
+                .as_ref()
+                .map(is_std_task_future_ty)
+                .unwrap_or(false)
+        {
+            return;
+        }
+
         if !func.sig.generics_params.is_empty() || func.sig.receiver.is_some() {
             return;
         }
@@ -2042,7 +2109,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.symbol_var(&func.name)
         };
         let param_count = func.sig.params.len();
-        let existing_signature = {
+        let body_is_async_expr = matches!(func.body.kind(), ExprKind::Async(_));
+        let is_async_fn = body_is_async_expr
+            || func
+                .sig
+                .ret_ty
+                .as_ref()
+                .map(is_std_task_future_ty)
+                .unwrap_or(false);
+        let existing_signature = if is_async_fn {
+            None
+        } else {
             let root = self.find(fn_var);
             match self.type_vars[root].kind.clone() {
                 TypeVarKind::Bound(TypeTerm::Function(func_term)) => {
@@ -2119,16 +2196,59 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         };
 
         let ret_var = if let Some(existing) = existing_signature.as_ref().map(|sig| sig.ret) {
-            self.unify(existing, body_var)?;
+            if !is_async_fn || body_is_async_expr {
+                self.unify(existing, body_var)?;
+            }
             if let Some(ret) = &func.sig.ret_ty {
-                let annot_var = self.type_from_ast_ty(ret)?;
-                self.unify(existing, annot_var)?;
+                if is_async_fn {
+                    let future_ty = if is_std_task_future_ty(ret) {
+                        ret.clone()
+                    } else {
+                        make_std_task_future_ty(ret.clone())
+                    };
+                    let future_var = self.type_from_ast_ty(&future_ty)?;
+                    self.unify(existing, future_var)?;
+
+                    if !body_is_async_expr {
+                        let body_ty = self.resolve_to_ty(body_var)?;
+                        if is_future_like_ty(&body_ty) {
+                            self.unify(body_var, future_var)?;
+                        } else if let Some(inner_ty) = std_task_future_inner_ty(&future_ty) {
+                            let inner_var = self.type_from_ast_ty(&inner_ty)?;
+                            self.unify(body_var, inner_var)?;
+                        }
+                    }
+                } else {
+                    let annot_var = self.type_from_ast_ty(ret)?;
+                    self.unify(existing, annot_var)?;
+                }
             }
             existing
         } else if let Some(ret) = &func.sig.ret_ty {
-            let annot_var = self.type_from_ast_ty(ret)?;
-            self.unify(body_var, annot_var)?;
-            annot_var
+            if is_async_fn {
+                let future_ty = if is_std_task_future_ty(ret) {
+                    ret.clone()
+                } else {
+                    make_std_task_future_ty(ret.clone())
+                };
+                let future_var = self.type_from_ast_ty(&future_ty)?;
+                if body_is_async_expr {
+                    self.unify(body_var, future_var)?;
+                } else {
+                    let body_ty = self.resolve_to_ty(body_var)?;
+                    if is_future_like_ty(&body_ty) {
+                        self.unify(body_var, future_var)?;
+                    } else if let Some(inner_ty) = std_task_future_inner_ty(&future_ty) {
+                        let inner_var = self.type_from_ast_ty(&inner_ty)?;
+                        self.unify(body_var, inner_var)?;
+                    }
+                }
+                future_var
+            } else {
+                let annot_var = self.type_from_ast_ty(ret)?;
+                self.unify(body_var, annot_var)?;
+                annot_var
+            }
         } else {
             body_var
         };
