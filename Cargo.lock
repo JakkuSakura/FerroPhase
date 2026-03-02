@@ -1299,6 +1299,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-bash"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
+ "fp-lang",
+]
+
+[[package]]
 name = "fp-bytecode"
 version = "0.1.0"
 dependencies = [
@@ -1574,6 +1582,19 @@ dependencies = [
  "num-traits",
  "rustpython-parser",
  "serde_json",
+]
+
+[[package]]
+name = "fp-shell"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "fp-bash",
+ "fp-core",
+ "fp-interpret",
+ "fp-lang",
+ "tempfile",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

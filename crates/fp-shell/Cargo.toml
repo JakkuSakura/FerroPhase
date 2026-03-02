@@ -1,0 +1,15 @@
+[package]
+name = "fp-shell"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+fp-bash = { path = "../fp-bash" }
+fp-core = { path = "../fp-core" }
+fp-interpret = { path = "../fp-interpret" }
+fp-lang = { path = "../fp-lang" }
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3.14"
