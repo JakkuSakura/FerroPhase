@@ -1,0 +1,10 @@
+[package]
+name = "fp-bash"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+
+[dev-dependencies]
+fp-lang = { path = "../fp-lang" }
