@@ -1,10 +1,25 @@
 use fp_core::ast::{
-    AstTarget, AstTargetOutput, BlockStmt, Expr, ExprBlock, ExprFor, ExprIf, ExprInvoke,
-    ExprInvokeTarget, ExprKind, Item, ItemKind, Name, Node, NodeKind, PatternKind, Value,
+    AstTarget, AstTargetOutput, BlockStmt, Expr, ExprBlock, ExprFor, ExprIf, ExprIntrinsicCall,
+    ExprInvoke, ExprInvokeTarget, ExprKind, ExprStringTemplate, FormatArgRef, FormatTemplatePart,
+    Item, ItemKind, Name, Node, NodeKind, PatternKind, Value,
 };
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use std::collections::HashMap;
 use std::collections::HashSet;
+
+#[derive(Debug, Clone, Default)]
+pub struct ShellInventory {
+    pub groups: HashMap<String, Vec<String>>,
+    pub hosts: HashMap<String, InventoryHost>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct InventoryHost {
+    pub address: Option<String>,
+    pub user: Option<String>,
+    pub port: Option<u16>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum HostSelector {
@@ -31,6 +46,14 @@ impl BashTarget {
     pub fn new() -> Self {
         Self
     }
+
+    pub fn with_inventory(inventory: ShellInventory) -> BashTargetWithInventory {
+        BashTargetWithInventory { inventory }
+    }
+}
+
+pub struct BashTargetWithInventory {
+    inventory: ShellInventory,
 }
 
 impl Default for BashTarget {
@@ -53,12 +76,35 @@ impl AstTarget for BashTarget {
     }
 }
 
+impl AstTarget for BashTargetWithInventory {
+    fn emit_node(&self, node: &Node) -> Result<AstTargetOutput, fp_core::Error> {
+        let mut renderer = BashRenderer::with_inventory(self.inventory.clone());
+        renderer.emit_node(node, &EmitContext::default(), 0);
+        if let Some(first_error) = renderer.errors.first() {
+            return Err(fp_core::Error::from(first_error.clone()));
+        }
+        Ok(AstTargetOutput {
+            code: renderer.finish(),
+            side_files: Vec::new(),
+        })
+    }
+}
+
 struct BashRenderer {
     lines: Vec<String>,
     errors: Vec<String>,
     scopes: Vec<HashMap<String, VarValue>>,
     pending_remote: Option<PendingRemote>,
     known_functions: HashSet<String>,
+    inventory: ShellInventory,
+}
+
+#[derive(Debug, Clone, Default)]
+struct OperationMeta {
+    only_if: Option<String>,
+    unless: Option<String>,
+    creates: Option<String>,
+    removes: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -104,12 +150,17 @@ impl RsyncOptions {
 
 impl BashRenderer {
     fn new() -> Self {
+        Self::with_inventory(ShellInventory::default())
+    }
+
+    fn with_inventory(inventory: ShellInventory) -> Self {
         Self {
             lines: Vec::new(),
             errors: Vec::new(),
             scopes: vec![HashMap::new()],
             pending_remote: None,
             known_functions: HashSet::new(),
+            inventory,
         }
     }
 
@@ -119,6 +170,7 @@ impl BashRenderer {
         let mut script = String::new();
         script.push_str("#!/usr/bin/env bash\n");
         script.push_str("set -euo pipefail\n\n");
+        script.push_str("__fp_last_changed=0\n\n");
         script.push_str("SSH_CONTROL_PATH=\"${TMPDIR:-/tmp}/fp-shell-%r@%h:%p\"\n\n");
         script.push_str("ssh_cmd() {\n");
         script.push_str("  ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=\"$SSH_CONTROL_PATH\" -- \"$@\"\n");
@@ -334,7 +386,13 @@ impl BashRenderer {
             indent,
             &format!("for {} in {}; do", pattern_ident.ident.as_str(), joined),
         );
+        self.push_scope();
+        self.bind_var(
+            pattern_ident.ident.as_str().to_string(),
+            VarValue::String(format!("${}", pattern_ident.ident.as_str())),
+        );
         self.emit_expr(&expr_for.body, context, indent + 1);
+        self.pop_scope();
         self.push_line(indent, "done");
     }
 
@@ -356,6 +414,10 @@ impl BashRenderer {
                 return false;
             };
             let Some(raw_command) = self.resolve_string_expr(command_expr) else {
+                self.errors.push(
+                    "std::server::shell command must resolve to string/int/bool (including f\"...\"/format!(...))"
+                        .to_string(),
+                );
                 return false;
             };
             let sudo = kwarg_value(invoke, &["sudo"])
@@ -364,7 +426,8 @@ impl BashRenderer {
             let cwd = kwarg_value(invoke, &["cwd"]).and_then(|expr| self.resolve_string_expr(expr));
             let command = apply_shell_options(raw_command, cwd.as_deref(), sudo);
             let hosts = self.resolve_hosts(invoke, context);
-            self.emit_run_command(&hosts, &command, indent);
+            let meta = self.operation_meta(invoke);
+            self.emit_run_command(&hosts, &command, &meta, indent);
             return true;
         }
 
@@ -387,7 +450,33 @@ impl BashRenderer {
                 return false;
             };
             let hosts = self.resolve_hosts(invoke, context);
-            self.emit_copy_command(&hosts, &source, &destination, indent);
+            let meta = self.operation_meta(invoke);
+            self.emit_copy_command(&hosts, &source, &destination, &meta, indent);
+            return true;
+        }
+
+        if path == ["std", "files", "template"] {
+            let source_expr = invoke
+                .args
+                .first()
+                .or_else(|| kwarg_value(invoke, &["src", "source"]));
+            let destination_expr = invoke
+                .args
+                .get(1)
+                .or_else(|| kwarg_value(invoke, &["dest", "destination"]));
+            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr) else {
+                return false;
+            };
+            let Some(source) = self.resolve_string_expr(source_expr) else {
+                return false;
+            };
+            let Some(destination) = self.resolve_string_expr(destination_expr) else {
+                return false;
+            };
+            let vars = kwarg_value(invoke, &["vars"]).and_then(|expr| self.resolve_vars_map(expr));
+            let hosts = self.resolve_hosts(invoke, context);
+            let meta = self.operation_meta(invoke);
+            self.emit_template_command(&hosts, &source, &destination, vars, &meta, indent);
             return true;
         }
 
@@ -426,7 +515,8 @@ impl BashRenderer {
             };
 
             let hosts = self.resolve_hosts(invoke, context);
-            self.emit_rsync_command(&hosts, &source, &destination, options, indent);
+            let meta = self.operation_meta(invoke);
+            self.emit_rsync_command(&hosts, &source, &destination, options, &meta, indent);
             return true;
         }
 
@@ -450,7 +540,8 @@ impl BashRenderer {
                 format!("systemctl restart {}", service_name)
             };
             let hosts = self.resolve_hosts(invoke, context);
-            self.emit_run_command(&hosts, &command, indent);
+            let meta = self.operation_meta(invoke);
+            self.emit_run_command(&hosts, &command, &meta, indent);
             return true;
         }
 
@@ -460,7 +551,7 @@ impl BashRenderer {
                 let mut rendered_args = Vec::new();
                 for arg in &invoke.args {
                     if let Some(value) = self.resolve_string_expr(arg) {
-                        rendered_args.push(shell_quote(&value));
+                        rendered_args.push(shell_arg_quote(&value));
                     } else {
                         self.errors.push(format!(
                             "function '{}' only supports string/int/bool arguments in fp-bash emitter",
@@ -520,14 +611,20 @@ impl BashRenderer {
         true
     }
 
-    fn emit_run_command(&mut self, hosts: &[HostSelector], command: &str, indent: usize) {
+    fn emit_run_command(
+        &mut self,
+        hosts: &[HostSelector],
+        command: &str,
+        meta: &OperationMeta,
+        indent: usize,
+    ) {
         for host in hosts {
             match host {
                 HostSelector::Localhost => {
-                    self.push_line(indent, command);
+                    self.emit_command_with_meta(command.to_string(), host, meta, indent);
                 }
                 HostSelector::Remote(name) => {
-                    self.queue_remote_command(indent, name.clone(), command.to_string());
+                    self.emit_command_with_meta(command.to_string(), &HostSelector::Remote(name.clone()), meta, indent);
                 }
             }
         }
@@ -538,24 +635,27 @@ impl BashRenderer {
         hosts: &[HostSelector],
         source: &str,
         destination: &str,
+        meta: &OperationMeta,
         indent: usize,
     ) {
         for host in hosts {
             match host {
                 HostSelector::Localhost => {
-                    self.push_line(
+                    self.emit_local_operation_with_meta(
+                        format!("cp -- {} {}", shell_quote(source), shell_quote(destination)),
+                        meta,
                         indent,
-                        &format!("cp -- {} {}", shell_quote(source), shell_quote(destination)),
                     );
                 }
                 HostSelector::Remote(name) => {
-                    self.push_line(
-                        indent,
-                        &format!(
+                    self.emit_local_operation_with_meta(
+                        format!(
                             "scp_cmd {} {}",
                             shell_quote(source),
                             shell_quote(&format!("{}:{}", name, destination))
                         ),
+                        meta,
+                        indent,
                     );
                 }
             }
@@ -568,35 +668,123 @@ impl BashRenderer {
         source: &str,
         destination: &str,
         options: RsyncOptions,
+        meta: &OperationMeta,
         indent: usize,
     ) {
         let flags = options.to_flags();
         for host in hosts {
             match host {
                 HostSelector::Localhost => {
-                    self.push_line(
-                        indent,
-                        &format!(
+                    self.emit_local_operation_with_meta(
+                        format!(
                             "rsync {} -- {} {}",
                             flags,
                             shell_quote(source),
                             shell_quote(destination)
                         ),
+                        meta,
+                        indent,
                     );
                 }
                 HostSelector::Remote(name) => {
-                    self.push_line(
-                        indent,
-                        &format!(
+                    self.emit_local_operation_with_meta(
+                        format!(
                             "rsync_cmd {} -- {} {}",
                             flags,
                             shell_quote(source),
                             shell_quote(&format!("{}:{}", name, destination))
                         ),
+                        meta,
+                        indent,
                     );
                 }
             }
         }
+    }
+
+    fn emit_template_command(
+        &mut self,
+        hosts: &[HostSelector],
+        source: &str,
+        destination: &str,
+        vars: Option<HashMap<String, String>>,
+        meta: &OperationMeta,
+        indent: usize,
+    ) {
+        let env_prefix = render_env_prefix(vars.as_ref());
+        for host in hosts {
+            match host {
+                HostSelector::Localhost => {
+                    self.emit_local_operation_with_meta(
+                        format!(
+                            "{}envsubst < {} > {}",
+                            env_prefix,
+                            shell_quote(source),
+                            shell_quote(destination)
+                        ),
+                        meta,
+                        indent,
+                    );
+                }
+                HostSelector::Remote(name) => {
+                    self.emit_local_operation_with_meta(
+                        format!(
+                            "{}envsubst < {} | ssh_cmd {} 'cat > {}'",
+                            env_prefix,
+                            shell_quote(source),
+                            shell_quote(name),
+                            shell_quote(destination)
+                        ),
+                        meta,
+                        indent,
+                    );
+                }
+            }
+        }
+    }
+
+    fn emit_local_operation_with_meta(
+        &mut self,
+        command: String,
+        meta: &OperationMeta,
+        indent: usize,
+    ) {
+        let needs_wrapper = meta.only_if.is_some()
+            || meta.unless.is_some()
+            || meta.creates.is_some()
+            || meta.removes.is_some();
+
+        if !needs_wrapper {
+            self.push_line(indent, &command);
+            return;
+        }
+
+        self.push_line(indent, "__fp_changed=0");
+        let mut condition_parts = Vec::new();
+        if let Some(only_if) = &meta.only_if {
+            condition_parts.push(format!("({})", only_if));
+        }
+        if let Some(unless) = &meta.unless {
+            condition_parts.push(format!("! ({})", unless));
+        }
+        if let Some(creates) = &meta.creates {
+            condition_parts.push(format!("[ ! -e {} ]", shell_quote(creates)));
+        }
+        if let Some(removes) = &meta.removes {
+            condition_parts.push(format!("[ -e {} ]", shell_quote(removes)));
+        }
+
+        if condition_parts.is_empty() {
+            self.push_line(indent + 1, &command);
+            self.push_line(indent + 1, "__fp_changed=1");
+        } else {
+            self.push_line(indent, &format!("if {}; then", condition_parts.join(" && ")));
+            self.push_line(indent + 1, &command);
+            self.push_line(indent + 1, "__fp_changed=1");
+            self.push_line(indent, "fi");
+        }
+
+        self.push_line(indent, "__fp_last_changed=\"$__fp_changed\"");
     }
 
     fn resolve_hosts(&self, invoke: &ExprInvoke, context: &EmitContext) -> Vec<HostSelector> {
@@ -607,6 +795,103 @@ impl BashRenderer {
             .or_else(|| kwarg_value(invoke, &["hosts", "host"]).and_then(|expr| self.parse_host_selector(expr)))
             .or_else(|| context.hosts.clone())
             .unwrap_or_else(|| vec![HostSelector::Localhost])
+    }
+
+    fn operation_meta(&mut self, invoke: &ExprInvoke) -> OperationMeta {
+        let mut meta = OperationMeta::default();
+        meta.only_if = kwarg_value(invoke, &["only_if"]).and_then(|expr| self.resolve_string_expr(expr));
+        meta.unless = kwarg_value(invoke, &["unless"]).and_then(|expr| self.resolve_string_expr(expr));
+        meta.creates = kwarg_value(invoke, &["creates"]).and_then(|expr| self.resolve_string_expr(expr));
+        meta.removes = kwarg_value(invoke, &["removes"]).and_then(|expr| self.resolve_string_expr(expr));
+
+        meta
+    }
+
+    fn emit_command_with_meta(
+        &mut self,
+        command: String,
+        host: &HostSelector,
+        meta: &OperationMeta,
+        indent: usize,
+    ) {
+        let needs_wrapper = meta.only_if.is_some()
+            || meta.unless.is_some()
+            || meta.creates.is_some()
+            || meta.removes.is_some();
+
+        let emit_base_command = |this: &mut BashRenderer, line: String| {
+            match host {
+                HostSelector::Localhost => this.push_line(indent + if needs_wrapper { 1 } else { 0 }, &line),
+                HostSelector::Remote(name) => {
+                    if needs_wrapper {
+                        this.push_line(
+                            indent + 1,
+                            &format!("run_remote {} {}", shell_arg_quote(name), shell_arg_quote(&line)),
+                        );
+                    } else {
+                        this.queue_remote_command(indent, name.clone(), line);
+                    }
+                }
+            }
+        };
+
+        if !needs_wrapper {
+            emit_base_command(self, command);
+            return;
+        }
+
+        self.push_line(indent, "__fp_changed=0");
+        let mut condition_parts = Vec::new();
+        if let Some(only_if) = &meta.only_if {
+            condition_parts.push(format!("({})", only_if));
+        }
+        if let Some(unless) = &meta.unless {
+            condition_parts.push(format!("! ({})", unless));
+        }
+        if let Some(creates) = &meta.creates {
+            condition_parts.push(format!("[ ! -e {} ]", shell_quote(creates)));
+        }
+        if let Some(removes) = &meta.removes {
+            condition_parts.push(format!("[ -e {} ]", shell_quote(removes)));
+        }
+
+        if condition_parts.is_empty() {
+            emit_base_command(self, command);
+            self.push_line(indent + 1, "__fp_changed=1");
+        } else {
+            self.push_line(indent, &format!("if {}; then", condition_parts.join(" && ")));
+            emit_base_command(self, command);
+            self.push_line(indent + 1, "__fp_changed=1");
+            self.push_line(indent, "fi");
+        }
+
+        self.push_line(indent, "__fp_last_changed=\"$__fp_changed\"");
+    }
+
+    fn resolve_vars_map(&self, expr: &Expr) -> Option<HashMap<String, String>> {
+        match expr.kind() {
+            ExprKind::Value(value) => match value.as_ref() {
+                Value::Map(map) => {
+                    let mut vars = HashMap::new();
+                    for entry in &map.entries {
+                        let key = match &entry.key {
+                            Value::String(text) => text.value.clone(),
+                            _ => return None,
+                        };
+                        let value = match &entry.value {
+                            Value::String(text) => text.value.clone(),
+                            Value::Int(int_value) => int_value.value.to_string(),
+                            Value::Bool(bool_value) => bool_value.value.to_string(),
+                            _ => return None,
+                        };
+                        vars.insert(key, value);
+                    }
+                    Some(vars)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     fn render_condition(&self, expr: &Expr) -> String {
@@ -677,9 +962,53 @@ impl BashRenderer {
                 VarValue::Bool(value) => Some(value.to_string()),
                 VarValue::StringList(_) => None,
             }),
+            ExprKind::FormatString(template) => self.resolve_format_string(template, &[]),
+            ExprKind::IntrinsicCall(call) => self.resolve_intrinsic_string(call),
             ExprKind::Paren(paren) => self.resolve_string_expr(&paren.expr),
             _ => None,
         }
+    }
+
+    fn resolve_intrinsic_string(&self, call: &ExprIntrinsicCall) -> Option<String> {
+        if call.kind == IntrinsicCallKind::Format {
+            let ExprKind::FormatString(template) = call.args.first()?.kind() else {
+                return None;
+            };
+            return self.resolve_format_string(template, &call.args[1..]);
+        }
+        None
+    }
+
+    fn resolve_format_string(&self, template: &ExprStringTemplate, args: &[Expr]) -> Option<String> {
+        let mut rendered = String::new();
+        let mut implicit_index = 0usize;
+
+        for part in &template.parts {
+            match part {
+                FormatTemplatePart::Literal(text) => rendered.push_str(text),
+                FormatTemplatePart::Placeholder(placeholder) => {
+                    let value = match &placeholder.arg_ref {
+                        FormatArgRef::Named(name) => self.lookup_var(name).and_then(|var| match var {
+                            VarValue::String(value) => Some(value.clone()),
+                            VarValue::Int(value) => Some(value.to_string()),
+                            VarValue::Bool(value) => Some(value.to_string()),
+                            VarValue::StringList(_) => None,
+                        }),
+                        FormatArgRef::Implicit => {
+                            let arg = args.get(implicit_index)?;
+                            implicit_index += 1;
+                            self.resolve_string_expr(arg)
+                        }
+                        FormatArgRef::Positional(index) => args
+                            .get(*index)
+                            .and_then(|arg| self.resolve_string_expr(arg)),
+                    }?;
+                    rendered.push_str(&value);
+                }
+            }
+        }
+
+        Some(rendered)
     }
 
     fn resolve_bool_expr(&self, expr: &Expr) -> Option<bool> {
@@ -796,8 +1125,35 @@ impl BashRenderer {
     }
 
     fn parse_host_selector(&self, expr: &Expr) -> Option<Vec<HostSelector>> {
-        self.resolve_string_list_expr(expr)
-            .map(|hosts| hosts.into_iter().map(|name| host_from_name(&name)).collect())
+        self.resolve_string_list_expr(expr).map(|hosts| {
+            let mut selectors = Vec::new();
+            for name in hosts {
+                if let Some(group_hosts) = self.inventory.groups.get(&name) {
+                    for host_name in group_hosts {
+                        selectors.push(self.host_from_inventory(host_name));
+                    }
+                } else {
+                    selectors.push(self.host_from_inventory(&name));
+                }
+            }
+            selectors
+        })
+    }
+
+    fn host_from_inventory(&self, name: &str) -> HostSelector {
+        if name == "localhost" {
+            return HostSelector::Localhost;
+        }
+
+        if let Some(host) = self.inventory.hosts.get(name) {
+            let mut target = host.address.clone().unwrap_or_else(|| name.to_string());
+            if let Some(user) = &host.user {
+                target = format!("{}@{}", user, target);
+            }
+            return HostSelector::Remote(target);
+        }
+
+        host_from_name(name)
     }
 
     fn bind_var(&mut self, name: String, value: VarValue) {
@@ -856,8 +1212,8 @@ impl BashRenderer {
         self.lines.push(format!(
             "{}run_remote {} {}",
             "    ".repeat(pending.indent),
-            shell_quote(&pending.host),
-            shell_quote(&merged)
+            shell_arg_quote(&pending.host),
+            shell_arg_quote(&merged)
         ));
     }
 }
@@ -910,6 +1266,37 @@ fn apply_shell_options(command: String, cwd: Option<&str>, sudo: bool) -> String
 fn shell_quote(raw: &str) -> String {
     let escaped = raw.replace('\'', "'\\''");
     format!("'{}'", escaped)
+}
+
+fn shell_double_quote(raw: &str) -> String {
+    let escaped = raw
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('`', "\\`");
+    format!("\"{}\"", escaped)
+}
+
+fn shell_arg_quote(raw: &str) -> String {
+    if raw.contains('$') {
+        shell_double_quote(raw)
+    } else {
+        shell_quote(raw)
+    }
+}
+
+fn render_env_prefix(vars: Option<&HashMap<String, String>>) -> String {
+    let Some(vars) = vars else {
+        return String::new();
+    };
+    if vars.is_empty() {
+        return String::new();
+    }
+
+    let mut parts = Vec::new();
+    for (key, value) in vars {
+        parts.push(format!("{}={}", key, shell_quote(value)));
+    }
+    format!("env {} ", parts.join(" "))
 }
 
 #[cfg(test)]
@@ -1009,6 +1396,63 @@ const fn main() {
     }
 
     #[test]
+    fn supports_string_template_variables() {
+        let source = r#"
+const fn main() {
+    let cmd = "uptime";
+    let retries = 3;
+    std::server::shell(f"echo cmd={cmd} retries={retries}");
+}
+"#;
+        let script = emit(source);
+        assert!(script.contains("echo cmd=uptime retries=3"));
+    }
+
+    #[test]
+    fn supports_runtime_loop_variable_interpolation() {
+        let source = r#"
+const fn main() {
+    for host in ["web-1", "web-2"] {
+        std::server::shell(f"echo host={host}");
+    }
+}
+"#;
+        let script = emit(source);
+        assert!(script.contains("for host in 'web-1' 'web-2'; do"));
+        assert!(script.contains("echo host=$host"));
+    }
+
+    #[test]
+    fn supports_runtime_loop_variable_in_remote_hosts() {
+        let source = r#"
+const fn main() {
+    for host in ["web-1", "web-2"] {
+        std::server::shell("hostname", hosts=[host]);
+    }
+}
+"#;
+        let script = emit(source);
+        assert!(script.contains("run_remote \"$host\" 'hostname'"));
+    }
+
+    #[test]
+    fn supports_runtime_arguments_in_function_calls() {
+        let source = r#"
+const fn deploy(host: str) {
+    std::server::shell("hostname", hosts=host);
+}
+
+const fn main() {
+    for host in ["web-1", "web-2"] {
+        deploy(host);
+    }
+}
+"#;
+        let script = emit(source);
+        assert!(script.contains("deploy \"$host\""));
+    }
+
+    #[test]
     fn supports_integer_variables() {
         let source = r#"
 const fn main() {
@@ -1080,5 +1524,47 @@ const fn main() {
 "#;
         let script = emit(source);
         assert!(script.contains("20"));
+    }
+
+    #[test]
+    fn supports_idempotency_guards() {
+        let source = r#"
+const fn main() {
+    std::server::shell(
+        "touch /tmp/flag",
+        creates="/tmp/flag",
+        only_if="test -d /tmp",
+        unless="test -f /tmp/skip",
+    );
+}
+"#;
+        let script = emit(source);
+        assert!(script.contains("__fp_changed=0"));
+        assert!(script.contains("[ ! -e '/tmp/flag' ]"));
+        assert!(script.contains("(test -d /tmp)"));
+        assert!(script.contains("! (test -f /tmp/skip)"));
+    }
+    #[test]
+    fn tracks_last_changed_result() {
+        let source = r#"
+const fn main() {
+    std::files::copy(src="./app.conf", dest="/etc/app.conf", creates="/etc/app.conf");
+}
+"#;
+        let script = emit(source);
+        assert!(script.contains("__fp_last_changed=0"));
+        assert!(script.contains("__fp_changed=0"));
+        assert!(script.contains("__fp_last_changed=\"$__fp_changed\""));
+    }
+
+    #[test]
+    fn supports_template_operation() {
+        let source = r#"
+const fn main() {
+    std::files::template(src="./templates/app.conf.tpl", dest="/etc/app.conf");
+}
+"#;
+        let script = emit(source);
+        assert!(script.contains("envsubst < './templates/app.conf.tpl' > '/etc/app.conf'"));
     }
 }

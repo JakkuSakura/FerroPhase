@@ -1,4 +1,4 @@
-use fp_bash::BashTarget;
+use fp_bash::{BashTarget, InventoryHost, ShellInventory};
 use fp_core::ast::{AstTarget, AstTargetOutput};
 use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
@@ -6,6 +6,63 @@ use fp_interpret::const_eval::ConstEvaluationOrchestrator;
 use fp_lang::FerroFrontend;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Default)]
+pub struct CompileOptions {
+    pub inventory: Option<ShellInventory>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+struct InventoryDocument {
+    #[serde(default)]
+    groups: std::collections::HashMap<String, Vec<String>>,
+    #[serde(default)]
+    hosts: std::collections::HashMap<String, InventoryHostDocument>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+struct InventoryHostDocument {
+    address: Option<String>,
+    user: Option<String>,
+    port: Option<u16>,
+}
+
+pub fn load_inventory(path: &Path) -> Result<ShellInventory, ShellError> {
+    let content = fs::read_to_string(path)?;
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    let parsed: InventoryDocument = if extension == "json" {
+        serde_json::from_str(&content)
+            .map_err(|err| ShellError::Parse(format!("invalid inventory json: {}", err)))?
+    } else {
+        toml::from_str(&content)
+            .map_err(|err| ShellError::Parse(format!("invalid inventory toml: {}", err)))?
+    };
+
+    let hosts = parsed
+        .hosts
+        .into_iter()
+        .map(|(name, host)| {
+            (
+                name,
+                InventoryHost {
+                    address: host.address,
+                    user: host.user,
+                    port: host.port,
+                },
+            )
+        })
+        .collect();
+
+    Ok(ShellInventory {
+        groups: parsed.groups,
+        hosts,
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellTarget {
@@ -44,6 +101,15 @@ pub fn compile_source(
     source_path: &Path,
     target: ShellTarget,
 ) -> Result<AstTargetOutput, ShellError> {
+    compile_source_with_options(source, source_path, target, &CompileOptions::default())
+}
+
+pub fn compile_source_with_options(
+    source: &str,
+    source_path: &Path,
+    target: ShellTarget,
+    options: &CompileOptions,
+) -> Result<AstTargetOutput, ShellError> {
     let frontend = FerroFrontend::new();
     let parsed = frontend
         .parse(source, Some(source_path))
@@ -62,9 +128,17 @@ pub fn compile_source(
         .map_err(|err| ShellError::Parse(err.to_string()))?;
 
     match target {
-        ShellTarget::Bash => BashTarget::new()
-            .emit_node(&ast)
-            .map_err(|err| ShellError::Emit(err.to_string())),
+        ShellTarget::Bash => {
+            if let Some(inventory) = &options.inventory {
+                BashTarget::with_inventory(inventory.clone())
+                    .emit_node(&ast)
+                    .map_err(|err| ShellError::Emit(err.to_string()))
+            } else {
+                BashTarget::new()
+                    .emit_node(&ast)
+                    .map_err(|err| ShellError::Emit(err.to_string()))
+            }
+        }
     }
 }
 
@@ -73,8 +147,17 @@ pub fn compile_file(
     output: Option<&Path>,
     target: ShellTarget,
 ) -> Result<PathBuf, ShellError> {
+    compile_file_with_options(input, output, target, &CompileOptions::default())
+}
+
+pub fn compile_file_with_options(
+    input: &Path,
+    output: Option<&Path>,
+    target: ShellTarget,
+    options: &CompileOptions,
+) -> Result<PathBuf, ShellError> {
     let source = fs::read_to_string(input)?;
-    let generated = compile_source(&source, input, target.clone())?;
+    let generated = compile_source_with_options(&source, input, target.clone(), options)?;
 
     let destination = output
         .map(Path::to_path_buf)
@@ -145,5 +228,27 @@ const fn main() {
                 .to_string()
                 .contains("requires closure body syntax: std::host::on(hosts, || { ... })")
         );
+    }
+
+    #[test]
+    fn parses_inventory_from_toml() {
+        let directory = tempfile::tempdir().expect("tempdir should be created");
+        let path = directory.path().join("inventory.toml");
+        fs::write(
+            &path,
+            r#"
+[groups]
+web = ["web-1", "web-2"]
+
+[hosts.web-1]
+address = "10.0.0.10"
+user = "deploy"
+"#,
+        )
+        .expect("inventory should be written");
+
+        let inventory = load_inventory(&path).expect("inventory should parse");
+        assert_eq!(inventory.groups["web"].len(), 2);
+        assert_eq!(inventory.hosts["web-1"].user.as_deref(), Some("deploy"));
     }
 }

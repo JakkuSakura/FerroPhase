@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand};
-use fp_shell::{ShellTarget, compile_file};
+use fp_shell::{CompileOptions, ShellTarget, compile_file_with_options, load_inventory};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -27,6 +27,9 @@ struct CompileArgs {
 
     #[arg(long)]
     check: bool,
+
+    #[arg(long)]
+    inventory: Option<PathBuf>,
 }
 
 fn main() {
@@ -41,7 +44,18 @@ fn run() -> Result<(), fp_shell::ShellError> {
     match cli.command {
         Command::Compile(args) => {
             let target = ShellTarget::parse(&args.target)?;
-            let output = compile_file(&args.input, args.output.as_deref(), target)?;
+            let inventory = if let Some(path) = args.inventory.as_deref() {
+                Some(load_inventory(path)?)
+            } else {
+                None
+            };
+            let options = CompileOptions { inventory };
+            let output = compile_file_with_options(
+                &args.input,
+                args.output.as_deref(),
+                target,
+                &options,
+            )?;
             if args.check {
                 println!("ok: {}", output.display());
             } else {

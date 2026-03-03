@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+__fp_last_changed=0
+
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
 ssh_cmd() {
@@ -21,8 +23,14 @@ run_remote() {
   ssh_cmd "$host" "$cmd"
 }
 
-run_remote 'web-1' 'uptime'
-3
-7
-run_remote 'web-1' 'echo inside closure scope'
-run_remote 'web-2' 'echo inside closure scope'
+restart_service() {
+    local host="$1"
+    local service="$2"
+    echo restarting service=$2 on host=$1
+    run_remote "$1" "sudo systemctl restart $2"
+}
+for host in 'web-1' 'web-2'; do
+    echo loop host=$host
+    run_remote "$host" 'hostname'
+    restart_service "$host" 'fp-service'
+done
