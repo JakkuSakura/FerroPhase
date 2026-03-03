@@ -1,0 +1,10 @@
+[groups]
+web = ["web-1", "web-2"]
+
+[hosts.web-1]
+address = "10.0.0.11"
+user = "deploy"
+
+[hosts.web-2]
+address = "10.0.0.12"
+user = "deploy"

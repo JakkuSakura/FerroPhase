@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+__fp_last_changed=0
+
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
 ssh_cmd() {

@@ -1,14 +1,14 @@
+const fn restart_service(host: str, service: str) {
+    std::server::shell(f"echo restarting service={service} on host={host}");
+    std::server::shell(f"sudo systemctl restart {service}", hosts=host);
+}
+
 const fn main() {
-    let remote = "web-1";
-    let check_cmd = "uptime";
-    let retry_count = 3;
-    let total_retry = retry_count * 2 + 1;
+    let service = "fp-service";
 
-    std::server::shell(check_cmd, hosts=remote);
-    std::server::shell(retry_count);
-    std::server::shell(total_retry);
-
-    std::host::on(["web-1", "web-2"], || {
-        std::server::shell("echo inside closure scope");
-    });
+    for host in ["web-1", "web-2"] {
+        std::server::shell(f"echo loop host={host}");
+        std::server::shell("hostname", hosts=[host]);
+        restart_service(host, service);
+    }
 }

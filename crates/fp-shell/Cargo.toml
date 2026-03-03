@@ -9,7 +9,10 @@ fp-bash = { path = "../fp-bash" }
 fp-core = { path = "../fp-core" }
 fp-interpret = { path = "../fp-interpret" }
 fp-lang = { path = "../fp-lang" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 thiserror = "2.0"
+toml = "0.8"
 
 [dev-dependencies]
 tempfile = "3.14"

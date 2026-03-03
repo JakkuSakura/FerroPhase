@@ -23,11 +23,4 @@ run_remote() {
   ssh_cmd "$host" "$cmd"
 }
 
-sync_and_restart() {
-    local host="$1"
-    local service="$2"
-    rsync_cmd -az --delete -- './dist/' '$1:/srv/fp-service/dist/'
-    run_remote "$1" "sudo systemctl restart $2"
-}
-sync_and_restart 'web-1' 'fp-service'
-sync_and_restart 'web-2' 'fp-service'
+envsubst < './templates/fp-service.conf.tpl' > '/etc/fp-service/fp-service.conf'
