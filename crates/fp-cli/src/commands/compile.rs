@@ -34,7 +34,7 @@ pub struct CompileArgs {
     #[arg(required = true)]
     pub input: Vec<PathBuf>,
 
-    /// Output backend (binary, rust, llvm, wasm, bytecode, text-bytecode, interpret)
+    /// Output backend (binary, ebpf, cil, rust, llvm, wasm, bytecode, text-bytecode, jvm-bytecode, interpret)
     #[arg(short = 'b', long = "backend", default_value = "binary")]
     pub backend: BackendKind,
 
@@ -56,6 +56,10 @@ pub struct CompileArgs {
     /// Target CPU for codegen (optional)
     #[arg(long = "target-cpu")]
     pub target_cpu: Option<String>,
+
+    /// Native target ISA/dialect override (for `--emitter native`).
+    #[arg(long = "native-target")]
+    pub native_target: Option<String>,
 
     /// Target feature string for codegen (optional)
     #[arg(long = "target-features")]
@@ -149,6 +153,8 @@ enum CompileTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum EmitterKind {
     Native,
+    Goasm,
+    Urcl,
     Llvm,
     Cranelift,
 }
@@ -157,6 +163,8 @@ impl EmitterKind {
     pub fn as_str(self) -> &'static str {
         match self {
             EmitterKind::Native => "native",
+            EmitterKind::Goasm => "goasm",
+            EmitterKind::Urcl => "urcl",
             EmitterKind::Llvm => "llvm",
             EmitterKind::Cranelift => "cranelift",
         }
@@ -183,6 +191,10 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     let mut compiled_files = Vec::new();
     let target = resolve_compile_target(&args)?;
+    let goasm_text_target = matches!(target, CompileTarget::Backend(BackendKind::Binary))
+        && args.emitter == EmitterKind::Goasm;
+    let urcl_text_target = matches!(target, CompileTarget::Backend(BackendKind::Binary))
+        && args.emitter == EmitterKind::Urcl;
 
     let is_text_backend = matches!(target, CompileTarget::Backend(BackendKind::TextBytecode));
     let target_backend = match target {
@@ -209,6 +221,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             input_file,
             args.output.as_ref(),
             target,
+            args.emitter,
             args.target_triple.as_deref(),
             emit_text_bytecode,
             output_is_dir,
@@ -242,6 +255,12 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
                     warn!("No compiled binaries available to execute");
                 }
                 [path] => {
+                    if goasm_text_target || urcl_text_target {
+                        return Err(CliError::InvalidInput(
+                            "--exec is not supported for text assembly emitters; choose a native binary emitter instead"
+                                .to_string(),
+                        ));
+                    }
                     exec_compiled_binary(path).await?;
                 }
                 _ => {
@@ -268,6 +287,12 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
                     ));
                 }
             },
+            BackendKind::Ebpf => {
+                warn!("--exec is not supported for eBPF artifacts");
+            }
+            BackendKind::Cil => {
+                warn!("--exec is not supported for CIL artifacts");
+            }
             _ => {
                 warn!("--exec is only supported for binary or bytecode targets");
             }
@@ -320,6 +345,7 @@ async fn compile_file(
         backend: Some(args.emitter.as_str().to_string()),
         target_triple: args.target_triple.clone(),
         target_cpu: args.target_cpu.clone(),
+        native_target: args.native_target.clone(),
         target_features: args.target_features.clone(),
         target_sysroot: args.target_sysroot.clone(),
         linker: Some(args.linker.clone()),
@@ -691,6 +717,7 @@ fn determine_output_path(
     input: &Path,
     output: Option<&PathBuf>,
     target: CompileTarget,
+    emitter: EmitterKind,
     target_triple: Option<&str>,
     emit_text_bytecode: bool,
     output_is_dir: bool,
@@ -714,16 +741,25 @@ fn determine_output_path(
         }
     };
 
+    let goasm_text_target = matches!(backend, BackendKind::Binary) && emitter == EmitterKind::Goasm;
+    let urcl_text_target = matches!(backend, BackendKind::Binary) && emitter == EmitterKind::Urcl;
+
     if let Some(output) = output {
         if output_is_dir {
             let extension = match backend {
                 BackendKind::Binary => {
-                    if is_windows_target(target_triple) {
+                    if goasm_text_target {
+                        "s"
+                    } else if urcl_text_target {
+                        "urcl"
+                    } else if is_windows_target(target_triple) {
                         "exe"
                     } else {
                         "out"
                     }
                 }
+                BackendKind::Ebpf => "ebpf",
+                BackendKind::Cil => "il",
                 BackendKind::Rust => "rs",
                 BackendKind::Llvm => "ll",
                 BackendKind::Wasm => "wasm",
@@ -734,6 +770,7 @@ fn determine_output_path(
                         "fbc"
                     }
                 }
+                BackendKind::JvmBytecode => "class",
                 BackendKind::Interpret => "out",
             };
             let stem = input
@@ -745,7 +782,7 @@ fn determine_output_path(
             return Ok(path);
         }
 
-        if matches!(backend, BackendKind::Binary) {
+        if matches!(backend, BackendKind::Binary) && !goasm_text_target && !urcl_text_target {
             let mut path = output.clone();
             let desired_ext = if is_windows_target(target_triple) {
                 "exe"
@@ -776,15 +813,21 @@ fn determine_output_path(
     } else {
         let extension = match backend {
             BackendKind::Binary => {
-                // Use platform-specific executable extension
-                if is_windows_target(target_triple) {
+                if goasm_text_target {
+                    "s"
+                } else if urcl_text_target {
+                    "urcl"
+                } else if is_windows_target(target_triple) {
                     "exe"
                 } else {
                     "out" // Use .out extension on Unix systems for clarity
                 }
             }
+            BackendKind::Ebpf => "ebpf",
+            BackendKind::Cil => "il",
             BackendKind::Rust => "rs",
             BackendKind::Llvm => "ll",
+            BackendKind::JvmBytecode => "class",
             BackendKind::Wasm => "wasm",
             BackendKind::Bytecode | BackendKind::TextBytecode => {
                 if emit_text_bytecode {

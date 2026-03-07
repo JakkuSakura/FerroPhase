@@ -15,6 +15,18 @@ pub(crate) struct LinkCraneliftContext {
     pub lir_program: fp_core::lir::LirProgram,
 }
 
+pub(crate) struct LinkGoAsmContext {
+    pub base_path: PathBuf,
+    pub options: PipelineOptions,
+    pub lir_program: fp_core::lir::LirProgram,
+}
+
+pub(crate) struct LinkUrclContext {
+    pub base_path: PathBuf,
+    pub options: PipelineOptions,
+    pub lir_program: fp_core::lir::LirProgram,
+}
+
 pub(crate) struct LinkLlvmContext {
     pub llvm_ir_path: PathBuf,
     pub base_path: PathBuf,
@@ -22,6 +34,8 @@ pub(crate) struct LinkLlvmContext {
 }
 
 pub(crate) struct LinkNativeStage;
+pub(crate) struct LinkGoAsmStage;
+pub(crate) struct LinkUrclStage;
 pub(crate) struct LinkCraneliftStage;
 pub(crate) struct LinkLlvmStage;
 
@@ -63,9 +77,29 @@ impl PipelineStage for LinkNativeStage {
             return Ok(binary_path);
         }
 
-        let mut cfg = fp_native::config::NativeConfig::executable(&binary_path)
+        let native_target = match context.options.native_target.as_deref() {
+            Some(value) => Some(
+                fp_native::config::NativeTarget::resolve(
+                    value,
+                    context.options.target_triple.as_deref(),
+                )
+                .ok_or_else(|| {
+                    diagnostics.push(
+                        Diagnostic::error(format!("Unsupported fp-native target: {}", value))
+                            .with_source_context(STAGE_LINK_BINARY),
+                    );
+                    PipelineError::new(STAGE_LINK_BINARY, "unsupported fp-native target")
+                })?,
+            ),
+            None => None,
+        };
+
+        let base_cfg = fp_native::config::NativeConfig::executable(&binary_path);
+
+        let mut cfg = base_cfg
             .with_target_triple(context.options.target_triple.clone())
             .with_target_cpu(context.options.target_cpu.clone())
+            .with_native_target(native_target)
             .with_target_features(context.options.target_features.clone())
             .with_sysroot(context.options.target_sysroot.clone())
             .with_fuse_ld(context.options.target_linker.clone())
@@ -85,6 +119,72 @@ impl PipelineStage for LinkNativeStage {
         })?;
 
         Ok(binary_path)
+    }
+}
+
+impl PipelineStage for LinkGoAsmStage {
+    type SrcCtx = LinkGoAsmContext;
+    type DstCtx = PathBuf;
+
+    fn name(&self) -> &'static str {
+        STAGE_LINK_BINARY
+    }
+
+    fn run(
+        &self,
+        context: LinkGoAsmContext,
+        diagnostics: &mut PipelineDiagnostics,
+    ) -> Result<PathBuf, PipelineError> {
+        let output_path = binary_output_path(&context.base_path, &context.options);
+        ensure_output_dir(&output_path, diagnostics)?;
+
+        let target = Some(fp_goasm::config::GoAsmTarget::resolve(
+            context.options.target_triple.as_deref(),
+        ));
+
+        let cfg = fp_goasm::config::GoAsmConfig::new(&output_path)
+            .with_target(target)
+            .with_target_triple(context.options.target_triple.clone());
+        let emitter = fp_goasm::GoAsmEmitter::new(cfg);
+        emitter.emit(context.lir_program, None).map_err(|e| {
+            diagnostics.push(
+                Diagnostic::error(format!("fp-goasm failed: {}", e))
+                    .with_source_context(STAGE_LINK_BINARY),
+            );
+            PipelineError::new(STAGE_LINK_BINARY, "fp-goasm failed")
+        })?;
+
+        Ok(output_path)
+    }
+}
+
+impl PipelineStage for LinkUrclStage {
+    type SrcCtx = LinkUrclContext;
+    type DstCtx = PathBuf;
+
+    fn name(&self) -> &'static str {
+        STAGE_LINK_BINARY
+    }
+
+    fn run(
+        &self,
+        context: LinkUrclContext,
+        diagnostics: &mut PipelineDiagnostics,
+    ) -> Result<PathBuf, PipelineError> {
+        let output_path = binary_output_path(&context.base_path, &context.options);
+        ensure_output_dir(&output_path, diagnostics)?;
+
+        let cfg = fp_urcl::UrclConfig::new(&output_path);
+        let emitter = fp_urcl::UrclEmitter::new(cfg);
+        emitter.emit(context.lir_program, None).map_err(|e| {
+            diagnostics.push(
+                Diagnostic::error(format!("fp-urcl failed: {}", e))
+                    .with_source_context(STAGE_LINK_BINARY),
+            );
+            PipelineError::new(STAGE_LINK_BINARY, "fp-urcl failed")
+        })?;
+
+        Ok(output_path)
     }
 }
 
@@ -286,6 +386,13 @@ impl PipelineStage for LinkCraneliftStage {
 }
 
 fn binary_output_path(base_path: &Path, options: &PipelineOptions) -> PathBuf {
+    if matches!(
+        options.backend.as_deref(),
+        Some("goasm") | Some("fp-goasm") | Some("urcl") | Some("fp-urcl")
+    ) {
+        return base_path.to_path_buf();
+    }
+
     base_path.with_extension(if is_windows_target(options.target_triple.as_deref()) {
         "exe"
     } else {
@@ -424,6 +531,36 @@ impl Pipeline {
     ) -> Result<PathBuf, CliError> {
         let stage = LinkNativeStage;
         let context = LinkNativeContext {
+            base_path: base_path.to_path_buf(),
+            options: options.clone(),
+            lir_program: lir_program.clone(),
+        };
+        self.run_pipeline_stage(STAGE_LINK_BINARY, stage, context, options)
+    }
+
+    pub(crate) fn stage_link_binary_goasm(
+        &self,
+        lir_program: &fp_core::lir::LirProgram,
+        base_path: &Path,
+        options: &PipelineOptions,
+    ) -> Result<PathBuf, CliError> {
+        let stage = LinkGoAsmStage;
+        let context = LinkGoAsmContext {
+            base_path: base_path.to_path_buf(),
+            options: options.clone(),
+            lir_program: lir_program.clone(),
+        };
+        self.run_pipeline_stage(STAGE_LINK_BINARY, stage, context, options)
+    }
+
+    pub(crate) fn stage_link_binary_urcl(
+        &self,
+        lir_program: &fp_core::lir::LirProgram,
+        base_path: &Path,
+        options: &PipelineOptions,
+    ) -> Result<PathBuf, CliError> {
+        let stage = LinkUrclStage;
+        let context = LinkUrclContext {
             base_path: base_path.to_path_buf(),
             options: options.clone(),
             lir_program: lir_program.clone(),

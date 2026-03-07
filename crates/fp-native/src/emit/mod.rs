@@ -2,6 +2,7 @@ mod aarch64;
 mod codegen;
 mod x86_64;
 
+use crate::config::NativeTarget;
 use crate::link;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
@@ -24,6 +25,41 @@ pub enum TargetFormat {
 pub enum TargetArch {
     X86_64,
     Aarch64,
+}
+
+pub fn host_arch(triple: Option<&str>) -> Result<TargetArch> {
+    let triple = triple.map(|t| t.to_ascii_lowercase());
+
+    match triple.as_deref() {
+        Some(triple) if triple.contains("x86_64") || triple.contains("amd64") => {
+            Ok(TargetArch::X86_64)
+        }
+        Some(triple) if triple.contains("aarch64") || triple.contains("arm64") => {
+            Ok(TargetArch::Aarch64)
+        }
+        _ => {
+            if cfg!(target_arch = "x86_64") {
+                Ok(TargetArch::X86_64)
+            } else if cfg!(target_arch = "aarch64") {
+                Ok(TargetArch::Aarch64)
+            } else {
+                Err(Error::from("unsupported target architecture"))
+            }
+        }
+    }
+}
+
+pub fn resolve_native_target(
+    requested: Option<NativeTarget>,
+    triple: Option<&str>,
+) -> Result<NativeTarget> {
+    match requested {
+        Some(target) => Ok(target),
+        None => Ok(match host_arch(triple)? {
+            TargetArch::X86_64 => NativeTarget::X86_64,
+            TargetArch::Aarch64 => NativeTarget::Aarch64,
+        }),
+    }
 }
 
 pub fn detect_target(triple: Option<&str>) -> Result<(TargetFormat, TargetArch)> {
@@ -57,21 +93,7 @@ pub fn detect_target(triple: Option<&str>) -> Result<(TargetFormat, TargetArch)>
         }
     };
 
-    let arch = match triple.as_deref() {
-        Some(triple) if triple.contains("x86_64") || triple.contains("amd64") => TargetArch::X86_64,
-        Some(triple) if triple.contains("aarch64") || triple.contains("arm64") => {
-            TargetArch::Aarch64
-        }
-        _ => {
-            if cfg!(target_arch = "x86_64") {
-                TargetArch::X86_64
-            } else if cfg!(target_arch = "aarch64") {
-                TargetArch::Aarch64
-            } else {
-                return Err(Error::from("unsupported target architecture"));
-            }
-        }
-    };
+    let arch = host_arch(triple.as_deref())?;
 
     Ok((format, arch))
 }

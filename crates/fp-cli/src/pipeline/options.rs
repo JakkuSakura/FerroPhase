@@ -13,6 +13,8 @@ pub struct PipelineOptions {
     pub target_triple: Option<String>,
     /// Target CPU for codegen (optional)
     pub target_cpu: Option<String>,
+    /// Native target ISA override for `fp-native` (e.g. `x86_64`, `aarch64`).
+    pub native_target: Option<String>,
     /// Target feature string for codegen (optional)
     pub target_features: Option<String>,
     /// Target sysroot for linking (optional)
@@ -54,10 +56,16 @@ pub enum BackendKind {
     Llvm,
     /// Generate binary executable
     Binary,
+    /// Generate eBPF textual assembly
+    Ebpf,
+    /// Generate textual Common Intermediate Language for .NET
+    Cil,
     /// Generate bytecode for the virtual machine backend
     Bytecode,
     /// Generate human-readable bytecode text
     TextBytecode,
+    /// Generate JVM classfiles
+    JvmBytecode,
     Wasm,
 }
 
@@ -65,11 +73,14 @@ impl BackendKind {
     pub fn as_str(self) -> &'static str {
         match self {
             BackendKind::Binary => "binary",
+            BackendKind::Ebpf => "ebpf",
+            BackendKind::Cil => "cil",
             BackendKind::Rust => "rust",
             BackendKind::Llvm => "llvm",
             BackendKind::Wasm => "wasm",
             BackendKind::Bytecode => "bytecode",
             BackendKind::TextBytecode => "text-bytecode",
+            BackendKind::JvmBytecode => "jvm-bytecode",
             BackendKind::Interpret => "interpret",
         }
     }
@@ -126,6 +137,7 @@ impl Default for PipelineOptions {
             backend: None,
             target_triple: None,
             target_cpu: None,
+            native_target: None,
             target_features: None,
             target_sysroot: None,
             linker: None,

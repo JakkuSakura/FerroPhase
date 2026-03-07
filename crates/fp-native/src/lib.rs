@@ -5,7 +5,7 @@ pub mod jit;
 pub mod link;
 
 use crate::config::{EmitKind, NativeConfig};
-use crate::emit::detect_target;
+use crate::emit::{detect_target, resolve_native_target};
 use fp_core::error::Result;
 use fp_core::lir::LirProgram;
 use std::path::{Path, PathBuf};
@@ -44,6 +44,10 @@ impl NativeEmitter {
 
     fn emit_impl(&self, lir_program: &LirProgram) -> Result<PathBuf> {
         let out = self.config.output_path.clone();
+        resolve_native_target(
+            self.config.native_target,
+            self.config.target_triple.as_deref(),
+        )?;
 
         let (format, arch) = detect_target(self.config.target_triple.as_deref())?;
 
@@ -55,6 +59,11 @@ impl NativeEmitter {
         match self.config.emit {
             EmitKind::Object => emit::write_object(&out, &plan)?,
             EmitKind::Executable => emit::write_executable(&out, &plan)?,
+            EmitKind::AssemblyText => {
+                return Err(fp_core::error::Error::from(
+                    "fp-native does not support textual assembly emission",
+                ));
+            }
         }
         Ok(out)
     }

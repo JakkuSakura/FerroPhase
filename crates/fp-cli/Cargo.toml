@@ -15,6 +15,7 @@ fp-backend = { path = "../fp-backend" }
 fp-typing = { path = "../fp-typing" }
 fp-typescript = { path = "../fp-typescript" }
 fp-csharp = { path = "../fp-csharp" }
+fp-dotnet = { path = "../fp-dotnet" }
 fp-python = { path = "../fp-python" }
 fp-golang = { path = "../fp-golang" }
 fp-llvm = { path = "../fp-llvm" }
@@ -31,9 +32,13 @@ fp-toml = { path = "../fp-toml" }
 fp-hcl = { path = "../fp-hcl" }
 fp-pipeline = { path = "../fp-pipeline" }
 fp-bytecode = { path = "../fp-bytecode" }
+fp-jvm = { path = "../fp-jvm" }
 fp-stackvm = { path = "../fp-stackvm" }
 fp-wasm = { path = "../fp-wasm" }
+fp-ebpf = { path = "../fp-ebpf" }
 fp-native = { path = "../fp-native" }
+fp-goasm = { path = "../fp-goasm" }
+fp-urcl = { path = "../fp-urcl" }
 fp-cranelift = { path = "../fp-cranelift" }
 
 # CLI and argument parsing

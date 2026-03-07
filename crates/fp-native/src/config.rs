@@ -4,6 +4,29 @@ use std::path::PathBuf;
 pub enum EmitKind {
     Object,
     Executable,
+    AssemblyText,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeTarget {
+    X86_64,
+    Aarch64,
+}
+
+impl NativeTarget {
+    pub fn parse(value: &str) -> Option<Self> {
+        let value = value.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "x86_64" | "amd64" => Some(Self::X86_64),
+            "aarch64" | "arm64" => Some(Self::Aarch64),
+            _ => None,
+        }
+    }
+
+    pub fn resolve(value: &str, target_triple: Option<&str>) -> Option<Self> {
+        let _ = target_triple;
+        Self::parse(value)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -13,6 +36,7 @@ pub struct NativeConfig {
     pub linker_args: Vec<String>,
     pub keep_object: bool,
     pub asm_dump: Option<PathBuf>,
+    pub native_target: Option<NativeTarget>,
 
     /// Target triple for codegen/linking (e.g. x86_64-apple-darwin).
     pub target_triple: Option<String>,
@@ -38,6 +62,7 @@ impl NativeConfig {
             linker_args: Vec::new(),
             keep_object: false,
             asm_dump: None,
+            native_target: None,
 
             target_triple: None,
             target_cpu: None,
@@ -56,6 +81,26 @@ impl NativeConfig {
             linker_args: Vec::new(),
             keep_object: true,
             asm_dump: None,
+            native_target: None,
+
+            target_triple: None,
+            target_cpu: None,
+            target_features: None,
+            sysroot: None,
+            linker_driver: None,
+            fuse_ld: None,
+            release: false,
+        }
+    }
+
+    pub fn assembly(output_path: impl Into<PathBuf>) -> Self {
+        Self {
+            emit: EmitKind::AssemblyText,
+            output_path: output_path.into(),
+            linker_args: Vec::new(),
+            keep_object: false,
+            asm_dump: None,
+            native_target: None,
 
             target_triple: None,
             target_cpu: None,
@@ -114,6 +159,11 @@ impl NativeConfig {
 
     pub fn with_asm_dump(mut self, dump: Option<PathBuf>) -> Self {
         self.asm_dump = dump;
+        self
+    }
+
+    pub fn with_native_target(mut self, target: Option<NativeTarget>) -> Self {
+        self.native_target = target;
         self
     }
 }

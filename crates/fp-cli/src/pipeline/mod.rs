@@ -21,10 +21,12 @@ use fp_core::diagnostics::{
 use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::pretty::{PrettyOptions, pretty};
 use fp_core::{hir, lir};
+use fp_dotnet::emit_cil;
 use fp_interpret::const_eval::ConstEvalOutcome;
 use fp_interpret::engine::{
     AstInterpreter, InterpreterMode, InterpreterOptions, InterpreterOutcome,
 };
+use fp_jvm;
 use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
 use fp_pipeline::{PipelineBuilder, PipelineDiagnostics, PipelineError, PipelineStage};
 use fp_typescript::frontend::TsParseMode;
@@ -54,6 +56,8 @@ const STAGE_MIR_TO_LIR: &str = "mir→lir";
 const STAGE_RUNTIME_MATERIALIZE: &str = "materialize-runtime";
 const STAGE_TYPE_POST_MATERIALIZE: &str = "ast→typed(post-materialize)";
 const STAGE_LINK_BINARY: &str = "link-binary";
+const STAGE_EMIT_EBPF: &str = "emit-ebpf";
+const STAGE_EMIT_CIL: &str = "emit-cil";
 const STAGE_EMIT_WASM: &str = "emit-wasm";
 const STAGE_INTRINSIC_NORMALIZE: &str = "intrinsic-normalize";
 const STAGE_AST_INTERPRET: &str = "ast-interpret";
@@ -321,11 +325,14 @@ impl Pipeline {
                 let base_path = options.base_path.as_ref().ok_or_else(|| {
                     let msg = match target {
                         BackendKind::Rust => "Missing base path for transpilation",
+                        BackendKind::Cil => "Missing base path for CIL generation",
                         BackendKind::Llvm => "Missing base path for LLVM generation",
                         BackendKind::Binary => "Missing base path for binary generation",
+                        BackendKind::Ebpf => "Missing base path for eBPF generation",
                         BackendKind::Bytecode | BackendKind::TextBytecode => {
                             "Missing base path for bytecode generation"
                         }
+                        BackendKind::JvmBytecode => "Missing base path for JVM bytecode generation",
                         BackendKind::Wasm => "Missing base path for wasm generation",
                         BackendKind::Interpret => unreachable!(),
                     };
@@ -602,7 +609,11 @@ impl Pipeline {
 
         if matches!(
             target,
-            BackendKind::Llvm | BackendKind::Binary | BackendKind::Wasm
+            BackendKind::Llvm
+                | BackendKind::Binary
+                | BackendKind::Ebpf
+                | BackendKind::Cil
+                | BackendKind::Wasm
         ) && !did_const_eval
         {
             let stage_started = std::time::Instant::now();
@@ -657,17 +668,35 @@ impl Pipeline {
             );
         }
 
-        let output = if matches!(target, BackendKind::Rust) {
-            let span = info_span!("pipeline.codegen", target = "rust");
+        let output = if matches!(target, BackendKind::Rust | BackendKind::Cil) {
+            let span = info_span!("pipeline.codegen", target = target.as_str());
             let _enter = span.enter();
-            let stage_started = std::time::Instant::now();
-            info!("pipeline: start codegen-rust");
-            let code = CodeGenerator::generate_rust_code(&ast)?;
-            info!(
-                "pipeline: finished codegen-rust in {:.2?}",
-                stage_started.elapsed()
-            );
-            PipelineOutput::Code(code)
+            match target {
+                BackendKind::Rust => {
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start codegen-rust");
+                    let code = CodeGenerator::generate_rust_code(&ast)?;
+                    info!(
+                        "pipeline: finished codegen-rust in {:.2?}",
+                        stage_started.elapsed()
+                    );
+                    PipelineOutput::Code(code)
+                }
+                BackendKind::Cil => {
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_EMIT_CIL);
+                    let code = emit_cil(&ast).map_err(|err| {
+                        CliError::Compilation(format!("CIL emit failed: {}", err))
+                    })?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_EMIT_CIL,
+                        stage_started.elapsed()
+                    );
+                    PipelineOutput::Code(code)
+                }
+                _ => unreachable!(),
+            }
         } else {
             let stage_started = std::time::Instant::now();
             info!("pipeline: start {}", STAGE_AST_TO_HIR);
@@ -747,6 +776,40 @@ impl Pipeline {
                             stage_started.elapsed()
                         );
                         PipelineOutput::Binary(binary_path)
+                    } else if backend == "goasm" || backend == "fp-goasm" {
+                        let stage_started = std::time::Instant::now();
+                        info!("pipeline: start {}", STAGE_LINK_BINARY);
+                        let output_path =
+                            self.stage_link_binary_goasm(&lir.lir_program, base_path, options)?;
+                        info!(
+                            "pipeline: finished {} in {:.2?}",
+                            STAGE_LINK_BINARY,
+                            stage_started.elapsed()
+                        );
+                        PipelineOutput::Code(fs::read_to_string(&output_path).map_err(|err| {
+                            CliError::Compilation(format!(
+                                "Failed to read Go assembly output {}: {}",
+                                output_path.display(),
+                                err
+                            ))
+                        })?)
+                    } else if backend == "urcl" || backend == "fp-urcl" {
+                        let stage_started = std::time::Instant::now();
+                        info!("pipeline: start {}", STAGE_LINK_BINARY);
+                        let output_path =
+                            self.stage_link_binary_urcl(&lir.lir_program, base_path, options)?;
+                        info!(
+                            "pipeline: finished {} in {:.2?}",
+                            STAGE_LINK_BINARY,
+                            stage_started.elapsed()
+                        );
+                        PipelineOutput::Code(fs::read_to_string(&output_path).map_err(|err| {
+                            CliError::Compilation(format!(
+                                "Failed to read URCL output {}: {}",
+                                output_path.display(),
+                                err
+                            ))
+                        })?)
                     } else if backend == "cranelift" || backend == "fp-cranelift" {
                         let stage_started = std::time::Instant::now();
                         info!("pipeline: start {}", STAGE_LINK_BINARY);
@@ -783,6 +846,33 @@ impl Pipeline {
                         );
                         PipelineOutput::Binary(binary_path)
                     }
+                }
+                BackendKind::Ebpf => {
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_HIR_TO_MIR);
+                    let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_HIR_TO_MIR,
+                        stage_started.elapsed()
+                    );
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_MIR_TO_LIR);
+                    let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_MIR_TO_LIR,
+                        stage_started.elapsed()
+                    );
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_EMIT_EBPF);
+                    let ebpf_text = self.stage_emit_ebpf(&lir.lir_program, base_path, options)?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_EMIT_EBPF,
+                        stage_started.elapsed()
+                    );
+                    PipelineOutput::Code(ebpf_text)
                 }
                 BackendKind::Bytecode | BackendKind::TextBytecode => {
                     let stage_started = std::time::Instant::now();
@@ -829,6 +919,65 @@ impl Pipeline {
 
                     PipelineOutput::Binary(output_path)
                 }
+                BackendKind::JvmBytecode => {
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_HIR_TO_MIR);
+                    let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_HIR_TO_MIR,
+                        stage_started.elapsed()
+                    );
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start jvm-lower");
+                    let class_stem = input_path
+                        .and_then(|path| path.file_stem())
+                        .and_then(|stem| stem.to_str())
+                        .or_else(|| base_path.file_stem().and_then(|stem| stem.to_str()))
+                        .unwrap_or("Main");
+                    let jvm_options = fp_jvm::JvmBackendOptions {
+                        class_name: fp_jvm::derive_class_name(class_stem),
+                        emit_java_entrypoint: true,
+                    };
+                    let program =
+                        fp_jvm::lower_program(&mir.mir_program, &jvm_options).map_err(|err| {
+                            CliError::Compilation(format!("MIR→JVM lowering failed: {}", err))
+                        })?;
+                    let mut classes = fp_jvm::emit_class_files(&program).map_err(|err| {
+                        CliError::Compilation(format!("JVM class emission failed: {}", err))
+                    })?;
+                    info!(
+                        "pipeline: finished jvm-lower in {:.2?}",
+                        stage_started.elapsed()
+                    );
+
+                    if classes.len() != 1 {
+                        return Err(CliError::Compilation(
+                            "JVM backend currently expects exactly one emitted class".to_string(),
+                        ));
+                    }
+
+                    let class = classes.remove(0);
+                    let output_path = match base_path.extension().and_then(|ext| ext.to_str()) {
+                        Some("jar") => base_path.to_path_buf(),
+                        _ => base_path.with_extension("class"),
+                    };
+                    if let Some(parent) = output_path.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+
+                    if output_path.extension().and_then(|ext| ext.to_str()) == Some("jar") {
+                        let jar = fp_jvm::emit_executable_jar(&[class], &program.class.name)
+                            .map_err(|err| {
+                                CliError::Compilation(format!("JAR packaging failed: {}", err))
+                            })?;
+                        fs::write(&output_path, jar)?;
+                    } else {
+                        fs::write(&output_path, class.bytes)?;
+                    }
+
+                    PipelineOutput::Binary(output_path)
+                }
                 BackendKind::Wasm => {
                     let stage_started = std::time::Instant::now();
                     info!("pipeline: start {}", STAGE_HIR_TO_MIR);
@@ -856,7 +1005,7 @@ impl Pipeline {
                     );
                     PipelineOutput::Binary(wasm_path)
                 }
-                BackendKind::Rust | BackendKind::Interpret => unreachable!(),
+                BackendKind::Rust | BackendKind::Cil | BackendKind::Interpret => unreachable!(),
             }
         };
 

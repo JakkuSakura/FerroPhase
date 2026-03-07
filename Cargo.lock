@@ -1351,12 +1351,16 @@ dependencies = [
  "fp-core",
  "fp-cranelift",
  "fp-csharp",
+ "fp-dotnet",
+ "fp-ebpf",
  "fp-flatbuffers",
+ "fp-goasm",
  "fp-golang",
  "fp-hcl",
  "fp-interpret",
  "fp-json",
  "fp-jsonschema",
+ "fp-jvm",
  "fp-lang",
  "fp-llvm",
  "fp-native",
@@ -1369,6 +1373,7 @@ dependencies = [
  "fp-toml",
  "fp-typescript",
  "fp-typing",
+ "fp-urcl",
  "fp-wasm",
  "fp-wit",
  "fp-zig",
@@ -1447,11 +1452,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-dotnet"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "fp-core",
+]
+
+[[package]]
+name = "fp-ebpf"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
+]
+
+[[package]]
 name = "fp-flatbuffers"
 version = "0.1.0"
 dependencies = [
  "fp-core",
  "regex",
+]
+
+[[package]]
+name = "fp-goasm"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
+ "tempfile",
 ]
 
 [[package]]
@@ -1513,6 +1541,15 @@ dependencies = [
  "fp-core",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "fp-jvm"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "fp-core",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -1657,6 +1694,14 @@ version = "0.1.0"
 dependencies = [
  "fp-core",
  "tracing",
+]
+
+[[package]]
+name = "fp-urcl"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
+ "tempfile",
 ]
 
 [[package]]
