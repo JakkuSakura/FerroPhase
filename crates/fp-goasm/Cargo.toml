@@ -1,0 +1,11 @@
+[package]
+name = "fp-goasm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+
+[dev-dependencies]
+tempfile = "3.8"
