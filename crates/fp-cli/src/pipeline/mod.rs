@@ -21,7 +21,7 @@ use fp_core::diagnostics::{
 use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::pretty::{PrettyOptions, pretty};
 use fp_core::{hir, lir};
-use fp_dotnet::emit_cil;
+use fp_dotnet::{emit_assembly, emit_cil};
 use fp_interpret::const_eval::ConstEvalOutcome;
 use fp_interpret::engine::{
     AstInterpreter, InterpreterMode, InterpreterOptions, InterpreterOutcome,
@@ -326,6 +326,7 @@ impl Pipeline {
                     let msg = match target {
                         BackendKind::Rust => "Missing base path for transpilation",
                         BackendKind::Cil => "Missing base path for CIL generation",
+                        BackendKind::Dotnet => "Missing base path for .NET assembly generation",
                         BackendKind::Llvm => "Missing base path for LLVM generation",
                         BackendKind::Binary => "Missing base path for binary generation",
                         BackendKind::Ebpf => "Missing base path for eBPF generation",
@@ -613,6 +614,7 @@ impl Pipeline {
                 | BackendKind::Binary
                 | BackendKind::Ebpf
                 | BackendKind::Cil
+                | BackendKind::Dotnet
                 | BackendKind::Wasm
         ) && !did_const_eval
         {
@@ -668,7 +670,10 @@ impl Pipeline {
             );
         }
 
-        let output = if matches!(target, BackendKind::Rust | BackendKind::Cil) {
+        let output = if matches!(
+            target,
+            BackendKind::Rust | BackendKind::Cil | BackendKind::Dotnet
+        ) {
             let span = info_span!("pipeline.codegen", target = target.as_str());
             let _enter = span.enter();
             match target {
@@ -694,6 +699,20 @@ impl Pipeline {
                         stage_started.elapsed()
                     );
                     PipelineOutput::Code(code)
+                }
+                BackendKind::Dotnet => {
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_EMIT_CIL);
+                    let assembly_path = emit_assembly(&ast, base_path, options.save_intermediates)
+                        .map_err(|err| {
+                            CliError::Compilation(format!(".NET assembly emit failed: {}", err))
+                        })?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_EMIT_CIL,
+                        stage_started.elapsed()
+                    );
+                    PipelineOutput::Binary(assembly_path)
                 }
                 _ => unreachable!(),
             }
@@ -1019,7 +1038,10 @@ impl Pipeline {
                     );
                     PipelineOutput::Binary(wasm_path)
                 }
-                BackendKind::Rust | BackendKind::Cil | BackendKind::Interpret => unreachable!(),
+                BackendKind::Rust
+                | BackendKind::Cil
+                | BackendKind::Dotnet
+                | BackendKind::Interpret => unreachable!(),
             }
         };
 

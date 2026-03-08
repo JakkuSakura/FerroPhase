@@ -60,6 +60,8 @@ pub enum BackendKind {
     Ebpf,
     /// Generate textual Common Intermediate Language for .NET
     Cil,
+    /// Generate a .NET PE assembly via CIL + ilasm
+    Dotnet,
     /// Generate bytecode for the virtual machine backend
     Bytecode,
     /// Generate human-readable bytecode text
@@ -75,6 +77,7 @@ impl BackendKind {
             BackendKind::Binary => "binary",
             BackendKind::Ebpf => "ebpf",
             BackendKind::Cil => "cil",
+            BackendKind::Dotnet => "dotnet",
             BackendKind::Rust => "rust",
             BackendKind::Llvm => "llvm",
             BackendKind::Wasm => "wasm",

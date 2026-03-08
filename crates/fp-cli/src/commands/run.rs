@@ -22,6 +22,27 @@ pub struct RunArgs {
     /// Execution mode (compile or interpret)
     #[arg(long, default_value = "compile")]
     pub mode: RunMode,
+    /// Backend to use in compile mode
+    #[arg(long, default_value = "binary")]
+    pub backend: BackendKind,
+    /// Codegen emitter to use in compile mode
+    #[arg(long, default_value = "native")]
+    pub emitter: EmitterKind,
+    /// Native target override for compile mode
+    #[arg(long = "native-target")]
+    pub native_target: Option<String>,
+    /// Explicit output artifact path in compile mode (for example `app.exe` or `app.dll`)
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+    /// Optimization level in compile mode (0-3)
+    #[arg(short = 'O', long, default_value_t = 2)]
+    pub opt_level: u8,
+    /// Enable debug information in compile mode
+    #[arg(short, long)]
+    pub debug: bool,
+    /// Build with release settings in compile mode
+    #[arg(long)]
+    pub release: bool,
 }
 
 pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
@@ -36,20 +57,21 @@ pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
 
     let compile_args = CompileArgs {
         input: vec![args.file],
-        backend: BackendKind::Binary,
+        backend: args.backend,
         target: None,
-        emitter: EmitterKind::Native,
+        emitter: args.emitter,
         target_triple: None,
         target_cpu: None,
+        native_target: args.native_target,
         target_features: None,
         target_sysroot: None,
         linker: "clang".to_string(),
         target_linker: None,
-        output: None,
+        output: args.output,
         package_graph: None,
-        opt_level: 2,
-        debug: false,
-        release: false,
+        opt_level: args.opt_level,
+        debug: args.debug,
+        release: args.release,
         include: Vec::new(),
         define: Vec::new(),
         exec: true,

@@ -34,7 +34,7 @@ pub struct CompileArgs {
     #[arg(required = true)]
     pub input: Vec<PathBuf>,
 
-    /// Output backend (binary, ebpf, cil, rust, llvm, wasm, bytecode, text-bytecode, jvm-bytecode, interpret)
+    /// Output backend (binary, ebpf, cil, dotnet, rust, llvm, wasm, bytecode, text-bytecode, jvm-bytecode, interpret)
     #[arg(short = 'b', long = "backend", default_value = "binary")]
     pub backend: BackendKind,
 
@@ -293,6 +293,20 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             BackendKind::Cil => {
                 warn!("--exec is not supported for CIL artifacts");
             }
+            BackendKind::Dotnet => match compiled_files.as_slice() {
+                [] => {
+                    warn!("No compiled .NET assembly available to execute");
+                }
+                [path] => {
+                    exec_dotnet_assembly(path).await?;
+                }
+                _ => {
+                    return Err(CliError::Compilation(
+                        "--exec currently supports compiling a single .NET assembly at a time"
+                            .to_string(),
+                    ));
+                }
+            },
             _ => {
                 warn!("--exec is only supported for binary or bytecode targets");
             }
@@ -686,6 +700,76 @@ async fn exec_compiled_binary(path: &Path) -> Result<()> {
 
     Ok(())
 }
+async fn exec_dotnet_assembly(path: &Path) -> Result<()> {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .ok_or_else(|| {
+            CliError::Compilation(format!(
+                "Refusing to execute '{}': unsupported .NET assembly extension",
+                path.display()
+            ))
+        })?;
+
+    let mut command = if command_available("mono") {
+        let mut command = Command::new("mono");
+        command.arg(path);
+        command
+    } else if extension == "dll" {
+        ensure_command_available("dotnet", path)?;
+        let mut command = Command::new("dotnet");
+        command.arg(path);
+        command
+    } else {
+        return Err(CliError::Compilation(format!(
+            "Refusing to execute '{}': required command '{}' is not available on PATH",
+            path.display(),
+            "mono"
+        )));
+    };
+
+    info!("🚀 Executing .NET assembly: {}", path.display());
+
+    let output = command.output().await.map_err(|e| {
+        CliError::Compilation(format!("Failed to execute .NET assembly: {}", e))
+    })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(CliError::Compilation(format!(
+            ".NET assembly execution failed: {}",
+            stderr
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.is_empty() {
+        println!("{}", stdout);
+    }
+
+    Ok(())
+}
+
+fn ensure_command_available(command: &str, path: &Path) -> Result<()> {
+    if command_available(command) {
+        Ok(())
+    } else {
+        Err(CliError::Compilation(format!(
+            "Cannot execute '{}': required command '{}' is not available on PATH",
+            path.display(),
+            command
+        )))
+    }
+}
+
+fn command_available(command: &str) -> bool {
+    let path_var = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path_var)
+        .map(|entry| entry.join(command))
+        .any(|candidate| candidate.is_file())
+}
+
 
 fn exec_compiled_bytecode(path: &Path) -> Result<()> {
     let bytes = std::fs::read(path).map_err(CliError::Io)?;
@@ -760,6 +844,7 @@ fn determine_output_path(
                 }
                 BackendKind::Ebpf => "ebpf",
                 BackendKind::Cil => "il",
+                BackendKind::Dotnet => "exe",
                 BackendKind::Rust => "rs",
                 BackendKind::Llvm => "ll",
                 BackendKind::Wasm => "wasm",
@@ -809,6 +894,24 @@ fn determine_output_path(
             return Ok(path);
         }
 
+        if matches!(backend, BackendKind::Dotnet) {
+            let mut path = output.clone();
+            let desired_ext = match path.extension().and_then(|ext| ext.to_str()) {
+                Some(ext) if ext.eq_ignore_ascii_case("dll") => "dll",
+                Some(ext) if ext.eq_ignore_ascii_case("exe") => "exe",
+                _ => "exe",
+            };
+            let needs_update = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| !ext.eq_ignore_ascii_case(desired_ext))
+                .unwrap_or(true);
+            if needs_update {
+                path.set_extension(desired_ext);
+            }
+            return Ok(path);
+        }
+
         Ok(output.clone())
     } else {
         let extension = match backend {
@@ -825,6 +928,7 @@ fn determine_output_path(
             }
             BackendKind::Ebpf => "ebpf",
             BackendKind::Cil => "il",
+            BackendKind::Dotnet => "exe",
             BackendKind::Rust => "rs",
             BackendKind::Llvm => "ll",
             BackendKind::JvmBytecode => "class",

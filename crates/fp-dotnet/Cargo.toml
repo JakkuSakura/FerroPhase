@@ -7,3 +7,4 @@ publish = false
 [dependencies]
 fp-core = { path = "../fp-core" }
 eyre = "0.6"
+tempfile = "3"
