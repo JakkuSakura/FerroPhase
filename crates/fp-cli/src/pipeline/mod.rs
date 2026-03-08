@@ -958,15 +958,29 @@ impl Pipeline {
                     }
 
                     let class = classes.remove(0);
-                    let output_path = match base_path.extension().and_then(|ext| ext.to_str()) {
-                        Some("jar") => base_path.to_path_buf(),
-                        _ => base_path.with_extension("class"),
+                    let wants_jar =
+                        base_path.extension().and_then(|ext| ext.to_str()) == Some("jar");
+                    let output_path = if wants_jar {
+                        base_path.to_path_buf()
+                    } else {
+                        base_path.with_extension("class")
                     };
                     if let Some(parent) = output_path.parent() {
                         fs::create_dir_all(parent)?;
                     }
 
-                    if output_path.extension().and_then(|ext| ext.to_str()) == Some("jar") {
+                    let class_bytes = class.bytes.clone();
+                    let class_path = if wants_jar {
+                        output_path.with_extension("class")
+                    } else {
+                        output_path.clone()
+                    };
+
+                    if wants_jar {
+                        if options.save_intermediates {
+                            fs::write(&class_path, &class_bytes)?;
+                        }
+
                         let jar = fp_jvm::emit_executable_jar(&[class], &program.class.name)
                             .map_err(|err| {
                                 CliError::Compilation(format!("JAR packaging failed: {}", err))

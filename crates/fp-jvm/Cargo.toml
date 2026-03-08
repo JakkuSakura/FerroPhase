@@ -1,0 +1,9 @@
+[package]
+name = "fp-jvm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crc32fast = "1.4"
+fp-core = { path = "../fp-core" }
+thiserror = "2.0.17"
