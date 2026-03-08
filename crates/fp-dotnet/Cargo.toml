@@ -1,0 +1,9 @@
+[package]
+name = "fp-dotnet"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+eyre = "0.6"
