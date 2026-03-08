@@ -225,6 +225,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             args.target_triple.as_deref(),
             emit_text_bytecode,
             output_is_dir,
+            args.exec,
         )?;
 
         // Compile single file
@@ -287,9 +288,20 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
                     ));
                 }
             },
-            BackendKind::Ebpf => {
-                warn!("--exec is not supported for eBPF artifacts");
-            }
+            BackendKind::Ebpf => match compiled_files.as_slice() {
+                [] => {
+                    warn!("No compiled eBPF artifacts available to execute");
+                }
+                [path] => {
+                    exec_ebpf_artifact(path).await?;
+                }
+                _ => {
+                    return Err(CliError::Compilation(
+                        "--exec currently supports compiling a single eBPF artifact at a time"
+                            .to_string(),
+                    ));
+                }
+            },
             BackendKind::Cil => {
                 warn!("--exec is not supported for CIL artifacts");
             }
@@ -700,6 +712,69 @@ async fn exec_compiled_binary(path: &Path) -> Result<()> {
 
     Ok(())
 }
+
+async fn exec_ebpf_artifact(path: &Path) -> Result<()> {
+    let is_object = path.extension().map_or(false, |ext| ext == "o");
+    if !is_object {
+        return Err(CliError::Compilation(format!(
+            "Refusing to execute '{}': eBPF execution requires an ELF object (.o)",
+            path.display()
+        )));
+    }
+
+    let runtime = std::env::var("FP_EBPF_RUNTIME").map_err(|_| {
+        CliError::Compilation(
+            "Missing eBPF user-mode runtime: set FP_EBPF_RUNTIME to an external runner executable such as fp-ebpf-runtime"
+                .to_string(),
+        )
+    })?;
+    let runtime_args = std::env::var("FP_EBPF_RUNTIME_ARGS").unwrap_or_default();
+
+    info!(
+        "🚀 Executing eBPF artifact via external runtime: {} {}",
+        runtime,
+        path.display()
+    );
+
+    let mut command = Command::new(&runtime);
+    for arg in split_runtime_args(&runtime_args) {
+        command.arg(arg);
+    }
+    command.arg(path);
+
+    let output = command.output().await.map_err(|e| {
+        CliError::Compilation(format!(
+            "Failed to execute eBPF runtime '{}' for '{}': {}",
+            runtime,
+            path.display(),
+            e
+        ))
+    })?;
+
+    if !output.stdout.is_empty() {
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+    if !output.stderr.is_empty() {
+        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        return Err(CliError::Compilation(format!(
+            "eBPF runtime exited with status {}",
+            code
+        )));
+    }
+
+    Ok(())
+}
+
+fn split_runtime_args(raw: &str) -> Vec<String> {
+    raw.split_whitespace()
+        .map(|part| part.to_string())
+        .collect()
+}
+
 async fn exec_dotnet_assembly(path: &Path) -> Result<()> {
     let extension = path
         .extension()
@@ -805,6 +880,7 @@ fn determine_output_path(
     target_triple: Option<&str>,
     emit_text_bytecode: bool,
     output_is_dir: bool,
+    exec_requested: bool,
 ) -> Result<PathBuf> {
     let backend = match target {
         CompileTarget::Backend(backend) => backend,
@@ -842,7 +918,13 @@ fn determine_output_path(
                         "out"
                     }
                 }
-                BackendKind::Ebpf => "ebpf",
+                BackendKind::Ebpf => {
+                    if exec_requested {
+                        "o"
+                    } else {
+                        "ebpf"
+                    }
+                }
                 BackendKind::Cil => "il",
                 BackendKind::Dotnet => "exe",
                 BackendKind::Rust => "rs",
@@ -926,7 +1008,13 @@ fn determine_output_path(
                     "out" // Use .out extension on Unix systems for clarity
                 }
             }
-            BackendKind::Ebpf => "ebpf",
+            BackendKind::Ebpf => {
+                if exec_requested {
+                    "o"
+                } else {
+                    "ebpf"
+                }
+            }
             BackendKind::Cil => "il",
             BackendKind::Dotnet => "exe",
             BackendKind::Rust => "rs",

@@ -1,0 +1,9 @@
+[package]
+name = "fp-ebpf"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+object = { version = "0.36.7", features = ["write"] }

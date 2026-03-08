@@ -2,6 +2,7 @@
 // Each submodule extends `impl Pipeline` with its stage methods.
 
 pub(super) mod const_eval;
+pub(super) mod ebpf;
 pub(super) mod frontend;
 pub(super) mod link;
 pub(super) mod lowering;
