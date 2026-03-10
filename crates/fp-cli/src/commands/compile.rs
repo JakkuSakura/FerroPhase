@@ -147,6 +147,68 @@ pub struct CompileArgs {
     pub single_world: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContainerTranspileSource {
+    GoAsm,
+    Urcl,
+    JvmBytecode,
+    Cil,
+}
+
+impl ContainerTranspileSource {
+    fn label(self) -> &'static str {
+        match self {
+            ContainerTranspileSource::GoAsm => "goasm",
+            ContainerTranspileSource::Urcl => "urcl",
+            ContainerTranspileSource::JvmBytecode => "jvm-bytecode",
+            ContainerTranspileSource::Cil => "cil",
+        }
+    }
+}
+
+fn detect_container_transpile_source(
+    source_language: Option<&str>,
+    input: &Path,
+) -> Option<ContainerTranspileSource> {
+    if let Some(lang) = source_language.map(|lang| lang.trim().to_ascii_lowercase()) {
+        match lang.as_str() {
+            "goasm" | "go-asm" => return Some(ContainerTranspileSource::GoAsm),
+            "urcl" => return Some(ContainerTranspileSource::Urcl),
+            "jvm" | "jvm-bytecode" | "bytecode-jvm" | "class" => {
+                return Some(ContainerTranspileSource::JvmBytecode)
+            }
+            "cil" | "msil" | "dotnet-cil" => return Some(ContainerTranspileSource::Cil),
+            _ => {}
+        }
+    }
+
+    match input
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("goasm") => Some(ContainerTranspileSource::GoAsm),
+        Some("urcl") => Some(ContainerTranspileSource::Urcl),
+        Some("class") => Some(ContainerTranspileSource::JvmBytecode),
+        Some("dll" | "exe") => Some(ContainerTranspileSource::Cil),
+        _ => None,
+    }
+}
+
+fn maybe_transpile_container_placeholder(input: &Path, args: &CompileArgs) -> Result<Option<PathBuf>> {
+    let Some(source) =
+        detect_container_transpile_source(args.source_language.as_deref(), input)
+    else {
+        return Ok(None);
+    };
+
+    return Err(CliError::InvalidInput(format!(
+        "transpiling from `{}` is not implemented yet; this is a placeholder for the generic container transpiler",
+        source.label()
+    )));
+}
+
 #[derive(Debug, Clone, Copy)]
 enum CompileTarget {
     Backend(BackendKind),
@@ -343,6 +405,10 @@ async fn compile_file(
     _config: &CliConfig,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
+
+    if let Some(artifact) = maybe_transpile_container_placeholder(input, args)? {
+        return Ok(Some(artifact));
+    }
 
     if let Some(artifact) = maybe_transpile_native_object(input, output, args).await? {
         return Ok(Some(artifact));
