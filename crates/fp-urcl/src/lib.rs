@@ -1,8 +1,11 @@
 mod emit;
+mod parse;
 
 use fp_core::error::Result;
 use fp_core::lir::LirProgram;
 use std::path::{Path, PathBuf};
+
+pub use parse::parse_program;
 
 #[derive(Debug, Clone)]
 pub struct UrclConfig {

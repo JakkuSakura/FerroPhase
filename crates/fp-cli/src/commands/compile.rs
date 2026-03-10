@@ -12,12 +12,13 @@ use crate::{
 use console::style;
 use fp_core::ast::{AstTarget, AstTargetOutput, Node};
 use fp_core::config;
+use fp_csharp::CSharpSerializer;
+use fp_godot::GdscriptSerializer;
+use fp_golang::GoSerializer;
+use fp_lang::PrettyAstSerializer;
 use fp_native::asm::{aarch64::AsmAarch64Program, x86_64::AsmX86_64Program};
 use fp_native::asmir::{lift_from_aarch64, lift_from_x86_64, lower_to_aarch64, lower_to_x86_64};
 use fp_native::emit::{self, TargetArch};
-use fp_csharp::CSharpSerializer;
-use fp_golang::GoSerializer;
-use fp_lang::PrettyAstSerializer;
 use fp_python::PythonSerializer;
 use fp_sycl::SyclSerializer;
 use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
@@ -41,7 +42,7 @@ pub struct CompileArgs {
     #[arg(short = 'b', long = "backend", default_value = "binary")]
     pub backend: BackendKind,
 
-    /// Explicit output target (typescript, javascript, python, go, zig, sycl, rust, wit)
+    /// Explicit output target (typescript, javascript, python, go, gdscript, zig, sycl, rust, wit)
     #[arg(short = 't', long = "target")]
     pub target: Option<String>,
 
@@ -147,6 +148,78 @@ pub struct CompileArgs {
     pub single_world: bool,
 }
 
+async fn maybe_transpile_urcl(input: &Path, output: &Path, args: &CompileArgs) -> Result<Option<PathBuf>> {
+    if detect_container_transpile_source(args.source_language.as_deref(), input)
+        != Some(ContainerTranspileSource::Urcl)
+    {
+        return Ok(None);
+    }
+
+    if args.backend != BackendKind::Binary {
+        return Err(CliError::InvalidInput(
+            "URCL input currently supports only `--backend binary`".to_string(),
+        ));
+    }
+    if args.exec {
+        return Err(CliError::InvalidInput(
+            "`--exec` is not supported for URCL transpilation".to_string(),
+        ));
+    }
+
+    let text = async_fs::read_to_string(input)
+        .await
+        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read URCL input: {err}"))))?;
+    let lir_program = fp_urcl::parse_program(&text)
+        .map_err(|err| CliError::Compilation(format!("Failed to parse URCL: {err}")))?;
+
+    let output_path = if args.output.is_none() {
+        match args.emitter {
+            EmitterKind::Goasm => input.with_extension("s"),
+            EmitterKind::Urcl => input.with_extension("urcl"),
+            _ => input.with_extension("o"),
+        }
+    } else {
+        output.to_path_buf()
+    };
+
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
+
+    match args.emitter {
+        EmitterKind::Urcl => {
+            let emitter = fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(&output_path));
+            emitter
+                .emit(lir_program, Some(input))
+                .map_err(|err| CliError::Compilation(format!("Failed to emit URCL: {err}")))?;
+        }
+        EmitterKind::Goasm => {
+            let config = fp_goasm::config::GoAsmConfig::new(&output_path)
+                .with_target_triple(args.target_triple.clone());
+            let emitter = fp_goasm::GoAsmEmitter::new(config);
+            emitter
+                .emit(lir_program, Some(input))
+                .map_err(|err| CliError::Compilation(format!("Failed to emit Go asm: {err}")))?;
+        }
+        EmitterKind::Native => {
+            let (format, arch) = emit::detect_target(args.target_triple.as_deref())
+                .map_err(|err| CliError::Compilation(err.to_string()))?;
+            let plan = fp_native::emit::emit_plan(&lir_program, format, arch)
+                .map_err(|err| CliError::Compilation(format!("Failed to emit native object: {err}")))?;
+            fp_native::emit::write_object(&output_path, &plan)
+                .map_err(|err| CliError::Compilation(format!("Failed to write object output: {err}")))?;
+        }
+        other => {
+            return Err(CliError::InvalidInput(format!(
+                "URCL input does not support `--emitter {}` yet",
+                other.as_str()
+            )));
+        }
+    }
+
+    Ok(Some(output_path))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContainerTranspileSource {
     GoAsm,
@@ -175,7 +248,7 @@ fn detect_container_transpile_source(
             "goasm" | "go-asm" => return Some(ContainerTranspileSource::GoAsm),
             "urcl" => return Some(ContainerTranspileSource::Urcl),
             "jvm" | "jvm-bytecode" | "bytecode-jvm" | "class" => {
-                return Some(ContainerTranspileSource::JvmBytecode)
+                return Some(ContainerTranspileSource::JvmBytecode);
             }
             "cil" | "msil" | "dotnet-cil" => return Some(ContainerTranspileSource::Cil),
             _ => {}
@@ -196,12 +269,18 @@ fn detect_container_transpile_source(
     }
 }
 
-fn maybe_transpile_container_placeholder(input: &Path, args: &CompileArgs) -> Result<Option<PathBuf>> {
-    let Some(source) =
-        detect_container_transpile_source(args.source_language.as_deref(), input)
+fn maybe_transpile_container_placeholder(
+    input: &Path,
+    args: &CompileArgs,
+) -> Result<Option<PathBuf>> {
+    let Some(source) = detect_container_transpile_source(args.source_language.as_deref(), input)
     else {
         return Ok(None);
     };
+
+    if source == ContainerTranspileSource::Urcl {
+        return Ok(None);
+    }
 
     return Err(CliError::InvalidInput(format!(
         "transpiling from `{}` is not implemented yet; this is a placeholder for the generic container transpiler",
@@ -282,6 +361,10 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     for (_i, input_file) in args.input.iter().enumerate() {
         progress.set_message(format!("Compiling {}", input_file.display()));
 
+        let urcl_container_input =
+            detect_container_transpile_source(args.source_language.as_deref(), input_file)
+                == Some(ContainerTranspileSource::Urcl);
+
         let output_file = determine_output_path(
             input_file,
             args.output.as_ref(),
@@ -290,6 +373,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             args.target_triple.as_deref(),
             detect_native_asm_source(args.source_language.as_deref(), input_file).is_some(),
             detect_native_object_source(args.source_language.as_deref(), input_file),
+            urcl_container_input,
             emit_text_bytecode,
             output_is_dir,
             args.exec,
@@ -406,15 +490,19 @@ async fn compile_file(
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
 
-    if let Some(artifact) = maybe_transpile_container_placeholder(input, args)? {
-        return Ok(Some(artifact));
-    }
-
     if let Some(artifact) = maybe_transpile_native_object(input, output, args).await? {
         return Ok(Some(artifact));
     }
 
     if let Some(artifact) = maybe_transpile_native_asm(input, output, args).await? {
+        return Ok(Some(artifact));
+    }
+
+    if let Some(artifact) = maybe_transpile_urcl(input, output, args).await? {
+        return Ok(Some(artifact));
+    }
+
+    if let Some(artifact) = maybe_transpile_container_placeholder(input, args)? {
         return Ok(Some(artifact));
     }
 
@@ -584,7 +672,8 @@ async fn maybe_transpile_native_object(
     }
     if args.backend != BackendKind::Binary {
         return Err(CliError::InvalidInput(
-            "native object input currently only supports `--backend binary` transpilation".to_string(),
+            "native object input currently only supports `--backend binary` transpilation"
+                .to_string(),
         ));
     }
     if args.exec {
@@ -593,9 +682,11 @@ async fn maybe_transpile_native_object(
         ));
     }
 
-    let bytes = async_fs::read(input)
-        .await
-        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read object input: {err}"))))?;
+    let bytes = async_fs::read(input).await.map_err(|err| {
+        CliError::Io(io::Error::other(format!(
+            "Failed to read object input: {err}"
+        )))
+    })?;
     let asmir = fp_native::binary::lift_object_to_asmir(&bytes)
         .map_err(|err| CliError::Compilation(format!("Failed to lift object file: {err}")))?;
 
@@ -644,9 +735,9 @@ async fn maybe_transpile_native_asm(
         ));
     }
 
-    let text = async_fs::read_to_string(input)
-        .await
-        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read asm input: {err}"))))?;
+    let text = async_fs::read_to_string(input).await.map_err(|err| {
+        CliError::Io(io::Error::other(format!("Failed to read asm input: {err}")))
+    })?;
     let source_program = parse_native_asm_source(&text, source_kind)?;
     let (_, target_arch) = emit::detect_target(args.target_triple.as_deref())
         .map_err(|err| CliError::Compilation(err.to_string()))?;
@@ -679,26 +770,47 @@ async fn maybe_transpile_native_asm(
     };
     async_fs::write(&output_path, output_program)
         .await
-        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to write asm output: {err}"))))?;
+        .map_err(|err| {
+            CliError::Io(io::Error::other(format!(
+                "Failed to write asm output: {err}"
+            )))
+        })?;
     Ok(Some(output_path))
 }
 
-fn detect_native_asm_source(source_language: Option<&str>, input: &Path) -> Option<NativeAsmSource> {
+fn detect_native_asm_source(
+    source_language: Option<&str>,
+    input: &Path,
+) -> Option<NativeAsmSource> {
     match source_language.map(|lang| lang.trim().to_ascii_lowercase()) {
-        Some(lang) if matches!(lang.as_str(), "x86_64-asm" | "asm-x86_64" | "x86asm" | "x86_64asm") => {
-            return Some(NativeAsmSource::X86_64)
+        Some(lang)
+            if matches!(
+                lang.as_str(),
+                "x86_64-asm" | "asm-x86_64" | "x86asm" | "x86_64asm"
+            ) =>
+        {
+            return Some(NativeAsmSource::X86_64);
         }
-        Some(lang) if matches!(lang.as_str(), "aarch64-asm" | "asm-aarch64" | "arm64-asm" | "aarch64asm") => {
-            return Some(NativeAsmSource::Aarch64)
+        Some(lang)
+            if matches!(
+                lang.as_str(),
+                "aarch64-asm" | "asm-aarch64" | "arm64-asm" | "aarch64asm"
+            ) =>
+        {
+            return Some(NativeAsmSource::Aarch64);
         }
         Some(lang) if matches!(lang.as_str(), "asm" | "native-asm") => {
-            return Some(NativeAsmSource::Auto)
+            return Some(NativeAsmSource::Auto);
         }
         Some(_) => return None,
         None => {}
     }
 
-    match input.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase()) {
+    match input
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+    {
         Some(ext) if ext == "s" || ext == "asm" => Some(NativeAsmSource::Auto),
         _ => None,
     }
@@ -717,17 +829,15 @@ fn parse_native_asm_source(text: &str, source: NativeAsmSource) -> Result<Parsed
         NativeAsmSource::Aarch64 => AsmAarch64Program::parse_text(text)
             .map(ParsedNativeAsm::Aarch64)
             .map_err(|err| CliError::Compilation(format!("Failed to parse aarch64 asm: {err}"))),
-        NativeAsmSource::Auto => {
-            match AsmX86_64Program::parse_text(text) {
-                Ok(program) => Ok(ParsedNativeAsm::X86_64(program)),
-                Err(x86_err) => match AsmAarch64Program::parse_text(text) {
-                    Ok(program) => Ok(ParsedNativeAsm::Aarch64(program)),
-                    Err(aarch64_err) => Err(CliError::Compilation(format!(
-                        "Failed to detect native asm dialect; x86_64: {x86_err}; aarch64: {aarch64_err}"
-                    ))),
-                },
-            }
-        }
+        NativeAsmSource::Auto => match AsmX86_64Program::parse_text(text) {
+            Ok(program) => Ok(ParsedNativeAsm::X86_64(program)),
+            Err(x86_err) => match AsmAarch64Program::parse_text(text) {
+                Ok(program) => Ok(ParsedNativeAsm::Aarch64(program)),
+                Err(aarch64_err) => Err(CliError::Compilation(format!(
+                    "Failed to detect native asm dialect; x86_64: {x86_err}; aarch64: {aarch64_err}"
+                ))),
+            },
+        },
     }
 }
 
@@ -827,6 +937,12 @@ fn emit_ast_target(
         }
         crate::languages::backend::AstLanguageTarget::Go => {
             let serializer = GoSerializer::default();
+            serializer
+                .emit_node(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))
+        }
+        crate::languages::backend::AstLanguageTarget::Gdscript => {
+            let serializer = GdscriptSerializer;
             serializer
                 .emit_node(node)
                 .map_err(|e| CliError::TargetEmit(e.to_string()))
@@ -1157,6 +1273,7 @@ fn determine_output_path(
     target_triple: Option<&str>,
     native_asm_input: bool,
     native_object_input: bool,
+    urcl_container_input: bool,
     emit_text_bytecode: bool,
     output_is_dir: bool,
     exec_requested: bool,
@@ -1188,6 +1305,9 @@ fn determine_output_path(
     let native_object_target = matches!(backend, BackendKind::Binary)
         && emitter == EmitterKind::Native
         && native_object_input;
+    let urcl_object_target = matches!(backend, BackendKind::Binary)
+        && emitter == EmitterKind::Native
+        && urcl_container_input;
 
     if let Some(output) = output {
         if output_is_dir {
@@ -1200,6 +1320,8 @@ fn determine_output_path(
                     } else if native_asm_text_target {
                         "s"
                     } else if native_object_target {
+                        "o"
+                    } else if urcl_object_target {
                         "o"
                     } else if is_windows_target(target_triple) {
                         "exe"
@@ -1243,6 +1365,7 @@ fn determine_output_path(
             && !urcl_text_target
             && !native_asm_text_target
             && !native_object_target
+            && !urcl_object_target
         {
             let mut path = output.clone();
             let desired_ext = if is_windows_target(target_triple) {
@@ -1265,6 +1388,10 @@ fn determine_output_path(
         }
 
         if native_asm_text_target {
+            return Ok(output.clone());
+        }
+
+        if urcl_object_target {
             return Ok(output.clone());
         }
 
@@ -1295,16 +1422,18 @@ fn determine_output_path(
         Ok(output.clone())
     } else {
         let extension = match backend {
-                BackendKind::Binary => {
-                    if goasm_text_target {
-                        "s"
-                    } else if urcl_text_target {
-                        "urcl"
-                    } else if native_asm_text_target {
-                        "s"
-                    } else if is_windows_target(target_triple) {
-                        "exe"
-                    } else {
+            BackendKind::Binary => {
+                if goasm_text_target {
+                    "s"
+                } else if urcl_text_target {
+                    "urcl"
+                } else if native_asm_text_target {
+                    "s"
+                } else if urcl_object_target {
+                    "o"
+                } else if is_windows_target(target_triple) {
+                    "exe"
+                } else {
                     "out" // Use .out extension on Unix systems for clarity
                 }
             }

@@ -56,23 +56,7 @@ async fn compile_rejects_goasm_transpile_placeholder() {
         .contains("transpiling from `goasm` is not implemented yet"));
 }
 
-#[tokio::test]
-async fn compile_rejects_urcl_transpile_placeholder() {
-    let temp_dir = TempDir::new().unwrap();
-    let input_file = temp_dir.path().join("main.urcl");
-    let output_file = temp_dir.path().join("main.out.urcl");
-    fs::write(&input_file, "BITS 64\nRET\n").unwrap();
-
-    let mut args = base_args(input_file, output_file);
-    args.source_language = Some("urcl".to_string());
-
-    let err = compile_command(args, &CliConfig::default())
-        .await
-        .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("transpiling from `urcl` is not implemented yet"));
-}
+// NOTE: URCL input is now supported (see `test_compile_urcl_container.rs`).
 
 #[tokio::test]
 async fn compile_rejects_jvm_bytecode_transpile_placeholder() {
