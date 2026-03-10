@@ -10,7 +10,7 @@ supporting multi-language inputs and multiple execution modes (compile, run,
 AST-target emission, bytecode).
 
 ```
-SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ → HIRᵗ → MIR → LIR → backend
+SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ → HIRᵗ → MIR → LIR → AsmIR/native backend
 ```
 
 - `ASTᵗ` is the AST annotated with principal types.
@@ -29,7 +29,7 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
 | **Type Enrichment** | Algorithm W inference attaches types directly to AST nodes (expressions, patterns, declarations). |
 | **Interpretation** | Runs on the typed AST; const mode mutates the tree, runtime mode reads it without changes. Shares intrinsic registry across modes. |
 | **Typed Projection** | Converts evaluated AST into `HIRᵗ`, handling desugaring, ownership bookkeeping, and preparing for optimisation passes. |
-| **Optimisation & Codegen** | Lowers `HIRᵗ` → `MIR` → `LIR` → target backends (LLVM, bytecode, native). |
+| **Optimisation & Codegen** | Lowers `HIRᵗ` → `MIR` → `LIR` → target backends (`AsmIR`/native, LLVM, bytecode). |
 
 ## Bounded Contexts (at a glance)
 
@@ -78,10 +78,17 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
 
 | Mode | Flow | Notes |
 |------|------|-------|
-| **Compile** | AST → ASTᵗ → ASTᵗ′ (const) → HIRᵗ → MIR → LIR → LLVM | Const evaluation folds code before optimisation; backends consume typed IR. |
+| **Compile** | AST → ASTᵗ → ASTᵗ′ (const) → HIRᵗ → MIR → LIR → LLVM / AsmIR | Const evaluation folds code before optimisation; `LIR` stays target-neutral while `AsmIR` captures target-aware machine structure when needed. |
 | **Run (Interpreter)** | AST → ASTᵗ → Interpreter (runtime) | Shares evaluator with const mode; no MIR generation. |
 | **Bytecode** | AST → ASTᵗ → ASTᵗ′ → HIRᵗ → MIR → LIR → VM bytecode | Bytecode generator reuses the same typed IR pipeline. |
 | **AST Target Emit** | AST → ASTᵗ → ASTᵗ′ → HIRᵗ → target AST | Typed metadata is preserved for optional annotation in the output language. |
+
+## `AsmIR` Boundary
+
+- `LIR` remains the common target-neutral low-level IR.
+- `AsmIR` is the new target-aware machine/assembly layer for native backends and binary tooling.
+- `AsmIR` exists to model physical registers, machine opcodes, addressing modes, relocations, and instruction encodings without polluting `LIR` with ISA-specific details.
+- Native instruction selection should lower `LIR` into `AsmIR`; disassembly/binary lifting should target `AsmIR`, not `LIR`, unless a semantic recovery step is intentionally performed later.
 
 ## Diagnostics
 

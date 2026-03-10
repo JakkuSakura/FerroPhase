@@ -78,6 +78,7 @@ pathdiff = "0.2"
 tempfile = "3.8"
 quote = "1.0"
 libc = "0.2"
+object = { version = "0.36.7", features = ["write"] }
 
 # Performance and profiling
 

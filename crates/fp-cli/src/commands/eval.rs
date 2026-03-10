@@ -108,6 +108,7 @@ fn eval_pipeline_options(args: &EvalArgs) -> PipelineOptions {
         backend: None,
         target_triple: None,
         target_cpu: None,
+        native_target: None,
         target_features: None,
         target_sysroot: None,
         linker: None,

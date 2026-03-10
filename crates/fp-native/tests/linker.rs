@@ -15,6 +15,28 @@ fn host_arch() -> TargetArch {
     }
 }
 
+#[test]
+fn emit_plan_carries_selected_asmir() {
+    let plan = emit::emit_plan(&minimal_program(), TargetFormat::Elf, TargetArch::X86_64).unwrap();
+    assert_eq!(plan.asmir.functions.len(), 1);
+    assert_eq!(plan.asmir.functions[0].name.as_str(), "main");
+    assert_eq!(plan.asmir.functions[0].basic_blocks.len(), 1);
+    assert!(plan.asmir.functions[0].basic_blocks[0].instructions.is_empty());
+}
+
+#[test]
+fn dump_asm_includes_asmir_section() {
+    let plan = emit::emit_plan(&minimal_program(), TargetFormat::Elf, TargetArch::X86_64).unwrap();
+    let out_dir = tempfile::tempdir().unwrap();
+    let dump_path = out_dir.path().join("plan.dump");
+
+    emit::dump_asm(&dump_path, &plan).unwrap();
+
+    let dump = std::fs::read_to_string(&dump_path).unwrap();
+    assert!(dump.contains("AsmIR:"));
+    assert!(dump.contains("fn main"));
+}
+
 #[cfg(target_arch = "x86_64")]
 fn read_u32_le(bytes: &[u8], offset: usize) -> u32 {
     let chunk: [u8; 4] = bytes[offset..offset + 4].try_into().unwrap();

@@ -109,6 +109,7 @@ async fn compile_example_async(example_name: &str) {
         emitter: EmitterKind::Native,
         target_triple: None,
         target_cpu: None,
+        native_target: None,
         target_features: None,
         target_sysroot: None,
         linker: "native".to_string(),

@@ -3,7 +3,11 @@ use fp_shell::{CompileOptions, ShellTarget, compile_file_with_options, load_inve
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "fp-shell", version, about = "Compile .fp scripts into shell scripts")]
+#[command(
+    name = "fp-shell",
+    version,
+    about = "Compile .fp scripts into shell scripts"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -50,12 +54,8 @@ fn run() -> Result<(), fp_shell::ShellError> {
                 None
             };
             let options = CompileOptions { inventory };
-            let output = compile_file_with_options(
-                &args.input,
-                args.output.as_deref(),
-                target,
-                &options,
-            )?;
+            let output =
+                compile_file_with_options(&args.input, args.output.as_deref(), target, &options)?;
             if args.check {
                 println!("ok: {}", output.display());
             } else {

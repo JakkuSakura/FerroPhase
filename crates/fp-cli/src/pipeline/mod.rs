@@ -1011,7 +1011,7 @@ impl Pipeline {
                             })?;
                         fs::write(&output_path, jar)?;
                     } else {
-                        fs::write(&output_path, class.bytes)?;
+                        fs::write(&output_path, class_bytes)?;
                     }
 
                     PipelineOutput::Binary(output_path)

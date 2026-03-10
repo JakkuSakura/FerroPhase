@@ -318,7 +318,8 @@ impl BashRenderer {
     fn discover_functions(&mut self, item: &Item) {
         match item.kind() {
             ItemKind::DefFunction(function) => {
-                self.known_functions.insert(function.name.as_str().to_string());
+                self.known_functions
+                    .insert(function.name.as_str().to_string());
             }
             ItemKind::Module(module) => {
                 for child in &module.items {
@@ -396,7 +397,12 @@ impl BashRenderer {
         self.push_line(indent, "done");
     }
 
-    fn emit_shell_invoke(&mut self, invoke: &ExprInvoke, context: &EmitContext, indent: usize) -> bool {
+    fn emit_shell_invoke(
+        &mut self,
+        invoke: &ExprInvoke,
+        context: &EmitContext,
+        indent: usize,
+    ) -> bool {
         let Some(path) = invoke_target_segments(&invoke.target) else {
             return false;
         };
@@ -440,7 +446,8 @@ impl BashRenderer {
                 .args
                 .get(1)
                 .or_else(|| kwarg_value(invoke, &["dest", "destination"]));
-            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr) else {
+            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr)
+            else {
                 return false;
             };
             let Some(source) = self.resolve_string_expr(source_expr) else {
@@ -464,7 +471,8 @@ impl BashRenderer {
                 .args
                 .get(1)
                 .or_else(|| kwarg_value(invoke, &["dest", "destination"]));
-            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr) else {
+            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr)
+            else {
                 return false;
             };
             let Some(source) = self.resolve_string_expr(source_expr) else {
@@ -489,7 +497,8 @@ impl BashRenderer {
                 .args
                 .get(1)
                 .or_else(|| kwarg_value(invoke, &["dest", "destination"]));
-            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr) else {
+            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr)
+            else {
                 return false;
             };
             let Some(source) = self.resolve_string_expr(source_expr) else {
@@ -624,7 +633,12 @@ impl BashRenderer {
                     self.emit_command_with_meta(command.to_string(), host, meta, indent);
                 }
                 HostSelector::Remote(name) => {
-                    self.emit_command_with_meta(command.to_string(), &HostSelector::Remote(name.clone()), meta, indent);
+                    self.emit_command_with_meta(
+                        command.to_string(),
+                        &HostSelector::Remote(name.clone()),
+                        meta,
+                        indent,
+                    );
                 }
             }
         }
@@ -778,7 +792,10 @@ impl BashRenderer {
             self.push_line(indent + 1, &command);
             self.push_line(indent + 1, "__fp_changed=1");
         } else {
-            self.push_line(indent, &format!("if {}; then", condition_parts.join(" && ")));
+            self.push_line(
+                indent,
+                &format!("if {}; then", condition_parts.join(" && ")),
+            );
             self.push_line(indent + 1, &command);
             self.push_line(indent + 1, "__fp_changed=1");
             self.push_line(indent, "fi");
@@ -792,17 +809,24 @@ impl BashRenderer {
             .args
             .get(1)
             .and_then(|expr| self.parse_host_selector(expr))
-            .or_else(|| kwarg_value(invoke, &["hosts", "host"]).and_then(|expr| self.parse_host_selector(expr)))
+            .or_else(|| {
+                kwarg_value(invoke, &["hosts", "host"])
+                    .and_then(|expr| self.parse_host_selector(expr))
+            })
             .or_else(|| context.hosts.clone())
             .unwrap_or_else(|| vec![HostSelector::Localhost])
     }
 
     fn operation_meta(&mut self, invoke: &ExprInvoke) -> OperationMeta {
         let mut meta = OperationMeta::default();
-        meta.only_if = kwarg_value(invoke, &["only_if"]).and_then(|expr| self.resolve_string_expr(expr));
-        meta.unless = kwarg_value(invoke, &["unless"]).and_then(|expr| self.resolve_string_expr(expr));
-        meta.creates = kwarg_value(invoke, &["creates"]).and_then(|expr| self.resolve_string_expr(expr));
-        meta.removes = kwarg_value(invoke, &["removes"]).and_then(|expr| self.resolve_string_expr(expr));
+        meta.only_if =
+            kwarg_value(invoke, &["only_if"]).and_then(|expr| self.resolve_string_expr(expr));
+        meta.unless =
+            kwarg_value(invoke, &["unless"]).and_then(|expr| self.resolve_string_expr(expr));
+        meta.creates =
+            kwarg_value(invoke, &["creates"]).and_then(|expr| self.resolve_string_expr(expr));
+        meta.removes =
+            kwarg_value(invoke, &["removes"]).and_then(|expr| self.resolve_string_expr(expr));
 
         meta
     }
@@ -819,18 +843,22 @@ impl BashRenderer {
             || meta.creates.is_some()
             || meta.removes.is_some();
 
-        let emit_base_command = |this: &mut BashRenderer, line: String| {
-            match host {
-                HostSelector::Localhost => this.push_line(indent + if needs_wrapper { 1 } else { 0 }, &line),
-                HostSelector::Remote(name) => {
-                    if needs_wrapper {
-                        this.push_line(
-                            indent + 1,
-                            &format!("run_remote {} {}", shell_arg_quote(name), shell_arg_quote(&line)),
-                        );
-                    } else {
-                        this.queue_remote_command(indent, name.clone(), line);
-                    }
+        let emit_base_command = |this: &mut BashRenderer, line: String| match host {
+            HostSelector::Localhost => {
+                this.push_line(indent + if needs_wrapper { 1 } else { 0 }, &line)
+            }
+            HostSelector::Remote(name) => {
+                if needs_wrapper {
+                    this.push_line(
+                        indent + 1,
+                        &format!(
+                            "run_remote {} {}",
+                            shell_arg_quote(name),
+                            shell_arg_quote(&line)
+                        ),
+                    );
+                } else {
+                    this.queue_remote_command(indent, name.clone(), line);
                 }
             }
         };
@@ -859,7 +887,10 @@ impl BashRenderer {
             emit_base_command(self, command);
             self.push_line(indent + 1, "__fp_changed=1");
         } else {
-            self.push_line(indent, &format!("if {}; then", condition_parts.join(" && ")));
+            self.push_line(
+                indent,
+                &format!("if {}; then", condition_parts.join(" && ")),
+            );
             emit_base_command(self, command);
             self.push_line(indent + 1, "__fp_changed=1");
             self.push_line(indent, "fi");
@@ -956,12 +987,14 @@ impl BashRenderer {
                 Value::Bool(bool_value) => Some(bool_value.value.to_string()),
                 _ => None,
             },
-            ExprKind::Name(Name::Ident(ident)) => self.lookup_var(ident.as_str()).and_then(|var| match var {
-                VarValue::String(value) => Some(value.clone()),
-                VarValue::Int(value) => Some(value.to_string()),
-                VarValue::Bool(value) => Some(value.to_string()),
-                VarValue::StringList(_) => None,
-            }),
+            ExprKind::Name(Name::Ident(ident)) => {
+                self.lookup_var(ident.as_str()).and_then(|var| match var {
+                    VarValue::String(value) => Some(value.clone()),
+                    VarValue::Int(value) => Some(value.to_string()),
+                    VarValue::Bool(value) => Some(value.to_string()),
+                    VarValue::StringList(_) => None,
+                })
+            }
             ExprKind::FormatString(template) => self.resolve_format_string(template, &[]),
             ExprKind::IntrinsicCall(call) => self.resolve_intrinsic_string(call),
             ExprKind::Paren(paren) => self.resolve_string_expr(&paren.expr),
@@ -979,7 +1012,11 @@ impl BashRenderer {
         None
     }
 
-    fn resolve_format_string(&self, template: &ExprStringTemplate, args: &[Expr]) -> Option<String> {
+    fn resolve_format_string(
+        &self,
+        template: &ExprStringTemplate,
+        args: &[Expr],
+    ) -> Option<String> {
         let mut rendered = String::new();
         let mut implicit_index = 0usize;
 
@@ -988,12 +1025,14 @@ impl BashRenderer {
                 FormatTemplatePart::Literal(text) => rendered.push_str(text),
                 FormatTemplatePart::Placeholder(placeholder) => {
                     let value = match &placeholder.arg_ref {
-                        FormatArgRef::Named(name) => self.lookup_var(name).and_then(|var| match var {
-                            VarValue::String(value) => Some(value.clone()),
-                            VarValue::Int(value) => Some(value.to_string()),
-                            VarValue::Bool(value) => Some(value.to_string()),
-                            VarValue::StringList(_) => None,
-                        }),
+                        FormatArgRef::Named(name) => {
+                            self.lookup_var(name).and_then(|var| match var {
+                                VarValue::String(value) => Some(value.clone()),
+                                VarValue::Int(value) => Some(value.to_string()),
+                                VarValue::Bool(value) => Some(value.to_string()),
+                                VarValue::StringList(_) => None,
+                            })
+                        }
                         FormatArgRef::Implicit => {
                             let arg = args.get(implicit_index)?;
                             implicit_index += 1;
@@ -1031,10 +1070,12 @@ impl BashRenderer {
                 Value::Bool(flag) => Some(flag.value),
                 _ => None,
             },
-            ExprKind::Name(Name::Ident(ident)) => self.lookup_var(ident.as_str()).and_then(|var| match var {
-                VarValue::Bool(value) => Some(*value),
-                _ => None,
-            }),
+            ExprKind::Name(Name::Ident(ident)) => {
+                self.lookup_var(ident.as_str()).and_then(|var| match var {
+                    VarValue::Bool(value) => Some(*value),
+                    _ => None,
+                })
+            }
             ExprKind::Paren(paren) => self.resolve_bool_expr(&paren.expr),
             _ => None,
         }

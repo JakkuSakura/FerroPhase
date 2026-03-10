@@ -3747,10 +3747,8 @@ impl MirLowering {
                     self.method_lookup.insert(fn_name.clone(), info.clone());
                     self.method_lookup
                         .insert(format!("{}::{}", struct_name, method_tail), info.clone());
-                    self.method_lookup.insert(
-                        format!("{}::{}", struct_name, impl_item_tail),
-                        info.clone(),
-                    );
+                    self.method_lookup
+                        .insert(format!("{}::{}", struct_name, impl_item_tail), info.clone());
                     self.struct_methods
                         .entry(struct_name.clone())
                         .or_default()

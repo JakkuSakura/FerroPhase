@@ -4,6 +4,8 @@ mod x86_64;
 
 use crate::config::NativeTarget;
 use crate::link;
+use crate::asmir;
+use fp_core::asmir::AsmProgram;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
     CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram,
@@ -111,6 +113,7 @@ pub fn emit_executable(path: &Path, format: TargetFormat, arch: TargetArch) -> R
 pub struct EmitPlan {
     pub format: TargetFormat,
     pub arch: TargetArch,
+    pub asmir: AsmProgram,
     pub text: Vec<u8>,
     pub rodata: Vec<u8>,
     pub relocs: Vec<Relocation>,
@@ -155,10 +158,40 @@ pub fn emit_plan(
     format: TargetFormat,
     arch: TargetArch,
 ) -> Result<EmitPlan> {
-    let output = codegen::emit_text_from_lir(lir_program, format, arch)?;
+    let lowered_lir = codegen::lower_program_for_native(lir_program)?;
+    let asmir = asmir::select_program(&lowered_lir, format, arch)?;
+    let output = codegen::emit_text_from_selection(&lowered_lir, &asmir, format, arch)?;
     Ok(EmitPlan {
         format,
         arch,
+        asmir,
+        text: output.text,
+        rodata: output.rodata,
+        relocs: output.relocs,
+        symbols: output.symbols,
+        rodata_symbols: output.rodata_symbols,
+        entry_offset: output.entry_offset,
+    })
+}
+
+pub fn emit_plan_from_asmir(mut asmir: AsmProgram, format: TargetFormat, arch: TargetArch) -> Result<EmitPlan> {
+    asmir.target.architecture = match arch {
+        TargetArch::X86_64 => fp_core::asmir::AsmArchitecture::X86_64,
+        TargetArch::Aarch64 => fp_core::asmir::AsmArchitecture::Aarch64,
+    };
+    asmir.target.object_format = match format {
+        TargetFormat::MachO => fp_core::asmir::AsmObjectFormat::MachO,
+        TargetFormat::Elf => fp_core::asmir::AsmObjectFormat::Elf,
+        TargetFormat::Coff => fp_core::asmir::AsmObjectFormat::Coff,
+    };
+    let output = match arch {
+        TargetArch::X86_64 => crate::emit::x86_64::emit_text_from_asmir(&asmir, format)?,
+        TargetArch::Aarch64 => crate::emit::aarch64::emit_text_from_asmir(&asmir, format)?,
+    };
+    Ok(EmitPlan {
+        format,
+        arch,
+        asmir,
         text: output.text,
         rodata: output.rodata,
         relocs: output.relocs,
@@ -190,6 +223,8 @@ pub fn dump_asm(path: &Path, plan: &EmitPlan) -> Result<()> {
         plan.format, plan.arch, plan.entry_offset
     )
     .ok();
+    writeln!(&mut out, "\nAsmIR:").ok();
+    writeln!(&mut out, "{}", fp_core::asmir::pretty::format_program(&plan.asmir)).ok();
 
     if !plan.symbols.is_empty() {
         let mut symbols: Vec<(&String, &u64)> = plan.symbols.iter().collect();

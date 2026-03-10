@@ -27,6 +27,7 @@ fn main() {
         emitter: EmitterKind::Llvm,
         target_triple: None,
         target_cpu: None,
+        native_target: None,
         target_features: None,
         target_sysroot: None,
         linker: "clang".to_string(),

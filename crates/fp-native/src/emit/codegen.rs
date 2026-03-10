@@ -1,4 +1,5 @@
 use fp_core::error::{Error, Result};
+use fp_core::asmir::AsmProgram;
 use fp_core::lir::layout::align_of;
 use fp_core::lir::{
     LirConstant, LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue,
@@ -6,14 +7,12 @@ use fp_core::lir::{
 
 use crate::emit::{CodegenOutput, TargetArch, TargetFormat, aarch64, x86_64};
 
-pub fn emit_text_from_lir(
+pub fn emit_text_from_selection(
     lir_program: &LirProgram,
+    asmir_program: &AsmProgram,
     format: TargetFormat,
     arch: TargetArch,
 ) -> Result<CodegenOutput> {
-    let mut lir_program = lir_program.clone();
-    lower_phi_in_program(&mut lir_program)?;
-
     let func = lir_program
         .functions
         .iter()
@@ -55,11 +54,16 @@ pub fn emit_text_from_lir(
     }
 
     match arch {
-        TargetArch::X86_64 => x86_64::emit_text(&lir_program, format),
-        TargetArch::Aarch64 => aarch64::emit_text(&lir_program, format),
+        TargetArch::X86_64 => x86_64::emit_text_from_asmir(asmir_program, format),
+        TargetArch::Aarch64 => aarch64::emit_text_from_asmir(asmir_program, format),
     }
 }
 
+pub fn lower_program_for_native(lir_program: &LirProgram) -> Result<LirProgram> {
+    let mut lir_program = lir_program.clone();
+    lower_phi_in_program(&mut lir_program)?;
+    Ok(lir_program)
+}
 fn is_call_arg_value(value: &LirValue) -> bool {
     matches!(
         value,

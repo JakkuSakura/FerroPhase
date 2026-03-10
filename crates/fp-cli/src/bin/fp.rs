@@ -31,7 +31,7 @@ use fp_cli::{
     cli::CliConfig,
     commands::{
         self, check::CheckArgs, compile::CompileArgs, completions::CompletionsArgs, eval::EvalArgs,
-        interpret::InterpretArgs, parse::ParseArgs, run::RunArgs,
+        inspect::InspectArgs, interpret::InterpretArgs, parse::ParseArgs, run::RunArgs,
     },
     diagnostics::setup_error_reporting,
 };
@@ -115,6 +115,9 @@ enum Commands {
     /// Interpret bytecode produced by `compile --emitter bytecode`
     Interpret(InterpretArgs),
 
+    /// Inspect binary, bytecode, and object artifacts
+    Inspect(InspectArgs),
+
     /// Check and validate FerroPhase code
     Check(CheckArgs),
 
@@ -147,6 +150,7 @@ async fn main() -> Result<()> {
         Commands::Parse(args) => commands::parse_command(args, &config).await,
         Commands::Run(args) => commands::run_command(args, &config).await,
         Commands::Interpret(args) => commands::interpret_command(args, &config).await,
+        Commands::Inspect(args) => commands::inspect_command(args, &config).await,
         Commands::Check(args) => commands::check_command(args, &config).await,
         Commands::Completions(args) => commands::completions_command(args, &config).await,
     };

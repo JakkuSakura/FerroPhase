@@ -4653,7 +4653,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Some(ident.as_str())
             } else {
                 match locator {
-                    Name::Path(path) if path.prefix == PathPrefix::Plain && path.segments.len() == 1 => {
+                    Name::Path(path)
+                        if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
+                    {
                         Some(path.segments[0].as_str())
                     }
                     Name::ParameterPath(path)

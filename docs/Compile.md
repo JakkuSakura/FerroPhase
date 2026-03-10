@@ -100,6 +100,62 @@ $ cat target/ast/src_main.ast-eval
 - The typed AST shows the solver’s view before evaluation.
 - The evaluated AST includes const-folded expressions and generated items.
 
+## Inspecting Produced Artifacts
+
+Use the `inspect` command to read compiled artifacts back out of their binary form:
+
+```bash
+$ fp inspect target/main.fbc
+$ fp inspect target/main.fbc --export-text-bytecode target/main.ftbc
+$ fp inspect target/main --hex --max-bytes 128
+```
+
+- `.fbc` files are decoded as FerroPhase binary bytecode and summarised by entrypoint, constants, and functions.
+- `--export-text-bytecode` converts `.fbc` into the stable textual `.ftbc` representation for review and diffing.
+- Native/object binaries are summarised by file kind, architecture, sections, symbols, and code sections.
+- `--hex` prints a bounded raw byte preview for any inspected artifact.
+- Auto-detection is header-based across these families: FerroPhase binary bytecode, FerroPhase text bytecode, JVM class files, Unix archives, WebAssembly modules, and native/object containers (`ELF`, `Mach-O`, `PE`, `COFF`, `XCOFF`, dyld cache). Unknown files fall back to raw bytes.
+
+Current scope:
+- FerroPhase can inspect and transcode its own bytecode representation.
+- Native executables can be inspected structurally, but there is not yet a reverse pipeline from machine code back into MIR/AST, so high-level decompilation is intentionally out of scope for now.
+
+## Textual Backends
+
+FerroPhase also supports text-oriented backend targets for inspection and experimentation:
+
+```bash
+$ fp compile src/main.fp --backend ebpf -o main.ebpf
+$ fp compile src/main.fp --backend cil -o main.il
+$ fp compile src/main.fp --backend dotnet -o main.exe
+```
+
+- `--backend ebpf` emits an experimental eBPF assembly sketch.
+- `--backend ebpf -o main.o` emits an ELF eBPF object suitable for execution.
+- `--backend cil` emits experimental .NET CIL in textual `.il` form.
+- `--backend dotnet` emits a PE-format .NET assembly by assembling generated CIL through `ilasm`.
+- `--backend dotnet` defaults to `.exe`; use a `.dll` output path to emit a library instead.
+- `--backend ebpf --exec` is supported through an external runtime executable exposed via `FP_EBPF_RUNTIME`.
+- `FP_EBPF_RUNTIME_ARGS` can be used for wrapper commands such as `cargo run -q -p fp-ebpf --bin fp-ebpf-runtime --`.
+- `--exec` is not currently supported for `cil` targets.
+- `--backend dotnet --exec` is supported when `ilasm` and a suitable runtime (`mono`, or `dotnet` as fallback for `.dll`) are available.
+
+## Running with .NET Backend
+
+The `run` command can also target the .NET backend directly:
+
+```bash
+$ fp run src/main.fp --backend dotnet
+$ fp run src/main.fp --backend dotnet --output app.exe
+$ fp run src/main.fp --backend dotnet --output app.dll
+$ fp run src/main.fp --backend dotnet --release -O3
+```
+
+- `--backend dotnet` compiles to a .NET assembly and executes it immediately.
+- `--output app.exe` keeps the executable artifact on disk before running it.
+- `--output app.dll` keeps a library-style assembly on disk; on Unix-like systems FerroPhase runs it via `mono`.
+- `fp run` also accepts core compile-mode knobs such as `--emitter`, `--native-target`, `--debug`, `--release`, and `-O/--opt-level`.
+
 ## Troubleshooting
 
 - **Missing LLVM tools**: `fp compile` reports if `llc`/`clang` are unavailable. Install via your package manager or set

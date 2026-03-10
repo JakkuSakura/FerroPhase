@@ -4,6 +4,7 @@
 pub mod macros;
 
 pub mod ast;
+pub mod asmir;
 pub mod cfg;
 pub mod collections;
 pub mod config;

@@ -12,6 +12,9 @@ use crate::{
 use console::style;
 use fp_core::ast::{AstTarget, AstTargetOutput, Node};
 use fp_core::config;
+use fp_native::asm::{aarch64::AsmAarch64Program, x86_64::AsmX86_64Program};
+use fp_native::asmir::{lift_from_aarch64, lift_from_x86_64, lower_to_aarch64, lower_to_x86_64};
+use fp_native::emit::{self, TargetArch};
 use fp_csharp::CSharpSerializer;
 use fp_golang::GoSerializer;
 use fp_lang::PrettyAstSerializer;
@@ -223,6 +226,8 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             target,
             args.emitter,
             args.target_triple.as_deref(),
+            detect_native_asm_source(args.source_language.as_deref(), input_file).is_some(),
+            detect_native_object_source(args.source_language.as_deref(), input_file),
             emit_text_bytecode,
             output_is_dir,
             args.exec,
@@ -338,6 +343,14 @@ async fn compile_file(
     _config: &CliConfig,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
+
+    if let Some(artifact) = maybe_transpile_native_object(input, output, args).await? {
+        return Ok(Some(artifact));
+    }
+
+    if let Some(artifact) = maybe_transpile_native_asm(input, output, args).await? {
+        return Ok(Some(artifact));
+    }
 
     if let CompileTarget::Ast(ast_target) = target {
         compile_ast_target(input, output, args, ast_target).await?;
@@ -460,6 +473,196 @@ async fn compile_file(
     };
 
     Ok(artifact)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeAsmSource {
+    Auto,
+    X86_64,
+    Aarch64,
+}
+
+fn detect_native_object_source(source_language: Option<&str>, input: &Path) -> bool {
+    if let Some(lang) = source_language.map(|lang| lang.trim().to_ascii_lowercase()) {
+        if matches!(
+            lang.as_str(),
+            "object" | "native-object" | "obj" | "native-obj" | "o"
+        ) {
+            return true;
+        }
+    }
+
+    matches!(
+        input
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .as_deref(),
+        Some("o" | "obj")
+    )
+}
+
+async fn maybe_transpile_native_object(
+    input: &Path,
+    output: &Path,
+    args: &CompileArgs,
+) -> Result<Option<PathBuf>> {
+    if !detect_native_object_source(args.source_language.as_deref(), input) {
+        return Ok(None);
+    }
+
+    if args.emitter != EmitterKind::Native {
+        return Err(CliError::InvalidInput(
+            "native object input currently requires `--emitter native`".to_string(),
+        ));
+    }
+    if args.backend != BackendKind::Binary {
+        return Err(CliError::InvalidInput(
+            "native object input currently only supports `--backend binary` transpilation".to_string(),
+        ));
+    }
+    if args.exec {
+        return Err(CliError::InvalidInput(
+            "`--exec` is not supported for native object transpilation".to_string(),
+        ));
+    }
+
+    let bytes = async_fs::read(input)
+        .await
+        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read object input: {err}"))))?;
+    let asmir = fp_native::binary::lift_object_to_asmir(&bytes)
+        .map_err(|err| CliError::Compilation(format!("Failed to lift object file: {err}")))?;
+
+    let (format, arch) = emit::detect_target(args.target_triple.as_deref())
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
+    let plan = fp_native::emit::emit_plan_from_asmir(asmir, format, arch)
+        .map_err(|err| CliError::Compilation(format!("Failed to emit target object: {err}")))?;
+
+    let output_path = if args.output.is_none() {
+        input.with_extension("o")
+    } else {
+        output.to_path_buf()
+    };
+
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
+
+    fp_native::emit::write_object(&output_path, &plan)
+        .map_err(|err| CliError::Compilation(format!("Failed to write object output: {err}")))?;
+    Ok(Some(output_path))
+}
+
+async fn maybe_transpile_native_asm(
+    input: &Path,
+    output: &Path,
+    args: &CompileArgs,
+) -> Result<Option<PathBuf>> {
+    let Some(source_kind) = detect_native_asm_source(args.source_language.as_deref(), input) else {
+        return Ok(None);
+    };
+
+    if args.emitter != EmitterKind::Native {
+        return Err(CliError::InvalidInput(
+            "native asm input currently requires `--emitter native`".to_string(),
+        ));
+    }
+    if args.backend != BackendKind::Binary {
+        return Err(CliError::InvalidInput(
+            "native asm input currently only supports `--backend binary` transpilation".to_string(),
+        ));
+    }
+    if args.exec {
+        return Err(CliError::InvalidInput(
+            "`--exec` is not supported for native asm transpilation".to_string(),
+        ));
+    }
+
+    let text = async_fs::read_to_string(input)
+        .await
+        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read asm input: {err}"))))?;
+    let source_program = parse_native_asm_source(&text, source_kind)?;
+    let (_, target_arch) = emit::detect_target(args.target_triple.as_deref())
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
+
+    let output_program = match source_program {
+        ParsedNativeAsm::X86_64(program) => {
+            if matches!(target_arch, TargetArch::X86_64) {
+                program.to_text()
+            } else {
+                let mut target_program = lift_from_x86_64(&program);
+                target_program.target.architecture = fp_core::asmir::AsmArchitecture::Aarch64;
+                lower_to_aarch64(&target_program).to_text()
+            }
+        }
+        ParsedNativeAsm::Aarch64(program) => {
+            if matches!(target_arch, TargetArch::Aarch64) {
+                program.to_text()
+            } else {
+                let mut target_program = lift_from_aarch64(&program);
+                target_program.target.architecture = fp_core::asmir::AsmArchitecture::X86_64;
+                lower_to_x86_64(&target_program).to_text()
+            }
+        }
+    };
+
+    let output_path = if args.output.is_none() {
+        input.with_extension("s")
+    } else {
+        output.to_path_buf()
+    };
+    async_fs::write(&output_path, output_program)
+        .await
+        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to write asm output: {err}"))))?;
+    Ok(Some(output_path))
+}
+
+fn detect_native_asm_source(source_language: Option<&str>, input: &Path) -> Option<NativeAsmSource> {
+    match source_language.map(|lang| lang.trim().to_ascii_lowercase()) {
+        Some(lang) if matches!(lang.as_str(), "x86_64-asm" | "asm-x86_64" | "x86asm" | "x86_64asm") => {
+            return Some(NativeAsmSource::X86_64)
+        }
+        Some(lang) if matches!(lang.as_str(), "aarch64-asm" | "asm-aarch64" | "arm64-asm" | "aarch64asm") => {
+            return Some(NativeAsmSource::Aarch64)
+        }
+        Some(lang) if matches!(lang.as_str(), "asm" | "native-asm") => {
+            return Some(NativeAsmSource::Auto)
+        }
+        Some(_) => return None,
+        None => {}
+    }
+
+    match input.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase()) {
+        Some(ext) if ext == "s" || ext == "asm" => Some(NativeAsmSource::Auto),
+        _ => None,
+    }
+}
+
+enum ParsedNativeAsm {
+    X86_64(AsmX86_64Program),
+    Aarch64(AsmAarch64Program),
+}
+
+fn parse_native_asm_source(text: &str, source: NativeAsmSource) -> Result<ParsedNativeAsm> {
+    match source {
+        NativeAsmSource::X86_64 => AsmX86_64Program::parse_text(text)
+            .map(ParsedNativeAsm::X86_64)
+            .map_err(|err| CliError::Compilation(format!("Failed to parse x86_64 asm: {err}"))),
+        NativeAsmSource::Aarch64 => AsmAarch64Program::parse_text(text)
+            .map(ParsedNativeAsm::Aarch64)
+            .map_err(|err| CliError::Compilation(format!("Failed to parse aarch64 asm: {err}"))),
+        NativeAsmSource::Auto => {
+            match AsmX86_64Program::parse_text(text) {
+                Ok(program) => Ok(ParsedNativeAsm::X86_64(program)),
+                Err(x86_err) => match AsmAarch64Program::parse_text(text) {
+                    Ok(program) => Ok(ParsedNativeAsm::Aarch64(program)),
+                    Err(aarch64_err) => Err(CliError::Compilation(format!(
+                        "Failed to detect native asm dialect; x86_64: {x86_err}; aarch64: {aarch64_err}"
+                    ))),
+                },
+            }
+        }
+    }
 }
 
 async fn compile_ast_target(
@@ -787,7 +990,10 @@ async fn exec_dotnet_assembly(path: &Path) -> Result<()> {
             ))
         })?;
 
-    let mut command = if command_available("mono") {
+    let mut command = if cfg!(windows) && extension == "exe" {
+        Command::new(path)
+    } else if command_available("mono") {
+        ensure_command_available("mono", path)?;
         let mut command = Command::new("mono");
         command.arg(path);
         command
@@ -798,36 +1004,42 @@ async fn exec_dotnet_assembly(path: &Path) -> Result<()> {
         command
     } else {
         return Err(CliError::Compilation(format!(
-            "Refusing to execute '{}': required command '{}' is not available on PATH",
-            path.display(),
-            "mono"
+            "Refusing to execute '{}': unsupported .NET assembly extension",
+            path.display()
         )));
     };
 
     info!("🚀 Executing .NET assembly: {}", path.display());
 
     let output = command.output().await.map_err(|e| {
-        CliError::Compilation(format!("Failed to execute .NET assembly: {}", e))
+        CliError::Compilation(format!("Failed to execute '{}': {}", path.display(), e))
     })?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(CliError::Compilation(format!(
-            ".NET assembly execution failed: {}",
-            stderr
-        )));
+    if !output.stdout.is_empty() {
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+    if !output.stderr.is_empty() {
+        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if !stdout.is_empty() {
-        println!("{}", stdout);
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        if std::env::var("FP_ALLOW_EXEC_FAILURE").as_deref() == Ok("1") {
+            warn!("Process exited with status {}", code);
+        } else {
+            return Err(CliError::Compilation(format!(
+                ".NET process exited with status {}",
+                code
+            )));
+        }
     }
 
     Ok(())
 }
 
 fn ensure_command_available(command: &str, path: &Path) -> Result<()> {
-    if command_available(command) {
+    let found = command_available(command);
+    if found {
         Ok(())
     } else {
         Err(CliError::Compilation(format!(
@@ -844,7 +1056,6 @@ fn command_available(command: &str) -> bool {
         .map(|entry| entry.join(command))
         .any(|candidate| candidate.is_file())
 }
-
 
 fn exec_compiled_bytecode(path: &Path) -> Result<()> {
     let bytes = std::fs::read(path).map_err(CliError::Io)?;
@@ -878,6 +1089,8 @@ fn determine_output_path(
     target: CompileTarget,
     emitter: EmitterKind,
     target_triple: Option<&str>,
+    native_asm_input: bool,
+    native_object_input: bool,
     emit_text_bytecode: bool,
     output_is_dir: bool,
     exec_requested: bool,
@@ -903,6 +1116,12 @@ fn determine_output_path(
 
     let goasm_text_target = matches!(backend, BackendKind::Binary) && emitter == EmitterKind::Goasm;
     let urcl_text_target = matches!(backend, BackendKind::Binary) && emitter == EmitterKind::Urcl;
+    let native_asm_text_target = matches!(backend, BackendKind::Binary)
+        && emitter == EmitterKind::Native
+        && native_asm_input;
+    let native_object_target = matches!(backend, BackendKind::Binary)
+        && emitter == EmitterKind::Native
+        && native_object_input;
 
     if let Some(output) = output {
         if output_is_dir {
@@ -912,6 +1131,10 @@ fn determine_output_path(
                         "s"
                     } else if urcl_text_target {
                         "urcl"
+                    } else if native_asm_text_target {
+                        "s"
+                    } else if native_object_target {
+                        "o"
                     } else if is_windows_target(target_triple) {
                         "exe"
                     } else {
@@ -949,7 +1172,12 @@ fn determine_output_path(
             return Ok(path);
         }
 
-        if matches!(backend, BackendKind::Binary) && !goasm_text_target && !urcl_text_target {
+        if matches!(backend, BackendKind::Binary)
+            && !goasm_text_target
+            && !urcl_text_target
+            && !native_asm_text_target
+            && !native_object_target
+        {
             let mut path = output.clone();
             let desired_ext = if is_windows_target(target_triple) {
                 "exe"
@@ -968,6 +1196,10 @@ fn determine_output_path(
             }
 
             return Ok(path);
+        }
+
+        if native_asm_text_target {
+            return Ok(output.clone());
         }
 
         if matches!(backend, BackendKind::Bytecode) && emit_text_bytecode {
@@ -997,14 +1229,16 @@ fn determine_output_path(
         Ok(output.clone())
     } else {
         let extension = match backend {
-            BackendKind::Binary => {
-                if goasm_text_target {
-                    "s"
-                } else if urcl_text_target {
-                    "urcl"
-                } else if is_windows_target(target_triple) {
-                    "exe"
-                } else {
+                BackendKind::Binary => {
+                    if goasm_text_target {
+                        "s"
+                    } else if urcl_text_target {
+                        "urcl"
+                    } else if native_asm_text_target {
+                        "s"
+                    } else if is_windows_target(target_triple) {
+                        "exe"
+                    } else {
                     "out" // Use .out extension on Unix systems for clarity
                 }
             }

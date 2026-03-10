@@ -2052,7 +2052,7 @@ impl<'a> LirCodegen<'a> {
             .builder
             .build_store(alloca, src)
             .map_err(|e| Error::from(e.to_string()))?;
-        let target_ptr_ty = target.ptr_type(AddressSpace::default());
+        let target_ptr_ty = self.llvm_ctx.ptr_type();
         let cast_ptr = self
             .llvm_ctx
             .builder

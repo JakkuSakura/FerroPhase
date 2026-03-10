@@ -101,6 +101,9 @@ impl IntrinsicsMaterializer {
                     }
                 }
             }
+            BackendKind::Ebpf => Self {
+                strategy: Box::new(NoopIntrinsicMaterializer),
+            },
             _ => Self {
                 strategy: Box::new(NoopIntrinsicMaterializer),
             },

@@ -2414,7 +2414,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                     return flow;
                 }
 
-                if let Some(flow) = self.try_eval_std_net_function_runtime(&locator, &mut invoke.args)
+                if let Some(flow) =
+                    self.try_eval_std_net_function_runtime(&locator, &mut invoke.args)
                 {
                     return flow;
                 }
@@ -2592,7 +2593,8 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         let receiver = self.resolve_receiver_binding(select.obj.as_mut());
         let method_name = select.field.name.as_str().to_string();
-        if let Some(flow) = self.try_eval_std_net_method_runtime(&receiver.value, &method_name, args)
+        if let Some(flow) =
+            self.try_eval_std_net_method_runtime(&receiver.value, &method_name, args)
         {
             return flow;
         }
@@ -2871,10 +2873,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let Some(port) = self.runtime_port_arg(&values[1], "SocketAddr::new port") else {
                     return Some(RuntimeFlow::Value(Value::undefined()));
                 };
-                return Some(RuntimeFlow::Value(Value::Any(AnyBox::new(RuntimeSocketAddr {
-                    host,
-                    port,
-                }))));
+                return Some(RuntimeFlow::Value(Value::Any(AnyBox::new(
+                    RuntimeSocketAddr { host, port },
+                ))));
             }
             if method_name == "parse" {
                 let values = match self.evaluate_args_runtime(args) {
@@ -2885,7 +2886,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.emit_error("SocketAddr::parse expects one address string");
                     return Some(RuntimeFlow::Value(Value::undefined()));
                 }
-                let Some(addr) = self.runtime_string_arg(&values[0], "SocketAddr::parse addr") else {
+                let Some(addr) = self.runtime_string_arg(&values[0], "SocketAddr::parse addr")
+                else {
                     return Some(RuntimeFlow::Value(Value::undefined()));
                 };
                 match std::net::SocketAddr::from_str(addr.as_str()) {
@@ -2913,15 +2915,15 @@ impl<'ctx> AstInterpreter<'ctx> {
             };
             if values.len() != 1 {
                 self.emit_error("TcpListener::bind expects one address argument");
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::undefined(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
             }
             let Some(addr) = self.runtime_socket_addr_arg(&values[0], "TcpListener::bind addr")
             else {
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::undefined(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
             };
             match std::net::TcpListener::bind(addr) {
                 Ok(listener) => {
@@ -2929,13 +2931,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                         listener: Arc::new(listener),
                     };
                     let value = Value::Any(AnyBox::new(runtime_listener));
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(value),
+                    ));
                 }
                 Err(err) => {
                     self.emit_error(format!("TcpListener::bind failed: {}", err));
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                        Value::undefined(),
-                    )));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::undefined()),
+                    ));
                 }
             }
         }
@@ -2947,15 +2951,15 @@ impl<'ctx> AstInterpreter<'ctx> {
             };
             if values.len() != 1 {
                 self.emit_error("TcpStream::connect expects one address argument");
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::undefined(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
             }
             let Some(addr) = self.runtime_socket_addr_arg(&values[0], "TcpStream::connect addr")
             else {
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::undefined(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
             };
             match std::net::TcpStream::connect(addr) {
                 Ok(stream) => {
@@ -2964,13 +2968,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                         last_read: Arc::new(Mutex::new(Vec::new())),
                     };
                     let value = Value::Any(AnyBox::new(runtime_stream));
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(value),
+                    ));
                 }
                 Err(err) => {
                     self.emit_error(format!("TcpStream::connect failed: {}", err));
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                        Value::undefined(),
-                    )));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::undefined()),
+                    ));
                 }
             }
         }
@@ -2982,15 +2988,15 @@ impl<'ctx> AstInterpreter<'ctx> {
             };
             if values.len() != 1 {
                 self.emit_error("UdpSocket::bind expects one address argument");
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::undefined(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
             }
             let Some(addr) = self.runtime_socket_addr_arg(&values[0], "UdpSocket::bind addr")
             else {
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::undefined(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
             };
             match std::net::UdpSocket::bind(addr) {
                 Ok(socket) => {
@@ -2999,13 +3005,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                         last_recv: Arc::new(Mutex::new(Vec::new())),
                     };
                     let value = Value::Any(AnyBox::new(runtime_socket));
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(value),
+                    ));
                 }
                 Err(err) => {
                     self.emit_error(format!("UdpSocket::bind failed: {}", err));
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                        Value::undefined(),
-                    )));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::undefined()),
+                    ));
                 }
             }
         }
@@ -3033,10 +3041,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             let Some(port) = self.runtime_port_arg(&values[1], "SocketAddr::new port") else {
                 return Some(RuntimeFlow::Value(Value::undefined()));
             };
-            return Some(RuntimeFlow::Value(Value::Any(AnyBox::new(RuntimeSocketAddr {
-                host,
-                port,
-            }))));
+            return Some(RuntimeFlow::Value(Value::Any(AnyBox::new(
+                RuntimeSocketAddr { host, port },
+            ))));
         }
 
         if Self::locator_suffix_matches(locator, &["SocketAddr", "parse"]) {
@@ -3074,15 +3081,15 @@ impl<'ctx> AstInterpreter<'ctx> {
             };
             if values.len() != 1 {
                 self.emit_error("TcpListener::bind expects one address argument");
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::undefined(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
             }
             let Some(addr) = self.runtime_socket_addr_arg(&values[0], "TcpListener::bind addr")
             else {
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::undefined(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
             };
             match std::net::TcpListener::bind(addr) {
                 Ok(listener) => {
@@ -3090,13 +3097,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                         listener: Arc::new(listener),
                     };
                     let value = Value::Any(AnyBox::new(runtime_listener));
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(value),
+                    ));
                 }
                 Err(err) => {
                     self.emit_error(format!("TcpListener::bind failed: {}", err));
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                        Value::undefined(),
-                    )));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::undefined()),
+                    ));
                 }
             }
         }
@@ -3108,15 +3117,15 @@ impl<'ctx> AstInterpreter<'ctx> {
             };
             if values.len() != 1 {
                 self.emit_error("TcpStream::connect expects one address argument");
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::undefined(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
             }
             let Some(addr) = self.runtime_socket_addr_arg(&values[0], "TcpStream::connect addr")
             else {
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::undefined(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
             };
             match std::net::TcpStream::connect(addr) {
                 Ok(stream) => {
@@ -3125,13 +3134,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                         last_read: Arc::new(Mutex::new(Vec::new())),
                     };
                     let value = Value::Any(AnyBox::new(runtime_stream));
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(value),
+                    ));
                 }
                 Err(err) => {
                     self.emit_error(format!("TcpStream::connect failed: {}", err));
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                        Value::undefined(),
-                    )));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::undefined()),
+                    ));
                 }
             }
         }
@@ -3143,15 +3154,15 @@ impl<'ctx> AstInterpreter<'ctx> {
             };
             if values.len() != 1 {
                 self.emit_error("UdpSocket::bind expects one address argument");
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::undefined(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
             }
             let Some(addr) = self.runtime_socket_addr_arg(&values[0], "UdpSocket::bind addr")
             else {
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::undefined(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
             };
             match std::net::UdpSocket::bind(addr) {
                 Ok(socket) => {
@@ -3160,13 +3171,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                         last_recv: Arc::new(Mutex::new(Vec::new())),
                     };
                     let value = Value::Any(AnyBox::new(runtime_socket));
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(value),
+                    ));
                 }
                 Err(err) => {
                     self.emit_error(format!("UdpSocket::bind failed: {}", err));
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                        Value::undefined(),
-                    )));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::undefined()),
+                    ));
                 }
             }
         }
@@ -3211,13 +3224,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                             last_read: Arc::new(Mutex::new(Vec::new())),
                         };
                         let value = Value::Any(AnyBox::new(runtime_stream));
-                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(value),
+                        ));
                     }
                     Err(err) => {
                         self.emit_error(format!("TcpListener::accept failed: {}", err));
-                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                            Value::undefined(),
-                        )));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::undefined()),
+                        ));
                     }
                 }
             }
@@ -3249,15 +3264,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                             *last_read = bytes.clone();
                         }
                         self.write_bytes_to_runtime_buffer(&evaluated[0], &bytes);
-                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                            Value::int(size as i64),
-                        )));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::int(size as i64)),
+                        ));
                     }
                     Err(err) => {
                         self.emit_error(format!("TcpStream::read failed: {}", err));
-                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                            Value::int(-1),
-                        )));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::int(-1)),
+                        ));
                     }
                 }
             }
@@ -3267,7 +3282,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Ok(values) => values,
                     Err(flow) => return Some(flow),
                 };
-                let mut bytes = self.runtime_value_to_bytes(&evaluated[0]).unwrap_or_default();
+                let mut bytes = self
+                    .runtime_value_to_bytes(&evaluated[0])
+                    .unwrap_or_default();
                 if bytes.is_empty() {
                     let last_read = match stream.last_read.lock() {
                         Ok(guard) => guard.clone(),
@@ -3284,15 +3301,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
                 match write_result {
                     Ok(size) => {
-                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                            Value::int(size as i64),
-                        )));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::int(size as i64)),
+                        ));
                     }
                     Err(err) => {
                         self.emit_error(format!("TcpStream::write failed: {}", err));
-                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                            Value::int(-1),
-                        )));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::int(-1)),
+                        ));
                     }
                 }
             }
@@ -3308,9 +3325,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if let Err(err) = shutdown_result {
                     self.emit_error(format!("TcpStream::shutdown failed: {}", err));
                 }
-                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                    Value::unit(),
-                )));
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::unit()),
+                ));
             }
 
             return None;
@@ -3339,7 +3356,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                             port: peer.port(),
                         }));
                         return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                            Value::Tuple(ValueTuple::new(vec![Value::int(size as i64), peer_value])),
+                            Value::Tuple(ValueTuple::new(vec![
+                                Value::int(size as i64),
+                                peer_value,
+                            ])),
                         )));
                     }
                     Err(err) => {
@@ -3362,7 +3382,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Ok(values) => values,
                     Err(flow) => return Some(flow),
                 };
-                let mut bytes = self.runtime_value_to_bytes(&evaluated[0]).unwrap_or_default();
+                let mut bytes = self
+                    .runtime_value_to_bytes(&evaluated[0])
+                    .unwrap_or_default();
                 if bytes.is_empty() {
                     let last_recv = match socket.last_recv.lock() {
                         Ok(guard) => guard.clone(),
@@ -3370,23 +3392,24 @@ impl<'ctx> AstInterpreter<'ctx> {
                     };
                     bytes = last_recv;
                 }
-                let Some(addr) = self.runtime_socket_addr_arg(&evaluated[1], "UdpSocket::send_to addr")
+                let Some(addr) =
+                    self.runtime_socket_addr_arg(&evaluated[1], "UdpSocket::send_to addr")
                 else {
-                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                        Value::int(-1),
-                    )));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::int(-1)),
+                    ));
                 };
                 match socket.socket.send_to(&bytes, addr) {
                     Ok(size) => {
-                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                            Value::int(size as i64),
-                        )));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::int(size as i64)),
+                        ));
                     }
                     Err(err) => {
                         self.emit_error(format!("UdpSocket::send_to failed: {}", err));
-                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
-                            Value::int(-1),
-                        )));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::int(-1)),
+                        ));
                     }
                 }
             }
@@ -3407,12 +3430,17 @@ impl<'ctx> AstInterpreter<'ctx> {
             Name::ParameterPath(path)
                 if path.prefix == PathPrefix::Plain && path.segments.len() == 2 =>
             {
-                (path.segments[0].ident.as_str(), path.segments[1].ident.as_str())
+                (
+                    path.segments[0].ident.as_str(),
+                    path.segments[1].ident.as_str(),
+                )
             }
             _ => return None,
         };
 
-        let receiver_value = self.lookup_stored_value(receiver_name).map(|value| value.value())?;
+        let receiver_value = self
+            .lookup_stored_value(receiver_name)
+            .map(|value| value.value())?;
         self.try_eval_std_net_method_runtime(&receiver_value, method_name, args)
     }
 
@@ -3468,11 +3496,18 @@ impl<'ctx> AstInterpreter<'ctx> {
         Some(port as u16)
     }
 
-    fn runtime_socket_addr_arg(&mut self, value: &Value, context: &str) -> Option<std::net::SocketAddr> {
+    fn runtime_socket_addr_arg(
+        &mut self,
+        value: &Value,
+        context: &str,
+    ) -> Option<std::net::SocketAddr> {
         match value {
             Value::Any(any) => {
                 if let Some(addr) = any.downcast_ref::<RuntimeSocketAddr>() {
-                    return std::net::SocketAddr::from_str(format!("{}:{}", addr.host, addr.port).as_str()).ok();
+                    return std::net::SocketAddr::from_str(
+                        format!("{}:{}", addr.host, addr.port).as_str(),
+                    )
+                    .ok();
                 }
             }
             Value::String(string) => {
@@ -3577,7 +3612,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let mut out = Vec::with_capacity(list.values.len());
                 for value in &list.values {
                     match value {
-                        Value::Int(int) if (0..=255).contains(&int.value) => out.push(int.value as u8),
+                        Value::Int(int) if (0..=255).contains(&int.value) => {
+                            out.push(int.value as u8)
+                        }
                         Value::Char(ch) => out.push(ch.value as u8),
                         _ => return None,
                     }
@@ -3588,7 +3625,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let mut out = Vec::with_capacity(tuple.values.len());
                 for value in &tuple.values {
                     match value {
-                        Value::Int(int) if (0..=255).contains(&int.value) => out.push(int.value as u8),
+                        Value::Int(int) if (0..=255).contains(&int.value) => {
+                            out.push(int.value as u8)
+                        }
                         Value::Char(ch) => out.push(ch.value as u8),
                         _ => return None,
                     }

@@ -1,5 +1,5 @@
-pub use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
+pub use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::mir;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -1767,7 +1767,10 @@ fn lower_rvalue(
             Ok(())
         }
         _ => {
-            emit_lowering_warning(format!("unsupported rvalue: {:?}; using unit dummy", rvalue));
+            emit_lowering_warning(format!(
+                "unsupported rvalue: {:?}; using unit dummy",
+                rvalue
+            ));
             push_dummy_unit(code, const_pool);
             Ok(())
         }
@@ -1853,7 +1856,10 @@ fn lower_const_value(value: &mir::ConstValue) -> Result<BytecodeConst, BytecodeE
             Ok(BytecodeConst::Map(lowered))
         }
         _ => {
-            emit_lowering_warning(format!("unsupported const value: {:?}; using unit dummy", value));
+            emit_lowering_warning(format!(
+                "unsupported const value: {:?}; using unit dummy",
+                value
+            ));
             Ok(BytecodeConst::Unit)
         }
     }
@@ -1899,7 +1905,9 @@ fn lower_callee(operand: &mir::Operand) -> Result<BytecodeCallee, BytecodeError>
                     "unsupported call operand: {:?}; using dummy callee",
                     constant.literal
                 ));
-                Ok(BytecodeCallee::Function("__fp_unsupported_callee__".to_string()))
+                Ok(BytecodeCallee::Function(
+                    "__fp_unsupported_callee__".to_string(),
+                ))
             }
         },
         mir::Operand::Copy(place) | mir::Operand::Move(place) => {
