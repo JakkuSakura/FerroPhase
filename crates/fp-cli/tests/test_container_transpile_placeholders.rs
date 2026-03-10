@@ -38,24 +38,6 @@ fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileAr
     }
 }
 
-#[tokio::test]
-async fn compile_rejects_goasm_transpile_placeholder() {
-    let temp_dir = TempDir::new().unwrap();
-    let input_file = temp_dir.path().join("main.s");
-    let output_file = temp_dir.path().join("main.out.s");
-    fs::write(&input_file, "TEXT ·main(SB), $0-0\nRET\n").unwrap();
-
-    let mut args = base_args(input_file, output_file);
-    args.source_language = Some("goasm".to_string());
-
-    let err = compile_command(args, &CliConfig::default())
-        .await
-        .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("transpiling from `goasm` is not implemented yet"));
-}
-
 // NOTE: URCL input is now supported (see `test_compile_urcl_container.rs`).
 
 #[tokio::test]

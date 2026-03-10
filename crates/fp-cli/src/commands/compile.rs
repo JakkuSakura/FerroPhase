@@ -148,6 +148,78 @@ pub struct CompileArgs {
     pub single_world: bool,
 }
 
+async fn maybe_transpile_goasm(input: &Path, output: &Path, args: &CompileArgs) -> Result<Option<PathBuf>> {
+    if detect_container_transpile_source(args.source_language.as_deref(), input)
+        != Some(ContainerTranspileSource::GoAsm)
+    {
+        return Ok(None);
+    }
+
+    if args.backend != BackendKind::Binary {
+        return Err(CliError::InvalidInput(
+            "Go asm input currently supports only `--backend binary`".to_string(),
+        ));
+    }
+    if args.exec {
+        return Err(CliError::InvalidInput(
+            "`--exec` is not supported for goasm transpilation".to_string(),
+        ));
+    }
+
+    let text = async_fs::read_to_string(input)
+        .await
+        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read goasm input: {err}"))))?;
+    let (lir_program, _source_target) = fp_goasm::parse_program(&text)
+        .map_err(|err| CliError::Compilation(format!("Failed to parse goasm: {err}")))?;
+
+    let output_path = if args.output.is_none() {
+        match args.emitter {
+            EmitterKind::Goasm => input.with_extension("s"),
+            EmitterKind::Urcl => input.with_extension("urcl"),
+            _ => input.with_extension("o"),
+        }
+    } else {
+        output.to_path_buf()
+    };
+
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
+
+    match args.emitter {
+        EmitterKind::Goasm => {
+            let config = fp_goasm::config::GoAsmConfig::new(&output_path)
+                .with_target_triple(args.target_triple.clone());
+            let emitter = fp_goasm::GoAsmEmitter::new(config);
+            emitter
+                .emit(lir_program, Some(input))
+                .map_err(|err| CliError::Compilation(format!("Failed to emit Go asm: {err}")))?;
+        }
+        EmitterKind::Urcl => {
+            let emitter = fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(&output_path));
+            emitter
+                .emit(lir_program, Some(input))
+                .map_err(|err| CliError::Compilation(format!("Failed to emit URCL: {err}")))?;
+        }
+        EmitterKind::Native => {
+            let (format, arch) = emit::detect_target(args.target_triple.as_deref())
+                .map_err(|err| CliError::Compilation(err.to_string()))?;
+            let plan = fp_native::emit::emit_plan(&lir_program, format, arch)
+                .map_err(|err| CliError::Compilation(format!("Failed to emit native object: {err}")))?;
+            fp_native::emit::write_object(&output_path, &plan)
+                .map_err(|err| CliError::Compilation(format!("Failed to write object output: {err}")))?;
+        }
+        other => {
+            return Err(CliError::InvalidInput(format!(
+                "goasm input does not support `--emitter {}` yet",
+                other.as_str()
+            )));
+        }
+    }
+
+    Ok(Some(output_path))
+}
+
 async fn maybe_transpile_urcl(input: &Path, output: &Path, args: &CompileArgs) -> Result<Option<PathBuf>> {
     if detect_container_transpile_source(args.source_language.as_deref(), input)
         != Some(ContainerTranspileSource::Urcl)
@@ -281,6 +353,9 @@ fn maybe_transpile_container_placeholder(
     if source == ContainerTranspileSource::Urcl {
         return Ok(None);
     }
+    if source == ContainerTranspileSource::GoAsm {
+        return Ok(None);
+    }
 
     return Err(CliError::InvalidInput(format!(
         "transpiling from `{}` is not implemented yet; this is a placeholder for the generic container transpiler",
@@ -364,6 +439,9 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         let urcl_container_input =
             detect_container_transpile_source(args.source_language.as_deref(), input_file)
                 == Some(ContainerTranspileSource::Urcl);
+        let goasm_container_input =
+            detect_container_transpile_source(args.source_language.as_deref(), input_file)
+                == Some(ContainerTranspileSource::GoAsm);
 
         let output_file = determine_output_path(
             input_file,
@@ -374,6 +452,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             detect_native_asm_source(args.source_language.as_deref(), input_file).is_some(),
             detect_native_object_source(args.source_language.as_deref(), input_file),
             urcl_container_input,
+            goasm_container_input,
             emit_text_bytecode,
             output_is_dir,
             args.exec,
@@ -499,6 +578,10 @@ async fn compile_file(
     }
 
     if let Some(artifact) = maybe_transpile_urcl(input, output, args).await? {
+        return Ok(Some(artifact));
+    }
+
+    if let Some(artifact) = maybe_transpile_goasm(input, output, args).await? {
         return Ok(Some(artifact));
     }
 
@@ -1274,6 +1357,7 @@ fn determine_output_path(
     native_asm_input: bool,
     native_object_input: bool,
     urcl_container_input: bool,
+    goasm_container_input: bool,
     emit_text_bytecode: bool,
     output_is_dir: bool,
     exec_requested: bool,
@@ -1308,6 +1392,9 @@ fn determine_output_path(
     let urcl_object_target = matches!(backend, BackendKind::Binary)
         && emitter == EmitterKind::Native
         && urcl_container_input;
+    let goasm_object_target = matches!(backend, BackendKind::Binary)
+        && emitter == EmitterKind::Native
+        && goasm_container_input;
 
     if let Some(output) = output {
         if output_is_dir {
@@ -1322,6 +1409,8 @@ fn determine_output_path(
                     } else if native_object_target {
                         "o"
                     } else if urcl_object_target {
+                        "o"
+                    } else if goasm_object_target {
                         "o"
                     } else if is_windows_target(target_triple) {
                         "exe"
@@ -1366,6 +1455,7 @@ fn determine_output_path(
             && !native_asm_text_target
             && !native_object_target
             && !urcl_object_target
+            && !goasm_object_target
         {
             let mut path = output.clone();
             let desired_ext = if is_windows_target(target_triple) {
@@ -1392,6 +1482,10 @@ fn determine_output_path(
         }
 
         if urcl_object_target {
+            return Ok(output.clone());
+        }
+
+        if goasm_object_target {
             return Ok(output.clone());
         }
 
@@ -1430,6 +1524,8 @@ fn determine_output_path(
                 } else if native_asm_text_target {
                     "s"
                 } else if urcl_object_target {
+                    "o"
+                } else if goasm_object_target {
                     "o"
                 } else if is_windows_target(target_triple) {
                     "exe"

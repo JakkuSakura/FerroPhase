@@ -1,10 +1,13 @@
 pub mod config;
 mod emit;
+mod parse;
 
 use crate::config::{GoAsmConfig, GoAsmTarget};
 use fp_core::error::Result;
 use fp_core::lir::LirProgram;
 use std::path::{Path, PathBuf};
+
+pub use parse::parse_program;
 
 pub struct GoAsmEmitter {
     config: GoAsmConfig,
