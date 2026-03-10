@@ -1,165 +1,177 @@
+use crate::binary::TextRelocation;
 use fp_core::asmir::{
-    AsmAddressValue, AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmOperand,
-    AsmPhysicalRegister, AsmRegister, AsmRegisterBank, AsmType, AsmValue,
-    OperandAccess,
+    AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmType, AsmValue,
 };
 use fp_core::error::{Error, Result};
-use fp_core::lir::Name;
+use crate::binary::LiftedFunction;
+use fp_core::asmir::AsmTerminator;
+use fp_core::asmir::AsmLocal;
+use fp_core::lir::CallingConvention;
 
-pub fn lift_function_bytes(bytes: &[u8]) -> Result<(Vec<AsmInstruction>, Option<fp_core::asmir::AsmTerminator>)> {
+pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<LiftedFunction> {
     if bytes.len() % 4 != 0 {
         return Err(Error::from("aarch64 function size is not 4-byte aligned"));
     }
 
+    let mut ctx = RegisterLiftContext::new();
     let mut instructions = Vec::new();
     let mut next_id = 0u32;
     let mut index = 0usize;
     while index < bytes.len() {
         let word = u32::from_le_bytes(bytes[index..index + 4].try_into().unwrap());
         if word == 0xD65F03C0 {
-            return Ok((instructions, Some(fp_core::asmir::AsmTerminator::Return(None))));
+            let return_value = ctx.read_return_value();
+            return Ok(LiftedFunction {
+                instructions,
+                terminator: Some(AsmTerminator::Return(return_value)),
+                locals: ctx.locals,
+            });
         }
         if word == 0xD503201F {
             index += 4;
             continue;
         }
 
-        let lifted = lift_instruction(word, next_id)?;
-        instructions.push(lifted);
-        next_id += 1;
+        if (word & 0xFC000000) == 0x94000000 {
+            let reloc = relocation_at(relocs, index as u64)
+                .ok_or_else(|| Error::from("unsupported aarch64 bl without relocation"))?;
+            let id = next_id;
+            instructions.push(AsmInstruction {
+                id,
+                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function(reloc.symbol.clone()),
+                    args: Vec::new(),
+                    calling_convention: CallingConvention::AAPCS,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::Void),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            });
+            next_id += 1;
+            index += 4;
+            continue;
+        }
+
+        lift_instruction(word, &mut ctx, &mut instructions, &mut next_id)?;
         index += 4;
     }
 
-    Ok((instructions, None))
+    Ok(LiftedFunction {
+        instructions,
+        terminator: None,
+        locals: ctx.locals,
+    })
 }
 
-fn lift_instruction(word: u32, id: u32) -> Result<AsmInstruction> {
-    if let Some((dst, src, imm)) = decode_add_immediate(word) {
-        return Ok(build_binary(
-            id,
-            AsmInstructionKind::Add(src.clone(), imm.clone()),
-            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-            dst,
-            src,
-            imm,
-        ));
-    }
-    if let Some((dst, src, imm)) = decode_sub_immediate(word) {
-        return Ok(build_binary(
-            id,
-            AsmInstructionKind::Sub(src.clone(), imm.clone()),
-            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-            dst,
-            src,
-            imm,
-        ));
-    }
-    if let Some((dst, base, disp, size_bytes)) = decode_ldr_immediate(word) {
-        let address = AsmValue::Address(Box::new(AsmAddressValue {
-            base: Some(Box::new(base.clone())),
-            index: None,
-            scale: 1,
-            displacement: disp,
-            segment: None,
-            size_bytes: Some(size_bytes),
-            address_space: None,
-            pre_indexed: false,
-            post_indexed: false,
-        }));
-        let memory = AsmOperand::Memory(fp_core::asmir::AsmMemoryOperand {
-            base: Some(value_to_register(&base)?),
-            index: None,
-            scale: 1,
-            displacement: disp,
-            segment: None,
-            size_bytes: Some(size_bytes),
-            address_space: None,
-            pre_indexed: false,
-            post_indexed: false,
-        });
+fn relocation_at<'a>(relocs: &'a [TextRelocation], offset: u64) -> Option<&'a TextRelocation> {
+    relocs.iter().find(|reloc| reloc.offset == offset)
+}
 
-        return Ok(AsmInstruction {
+fn lift_instruction(
+    word: u32,
+    ctx: &mut RegisterLiftContext,
+    instructions: &mut Vec<AsmInstruction>,
+    next_id: &mut u32,
+) -> Result<()> {
+    if let Some((dst, src, imm)) = decode_add_immediate(word) {
+        let lhs = ctx.read_gpr(src)?;
+        let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
+        let id = *next_id;
+        instructions.push(build_binop(
+            id,
+            AsmInstructionKind::Add(lhs.clone(), rhs.clone()),
+            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
+        ));
+        *next_id += 1;
+        ctx.write_gpr(dst, AsmValue::Register(id));
+        return Ok(());
+    }
+
+    if let Some((dst, src, imm)) = decode_sub_immediate(word) {
+        let lhs = ctx.read_gpr(src)?;
+        let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
+        let id = *next_id;
+        instructions.push(build_binop(
+            id,
+            AsmInstructionKind::Sub(lhs.clone(), rhs.clone()),
+            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
+        ));
+        *next_id += 1;
+        ctx.write_gpr(dst, AsmValue::Register(id));
+        return Ok(());
+    }
+
+    if let Some((dst, base, disp)) = decode_ldr_immediate(word) {
+        let base_value = ctx.read_gpr(base)?;
+        let addr = pointer_add_immediate(base_value, disp, instructions, next_id)?;
+        let id = *next_id;
+        instructions.push(AsmInstruction {
             id,
             opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
             kind: AsmInstructionKind::Load {
-                address,
+                address: addr,
                 alignment: None,
                 volatile: false,
             },
             type_hint: Some(AsmType::I64),
-            operands: vec![register_operand(value_to_register(&dst)?, OperandAccess::Write), memory],
+            operands: Vec::new(),
             implicit_uses: Vec::new(),
             implicit_defs: Vec::new(),
             encoding: None,
             debug_info: None,
             annotations: Vec::new(),
         });
+        *next_id += 1;
+        ctx.write_gpr(dst, AsmValue::Register(id));
+        return Ok(());
     }
-    if let Some((value, base, disp, size_bytes)) = decode_str_immediate(word) {
-        let address = AsmValue::Address(Box::new(AsmAddressValue {
-            base: Some(Box::new(base.clone())),
-            index: None,
-            scale: 1,
-            displacement: disp,
-            segment: None,
-            size_bytes: Some(size_bytes),
-            address_space: None,
-            pre_indexed: false,
-            post_indexed: false,
-        }));
-        let memory = AsmOperand::Memory(fp_core::asmir::AsmMemoryOperand {
-            base: Some(value_to_register(&base)?),
-            index: None,
-            scale: 1,
-            displacement: disp,
-            segment: None,
-            size_bytes: Some(size_bytes),
-            address_space: None,
-            pre_indexed: false,
-            post_indexed: false,
-        });
-        let value_operand = register_operand(value_to_register(&value)?, OperandAccess::Read);
 
-        return Ok(AsmInstruction {
+    if let Some((value, base, disp)) = decode_str_immediate(word) {
+        let base_value = ctx.read_gpr(base)?;
+        let addr = pointer_add_immediate(base_value, disp, instructions, next_id)?;
+        let stored = ctx.read_gpr(value)?;
+        let id = *next_id;
+        instructions.push(AsmInstruction {
             id,
             opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
             kind: AsmInstructionKind::Store {
-                value,
-                address,
+                value: stored,
+                address: addr,
                 alignment: None,
                 volatile: false,
             },
             type_hint: Some(AsmType::Void),
-            operands: vec![memory, value_operand],
+            operands: Vec::new(),
             implicit_uses: Vec::new(),
             implicit_defs: Vec::new(),
             encoding: None,
             debug_info: None,
             annotations: Vec::new(),
         });
+        *next_id += 1;
+        return Ok(());
     }
 
     Err(Error::from(format!("unsupported aarch64 instruction: 0x{word:08x}")))
 }
 
-fn build_binary(
+fn build_binop(
     id: u32,
     kind: AsmInstructionKind,
     opcode: AsmOpcode,
-    dst: AsmValue,
-    lhs: AsmValue,
-    rhs: AsmValue,
 ) -> AsmInstruction {
     AsmInstruction {
         id,
         opcode,
         kind,
         type_hint: Some(AsmType::I64),
-        operands: vec![
-            register_operand(value_to_register(&dst).unwrap(), OperandAccess::Write),
-            register_operand(value_to_register(&lhs).unwrap(), OperandAccess::Read),
-            value_operand(rhs),
-        ],
+        operands: Vec::new(),
         implicit_uses: Vec::new(),
         implicit_defs: Vec::new(),
         encoding: None,
@@ -168,7 +180,7 @@ fn build_binary(
     }
 }
 
-fn decode_add_immediate(word: u32) -> Option<(AsmValue, AsmValue, AsmValue)> {
+fn decode_add_immediate(word: u32) -> Option<(u8, u8, i64)> {
     // ADD (immediate) 64-bit: sf=1, op=0, S=0, fixed 0b10001 at bits 28..24.
     if (word & 0x1F000000) != 0x11000000 {
         return None;
@@ -186,14 +198,13 @@ fn decode_add_immediate(word: u32) -> Option<(AsmValue, AsmValue, AsmValue)> {
     let imm12 = ((word >> 10) & 0xFFF) as i64;
     let rn = ((word >> 5) & 0x1F) as u8;
     let rd = (word & 0x1F) as u8;
-    Some((
-        reg_value(rd),
-        reg_value(rn),
-        AsmValue::Constant(AsmConstant::Int(imm12, AsmType::I64)),
-    ))
+    if rn == 31 || rd == 31 {
+        return None;
+    }
+    Some((rd, rn, imm12))
 }
 
-fn decode_sub_immediate(word: u32) -> Option<(AsmValue, AsmValue, AsmValue)> {
+fn decode_sub_immediate(word: u32) -> Option<(u8, u8, i64)> {
     // SUB (immediate) 64-bit: sf=1, op=1, S=0, fixed 0b10001.
     if (word & 0x1F000000) != 0x11000000 {
         return None;
@@ -211,14 +222,13 @@ fn decode_sub_immediate(word: u32) -> Option<(AsmValue, AsmValue, AsmValue)> {
     let imm12 = ((word >> 10) & 0xFFF) as i64;
     let rn = ((word >> 5) & 0x1F) as u8;
     let rd = (word & 0x1F) as u8;
-    Some((
-        reg_value(rd),
-        reg_value(rn),
-        AsmValue::Constant(AsmConstant::Int(imm12, AsmType::I64)),
-    ))
+    if rn == 31 || rd == 31 {
+        return None;
+    }
+    Some((rd, rn, imm12))
 }
 
-fn decode_ldr_immediate(word: u32) -> Option<(AsmValue, AsmValue, i64, u16)> {
+fn decode_ldr_immediate(word: u32) -> Option<(u8, u8, i64)> {
     // LDR Xt, [Xn, #imm] (unsigned immediate), 64-bit.
     if (word & 0xFFC00000) != 0xF9400000 {
         return None;
@@ -226,11 +236,14 @@ fn decode_ldr_immediate(word: u32) -> Option<(AsmValue, AsmValue, i64, u16)> {
     let imm12 = ((word >> 10) & 0xFFF) as i64;
     let rn = ((word >> 5) & 0x1F) as u8;
     let rt = (word & 0x1F) as u8;
+    if rn == 31 || rt == 31 {
+        return None;
+    }
     let disp = imm12 * 8;
-    Some((reg_value(rt), reg_value(rn), disp, 8))
+    Some((rt, rn, disp))
 }
 
-fn decode_str_immediate(word: u32) -> Option<(AsmValue, AsmValue, i64, u16)> {
+fn decode_str_immediate(word: u32) -> Option<(u8, u8, i64)> {
     // STR Xt, [Xn, #imm] (unsigned immediate), 64-bit.
     if (word & 0xFFC00000) != 0xF9000000 {
         return None;
@@ -238,48 +251,94 @@ fn decode_str_immediate(word: u32) -> Option<(AsmValue, AsmValue, i64, u16)> {
     let imm12 = ((word >> 10) & 0xFFF) as i64;
     let rn = ((word >> 5) & 0x1F) as u8;
     let rt = (word & 0x1F) as u8;
+    if rn == 31 || rt == 31 {
+        return None;
+    }
     let disp = imm12 * 8;
-    Some((reg_value(rt), reg_value(rn), disp, 8))
+    Some((rt, rn, disp))
 }
 
-fn reg_value(index: u8) -> AsmValue {
-    let name = if index == 31 {
-        "sp".to_string()
-    } else {
-        format!("x{index}")
-    };
-    AsmValue::PhysicalRegister(AsmPhysicalRegister {
-        name,
-        bank: AsmRegisterBank::General,
-        size_bits: 64,
-    })
+struct RegisterLiftContext {
+    locals: Vec<AsmLocal>,
+    locals_by_register: std::collections::HashMap<u8, u32>,
+    registers: std::collections::HashMap<u8, AsmValue>,
+    next_local_id: u32,
 }
 
-fn value_to_register(value: &AsmValue) -> Result<AsmRegister> {
-    match value {
-        AsmValue::PhysicalRegister(register) => Ok(AsmRegister::Physical(register.clone())),
-        AsmValue::Register(id) => Ok(AsmRegister::Virtual {
-            id: *id,
-            bank: AsmRegisterBank::General,
-            size_bits: 64,
-        }),
-        other => Err(Error::from(format!("expected register value, got {other:?}"))),
+impl RegisterLiftContext {
+    fn new() -> Self {
+        Self {
+            locals: Vec::new(),
+            locals_by_register: std::collections::HashMap::new(),
+            registers: std::collections::HashMap::new(),
+            next_local_id: 0,
+        }
+    }
+
+    fn read_return_value(&mut self) -> Option<AsmValue> {
+        self.registers.get(&0).cloned().or_else(|| {
+            self.ensure_local(0, true);
+            Some(AsmValue::Local(*self.locals_by_register.get(&0)?))
+        })
+    }
+
+    fn read_gpr(&mut self, reg: u8) -> Result<AsmValue> {
+        if let Some(value) = self.registers.get(&reg).cloned() {
+            return Ok(value);
+        }
+        let is_argument = reg <= 7;
+        self.ensure_local(reg, is_argument);
+        let local_id = *self
+            .locals_by_register
+            .get(&reg)
+            .ok_or_else(|| Error::from("missing local"))?;
+        let value = AsmValue::Local(local_id);
+        self.registers.insert(reg, value.clone());
+        Ok(value)
+    }
+
+    fn write_gpr(&mut self, reg: u8, value: AsmValue) {
+        self.registers.insert(reg, value);
+    }
+
+    fn ensure_local(&mut self, reg: u8, is_argument: bool) {
+        if let Some(local_id) = self.locals_by_register.get(&reg).copied() {
+            if is_argument {
+                if let Some(local) = self.locals.iter_mut().find(|local| local.id == local_id) {
+                    local.is_argument = true;
+                }
+            }
+            return;
+        }
+
+        let local_id = self.next_local_id;
+        self.next_local_id += 1;
+        self.locals_by_register.insert(reg, local_id);
+        self.locals.push(AsmLocal {
+            id: local_id,
+            ty: AsmType::I64,
+            name: Some(format!("x{reg}")),
+            is_argument,
+        });
     }
 }
 
-fn register_operand(reg: AsmRegister, access: OperandAccess) -> AsmOperand {
-    AsmOperand::Register { reg, access }
-}
-
-fn value_operand(value: AsmValue) -> AsmOperand {
-    match value {
-        AsmValue::Constant(AsmConstant::Int(value, _)) => AsmOperand::Immediate(value as i128),
-        AsmValue::Constant(AsmConstant::UInt(value, _)) => AsmOperand::Immediate(value as i128),
-        AsmValue::Constant(AsmConstant::Bool(value)) => AsmOperand::Immediate(if value { 1 } else { 0 }),
-        AsmValue::PhysicalRegister(register) => AsmOperand::Register {
-            reg: AsmRegister::Physical(register),
-            access: OperandAccess::Read,
-        },
-        other => AsmOperand::Symbol(Name::new(format!("value.{other:?}"))),
+fn pointer_add_immediate(
+    base: AsmValue,
+    displacement: i64,
+    instructions: &mut Vec<AsmInstruction>,
+    next_id: &mut u32,
+) -> Result<AsmValue> {
+    if displacement == 0 {
+        return Ok(base);
     }
+    let rhs = AsmValue::Constant(AsmConstant::Int(displacement, AsmType::I64));
+    let id = *next_id;
+    instructions.push(build_binop(
+        id,
+        AsmInstructionKind::Add(base, rhs),
+        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
+    ));
+    *next_id += 1;
+    Ok(AsmValue::Register(id))
 }

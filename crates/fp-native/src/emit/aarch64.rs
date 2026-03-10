@@ -3842,22 +3842,6 @@ fn align_rodata(rodata: &mut Vec<u8>, align: usize) {
 }
 
 fn emit_load_rodata_addr(asm: &mut Assembler, dst: Reg, addend: i64) -> Result<()> {
-    if matches!(asm.target_format, TargetFormat::MachO) {
-        let adrp = 0x9000_0000u32 | dst.id();
-        let add = 0x9100_0000u32 | (dst.id() << 5) | dst.id();
-        let offset = asm.buf.len();
-        asm.emit_u32(adrp);
-        asm.emit_u32(add);
-        asm.relocs.push(Relocation {
-            offset: offset as u64,
-            kind: RelocKind::Aarch64AdrpAdd,
-            section: crate::emit::RelocSection::Text,
-            symbol: ".rodata".to_string(),
-            addend,
-        });
-        return Ok(());
-    }
-
     if asm.buf.len() % 8 != 0 {
         emit_nop(asm);
     }
@@ -3878,22 +3862,6 @@ fn emit_load_rodata_addr(asm: &mut Assembler, dst: Reg, addend: i64) -> Result<(
 }
 
 fn emit_load_symbol_addr(asm: &mut Assembler, dst: Reg, symbol: &str, addend: i64) -> Result<()> {
-    if matches!(asm.target_format, TargetFormat::MachO) {
-        let adrp = 0x9000_0000u32 | dst.id();
-        let add = 0x9100_0000u32 | (dst.id() << 5) | dst.id();
-        let offset = asm.buf.len();
-        asm.emit_u32(adrp);
-        asm.emit_u32(add);
-        asm.relocs.push(Relocation {
-            offset: offset as u64,
-            kind: RelocKind::Aarch64AdrpAdd,
-            section: crate::emit::RelocSection::Text,
-            symbol: symbol.to_string(),
-            addend,
-        });
-        return Ok(());
-    }
-
     if asm.buf.len() % 8 != 0 {
         emit_nop(asm);
     }

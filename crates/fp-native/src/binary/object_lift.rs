@@ -1,19 +1,20 @@
-use crate::binary::aarch64;
+use crate::binary::{aarch64, x86_64, TextRelocation};
 use fp_core::asmir::{
     AsmArchitecture, AsmEndianness, AsmFunction, AsmFunctionSignature, AsmObjectFormat,
     AsmProgram, AsmSection, AsmSectionFlag, AsmSectionKind, AsmTarget, AsmTerminator, AsmType,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{Linkage, Name, Visibility};
-use object::{Object, ObjectSection, ObjectSymbol};
+use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget};
 
 pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
     let file = object::File::parse(bytes).map_err(|err| Error::from(err.to_string()))?;
     let architecture = match file.architecture() {
         object::Architecture::Aarch64 => AsmArchitecture::Aarch64,
+        object::Architecture::X86_64 => AsmArchitecture::X86_64,
         other => {
             return Err(Error::from(format!(
-                "object lift currently supports only aarch64; got {other:?}"
+                "object lift currently supports only x86_64 and aarch64; got {other:?}"
             )))
         }
     };
@@ -28,6 +29,25 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
     let text_bytes = text_section
         .data()
         .map_err(|err| Error::from(err.to_string()))?;
+
+    let mut relocs = Vec::new();
+    for (offset, relocation) in text_section.relocations() {
+        let RelocationTarget::Symbol(symbol_index) = relocation.target() else {
+            continue;
+        };
+        let symbol = file
+            .symbol_by_index(symbol_index)
+            .map_err(|err| Error::from(err.to_string()))?;
+        let name = match symbol.name() {
+            Ok(name) => name.to_string(),
+            Err(_) => continue,
+        };
+        relocs.push(TextRelocation {
+            offset,
+            symbol: name,
+            addend: relocation.addend(),
+        });
+    }
 
     let symbol = file
         .symbols()
@@ -61,9 +81,21 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         return Err(Error::from("text symbol range is out of bounds"));
     }
     let code = &text_bytes[symbol_offset..symbol_offset + symbol_size];
+    let relocs = relocs
+        .into_iter()
+        .filter(|reloc| {
+            let offset = reloc.offset as usize;
+            offset >= symbol_offset && offset < symbol_offset + symbol_size
+        })
+        .map(|mut reloc| {
+            reloc.offset = reloc.offset - symbol_offset as u64;
+            reloc
+        })
+        .collect::<Vec<_>>();
 
-    let (instructions, terminator) = match architecture {
-        AsmArchitecture::Aarch64 => aarch64::lift_function_bytes(code)?,
+    let lifted = match architecture {
+        AsmArchitecture::Aarch64 => aarch64::lift_function_bytes(code, relocs.as_slice())?,
+        AsmArchitecture::X86_64 => x86_64::lift_function_bytes(code, relocs.as_slice())?,
         _ => {
             return Err(Error::from(
                 "object lift internal error: unsupported architecture",
@@ -85,22 +117,27 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         alignment: Some(16),
     });
 
+    let return_type = match lifted.terminator {
+        Some(AsmTerminator::Return(Some(_))) => AsmType::I64,
+        _ => AsmType::Void,
+    };
+
     program.functions.push(AsmFunction {
         name,
         signature: AsmFunctionSignature {
             params: Vec::new(),
-            return_type: AsmType::Void,
+            return_type,
             is_variadic: false,
         },
         basic_blocks: vec![fp_core::asmir::AsmBlock {
             id: 0,
             label: Some(Name::new("entry")),
-            instructions,
-            terminator: terminator.unwrap_or(AsmTerminator::Return(None)),
+            instructions: lifted.instructions,
+            terminator: lifted.terminator.unwrap_or(AsmTerminator::Return(None)),
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
-        locals: Vec::new(),
+        locals: lifted.locals,
         stack_slots: Vec::new(),
         frame: None,
         linkage: Linkage::External,

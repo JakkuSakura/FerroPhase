@@ -7,6 +7,7 @@ pub(crate) mod coff;
 pub mod dump;
 pub(crate) mod elf;
 pub(crate) mod macho;
+pub(crate) mod object_writer;
 mod pe;
 
 /// Link an executable for a target format.
