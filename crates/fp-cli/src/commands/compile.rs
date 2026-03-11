@@ -161,6 +161,17 @@ async fn maybe_transpile_cil(input: &Path, output: &Path, args: &CompileArgs) ->
         ));
     }
 
+    let extension = input
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+    if matches!(extension.as_deref(), Some("dll" | "exe")) {
+        return Err(CliError::InvalidInput(
+            "CIL input currently expects textual `.il` (binary .dll/.exe handling is not implemented yet)"
+                .to_string(),
+        ));
+    }
+
     let text = async_fs::read_to_string(input)
         .await
         .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read CIL input: {err}"))))?;

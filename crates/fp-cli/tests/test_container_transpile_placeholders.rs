@@ -61,7 +61,7 @@ async fn compile_rejects_jvm_bytecode_transpile_placeholder() {
 #[tokio::test]
 async fn compile_rejects_cil_transpile_placeholder() {
     let temp_dir = TempDir::new().unwrap();
-    let input_file = temp_dir.path().join("Hello.dll");
+    let input_file = temp_dir.path().join("Hello.il");
     let output_file = temp_dir.path().join("Hello.o");
     fs::write(&input_file, b"dummy").unwrap();
 
