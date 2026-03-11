@@ -67,6 +67,10 @@ pub enum Aarch64ConditionCode {
     Le,
     Gt,
     Ge,
+    Lo,
+    Ls,
+    Hi,
+    Hs,
     NonZero,
 }
 
@@ -246,6 +250,10 @@ fn format_condition(condition: &Aarch64ConditionCode) -> &'static str {
         Aarch64ConditionCode::Le => "le",
         Aarch64ConditionCode::Gt => "gt",
         Aarch64ConditionCode::Ge => "ge",
+        Aarch64ConditionCode::Lo => "ult",
+        Aarch64ConditionCode::Ls => "ule",
+        Aarch64ConditionCode::Hi => "ugt",
+        Aarch64ConditionCode::Hs => "uge",
         Aarch64ConditionCode::NonZero => "nz",
     }
 }
@@ -258,6 +266,10 @@ fn parse_condition(token: &str) -> Result<Aarch64ConditionCode> {
         "le" => Ok(Aarch64ConditionCode::Le),
         "gt" => Ok(Aarch64ConditionCode::Gt),
         "ge" => Ok(Aarch64ConditionCode::Ge),
+        "ult" => Ok(Aarch64ConditionCode::Lo),
+        "ule" => Ok(Aarch64ConditionCode::Ls),
+        "ugt" => Ok(Aarch64ConditionCode::Hi),
+        "uge" => Ok(Aarch64ConditionCode::Hs),
         "nz" => Ok(Aarch64ConditionCode::NonZero),
         _ => Err(Error::from(format!("unknown aarch64 condition: {token}"))),
     }

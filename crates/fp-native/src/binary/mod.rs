@@ -50,6 +50,35 @@ mod tests {
     }
 
     #[test]
+    fn x86_64_lifter_splits_blocks_for_conditional_jump() {
+        // cmp rax, 0; je +1; ret; ret
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&[0x48, 0x3D, 0x00, 0x00, 0x00, 0x00]);
+        bytes.extend_from_slice(&[0x74, 0x01]);
+        bytes.push(0xC3);
+        bytes.push(0xC3);
+
+        let lifted = x86_64::lift_function_bytes(&bytes, &[]).unwrap();
+        assert_eq!(lifted.basic_blocks.len(), 3);
+        assert!(matches!(
+            lifted.basic_blocks[0].terminator,
+            fp_core::asmir::AsmTerminator::CondBr {
+                if_true: 2,
+                if_false: 1,
+                ..
+            }
+        ));
+        assert!(matches!(
+            lifted.basic_blocks[1].terminator,
+            fp_core::asmir::AsmTerminator::Return(_)
+        ));
+        assert!(matches!(
+            lifted.basic_blocks[2].terminator,
+            fp_core::asmir::AsmTerminator::Return(_)
+        ));
+    }
+
+    #[test]
     fn aarch64_lifter_splits_blocks_for_unconditional_branch() {
         let b = 0x1400_0001u32.to_le_bytes();
         let nop = 0xD503_201Fu32.to_le_bytes();
@@ -68,6 +97,39 @@ mod tests {
         assert!(matches!(
             lifted.basic_blocks[1].terminator,
             fp_core::asmir::AsmTerminator::Br(2)
+        ));
+        assert!(matches!(
+            lifted.basic_blocks[2].terminator,
+            fp_core::asmir::AsmTerminator::Return(_)
+        ));
+    }
+
+    #[test]
+    fn aarch64_lifter_splits_blocks_for_conditional_branch() {
+        // cmp x0, x0; b.eq +8; ret; ret
+        let cmp = 0xEB00_001Fu32.to_le_bytes();
+        let b_eq = 0x5400_0020u32.to_le_bytes();
+        let ret = 0xD65F_03C0u32.to_le_bytes();
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&cmp);
+        bytes.extend_from_slice(&b_eq);
+        bytes.extend_from_slice(&ret);
+        bytes.extend_from_slice(&ret);
+
+        let lifted = aarch64::lift_function_bytes(&bytes, &[]).unwrap();
+        assert_eq!(lifted.basic_blocks.len(), 3);
+        assert!(matches!(
+            lifted.basic_blocks[0].terminator,
+            fp_core::asmir::AsmTerminator::CondBr {
+                if_true: 2,
+                if_false: 1,
+                ..
+            }
+        ));
+        assert!(matches!(
+            lifted.basic_blocks[1].terminator,
+            fp_core::asmir::AsmTerminator::Return(_)
         ));
         assert!(matches!(
             lifted.basic_blocks[2].terminator,

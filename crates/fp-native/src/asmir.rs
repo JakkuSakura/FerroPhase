@@ -315,7 +315,11 @@ fn canonicalize_instruction_kind_registers(
         | AsmInstructionKind::Lt(lhs, rhs)
         | AsmInstructionKind::Le(lhs, rhs)
         | AsmInstructionKind::Gt(lhs, rhs)
-        | AsmInstructionKind::Ge(lhs, rhs) => {
+        | AsmInstructionKind::Ge(lhs, rhs)
+        | AsmInstructionKind::Ult(lhs, rhs)
+        | AsmInstructionKind::Ule(lhs, rhs)
+        | AsmInstructionKind::Ugt(lhs, rhs)
+        | AsmInstructionKind::Uge(lhs, rhs) => {
             canonicalize_value(lhs, map, next_virtual_id);
             canonicalize_value(rhs, map, next_virtual_id);
         }
@@ -771,6 +775,10 @@ fn comparison_code_from_kind(kind: &AsmInstructionKind) -> Option<AsmConditionCo
         AsmInstructionKind::Le(..) => Some(AsmConditionCode::Le),
         AsmInstructionKind::Gt(..) => Some(AsmConditionCode::Gt),
         AsmInstructionKind::Ge(..) => Some(AsmConditionCode::Ge),
+        AsmInstructionKind::Ult(..) => Some(AsmConditionCode::Ult),
+        AsmInstructionKind::Ule(..) => Some(AsmConditionCode::Ule),
+        AsmInstructionKind::Ugt(..) => Some(AsmConditionCode::Ugt),
+        AsmInstructionKind::Uge(..) => Some(AsmConditionCode::Uge),
         _ => None,
     }
 }
@@ -1104,6 +1112,10 @@ fn parse_x86_condition_token(token: &str) -> Option<X86ConditionCode> {
         "le" => Some(X86ConditionCode::LessEqual),
         "gt" => Some(X86ConditionCode::Greater),
         "ge" => Some(X86ConditionCode::GreaterEqual),
+        "ult" => Some(X86ConditionCode::Below),
+        "ule" => Some(X86ConditionCode::BelowEqual),
+        "ugt" => Some(X86ConditionCode::Above),
+        "uge" => Some(X86ConditionCode::AboveEqual),
         "nz" => Some(X86ConditionCode::NonZero),
         _ => None,
     }
@@ -1117,6 +1129,10 @@ fn parse_aarch64_condition_token(token: &str) -> Option<Aarch64ConditionCode> {
         "le" => Some(Aarch64ConditionCode::Le),
         "gt" => Some(Aarch64ConditionCode::Gt),
         "ge" => Some(Aarch64ConditionCode::Ge),
+        "ult" => Some(Aarch64ConditionCode::Lo),
+        "ule" => Some(Aarch64ConditionCode::Ls),
+        "ugt" => Some(Aarch64ConditionCode::Hi),
+        "uge" => Some(Aarch64ConditionCode::Hs),
         "nz" => Some(Aarch64ConditionCode::NonZero),
         _ => None,
     }
@@ -1168,7 +1184,11 @@ fn x86_typed_operands(
         | AsmInstructionKind::Lt(lhs, rhs)
         | AsmInstructionKind::Le(lhs, rhs)
         | AsmInstructionKind::Gt(lhs, rhs)
-        | AsmInstructionKind::Ge(lhs, rhs) => {
+        | AsmInstructionKind::Ge(lhs, rhs)
+        | AsmInstructionKind::Ult(lhs, rhs)
+        | AsmInstructionKind::Ule(lhs, rhs)
+        | AsmInstructionKind::Ugt(lhs, rhs)
+        | AsmInstructionKind::Uge(lhs, rhs) => {
             operands.push(x86_operand(lhs, ctx));
             operands.push(x86_operand(rhs, ctx));
         }
@@ -1272,6 +1292,10 @@ fn x86_condition(kind: &AsmInstructionKind) -> Option<X86ConditionCode> {
         AsmInstructionKind::Le(..) => Some(X86ConditionCode::LessEqual),
         AsmInstructionKind::Gt(..) => Some(X86ConditionCode::Greater),
         AsmInstructionKind::Ge(..) => Some(X86ConditionCode::GreaterEqual),
+        AsmInstructionKind::Ult(..) => Some(X86ConditionCode::Below),
+        AsmInstructionKind::Ule(..) => Some(X86ConditionCode::BelowEqual),
+        AsmInstructionKind::Ugt(..) => Some(X86ConditionCode::Above),
+        AsmInstructionKind::Uge(..) => Some(X86ConditionCode::AboveEqual),
         AsmInstructionKind::Select { .. } => Some(X86ConditionCode::NonZero),
         _ => None,
     }
@@ -1478,7 +1502,11 @@ fn aarch64_opcode_name(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> &'sta
         | AsmInstructionKind::Lt(..)
         | AsmInstructionKind::Le(..)
         | AsmInstructionKind::Gt(..)
-        | AsmInstructionKind::Ge(..) => "cmp",
+        | AsmInstructionKind::Ge(..)
+        | AsmInstructionKind::Ult(..)
+        | AsmInstructionKind::Ule(..)
+        | AsmInstructionKind::Ugt(..)
+        | AsmInstructionKind::Uge(..) => "cmp",
         AsmInstructionKind::Load { .. } => "ldr",
         AsmInstructionKind::Store { .. } => "str",
         AsmInstructionKind::Alloca { .. } => "add.sp",
@@ -1537,7 +1565,11 @@ fn aarch64_typed_operands(
         | AsmInstructionKind::Lt(lhs, rhs)
         | AsmInstructionKind::Le(lhs, rhs)
         | AsmInstructionKind::Gt(lhs, rhs)
-        | AsmInstructionKind::Ge(lhs, rhs) => {
+        | AsmInstructionKind::Ge(lhs, rhs)
+        | AsmInstructionKind::Ult(lhs, rhs)
+        | AsmInstructionKind::Ule(lhs, rhs)
+        | AsmInstructionKind::Ugt(lhs, rhs)
+        | AsmInstructionKind::Uge(lhs, rhs) => {
             operands.push(aarch64_operand(lhs, ctx));
             operands.push(aarch64_operand(rhs, ctx));
         }
@@ -1640,6 +1672,10 @@ fn aarch64_condition(kind: &AsmInstructionKind) -> Option<Aarch64ConditionCode> 
         AsmInstructionKind::Le(..) => Some(Aarch64ConditionCode::Le),
         AsmInstructionKind::Gt(..) => Some(Aarch64ConditionCode::Gt),
         AsmInstructionKind::Ge(..) => Some(Aarch64ConditionCode::Ge),
+        AsmInstructionKind::Ult(..) => Some(Aarch64ConditionCode::Lo),
+        AsmInstructionKind::Ule(..) => Some(Aarch64ConditionCode::Ls),
+        AsmInstructionKind::Ugt(..) => Some(Aarch64ConditionCode::Hi),
+        AsmInstructionKind::Uge(..) => Some(Aarch64ConditionCode::Hs),
         AsmInstructionKind::Select { .. } => Some(Aarch64ConditionCode::NonZero),
         _ => None,
     }
@@ -1797,7 +1833,11 @@ fn x86_opcode(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> X86Opcode {
         | AsmInstructionKind::Lt(..)
         | AsmInstructionKind::Le(..)
         | AsmInstructionKind::Gt(..)
-        | AsmInstructionKind::Ge(..) => X86Opcode::Cmp,
+        | AsmInstructionKind::Ge(..)
+        | AsmInstructionKind::Ult(..)
+        | AsmInstructionKind::Ule(..)
+        | AsmInstructionKind::Ugt(..)
+        | AsmInstructionKind::Uge(..) => X86Opcode::Cmp,
         AsmInstructionKind::Load { .. } | AsmInstructionKind::Store { .. } => X86Opcode::Mov,
         AsmInstructionKind::Alloca { .. } => X86Opcode::LeaFrame,
         AsmInstructionKind::GetElementPtr { .. } => X86Opcode::Lea,
@@ -1869,7 +1909,11 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
         | AsmInstructionKind::Lt(lhs, rhs)
         | AsmInstructionKind::Le(lhs, rhs)
         | AsmInstructionKind::Gt(lhs, rhs)
-        | AsmInstructionKind::Ge(lhs, rhs) => {
+        | AsmInstructionKind::Ge(lhs, rhs)
+        | AsmInstructionKind::Ult(lhs, rhs)
+        | AsmInstructionKind::Ule(lhs, rhs)
+        | AsmInstructionKind::Ugt(lhs, rhs)
+        | AsmInstructionKind::Uge(lhs, rhs) => {
             operands.push(value_operand(lhs));
             operands.push(value_operand(rhs));
         }
@@ -2379,6 +2423,10 @@ fn x86_condition_from_asm(condition: &AsmConditionCode) -> X86ConditionCode {
         AsmConditionCode::Le => X86ConditionCode::LessEqual,
         AsmConditionCode::Gt => X86ConditionCode::Greater,
         AsmConditionCode::Ge => X86ConditionCode::GreaterEqual,
+        AsmConditionCode::Ult => X86ConditionCode::Below,
+        AsmConditionCode::Ule => X86ConditionCode::BelowEqual,
+        AsmConditionCode::Ugt => X86ConditionCode::Above,
+        AsmConditionCode::Uge => X86ConditionCode::AboveEqual,
         AsmConditionCode::Nz => X86ConditionCode::NonZero,
     }
 }
@@ -2391,6 +2439,10 @@ fn aarch64_condition_from_asm(condition: &AsmConditionCode) -> Aarch64ConditionC
         AsmConditionCode::Le => Aarch64ConditionCode::Le,
         AsmConditionCode::Gt => Aarch64ConditionCode::Gt,
         AsmConditionCode::Ge => Aarch64ConditionCode::Ge,
+        AsmConditionCode::Ult => Aarch64ConditionCode::Lo,
+        AsmConditionCode::Ule => Aarch64ConditionCode::Ls,
+        AsmConditionCode::Ugt => Aarch64ConditionCode::Hi,
+        AsmConditionCode::Uge => Aarch64ConditionCode::Hs,
         AsmConditionCode::Nz => Aarch64ConditionCode::NonZero,
     }
 }
@@ -2403,6 +2455,10 @@ fn asm_condition_from_x86(condition: &X86ConditionCode) -> AsmConditionCode {
         X86ConditionCode::LessEqual => AsmConditionCode::Le,
         X86ConditionCode::Greater => AsmConditionCode::Gt,
         X86ConditionCode::GreaterEqual => AsmConditionCode::Ge,
+        X86ConditionCode::Below => AsmConditionCode::Ult,
+        X86ConditionCode::BelowEqual => AsmConditionCode::Ule,
+        X86ConditionCode::Above => AsmConditionCode::Ugt,
+        X86ConditionCode::AboveEqual => AsmConditionCode::Uge,
         X86ConditionCode::NonZero => AsmConditionCode::Nz,
     }
 }
@@ -2415,6 +2471,10 @@ fn asm_condition_from_aarch64(condition: &Aarch64ConditionCode) -> AsmConditionC
         Aarch64ConditionCode::Le => AsmConditionCode::Le,
         Aarch64ConditionCode::Gt => AsmConditionCode::Gt,
         Aarch64ConditionCode::Ge => AsmConditionCode::Ge,
+        Aarch64ConditionCode::Lo => AsmConditionCode::Ult,
+        Aarch64ConditionCode::Ls => AsmConditionCode::Ule,
+        Aarch64ConditionCode::Hi => AsmConditionCode::Ugt,
+        Aarch64ConditionCode::Hs => AsmConditionCode::Uge,
         Aarch64ConditionCode::NonZero => AsmConditionCode::Nz,
     }
 }
@@ -2570,6 +2630,10 @@ fn x86_condition_suffix(condition: &X86ConditionCode) -> &'static str {
         X86ConditionCode::LessEqual => "le",
         X86ConditionCode::Greater => "gt",
         X86ConditionCode::GreaterEqual => "ge",
+        X86ConditionCode::Below => "ult",
+        X86ConditionCode::BelowEqual => "ule",
+        X86ConditionCode::Above => "ugt",
+        X86ConditionCode::AboveEqual => "uge",
         X86ConditionCode::NonZero => "nz",
     }
 }
@@ -2582,6 +2646,10 @@ fn aarch64_condition_suffix(condition: &Aarch64ConditionCode) -> &'static str {
         Aarch64ConditionCode::Le => "le",
         Aarch64ConditionCode::Gt => "gt",
         Aarch64ConditionCode::Ge => "ge",
+        Aarch64ConditionCode::Lo => "ult",
+        Aarch64ConditionCode::Ls => "ule",
+        Aarch64ConditionCode::Hi => "ugt",
+        Aarch64ConditionCode::Hs => "uge",
         Aarch64ConditionCode::NonZero => "nz",
     }
 }
@@ -2594,6 +2662,10 @@ fn asm_condition_suffix(condition: &AsmConditionCode) -> &'static str {
         AsmConditionCode::Le => "le",
         AsmConditionCode::Gt => "gt",
         AsmConditionCode::Ge => "ge",
+        AsmConditionCode::Ult => "ult",
+        AsmConditionCode::Ule => "ule",
+        AsmConditionCode::Ugt => "ugt",
+        AsmConditionCode::Uge => "uge",
         AsmConditionCode::Nz => "nz",
     }
 }
@@ -3249,6 +3321,10 @@ fn compare_value_kind(
         X86ConditionCode::LessEqual => AsmInstructionKind::Le(lhs, rhs),
         X86ConditionCode::Greater => AsmInstructionKind::Gt(lhs, rhs),
         X86ConditionCode::GreaterEqual => AsmInstructionKind::Ge(lhs, rhs),
+        X86ConditionCode::Below => AsmInstructionKind::Ult(lhs, rhs),
+        X86ConditionCode::BelowEqual => AsmInstructionKind::Ule(lhs, rhs),
+        X86ConditionCode::Above => AsmInstructionKind::Ugt(lhs, rhs),
+        X86ConditionCode::AboveEqual => AsmInstructionKind::Uge(lhs, rhs),
         X86ConditionCode::NonZero => {
             AsmInstructionKind::Ne(lhs, AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)))
         }
@@ -3376,6 +3452,10 @@ fn aarch64_condition_to_x86_equivalent(condition: Aarch64ConditionCode) -> X86Co
         Aarch64ConditionCode::Le => X86ConditionCode::LessEqual,
         Aarch64ConditionCode::Gt => X86ConditionCode::Greater,
         Aarch64ConditionCode::Ge => X86ConditionCode::GreaterEqual,
+        Aarch64ConditionCode::Lo => X86ConditionCode::Below,
+        Aarch64ConditionCode::Ls => X86ConditionCode::BelowEqual,
+        Aarch64ConditionCode::Hi => X86ConditionCode::Above,
+        Aarch64ConditionCode::Hs => X86ConditionCode::AboveEqual,
         Aarch64ConditionCode::NonZero => X86ConditionCode::NonZero,
     }
 }
@@ -3540,6 +3620,10 @@ fn generic_opcode(kind: &AsmInstructionKind) -> AsmGenericOpcode {
         AsmInstructionKind::Le(..) => AsmGenericOpcode::Le,
         AsmInstructionKind::Gt(..) => AsmGenericOpcode::Gt,
         AsmInstructionKind::Ge(..) => AsmGenericOpcode::Ge,
+        AsmInstructionKind::Ult(..) => AsmGenericOpcode::Ult,
+        AsmInstructionKind::Ule(..) => AsmGenericOpcode::Ule,
+        AsmInstructionKind::Ugt(..) => AsmGenericOpcode::Ugt,
+        AsmInstructionKind::Uge(..) => AsmGenericOpcode::Uge,
         AsmInstructionKind::Load { .. } => AsmGenericOpcode::Load,
         AsmInstructionKind::Store { .. } => AsmGenericOpcode::Store,
         AsmInstructionKind::Alloca { .. } => AsmGenericOpcode::Alloca,

@@ -102,6 +102,10 @@ pub enum X86ConditionCode {
     LessEqual,
     Greater,
     GreaterEqual,
+    Below,
+    BelowEqual,
+    Above,
+    AboveEqual,
     NonZero,
 }
 
@@ -315,6 +319,10 @@ fn format_condition(condition: &X86ConditionCode) -> &'static str {
         X86ConditionCode::LessEqual => "le",
         X86ConditionCode::Greater => "gt",
         X86ConditionCode::GreaterEqual => "ge",
+        X86ConditionCode::Below => "ult",
+        X86ConditionCode::BelowEqual => "ule",
+        X86ConditionCode::Above => "ugt",
+        X86ConditionCode::AboveEqual => "uge",
         X86ConditionCode::NonZero => "nz",
     }
 }
@@ -327,6 +335,10 @@ fn parse_condition(token: &str) -> Result<X86ConditionCode> {
         "le" => Ok(X86ConditionCode::LessEqual),
         "gt" => Ok(X86ConditionCode::Greater),
         "ge" => Ok(X86ConditionCode::GreaterEqual),
+        "ult" => Ok(X86ConditionCode::Below),
+        "ule" => Ok(X86ConditionCode::BelowEqual),
+        "ugt" => Ok(X86ConditionCode::Above),
+        "uge" => Ok(X86ConditionCode::AboveEqual),
         "nz" => Ok(X86ConditionCode::NonZero),
         _ => Err(Error::from(format!("unknown x86 condition: {token}"))),
     }

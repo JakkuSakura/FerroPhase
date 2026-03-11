@@ -8,6 +8,162 @@ use fp_core::asmir::{
 use fp_core::error::{Error, Result};
 use fp_core::lir::CallingConvention;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LastCompare {
+    id: u32,
+    index: usize,
+}
+
+fn decode_b_cond_immediate(word: u32, offset: u64) -> Result<Option<(u8, u64)>> {
+    // B.cond immediate.
+    if (word & 0xFF000010) != 0x54000000 {
+        return Ok(None);
+    }
+    let imm19 = ((word >> 5) & 0x7FFFF) as i32;
+    let imm19 = (imm19 << 13) >> 13;
+    let target = (offset as i64)
+        .saturating_add(4)
+        .saturating_add((imm19 as i64) << 2);
+    if target < 0 {
+        return Err(Error::from("aarch64 conditional branch target underflow"));
+    }
+    let condition = (word & 0x0F) as u8;
+    Ok(Some((condition, target as u64)))
+}
+
+fn decode_cmp_register(word: u32) -> Option<(u8, u8)> {
+    // Alias: `cmp Xn, Xm` -> `subs xzr, Xn, Xm`.
+    // Match the opcode bits and the XZR destination.
+    if (word & 0xFF00001F) != 0xEB00001F {
+        return None;
+    }
+    let rm = ((word >> 16) & 0x1F) as u8;
+    let rn = ((word >> 5) & 0x1F) as u8;
+    Some((rn, rm))
+}
+
+fn decode_cmp_immediate(word: u32) -> Option<(u8, i64)> {
+    // Alias: `cmp Xn, #imm` -> `subs xzr, Xn, #imm`.
+    if (word & 0xFF00001F) != 0xF100001F {
+        return None;
+    }
+    let shift = (word >> 22) & 0x3;
+    if shift != 0 {
+        return None;
+    }
+    let imm12 = ((word >> 10) & 0xFFF) as i64;
+    let rn = ((word >> 5) & 0x1F) as u8;
+    Some((rn, imm12))
+}
+
+fn compare_instruction(
+    id: u32,
+    kind: AsmInstructionKind,
+    opcode: fp_core::asmir::AsmGenericOpcode,
+) -> AsmInstruction {
+    AsmInstruction {
+        id,
+        opcode: AsmOpcode::Generic(opcode),
+        kind,
+        type_hint: None,
+        operands: Vec::new(),
+        implicit_uses: Vec::new(),
+        implicit_defs: Vec::new(),
+        encoding: None,
+        debug_info: None,
+        annotations: Vec::new(),
+    }
+}
+
+fn patch_compare_kind(
+    instructions: &mut [AsmInstruction],
+    compare: &LastCompare,
+    condition: u8,
+) -> Result<()> {
+    let inst = instructions
+        .get_mut(compare.index)
+        .ok_or_else(|| Error::from("missing comparison instruction"))?;
+    if inst.id != compare.id {
+        return Err(Error::from("comparison instruction id mismatch"));
+    }
+    let (lhs, rhs) = match &inst.kind {
+        AsmInstructionKind::Eq(lhs, rhs)
+        | AsmInstructionKind::Ne(lhs, rhs)
+        | AsmInstructionKind::Lt(lhs, rhs)
+        | AsmInstructionKind::Le(lhs, rhs)
+        | AsmInstructionKind::Gt(lhs, rhs)
+        | AsmInstructionKind::Ge(lhs, rhs)
+        | AsmInstructionKind::Ult(lhs, rhs)
+        | AsmInstructionKind::Ule(lhs, rhs)
+        | AsmInstructionKind::Ugt(lhs, rhs)
+        | AsmInstructionKind::Uge(lhs, rhs) => (lhs.clone(), rhs.clone()),
+        _ => {
+            return Err(Error::from(
+                "comparison instruction has unexpected kind for patching",
+            ));
+        }
+    };
+    let (kind, opcode) = compare_kind_from_cond(condition, lhs, rhs)?;
+    inst.kind = kind;
+    inst.opcode = AsmOpcode::Generic(opcode);
+    inst.type_hint = None;
+    Ok(())
+}
+
+fn compare_kind_from_cond(
+    condition: u8,
+    lhs: AsmValue,
+    rhs: AsmValue,
+) -> Result<(AsmInstructionKind, fp_core::asmir::AsmGenericOpcode)> {
+    Ok(match condition {
+        0 => (
+            AsmInstructionKind::Eq(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Eq,
+        ),
+        1 => (
+            AsmInstructionKind::Ne(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Ne,
+        ),
+        10 => (
+            AsmInstructionKind::Ge(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Ge,
+        ),
+        11 => (
+            AsmInstructionKind::Lt(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Lt,
+        ),
+        12 => (
+            AsmInstructionKind::Gt(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Gt,
+        ),
+        13 => (
+            AsmInstructionKind::Le(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Le,
+        ),
+        2 => (
+            AsmInstructionKind::Uge(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Uge,
+        ),
+        3 => (
+            AsmInstructionKind::Ult(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Ult,
+        ),
+        8 => (
+            AsmInstructionKind::Ugt(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Ugt,
+        ),
+        9 => (
+            AsmInstructionKind::Ule(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Ule,
+        ),
+        other => {
+            return Err(Error::from(format!(
+                "unsupported aarch64 condition code: {other}"
+            )));
+        }
+    })
+}
+
 pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<LiftedFunction> {
     if bytes.len() % 4 != 0 {
         return Err(Error::from("aarch64 function size is not 4-byte aligned"));
@@ -30,6 +186,14 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
             continue;
         }
         if let Some(target) = decode_b_immediate(word, offset)? {
+            block_starts.push(target);
+            let fallthrough = offset + 4;
+            if fallthrough < bytes.len() as u64 {
+                block_starts.push(fallthrough);
+            }
+            continue;
+        }
+        if let Some((_, target)) = decode_b_cond_immediate(word, offset)? {
             block_starts.push(target);
             let fallthrough = offset + 4;
             if fallthrough < bytes.len() as u64 {
@@ -59,6 +223,7 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
 
         let mut instructions = Vec::new();
         let mut terminated = false;
+        let mut last_compare: Option<LastCompare> = None;
 
         let mut cursor = block_offset;
         while cursor < next_block_offset {
@@ -81,6 +246,36 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
                     label: None,
                     instructions: std::mem::take(&mut instructions),
                     terminator: fp_core::asmir::AsmTerminator::Return(return_value),
+                    predecessors: Vec::new(),
+                    successors: Vec::new(),
+                });
+                terminated = true;
+                break;
+            }
+
+            if let Some((condition, target)) = decode_b_cond_immediate(word, cursor)? {
+                let if_true = offset_to_block
+                    .get(&target)
+                    .copied()
+                    .ok_or_else(|| Error::from("missing aarch64 conditional target block"))?;
+                let fallthrough = cursor + 4;
+                let if_false = offset_to_block
+                    .get(&fallthrough)
+                    .copied()
+                    .ok_or_else(|| Error::from("missing aarch64 conditional fallthrough block"))?;
+                let compare = last_compare
+                    .as_ref()
+                    .ok_or_else(|| Error::from("conditional branch without comparison"))?;
+                patch_compare_kind(&mut instructions, compare, condition)?;
+                basic_blocks.push(fp_core::asmir::AsmBlock {
+                    id: block_id,
+                    label: None,
+                    instructions: std::mem::take(&mut instructions),
+                    terminator: fp_core::asmir::AsmTerminator::CondBr {
+                        condition: AsmValue::Flags(compare.id),
+                        if_true,
+                        if_false,
+                    },
                     predecessors: Vec::new(),
                     successors: Vec::new(),
                 });
@@ -127,6 +322,42 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
                     annotations: Vec::new(),
                 });
                 next_id += 1;
+                cursor += 4;
+                continue;
+            }
+
+            if let Some((lhs, rhs)) = decode_cmp_register(word) {
+                let lhs_value = ctx.read_gpr(lhs)?;
+                let rhs_value = ctx.read_gpr(rhs)?;
+                let id = next_id;
+                instructions.push(compare_instruction(
+                    id,
+                    AsmInstructionKind::Eq(lhs_value, rhs_value),
+                    fp_core::asmir::AsmGenericOpcode::Eq,
+                ));
+                next_id += 1;
+                last_compare = Some(LastCompare {
+                    id,
+                    index: instructions.len() - 1,
+                });
+                cursor += 4;
+                continue;
+            }
+
+            if let Some((lhs, imm)) = decode_cmp_immediate(word) {
+                let lhs_value = ctx.read_gpr(lhs)?;
+                let rhs_value = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
+                let id = next_id;
+                instructions.push(compare_instruction(
+                    id,
+                    AsmInstructionKind::Eq(lhs_value, rhs_value),
+                    fp_core::asmir::AsmGenericOpcode::Eq,
+                ));
+                next_id += 1;
+                last_compare = Some(LastCompare {
+                    id,
+                    index: instructions.len() - 1,
+                });
                 cursor += 4;
                 continue;
             }

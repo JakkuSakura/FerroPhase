@@ -28,6 +28,7 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
             .unwrap_or(bytes.len() as u64);
         let mut instructions = Vec::new();
         let mut terminated = false;
+        let mut last_compare: Option<LastCompare> = None;
 
         let mut cursor = block_offset;
         while cursor < next_block_offset {
@@ -37,7 +38,13 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
                 .ok_or_else(|| Error::from("missing decoded instruction"))?;
 
             if is_terminator(&inst.kind) {
-                let terminator = lift_terminator(&mut ctx, inst, &offset_to_block)?;
+                let terminator = lift_terminator(
+                    &mut ctx,
+                    inst,
+                    &mut instructions,
+                    &offset_to_block,
+                    &mut last_compare,
+                )?;
                 basic_blocks.push(fp_core::asmir::AsmBlock {
                     id: block_id,
                     label: None,
@@ -50,7 +57,14 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
                 break;
             }
 
-            lift_non_terminator(&mut ctx, inst, relocs, &mut instructions, &mut next_id)?;
+            lift_non_terminator(
+                &mut ctx,
+                inst,
+                relocs,
+                &mut instructions,
+                &mut next_id,
+                &mut last_compare,
+            )?;
             cursor = cursor
                 .checked_add(inst.len as u64)
                 .ok_or_else(|| Error::from("x86_64 lift overflow"))?;
@@ -81,11 +95,171 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
     })
 }
 
+fn compare_instruction(
+    id: u32,
+    kind: AsmInstructionKind,
+    opcode: fp_core::asmir::AsmGenericOpcode,
+) -> AsmInstruction {
+    AsmInstruction {
+        id,
+        opcode: AsmOpcode::Generic(opcode),
+        kind,
+        type_hint: None,
+        operands: Vec::new(),
+        implicit_uses: Vec::new(),
+        implicit_defs: Vec::new(),
+        encoding: None,
+        debug_info: None,
+        annotations: Vec::new(),
+    }
+}
+
+fn value_from_operand(
+    ctx: &mut RegisterLiftContext,
+    operand: Operand,
+    instruction_offset: u64,
+    relocs: &[TextRelocation],
+    instructions: &mut Vec<AsmInstruction>,
+    next_id: &mut u32,
+) -> Result<AsmValue> {
+    match operand {
+        Operand::Imm(value) => Ok(AsmValue::Constant(AsmConstant::Int(value, AsmType::I64))),
+        Operand::Rm(rm) => match rm {
+            RmOperand::Reg(reg) => ctx.read_gpr(reg),
+            RmOperand::Mem(memory) => {
+                let addr = compute_address(
+                    ctx,
+                    memory,
+                    instruction_offset,
+                    relocs,
+                    instructions,
+                    next_id,
+                )?;
+                let id = *next_id;
+                instructions.push(AsmInstruction {
+                    id,
+                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
+                    kind: AsmInstructionKind::Load {
+                        address: addr,
+                        alignment: None,
+                        volatile: false,
+                    },
+                    type_hint: Some(AsmType::I64),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                });
+                *next_id += 1;
+                Ok(AsmValue::Register(id))
+            }
+        },
+    }
+}
+
+fn patch_compare_kind(
+    instructions: &mut [AsmInstruction],
+    compare: &LastCompare,
+    condition: u8,
+) -> Result<()> {
+    let inst = instructions
+        .get_mut(compare.index)
+        .ok_or_else(|| Error::from("missing comparison instruction"))?;
+    if inst.id != compare.id {
+        return Err(Error::from("comparison instruction id mismatch"));
+    }
+    let (lhs, rhs) = compare_operands(&inst.kind)
+        .ok_or_else(|| Error::from("comparison instruction has unexpected kind"))?;
+    let (kind, opcode) = compare_kind_from_condition(condition, lhs, rhs)?;
+    inst.kind = kind;
+    inst.opcode = AsmOpcode::Generic(opcode);
+    inst.type_hint = None;
+    Ok(())
+}
+
+fn compare_operands(kind: &AsmInstructionKind) -> Option<(AsmValue, AsmValue)> {
+    match kind {
+        AsmInstructionKind::Eq(lhs, rhs)
+        | AsmInstructionKind::Ne(lhs, rhs)
+        | AsmInstructionKind::Lt(lhs, rhs)
+        | AsmInstructionKind::Le(lhs, rhs)
+        | AsmInstructionKind::Gt(lhs, rhs)
+        | AsmInstructionKind::Ge(lhs, rhs)
+        | AsmInstructionKind::Ult(lhs, rhs)
+        | AsmInstructionKind::Ule(lhs, rhs)
+        | AsmInstructionKind::Ugt(lhs, rhs)
+        | AsmInstructionKind::Uge(lhs, rhs) => Some((lhs.clone(), rhs.clone())),
+        _ => None,
+    }
+}
+
+fn compare_kind_from_condition(
+    condition: u8,
+    lhs: AsmValue,
+    rhs: AsmValue,
+) -> Result<(AsmInstructionKind, fp_core::asmir::AsmGenericOpcode)> {
+    Ok(match condition {
+        0x4 => (
+            AsmInstructionKind::Eq(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Eq,
+        ),
+        0x5 => (
+            AsmInstructionKind::Ne(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Ne,
+        ),
+        0xC => (
+            AsmInstructionKind::Lt(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Lt,
+        ),
+        0xD => (
+            AsmInstructionKind::Ge(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Ge,
+        ),
+        0xE => (
+            AsmInstructionKind::Le(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Le,
+        ),
+        0xF => (
+            AsmInstructionKind::Gt(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Gt,
+        ),
+        0x2 => (
+            AsmInstructionKind::Ult(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Ult,
+        ),
+        0x3 => (
+            AsmInstructionKind::Uge(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Uge,
+        ),
+        0x6 => (
+            AsmInstructionKind::Ule(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Ule,
+        ),
+        0x7 => (
+            AsmInstructionKind::Ugt(lhs, rhs),
+            fp_core::asmir::AsmGenericOpcode::Ugt,
+        ),
+        other => {
+            return Err(Error::from(format!(
+                "unsupported x86_64 conditional jump: 0x{other:02x}"
+            )));
+        }
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DecodedInstruction {
     offset: u64,
     len: usize,
     kind: Decoded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LastCompare {
+    id: u32,
+    index: usize,
 }
 
 fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
@@ -116,6 +290,16 @@ fn determine_block_starts(decoded: &[DecodedInstruction]) -> Result<Vec<u64>> {
 
     for inst in decoded {
         match inst.kind {
+            Decoded::JccRel { target, .. } => {
+                if !instruction_starts.contains(&target) {
+                    return Err(Error::from("x86_64 jcc target not on instruction boundary"));
+                }
+                starts.push(target);
+                let fallthrough = inst.offset + inst.len as u64;
+                if instruction_starts.contains(&fallthrough) {
+                    starts.push(fallthrough);
+                }
+            }
             Decoded::JmpRel { target } => {
                 if !instruction_starts.contains(&target) {
                     return Err(Error::from("x86_64 jmp target not on instruction boundary"));
@@ -142,18 +326,47 @@ fn determine_block_starts(decoded: &[DecodedInstruction]) -> Result<Vec<u64>> {
 }
 
 fn is_terminator(kind: &Decoded) -> bool {
-    matches!(kind, Decoded::Ret | Decoded::JmpRel { .. })
+    matches!(
+        kind,
+        Decoded::Ret | Decoded::JmpRel { .. } | Decoded::JccRel { .. }
+    )
 }
 
 fn lift_terminator(
     ctx: &mut RegisterLiftContext,
     inst: &DecodedInstruction,
+    instructions: &mut Vec<AsmInstruction>,
     offset_to_block: &std::collections::HashMap<u64, u32>,
+    last_compare: &mut Option<LastCompare>,
 ) -> Result<fp_core::asmir::AsmTerminator> {
     match inst.kind {
         Decoded::Ret => Ok(fp_core::asmir::AsmTerminator::Return(
             ctx.read_return_value(),
         )),
+        Decoded::JccRel { condition, target } => {
+            let if_true = offset_to_block
+                .get(&target)
+                .copied()
+                .ok_or_else(|| Error::from("missing conditional jump target block"))?;
+            let fallthrough = inst.offset + inst.len as u64;
+            let if_false = offset_to_block
+                .get(&fallthrough)
+                .copied()
+                .ok_or_else(|| Error::from("missing conditional jump fallthrough block"))?;
+
+            let compare = last_compare
+                .as_ref()
+                .ok_or_else(|| Error::from("conditional branch without comparison"))?;
+            patch_compare_kind(instructions, compare, condition)?;
+
+            // The branch consumes the flags produced by the compare.
+            // This keeps the terminator independent from ISA-specific condition codes.
+            Ok(fp_core::asmir::AsmTerminator::CondBr {
+                condition: AsmValue::Flags(compare.id),
+                if_true,
+                if_false,
+            })
+        }
         Decoded::JmpRel { target } => {
             let dest = offset_to_block
                 .get(&target)
@@ -171,6 +384,7 @@ fn lift_non_terminator(
     relocs: &[TextRelocation],
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
+    last_compare: &mut Option<LastCompare>,
 ) -> Result<()> {
     match inst.kind {
         Decoded::Nop => Ok(()),
@@ -198,6 +412,53 @@ fn lift_non_terminator(
             ));
             *next_id += 1;
             ctx.write_gpr(dst, AsmValue::Register(id));
+            Ok(())
+        }
+        Decoded::Cmp { lhs, rhs } => {
+            let lhs_value =
+                value_from_operand(ctx, lhs, inst.offset, relocs, instructions, next_id)?;
+            let rhs_value =
+                value_from_operand(ctx, rhs, inst.offset, relocs, instructions, next_id)?;
+            let id = *next_id;
+            instructions.push(compare_instruction(
+                id,
+                AsmInstructionKind::Eq(lhs_value, rhs_value),
+                fp_core::asmir::AsmGenericOpcode::Eq,
+            ));
+            *next_id += 1;
+            *last_compare = Some(LastCompare {
+                id,
+                index: instructions.len() - 1,
+            });
+            Ok(())
+        }
+        Decoded::Test { lhs, rhs } => {
+            let lhs_value =
+                value_from_operand(ctx, lhs, inst.offset, relocs, instructions, next_id)?;
+            let rhs_value =
+                value_from_operand(ctx, rhs, inst.offset, relocs, instructions, next_id)?;
+            let and_id = *next_id;
+            instructions.push(build_binop(
+                and_id,
+                AsmInstructionKind::And(lhs_value, rhs_value),
+                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
+            ));
+            *next_id += 1;
+
+            let cmp_id = *next_id;
+            instructions.push(compare_instruction(
+                cmp_id,
+                AsmInstructionKind::Eq(
+                    AsmValue::Register(and_id),
+                    AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
+                ),
+                fp_core::asmir::AsmGenericOpcode::Eq,
+            ));
+            *next_id += 1;
+            *last_compare = Some(LastCompare {
+                id: cmp_id,
+                index: instructions.len() - 1,
+            });
             Ok(())
         }
         Decoded::MovRmToReg { dst, src } => match src {
@@ -320,7 +581,7 @@ fn lift_non_terminator(
             *next_id += 1;
             Ok(())
         }
-        Decoded::Ret | Decoded::JmpRel { .. } => Ok(()),
+        Decoded::Ret | Decoded::JmpRel { .. } | Decoded::JccRel { .. } => Ok(()),
     }
 }
 
@@ -334,10 +595,19 @@ enum Decoded {
     Ret,
     AddImm { dst: u8, imm: i64 },
     SubImm { dst: u8, imm: i64 },
+    Cmp { lhs: Operand, rhs: Operand },
+    Test { lhs: Operand, rhs: Operand },
     MovRmToReg { dst: u8, src: RmOperand },
     MovRegToRm { dst: RmOperand, src: u8 },
     CallRel32 { imm_offset: usize },
     JmpRel { target: u64 },
+    JccRel { condition: u8, target: u64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Operand {
+    Rm(RmOperand),
+    Imm(i64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -374,6 +644,51 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
     }
     if opcode == 0xC3 {
         return Ok(Some((Decoded::Ret, opcode_index + 1)));
+    }
+
+    if (0x70..=0x7F).contains(&opcode) {
+        // Jcc rel8.
+        let imm = *bytes
+            .get(opcode_index + 1)
+            .ok_or_else(|| Error::from("truncated rel8"))? as i8;
+        let len = opcode_index + 2;
+        let target = (offset as i64)
+            .saturating_add(len as i64)
+            .saturating_add(imm as i64);
+        if target < 0 {
+            return Err(Error::from("x86_64 jcc target underflow"));
+        }
+        return Ok(Some((
+            Decoded::JccRel {
+                condition: opcode & 0x0F,
+                target: target as u64,
+            },
+            len,
+        )));
+    }
+
+    if opcode == 0x0F {
+        let ext = *bytes
+            .get(opcode_index + 1)
+            .ok_or_else(|| Error::from("truncated 0f opcode"))?;
+        if (0x80..=0x8F).contains(&ext) {
+            // Jcc rel32.
+            let imm = read_i32(bytes, opcode_index + 2)? as i64;
+            let len = opcode_index + 2 + 4;
+            let target = (offset as i64)
+                .saturating_add(len as i64)
+                .saturating_add(imm);
+            if target < 0 {
+                return Err(Error::from("x86_64 jcc target underflow"));
+            }
+            return Ok(Some((
+                Decoded::JccRel {
+                    condition: ext & 0x0F,
+                    target: target as u64,
+                },
+                len,
+            )));
+        }
     }
 
     if opcode == 0xEB {
@@ -449,33 +764,80 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
         )));
     }
 
-    // ADD/SUB r/m64, imm8|imm32 for rsp: REX.W 83/81 /0 or /5.
+    // CMP rax, imm32: REX.W 3D imm32.
+    if rex_w && opcode == 0x3D {
+        let imm = read_i32(bytes, opcode_index + 1)?;
+        return Ok(Some((
+            Decoded::Cmp {
+                lhs: Operand::Rm(RmOperand::Reg(0)),
+                rhs: Operand::Imm(imm as i64),
+            },
+            opcode_index + 1 + 4,
+        )));
+    }
+
+    // CMP r/m64, r64: REX.W 39 /r.
+    if rex_w && opcode == 0x39 {
+        let (reg, rm, consumed) = decode_modrm(bytes, opcode_index + 1)?;
+        return Ok(Some((
+            Decoded::Cmp {
+                lhs: Operand::Rm(rm),
+                rhs: Operand::Rm(RmOperand::Reg(reg)),
+            },
+            opcode_index + 1 + consumed,
+        )));
+    }
+
+    // CMP r64, r/m64: REX.W 3B /r.
+    if rex_w && opcode == 0x3B {
+        let (reg, rm, consumed) = decode_modrm(bytes, opcode_index + 1)?;
+        return Ok(Some((
+            Decoded::Cmp {
+                lhs: Operand::Rm(RmOperand::Reg(reg)),
+                rhs: Operand::Rm(rm),
+            },
+            opcode_index + 1 + consumed,
+        )));
+    }
+
+    // TEST r/m64, r64: REX.W 85 /r.
+    if rex_w && opcode == 0x85 {
+        let (reg, rm, consumed) = decode_modrm(bytes, opcode_index + 1)?;
+        return Ok(Some((
+            Decoded::Test {
+                lhs: Operand::Rm(rm),
+                rhs: Operand::Rm(RmOperand::Reg(reg)),
+            },
+            opcode_index + 1 + consumed,
+        )));
+    }
+
+    // ADD/SUB/CMP r/m64, imm8|imm32: REX.W 83/81 /0, /5, /7.
     if rex_w && (opcode == 0x83 || opcode == 0x81) {
-        let modrm = *bytes
-            .get(opcode_index + 1)
-            .ok_or_else(|| Error::from("missing modrm"))?;
-        let mode = (modrm >> 6) & 0b11;
-        let reg = (modrm >> 3) & 0b111;
-        let rm = modrm & 0b111;
-        if mode == 0b11 && rm == 0b100 {
-            let (imm, imm_len) = if opcode == 0x83 {
-                let imm8 = *bytes
-                    .get(opcode_index + 2)
-                    .ok_or_else(|| Error::from("truncated imm8"))? as i8;
-                (imm8 as i64, 1usize)
-            } else {
-                (read_i32(bytes, opcode_index + 2)? as i64, 4usize)
-            };
-            let len = opcode_index + 2 + imm_len;
-            match reg {
-                0 => {
-                    return Ok(Some((Decoded::AddImm { dst: 4, imm }, len)));
-                }
-                5 => {
-                    return Ok(Some((Decoded::SubImm { dst: 4, imm }, len)));
-                }
-                _ => {}
+        let (ext, rm, consumed) = decode_modrm(bytes, opcode_index + 1)?;
+        let imm_offset = opcode_index + 1 + consumed;
+        let (imm, imm_len) = if opcode == 0x83 {
+            let imm8 = *bytes
+                .get(imm_offset)
+                .ok_or_else(|| Error::from("truncated imm8"))? as i8;
+            (imm8 as i64, 1usize)
+        } else {
+            (read_i32(bytes, imm_offset)? as i64, 4usize)
+        };
+        let len = imm_offset + imm_len;
+        match (ext, rm) {
+            (0, RmOperand::Reg(0b100)) => return Ok(Some((Decoded::AddImm { dst: 4, imm }, len))),
+            (5, RmOperand::Reg(0b100)) => return Ok(Some((Decoded::SubImm { dst: 4, imm }, len))),
+            (7, rm) => {
+                return Ok(Some((
+                    Decoded::Cmp {
+                        lhs: Operand::Rm(rm),
+                        rhs: Operand::Imm(imm),
+                    },
+                    len,
+                )));
             }
+            _ => {}
         }
     }
 
