@@ -41,27 +41,47 @@ fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileAr
 // NOTE: URCL input is now supported (see `test_compile_urcl_container.rs`).
 
 #[tokio::test]
-async fn compile_rejects_jvm_bytecode_transpile_placeholder() {
+async fn compile_transpiles_jvm_class_to_native_object() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("Hello.class");
     let output_file = temp_dir.path().join("Hello.o");
-    fs::write(&input_file, b"dummy").unwrap();
 
-    let mut args = base_args(input_file, output_file);
+    let program = fp_jvm::JvmProgram {
+        class: fp_jvm::JvmClass {
+            name: "Hello".to_string(),
+            super_name: "java/lang/Object".to_string(),
+            methods: vec![fp_jvm::JvmMethod {
+                name: "add".to_string(),
+                descriptor: "()I".to_string(),
+                access_flags: 0x0009, // public static
+                code: fp_jvm::JvmCode {
+                    max_stack: 2,
+                    max_locals: 0,
+                    instructions: vec![
+                        fp_jvm::JvmInstr::IConst(40),
+                        fp_jvm::JvmInstr::IConst(2),
+                        fp_jvm::JvmInstr::IAdd,
+                        fp_jvm::JvmInstr::IReturn,
+                    ],
+                },
+            }],
+        },
+    };
+    let emitted = fp_jvm::emit_class_files(&program).unwrap();
+    fs::write(&input_file, &emitted[0].bytes).unwrap();
+
+    let mut args = base_args(input_file, output_file.clone());
     args.source_language = Some("jvm-bytecode".to_string());
 
-    let err = compile_command(args, &CliConfig::default())
-        .await
-        .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("JVM bytecode input currently supports only `--backend jvm-bytecode`"));
+    compile_command(args, &CliConfig::default()).await.unwrap();
+    let bytes = fs::read(&output_file).unwrap();
+    assert!(bytes.starts_with(b"\x7fELF"));
 }
 
 #[tokio::test]
 async fn compile_rejects_cil_transpile_placeholder() {
     let temp_dir = TempDir::new().unwrap();
-    let input_file = temp_dir.path().join("Hello.il");
+    let input_file = temp_dir.path().join("Hello.dll");
     let output_file = temp_dir.path().join("Hello.o");
     fs::write(&input_file, b"dummy").unwrap();
 
@@ -73,6 +93,6 @@ async fn compile_rejects_cil_transpile_placeholder() {
         .unwrap_err();
     assert!(err
         .to_string()
-        .contains("CIL input currently supports only `--backend cil` or `--backend dotnet`"));
+        .contains("binary .dll/.exe -> native transpilation is not implemented yet"));
 }
 

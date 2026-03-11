@@ -19,4 +19,7 @@ pub enum JvmError {
     MissingTerminator(usize),
     #[error("integer literal out of range for JVM int: {0}")]
     IntOutOfRange(i64),
+
+    #[error("invalid JVM classfile: {0}")]
+    InvalidClassFile(String),
 }

@@ -165,19 +165,25 @@ async fn maybe_transpile_cil(input: &Path, output: &Path, args: &CompileArgs) ->
         .extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_ascii_lowercase());
-    if matches!(extension.as_deref(), Some("dll" | "exe")) {
-        return Err(CliError::InvalidInput(
-            "CIL input currently expects textual `.il` (binary .dll/.exe handling is not implemented yet)"
-                .to_string(),
-        ));
-    }
+    let is_binary_pe = matches!(extension.as_deref(), Some("dll" | "exe"));
 
-    let text = async_fs::read_to_string(input)
-        .await
-        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read CIL input: {err}"))))?;
+    let text = if is_binary_pe {
+        String::new()
+    } else {
+        async_fs::read_to_string(input)
+            .await
+            .map_err(|err| {
+                CliError::Io(io::Error::other(format!("Failed to read CIL input: {err}")))
+            })?
+    };
 
     match args.backend {
         BackendKind::Cil => {
+            if is_binary_pe {
+                return Err(CliError::InvalidInput(
+                    "`--backend cil` currently expects textual `.il` input".to_string(),
+                ));
+            }
             let output_path = if args.output.is_none() {
                 input.with_extension("il")
             } else {
@@ -197,8 +203,75 @@ async fn maybe_transpile_cil(input: &Path, output: &Path, args: &CompileArgs) ->
             } else {
                 output.to_path_buf()
             };
-            fp_dotnet::assemble_cil_text(&text, &output_path)
-                .map_err(|err| CliError::Compilation(format!("Failed to assemble CIL: {err}")))?;
+            if is_binary_pe {
+                if let Some(parent) = output_path.parent() {
+                    std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+                }
+                async_fs::copy(input, &output_path)
+                    .await
+                    .map_err(|err| {
+                        CliError::Io(io::Error::other(format!(
+                            "Failed to copy dotnet assembly: {err}"
+                        )))
+                    })?;
+            } else {
+                fp_dotnet::assemble_cil_text(&text, &output_path)
+                    .map_err(|err| CliError::Compilation(format!("Failed to assemble CIL: {err}")))?;
+            }
+            Ok(Some(output_path))
+        }
+        BackendKind::Binary => {
+            if is_binary_pe {
+                return Err(CliError::InvalidInput(
+                    "binary .dll/.exe -> native transpilation is not implemented yet"
+                        .to_string(),
+                ));
+            }
+            let lir_program = fp_dotnet::parse_cil_program(&text)
+                .map_err(|err| CliError::Compilation(format!("Failed to parse CIL: {err}")))?;
+            let output_path = if args.output.is_none() {
+                match args.emitter {
+                    EmitterKind::Goasm => input.with_extension("s"),
+                    EmitterKind::Urcl => input.with_extension("urcl"),
+                    _ => input.with_extension("o"),
+                }
+            } else {
+                output.to_path_buf()
+            };
+            if let Some(parent) = output_path.parent() {
+                std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+            }
+            match args.emitter {
+                EmitterKind::Native => {
+                    let (format, arch) = emit::detect_target(args.target_triple.as_deref())
+                        .map_err(|err| CliError::Compilation(err.to_string()))?;
+                    let plan = fp_native::emit::emit_plan(&lir_program, format, arch)
+                        .map_err(|err| CliError::Compilation(format!("Failed to emit native object: {err}")))?;
+                    fp_native::emit::write_object(&output_path, &plan).map_err(|err| {
+                        CliError::Compilation(format!("Failed to write object output: {err}"))
+                    })?;
+                }
+                EmitterKind::Goasm => {
+                    let config = fp_goasm::config::GoAsmConfig::new(&output_path)
+                        .with_target_triple(args.target_triple.clone());
+                    let emitter = fp_goasm::GoAsmEmitter::new(config);
+                    emitter.emit(lir_program, Some(input)).map_err(|err| {
+                        CliError::Compilation(format!("Failed to emit Go asm: {err}"))
+                    })?;
+                }
+                EmitterKind::Urcl => {
+                    let emitter = fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(&output_path));
+                    emitter.emit(lir_program, Some(input)).map_err(|err| {
+                        CliError::Compilation(format!("Failed to emit URCL: {err}"))
+                    })?;
+                }
+                other => {
+                    return Err(CliError::InvalidInput(format!(
+                        "CIL input does not support `--emitter {}` yet",
+                        other.as_str()
+                    )));
+                }
+            }
             Ok(Some(output_path))
         }
         other => Err(CliError::InvalidInput(format!(
@@ -219,11 +292,6 @@ async fn maybe_transpile_jvm_bytecode(
         return Ok(None);
     }
 
-    if args.backend != BackendKind::JvmBytecode {
-        return Err(CliError::InvalidInput(
-            "JVM bytecode input currently supports only `--backend jvm-bytecode`".to_string(),
-        ));
-    }
     if args.exec {
         return Err(CliError::InvalidInput(
             "`--exec` is not supported for JVM bytecode transpilation".to_string(),
@@ -239,42 +307,87 @@ async fn maybe_transpile_jvm_bytecode(
         ));
     }
 
-    let output_path = if args.output.is_none() {
-        input.with_extension("class")
-    } else {
-        output.to_path_buf()
-    };
+    let output_path = output.to_path_buf();
     if let Some(parent) = output_path.parent() {
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
     }
 
-    match output_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("jar") => {
-            let stem = input
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
-            let jar = fp_jvm::emit_executable_jar(
-                &[fp_jvm::EmittedClass {
-                    internal_name: stem.to_string(),
-                    bytes,
-                }],
-                stem,
-            )
-            .map_err(|err| CliError::Compilation(format!("Failed to emit jar: {err}")))?;
-            async_fs::write(&output_path, jar)
-                .await
-                .map_err(|err| CliError::Io(io::Error::other(format!("Failed to write jar output: {err}"))))?;
+    match args.backend {
+        BackendKind::JvmBytecode => {
+            match output_path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.to_ascii_lowercase())
+                .as_deref()
+            {
+                Some("jar") => {
+                    let stem = input
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
+                    let jar = fp_jvm::emit_executable_jar(
+                        &[fp_jvm::EmittedClass {
+                            internal_name: stem.to_string(),
+                            bytes,
+                        }],
+                        stem,
+                    )
+                    .map_err(|err| CliError::Compilation(format!("Failed to emit jar: {err}")))?;
+                    async_fs::write(&output_path, jar).await.map_err(|err| {
+                        CliError::Io(io::Error::other(format!("Failed to write jar output: {err}")))
+                    })?;
+                }
+                _ => {
+                    async_fs::write(&output_path, bytes).await.map_err(|err| {
+                        CliError::Io(io::Error::other(format!(
+                            "Failed to write class output: {err}"
+                        )))
+                    })?;
+                }
+            }
         }
-        _ => {
-            async_fs::write(&output_path, bytes)
-                .await
-                .map_err(|err| CliError::Io(io::Error::other(format!("Failed to write class output: {err}"))))?;
+        BackendKind::Binary => {
+            let lir_program = fp_jvm::parse_class_to_lir(&bytes)
+                .map_err(|err| CliError::Compilation(format!("Failed to parse classfile: {err}")))?;
+
+            match args.emitter {
+                EmitterKind::Native => {
+                    let (format, arch) = emit::detect_target(args.target_triple.as_deref())
+                        .map_err(|err| CliError::Compilation(err.to_string()))?;
+                    let plan = fp_native::emit::emit_plan(&lir_program, format, arch).map_err(|err| {
+                        CliError::Compilation(format!("Failed to emit native object: {err}"))
+                    })?;
+                    fp_native::emit::write_object(&output_path, &plan).map_err(|err| {
+                        CliError::Compilation(format!("Failed to write object output: {err}"))
+                    })?;
+                }
+                EmitterKind::Goasm => {
+                    let config = fp_goasm::config::GoAsmConfig::new(&output_path)
+                        .with_target_triple(args.target_triple.clone());
+                    let emitter = fp_goasm::GoAsmEmitter::new(config);
+                    emitter.emit(lir_program, Some(input)).map_err(|err| {
+                        CliError::Compilation(format!("Failed to emit Go asm: {err}"))
+                    })?;
+                }
+                EmitterKind::Urcl => {
+                    let emitter = fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(&output_path));
+                    emitter.emit(lir_program, Some(input)).map_err(|err| {
+                        CliError::Compilation(format!("Failed to emit URCL: {err}"))
+                    })?;
+                }
+                other => {
+                    return Err(CliError::InvalidInput(format!(
+                        "JVM bytecode input does not support `--emitter {}` yet",
+                        other.as_str()
+                    )));
+                }
+            }
+        }
+        other => {
+            return Err(CliError::InvalidInput(format!(
+                "JVM bytecode input currently supports only `--backend jvm-bytecode` or `--backend binary` (got {})",
+                other.as_str()
+            )));
         }
     }
 
@@ -576,6 +689,12 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         let goasm_container_input =
             detect_container_transpile_source(args.source_language.as_deref(), input_file)
                 == Some(ContainerTranspileSource::GoAsm);
+        let cil_container_input =
+            detect_container_transpile_source(args.source_language.as_deref(), input_file)
+                == Some(ContainerTranspileSource::Cil);
+        let jvm_container_input =
+            detect_container_transpile_source(args.source_language.as_deref(), input_file)
+                == Some(ContainerTranspileSource::JvmBytecode);
 
         let output_file = determine_output_path(
             input_file,
@@ -587,6 +706,8 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             detect_native_object_source(args.source_language.as_deref(), input_file),
             urcl_container_input,
             goasm_container_input,
+            cil_container_input,
+            jvm_container_input,
             emit_text_bytecode,
             output_is_dir,
             args.exec,
@@ -1500,6 +1621,8 @@ fn determine_output_path(
     native_object_input: bool,
     urcl_container_input: bool,
     goasm_container_input: bool,
+    cil_container_input: bool,
+    jvm_container_input: bool,
     emit_text_bytecode: bool,
     output_is_dir: bool,
     exec_requested: bool,
@@ -1537,6 +1660,12 @@ fn determine_output_path(
     let goasm_object_target = matches!(backend, BackendKind::Binary)
         && emitter == EmitterKind::Native
         && goasm_container_input;
+    let cil_object_target = matches!(backend, BackendKind::Binary)
+        && emitter == EmitterKind::Native
+        && cil_container_input;
+    let jvm_object_target = matches!(backend, BackendKind::Binary)
+        && emitter == EmitterKind::Native
+        && jvm_container_input;
 
     if let Some(output) = output {
         if output_is_dir {
@@ -1553,6 +1682,10 @@ fn determine_output_path(
                     } else if urcl_object_target {
                         "o"
                     } else if goasm_object_target {
+                        "o"
+                    } else if cil_object_target {
+                        "o"
+                    } else if jvm_object_target {
                         "o"
                     } else if is_windows_target(target_triple) {
                         "exe"
@@ -1598,6 +1731,8 @@ fn determine_output_path(
             && !native_object_target
             && !urcl_object_target
             && !goasm_object_target
+            && !cil_object_target
+            && !jvm_object_target
         {
             let mut path = output.clone();
             let desired_ext = if is_windows_target(target_triple) {
@@ -1628,6 +1763,14 @@ fn determine_output_path(
         }
 
         if goasm_object_target {
+            return Ok(output.clone());
+        }
+
+        if cil_object_target {
+            return Ok(output.clone());
+        }
+
+        if jvm_object_target {
             return Ok(output.clone());
         }
 
@@ -1668,6 +1811,10 @@ fn determine_output_path(
                 } else if urcl_object_target {
                     "o"
                 } else if goasm_object_target {
+                    "o"
+                } else if cil_object_target {
+                    "o"
+                } else if jvm_object_target {
                     "o"
                 } else if is_windows_target(target_triple) {
                     "exe"
