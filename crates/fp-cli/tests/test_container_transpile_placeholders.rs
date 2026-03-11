@@ -55,7 +55,7 @@ async fn compile_rejects_jvm_bytecode_transpile_placeholder() {
         .unwrap_err();
     assert!(err
         .to_string()
-        .contains("placeholder for the generic container transpiler"));
+        .contains("JVM bytecode input currently supports only `--backend jvm-bytecode`"));
 }
 
 #[tokio::test]
@@ -73,6 +73,6 @@ async fn compile_rejects_cil_transpile_placeholder() {
         .unwrap_err();
     assert!(err
         .to_string()
-        .contains("placeholder for the generic container transpiler"));
+        .contains("CIL input currently supports only `--backend cil` or `--backend dotnet`"));
 }
 

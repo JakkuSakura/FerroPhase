@@ -23,6 +23,10 @@ pub fn emit_assembly(node: &Node, output_path: &Path, keep_cil: bool) -> Result<
     assemble_cil(&cil, output_path, keep_cil).map_err(fp_core::error::Error::from)
 }
 
+pub fn assemble_cil_text(cil: &str, output_path: &Path) -> Result<PathBuf> {
+    assemble_cil(cil, output_path, false).map_err(fp_core::error::Error::from)
+}
+
 fn assemble_cil(cil: &str, output_path: &Path, keep_cil: bool) -> EyreResult<PathBuf> {
     let assembly_kind = assembly_kind_for(output_path);
     let cil_path = if keep_cil {

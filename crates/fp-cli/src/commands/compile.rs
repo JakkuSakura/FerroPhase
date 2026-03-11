@@ -148,6 +148,128 @@ pub struct CompileArgs {
     pub single_world: bool,
 }
 
+async fn maybe_transpile_cil(input: &Path, output: &Path, args: &CompileArgs) -> Result<Option<PathBuf>> {
+    if detect_container_transpile_source(args.source_language.as_deref(), input)
+        != Some(ContainerTranspileSource::Cil)
+    {
+        return Ok(None);
+    }
+
+    if args.exec {
+        return Err(CliError::InvalidInput(
+            "`--exec` is not supported for CIL transpilation".to_string(),
+        ));
+    }
+
+    let text = async_fs::read_to_string(input)
+        .await
+        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read CIL input: {err}"))))?;
+
+    match args.backend {
+        BackendKind::Cil => {
+            let output_path = if args.output.is_none() {
+                input.with_extension("il")
+            } else {
+                output.to_path_buf()
+            };
+            if let Some(parent) = output_path.parent() {
+                std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+            }
+            async_fs::write(&output_path, text)
+                .await
+                .map_err(|err| CliError::Io(io::Error::other(format!("Failed to write CIL output: {err}"))))?;
+            Ok(Some(output_path))
+        }
+        BackendKind::Dotnet => {
+            let output_path = if args.output.is_none() {
+                input.with_extension("exe")
+            } else {
+                output.to_path_buf()
+            };
+            fp_dotnet::assemble_cil_text(&text, &output_path)
+                .map_err(|err| CliError::Compilation(format!("Failed to assemble CIL: {err}")))?;
+            Ok(Some(output_path))
+        }
+        other => Err(CliError::InvalidInput(format!(
+            "CIL input currently supports only `--backend cil` or `--backend dotnet` (got {})",
+            other.as_str()
+        ))),
+    }
+}
+
+async fn maybe_transpile_jvm_bytecode(
+    input: &Path,
+    output: &Path,
+    args: &CompileArgs,
+) -> Result<Option<PathBuf>> {
+    if detect_container_transpile_source(args.source_language.as_deref(), input)
+        != Some(ContainerTranspileSource::JvmBytecode)
+    {
+        return Ok(None);
+    }
+
+    if args.backend != BackendKind::JvmBytecode {
+        return Err(CliError::InvalidInput(
+            "JVM bytecode input currently supports only `--backend jvm-bytecode`".to_string(),
+        ));
+    }
+    if args.exec {
+        return Err(CliError::InvalidInput(
+            "`--exec` is not supported for JVM bytecode transpilation".to_string(),
+        ));
+    }
+
+    let bytes = async_fs::read(input)
+        .await
+        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read class input: {err}"))))?;
+    if !bytes.starts_with(&[0xCA, 0xFE, 0xBA, 0xBE]) {
+        return Err(CliError::InvalidInput(
+            "invalid .class input (missing CAFEBABE header)".to_string(),
+        ));
+    }
+
+    let output_path = if args.output.is_none() {
+        input.with_extension("class")
+    } else {
+        output.to_path_buf()
+    };
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
+
+    match output_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jar") => {
+            let stem = input
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
+            let jar = fp_jvm::emit_executable_jar(
+                &[fp_jvm::EmittedClass {
+                    internal_name: stem.to_string(),
+                    bytes,
+                }],
+                stem,
+            )
+            .map_err(|err| CliError::Compilation(format!("Failed to emit jar: {err}")))?;
+            async_fs::write(&output_path, jar)
+                .await
+                .map_err(|err| CliError::Io(io::Error::other(format!("Failed to write jar output: {err}"))))?;
+        }
+        _ => {
+            async_fs::write(&output_path, bytes)
+                .await
+                .map_err(|err| CliError::Io(io::Error::other(format!("Failed to write class output: {err}"))))?;
+        }
+    }
+
+    Ok(Some(output_path))
+}
+
 async fn maybe_transpile_goasm(input: &Path, output: &Path, args: &CompileArgs) -> Result<Option<PathBuf>> {
     if detect_container_transpile_source(args.source_language.as_deref(), input)
         != Some(ContainerTranspileSource::GoAsm)
@@ -336,6 +458,7 @@ fn detect_container_transpile_source(
         Some("goasm") => Some(ContainerTranspileSource::GoAsm),
         Some("urcl") => Some(ContainerTranspileSource::Urcl),
         Some("class") => Some(ContainerTranspileSource::JvmBytecode),
+        Some("il") => Some(ContainerTranspileSource::Cil),
         Some("dll" | "exe") => Some(ContainerTranspileSource::Cil),
         _ => None,
     }
@@ -582,6 +705,14 @@ async fn compile_file(
     }
 
     if let Some(artifact) = maybe_transpile_goasm(input, output, args).await? {
+        return Ok(Some(artifact));
+    }
+
+    if let Some(artifact) = maybe_transpile_cil(input, output, args).await? {
+        return Ok(Some(artifact));
+    }
+
+    if let Some(artifact) = maybe_transpile_jvm_bytecode(input, output, args).await? {
         return Ok(Some(artifact));
     }
 
