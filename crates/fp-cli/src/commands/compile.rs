@@ -1094,6 +1094,12 @@ async fn maybe_transpile_native_object(
             "Failed to read object input: {err}"
         )))
     })?;
+
+    // Parse container metadata up-front so this path can become format-generic
+    // without relying on ad-hoc per-format detection.
+    let registry = crate::container::ContainerRegistry::new();
+    let _container = registry.read_native_object(&bytes)?;
+
     let asmir = fp_native::binary::lift_object_to_asmir(&bytes)
         .map_err(|err| CliError::Compilation(format!("Failed to lift object file: {err}")))?;
 
