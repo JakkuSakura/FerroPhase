@@ -18,6 +18,7 @@ fp-csharp = { path = "../fp-csharp" }
 fp-dotnet = { path = "../fp-dotnet" }
 fp-python = { path = "../fp-python" }
 fp-golang = { path = "../fp-golang" }
+fp-godot = { path = "../fp-godot" }
 fp-llvm = { path = "../fp-llvm" }
 fp-lang = { path = "../fp-lang" }
 fp-wit = { path = "../fp-wit" }

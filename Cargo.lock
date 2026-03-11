@@ -1355,6 +1355,7 @@ dependencies = [
  "fp-ebpf",
  "fp-flatbuffers",
  "fp-goasm",
+ "fp-godot",
  "fp-golang",
  "fp-hcl",
  "fp-interpret",
@@ -1483,6 +1484,16 @@ version = "0.1.0"
 dependencies = [
  "fp-core",
  "tempfile",
+]
+
+[[package]]
+name = "fp-godot"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "fp-core",
+ "itertools 0.13.0",
+ "pretty_assertions",
 ]
 
 [[package]]

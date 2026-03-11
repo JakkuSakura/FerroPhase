@@ -1,0 +1,12 @@
+[package]
+name = "fp-godot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eyre = "0.6"
+fp-core = { path = "../fp-core" }
+itertools = "0.13"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
