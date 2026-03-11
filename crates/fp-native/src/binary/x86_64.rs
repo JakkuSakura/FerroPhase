@@ -1,8 +1,8 @@
 use crate::binary::{LiftedFunction, TextRelocation};
+use fp_core::asmir::AsmLocal;
 use fp_core::asmir::{
     AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmType, AsmValue,
 };
-use fp_core::asmir::AsmLocal;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Name};
 
@@ -243,31 +243,48 @@ fn decode_instruction(bytes: &[u8]) -> Result<Option<(Decoded, usize)>> {
     if opcode == 0xE8 {
         // CALL rel32.
         read_i32(bytes, opcode_index + 1)?;
-        return Ok(Some((Decoded::CallRel32 { imm_offset: opcode_index + 1 }, opcode_index + 1 + 4)));
+        return Ok(Some((
+            Decoded::CallRel32 {
+                imm_offset: opcode_index + 1,
+            },
+            opcode_index + 1 + 4,
+        )));
     }
 
     // ADD rax, imm32: REX.W 05 imm32.
     if rex_w && opcode == 0x05 {
         let imm = read_i32(bytes, opcode_index + 1)?;
-        return Ok(Some((Decoded::AddImm32 { dst: 0, imm }, opcode_index + 1 + 4)));
+        return Ok(Some((
+            Decoded::AddImm32 { dst: 0, imm },
+            opcode_index + 1 + 4,
+        )));
     }
 
     // SUB rax, imm32: REX.W 2D imm32.
     if rex_w && opcode == 0x2D {
         let imm = read_i32(bytes, opcode_index + 1)?;
-        return Ok(Some((Decoded::SubImm32 { dst: 0, imm }, opcode_index + 1 + 4)));
+        return Ok(Some((
+            Decoded::SubImm32 { dst: 0, imm },
+            opcode_index + 1 + 4,
+        )));
     }
 
     // MOV r64, r/m64: REX.W 8B /r.
     if rex_w && opcode == 0x8B {
         let (reg, rm, consumed) = decode_modrm(bytes, opcode_index + 1)?;
-        return Ok(Some((Decoded::MovRmToReg { dst: reg, src: rm }, opcode_index + 1 + consumed)));
+        return Ok(Some((
+            Decoded::MovRmToReg { dst: reg, src: rm },
+            opcode_index + 1 + consumed,
+        )));
     }
 
     // MOV r/m64, r64: REX.W 89 /r.
     if rex_w && opcode == 0x89 {
         let (reg, rm, consumed) = decode_modrm(bytes, opcode_index + 1)?;
-        return Ok(Some((Decoded::MovRegToRm { dst: rm, src: reg }, opcode_index + 1 + consumed)));
+        return Ok(Some((
+            Decoded::MovRegToRm { dst: rm, src: reg },
+            opcode_index + 1 + consumed,
+        )));
     }
 
     Ok(None)
@@ -546,4 +563,3 @@ fn reg_name(index: u8) -> &'static str {
         _ => "r0",
     }
 }
-

@@ -358,7 +358,9 @@ fn default_argument_setup(descriptor: &str) -> Result<Vec<JvmInstr>, JvmError> {
     let mut instructions = Vec::new();
     let mut chars = descriptor.chars().peekable();
     if chars.next() != Some('(') {
-        return Err(JvmError::Lowering(format!("invalid method descriptor: {descriptor}")));
+        return Err(JvmError::Lowering(format!(
+            "invalid method descriptor: {descriptor}"
+        )));
     }
 
     while let Some(ch) = chars.peek().copied() {

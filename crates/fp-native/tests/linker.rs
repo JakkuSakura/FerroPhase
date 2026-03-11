@@ -21,7 +21,11 @@ fn emit_plan_carries_selected_asmir() {
     assert_eq!(plan.asmir.functions.len(), 1);
     assert_eq!(plan.asmir.functions[0].name.as_str(), "main");
     assert_eq!(plan.asmir.functions[0].basic_blocks.len(), 1);
-    assert!(plan.asmir.functions[0].basic_blocks[0].instructions.is_empty());
+    assert!(
+        plan.asmir.functions[0].basic_blocks[0]
+            .instructions
+            .is_empty()
+    );
 }
 
 #[test]

@@ -1,11 +1,8 @@
-use fp_core::error::{Error, Result};
 use fp_core::asmir::{
-    AsmArchitecture, AsmBlock, AsmBlockId as BasicBlockId,
-    AsmConstant,
-    AsmFunction, AsmInstructionKind,
-    AsmIntrinsicKind, AsmProgram,
-    AsmTerminator, AsmType, AsmValue,
+    AsmArchitecture, AsmBlock, AsmBlockId as BasicBlockId, AsmConstant, AsmFunction,
+    AsmInstructionKind, AsmIntrinsicKind, AsmProgram, AsmTerminator, AsmType, AsmValue,
 };
+use fp_core::error::{Error, Result};
 use fp_core::lir::layout::{align_of, size_of, struct_layout};
 use std::collections::{BTreeSet, HashMap};
 
@@ -325,10 +322,7 @@ fn align_to(value: i32, align: i32) -> i32 {
     ((value + align - 1) / align) * align
 }
 
-pub fn emit_text_from_asmir(
-    program: &AsmProgram,
-    format: TargetFormat,
-) -> Result<CodegenOutput> {
+pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Result<CodegenOutput> {
     if !matches!(program.target.architecture, AsmArchitecture::X86_64) {
         return Err(Error::from("x86_64 emitter requires x86_64 AsmIR input"));
     }
@@ -350,8 +344,11 @@ pub fn emit_text_from_asmir(
 
     emit_const_globals(program, &mut rodata, &mut rodata_symbols)?;
 
-    let defined_functions: Vec<&AsmFunction> =
-        program.functions.iter().filter(|func| !func.is_declaration).collect();
+    let defined_functions: Vec<&AsmFunction> = program
+        .functions
+        .iter()
+        .filter(|func| !func.is_declaration)
+        .collect();
 
     for (index, func) in defined_functions.iter().copied().enumerate() {
         asm.bind(Label::Function(index as u32));

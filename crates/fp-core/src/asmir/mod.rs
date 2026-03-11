@@ -617,7 +617,10 @@ mod tests {
                 label: Some(Name::new("entry")),
                 instructions: vec![AsmInstruction {
                     id: 0,
-                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::Int(0, Ty::I32))),
+                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::Int(
+                        0,
+                        Ty::I32,
+                    ))),
                     type_hint: Some(Ty::I32),
                     opcode: AsmOpcode::Generic(AsmGenericOpcode::Freeze),
                     operands: vec![

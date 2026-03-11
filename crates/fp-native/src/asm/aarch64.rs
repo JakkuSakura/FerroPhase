@@ -3,8 +3,7 @@ use fp_core::error::{Error, Result};
 use fp_core::lir::Name;
 
 use crate::asm::text::{
-    parse_block_id, parse_i128, parse_u16, split_mnemonic_operands, split_operands,
-    strip_comment,
+    parse_block_id, parse_i128, parse_u16, split_mnemonic_operands, split_operands, strip_comment,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +34,10 @@ pub struct Aarch64InstructionDetail {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Aarch64Operand {
-    Register { reg: Aarch64Register, access: OperandAccess },
+    Register {
+        reg: Aarch64Register,
+        access: OperandAccess,
+    },
     Immediate(i128),
     Memory(Aarch64MemoryOperand),
     Block(AsmBlockId),
@@ -139,7 +141,15 @@ fn format_instruction(inst: &Aarch64InstructionDetail) -> String {
     if inst.operands.is_empty() {
         mnemonic
     } else {
-        format!("{} {}", mnemonic, inst.operands.iter().map(format_operand).collect::<Vec<_>>().join(", "))
+        format!(
+            "{} {}",
+            mnemonic,
+            inst.operands
+                .iter()
+                .map(format_operand)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 }
 
@@ -147,7 +157,11 @@ fn format_terminator(term: &Aarch64TerminatorDetail) -> String {
     let mnemonic = match term.opcode {
         Aarch64TerminatorOpcode::BCond => format!(
             "b.{}",
-            format_condition(term.condition.as_ref().unwrap_or(&Aarch64ConditionCode::NonZero))
+            format_condition(
+                term.condition
+                    .as_ref()
+                    .unwrap_or(&Aarch64ConditionCode::NonZero)
+            )
         ),
         Aarch64TerminatorOpcode::Ret => "ret".to_string(),
         Aarch64TerminatorOpcode::B => "b".to_string(),
@@ -163,7 +177,15 @@ fn format_terminator(term: &Aarch64TerminatorDetail) -> String {
     if term.targets.is_empty() {
         mnemonic
     } else {
-        format!("{} {}", mnemonic, term.targets.iter().map(|id| format!("bb{id}")).collect::<Vec<_>>().join(", "))
+        format!(
+            "{} {}",
+            mnemonic,
+            term.targets
+                .iter()
+                .map(|id| format!("bb{id}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 }
 
@@ -346,8 +368,16 @@ fn is_terminator_line(line: &str) -> bool {
     let (mnemonic, _) = split_mnemonic_operands(line);
     matches!(
         mnemonic,
-        "ret" | "b" | "br" | "switch" | "invoke" | "resume" | "cleanupret"
-            | "catchret" | "catchswitch" | "brk"
+        "ret"
+            | "b"
+            | "br"
+            | "switch"
+            | "invoke"
+            | "resume"
+            | "cleanupret"
+            | "catchret"
+            | "catchswitch"
+            | "brk"
     ) || mnemonic.starts_with("b.")
 }
 
@@ -365,7 +395,10 @@ fn parse_instruction(line: &str) -> Result<Aarch64InstructionDetail> {
         parsed_operands.push(parse_operand(operand, operand_access(&opcode, index))?);
     }
     let call_target = if opcode == "bl" {
-        parsed_operands.first().map(call_target_from_operand).transpose()?
+        parsed_operands
+            .first()
+            .map(call_target_from_operand)
+            .transpose()?
     } else {
         None
     };
@@ -395,7 +428,11 @@ fn parse_terminator(line: &str) -> Result<Aarch64TerminatorDetail> {
                 "catchret" => Aarch64TerminatorOpcode::CatchRet,
                 "catchswitch" => Aarch64TerminatorOpcode::CatchSwitch,
                 "brk" => Aarch64TerminatorOpcode::Brk,
-                _ => return Err(Error::from(format!("unknown aarch64 terminator: {mnemonic}"))),
+                _ => {
+                    return Err(Error::from(format!(
+                        "unknown aarch64 terminator: {mnemonic}"
+                    )));
+                }
             },
             None,
         )
@@ -442,7 +479,10 @@ fn parse_operand(token: &str, access: OperandAccess) -> Result<Aarch64Operand> {
 }
 
 fn parse_register(token: &str) -> Result<Aarch64Register> {
-    if let Some((id, size_bits)) = token.strip_prefix('v').and_then(|rest| rest.split_once(':')) {
+    if let Some((id, size_bits)) = token
+        .strip_prefix('v')
+        .and_then(|rest| rest.split_once(':'))
+    {
         return Ok(Aarch64Register::Virtual {
             id: id
                 .parse::<u32>()
@@ -525,7 +565,9 @@ fn call_target_from_operand(operand: &Aarch64Operand) -> Result<Aarch64CallTarge
     match operand {
         Aarch64Operand::Symbol(name) => Ok(Aarch64CallTarget::Symbol(name.clone())),
         Aarch64Operand::Register { reg, .. } => Ok(Aarch64CallTarget::Register(reg.clone())),
-        _ => Err(Error::from("aarch64 call target must be symbol or register")),
+        _ => Err(Error::from(
+            "aarch64 call target must be symbol or register",
+        )),
     }
 }
 
@@ -545,7 +587,10 @@ mod tests {
                             opcode: "add".to_string(),
                             operands: vec![
                                 Aarch64Operand::Register {
-                                    reg: Aarch64Register::Virtual { id: 1, size_bits: 64 },
+                                    reg: Aarch64Register::Virtual {
+                                        id: 1,
+                                        size_bits: 64,
+                                    },
                                     access: OperandAccess::Write,
                                 },
                                 Aarch64Operand::Register {

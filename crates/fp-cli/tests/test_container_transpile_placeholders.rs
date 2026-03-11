@@ -3,7 +3,7 @@ use std::fs;
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{compile_command, CompileArgs, EmitterKind};
+use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
 use fp_cli::pipeline::BackendKind;
 
 fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileArgs {
@@ -91,8 +91,8 @@ async fn compile_rejects_cil_transpile_placeholder() {
     let err = compile_command(args, &CliConfig::default())
         .await
         .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("binary .dll/.exe -> native transpilation is not implemented yet"));
+    assert!(
+        err.to_string()
+            .contains("binary .dll/.exe -> native transpilation is not implemented yet")
+    );
 }
-

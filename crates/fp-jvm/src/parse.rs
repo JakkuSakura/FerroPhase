@@ -67,8 +67,12 @@ fn lower_method_to_lir(method: &ParsedMethod) -> Result<Option<LirFunction>, Jvm
                     .code
                     .get(pc + 1)
                     .copied()
-                    .ok_or_else(|| invalid(format!("{}: truncated bipush", method.name)))? as i8;
-                stack.push(LirValue::Constant(LirConstant::Int(imm as i64, LirType::I64)));
+                    .ok_or_else(|| invalid(format!("{}: truncated bipush", method.name)))?
+                    as i8;
+                stack.push(LirValue::Constant(LirConstant::Int(
+                    imm as i64,
+                    LirType::I64,
+                )));
                 pc += 2;
             }
             0x15 => {
@@ -205,9 +209,17 @@ struct ClassReader<'a> {
 #[derive(Debug, Clone)]
 enum CpEntry {
     Utf8(String),
-    Class { name_index: u16 },
-    NameAndType { name_index: u16, descriptor_index: u16 },
-    Methodref { class_index: u16, name_and_type_index: u16 },
+    Class {
+        name_index: u16,
+    },
+    NameAndType {
+        name_index: u16,
+        descriptor_index: u16,
+    },
+    Methodref {
+        class_index: u16,
+        name_and_type_index: u16,
+    },
     Unused,
 }
 
@@ -350,7 +362,9 @@ impl<'a> ClassReader<'a> {
                     CpEntry::Unused
                 }
                 other => {
-                    return Err(invalid(format!("cp: unsupported constant pool tag {other}")))
+                    return Err(invalid(format!(
+                        "cp: unsupported constant pool tag {other}"
+                    )));
                 }
             };
             self.constant_pool[index as usize] = entry;
@@ -409,4 +423,3 @@ impl<'a> ClassReader<'a> {
         Ok(())
     }
 }
-

@@ -1,9 +1,9 @@
-use fp_core::error::{Error, Result};
-use fp_core::lir::layout::{align_of, size_of, struct_layout};
 use fp_core::asmir::{
     AsmBlock, AsmBlockId as BasicBlockId, AsmConstant, AsmFunction, AsmInstructionKind,
     AsmIntrinsicKind, AsmProgram, AsmTerminator, AsmType, AsmValue,
 };
+use fp_core::error::{Error, Result};
+use fp_core::lir::layout::{align_of, size_of, struct_layout};
 use std::collections::{BTreeSet, HashMap};
 
 use crate::emit::{CodegenOutput, RelocKind, Relocation, TargetFormat};

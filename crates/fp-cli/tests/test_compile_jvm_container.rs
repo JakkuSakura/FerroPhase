@@ -3,7 +3,7 @@ use std::fs;
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{compile_command, CompileArgs, EmitterKind};
+use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
 use fp_cli::pipeline::BackendKind;
 
 fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileArgs {
@@ -53,4 +53,3 @@ async fn compile_jvm_classfile_roundtrips() {
     let out = fs::read(&output_file).unwrap();
     assert_eq!(out, bytes);
 }
-

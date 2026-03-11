@@ -1,21 +1,19 @@
-use crate::emit::{TargetArch, TargetFormat};
-use crate::asm::{aarch64 as aarch64_asm, x86_64 as x86_64_asm};
 use crate::asm::aarch64::{
     Aarch64CallTarget, Aarch64ConditionCode, Aarch64InstructionDetail, Aarch64MemoryOperand,
     Aarch64Operand, Aarch64Register, Aarch64TerminatorDetail, Aarch64TerminatorOpcode,
 };
 use crate::asm::x86_64::{
-    X86CallTarget, X86ConditionCode, X86InstructionDetail, X86MemoryOperand, X86Opcode,
-    X86Operand, X86Register, X86TerminatorDetail, X86TerminatorOpcode,
+    X86CallTarget, X86ConditionCode, X86InstructionDetail, X86MemoryOperand, X86Opcode, X86Operand,
+    X86Register, X86TerminatorDetail, X86TerminatorOpcode,
 };
+use crate::asm::{aarch64 as aarch64_asm, x86_64 as x86_64_asm};
+use crate::emit::{TargetArch, TargetFormat};
 use fp_core::asmir::{
-    AsmAddressValue, AsmArchitecture, AsmBlock, AsmConditionCode,
-    AsmConstant, AsmEndianness, AsmFunction, AsmFunctionSignature, AsmGenericOpcode,
-    AsmGlobal, AsmInstruction, AsmInstructionKind, AsmIntrinsicKind, AsmLandingPadClause,
-    AsmMemoryOperand, AsmObjectFormat, AsmOpcode, AsmOperand, AsmProgram, AsmRegister,
-    AsmRegisterBank, AsmSection, AsmSectionFlag, AsmSectionKind, AsmTarget, AsmTerminator,
-    AsmType, AsmTypeDefinition, AsmValue,
-    OperandAccess,
+    AsmAddressValue, AsmArchitecture, AsmBlock, AsmConditionCode, AsmConstant, AsmEndianness,
+    AsmFunction, AsmFunctionSignature, AsmGenericOpcode, AsmGlobal, AsmInstruction,
+    AsmInstructionKind, AsmIntrinsicKind, AsmLandingPadClause, AsmMemoryOperand, AsmObjectFormat,
+    AsmOpcode, AsmOperand, AsmProgram, AsmRegister, AsmRegisterBank, AsmSection, AsmSectionFlag,
+    AsmSectionKind, AsmTarget, AsmTerminator, AsmType, AsmTypeDefinition, AsmValue, OperandAccess,
 };
 use fp_core::error::Result;
 use fp_core::lir::layout::size_of;
@@ -109,7 +107,9 @@ pub fn select_program(
                     id: instruction.id,
                     kind: map_instruction_kind(&instruction.kind),
                     type_hint: instruction.type_hint.clone(),
-                    opcode: AsmOpcode::Generic(generic_opcode(&map_instruction_kind(&instruction.kind))),
+                    opcode: AsmOpcode::Generic(generic_opcode(&map_instruction_kind(
+                        &instruction.kind,
+                    ))),
                     operands: Vec::new(),
                     implicit_uses: Vec::new(),
                     implicit_defs: Vec::new(),
@@ -163,9 +163,14 @@ pub fn lower_to_x86_64(program: &AsmProgram) -> x86_64_asm::AsmX86_64Program {
                             instructions: block
                                 .instructions
                                 .iter()
-                                .map(|instruction| x86_detail_from_instruction(instruction, &mut ctx))
+                                .map(|instruction| {
+                                    x86_detail_from_instruction(instruction, &mut ctx)
+                                })
                                 .collect(),
-                            terminator: x86_terminator_detail(&block.terminator, &block.instructions),
+                            terminator: x86_terminator_detail(
+                                &block.terminator,
+                                &block.instructions,
+                            ),
                         })
                         .collect(),
                 }
@@ -200,9 +205,14 @@ pub fn lower_to_aarch64(program: &AsmProgram) -> aarch64_asm::AsmAarch64Program 
                             instructions: block
                                 .instructions
                                 .iter()
-                                .map(|instruction| aarch64_detail_from_instruction(instruction, &mut ctx))
+                                .map(|instruction| {
+                                    aarch64_detail_from_instruction(instruction, &mut ctx)
+                                })
                                 .collect(),
-                            terminator: aarch64_terminator_detail(&block.terminator, &block.instructions),
+                            terminator: aarch64_terminator_detail(
+                                &block.terminator,
+                                &block.instructions,
+                            ),
                         })
                         .collect(),
                 }
@@ -252,7 +262,10 @@ pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> AsmProgram {
                                 lifted
                             })
                             .collect::<Vec<_>>();
-                        let terminator = relink_comparison_condition(instructions.as_slice(), lift_x86_terminator(&block.terminator));
+                        let terminator = relink_comparison_condition(
+                            instructions.as_slice(),
+                            lift_x86_terminator(&block.terminator),
+                        );
                         AsmBlock {
                             id: block.id,
                             label: Some(Name::new(format!("bb{}", block.id))),
@@ -312,12 +325,16 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> AsmProgram
                             .instructions
                             .iter()
                             .map(|instruction| {
-                                let lifted = lift_aarch64_instruction(instruction, next_instruction_id);
+                                let lifted =
+                                    lift_aarch64_instruction(instruction, next_instruction_id);
                                 next_instruction_id += 1;
                                 lifted
                             })
                             .collect::<Vec<_>>();
-                        let terminator = relink_comparison_condition(instructions.as_slice(), lift_aarch64_terminator(&block.terminator));
+                        let terminator = relink_comparison_condition(
+                            instructions.as_slice(),
+                            lift_aarch64_terminator(&block.terminator),
+                        );
                         AsmBlock {
                             id: block.id,
                             label: Some(Name::new(format!("bb{}", block.id))),
@@ -341,7 +358,6 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> AsmProgram
     }
 }
 
-
 fn normalize_program_for_target(program: &mut AsmProgram) {
     match program.target.architecture {
         AsmArchitecture::X86_64 => normalize_program_for_x86_64(program),
@@ -355,7 +371,11 @@ fn normalize_program_generic(program: &mut AsmProgram) {
         for block in &mut function.basic_blocks {
             for instruction in &mut block.instructions {
                 instruction.opcode = AsmOpcode::Generic(generic_opcode(&instruction.kind));
-                instruction.operands = generic_operands(instruction.id, &instruction.kind, instruction.type_hint.as_ref());
+                instruction.operands = generic_operands(
+                    instruction.id,
+                    &instruction.kind,
+                    instruction.type_hint.as_ref(),
+                );
             }
         }
     }
@@ -369,7 +389,10 @@ fn normalize_program_for_aarch64(program: &mut AsmProgram) {
     normalize_program_generic(program);
 }
 
-fn relink_comparison_condition(instructions: &[AsmInstruction], terminator: AsmTerminator) -> AsmTerminator {
+fn relink_comparison_condition(
+    instructions: &[AsmInstruction],
+    terminator: AsmTerminator,
+) -> AsmTerminator {
     match terminator {
         AsmTerminator::CondBr {
             condition: AsmValue::Condition(condition),
@@ -391,7 +414,9 @@ fn relink_comparison_condition(instructions: &[AsmInstruction], terminator: AsmT
 }
 
 fn last_comparison_instruction(instructions: &[AsmInstruction]) -> Option<(u32, AsmConditionCode)> {
-    instructions.iter().rev().find_map(|instruction| comparison_code_from_kind(&instruction.kind).map(|code| (instruction.id, code)))
+    instructions.iter().rev().find_map(|instruction| {
+        comparison_code_from_kind(&instruction.kind).map(|code| (instruction.id, code))
+    })
 }
 
 fn comparison_code_from_kind(kind: &AsmInstructionKind) -> Option<AsmConditionCode> {
@@ -413,8 +438,12 @@ fn x86_detail_from_instruction(
     match &instruction.opcode {
         AsmOpcode::Custom(opcode) => x86_detail_from_custom(opcode, &instruction.operands, ctx),
         _ => {
-            let mut detail =
-                x86_detail(instruction.id, &instruction.kind, instruction.type_hint.as_ref(), ctx);
+            let mut detail = x86_detail(
+                instruction.id,
+                &instruction.kind,
+                instruction.type_hint.as_ref(),
+                ctx,
+            );
             if let Some(write_operand) = mapped_x86_write_operand(&instruction.operands, ctx) {
                 if !detail.operands.is_empty() && instruction_produces_value(&instruction.kind) {
                     detail.operands[0] = write_operand;
@@ -452,7 +481,10 @@ fn aarch64_detail_from_instruction(
             if let Some(operands) = aarch64_operands_from_asm(&instruction.operands) {
                 detail.operands = operands;
                 if detail.opcode == "bl" {
-                    detail.call_target = detail.operands.first().map(aarch64_call_target_from_operand);
+                    detail.call_target = detail
+                        .operands
+                        .first()
+                        .map(aarch64_call_target_from_operand);
                 }
             }
             detail
@@ -469,9 +501,10 @@ fn mapped_x86_write_operand(
     ctx: &mut PhysicalRegisterLoweringContext,
 ) -> Option<X86Operand> {
     operands.iter().find_map(|operand| match operand {
-        AsmOperand::Register { access: OperandAccess::Write | OperandAccess::ReadWrite, .. } => {
-            Some(asm_operand_to_x86(operand, ctx))
-        }
+        AsmOperand::Register {
+            access: OperandAccess::Write | OperandAccess::ReadWrite,
+            ..
+        } => Some(asm_operand_to_x86(operand, ctx)),
         _ => None,
     })
 }
@@ -484,7 +517,9 @@ fn x86_operand_from_asm(operand: &AsmOperand) -> Option<X86Operand> {
         }),
         AsmOperand::Immediate(value) => Some(X86Operand::Immediate(*value)),
         AsmOperand::Memory(memory) => Some(X86Operand::Memory(x86_memory_from_asm(memory)?)),
-        AsmOperand::Label(name) | AsmOperand::Symbol(name) => Some(X86Operand::Symbol(name.clone())),
+        AsmOperand::Label(name) | AsmOperand::Symbol(name) => {
+            Some(X86Operand::Symbol(name.clone()))
+        }
         AsmOperand::Block(id) => Some(X86Operand::Block(*id)),
         AsmOperand::Relocation(relocation) => Some(X86Operand::Symbol(relocation.symbol.clone())),
         AsmOperand::Predicate { .. } => None,
@@ -509,10 +544,12 @@ fn x86_memory_from_asm(memory: &AsmMemoryOperand) -> Option<X86MemoryOperand> {
 
 fn x86_register_from_asm(register: &AsmRegister) -> Option<X86Register> {
     match register {
-        AsmRegister::Physical(register) if is_x86_physical_register_name(&register.name) => Some(X86Register::Physical {
-            name: register.name.clone(),
-            size_bits: register.size_bits,
-        }),
+        AsmRegister::Physical(register) if is_x86_physical_register_name(&register.name) => {
+            Some(X86Register::Physical {
+                name: register.name.clone(),
+                size_bits: register.size_bits,
+            })
+        }
         AsmRegister::Physical(_) => None,
         AsmRegister::Virtual { id, size_bits, .. } => Some(X86Register::Virtual {
             id: *id,
@@ -530,9 +567,10 @@ fn mapped_aarch64_write_operand(
     ctx: &mut PhysicalRegisterLoweringContext,
 ) -> Option<Aarch64Operand> {
     operands.iter().find_map(|operand| match operand {
-        AsmOperand::Register { access: OperandAccess::Write | OperandAccess::ReadWrite, .. } => {
-            Some(asm_operand_to_aarch64(operand, ctx))
-        }
+        AsmOperand::Register {
+            access: OperandAccess::Write | OperandAccess::ReadWrite,
+            ..
+        } => Some(asm_operand_to_aarch64(operand, ctx)),
         _ => None,
     })
 }
@@ -544,10 +582,16 @@ fn aarch64_operand_from_asm(operand: &AsmOperand) -> Option<Aarch64Operand> {
             access: access.clone(),
         }),
         AsmOperand::Immediate(value) => Some(Aarch64Operand::Immediate(*value)),
-        AsmOperand::Memory(memory) => Some(Aarch64Operand::Memory(aarch64_memory_from_asm(memory)?)),
-        AsmOperand::Label(name) | AsmOperand::Symbol(name) => Some(Aarch64Operand::Symbol(name.clone())),
+        AsmOperand::Memory(memory) => {
+            Some(Aarch64Operand::Memory(aarch64_memory_from_asm(memory)?))
+        }
+        AsmOperand::Label(name) | AsmOperand::Symbol(name) => {
+            Some(Aarch64Operand::Symbol(name.clone()))
+        }
         AsmOperand::Block(id) => Some(Aarch64Operand::Block(*id)),
-        AsmOperand::Relocation(relocation) => Some(Aarch64Operand::Symbol(relocation.symbol.clone())),
+        AsmOperand::Relocation(relocation) => {
+            Some(Aarch64Operand::Symbol(relocation.symbol.clone()))
+        }
         AsmOperand::Predicate { .. } => None,
     }
 }
@@ -590,7 +634,21 @@ fn is_x86_physical_register_name(name: &str) -> bool {
         || name.starts_with("xmm")
         || matches!(
             name,
-            "ax" | "bx" | "cx" | "dx" | "si" | "di" | "sp" | "bp" | "al" | "ah" | "bl" | "bh" | "cl" | "ch" | "dl" | "dh"
+            "ax" | "bx"
+                | "cx"
+                | "dx"
+                | "si"
+                | "di"
+                | "sp"
+                | "bp"
+                | "al"
+                | "ah"
+                | "bl"
+                | "bh"
+                | "cl"
+                | "ch"
+                | "dl"
+                | "dh"
         )
 }
 
@@ -774,7 +832,9 @@ fn x86_typed_operands(
         | AsmInstructionKind::PtrToInt(value)
         | AsmInstructionKind::IntToPtr(value)
         | AsmInstructionKind::Freeze(value) => operands.push(x86_operand(value, ctx)),
-        AsmInstructionKind::Load { address, .. } => operands.push(x86_address_operand(address, ty, ctx)),
+        AsmInstructionKind::Load { address, .. } => {
+            operands.push(x86_address_operand(address, ty, ctx))
+        }
         AsmInstructionKind::Store { value, address, .. } => {
             operands.push(x86_address_operand(address, None, ctx));
             operands.push(x86_operand(value, ctx));
@@ -797,22 +857,39 @@ fn x86_typed_operands(
         | AsmInstructionKind::SextOrTrunc(value, _) => operands.push(x86_operand(value, ctx)),
         AsmInstructionKind::ExtractValue { aggregate, indices } => {
             operands.push(x86_operand(aggregate, ctx));
-            operands.extend(indices.iter().map(|index| X86Operand::Immediate(*index as i128)));
+            operands.extend(
+                indices
+                    .iter()
+                    .map(|index| X86Operand::Immediate(*index as i128)),
+            );
         }
-        AsmInstructionKind::InsertValue { aggregate, element, indices } => {
+        AsmInstructionKind::InsertValue {
+            aggregate,
+            element,
+            indices,
+        } => {
             operands.push(x86_operand(aggregate, ctx));
             operands.push(x86_operand(element, ctx));
-            operands.extend(indices.iter().map(|index| X86Operand::Immediate(*index as i128)));
+            operands.extend(
+                indices
+                    .iter()
+                    .map(|index| X86Operand::Immediate(*index as i128)),
+            );
         }
         AsmInstructionKind::Call { function, args, .. } => {
             operands.push(match x86_call_target_from_value(function, ctx) {
                 X86CallTarget::Symbol(name) => X86Operand::Symbol(name),
-                X86CallTarget::Register(reg) => X86Operand::Register { reg, access: OperandAccess::Read },
+                X86CallTarget::Register(reg) => X86Operand::Register {
+                    reg,
+                    access: OperandAccess::Read,
+                },
             });
             operands.extend(args.iter().map(|value| x86_operand(value, ctx)));
         }
         AsmInstructionKind::IntrinsicCall { kind, args, .. } => {
-            operands.push(X86Operand::Symbol(Name::new(format!("intrinsic.{kind:?}").to_ascii_lowercase())));
+            operands.push(X86Operand::Symbol(Name::new(
+                format!("intrinsic.{kind:?}").to_ascii_lowercase(),
+            )));
             operands.extend(args.iter().map(|value| x86_operand(value, ctx)));
         }
         AsmInstructionKind::Phi { incoming } => {
@@ -821,7 +898,11 @@ fn x86_typed_operands(
                 operands.push(X86Operand::Block(*block));
             }
         }
-        AsmInstructionKind::Select { condition, if_true, if_false } => {
+        AsmInstructionKind::Select {
+            condition,
+            if_true,
+            if_false,
+        } => {
             operands.push(x86_operand(condition, ctx));
             operands.push(x86_operand(if_true, ctx));
             operands.push(x86_operand(if_false, ctx));
@@ -853,9 +934,14 @@ fn x86_condition(kind: &AsmInstructionKind) -> Option<X86ConditionCode> {
     }
 }
 
-fn x86_call_target(kind: &AsmInstructionKind, ctx: &mut PhysicalRegisterLoweringContext) -> Option<X86CallTarget> {
+fn x86_call_target(
+    kind: &AsmInstructionKind,
+    ctx: &mut PhysicalRegisterLoweringContext,
+) -> Option<X86CallTarget> {
     match kind {
-        AsmInstructionKind::Call { function, .. } => Some(x86_call_target_from_value(function, ctx)),
+        AsmInstructionKind::Call { function, .. } => {
+            Some(x86_call_target_from_value(function, ctx))
+        }
         AsmInstructionKind::IntrinsicCall { kind, .. } => Some(X86CallTarget::Symbol(Name::new(
             format!("intrinsic.{kind:?}").to_ascii_lowercase(),
         ))),
@@ -889,9 +975,14 @@ impl PhysicalRegisterLoweringContext {
     }
 }
 
-fn x86_call_target_from_value(value: &AsmValue, ctx: &mut PhysicalRegisterLoweringContext) -> X86CallTarget {
+fn x86_call_target_from_value(
+    value: &AsmValue,
+    ctx: &mut PhysicalRegisterLoweringContext,
+) -> X86CallTarget {
     match value {
-        AsmValue::Function(name) | AsmValue::Global(name, _) => X86CallTarget::Symbol(Name::new(name.clone())),
+        AsmValue::Function(name) | AsmValue::Global(name, _) => {
+            X86CallTarget::Symbol(Name::new(name.clone()))
+        }
         AsmValue::Register(id) => X86CallTarget::Register(x86_virtual_register(*id, &AsmType::I64)),
         AsmValue::PhysicalRegister(register) => {
             X86CallTarget::Register(map_physical_register_to_x86(register, ctx))
@@ -900,7 +991,10 @@ fn x86_call_target_from_value(value: &AsmValue, ctx: &mut PhysicalRegisterLoweri
     }
 }
 
-fn x86_terminator_detail(term: &AsmTerminator, instructions: &[AsmInstruction]) -> X86TerminatorDetail {
+fn x86_terminator_detail(
+    term: &AsmTerminator,
+    instructions: &[AsmInstruction],
+) -> X86TerminatorDetail {
     match term {
         AsmTerminator::Return(_) => X86TerminatorDetail {
             opcode: X86TerminatorOpcode::Ret,
@@ -912,28 +1006,49 @@ fn x86_terminator_detail(term: &AsmTerminator, instructions: &[AsmInstruction]) 
             condition: None,
             targets: vec![*target],
         },
-        AsmTerminator::CondBr { condition, if_true, if_false } => X86TerminatorDetail {
+        AsmTerminator::CondBr {
+            condition,
+            if_true,
+            if_false,
+        } => X86TerminatorDetail {
             opcode: X86TerminatorOpcode::Jcc,
-            condition: resolve_x86_branch_condition(condition, instructions).or(Some(X86ConditionCode::NonZero)),
+            condition: resolve_x86_branch_condition(condition, instructions)
+                .or(Some(X86ConditionCode::NonZero)),
             targets: vec![*if_true, *if_false],
         },
         AsmTerminator::Switch { default, cases, .. } => X86TerminatorDetail {
             opcode: X86TerminatorOpcode::Switch,
             condition: None,
-            targets: cases.iter().map(|(_, target)| *target).chain(std::iter::once(*default)).collect(),
+            targets: cases
+                .iter()
+                .map(|(_, target)| *target)
+                .chain(std::iter::once(*default))
+                .collect(),
         },
         AsmTerminator::IndirectBr { destinations, .. } => X86TerminatorDetail {
             opcode: X86TerminatorOpcode::IndirectJmp,
             condition: None,
             targets: destinations.clone(),
         },
-        AsmTerminator::Invoke { normal_dest, unwind_dest, .. } => X86TerminatorDetail {
+        AsmTerminator::Invoke {
+            normal_dest,
+            unwind_dest,
+            ..
+        } => X86TerminatorDetail {
             opcode: X86TerminatorOpcode::Invoke,
             condition: None,
             targets: vec![*normal_dest, *unwind_dest],
         },
-        AsmTerminator::Resume(_) => X86TerminatorDetail { opcode: X86TerminatorOpcode::Resume, condition: None, targets: Vec::new() },
-        AsmTerminator::Unreachable => X86TerminatorDetail { opcode: X86TerminatorOpcode::Ud2, condition: None, targets: Vec::new() },
+        AsmTerminator::Resume(_) => X86TerminatorDetail {
+            opcode: X86TerminatorOpcode::Resume,
+            condition: None,
+            targets: Vec::new(),
+        },
+        AsmTerminator::Unreachable => X86TerminatorDetail {
+            opcode: X86TerminatorOpcode::Ud2,
+            condition: None,
+            targets: Vec::new(),
+        },
         AsmTerminator::CleanupRet { unwind_dest, .. } => X86TerminatorDetail {
             opcode: X86TerminatorOpcode::CleanupRet,
             condition: None,
@@ -944,15 +1059,26 @@ fn x86_terminator_detail(term: &AsmTerminator, instructions: &[AsmInstruction]) 
             condition: None,
             targets: vec![*successor],
         },
-        AsmTerminator::CatchSwitch { handlers, unwind_dest, .. } => X86TerminatorDetail {
+        AsmTerminator::CatchSwitch {
+            handlers,
+            unwind_dest,
+            ..
+        } => X86TerminatorDetail {
             opcode: X86TerminatorOpcode::CatchSwitch,
             condition: None,
-            targets: handlers.iter().copied().chain(unwind_dest.iter().copied()).collect(),
+            targets: handlers
+                .iter()
+                .copied()
+                .chain(unwind_dest.iter().copied())
+                .collect(),
         },
     }
 }
 
-fn resolve_x86_branch_condition(condition: &AsmValue, instructions: &[AsmInstruction]) -> Option<X86ConditionCode> {
+fn resolve_x86_branch_condition(
+    condition: &AsmValue,
+    instructions: &[AsmInstruction],
+) -> Option<X86ConditionCode> {
     match condition {
         AsmValue::Flags(id) => instructions
             .iter()
@@ -981,9 +1107,21 @@ fn aarch64_opcode_name(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> &'sta
     match kind {
         AsmInstructionKind::Add(..) => "add",
         AsmInstructionKind::Sub(..) => "sub",
-        AsmInstructionKind::Mul(..) if is_float_type_opt(ty) => if matches!(ty, Some(AsmType::F32)) { "fmul.s" } else { "fmul.d" },
+        AsmInstructionKind::Mul(..) if is_float_type_opt(ty) => {
+            if matches!(ty, Some(AsmType::F32)) {
+                "fmul.s"
+            } else {
+                "fmul.d"
+            }
+        }
         AsmInstructionKind::Mul(..) => "mul",
-        AsmInstructionKind::Div(..) | AsmInstructionKind::Rem(..) if is_float_type_opt(ty) => if matches!(ty, Some(AsmType::F32)) { "fdiv.s" } else { "fdiv.d" },
+        AsmInstructionKind::Div(..) | AsmInstructionKind::Rem(..) if is_float_type_opt(ty) => {
+            if matches!(ty, Some(AsmType::F32)) {
+                "fdiv.s"
+            } else {
+                "fdiv.d"
+            }
+        }
         AsmInstructionKind::Div(..) => "sdiv",
         AsmInstructionKind::Rem(..) => "msub.rem",
         AsmInstructionKind::And(..) => "and",
@@ -1064,7 +1202,9 @@ fn aarch64_typed_operands(
         | AsmInstructionKind::PtrToInt(value)
         | AsmInstructionKind::IntToPtr(value)
         | AsmInstructionKind::Freeze(value) => operands.push(aarch64_operand(value, ctx)),
-        AsmInstructionKind::Load { address, .. } => operands.push(aarch64_address_operand(address, ty, ctx)),
+        AsmInstructionKind::Load { address, .. } => {
+            operands.push(aarch64_address_operand(address, ty, ctx))
+        }
         AsmInstructionKind::Store { value, address, .. } => {
             operands.push(aarch64_address_operand(address, None, ctx));
             operands.push(aarch64_operand(value, ctx));
@@ -1087,22 +1227,39 @@ fn aarch64_typed_operands(
         | AsmInstructionKind::SextOrTrunc(value, _) => operands.push(aarch64_operand(value, ctx)),
         AsmInstructionKind::ExtractValue { aggregate, indices } => {
             operands.push(aarch64_operand(aggregate, ctx));
-            operands.extend(indices.iter().map(|index| Aarch64Operand::Immediate(*index as i128)));
+            operands.extend(
+                indices
+                    .iter()
+                    .map(|index| Aarch64Operand::Immediate(*index as i128)),
+            );
         }
-        AsmInstructionKind::InsertValue { aggregate, element, indices } => {
+        AsmInstructionKind::InsertValue {
+            aggregate,
+            element,
+            indices,
+        } => {
             operands.push(aarch64_operand(aggregate, ctx));
             operands.push(aarch64_operand(element, ctx));
-            operands.extend(indices.iter().map(|index| Aarch64Operand::Immediate(*index as i128)));
+            operands.extend(
+                indices
+                    .iter()
+                    .map(|index| Aarch64Operand::Immediate(*index as i128)),
+            );
         }
         AsmInstructionKind::Call { function, args, .. } => {
             operands.push(match aarch64_call_target_from_value(function, ctx) {
                 Aarch64CallTarget::Symbol(name) => Aarch64Operand::Symbol(name),
-                Aarch64CallTarget::Register(reg) => Aarch64Operand::Register { reg, access: OperandAccess::Read },
+                Aarch64CallTarget::Register(reg) => Aarch64Operand::Register {
+                    reg,
+                    access: OperandAccess::Read,
+                },
             });
             operands.extend(args.iter().map(|value| aarch64_operand(value, ctx)));
         }
         AsmInstructionKind::IntrinsicCall { kind, args, .. } => {
-            operands.push(Aarch64Operand::Symbol(Name::new(format!("intrinsic.{kind:?}").to_ascii_lowercase())));
+            operands.push(Aarch64Operand::Symbol(Name::new(
+                format!("intrinsic.{kind:?}").to_ascii_lowercase(),
+            )));
             operands.extend(args.iter().map(|value| aarch64_operand(value, ctx)));
         }
         AsmInstructionKind::Phi { incoming } => {
@@ -1111,7 +1268,11 @@ fn aarch64_typed_operands(
                 operands.push(Aarch64Operand::Block(*block));
             }
         }
-        AsmInstructionKind::Select { condition, if_true, if_false } => {
+        AsmInstructionKind::Select {
+            condition,
+            if_true,
+            if_false,
+        } => {
             operands.push(aarch64_operand(condition, ctx));
             operands.push(aarch64_operand(if_true, ctx));
             operands.push(aarch64_operand(if_false, ctx));
@@ -1147,10 +1308,12 @@ fn aarch64_call_target(
     ctx: &mut PhysicalRegisterLoweringContext,
 ) -> Option<Aarch64CallTarget> {
     match kind {
-        AsmInstructionKind::Call { function, .. } => Some(aarch64_call_target_from_value(function, ctx)),
-        AsmInstructionKind::IntrinsicCall { kind, .. } => Some(Aarch64CallTarget::Symbol(Name::new(
-            format!("intrinsic.{kind:?}").to_ascii_lowercase(),
-        ))),
+        AsmInstructionKind::Call { function, .. } => {
+            Some(aarch64_call_target_from_value(function, ctx))
+        }
+        AsmInstructionKind::IntrinsicCall { kind, .. } => Some(Aarch64CallTarget::Symbol(
+            Name::new(format!("intrinsic.{kind:?}").to_ascii_lowercase()),
+        )),
         _ => None,
     }
 }
@@ -1160,8 +1323,12 @@ fn aarch64_call_target_from_value(
     ctx: &mut PhysicalRegisterLoweringContext,
 ) -> Aarch64CallTarget {
     match value {
-        AsmValue::Function(name) | AsmValue::Global(name, _) => Aarch64CallTarget::Symbol(Name::new(name.clone())),
-        AsmValue::Register(id) => Aarch64CallTarget::Register(aarch64_virtual_register(*id, &AsmType::I64)),
+        AsmValue::Function(name) | AsmValue::Global(name, _) => {
+            Aarch64CallTarget::Symbol(Name::new(name.clone()))
+        }
+        AsmValue::Register(id) => {
+            Aarch64CallTarget::Register(aarch64_virtual_register(*id, &AsmType::I64))
+        }
         AsmValue::PhysicalRegister(register) => {
             Aarch64CallTarget::Register(map_physical_register_to_aarch64(register, ctx))
         }
@@ -1169,32 +1336,64 @@ fn aarch64_call_target_from_value(
     }
 }
 
-fn aarch64_terminator_detail(term: &AsmTerminator, instructions: &[AsmInstruction]) -> Aarch64TerminatorDetail {
+fn aarch64_terminator_detail(
+    term: &AsmTerminator,
+    instructions: &[AsmInstruction],
+) -> Aarch64TerminatorDetail {
     match term {
-        AsmTerminator::Return(_) => Aarch64TerminatorDetail { opcode: Aarch64TerminatorOpcode::Ret, condition: None, targets: Vec::new() },
-        AsmTerminator::Br(target) => Aarch64TerminatorDetail { opcode: Aarch64TerminatorOpcode::B, condition: None, targets: vec![*target] },
-        AsmTerminator::CondBr { condition, if_true, if_false } => Aarch64TerminatorDetail {
+        AsmTerminator::Return(_) => Aarch64TerminatorDetail {
+            opcode: Aarch64TerminatorOpcode::Ret,
+            condition: None,
+            targets: Vec::new(),
+        },
+        AsmTerminator::Br(target) => Aarch64TerminatorDetail {
+            opcode: Aarch64TerminatorOpcode::B,
+            condition: None,
+            targets: vec![*target],
+        },
+        AsmTerminator::CondBr {
+            condition,
+            if_true,
+            if_false,
+        } => Aarch64TerminatorDetail {
             opcode: Aarch64TerminatorOpcode::BCond,
-            condition: resolve_aarch64_branch_condition(condition, instructions).or(Some(Aarch64ConditionCode::NonZero)),
+            condition: resolve_aarch64_branch_condition(condition, instructions)
+                .or(Some(Aarch64ConditionCode::NonZero)),
             targets: vec![*if_true, *if_false],
         },
         AsmTerminator::Switch { default, cases, .. } => Aarch64TerminatorDetail {
             opcode: Aarch64TerminatorOpcode::Switch,
             condition: None,
-            targets: cases.iter().map(|(_, target)| *target).chain(std::iter::once(*default)).collect(),
+            targets: cases
+                .iter()
+                .map(|(_, target)| *target)
+                .chain(std::iter::once(*default))
+                .collect(),
         },
         AsmTerminator::IndirectBr { destinations, .. } => Aarch64TerminatorDetail {
             opcode: Aarch64TerminatorOpcode::Br,
             condition: None,
             targets: destinations.clone(),
         },
-        AsmTerminator::Invoke { normal_dest, unwind_dest, .. } => Aarch64TerminatorDetail {
+        AsmTerminator::Invoke {
+            normal_dest,
+            unwind_dest,
+            ..
+        } => Aarch64TerminatorDetail {
             opcode: Aarch64TerminatorOpcode::Invoke,
             condition: None,
             targets: vec![*normal_dest, *unwind_dest],
         },
-        AsmTerminator::Resume(_) => Aarch64TerminatorDetail { opcode: Aarch64TerminatorOpcode::Resume, condition: None, targets: Vec::new() },
-        AsmTerminator::Unreachable => Aarch64TerminatorDetail { opcode: Aarch64TerminatorOpcode::Brk, condition: None, targets: Vec::new() },
+        AsmTerminator::Resume(_) => Aarch64TerminatorDetail {
+            opcode: Aarch64TerminatorOpcode::Resume,
+            condition: None,
+            targets: Vec::new(),
+        },
+        AsmTerminator::Unreachable => Aarch64TerminatorDetail {
+            opcode: Aarch64TerminatorOpcode::Brk,
+            condition: None,
+            targets: Vec::new(),
+        },
         AsmTerminator::CleanupRet { unwind_dest, .. } => Aarch64TerminatorDetail {
             opcode: Aarch64TerminatorOpcode::CleanupRet,
             condition: None,
@@ -1205,15 +1404,26 @@ fn aarch64_terminator_detail(term: &AsmTerminator, instructions: &[AsmInstructio
             condition: None,
             targets: vec![*successor],
         },
-        AsmTerminator::CatchSwitch { handlers, unwind_dest, .. } => Aarch64TerminatorDetail {
+        AsmTerminator::CatchSwitch {
+            handlers,
+            unwind_dest,
+            ..
+        } => Aarch64TerminatorDetail {
             opcode: Aarch64TerminatorOpcode::CatchSwitch,
             condition: None,
-            targets: handlers.iter().copied().chain(unwind_dest.iter().copied()).collect(),
+            targets: handlers
+                .iter()
+                .copied()
+                .chain(unwind_dest.iter().copied())
+                .collect(),
         },
     }
 }
 
-fn resolve_aarch64_branch_condition(condition: &AsmValue, instructions: &[AsmInstruction]) -> Option<Aarch64ConditionCode> {
+fn resolve_aarch64_branch_condition(
+    condition: &AsmValue,
+    instructions: &[AsmInstruction],
+) -> Option<Aarch64ConditionCode> {
     match condition {
         AsmValue::Flags(id) => instructions
             .iter()
@@ -1263,7 +1473,9 @@ fn x86_opcode(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> X86Opcode {
         AsmInstructionKind::UIToFP(..) | AsmInstructionKind::SIToFP(..) => X86Opcode::Cvtsi2sd,
         AsmInstructionKind::ExtractValue { .. } => X86Opcode::MovExtract,
         AsmInstructionKind::InsertValue { .. } => X86Opcode::MovInsert,
-        AsmInstructionKind::Call { .. } | AsmInstructionKind::IntrinsicCall { .. } => X86Opcode::Call,
+        AsmInstructionKind::Call { .. } | AsmInstructionKind::IntrinsicCall { .. } => {
+            X86Opcode::Call
+        }
         AsmInstructionKind::Phi { .. } => X86Opcode::PhiCopy,
         AsmInstructionKind::Select { .. } => X86Opcode::CMov,
         AsmInstructionKind::InlineAsm { .. } => X86Opcode::InlineAsm,
@@ -1292,7 +1504,10 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
     let mut operands = Vec::new();
     if instruction_produces_value(kind) {
         if let Some(ty) = ty {
-            operands.push(register_operand(virtual_register(id, ty), OperandAccess::Write));
+            operands.push(register_operand(
+                virtual_register(id, ty),
+                OperandAccess::Write,
+            ));
         }
     }
 
@@ -1343,7 +1558,11 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
         | AsmInstructionKind::SextOrTrunc(value, _) => operands.push(value_operand(value)),
         AsmInstructionKind::ExtractValue { aggregate, indices } => {
             operands.push(value_operand(aggregate));
-            operands.extend(indices.iter().map(|index| AsmOperand::Immediate(*index as i128)));
+            operands.extend(
+                indices
+                    .iter()
+                    .map(|index| AsmOperand::Immediate(*index as i128)),
+            );
         }
         AsmInstructionKind::InsertValue {
             aggregate,
@@ -1352,7 +1571,11 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
         } => {
             operands.push(value_operand(aggregate));
             operands.push(value_operand(element));
-            operands.extend(indices.iter().map(|index| AsmOperand::Immediate(*index as i128)));
+            operands.extend(
+                indices
+                    .iter()
+                    .map(|index| AsmOperand::Immediate(*index as i128)),
+            );
         }
         AsmInstructionKind::Call { function, args, .. } => {
             operands.push(call_target_operand(function));
@@ -1409,17 +1632,25 @@ fn instruction_produces_value(kind: &AsmInstructionKind) -> bool {
 
 fn value_operand(value: &AsmValue) -> AsmOperand {
     match value {
-        AsmValue::Register(id) => register_operand(virtual_register(*id, &AsmType::I64), OperandAccess::Read),
-        AsmValue::PhysicalRegister(register) => register_operand(AsmRegister::Physical(register.clone()), OperandAccess::Read),
+        AsmValue::Register(id) => {
+            register_operand(virtual_register(*id, &AsmType::I64), OperandAccess::Read)
+        }
+        AsmValue::PhysicalRegister(register) => {
+            register_operand(AsmRegister::Physical(register.clone()), OperandAccess::Read)
+        }
         AsmValue::Address(address) => AsmOperand::Memory(memory_from_address_value(address)),
-        AsmValue::Condition(condition) => AsmOperand::Symbol(Name::new(format!("cc.{}", asm_condition_suffix(condition)))),
+        AsmValue::Condition(condition) => {
+            AsmOperand::Symbol(Name::new(format!("cc.{}", asm_condition_suffix(condition))))
+        }
         AsmValue::Comparison(comparison) => AsmOperand::Symbol(Name::new(format!(
             "cmp.{}",
             asm_condition_suffix(&comparison.condition)
         ))),
         AsmValue::Flags(id) => AsmOperand::Symbol(Name::new(format!("flags.{id}"))),
         AsmValue::Constant(constant) => constant_operand(constant),
-        AsmValue::Global(name, _) | AsmValue::Function(name) => AsmOperand::Symbol(Name::new(name.clone())),
+        AsmValue::Global(name, _) | AsmValue::Function(name) => {
+            AsmOperand::Symbol(Name::new(name.clone()))
+        }
         AsmValue::Local(id) => AsmOperand::Symbol(Name::new(format!("local.{id}"))),
         AsmValue::StackSlot(id) => AsmOperand::Symbol(Name::new(format!("stack.{id}"))),
         AsmValue::Undef(_) => AsmOperand::Immediate(0),
@@ -1438,14 +1669,18 @@ fn x86_operand(value: &AsmValue, ctx: &mut PhysicalRegisterLoweringContext) -> X
             access: OperandAccess::Read,
         },
         AsmValue::Address(address) => x86_address_value_operand(address, ctx),
-        AsmValue::Condition(condition) => X86Operand::Symbol(Name::new(format!("cc.{}", asm_condition_suffix(condition)))),
+        AsmValue::Condition(condition) => {
+            X86Operand::Symbol(Name::new(format!("cc.{}", asm_condition_suffix(condition))))
+        }
         AsmValue::Comparison(comparison) => X86Operand::Symbol(Name::new(format!(
             "cmp.{}",
             asm_condition_suffix(&comparison.condition)
         ))),
         AsmValue::Flags(id) => X86Operand::Symbol(Name::new(format!("flags.{id}"))),
         AsmValue::Constant(constant) => x86_constant_operand(constant),
-        AsmValue::Global(name, _) | AsmValue::Function(name) => X86Operand::Symbol(Name::new(name.clone())),
+        AsmValue::Global(name, _) | AsmValue::Function(name) => {
+            X86Operand::Symbol(Name::new(name.clone()))
+        }
         AsmValue::Local(id) => X86Operand::Symbol(Name::new(format!("local.{id}"))),
         AsmValue::StackSlot(id) => X86Operand::Symbol(Name::new(format!("stack.{id}"))),
         AsmValue::Undef(_) | AsmValue::Null(_) => X86Operand::Immediate(0),
@@ -1460,7 +1695,10 @@ fn x86_address_operand(
     match address {
         AsmValue::Address(address) => x86_memory_or_symbol_from_address(address, ty, ctx),
         AsmValue::Register(id) => X86Operand::Memory(X86MemoryOperand {
-            base: Some(x86_virtual_register(*id, &AsmType::Ptr(Box::new(AsmType::I8)))),
+            base: Some(x86_virtual_register(
+                *id,
+                &AsmType::Ptr(Box::new(AsmType::I8)),
+            )),
             index: None,
             scale: 1,
             displacement: 0,
@@ -1473,7 +1711,9 @@ fn x86_address_operand(
             displacement: 0,
             size_bytes: ty.map(type_size_bytes),
         }),
-        AsmValue::Global(name, _) | AsmValue::Function(name) => X86Operand::Symbol(Name::new(name.clone())),
+        AsmValue::Global(name, _) | AsmValue::Function(name) => {
+            X86Operand::Symbol(Name::new(name.clone()))
+        }
         AsmValue::Local(id) => X86Operand::Symbol(Name::new(format!("frame.local.{id}"))),
         AsmValue::StackSlot(id) => X86Operand::Symbol(Name::new(format!("frame.slot.{id}"))),
         _ => x86_operand(address, ctx),
@@ -1487,8 +1727,12 @@ fn x86_constant_operand(constant: &AsmConstant) -> X86Operand {
         AsmConstant::Bool(value) => X86Operand::Immediate(if *value { 1 } else { 0 }),
         AsmConstant::Null(_) | AsmConstant::Undef(_) => X86Operand::Immediate(0),
         AsmConstant::Float(value, ty) => X86Operand::Immediate(float_bits(*value, ty) as i128),
-        AsmConstant::String(value) => X86Operand::Symbol(Name::new(format!("str.{}", sanitize_symbol(value)))),
-        AsmConstant::GlobalRef(name, _, _) | AsmConstant::FunctionRef(name, _) => X86Operand::Symbol(name.clone()),
+        AsmConstant::String(value) => {
+            X86Operand::Symbol(Name::new(format!("str.{}", sanitize_symbol(value))))
+        }
+        AsmConstant::GlobalRef(name, _, _) | AsmConstant::FunctionRef(name, _) => {
+            X86Operand::Symbol(name.clone())
+        }
         AsmConstant::Array(..) => X86Operand::Symbol(Name::new("const.array")),
         AsmConstant::Struct(..) => X86Operand::Symbol(Name::new("const.struct")),
     }
@@ -1496,7 +1740,9 @@ fn x86_constant_operand(constant: &AsmConstant) -> X86Operand {
 
 fn call_target_operand(value: &AsmValue) -> AsmOperand {
     match value {
-        AsmValue::Function(name) | AsmValue::Global(name, _) => AsmOperand::Symbol(Name::new(name.clone())),
+        AsmValue::Function(name) | AsmValue::Global(name, _) => {
+            AsmOperand::Symbol(Name::new(name.clone()))
+        }
         _ => value_operand(value),
     }
 }
@@ -1532,7 +1778,9 @@ fn address_operand(address: &AsmValue, ty: Option<&AsmType>) -> AsmOperand {
             pre_indexed: false,
             post_indexed: false,
         }),
-        AsmValue::Global(name, _) | AsmValue::Function(name) => AsmOperand::Symbol(Name::new(name.clone())),
+        AsmValue::Global(name, _) | AsmValue::Function(name) => {
+            AsmOperand::Symbol(Name::new(name.clone()))
+        }
         AsmValue::Local(id) => AsmOperand::Symbol(Name::new(format!("frame.local.{id}"))),
         AsmValue::StackSlot(id) => AsmOperand::Symbol(Name::new(format!("frame.slot.{id}"))),
         _ => value_operand(address),
@@ -1541,11 +1789,20 @@ fn address_operand(address: &AsmValue, ty: Option<&AsmType>) -> AsmOperand {
 
 fn address_value_from_memory(memory: &AsmMemoryOperand) -> AsmAddressValue {
     AsmAddressValue {
-        base: memory.base.as_ref().map(|register| Box::new(register_value_from_asm(register))),
-        index: memory.index.as_ref().map(|register| Box::new(register_value_from_asm(register))),
+        base: memory
+            .base
+            .as_ref()
+            .map(|register| Box::new(register_value_from_asm(register))),
+        index: memory
+            .index
+            .as_ref()
+            .map(|register| Box::new(register_value_from_asm(register))),
         scale: memory.scale,
         displacement: memory.displacement,
-        segment: memory.segment.as_ref().map(|register| Box::new(register_value_from_asm(register))),
+        segment: memory
+            .segment
+            .as_ref()
+            .map(|register| Box::new(register_value_from_asm(register))),
         size_bytes: memory.size_bytes,
         address_space: memory.address_space,
         pre_indexed: memory.pre_indexed,
@@ -1556,10 +1813,16 @@ fn address_value_from_memory(memory: &AsmMemoryOperand) -> AsmAddressValue {
 fn memory_from_address_value(address: &AsmAddressValue) -> AsmMemoryOperand {
     AsmMemoryOperand {
         base: address.base.as_deref().and_then(address_component_register),
-        index: address.index.as_deref().and_then(address_component_register),
+        index: address
+            .index
+            .as_deref()
+            .and_then(address_component_register),
         scale: address.scale,
         displacement: address.displacement,
-        segment: address.segment.as_deref().and_then(address_component_register),
+        segment: address
+            .segment
+            .as_deref()
+            .and_then(address_component_register),
         size_bytes: address.size_bytes,
         address_space: address.address_space,
         pre_indexed: address.pre_indexed,
@@ -1609,8 +1872,14 @@ fn x86_memory_from_address(
     ctx: &mut PhysicalRegisterLoweringContext,
 ) -> X86MemoryOperand {
     X86MemoryOperand {
-        base: address.base.as_deref().and_then(|value| x86_register_from_value(value, ctx)),
-        index: address.index.as_deref().and_then(|value| x86_register_from_value(value, ctx)),
+        base: address
+            .base
+            .as_deref()
+            .and_then(|value| x86_register_from_value(value, ctx)),
+        index: address
+            .index
+            .as_deref()
+            .and_then(|value| x86_register_from_value(value, ctx)),
         scale: address.scale,
         displacement: address.displacement,
         size_bytes: address.size_bytes,
@@ -1644,8 +1913,14 @@ fn aarch64_memory_from_address(
     ctx: &mut PhysicalRegisterLoweringContext,
 ) -> Aarch64MemoryOperand {
     Aarch64MemoryOperand {
-        base: address.base.as_deref().and_then(|value| aarch64_register_from_value(value, ctx)),
-        index: address.index.as_deref().and_then(|value| aarch64_register_from_value(value, ctx)),
+        base: address
+            .base
+            .as_deref()
+            .and_then(|value| aarch64_register_from_value(value, ctx)),
+        index: address
+            .index
+            .as_deref()
+            .and_then(|value| aarch64_register_from_value(value, ctx)),
         scale: address.scale,
         displacement: address.displacement,
         size_bytes: address.size_bytes,
@@ -1657,7 +1932,10 @@ fn x86_register_from_value(
     ctx: &mut PhysicalRegisterLoweringContext,
 ) -> Option<X86Register> {
     match value {
-        AsmValue::Register(id) => Some(x86_virtual_register(*id, &AsmType::Ptr(Box::new(AsmType::I8)))),
+        AsmValue::Register(id) => Some(x86_virtual_register(
+            *id,
+            &AsmType::Ptr(Box::new(AsmType::I8)),
+        )),
         AsmValue::PhysicalRegister(register) => Some(map_physical_register_to_x86(register, ctx)),
         _ => None,
     }
@@ -1668,8 +1946,13 @@ fn aarch64_register_from_value(
     ctx: &mut PhysicalRegisterLoweringContext,
 ) -> Option<Aarch64Register> {
     match value {
-        AsmValue::Register(id) => Some(aarch64_virtual_register(*id, &AsmType::Ptr(Box::new(AsmType::I8)))),
-        AsmValue::PhysicalRegister(register) => Some(map_physical_register_to_aarch64(register, ctx)),
+        AsmValue::Register(id) => Some(aarch64_virtual_register(
+            *id,
+            &AsmType::Ptr(Box::new(AsmType::I8)),
+        )),
+        AsmValue::PhysicalRegister(register) => {
+            Some(map_physical_register_to_aarch64(register, ctx))
+        }
         _ => None,
     }
 }
@@ -1691,8 +1974,12 @@ fn constant_operand(constant: &AsmConstant) -> AsmOperand {
         AsmConstant::Bool(value) => AsmOperand::Immediate(if *value { 1 } else { 0 }),
         AsmConstant::Null(_) | AsmConstant::Undef(_) => AsmOperand::Immediate(0),
         AsmConstant::Float(value, ty) => AsmOperand::Immediate(float_bits(*value, ty) as i128),
-        AsmConstant::String(value) => AsmOperand::Symbol(Name::new(format!("str.{}", sanitize_symbol(value)))),
-        AsmConstant::GlobalRef(name, _, _) | AsmConstant::FunctionRef(name, _) => AsmOperand::Symbol(name.clone()),
+        AsmConstant::String(value) => {
+            AsmOperand::Symbol(Name::new(format!("str.{}", sanitize_symbol(value))))
+        }
+        AsmConstant::GlobalRef(name, _, _) | AsmConstant::FunctionRef(name, _) => {
+            AsmOperand::Symbol(name.clone())
+        }
         AsmConstant::Array(..) => AsmOperand::Symbol(Name::new("const.array")),
         AsmConstant::Struct(..) => AsmOperand::Symbol(Name::new("const.struct")),
     }
@@ -1791,15 +2078,21 @@ fn asm_condition_from_aarch64(condition: &Aarch64ConditionCode) -> AsmConditionC
 }
 
 fn lift_x86_instruction(instruction: &X86InstructionDetail, id: u32) -> AsmInstruction {
-    let operands = instruction.operands.iter().map(x86_operand_to_asm).collect::<Vec<_>>();
+    let operands = instruction
+        .operands
+        .iter()
+        .map(x86_operand_to_asm)
+        .collect::<Vec<_>>();
     let type_hint = output_type_from_asm_operands(&operands);
-    let kind = semanticize_x86_detail(instruction, &operands).unwrap_or_else(|_| AsmInstructionKind::InlineAsm {
-        asm_string: x86_custom_opcode_name(instruction),
-        constraints: String::new(),
-        inputs: operands.iter().filter_map(asm_operand_to_value).collect(),
-        output_type: type_hint.clone().unwrap_or(AsmType::Void),
-        side_effects: true,
-        align_stack: false,
+    let kind = semanticize_x86_detail(instruction, &operands).unwrap_or_else(|_| {
+        AsmInstructionKind::InlineAsm {
+            asm_string: x86_custom_opcode_name(instruction),
+            constraints: String::new(),
+            inputs: operands.iter().filter_map(asm_operand_to_value).collect(),
+            output_type: type_hint.clone().unwrap_or(AsmType::Void),
+            side_effects: true,
+            align_stack: false,
+        }
     });
     AsmInstruction {
         id,
@@ -1822,13 +2115,15 @@ fn lift_aarch64_instruction(instruction: &Aarch64InstructionDetail, id: u32) -> 
         .map(aarch64_operand_to_asm)
         .collect::<Vec<_>>();
     let type_hint = output_type_from_asm_operands(&operands);
-    let kind = semanticize_aarch64_detail(instruction, &operands).unwrap_or_else(|_| AsmInstructionKind::InlineAsm {
-        asm_string: aarch64_custom_opcode_name(instruction),
-        constraints: String::new(),
-        inputs: operands.iter().filter_map(asm_operand_to_value).collect(),
-        output_type: type_hint.clone().unwrap_or(AsmType::Void),
-        side_effects: true,
-        align_stack: false,
+    let kind = semanticize_aarch64_detail(instruction, &operands).unwrap_or_else(|_| {
+        AsmInstructionKind::InlineAsm {
+            asm_string: aarch64_custom_opcode_name(instruction),
+            constraints: String::new(),
+            inputs: operands.iter().filter_map(asm_operand_to_value).collect(),
+            output_type: type_hint.clone().unwrap_or(AsmType::Void),
+            side_effects: true,
+            align_stack: false,
+        }
     });
     AsmInstruction {
         id,
@@ -1847,16 +2142,17 @@ fn lift_aarch64_instruction(instruction: &Aarch64InstructionDetail, id: u32) -> 
 fn output_type_from_asm_operands(operands: &[AsmOperand]) -> Option<AsmType> {
     operands.iter().find_map(|operand| match operand {
         AsmOperand::Register {
-            reg:
-                AsmRegister::Virtual {
-                    size_bits, ..
-                },
+            reg: AsmRegister::Virtual { size_bits, .. },
             access,
-        } if matches!(access, OperandAccess::Write | OperandAccess::ReadWrite) => Some(type_from_bits(*size_bits)),
+        } if matches!(access, OperandAccess::Write | OperandAccess::ReadWrite) => {
+            Some(type_from_bits(*size_bits))
+        }
         AsmOperand::Register {
             reg: AsmRegister::Physical(register),
             access,
-        } if matches!(access, OperandAccess::Write | OperandAccess::ReadWrite) => Some(type_from_bits(register.size_bits)),
+        } if matches!(access, OperandAccess::Write | OperandAccess::ReadWrite) => {
+            Some(type_from_bits(register.size_bits))
+        }
         _ => None,
     })
 }
@@ -1883,9 +2179,17 @@ fn asm_operand_to_value(operand: &AsmOperand) -> Option<AsmValue> {
             reg: AsmRegister::Physical(register),
             ..
         } => Some(AsmValue::PhysicalRegister(register.clone())),
-        AsmOperand::Memory(memory) => Some(AsmValue::Address(Box::new(address_value_from_memory(memory)))),
-        AsmOperand::Immediate(value) => Some(AsmValue::Constant(AsmConstant::Int(*value as i64, AsmType::I64))),
-        AsmOperand::Symbol(name) => Some(AsmValue::Global(name.to_string(), AsmType::Ptr(Box::new(AsmType::I8)))),
+        AsmOperand::Memory(memory) => Some(AsmValue::Address(Box::new(address_value_from_memory(
+            memory,
+        )))),
+        AsmOperand::Immediate(value) => Some(AsmValue::Constant(AsmConstant::Int(
+            *value as i64,
+            AsmType::I64,
+        ))),
+        AsmOperand::Symbol(name) => Some(AsmValue::Global(
+            name.to_string(),
+            AsmType::Ptr(Box::new(AsmType::I8)),
+        )),
         _ => None,
     }
 }
@@ -1893,7 +2197,11 @@ fn asm_operand_to_value(operand: &AsmOperand) -> Option<AsmValue> {
 fn x86_custom_opcode_name(instruction: &X86InstructionDetail) -> String {
     match instruction.condition.as_ref() {
         Some(condition) if matches!(instruction.opcode, X86Opcode::Cmp | X86Opcode::CMov) => {
-            format!("{}.{}", instruction.opcode.mnemonic(), x86_condition_suffix(condition))
+            format!(
+                "{}.{}",
+                instruction.opcode.mnemonic(),
+                x86_condition_suffix(condition)
+            )
         }
         _ => instruction.opcode.mnemonic().to_string(),
     }
@@ -1902,7 +2210,11 @@ fn x86_custom_opcode_name(instruction: &X86InstructionDetail) -> String {
 fn aarch64_custom_opcode_name(instruction: &Aarch64InstructionDetail) -> String {
     match instruction.condition.as_ref() {
         Some(condition) if matches!(instruction.opcode.as_str(), "cmp" | "csel") => {
-            format!("{}.{}", instruction.opcode, aarch64_condition_suffix(condition))
+            format!(
+                "{}.{}",
+                instruction.opcode,
+                aarch64_condition_suffix(condition)
+            )
         }
         _ => instruction.opcode.clone(),
     }
@@ -1992,11 +2304,17 @@ fn aarch64_operand_to_asm(operand: &Aarch64Operand) -> AsmOperand {
 
 fn x86_register_to_asm(register: &X86Register) -> AsmRegister {
     match register {
-        X86Register::Physical { name, size_bits } => AsmRegister::Physical(fp_core::asmir::AsmPhysicalRegister {
-            name: name.clone(),
-            bank: if name.starts_with("xmm") { AsmRegisterBank::Float } else { AsmRegisterBank::General },
-            size_bits: *size_bits,
-        }),
+        X86Register::Physical { name, size_bits } => {
+            AsmRegister::Physical(fp_core::asmir::AsmPhysicalRegister {
+                name: name.clone(),
+                bank: if name.starts_with("xmm") {
+                    AsmRegisterBank::Float
+                } else {
+                    AsmRegisterBank::General
+                },
+                size_bits: *size_bits,
+            })
+        }
         X86Register::Virtual { id, size_bits } => AsmRegister::Virtual {
             id: *id,
             bank: AsmRegisterBank::General,
@@ -2007,15 +2325,17 @@ fn x86_register_to_asm(register: &X86Register) -> AsmRegister {
 
 fn aarch64_register_to_asm(register: &Aarch64Register) -> AsmRegister {
     match register {
-        Aarch64Register::Physical { name, size_bits } => AsmRegister::Physical(fp_core::asmir::AsmPhysicalRegister {
-            name: name.clone(),
-            bank: if matches!(name.chars().next(), Some('s' | 'd' | 'q' | 'v')) {
-                AsmRegisterBank::Float
-            } else {
-                AsmRegisterBank::General
-            },
-            size_bits: *size_bits,
-        }),
+        Aarch64Register::Physical { name, size_bits } => {
+            AsmRegister::Physical(fp_core::asmir::AsmPhysicalRegister {
+                name: name.clone(),
+                bank: if matches!(name.chars().next(), Some('s' | 'd' | 'q' | 'v')) {
+                    AsmRegisterBank::Float
+                } else {
+                    AsmRegisterBank::General
+                },
+                size_bits: *size_bits,
+            })
+        }
         Aarch64Register::Virtual { id, size_bits } => AsmRegister::Virtual {
             id: *id,
             bank: AsmRegisterBank::General,
@@ -2024,7 +2344,10 @@ fn aarch64_register_to_asm(register: &Aarch64Register) -> AsmRegister {
     }
 }
 
-fn asm_operand_to_x86(operand: &AsmOperand, ctx: &mut PhysicalRegisterLoweringContext) -> X86Operand {
+fn asm_operand_to_x86(
+    operand: &AsmOperand,
+    ctx: &mut PhysicalRegisterLoweringContext,
+) -> X86Operand {
     match operand {
         AsmOperand::Register { reg, access } => X86Operand::Register {
             reg: asm_register_to_x86(reg, ctx),
@@ -2032,8 +2355,14 @@ fn asm_operand_to_x86(operand: &AsmOperand, ctx: &mut PhysicalRegisterLoweringCo
         },
         AsmOperand::Immediate(value) => X86Operand::Immediate(*value),
         AsmOperand::Memory(mem) => X86Operand::Memory(X86MemoryOperand {
-            base: mem.base.as_ref().map(|register| asm_register_to_x86(register, ctx)),
-            index: mem.index.as_ref().map(|register| asm_register_to_x86(register, ctx)),
+            base: mem
+                .base
+                .as_ref()
+                .map(|register| asm_register_to_x86(register, ctx)),
+            index: mem
+                .index
+                .as_ref()
+                .map(|register| asm_register_to_x86(register, ctx)),
             scale: mem.scale,
             displacement: mem.displacement,
             size_bytes: mem.size_bytes,
@@ -2048,7 +2377,10 @@ fn asm_operand_to_x86(operand: &AsmOperand, ctx: &mut PhysicalRegisterLoweringCo
     }
 }
 
-fn asm_operand_to_aarch64(operand: &AsmOperand, ctx: &mut PhysicalRegisterLoweringContext) -> Aarch64Operand {
+fn asm_operand_to_aarch64(
+    operand: &AsmOperand,
+    ctx: &mut PhysicalRegisterLoweringContext,
+) -> Aarch64Operand {
     match operand {
         AsmOperand::Register { reg, access } => Aarch64Operand::Register {
             reg: asm_register_to_aarch64(reg, ctx),
@@ -2056,8 +2388,14 @@ fn asm_operand_to_aarch64(operand: &AsmOperand, ctx: &mut PhysicalRegisterLoweri
         },
         AsmOperand::Immediate(value) => Aarch64Operand::Immediate(*value),
         AsmOperand::Memory(mem) => Aarch64Operand::Memory(Aarch64MemoryOperand {
-            base: mem.base.as_ref().map(|register| asm_register_to_aarch64(register, ctx)),
-            index: mem.index.as_ref().map(|register| asm_register_to_aarch64(register, ctx)),
+            base: mem
+                .base
+                .as_ref()
+                .map(|register| asm_register_to_aarch64(register, ctx)),
+            index: mem
+                .index
+                .as_ref()
+                .map(|register| asm_register_to_aarch64(register, ctx)),
             scale: mem.scale,
             displacement: mem.displacement,
             size_bytes: mem.size_bytes,
@@ -2072,7 +2410,10 @@ fn asm_operand_to_aarch64(operand: &AsmOperand, ctx: &mut PhysicalRegisterLoweri
     }
 }
 
-fn asm_register_to_x86(register: &AsmRegister, ctx: &mut PhysicalRegisterLoweringContext) -> X86Register {
+fn asm_register_to_x86(
+    register: &AsmRegister,
+    ctx: &mut PhysicalRegisterLoweringContext,
+) -> X86Register {
     match register {
         AsmRegister::Physical(physical) => map_physical_register_to_x86(physical, ctx),
         AsmRegister::Virtual { id, size_bits, .. } => X86Register::Virtual {
@@ -2148,7 +2489,10 @@ fn map_physical_register_to_aarch64(
 }
 
 fn physical_register_index(name: &str) -> Option<u8> {
-    let digits = name.chars().skip_while(|ch| !ch.is_ascii_digit()).collect::<String>();
+    let digits = name
+        .chars()
+        .skip_while(|ch| !ch.is_ascii_digit())
+        .collect::<String>();
     if digits.is_empty() {
         None
     } else {
@@ -2163,7 +2507,8 @@ fn map_general_register_name_to_x86(name: &str, size_bits: u16) -> String {
     if name == "fp" || name == "x29" || name == "w29" {
         return x86_general_register_name(5, size_bits);
     }
-    let index = physical_register_index(name).unwrap_or_else(|| x86_general_register_index(name).unwrap_or(0));
+    let index = physical_register_index(name)
+        .unwrap_or_else(|| x86_general_register_index(name).unwrap_or(0));
     x86_general_register_name(index, size_bits)
 }
 
@@ -2172,9 +2517,15 @@ fn map_general_register_name_to_aarch64(name: &str, size_bits: u16) -> String {
         return "sp".to_string();
     }
     if matches!(name, "rbp" | "ebp" | "bp") {
-        return if size_bits <= 32 { "w29".to_string() } else { "x29".to_string() };
+        return if size_bits <= 32 {
+            "w29".to_string()
+        } else {
+            "x29".to_string()
+        };
     }
-    let index = x86_general_register_index(name).or_else(|| physical_register_index(name)).unwrap_or(0);
+    let index = x86_general_register_index(name)
+        .or_else(|| physical_register_index(name))
+        .unwrap_or(0);
     if size_bits <= 32 {
         format!("w{index}")
     } else {
@@ -2272,13 +2623,22 @@ fn aarch64_call_target_from_operand(operand: &Aarch64Operand) -> Aarch64CallTarg
 fn lift_x86_terminator(terminator: &X86TerminatorDetail) -> AsmTerminator {
     match terminator.opcode {
         X86TerminatorOpcode::Ret => AsmTerminator::Return(None),
-        X86TerminatorOpcode::Jmp => AsmTerminator::Br(terminator.targets.first().copied().unwrap_or(0)),
+        X86TerminatorOpcode::Jmp => {
+            AsmTerminator::Br(terminator.targets.first().copied().unwrap_or(0))
+        }
         X86TerminatorOpcode::Jcc => AsmTerminator::CondBr {
             condition: AsmValue::Condition(asm_condition_from_x86(
-                terminator.condition.as_ref().unwrap_or(&X86ConditionCode::NonZero),
+                terminator
+                    .condition
+                    .as_ref()
+                    .unwrap_or(&X86ConditionCode::NonZero),
             )),
             if_true: terminator.targets.first().copied().unwrap_or(0),
-            if_false: terminator.targets.get(1).copied().unwrap_or_else(|| terminator.targets.first().copied().unwrap_or(0)),
+            if_false: terminator
+                .targets
+                .get(1)
+                .copied()
+                .unwrap_or_else(|| terminator.targets.first().copied().unwrap_or(0)),
         },
         X86TerminatorOpcode::Switch => AsmTerminator::Switch {
             value: AsmValue::Undef(AsmType::I64),
@@ -2292,7 +2652,10 @@ fn lift_x86_terminator(terminator: &X86TerminatorDetail) -> AsmTerminator {
                 .collect(),
         },
         X86TerminatorOpcode::IndirectJmp => AsmTerminator::IndirectBr {
-            address: AsmValue::Global("indirect.branch".to_string(), AsmType::Ptr(Box::new(AsmType::I8))),
+            address: AsmValue::Global(
+                "indirect.branch".to_string(),
+                AsmType::Ptr(Box::new(AsmType::I8)),
+            ),
             destinations: terminator.targets.clone(),
         },
         X86TerminatorOpcode::Invoke => AsmTerminator::Invoke {
@@ -2323,16 +2686,28 @@ fn lift_x86_terminator(terminator: &X86TerminatorDetail) -> AsmTerminator {
 fn lift_aarch64_terminator(terminator: &Aarch64TerminatorDetail) -> AsmTerminator {
     match terminator.opcode {
         Aarch64TerminatorOpcode::Ret => AsmTerminator::Return(None),
-        Aarch64TerminatorOpcode::B => AsmTerminator::Br(terminator.targets.first().copied().unwrap_or(0)),
+        Aarch64TerminatorOpcode::B => {
+            AsmTerminator::Br(terminator.targets.first().copied().unwrap_or(0))
+        }
         Aarch64TerminatorOpcode::BCond => AsmTerminator::CondBr {
             condition: AsmValue::Condition(asm_condition_from_aarch64(
-                terminator.condition.as_ref().unwrap_or(&Aarch64ConditionCode::NonZero),
+                terminator
+                    .condition
+                    .as_ref()
+                    .unwrap_or(&Aarch64ConditionCode::NonZero),
             )),
             if_true: terminator.targets.first().copied().unwrap_or(0),
-            if_false: terminator.targets.get(1).copied().unwrap_or_else(|| terminator.targets.first().copied().unwrap_or(0)),
+            if_false: terminator
+                .targets
+                .get(1)
+                .copied()
+                .unwrap_or_else(|| terminator.targets.first().copied().unwrap_or(0)),
         },
         Aarch64TerminatorOpcode::Br => AsmTerminator::IndirectBr {
-            address: AsmValue::Global("indirect.branch".to_string(), AsmType::Ptr(Box::new(AsmType::I8))),
+            address: AsmValue::Global(
+                "indirect.branch".to_string(),
+                AsmType::Ptr(Box::new(AsmType::I8)),
+            ),
             destinations: terminator.targets.clone(),
         },
         Aarch64TerminatorOpcode::Switch => AsmTerminator::Switch {
@@ -2394,7 +2769,9 @@ fn semanticize_x86_detail(
         "lea" | "lea.frame" => address_kind(operands),
         "call" => call_value_kind(operands, &values),
         "cmov" => select_value_kind(operands, &values),
-        _ => Err(fp_core::error::Error::from(format!("unsupported x86 opcode for transpile: {base}"))),
+        _ => Err(fp_core::error::Error::from(format!(
+            "unsupported x86 opcode for transpile: {base}"
+        ))),
     }
 }
 
@@ -2408,29 +2785,36 @@ fn semanticize_aarch64_detail(
     match base {
         "add" => binary_value_kind(operands, &values, AsmInstructionKind::Add),
         "sub" => binary_value_kind(operands, &values, AsmInstructionKind::Sub),
-        "mul" | "fmul.s" | "fmul.d" => binary_value_kind(operands, &values, AsmInstructionKind::Mul),
-        "sdiv" | "fdiv.s" | "fdiv.d" => binary_value_kind(operands, &values, AsmInstructionKind::Div),
+        "mul" | "fmul.s" | "fmul.d" => {
+            binary_value_kind(operands, &values, AsmInstructionKind::Mul)
+        }
+        "sdiv" | "fdiv.s" | "fdiv.d" => {
+            binary_value_kind(operands, &values, AsmInstructionKind::Div)
+        }
         "and" => binary_value_kind(operands, &values, AsmInstructionKind::And),
         "orr" => binary_value_kind(operands, &values, AsmInstructionKind::Or),
         "eor" => binary_value_kind(operands, &values, AsmInstructionKind::Xor),
         "lsl" => binary_value_kind(operands, &values, AsmInstructionKind::Shl),
         "asr" => binary_value_kind(operands, &values, AsmInstructionKind::Shr),
         "mvn" => unary_value_kind(operands, &values, AsmInstructionKind::Not),
-        "cmp" => compare_value_kind(operands, &values, condition.map(aarch64_condition_to_x86_equivalent)),
+        "cmp" => compare_value_kind(
+            operands,
+            &values,
+            condition.map(aarch64_condition_to_x86_equivalent),
+        ),
         "ldr" => load_kind(operands),
         "str" => store_kind(operands),
         "add.addr" | "add.sp" => address_kind(operands),
         "bl" => call_value_kind(operands, &values),
         "csel" => select_value_kind(operands, &values),
-        _ => Err(fp_core::error::Error::from(format!("unsupported aarch64 opcode for transpile: {base}"))),
+        _ => Err(fp_core::error::Error::from(format!(
+            "unsupported aarch64 opcode for transpile: {base}"
+        ))),
     }
 }
 
 fn collect_machine_values(operands: &[AsmOperand]) -> Result<Vec<AsmValue>> {
-    operands
-        .iter()
-        .map(machine_operand_to_value)
-        .collect()
+    operands.iter().map(machine_operand_to_value).collect()
 }
 
 fn machine_operand_to_value(operand: &AsmOperand) -> Result<AsmValue> {
@@ -2443,19 +2827,35 @@ fn machine_operand_to_value(operand: &AsmOperand) -> Result<AsmValue> {
             reg: AsmRegister::Physical(register),
             ..
         } => Ok(AsmValue::PhysicalRegister(register.clone())),
-        AsmOperand::Immediate(value) => Ok(AsmValue::Constant(AsmConstant::Int(*value as i64, AsmType::I64))),
-        AsmOperand::Symbol(name) | AsmOperand::Label(name) => Ok(AsmValue::Function(name.to_string())),
-        AsmOperand::Block(id) => Ok(AsmValue::Constant(AsmConstant::UInt(*id as u64, AsmType::I32))),
+        AsmOperand::Immediate(value) => Ok(AsmValue::Constant(AsmConstant::Int(
+            *value as i64,
+            AsmType::I64,
+        ))),
+        AsmOperand::Symbol(name) | AsmOperand::Label(name) => {
+            Ok(AsmValue::Function(name.to_string()))
+        }
+        AsmOperand::Block(id) => Ok(AsmValue::Constant(AsmConstant::UInt(
+            *id as u64,
+            AsmType::I32,
+        ))),
         AsmOperand::Memory(memory) => memory_address_value(memory),
-        _ => Err(fp_core::error::Error::from("machine transpile currently supports only register, immediate, symbol, block, and memory operands")),
+        _ => Err(fp_core::error::Error::from(
+            "machine transpile currently supports only register, immediate, symbol, block, and memory operands",
+        )),
     }
 }
 
 fn memory_address_value(memory: &AsmMemoryOperand) -> Result<AsmValue> {
-    Ok(AsmValue::Address(Box::new(address_value_from_memory(memory))))
+    Ok(AsmValue::Address(Box::new(address_value_from_memory(
+        memory,
+    ))))
 }
 
-fn binary_value_kind<F>(operands: &[AsmOperand], values: &[AsmValue], build: F) -> Result<AsmInstructionKind>
+fn binary_value_kind<F>(
+    operands: &[AsmOperand],
+    values: &[AsmValue],
+    build: F,
+) -> Result<AsmInstructionKind>
 where
     F: Fn(AsmValue, AsmValue) -> AsmInstructionKind,
 {
@@ -2472,17 +2872,18 @@ where
     ))
 }
 
-fn unary_value_kind<F>(operands: &[AsmOperand], values: &[AsmValue], build: F) -> Result<AsmInstructionKind>
+fn unary_value_kind<F>(
+    operands: &[AsmOperand],
+    values: &[AsmValue],
+    build: F,
+) -> Result<AsmInstructionKind>
 where
     F: Fn(AsmValue) -> AsmInstructionKind,
 {
     let first_read = first_read_operand_index(operands);
-    Ok(build(
-        values
-            .get(first_read)
-            .cloned()
-            .ok_or_else(|| fp_core::error::Error::from("missing operand"))?,
-    ))
+    Ok(build(values.get(first_read).cloned().ok_or_else(|| {
+        fp_core::error::Error::from("missing operand")
+    })?))
 }
 
 fn compare_value_kind(
@@ -2506,7 +2907,9 @@ fn compare_value_kind(
         X86ConditionCode::LessEqual => AsmInstructionKind::Le(lhs, rhs),
         X86ConditionCode::Greater => AsmInstructionKind::Gt(lhs, rhs),
         X86ConditionCode::GreaterEqual => AsmInstructionKind::Ge(lhs, rhs),
-        X86ConditionCode::NonZero => AsmInstructionKind::Ne(lhs, AsmValue::Constant(AsmConstant::Int(0, AsmType::I64))),
+        X86ConditionCode::NonZero => {
+            AsmInstructionKind::Ne(lhs, AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)))
+        }
     })
 }
 
@@ -2646,14 +3049,18 @@ fn aarch64_operand(value: &AsmValue, ctx: &mut PhysicalRegisterLoweringContext) 
             access: OperandAccess::Read,
         },
         AsmValue::Address(address) => aarch64_address_value_operand(address, ctx),
-        AsmValue::Condition(condition) => Aarch64Operand::Symbol(Name::new(format!("cc.{}", asm_condition_suffix(condition)))),
+        AsmValue::Condition(condition) => {
+            Aarch64Operand::Symbol(Name::new(format!("cc.{}", asm_condition_suffix(condition))))
+        }
         AsmValue::Comparison(comparison) => Aarch64Operand::Symbol(Name::new(format!(
             "cmp.{}",
             asm_condition_suffix(&comparison.condition)
         ))),
         AsmValue::Flags(id) => Aarch64Operand::Symbol(Name::new(format!("flags.{id}"))),
         AsmValue::Constant(constant) => aarch64_constant_operand(constant),
-        AsmValue::Global(name, _) | AsmValue::Function(name) => Aarch64Operand::Symbol(Name::new(name.clone())),
+        AsmValue::Global(name, _) | AsmValue::Function(name) => {
+            Aarch64Operand::Symbol(Name::new(name.clone()))
+        }
         AsmValue::Local(id) => Aarch64Operand::Symbol(Name::new(format!("local.{id}"))),
         AsmValue::StackSlot(id) => Aarch64Operand::Symbol(Name::new(format!("stack.{id}"))),
         AsmValue::Undef(_) | AsmValue::Null(_) => Aarch64Operand::Immediate(0),
@@ -2668,7 +3075,10 @@ fn aarch64_address_operand(
     match address {
         AsmValue::Address(address) => aarch64_memory_or_symbol_from_address(address, ty, ctx),
         AsmValue::Register(id) => Aarch64Operand::Memory(Aarch64MemoryOperand {
-            base: Some(aarch64_virtual_register(*id, &AsmType::Ptr(Box::new(AsmType::I8)))),
+            base: Some(aarch64_virtual_register(
+                *id,
+                &AsmType::Ptr(Box::new(AsmType::I8)),
+            )),
             index: None,
             scale: 1,
             displacement: 0,
@@ -2681,7 +3091,9 @@ fn aarch64_address_operand(
             displacement: 0,
             size_bytes: ty.map(type_size_bytes),
         }),
-        AsmValue::Global(name, _) | AsmValue::Function(name) => Aarch64Operand::Symbol(Name::new(name.clone())),
+        AsmValue::Global(name, _) | AsmValue::Function(name) => {
+            Aarch64Operand::Symbol(Name::new(name.clone()))
+        }
         AsmValue::Local(id) => Aarch64Operand::Symbol(Name::new(format!("frame.local.{id}"))),
         AsmValue::StackSlot(id) => Aarch64Operand::Symbol(Name::new(format!("frame.slot.{id}"))),
         _ => aarch64_operand(address, ctx),
@@ -2695,8 +3107,12 @@ fn aarch64_constant_operand(constant: &AsmConstant) -> Aarch64Operand {
         AsmConstant::Bool(value) => Aarch64Operand::Immediate(if *value { 1 } else { 0 }),
         AsmConstant::Null(_) | AsmConstant::Undef(_) => Aarch64Operand::Immediate(0),
         AsmConstant::Float(value, ty) => Aarch64Operand::Immediate(float_bits(*value, ty) as i128),
-        AsmConstant::String(value) => Aarch64Operand::Symbol(Name::new(format!("str.{}", sanitize_symbol(value)))),
-        AsmConstant::GlobalRef(name, _, _) | AsmConstant::FunctionRef(name, _) => Aarch64Operand::Symbol(name.clone()),
+        AsmConstant::String(value) => {
+            Aarch64Operand::Symbol(Name::new(format!("str.{}", sanitize_symbol(value))))
+        }
+        AsmConstant::GlobalRef(name, _, _) | AsmConstant::FunctionRef(name, _) => {
+            Aarch64Operand::Symbol(name.clone())
+        }
         AsmConstant::Array(..) => Aarch64Operand::Symbol(Name::new("const.array")),
         AsmConstant::Struct(..) => Aarch64Operand::Symbol(Name::new("const.struct")),
     }
@@ -2719,12 +3135,20 @@ fn register_bank(ty: &AsmType) -> AsmRegisterBank {
 
 fn type_size_bits(ty: &AsmType) -> u16 {
     let bytes = type_size_bytes(ty);
-    if bytes == 0 { 64 } else { bytes.saturating_mul(8) }
+    if bytes == 0 {
+        64
+    } else {
+        bytes.saturating_mul(8)
+    }
 }
 
 fn type_size_bytes(ty: &AsmType) -> u16 {
     let size = size_of(ty);
-    if size == 0 { 0 } else { size.min(u16::MAX as u64) as u16 }
+    if size == 0 {
+        0
+    } else {
+        size.min(u16::MAX as u64) as u16
+    }
 }
 
 fn is_float_type_opt(ty: Option<&AsmType>) -> bool {
@@ -2806,16 +3230,34 @@ fn generic_opcode(kind: &AsmInstructionKind) -> AsmGenericOpcode {
 
 fn map_instruction_kind(kind: &LirInstructionKind) -> AsmInstructionKind {
     match kind {
-        LirInstructionKind::Add(lhs, rhs) => AsmInstructionKind::Add(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Sub(lhs, rhs) => AsmInstructionKind::Sub(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Mul(lhs, rhs) => AsmInstructionKind::Mul(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Div(lhs, rhs) => AsmInstructionKind::Div(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Rem(lhs, rhs) => AsmInstructionKind::Rem(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::And(lhs, rhs) => AsmInstructionKind::And(map_value(lhs), map_value(rhs)),
+        LirInstructionKind::Add(lhs, rhs) => {
+            AsmInstructionKind::Add(map_value(lhs), map_value(rhs))
+        }
+        LirInstructionKind::Sub(lhs, rhs) => {
+            AsmInstructionKind::Sub(map_value(lhs), map_value(rhs))
+        }
+        LirInstructionKind::Mul(lhs, rhs) => {
+            AsmInstructionKind::Mul(map_value(lhs), map_value(rhs))
+        }
+        LirInstructionKind::Div(lhs, rhs) => {
+            AsmInstructionKind::Div(map_value(lhs), map_value(rhs))
+        }
+        LirInstructionKind::Rem(lhs, rhs) => {
+            AsmInstructionKind::Rem(map_value(lhs), map_value(rhs))
+        }
+        LirInstructionKind::And(lhs, rhs) => {
+            AsmInstructionKind::And(map_value(lhs), map_value(rhs))
+        }
         LirInstructionKind::Or(lhs, rhs) => AsmInstructionKind::Or(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Xor(lhs, rhs) => AsmInstructionKind::Xor(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Shl(lhs, rhs) => AsmInstructionKind::Shl(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Shr(lhs, rhs) => AsmInstructionKind::Shr(map_value(lhs), map_value(rhs)),
+        LirInstructionKind::Xor(lhs, rhs) => {
+            AsmInstructionKind::Xor(map_value(lhs), map_value(rhs))
+        }
+        LirInstructionKind::Shl(lhs, rhs) => {
+            AsmInstructionKind::Shl(map_value(lhs), map_value(rhs))
+        }
+        LirInstructionKind::Shr(lhs, rhs) => {
+            AsmInstructionKind::Shr(map_value(lhs), map_value(rhs))
+        }
         LirInstructionKind::Not(value) => AsmInstructionKind::Not(map_value(value)),
         LirInstructionKind::Eq(lhs, rhs) => AsmInstructionKind::Eq(map_value(lhs), map_value(rhs)),
         LirInstructionKind::Ne(lhs, rhs) => AsmInstructionKind::Ne(map_value(lhs), map_value(rhs)),
@@ -2856,22 +3298,44 @@ fn map_instruction_kind(kind: &LirInstructionKind) -> AsmInstructionKind {
             indices: indices.iter().map(map_value).collect(),
             inbounds: *inbounds,
         },
-        LirInstructionKind::Bitcast(value, ty) => AsmInstructionKind::Bitcast(map_value(value), ty.clone()),
+        LirInstructionKind::Bitcast(value, ty) => {
+            AsmInstructionKind::Bitcast(map_value(value), ty.clone())
+        }
         LirInstructionKind::PtrToInt(value) => AsmInstructionKind::PtrToInt(map_value(value)),
         LirInstructionKind::IntToPtr(value) => AsmInstructionKind::IntToPtr(map_value(value)),
-        LirInstructionKind::Trunc(value, ty) => AsmInstructionKind::Trunc(map_value(value), ty.clone()),
-        LirInstructionKind::ZExt(value, ty) => AsmInstructionKind::ZExt(map_value(value), ty.clone()),
-        LirInstructionKind::SExt(value, ty) => AsmInstructionKind::SExt(map_value(value), ty.clone()),
-        LirInstructionKind::FPExt(value, ty) => AsmInstructionKind::FPExt(map_value(value), ty.clone()),
-        LirInstructionKind::FPTrunc(value, ty) => AsmInstructionKind::FPTrunc(map_value(value), ty.clone()),
-        LirInstructionKind::FPToUI(value, ty) => AsmInstructionKind::FPToUI(map_value(value), ty.clone()),
-        LirInstructionKind::FPToSI(value, ty) => AsmInstructionKind::FPToSI(map_value(value), ty.clone()),
-        LirInstructionKind::UIToFP(value, ty) => AsmInstructionKind::UIToFP(map_value(value), ty.clone()),
-        LirInstructionKind::SIToFP(value, ty) => AsmInstructionKind::SIToFP(map_value(value), ty.clone()),
-        LirInstructionKind::ExtractValue { aggregate, indices } => AsmInstructionKind::ExtractValue {
-            aggregate: map_value(aggregate),
-            indices: indices.clone(),
-        },
+        LirInstructionKind::Trunc(value, ty) => {
+            AsmInstructionKind::Trunc(map_value(value), ty.clone())
+        }
+        LirInstructionKind::ZExt(value, ty) => {
+            AsmInstructionKind::ZExt(map_value(value), ty.clone())
+        }
+        LirInstructionKind::SExt(value, ty) => {
+            AsmInstructionKind::SExt(map_value(value), ty.clone())
+        }
+        LirInstructionKind::FPExt(value, ty) => {
+            AsmInstructionKind::FPExt(map_value(value), ty.clone())
+        }
+        LirInstructionKind::FPTrunc(value, ty) => {
+            AsmInstructionKind::FPTrunc(map_value(value), ty.clone())
+        }
+        LirInstructionKind::FPToUI(value, ty) => {
+            AsmInstructionKind::FPToUI(map_value(value), ty.clone())
+        }
+        LirInstructionKind::FPToSI(value, ty) => {
+            AsmInstructionKind::FPToSI(map_value(value), ty.clone())
+        }
+        LirInstructionKind::UIToFP(value, ty) => {
+            AsmInstructionKind::UIToFP(map_value(value), ty.clone())
+        }
+        LirInstructionKind::SIToFP(value, ty) => {
+            AsmInstructionKind::SIToFP(map_value(value), ty.clone())
+        }
+        LirInstructionKind::ExtractValue { aggregate, indices } => {
+            AsmInstructionKind::ExtractValue {
+                aggregate: map_value(aggregate),
+                indices: indices.clone(),
+            }
+        }
         LirInstructionKind::InsertValue {
             aggregate,
             element,
@@ -2892,11 +3356,13 @@ fn map_instruction_kind(kind: &LirInstructionKind) -> AsmInstructionKind {
             calling_convention: calling_convention.clone(),
             tail_call: *tail_call,
         },
-        LirInstructionKind::IntrinsicCall { kind, format, args } => AsmInstructionKind::IntrinsicCall {
-            kind: map_intrinsic(kind),
-            format: format.clone(),
-            args: args.iter().map(map_value).collect(),
-        },
+        LirInstructionKind::IntrinsicCall { kind, format, args } => {
+            AsmInstructionKind::IntrinsicCall {
+                kind: map_intrinsic(kind),
+                format: format.clone(),
+                args: args.iter().map(map_value).collect(),
+            }
+        }
         LirInstructionKind::SextOrTrunc(value, ty) => {
             AsmInstructionKind::SextOrTrunc(map_value(value), ty.clone())
         }
@@ -3062,7 +3528,9 @@ fn map_intrinsic(kind: &LirIntrinsicKind) -> AsmIntrinsicKind {
 
 fn map_clause(clause: &fp_core::lir::LandingPadClause) -> AsmLandingPadClause {
     match clause {
-        fp_core::lir::LandingPadClause::Catch(value) => AsmLandingPadClause::Catch(map_value(value)),
+        fp_core::lir::LandingPadClause::Catch(value) => {
+            AsmLandingPadClause::Catch(map_value(value))
+        }
         fp_core::lir::LandingPadClause::Filter(values) => {
             AsmLandingPadClause::Filter(values.iter().map(map_value).collect())
         }
@@ -3089,12 +3557,15 @@ mod tests {
     use super::{
         lift_from_aarch64, lift_from_x86_64, lower_to_aarch64, lower_to_x86_64, select_program,
     };
-    use crate::asm::aarch64::{
-        AsmAarch64Block, AsmAarch64Function, AsmAarch64Program, Aarch64InstructionDetail,
-        Aarch64Operand, Aarch64Register, Aarch64TerminatorDetail,
-    };
-    use crate::asm::x86_64::{AsmX86_64Block, AsmX86_64Function, AsmX86_64Program, X86InstructionDetail, X86Operand, X86Register, X86TerminatorDetail};
     use crate::asm::aarch64::{Aarch64CallTarget, Aarch64ConditionCode, Aarch64TerminatorOpcode};
+    use crate::asm::aarch64::{
+        Aarch64InstructionDetail, Aarch64Operand, Aarch64Register, Aarch64TerminatorDetail,
+        AsmAarch64Block, AsmAarch64Function, AsmAarch64Program,
+    };
+    use crate::asm::x86_64::{
+        AsmX86_64Block, AsmX86_64Function, AsmX86_64Program, X86InstructionDetail, X86Operand,
+        X86Register, X86TerminatorDetail,
+    };
     use crate::asm::x86_64::{X86CallTarget, X86ConditionCode, X86Opcode, X86TerminatorOpcode};
     use crate::emit::{TargetArch, TargetFormat};
     use fp_core::asmir::{
@@ -3121,7 +3592,9 @@ mod tests {
                     label: Some(Name::new("entry")),
                     instructions: vec![LirInstruction {
                         id: 1,
-                        kind: LirInstructionKind::Freeze(fp_core::lir::LirValue::Undef(LirType::I32)),
+                        kind: LirInstructionKind::Freeze(fp_core::lir::LirValue::Undef(
+                            LirType::I32,
+                        )),
                         type_hint: Some(LirType::I32),
                         debug_info: None,
                     }],
@@ -3168,7 +3641,10 @@ mod tests {
                         id: 7,
                         kind: LirInstructionKind::Add(
                             fp_core::lir::LirValue::Register(1),
-                            fp_core::lir::LirValue::Constant(fp_core::lir::LirConstant::Int(4, LirType::I32)),
+                            fp_core::lir::LirValue::Constant(fp_core::lir::LirConstant::Int(
+                                4,
+                                LirType::I32,
+                            )),
                         ),
                         type_hint: Some(LirType::I32),
                         debug_info: None,
@@ -3194,7 +3670,10 @@ mod tests {
         assert_eq!(inst.operands.len(), 3);
         assert!(matches!(
             &inst.operands[0],
-            AsmOperand::Register { access: OperandAccess::Write, .. }
+            AsmOperand::Register {
+                access: OperandAccess::Write,
+                ..
+            }
         ));
         assert!(matches!(&inst.operands[1], AsmOperand::Register { .. }));
         assert!(matches!(&inst.operands[2], AsmOperand::Immediate(4)));
@@ -3221,8 +3700,14 @@ mod tests {
                         LirInstruction {
                             id: 1,
                             kind: LirInstructionKind::Eq(
-                                fp_core::lir::LirValue::Constant(fp_core::lir::LirConstant::Int(1, LirType::I32)),
-                                fp_core::lir::LirValue::Constant(fp_core::lir::LirConstant::Int(2, LirType::I32)),
+                                fp_core::lir::LirValue::Constant(fp_core::lir::LirConstant::Int(
+                                    1,
+                                    LirType::I32,
+                                )),
+                                fp_core::lir::LirValue::Constant(fp_core::lir::LirConstant::Int(
+                                    2,
+                                    LirType::I32,
+                                )),
                             ),
                             type_hint: Some(LirType::I1),
                             debug_info: None,
@@ -3258,10 +3743,7 @@ mod tests {
         let eq_inst = &x86.functions[0].blocks[0].instructions[0];
         let call_inst = &x86.functions[0].blocks[0].instructions[1];
 
-        assert!(matches!(
-            eq_inst.condition,
-            Some(X86ConditionCode::Equal)
-        ));
+        assert!(matches!(eq_inst.condition, Some(X86ConditionCode::Equal)));
         assert!(matches!(
             call_inst.call_target,
             Some(X86CallTarget::Symbol(ref name)) if *name == Name::new("callee")
@@ -3278,42 +3760,53 @@ mod tests {
                     return_type: LirType::I32,
                     is_variadic: false,
                 },
-                basic_blocks: vec![LirBasicBlock {
-                    id: 0,
-                    label: Some(Name::new("entry")),
-                    instructions: vec![
-                        LirInstruction {
-                            id: 1,
-                            kind: LirInstructionKind::Eq(
-                                fp_core::lir::LirValue::Constant(fp_core::lir::LirConstant::Int(1, LirType::I32)),
-                                fp_core::lir::LirValue::Constant(fp_core::lir::LirConstant::Int(2, LirType::I32)),
-                            ),
-                            type_hint: Some(LirType::I1),
-                            debug_info: None,
-                        },
-                        LirInstruction {
-                            id: 2,
-                            kind: LirInstructionKind::Call {
-                                function: fp_core::lir::LirValue::Function("callee".to_string()),
-                                args: Vec::new(),
-                                calling_convention: CallingConvention::C,
-                                tail_call: false,
+                basic_blocks: vec![
+                    LirBasicBlock {
+                        id: 0,
+                        label: Some(Name::new("entry")),
+                        instructions: vec![
+                            LirInstruction {
+                                id: 1,
+                                kind: LirInstructionKind::Eq(
+                                    fp_core::lir::LirValue::Constant(
+                                        fp_core::lir::LirConstant::Int(1, LirType::I32),
+                                    ),
+                                    fp_core::lir::LirValue::Constant(
+                                        fp_core::lir::LirConstant::Int(2, LirType::I32),
+                                    ),
+                                ),
+                                type_hint: Some(LirType::I1),
+                                debug_info: None,
                             },
-                            type_hint: Some(LirType::I32),
-                            debug_info: None,
-                        },
-                    ],
-                    terminator: LirTerminator::Br(1),
-                    predecessors: Vec::new(),
-                    successors: vec![1],
-                }, LirBasicBlock {
-                    id: 1,
-                    label: Some(Name::new("exit")),
-                    instructions: Vec::new(),
-                    terminator: LirTerminator::Return(Some(fp_core::lir::LirValue::Register(2))),
-                    predecessors: vec![0],
-                    successors: Vec::new(),
-                }],
+                            LirInstruction {
+                                id: 2,
+                                kind: LirInstructionKind::Call {
+                                    function: fp_core::lir::LirValue::Function(
+                                        "callee".to_string(),
+                                    ),
+                                    args: Vec::new(),
+                                    calling_convention: CallingConvention::C,
+                                    tail_call: false,
+                                },
+                                type_hint: Some(LirType::I32),
+                                debug_info: None,
+                            },
+                        ],
+                        terminator: LirTerminator::Br(1),
+                        predecessors: Vec::new(),
+                        successors: vec![1],
+                    },
+                    LirBasicBlock {
+                        id: 1,
+                        label: Some(Name::new("exit")),
+                        instructions: Vec::new(),
+                        terminator: LirTerminator::Return(Some(fp_core::lir::LirValue::Register(
+                            2,
+                        ))),
+                        predecessors: vec![0],
+                        successors: Vec::new(),
+                    },
+                ],
                 locals: Vec::new(),
                 stack_slots: Vec::new(),
                 calling_convention: CallingConvention::C,
@@ -3393,7 +3886,10 @@ mod tests {
 
         assert_eq!(x86.functions.len(), 1);
         assert_eq!(x86.functions[0].name, Name::new("main"));
-        assert_eq!(x86.functions[0].blocks[0].terminator.opcode, X86TerminatorOpcode::Jcc);
+        assert_eq!(
+            x86.functions[0].blocks[0].terminator.opcode,
+            X86TerminatorOpcode::Jcc
+        );
         assert_eq!(x86.functions[0].blocks[0].terminator.targets, vec![1, 2]);
     }
 
@@ -3408,11 +3904,17 @@ mod tests {
                         opcode: X86Opcode::Add,
                         operands: vec![
                             X86Operand::Register {
-                                reg: X86Register::Virtual { id: 1, size_bits: 64 },
+                                reg: X86Register::Virtual {
+                                    id: 1,
+                                    size_bits: 64,
+                                },
                                 access: OperandAccess::Write,
                             },
                             X86Operand::Register {
-                                reg: X86Register::Virtual { id: 2, size_bits: 64 },
+                                reg: X86Register::Virtual {
+                                    id: 2,
+                                    size_bits: 64,
+                                },
                                 access: OperandAccess::Read,
                             },
                             X86Operand::Immediate(4),
@@ -3444,7 +3946,10 @@ mod tests {
                 if_false: 2,
             }
         ));
-        assert_eq!(lowered.functions[0].blocks[0].terminator, x86.functions[0].blocks[0].terminator);
+        assert_eq!(
+            lowered.functions[0].blocks[0].terminator,
+            x86.functions[0].blocks[0].terminator
+        );
     }
 
     #[test]
@@ -3458,11 +3963,17 @@ mod tests {
                         opcode: "add".to_string(),
                         operands: vec![
                             Aarch64Operand::Register {
-                                reg: Aarch64Register::Virtual { id: 1, size_bits: 64 },
+                                reg: Aarch64Register::Virtual {
+                                    id: 1,
+                                    size_bits: 64,
+                                },
                                 access: OperandAccess::Write,
                             },
                             Aarch64Operand::Register {
-                                reg: Aarch64Register::Virtual { id: 2, size_bits: 64 },
+                                reg: Aarch64Register::Virtual {
+                                    id: 2,
+                                    size_bits: 64,
+                                },
                                 access: OperandAccess::Read,
                             },
                             Aarch64Operand::Immediate(7),
@@ -3494,7 +4005,10 @@ mod tests {
                 if_false: 2,
             }
         ));
-        assert_eq!(lowered.functions[0].blocks[0].terminator, aarch64.functions[0].blocks[0].terminator);
+        assert_eq!(
+            lowered.functions[0].blocks[0].terminator,
+            aarch64.functions[0].blocks[0].terminator
+        );
     }
 
     #[test]
@@ -3508,7 +4022,10 @@ mod tests {
                         opcode: X86Opcode::Cmp,
                         operands: vec![
                             X86Operand::Register {
-                                reg: X86Register::Virtual { id: 2, size_bits: 64 },
+                                reg: X86Register::Virtual {
+                                    id: 2,
+                                    size_bits: 64,
+                                },
                                 access: OperandAccess::Read,
                             },
                             X86Operand::Immediate(4),
@@ -3547,7 +4064,10 @@ mod tests {
                         opcode: "cmp.ge".to_string(),
                         operands: vec![
                             Aarch64Operand::Register {
-                                reg: Aarch64Register::Virtual { id: 2, size_bits: 64 },
+                                reg: Aarch64Register::Virtual {
+                                    id: 2,
+                                    size_bits: 64,
+                                },
                                 access: OperandAccess::Read,
                             },
                             Aarch64Operand::Immediate(7),
@@ -3638,7 +4158,10 @@ mod tests {
         let asmir = lift_from_x86_64(&x86);
         let lowered = lower_to_x86_64(&asmir);
 
-        assert_eq!(lowered.functions[0].blocks[0].instructions, x86.functions[0].blocks[0].instructions);
+        assert_eq!(
+            lowered.functions[0].blocks[0].instructions,
+            x86.functions[0].blocks[0].instructions
+        );
     }
 
     #[test]
@@ -3686,10 +4209,12 @@ mod tests {
                                 access: OperandAccess::Read,
                             }],
                             condition: None,
-                            call_target: Some(Aarch64CallTarget::Register(Aarch64Register::Physical {
-                                name: "x0".to_string(),
-                                size_bits: 64,
-                            })),
+                            call_target: Some(Aarch64CallTarget::Register(
+                                Aarch64Register::Physical {
+                                    name: "x0".to_string(),
+                                    size_bits: 64,
+                                },
+                            )),
                         },
                     ],
                     terminator: Aarch64TerminatorDetail {
@@ -3704,6 +4229,9 @@ mod tests {
         let asmir = lift_from_aarch64(&aarch64);
         let lowered = lower_to_aarch64(&asmir);
 
-        assert_eq!(lowered.functions[0].blocks[0].instructions, aarch64.functions[0].blocks[0].instructions);
+        assert_eq!(
+            lowered.functions[0].blocks[0].instructions,
+            aarch64.functions[0].blocks[0].instructions
+        );
     }
 }

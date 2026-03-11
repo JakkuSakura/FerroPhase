@@ -391,10 +391,14 @@ fn inspect_pe_header_reports_pe_metadata_without_full_parse() {
         .stdout(predicate::str::contains("kind: pe64"))
         .stdout(predicate::str::contains("pe_magic: PE32+"))
         .stdout(predicate::str::contains("pe_coff_machine: x86_64"))
-        .stdout(predicate::str::contains("dir#0 kind=export rva=0x2000 size=64"))
+        .stdout(predicate::str::contains(
+            "dir#0 kind=export rva=0x2000 size=64",
+        ))
         .stdout(predicate::str::contains("section#1 name=.rdata"))
         .stdout(predicate::str::contains("pe_exports: dll=test.dll"))
-        .stdout(predicate::str::contains("export#0 name=ExportedFn ordinal=1 rva=0x1000"))
+        .stdout(predicate::str::contains(
+            "export#0 name=ExportedFn ordinal=1 rva=0x1000",
+        ))
         .stdout(predicate::str::contains("dll#0 name=KERNEL32.dll"))
         .stdout(predicate::str::contains("import#0 name=ImportedFn hint=7"));
 }

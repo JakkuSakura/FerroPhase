@@ -268,7 +268,10 @@ fn parse_freeze(line: &str, target: GoAsmTarget) -> Result<Option<LirInstruction
     }))
 }
 
-fn parse_binop_pattern(lines: &[String], target: GoAsmTarget) -> Result<Option<(LirInstruction, usize)>> {
+fn parse_binop_pattern(
+    lines: &[String],
+    target: GoAsmTarget,
+) -> Result<Option<(LirInstruction, usize)>> {
     if lines.len() < 2 {
         return Ok(None);
     }
@@ -305,7 +308,10 @@ fn parse_binop_pattern(lines: &[String], target: GoAsmTarget) -> Result<Option<(
     )))
 }
 
-fn parse_not_pattern(lines: &[String], target: GoAsmTarget) -> Result<Option<(LirInstruction, usize)>> {
+fn parse_not_pattern(
+    lines: &[String],
+    target: GoAsmTarget,
+) -> Result<Option<(LirInstruction, usize)>> {
     if lines.len() < 2 {
         return Ok(None);
     }
@@ -470,7 +476,10 @@ fn parse_terminator(
         .and_then(|line| parse_jmp(line).transpose())
         .transpose()?
     {
-        return Ok(LirTerminator::Br(resolve_block(label_to_block, &target_label)?));
+        return Ok(LirTerminator::Br(resolve_block(
+            label_to_block,
+            &target_label,
+        )?));
     }
 
     if lines.len() >= 2 {
@@ -504,7 +513,10 @@ fn parse_return_mov(line: &str, target: GoAsmTarget) -> Result<Option<LirValue>>
         return Ok(None);
     }
     let operands = split_operands(rest);
-    let Some(dst) = operands.last().and_then(|op| parse_return_register(op, target)) else {
+    let Some(dst) = operands
+        .last()
+        .and_then(|op| parse_return_register(op, target))
+    else {
         return Ok(None);
     };
     if !dst {
@@ -538,10 +550,7 @@ fn parse_conditional_jump(line: &str, target: GoAsmTarget) -> Result<Option<(Lir
     // Condition is always the last compare result register in the emitted form.
     // We recover it via the register that was written by the comparison pattern.
     // Here we just pass through a dummy; the compare peephole replaces it.
-    Ok(Some((
-        LirValue::Register(0),
-        label.to_string(),
-    )))
+    Ok(Some((LirValue::Register(0), label.to_string())))
 }
 
 fn parse_jmp(line: &str) -> Result<Option<String>> {
@@ -586,8 +595,11 @@ fn parse_compare_pattern(
     if ops0.len() != 2 || ops0[0] != "$0" {
         return Ok(None);
     }
-    let dst = parse_register(&ops0[1], target).ok_or_else(|| Error::from("goasm parse: invalid compare dst"))?;
-    let id = dst.checked_sub(10).ok_or_else(|| Error::from("goasm parse: invalid compare dst"))?;
+    let dst = parse_register(&ops0[1], target)
+        .ok_or_else(|| Error::from("goasm parse: invalid compare dst"))?;
+    let id = dst
+        .checked_sub(10)
+        .ok_or_else(|| Error::from("goasm parse: invalid compare dst"))?;
 
     let line1 = lines[1].trim_start_matches('\t').trim();
     let (mn1, rest1) = split_mnemonic_operands(line1)?;
@@ -638,12 +650,16 @@ fn parse_compare_pattern(
     if ops5.len() != 2 || ops5[0] != "$1" {
         return Ok(None);
     }
-    let dst2 = parse_register(&ops5[1], target).ok_or_else(|| Error::from("goasm parse: invalid compare dst"))?;
+    let dst2 = parse_register(&ops5[1], target)
+        .ok_or_else(|| Error::from("goasm parse: invalid compare dst"))?;
     if dst2 != dst {
         return Ok(None);
     }
 
-    if lines.get(6).is_some_and(|line| line.trim_end_matches(':') != done_label) {
+    if lines
+        .get(6)
+        .is_some_and(|line| line.trim_end_matches(':') != done_label)
+    {
         return Ok(None);
     }
 
@@ -669,7 +685,8 @@ fn parse_compare_pattern(
 }
 
 fn parse_value(token: Option<&str>, target: GoAsmTarget, line: &str) -> Result<LirValue> {
-    let token = token.ok_or_else(|| Error::from(format!("goasm parse: missing operand in `{line}`")))?;
+    let token =
+        token.ok_or_else(|| Error::from(format!("goasm parse: missing operand in `{line}`")))?;
     if token.starts_with('$') {
         let number = token
             .trim_start_matches('$')
@@ -678,13 +695,17 @@ fn parse_value(token: Option<&str>, target: GoAsmTarget, line: &str) -> Result<L
         return Ok(LirValue::Constant(LirConstant::Int(number, LirType::I64)));
     }
     if let Some(reg) = parse_register(token, target) {
-        let id = reg.checked_sub(10).ok_or_else(|| Error::from("goasm parse: invalid vreg"))?;
+        let id = reg
+            .checked_sub(10)
+            .ok_or_else(|| Error::from("goasm parse: invalid vreg"))?;
         return Ok(LirValue::Register(id));
     }
     if parse_return_register(token, target).unwrap_or(false) {
         return Ok(LirValue::Register(0));
     }
-    Err(Error::from(format!("goasm parse: unsupported operand `{token}`")))
+    Err(Error::from(format!(
+        "goasm parse: unsupported operand `{token}`"
+    )))
 }
 
 fn parse_register(token: &str, target: GoAsmTarget) -> Option<u32> {
@@ -724,7 +745,9 @@ fn split_operands(rest: &str) -> Vec<String> {
     if rest.is_empty() {
         return Vec::new();
     }
-    rest.split(',').map(|part| part.trim().to_string()).collect()
+    rest.split(',')
+        .map(|part| part.trim().to_string())
+        .collect()
 }
 
 fn strip_comment(line: &str) -> &str {
@@ -753,4 +776,3 @@ fn block_label_suffix<'a>(function_name: &Name, label: &'a str) -> Option<&'a st
         .strip_prefix(&prefix)
         .or_else(|| label.strip_prefix(&prefix2))
 }
-

@@ -1,7 +1,7 @@
-use crate::binary::{aarch64, x86_64, TextRelocation};
+use crate::binary::{TextRelocation, aarch64, x86_64};
 use fp_core::asmir::{
-    AsmArchitecture, AsmEndianness, AsmFunction, AsmFunctionSignature, AsmObjectFormat,
-    AsmProgram, AsmSection, AsmSectionFlag, AsmSectionKind, AsmTarget, AsmTerminator, AsmType,
+    AsmArchitecture, AsmEndianness, AsmFunction, AsmFunctionSignature, AsmObjectFormat, AsmProgram,
+    AsmSection, AsmSectionFlag, AsmSectionKind, AsmTarget, AsmTerminator, AsmType,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{Linkage, Name, Visibility};
@@ -15,7 +15,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         other => {
             return Err(Error::from(format!(
                 "object lift currently supports only x86_64 and aarch64; got {other:?}"
-            )))
+            )));
         }
     };
 
@@ -54,8 +54,13 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         .filter(|symbol| symbol.section_index() == Some(text_index))
         .find(|symbol| symbol.size() > 0)
         .or_else(|| {
-            file.symbols()
-                .find(|symbol| symbol.name().ok().map(|name| name == "main").unwrap_or(false))
+            file.symbols().find(|symbol| {
+                symbol
+                    .name()
+                    .ok()
+                    .map(|name| name == "main")
+                    .unwrap_or(false)
+            })
         });
 
     let (name, symbol_offset, symbol_size) = match symbol {
@@ -99,7 +104,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         _ => {
             return Err(Error::from(
                 "object lift internal error: unsupported architecture",
-            ))
+            ));
         }
     };
 
@@ -149,4 +154,3 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
 
     Ok(program)
 }
-

@@ -6,7 +6,7 @@ use object::{Architecture, BinaryFormat, SectionKind};
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{compile_command, CompileArgs, EmitterKind};
+use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
 use fp_cli::pipeline::BackendKind;
 
 fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileArgs {
@@ -75,6 +75,8 @@ async fn compile_cil_text_to_native_object() {
     let file = object::File::parse(bytes.as_slice()).unwrap();
     assert_eq!(file.format(), BinaryFormat::Elf);
     assert_eq!(file.architecture(), Architecture::X86_64);
-    assert!(file.sections().any(|section| section.kind() == SectionKind::Text));
+    assert!(
+        file.sections()
+            .any(|section| section.kind() == SectionKind::Text)
+    );
 }
-

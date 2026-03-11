@@ -82,7 +82,11 @@ fn main() -> i32 {
 
     let jar_bytes = fs::read(&output_file).unwrap();
     assert_eq!(&jar_bytes[0..4], b"PK\x03\x04");
-    assert!(jar_bytes.windows("META-INF/MANIFEST.MF".len()).any(|w| w == b"META-INF/MANIFEST.MF"));
+    assert!(
+        jar_bytes
+            .windows("META-INF/MANIFEST.MF".len())
+            .any(|w| w == b"META-INF/MANIFEST.MF")
+    );
 
     let class_output = temp_dir.path().join("hello-world.class");
     let class_bytes = fs::read(&class_output).unwrap();

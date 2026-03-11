@@ -2,9 +2,9 @@ mod aarch64;
 mod codegen;
 mod x86_64;
 
+use crate::asmir;
 use crate::config::NativeTarget;
 use crate::link;
-use crate::asmir;
 use fp_core::asmir::AsmProgram;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
@@ -174,7 +174,11 @@ pub fn emit_plan(
     })
 }
 
-pub fn emit_plan_from_asmir(mut asmir: AsmProgram, format: TargetFormat, arch: TargetArch) -> Result<EmitPlan> {
+pub fn emit_plan_from_asmir(
+    mut asmir: AsmProgram,
+    format: TargetFormat,
+    arch: TargetArch,
+) -> Result<EmitPlan> {
     asmir.target.architecture = match arch {
         TargetArch::X86_64 => fp_core::asmir::AsmArchitecture::X86_64,
         TargetArch::Aarch64 => fp_core::asmir::AsmArchitecture::Aarch64,
@@ -224,7 +228,12 @@ pub fn dump_asm(path: &Path, plan: &EmitPlan) -> Result<()> {
     )
     .ok();
     writeln!(&mut out, "\nAsmIR:").ok();
-    writeln!(&mut out, "{}", fp_core::asmir::pretty::format_program(&plan.asmir)).ok();
+    writeln!(
+        &mut out,
+        "{}",
+        fp_core::asmir::pretty::format_program(&plan.asmir)
+    )
+    .ok();
 
     if !plan.symbols.is_empty() {
         let mut symbols: Vec<(&String, &u64)> = plan.symbols.iter().collect();

@@ -10,8 +10,9 @@ impl Pipeline {
         let wants_object = base_path.extension().and_then(|ext| ext.to_str()) == Some("o");
 
         if wants_object {
-            fp_ebpf::write_object(base_path, lir_program)
-                .map_err(|err| CliError::Compilation(format!("eBPF object emit failed: {}", err)))?;
+            fp_ebpf::write_object(base_path, lir_program).map_err(|err| {
+                CliError::Compilation(format!("eBPF object emit failed: {}", err))
+            })?;
             if options.save_intermediates {
                 let asm_path = base_path.with_extension("ebpf");
                 let asm = fp_ebpf::emit_assembly(lir_program).map_err(|err| {

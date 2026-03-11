@@ -20,7 +20,11 @@ pub fn format_program(program: &AsmProgram) -> String {
     for function in &program.functions {
         out.push_str(&format!("fn {}\n", function.name));
         for block in &function.basic_blocks {
-            out.push_str(&format!("  bb{} {}\n", block.id, block.label.as_ref().map(|n| n.as_str()).unwrap_or("")));
+            out.push_str(&format!(
+                "  bb{} {}\n",
+                block.id,
+                block.label.as_ref().map(|n| n.as_str()).unwrap_or("")
+            ));
             for instruction in &block.instructions {
                 out.push_str(&format!(
                     "    {} {}\n",
@@ -65,7 +69,10 @@ fn format_operand(operand: &AsmOperand) -> String {
         AsmOperand::Symbol(name) => format!("symbol({})", name),
         AsmOperand::Block(id) => format!("bb{}", id),
         AsmOperand::Relocation(reloc) => {
-            format!("reloc(kind={}, symbol={}, addend={})", reloc.kind, reloc.symbol, reloc.addend)
+            format!(
+                "reloc(kind={}, symbol={}, addend={})",
+                reloc.kind, reloc.symbol, reloc.addend
+            )
         }
         AsmOperand::Predicate { reg, inverted } => {
             format!("pred({:?}, inverted={})", reg, inverted)

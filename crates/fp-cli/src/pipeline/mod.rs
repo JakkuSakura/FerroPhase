@@ -891,7 +891,8 @@ impl Pipeline {
                         STAGE_EMIT_EBPF,
                         stage_started.elapsed()
                     );
-                    let wants_object = base_path.extension().and_then(|ext| ext.to_str()) == Some("o");
+                    let wants_object =
+                        base_path.extension().and_then(|ext| ext.to_str()) == Some("o");
                     if wants_object {
                         PipelineOutput::Binary(base_path.to_path_buf())
                     } else {

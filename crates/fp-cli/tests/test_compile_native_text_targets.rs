@@ -2,7 +2,7 @@ use std::fs;
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{compile_command, CompileArgs, EmitterKind};
+use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
 use fp_cli::pipeline::BackendKind;
 
 fn base_args(
@@ -383,7 +383,11 @@ async fn compile_native_asm_transpiles_indirect_register_call() {
     let input_file = temp_dir.path().join("call.s");
     let output_file = temp_dir.path().join("call.aarch64.s");
 
-    fs::write(&input_file, ".globl main\nmain:\nbb0:\n    call v1:64\n    ret\n").unwrap();
+    fs::write(
+        &input_file,
+        ".globl main\nmain:\nbb0:\n    call v1:64\n    ret\n",
+    )
+    .unwrap();
 
     let args = CompileArgs {
         input: vec![input_file],

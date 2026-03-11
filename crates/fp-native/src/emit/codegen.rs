@@ -1,5 +1,5 @@
-use fp_core::error::{Error, Result};
 use fp_core::asmir::AsmProgram;
+use fp_core::error::{Error, Result};
 use fp_core::lir::layout::align_of;
 use fp_core::lir::{
     LirConstant, LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue,

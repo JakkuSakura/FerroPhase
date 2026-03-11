@@ -3,10 +3,14 @@ use std::fs;
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{compile_command, CompileArgs, EmitterKind};
+use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
 use fp_cli::pipeline::BackendKind;
 
-fn base_args(input: std::path::PathBuf, output: std::path::PathBuf, backend: BackendKind) -> CompileArgs {
+fn base_args(
+    input: std::path::PathBuf,
+    output: std::path::PathBuf,
+    backend: BackendKind,
+) -> CompileArgs {
     CompileArgs {
         input: vec![input],
         backend,
@@ -69,4 +73,3 @@ async fn compile_cil_text_to_dotnet_assembly() {
     let bytes = fs::read(&output_file).unwrap();
     assert!(bytes.starts_with(b"MZ"));
 }
-

@@ -1,11 +1,11 @@
+use crate::binary::LiftedFunction;
 use crate::binary::TextRelocation;
+use fp_core::asmir::AsmLocal;
+use fp_core::asmir::AsmTerminator;
 use fp_core::asmir::{
     AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmType, AsmValue,
 };
 use fp_core::error::{Error, Result};
-use crate::binary::LiftedFunction;
-use fp_core::asmir::AsmTerminator;
-use fp_core::asmir::AsmLocal;
 use fp_core::lir::CallingConvention;
 
 pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<LiftedFunction> {
@@ -158,14 +158,12 @@ fn lift_instruction(
         return Ok(());
     }
 
-    Err(Error::from(format!("unsupported aarch64 instruction: 0x{word:08x}")))
+    Err(Error::from(format!(
+        "unsupported aarch64 instruction: 0x{word:08x}"
+    )))
 }
 
-fn build_binop(
-    id: u32,
-    kind: AsmInstructionKind,
-    opcode: AsmOpcode,
-) -> AsmInstruction {
+fn build_binop(id: u32, kind: AsmInstructionKind, opcode: AsmOpcode) -> AsmInstruction {
     AsmInstruction {
         id,
         opcode,

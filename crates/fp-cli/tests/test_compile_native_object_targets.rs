@@ -11,10 +11,14 @@ use object::{
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{compile_command, CompileArgs, EmitterKind};
+use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
 use fp_cli::pipeline::BackendKind;
 
-fn base_args(input: std::path::PathBuf, output: std::path::PathBuf, target_triple: &str) -> CompileArgs {
+fn base_args(
+    input: std::path::PathBuf,
+    output: std::path::PathBuf,
+    target_triple: &str,
+) -> CompileArgs {
     CompileArgs {
         input: vec![input],
         backend: BackendKind::Binary,
@@ -68,10 +72,18 @@ async fn compile_native_object_preserves_call_relocations_aarch64_to_x86_64() {
 }
 
 fn build_aarch64_macho_object_with_call_reloc() -> Vec<u8> {
-    let mut obj = Object::new(BinaryFormat::MachO, Architecture::Aarch64, Endianness::Little);
+    let mut obj = Object::new(
+        BinaryFormat::MachO,
+        Architecture::Aarch64,
+        Endianness::Little,
+    );
     let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
     // bl callee; ret
-    obj.append_section_data(section_id, &[0x00, 0x00, 0x00, 0x94, 0xC0, 0x03, 0x5F, 0xD6], 4);
+    obj.append_section_data(
+        section_id,
+        &[0x00, 0x00, 0x00, 0x94, 0xC0, 0x03, 0x5F, 0xD6],
+        4,
+    );
 
     let callee_id = obj.add_symbol(Symbol {
         name: b"callee".to_vec(),
@@ -224,7 +236,10 @@ async fn compile_native_object_transpiles_x86_64_elf_to_aarch64_macho() {
     let file = object::File::parse(bytes.as_slice()).unwrap();
     assert_eq!(file.format(), BinaryFormat::MachO);
     assert_eq!(file.architecture(), Architecture::Aarch64);
-    assert!(file.sections().any(|section| section.kind() == SectionKind::Text));
+    assert!(
+        file.sections()
+            .any(|section| section.kind() == SectionKind::Text)
+    );
 }
 
 fn build_minimal_x86_64_elf_object() -> Vec<u8> {
@@ -245,7 +260,11 @@ fn build_minimal_x86_64_elf_object() -> Vec<u8> {
 }
 
 fn build_minimal_aarch64_macho_object() -> Vec<u8> {
-    let mut obj = Object::new(BinaryFormat::MachO, Architecture::Aarch64, Endianness::Little);
+    let mut obj = Object::new(
+        BinaryFormat::MachO,
+        Architecture::Aarch64,
+        Endianness::Little,
+    );
     let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
     obj.append_section_data(section_id, &[0xC0, 0x03, 0x5F, 0xD6], 4);
     obj.add_symbol(Symbol {
@@ -275,6 +294,8 @@ async fn compile_native_object_transpiles_aarch64_macho_to_x86_64_elf() {
     let file = object::File::parse(bytes.as_slice()).unwrap();
     assert_eq!(file.format(), BinaryFormat::Elf);
     assert_eq!(file.architecture(), Architecture::X86_64);
-    assert!(file.sections().any(|section| section.kind() == SectionKind::Text));
+    assert!(
+        file.sections()
+            .any(|section| section.kind() == SectionKind::Text)
+    );
 }
-

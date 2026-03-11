@@ -207,7 +207,8 @@ fn parse_instruction(line: &str) -> Result<LirInstruction> {
         .ok_or_else(|| Error::from(format!("urcl parse: missing dst register in `{line}`")))?;
     let id = dst_reg
         .checked_sub(2)
-        .ok_or_else(|| Error::from("urcl parse: invalid destination register"))? as u32;
+        .ok_or_else(|| Error::from("urcl parse: invalid destination register"))?
+        as u32;
 
     let kind = match mnemonic {
         "ADD" => binary_kind(LirInstructionKind::Add, &operands, line)?,
@@ -246,7 +247,7 @@ fn parse_instruction(line: &str) -> Result<LirInstruction> {
         other => {
             return Err(Error::from(format!(
                 "urcl parse: unsupported instruction `{other}`"
-            )))
+            )));
         }
     };
 
@@ -499,7 +500,8 @@ fn binary_kind(
 }
 
 fn parse_value(token: Option<&str>, line: &str) -> Result<LirValue> {
-    let token = token.ok_or_else(|| Error::from(format!("urcl parse: missing operand in `{line}`")))?;
+    let token =
+        token.ok_or_else(|| Error::from(format!("urcl parse: missing operand in `{line}`")))?;
     if let Some(reg) = parse_register(token) {
         if reg == 1 {
             return Ok(LirValue::Register(0));
@@ -524,7 +526,9 @@ fn parse_value(token: Option<&str>, line: &str) -> Result<LirValue> {
     if let Ok(value) = token.parse::<i64>() {
         return Ok(LirValue::Constant(LirConstant::Int(value, LirType::I64)));
     }
-    Err(Error::from(format!("urcl parse: unsupported operand `{token}`")))
+    Err(Error::from(format!(
+        "urcl parse: unsupported operand `{token}`"
+    )))
 }
 
 fn parse_register(token: &str) -> Option<u32> {
@@ -546,7 +550,9 @@ fn split_operands(rest: &str) -> Vec<String> {
     if rest.is_empty() {
         return Vec::new();
     }
-    rest.split(',').map(|part| part.trim().to_string()).collect()
+    rest.split(',')
+        .map(|part| part.trim().to_string())
+        .collect()
 }
 
 fn strip_comment(line: &str) -> &str {
@@ -565,4 +571,3 @@ fn block_label_suffix<'a>(function_name: &Name, label: &'a str) -> Option<&'a st
     let prefix = format!("{}_", function_name.as_str());
     label.strip_prefix(&prefix)
 }
-

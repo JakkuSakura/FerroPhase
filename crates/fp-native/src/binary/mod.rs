@@ -1,5 +1,5 @@
-mod object_lift;
 pub mod aarch64;
+mod object_lift;
 pub mod x86_64;
 
 use fp_core::asmir::AsmProgram;
@@ -24,4 +24,3 @@ pub struct LiftedFunction {
 pub fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
     object_lift::lift_object_to_asmir(bytes)
 }
-

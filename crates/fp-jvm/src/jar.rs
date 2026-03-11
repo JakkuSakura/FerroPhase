@@ -52,9 +52,7 @@ pub fn extract_class_files_from_jar(jar_bytes: &[u8]) -> Result<Vec<EmittedClass
             ));
         }
         if compressed_size != uncompressed_size {
-            return Err(JvmError::InvalidJar(
-                "compressed size mismatch".to_string(),
-            ));
+            return Err(JvmError::InvalidJar("compressed size mismatch".to_string()));
         }
 
         let name_bytes = jar_bytes

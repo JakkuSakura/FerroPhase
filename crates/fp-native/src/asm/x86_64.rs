@@ -69,7 +69,10 @@ pub enum X86Opcode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum X86Operand {
-    Register { reg: X86Register, access: OperandAccess },
+    Register {
+        reg: X86Register,
+        access: OperandAccess,
+    },
     Immediate(i128),
     Memory(X86MemoryOperand),
     Block(AsmBlockId),
@@ -205,7 +208,15 @@ fn format_instruction(inst: &X86InstructionDetail) -> String {
     if inst.operands.is_empty() {
         mnemonic
     } else {
-        format!("{} {}", mnemonic, inst.operands.iter().map(format_operand).collect::<Vec<_>>().join(", "))
+        format!(
+            "{} {}",
+            mnemonic,
+            inst.operands
+                .iter()
+                .map(format_operand)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 }
 
@@ -222,7 +233,11 @@ fn format_terminator(term: &X86TerminatorDetail) -> String {
     let mnemonic = match term.opcode {
         X86TerminatorOpcode::Jcc => format!(
             "jcc.{}",
-            format_condition(term.condition.as_ref().unwrap_or(&X86ConditionCode::NonZero))
+            format_condition(
+                term.condition
+                    .as_ref()
+                    .unwrap_or(&X86ConditionCode::NonZero)
+            )
         ),
         X86TerminatorOpcode::Ret => "ret".to_string(),
         X86TerminatorOpcode::Jmp => "jmp".to_string(),
@@ -238,7 +253,15 @@ fn format_terminator(term: &X86TerminatorDetail) -> String {
     if term.targets.is_empty() {
         mnemonic
     } else {
-        format!("{} {}", mnemonic, term.targets.iter().map(|id| format!("bb{id}")).collect::<Vec<_>>().join(", "))
+        format!(
+            "{} {}",
+            mnemonic,
+            term.targets
+                .iter()
+                .map(|id| format!("bb{id}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 }
 
@@ -416,8 +439,16 @@ fn is_terminator_line(line: &str) -> bool {
     let (mnemonic, _) = split_mnemonic_operands(line);
     matches!(
         mnemonic,
-        "ret" | "jmp" | "resume" | "ud2" | "switch" | "indirectjmp" | "invoke"
-            | "cleanupret" | "catchret" | "catchswitch"
+        "ret"
+            | "jmp"
+            | "resume"
+            | "ud2"
+            | "switch"
+            | "indirectjmp"
+            | "invoke"
+            | "cleanupret"
+            | "catchret"
+            | "catchswitch"
     ) || mnemonic.starts_with("jcc.")
 }
 
@@ -435,7 +466,10 @@ fn parse_instruction(line: &str) -> Result<X86InstructionDetail> {
         parsed_operands.push(parse_operand(operand, operand_access(&opcode, index))?);
     }
     let call_target = if opcode == X86Opcode::Call {
-        parsed_operands.first().map(call_target_from_operand).transpose()?
+        parsed_operands
+            .first()
+            .map(call_target_from_operand)
+            .transpose()?
     } else {
         None
     };
@@ -518,7 +552,10 @@ fn parse_opcode(token: &str) -> Result<X86Opcode> {
 }
 
 fn operand_access(opcode: &X86Opcode, index: usize) -> OperandAccess {
-    if matches!(opcode, X86Opcode::Cmp | X86Opcode::Call | X86Opcode::InlineAsm | X86Opcode::LandingPad) {
+    if matches!(
+        opcode,
+        X86Opcode::Cmp | X86Opcode::Call | X86Opcode::InlineAsm | X86Opcode::LandingPad
+    ) {
         OperandAccess::Read
     } else if index == 0 {
         OperandAccess::Write
@@ -554,7 +591,10 @@ fn parse_operand(token: &str, access: OperandAccess) -> Result<X86Operand> {
 }
 
 fn parse_register(token: &str) -> Result<X86Register> {
-    if let Some((id, size_bits)) = token.strip_prefix('v').and_then(|rest| rest.split_once(':')) {
+    if let Some((id, size_bits)) = token
+        .strip_prefix('v')
+        .and_then(|rest| rest.split_once(':'))
+    {
         return Ok(X86Register::Virtual {
             id: id
                 .parse::<u32>()
@@ -583,7 +623,27 @@ fn infer_physical_size(name: &str) -> u16 {
 }
 
 fn is_register_name(token: &str) -> bool {
-    token.starts_with('r') || token.starts_with('e') || token.starts_with("xmm") || matches!(token, "ax" | "bx" | "cx" | "dx" | "si" | "di" | "sp" | "bp" | "al" | "ah" | "bl" | "bh" | "cl" | "ch" | "dl" | "dh")
+    token.starts_with('r')
+        || token.starts_with('e')
+        || token.starts_with("xmm")
+        || matches!(
+            token,
+            "ax" | "bx"
+                | "cx"
+                | "dx"
+                | "si"
+                | "di"
+                | "sp"
+                | "bp"
+                | "al"
+                | "ah"
+                | "bl"
+                | "bh"
+                | "cl"
+                | "ch"
+                | "dl"
+                | "dh"
+        )
 }
 
 fn parse_memory(token: &str) -> Result<X86MemoryOperand> {
@@ -610,7 +670,11 @@ fn parse_memory(token: &str) -> Result<X86MemoryOperand> {
     let mut index = None;
     let mut scale = 1u8;
     let mut displacement = 0i64;
-    for part in normalized.split('+').map(str::trim).filter(|part| !part.is_empty()) {
+    for part in normalized
+        .split('+')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
         if let Ok(value) = part.parse::<i64>() {
             displacement += value;
             continue;
@@ -663,7 +727,10 @@ mod tests {
                             opcode: X86Opcode::Add,
                             operands: vec![
                                 X86Operand::Register {
-                                    reg: X86Register::Virtual { id: 1, size_bits: 64 },
+                                    reg: X86Register::Virtual {
+                                        id: 1,
+                                        size_bits: 64,
+                                    },
                                     access: OperandAccess::Write,
                                 },
                                 X86Operand::Register {

@@ -332,4 +332,3 @@ fn parse_stack_instruction(
 
     Ok(None)
 }
-
