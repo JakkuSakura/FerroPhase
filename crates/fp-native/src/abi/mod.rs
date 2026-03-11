@@ -10,6 +10,22 @@ pub enum Abi {
     Aarch64Aapcs64,
 }
 
+pub fn raise_implicit_return_value(function: &mut AsmFunction, abi: Abi) {
+    if matches!(function.signature.return_type, fp_core::lir::Ty::Void) {
+        function.signature.return_type = fp_core::lir::Ty::I64;
+    }
+
+    let ret_reg = abi_int_return_register(abi);
+    for block in &mut function.basic_blocks {
+        let fp_core::asmir::AsmTerminator::Return(None) = &block.terminator else {
+            continue;
+        };
+        block.terminator = fp_core::asmir::AsmTerminator::Return(Some(AsmValue::PhysicalRegister(
+            abi_register(ret_reg),
+        )));
+    }
+}
+
 pub fn default_abi_for_target(arch: &AsmArchitecture, format: &AsmObjectFormat) -> Option<Abi> {
     match (arch, format) {
         (AsmArchitecture::X86_64, AsmObjectFormat::Coff | AsmObjectFormat::Pe) => {
@@ -50,22 +66,6 @@ pub fn raise_implicit_call_arguments(function: &mut AsmFunction, abi: Abi) {
                 .iter()
                 .map(|name| AsmValue::PhysicalRegister(abi_register(name)))
                 .collect();
-        }
-    }
-}
-
-pub fn raise_implicit_return_value(function: &mut AsmFunction, abi: Abi) {
-    let ret_reg = abi_int_return_register(abi);
-    for block in &mut function.basic_blocks {
-        if let fp_core::asmir::AsmTerminator::Return(None) = &block.terminator {
-            // Conservative: only raise return when the function signature isn't explicit.
-            // This is best-effort semanticization for lifted assembly text.
-            if matches!(function.signature.return_type, fp_core::lir::Ty::Void) {
-                continue;
-            }
-            block.terminator = fp_core::asmir::AsmTerminator::Return(Some(
-                AsmValue::PhysicalRegister(abi_register(ret_reg)),
-            ));
         }
     }
 }

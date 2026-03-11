@@ -611,14 +611,7 @@ pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> AsmProgram {
     ) {
         for function in &mut lifted.functions {
             crate::abi::raise_implicit_call_arguments(function, abi);
-        }
-    }
-    if let Some(abi) = crate::abi::default_abi_for_target(
-        &lifted.target.architecture,
-        &lifted.target.object_format,
-    ) {
-        for function in &mut lifted.functions {
-            crate::abi::raise_implicit_call_arguments(function, abi);
+            crate::abi::raise_implicit_return_value(function, abi);
         }
     }
     canonicalize_physical_registers(&mut lifted);
@@ -692,6 +685,15 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> AsmProgram
             })
             .collect(),
     };
+    if let Some(abi) = crate::abi::default_abi_for_target(
+        &lifted.target.architecture,
+        &lifted.target.object_format,
+    ) {
+        for function in &mut lifted.functions {
+            crate::abi::raise_implicit_call_arguments(function, abi);
+            crate::abi::raise_implicit_return_value(function, abi);
+        }
+    }
     canonicalize_physical_registers(&mut lifted);
     lifted
 }
@@ -1218,7 +1220,7 @@ fn x86_typed_operands(
                     .map(|index| X86Operand::Immediate(*index as i128)),
             );
         }
-        AsmInstructionKind::Call { function, args, .. } => {
+        AsmInstructionKind::Call { function, .. } => {
             operands.push(match x86_call_target_from_value(function, ctx) {
                 X86CallTarget::Symbol(name) => X86Operand::Symbol(name),
                 X86CallTarget::Register(reg) => X86Operand::Register {
@@ -1226,7 +1228,6 @@ fn x86_typed_operands(
                     access: OperandAccess::Read,
                 },
             });
-            operands.extend(args.iter().map(|value| x86_operand(value, ctx)));
         }
         AsmInstructionKind::IntrinsicCall { kind, args, .. } => {
             operands.push(X86Operand::Symbol(Name::new(
@@ -1588,7 +1589,7 @@ fn aarch64_typed_operands(
                     .map(|index| Aarch64Operand::Immediate(*index as i128)),
             );
         }
-        AsmInstructionKind::Call { function, args, .. } => {
+        AsmInstructionKind::Call { function, .. } => {
             operands.push(match aarch64_call_target_from_value(function, ctx) {
                 Aarch64CallTarget::Symbol(name) => Aarch64Operand::Symbol(name),
                 Aarch64CallTarget::Register(reg) => Aarch64Operand::Register {
@@ -1596,7 +1597,6 @@ fn aarch64_typed_operands(
                     access: OperandAccess::Read,
                 },
             });
-            operands.extend(args.iter().map(|value| aarch64_operand(value, ctx)));
         }
         AsmInstructionKind::IntrinsicCall { kind, args, .. } => {
             operands.push(Aarch64Operand::Symbol(Name::new(
@@ -1919,9 +1919,9 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
                     .map(|index| AsmOperand::Immediate(*index as i128)),
             );
         }
-        AsmInstructionKind::Call { function, args, .. } => {
+        AsmInstructionKind::Call { function, .. } => {
+            // Call arguments are semantic (ABI-lowered), not textual operands.
             operands.push(call_target_operand(function));
-            operands.extend(args.iter().map(value_operand));
         }
         AsmInstructionKind::IntrinsicCall { kind, args, .. } => {
             operands.push(AsmOperand::Symbol(Name::new(
