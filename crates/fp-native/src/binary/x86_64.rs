@@ -1,3 +1,4 @@
+use crate::binary::cfg::wire_block_edges;
 use crate::binary::{LiftedFunction, TextRelocation};
 use fp_core::asmir::AsmLocal;
 use fp_core::asmir::{
@@ -7,54 +8,248 @@ use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Name};
 
 pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<LiftedFunction> {
-    let mut ctx = RegisterLiftContext::new();
-    let mut instructions = Vec::new();
-    let mut next_id = 0u32;
-    let mut index = 0usize;
+    let decoded = decode_stream(bytes)?;
+    let block_starts = determine_block_starts(&decoded)?;
+    let offset_to_block = block_starts
+        .iter()
+        .enumerate()
+        .map(|(idx, offset)| (*offset, idx as u32))
+        .collect::<std::collections::HashMap<_, _>>();
 
+    let mut ctx = RegisterLiftContext::new();
+    let mut next_id = 0u32;
+    let mut basic_blocks = Vec::new();
+
+    for (block_index, &block_offset) in block_starts.iter().enumerate() {
+        let block_id = block_index as u32;
+        let next_block_offset = block_starts
+            .get(block_index + 1)
+            .copied()
+            .unwrap_or(bytes.len() as u64);
+        let mut instructions = Vec::new();
+        let mut terminated = false;
+
+        let mut cursor = block_offset;
+        while cursor < next_block_offset {
+            let inst = decoded
+                .iter()
+                .find(|inst| inst.offset == cursor)
+                .ok_or_else(|| Error::from("missing decoded instruction"))?;
+
+            if is_terminator(&inst.kind) {
+                let terminator = lift_terminator(&mut ctx, inst, &offset_to_block)?;
+                basic_blocks.push(fp_core::asmir::AsmBlock {
+                    id: block_id,
+                    label: None,
+                    instructions: std::mem::take(&mut instructions),
+                    terminator,
+                    predecessors: Vec::new(),
+                    successors: Vec::new(),
+                });
+                terminated = true;
+                break;
+            }
+
+            lift_non_terminator(&mut ctx, inst, relocs, &mut instructions, &mut next_id)?;
+            cursor = cursor
+                .checked_add(inst.len as u64)
+                .ok_or_else(|| Error::from("x86_64 lift overflow"))?;
+        }
+
+        if !terminated {
+            let terminator = if block_index + 1 < block_starts.len() {
+                fp_core::asmir::AsmTerminator::Br((block_index + 1) as u32)
+            } else {
+                fp_core::asmir::AsmTerminator::Return(None)
+            };
+            basic_blocks.push(fp_core::asmir::AsmBlock {
+                id: block_id,
+                label: None,
+                instructions,
+                terminator,
+                predecessors: Vec::new(),
+                successors: Vec::new(),
+            });
+        }
+    }
+
+    wire_block_edges(&mut basic_blocks);
+
+    Ok(LiftedFunction {
+        basic_blocks,
+        locals: ctx.locals,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DecodedInstruction {
+    offset: u64,
+    len: usize,
+    kind: Decoded,
+}
+
+fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
+    let mut decoded = Vec::new();
+    let mut index = 0usize;
     while index < bytes.len() {
-        let Some((decoded, consumed)) = decode_instruction(&bytes[index..])? else {
+        let Some((kind, len)) = decode_instruction(&bytes[index..], index as u64)? else {
             return Err(Error::from("unsupported x86_64 instruction"));
         };
+        decoded.push(DecodedInstruction {
+            offset: index as u64,
+            len,
+            kind,
+        });
+        index = index
+            .checked_add(len)
+            .ok_or_else(|| Error::from("x86_64 lift overflow"))?;
+    }
+    Ok(decoded)
+}
 
-        match decoded {
-            Decoded::Nop => {}
+fn determine_block_starts(decoded: &[DecodedInstruction]) -> Result<Vec<u64>> {
+    let mut starts = vec![0u64];
+    let instruction_starts = decoded
+        .iter()
+        .map(|inst| inst.offset)
+        .collect::<std::collections::HashSet<_>>();
+
+    for inst in decoded {
+        match inst.kind {
+            Decoded::JmpRel { target } => {
+                if !instruction_starts.contains(&target) {
+                    return Err(Error::from("x86_64 jmp target not on instruction boundary"));
+                }
+                starts.push(target);
+                let fallthrough = inst.offset + inst.len as u64;
+                if instruction_starts.contains(&fallthrough) {
+                    starts.push(fallthrough);
+                }
+            }
             Decoded::Ret => {
-                let return_value = ctx.read_return_value();
-                return Ok(LiftedFunction {
-                    instructions,
-                    terminator: Some(fp_core::asmir::AsmTerminator::Return(return_value)),
-                    locals: ctx.locals,
+                let fallthrough = inst.offset + inst.len as u64;
+                if instruction_starts.contains(&fallthrough) {
+                    starts.push(fallthrough);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    starts.sort_unstable();
+    starts.dedup();
+    Ok(starts)
+}
+
+fn is_terminator(kind: &Decoded) -> bool {
+    matches!(kind, Decoded::Ret | Decoded::JmpRel { .. })
+}
+
+fn lift_terminator(
+    ctx: &mut RegisterLiftContext,
+    inst: &DecodedInstruction,
+    offset_to_block: &std::collections::HashMap<u64, u32>,
+) -> Result<fp_core::asmir::AsmTerminator> {
+    match inst.kind {
+        Decoded::Ret => Ok(fp_core::asmir::AsmTerminator::Return(
+            ctx.read_return_value(),
+        )),
+        Decoded::JmpRel { target } => {
+            let dest = offset_to_block
+                .get(&target)
+                .copied()
+                .ok_or_else(|| Error::from("missing jump target block"))?;
+            Ok(fp_core::asmir::AsmTerminator::Br(dest))
+        }
+        _ => Err(Error::from("internal error: expected terminator")),
+    }
+}
+
+fn lift_non_terminator(
+    ctx: &mut RegisterLiftContext,
+    inst: &DecodedInstruction,
+    relocs: &[TextRelocation],
+    instructions: &mut Vec<AsmInstruction>,
+    next_id: &mut u32,
+) -> Result<()> {
+    match inst.kind {
+        Decoded::Nop => Ok(()),
+        Decoded::AddImm { dst, imm } => {
+            let lhs = ctx.read_gpr(dst)?;
+            let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
+            let id = *next_id;
+            instructions.push(build_binop(
+                id,
+                AsmInstructionKind::Add(lhs.clone(), rhs.clone()),
+                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
+            ));
+            *next_id += 1;
+            ctx.write_gpr(dst, AsmValue::Register(id));
+            Ok(())
+        }
+        Decoded::SubImm { dst, imm } => {
+            let lhs = ctx.read_gpr(dst)?;
+            let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
+            let id = *next_id;
+            instructions.push(build_binop(
+                id,
+                AsmInstructionKind::Sub(lhs.clone(), rhs.clone()),
+                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
+            ));
+            *next_id += 1;
+            ctx.write_gpr(dst, AsmValue::Register(id));
+            Ok(())
+        }
+        Decoded::MovRmToReg { dst, src } => match src {
+            RmOperand::Reg(src) => {
+                let value = ctx.read_gpr(src)?;
+                let id = *next_id;
+                instructions.push(AsmInstruction {
+                    id,
+                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
+                    kind: AsmInstructionKind::Freeze(value.clone()),
+                    type_hint: Some(AsmType::I64),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
                 });
-            }
-            Decoded::AddImm32 { dst, imm } => {
-                let lhs = ctx.read_gpr(dst)?;
-                let rhs = AsmValue::Constant(AsmConstant::Int(imm as i64, AsmType::I64));
-                let id = next_id;
-                instructions.push(build_binop(
-                    id,
-                    AsmInstructionKind::Add(lhs.clone(), rhs.clone()),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                ));
-                next_id += 1;
+                *next_id += 1;
                 ctx.write_gpr(dst, AsmValue::Register(id));
+                Ok(())
             }
-            Decoded::SubImm32 { dst, imm } => {
-                let lhs = ctx.read_gpr(dst)?;
-                let rhs = AsmValue::Constant(AsmConstant::Int(imm as i64, AsmType::I64));
-                let id = next_id;
-                instructions.push(build_binop(
+            RmOperand::Mem(memory) => {
+                let addr =
+                    compute_address(ctx, memory, inst.offset, relocs, instructions, next_id)?;
+                let id = *next_id;
+                instructions.push(AsmInstruction {
                     id,
-                    AsmInstructionKind::Sub(lhs.clone(), rhs.clone()),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-                ));
-                next_id += 1;
+                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
+                    kind: AsmInstructionKind::Load {
+                        address: addr,
+                        alignment: None,
+                        volatile: false,
+                    },
+                    type_hint: Some(AsmType::I64),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                });
+                *next_id += 1;
                 ctx.write_gpr(dst, AsmValue::Register(id));
+                Ok(())
             }
-            Decoded::MovRmToReg { dst, src } => match src {
-                RmOperand::Reg(src) => {
-                    let value = ctx.read_gpr(src)?;
-                    let id = next_id;
+        },
+        Decoded::MovRegToRm { dst, src } => {
+            let value = ctx.read_gpr(src)?;
+            match dst {
+                RmOperand::Reg(dst) => {
+                    let id = *next_id;
                     instructions.push(AsmInstruction {
                         id,
                         opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
@@ -67,28 +262,24 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
                         debug_info: None,
                         annotations: Vec::new(),
                     });
-                    next_id += 1;
+                    *next_id += 1;
                     ctx.write_gpr(dst, AsmValue::Register(id));
+                    Ok(())
                 }
                 RmOperand::Mem(memory) => {
-                    let addr = compute_address(
-                        &mut ctx,
-                        memory,
-                        index as u64,
-                        relocs,
-                        &mut instructions,
-                        &mut next_id,
-                    )?;
-                    let id = next_id;
+                    let addr =
+                        compute_address(ctx, memory, inst.offset, relocs, instructions, next_id)?;
+                    let id = *next_id;
                     instructions.push(AsmInstruction {
                         id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                        kind: AsmInstructionKind::Load {
+                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
+                        kind: AsmInstructionKind::Store {
+                            value,
                             address: addr,
                             alignment: None,
                             volatile: false,
                         },
-                        type_hint: Some(AsmType::I64),
+                        type_hint: Some(AsmType::Void),
                         operands: Vec::new(),
                         implicit_uses: Vec::new(),
                         implicit_defs: Vec::new(),
@@ -96,97 +287,41 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
                         debug_info: None,
                         annotations: Vec::new(),
                     });
-                    next_id += 1;
-                    ctx.write_gpr(dst, AsmValue::Register(id));
+                    *next_id += 1;
+                    Ok(())
                 }
-            },
-            Decoded::MovRegToRm { dst, src } => {
-                let value = ctx.read_gpr(src)?;
-                match dst {
-                    RmOperand::Reg(dst) => {
-                        let id = next_id;
-                        instructions.push(AsmInstruction {
-                            id,
-                            opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                            kind: AsmInstructionKind::Freeze(value.clone()),
-                            type_hint: Some(AsmType::I64),
-                            operands: Vec::new(),
-                            implicit_uses: Vec::new(),
-                            implicit_defs: Vec::new(),
-                            encoding: None,
-                            debug_info: None,
-                            annotations: Vec::new(),
-                        });
-                        next_id += 1;
-                        ctx.write_gpr(dst, AsmValue::Register(id));
-                    }
-                    RmOperand::Mem(memory) => {
-                        let addr = compute_address(
-                            &mut ctx,
-                            memory,
-                            index as u64,
-                            relocs,
-                            &mut instructions,
-                            &mut next_id,
-                        )?;
-                        let id = next_id;
-                        instructions.push(AsmInstruction {
-                            id,
-                            opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                            kind: AsmInstructionKind::Store {
-                                value,
-                                address: addr,
-                                alignment: None,
-                                volatile: false,
-                            },
-                            type_hint: Some(AsmType::Void),
-                            operands: Vec::new(),
-                            implicit_uses: Vec::new(),
-                            implicit_defs: Vec::new(),
-                            encoding: None,
-                            debug_info: None,
-                            annotations: Vec::new(),
-                        });
-                        next_id += 1;
-                    }
-                }
-            }
-            Decoded::CallRel32 { imm_offset } => {
-                let reloc_offset = (index + imm_offset) as u64;
-                let reloc = relocation_at(relocs, reloc_offset)
-                    .ok_or_else(|| Error::from("unsupported x86_64 call without relocation"))?;
-                let id = next_id;
-                instructions.push(AsmInstruction {
-                    id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function(reloc.symbol.clone()),
-                        args: Vec::new(),
-                        calling_convention: CallingConvention::X86_64SysV,
-                        tail_call: false,
-                    },
-                    type_hint: Some(AsmType::Void),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                next_id += 1;
             }
         }
-
-        index = index
-            .checked_add(consumed)
-            .ok_or_else(|| Error::from("x86_64 lift overflow"))?;
+        Decoded::CallRel32 { imm_offset } => {
+            let reloc_offset = inst
+                .offset
+                .checked_add(imm_offset as u64)
+                .ok_or_else(|| Error::from("x86_64 call relocation overflow"))?;
+            let reloc = relocation_at(relocs, reloc_offset)
+                .ok_or_else(|| Error::from("unsupported x86_64 call without relocation"))?;
+            let id = *next_id;
+            instructions.push(AsmInstruction {
+                id,
+                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function(reloc.symbol.clone()),
+                    args: Vec::new(),
+                    calling_convention: CallingConvention::X86_64SysV,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::Void),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            });
+            *next_id += 1;
+            Ok(())
+        }
+        Decoded::Ret | Decoded::JmpRel { .. } => Ok(()),
     }
-
-    Ok(LiftedFunction {
-        instructions,
-        terminator: None,
-        locals: ctx.locals,
-    })
 }
 
 fn relocation_at<'a>(relocs: &'a [TextRelocation], offset: u64) -> Option<&'a TextRelocation> {
@@ -197,11 +332,12 @@ fn relocation_at<'a>(relocs: &'a [TextRelocation], offset: u64) -> Option<&'a Te
 enum Decoded {
     Nop,
     Ret,
-    AddImm32 { dst: u8, imm: i32 },
-    SubImm32 { dst: u8, imm: i32 },
+    AddImm { dst: u8, imm: i64 },
+    SubImm { dst: u8, imm: i64 },
     MovRmToReg { dst: u8, src: RmOperand },
     MovRegToRm { dst: RmOperand, src: u8 },
     CallRel32 { imm_offset: usize },
+    JmpRel { target: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,7 +355,7 @@ struct X86Memory {
     displacement_offset: Option<usize>,
 }
 
-fn decode_instruction(bytes: &[u8]) -> Result<Option<(Decoded, usize)>> {
+fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usize)>> {
     if bytes.is_empty() {
         return Ok(None);
     }
@@ -240,6 +376,44 @@ fn decode_instruction(bytes: &[u8]) -> Result<Option<(Decoded, usize)>> {
         return Ok(Some((Decoded::Ret, opcode_index + 1)));
     }
 
+    if opcode == 0xEB {
+        // JMP rel8.
+        let imm = *bytes
+            .get(opcode_index + 1)
+            .ok_or_else(|| Error::from("truncated rel8"))? as i8;
+        let len = opcode_index + 2;
+        let target = (offset as i64)
+            .saturating_add(len as i64)
+            .saturating_add(imm as i64);
+        if target < 0 {
+            return Err(Error::from("x86_64 jmp target underflow"));
+        }
+        return Ok(Some((
+            Decoded::JmpRel {
+                target: target as u64,
+            },
+            len,
+        )));
+    }
+
+    if opcode == 0xE9 {
+        // JMP rel32.
+        let imm = read_i32(bytes, opcode_index + 1)? as i64;
+        let len = opcode_index + 1 + 4;
+        let target = (offset as i64)
+            .saturating_add(len as i64)
+            .saturating_add(imm);
+        if target < 0 {
+            return Err(Error::from("x86_64 jmp target underflow"));
+        }
+        return Ok(Some((
+            Decoded::JmpRel {
+                target: target as u64,
+            },
+            len,
+        )));
+    }
+
     if opcode == 0xE8 {
         // CALL rel32.
         read_i32(bytes, opcode_index + 1)?;
@@ -255,7 +429,10 @@ fn decode_instruction(bytes: &[u8]) -> Result<Option<(Decoded, usize)>> {
     if rex_w && opcode == 0x05 {
         let imm = read_i32(bytes, opcode_index + 1)?;
         return Ok(Some((
-            Decoded::AddImm32 { dst: 0, imm },
+            Decoded::AddImm {
+                dst: 0,
+                imm: imm as i64,
+            },
             opcode_index + 1 + 4,
         )));
     }
@@ -264,9 +441,42 @@ fn decode_instruction(bytes: &[u8]) -> Result<Option<(Decoded, usize)>> {
     if rex_w && opcode == 0x2D {
         let imm = read_i32(bytes, opcode_index + 1)?;
         return Ok(Some((
-            Decoded::SubImm32 { dst: 0, imm },
+            Decoded::SubImm {
+                dst: 0,
+                imm: imm as i64,
+            },
             opcode_index + 1 + 4,
         )));
+    }
+
+    // ADD/SUB r/m64, imm8|imm32 for rsp: REX.W 83/81 /0 or /5.
+    if rex_w && (opcode == 0x83 || opcode == 0x81) {
+        let modrm = *bytes
+            .get(opcode_index + 1)
+            .ok_or_else(|| Error::from("missing modrm"))?;
+        let mode = (modrm >> 6) & 0b11;
+        let reg = (modrm >> 3) & 0b111;
+        let rm = modrm & 0b111;
+        if mode == 0b11 && rm == 0b100 {
+            let (imm, imm_len) = if opcode == 0x83 {
+                let imm8 = *bytes
+                    .get(opcode_index + 2)
+                    .ok_or_else(|| Error::from("truncated imm8"))? as i8;
+                (imm8 as i64, 1usize)
+            } else {
+                (read_i32(bytes, opcode_index + 2)? as i64, 4usize)
+            };
+            let len = opcode_index + 2 + imm_len;
+            match reg {
+                0 => {
+                    return Ok(Some((Decoded::AddImm { dst: 4, imm }, len)));
+                }
+                5 => {
+                    return Ok(Some((Decoded::SubImm { dst: 4, imm }, len)));
+                }
+                _ => {}
+            }
+        }
     }
 
     // MOV r64, r/m64: REX.W 8B /r.

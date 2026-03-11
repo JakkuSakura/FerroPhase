@@ -1,11 +1,11 @@
 use crate::binary::{TextRelocation, aarch64, x86_64};
 use fp_core::asmir::{
     AsmArchitecture, AsmEndianness, AsmFunction, AsmFunctionSignature, AsmObjectFormat, AsmProgram,
-    AsmSection, AsmSectionFlag, AsmSectionKind, AsmTarget, AsmTerminator, AsmType,
+    AsmSection, AsmSectionFlag, AsmSectionKind, AsmStackFrame, AsmTarget, AsmTerminator, AsmType,
 };
 use fp_core::error::{Error, Result};
-use fp_core::lir::{Linkage, Name, Visibility};
-use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget};
+use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
+use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget, SymbolKind};
 
 pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
     let file = object::File::parse(bytes).map_err(|err| Error::from(err.to_string()))?;
@@ -17,6 +17,13 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                 "object lift currently supports only x86_64 and aarch64; got {other:?}"
             )));
         }
+    };
+
+    let object_format = match file.format() {
+        object::BinaryFormat::Elf => AsmObjectFormat::Elf,
+        object::BinaryFormat::MachO => AsmObjectFormat::MachO,
+        object::BinaryFormat::Coff => AsmObjectFormat::Coff,
+        _ => AsmObjectFormat::Raw,
     };
 
     let text_section = file
@@ -49,68 +56,9 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         });
     }
 
-    let symbol = file
-        .symbols()
-        .filter(|symbol| symbol.section_index() == Some(text_index))
-        .find(|symbol| symbol.size() > 0)
-        .or_else(|| {
-            file.symbols().find(|symbol| {
-                symbol
-                    .name()
-                    .ok()
-                    .map(|name| name == "main")
-                    .unwrap_or(false)
-            })
-        });
-
-    let (name, symbol_offset, symbol_size) = match symbol {
-        Some(symbol) => {
-            let name = symbol
-                .name()
-                .ok()
-                .map(Name::new)
-                .unwrap_or_else(|| Name::new("lifted"));
-            let section_addr = text_section.address();
-            let symbol_offset = symbol.address().saturating_sub(section_addr) as usize;
-            let symbol_size = symbol.size() as usize;
-            (name, symbol_offset, symbol_size)
-        }
-        None => {
-            if text_bytes.is_empty() {
-                return Err(Error::from("object lift requires non-empty .text section"));
-            }
-            (Name::new("lifted"), 0, text_bytes.len())
-        }
-    };
-    if symbol_offset >= text_bytes.len() || symbol_offset + symbol_size > text_bytes.len() {
-        return Err(Error::from("text symbol range is out of bounds"));
-    }
-    let code = &text_bytes[symbol_offset..symbol_offset + symbol_size];
-    let relocs = relocs
-        .into_iter()
-        .filter(|reloc| {
-            let offset = reloc.offset as usize;
-            offset >= symbol_offset && offset < symbol_offset + symbol_size
-        })
-        .map(|mut reloc| {
-            reloc.offset = reloc.offset - symbol_offset as u64;
-            reloc
-        })
-        .collect::<Vec<_>>();
-
-    let lifted = match architecture {
-        AsmArchitecture::Aarch64 => aarch64::lift_function_bytes(code, relocs.as_slice())?,
-        AsmArchitecture::X86_64 => x86_64::lift_function_bytes(code, relocs.as_slice())?,
-        _ => {
-            return Err(Error::from(
-                "object lift internal error: unsupported architecture",
-            ));
-        }
-    };
-
     let mut program = AsmProgram::new(AsmTarget {
-        architecture,
-        object_format: AsmObjectFormat::Raw,
+        architecture: architecture.clone(),
+        object_format: object_format.clone(),
         endianness: AsmEndianness::Little,
         pointer_width: 64,
         default_calling_convention: None,
@@ -122,35 +70,152 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         alignment: Some(16),
     });
 
-    let return_type = match lifted.terminator {
-        Some(AsmTerminator::Return(Some(_))) => AsmType::I64,
-        _ => AsmType::Void,
-    };
+    let mut text_symbols = file
+        .symbols()
+        .filter(|symbol| symbol.section_index() == Some(text_index))
+        .filter(|symbol| symbol.kind() == SymbolKind::Text)
+        .filter(|symbol| symbol.size() > 0)
+        .filter_map(|symbol| {
+            let name = symbol
+                .name()
+                .ok()
+                .map(Name::new)
+                .unwrap_or_else(|| Name::new("lifted"));
+            let section_addr = text_section.address();
+            let symbol_offset = symbol.address().saturating_sub(section_addr) as usize;
+            let symbol_size = symbol.size() as usize;
+            Some((name, symbol_offset, symbol_size))
+        })
+        .collect::<Vec<_>>();
+    text_symbols.sort_by_key(|(_, symbol_offset, _)| *symbol_offset);
 
-    program.functions.push(AsmFunction {
-        name,
-        signature: AsmFunctionSignature {
-            params: Vec::new(),
-            return_type,
-            is_variadic: false,
-        },
-        basic_blocks: vec![fp_core::asmir::AsmBlock {
-            id: 0,
-            label: Some(Name::new("entry")),
-            instructions: lifted.instructions,
-            terminator: lifted.terminator.unwrap_or(AsmTerminator::Return(None)),
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }],
-        locals: lifted.locals,
-        stack_slots: Vec::new(),
-        frame: None,
-        linkage: Linkage::External,
-        visibility: Visibility::Default,
-        calling_convention: None,
-        section: Some(".text".to_string()),
-        is_declaration: false,
-    });
+    if text_symbols.is_empty() {
+        if text_bytes.is_empty() {
+            return Err(Error::from("object lift requires non-empty .text section"));
+        }
+        text_symbols.push((Name::new("lifted"), 0, text_bytes.len()));
+    }
+
+    for (name, symbol_offset, symbol_size) in text_symbols {
+        if symbol_offset >= text_bytes.len() || symbol_offset + symbol_size > text_bytes.len() {
+            return Err(Error::from("text symbol range is out of bounds"));
+        }
+
+        let code = &text_bytes[symbol_offset..symbol_offset + symbol_size];
+        let symbol_relocs = relocs
+            .iter()
+            .filter(|reloc| {
+                let offset = reloc.offset as usize;
+                offset >= symbol_offset && offset < symbol_offset + symbol_size
+            })
+            .map(|reloc| TextRelocation {
+                offset: reloc.offset - symbol_offset as u64,
+                symbol: reloc.symbol.clone(),
+                addend: reloc.addend,
+            })
+            .collect::<Vec<_>>();
+
+        let mut lifted = match &architecture {
+            AsmArchitecture::Aarch64 => {
+                aarch64::lift_function_bytes(code, symbol_relocs.as_slice())?
+            }
+            AsmArchitecture::X86_64 => x86_64::lift_function_bytes(code, symbol_relocs.as_slice())?,
+            _ => {
+                return Err(Error::from(
+                    "object lift internal error: unsupported architecture",
+                ));
+            }
+        };
+
+        let calling_convention = match (&architecture, &object_format) {
+            (AsmArchitecture::X86_64, AsmObjectFormat::Coff | AsmObjectFormat::Pe) => {
+                CallingConvention::Win64
+            }
+            (AsmArchitecture::X86_64, _) => CallingConvention::X86_64SysV,
+            (AsmArchitecture::Aarch64, _) => CallingConvention::AAPCS,
+            _ => CallingConvention::C,
+        };
+        for block in &mut lifted.basic_blocks {
+            for inst in &mut block.instructions {
+                if let fp_core::asmir::AsmInstructionKind::Call {
+                    calling_convention: cc,
+                    ..
+                } = &mut inst.kind
+                {
+                    *cc = calling_convention.clone();
+                }
+            }
+        }
+
+        let return_type = lifted
+            .basic_blocks
+            .iter()
+            .find_map(|block| match &block.terminator {
+                AsmTerminator::Return(Some(_)) => Some(AsmType::I64),
+                _ => None,
+            })
+            .unwrap_or(AsmType::Void);
+
+        let frame = infer_stack_frame(&architecture, &lifted);
+
+        program.functions.push(AsmFunction {
+            name,
+            signature: AsmFunctionSignature {
+                params: Vec::new(),
+                return_type,
+                is_variadic: false,
+            },
+            basic_blocks: lifted.basic_blocks,
+            locals: lifted.locals,
+            stack_slots: Vec::new(),
+            frame,
+            linkage: Linkage::External,
+            visibility: Visibility::Default,
+            calling_convention: None,
+            section: Some(".text".to_string()),
+            is_declaration: false,
+        });
+    }
 
     Ok(program)
+}
+
+fn infer_stack_frame(
+    arch: &AsmArchitecture,
+    lifted: &crate::binary::LiftedFunction,
+) -> Option<AsmStackFrame> {
+    let sp_name = match arch {
+        AsmArchitecture::X86_64 => "rsp",
+        AsmArchitecture::Aarch64 => "sp",
+        _ => return None,
+    };
+    let sp_local = lifted
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some(sp_name))?
+        .id;
+
+    let entry = lifted.basic_blocks.first()?;
+    for inst in &entry.instructions {
+        let fp_core::asmir::AsmInstructionKind::Sub(lhs, rhs) = &inst.kind else {
+            continue;
+        };
+        if !matches!(lhs, fp_core::asmir::AsmValue::Local(id) if *id == sp_local) {
+            continue;
+        }
+        let fp_core::asmir::AsmValue::Constant(fp_core::asmir::AsmConstant::Int(size, _)) = rhs
+        else {
+            continue;
+        };
+        if *size <= 0 {
+            continue;
+        }
+        return Some(AsmStackFrame {
+            stack_size: (*size).min(u32::MAX as i64) as u32,
+            stack_alignment: 16,
+            callee_saved: Vec::new(),
+        });
+    }
+
+    None
 }

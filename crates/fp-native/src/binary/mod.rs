@@ -1,4 +1,5 @@
 pub mod aarch64;
+mod cfg;
 mod object_lift;
 pub mod x86_64;
 
@@ -13,14 +14,64 @@ pub struct TextRelocation {
 }
 
 pub struct LiftedFunction {
-    pub instructions: Vec<fp_core::asmir::AsmInstruction>,
-    pub terminator: Option<fp_core::asmir::AsmTerminator>,
+    pub basic_blocks: Vec<fp_core::asmir::AsmBlock>,
     pub locals: Vec<fp_core::asmir::AsmLocal>,
 }
 
 /// Lift an object file's machine code into generic AsmIR.
 ///
-/// Current scope: x86_64 + aarch64 object files with a single text symbol.
+/// Current scope: x86_64 + aarch64 object files with text symbols.
 pub fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
     object_lift::lift_object_to_asmir(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{aarch64, x86_64};
+
+    #[test]
+    fn x86_64_lifter_splits_blocks_for_unconditional_jump() {
+        let bytes = [0xEB, 0x01, 0xC3, 0xC3];
+        let lifted = x86_64::lift_function_bytes(&bytes, &[]).unwrap();
+        assert_eq!(lifted.basic_blocks.len(), 3);
+        assert_eq!(lifted.basic_blocks[0].id, 0);
+        assert!(matches!(
+            lifted.basic_blocks[0].terminator,
+            fp_core::asmir::AsmTerminator::Br(2)
+        ));
+        assert!(matches!(
+            lifted.basic_blocks[1].terminator,
+            fp_core::asmir::AsmTerminator::Return(_)
+        ));
+        assert!(matches!(
+            lifted.basic_blocks[2].terminator,
+            fp_core::asmir::AsmTerminator::Return(_)
+        ));
+    }
+
+    #[test]
+    fn aarch64_lifter_splits_blocks_for_unconditional_branch() {
+        let b = 0x1400_0001u32.to_le_bytes();
+        let nop = 0xD503_201Fu32.to_le_bytes();
+        let ret = 0xD65F_03C0u32.to_le_bytes();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&b);
+        bytes.extend_from_slice(&nop);
+        bytes.extend_from_slice(&ret);
+
+        let lifted = aarch64::lift_function_bytes(&bytes, &[]).unwrap();
+        assert_eq!(lifted.basic_blocks.len(), 3);
+        assert!(matches!(
+            lifted.basic_blocks[0].terminator,
+            fp_core::asmir::AsmTerminator::Br(2)
+        ));
+        assert!(matches!(
+            lifted.basic_blocks[1].terminator,
+            fp_core::asmir::AsmTerminator::Br(2)
+        ));
+        assert!(matches!(
+            lifted.basic_blocks[2].terminator,
+            fp_core::asmir::AsmTerminator::Return(_)
+        ));
+    }
 }

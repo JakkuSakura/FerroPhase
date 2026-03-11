@@ -1,7 +1,7 @@
 use crate::binary::LiftedFunction;
 use crate::binary::TextRelocation;
+use crate::binary::cfg::wire_block_edges;
 use fp_core::asmir::AsmLocal;
-use fp_core::asmir::AsmTerminator;
 use fp_core::asmir::{
     AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmType, AsmValue,
 };
@@ -13,64 +13,174 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
         return Err(Error::from("aarch64 function size is not 4-byte aligned"));
     }
 
-    let mut ctx = RegisterLiftContext::new();
-    let mut instructions = Vec::new();
-    let mut next_id = 0u32;
-    let mut index = 0usize;
-    while index < bytes.len() {
-        let word = u32::from_le_bytes(bytes[index..index + 4].try_into().unwrap());
+    let instruction_count = bytes.len() / 4;
+    let mut block_starts = vec![0u64];
+    for inst_index in 0..instruction_count {
+        let offset = (inst_index * 4) as u64;
+        let word = u32::from_le_bytes(
+            bytes[inst_index * 4..inst_index * 4 + 4]
+                .try_into()
+                .unwrap(),
+        );
         if word == 0xD65F03C0 {
-            let return_value = ctx.read_return_value();
-            return Ok(LiftedFunction {
+            let fallthrough = offset + 4;
+            if fallthrough < bytes.len() as u64 {
+                block_starts.push(fallthrough);
+            }
+            continue;
+        }
+        if let Some(target) = decode_b_immediate(word, offset)? {
+            block_starts.push(target);
+            let fallthrough = offset + 4;
+            if fallthrough < bytes.len() as u64 {
+                block_starts.push(fallthrough);
+            }
+        }
+    }
+    block_starts.sort_unstable();
+    block_starts.dedup();
+
+    let offset_to_block = block_starts
+        .iter()
+        .enumerate()
+        .map(|(idx, offset)| (*offset, idx as u32))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let mut ctx = RegisterLiftContext::new();
+    let mut next_id = 0u32;
+    let mut basic_blocks = Vec::new();
+
+    for (block_index, &block_offset) in block_starts.iter().enumerate() {
+        let block_id = block_index as u32;
+        let next_block_offset = block_starts
+            .get(block_index + 1)
+            .copied()
+            .unwrap_or(bytes.len() as u64);
+
+        let mut instructions = Vec::new();
+        let mut terminated = false;
+
+        let mut cursor = block_offset;
+        while cursor < next_block_offset {
+            let inst_index = (cursor / 4) as usize;
+            let word = u32::from_le_bytes(
+                bytes[inst_index * 4..inst_index * 4 + 4]
+                    .try_into()
+                    .unwrap(),
+            );
+
+            if word == 0xD503201F {
+                cursor += 4;
+                continue;
+            }
+
+            if word == 0xD65F03C0 {
+                let return_value = ctx.read_return_value();
+                basic_blocks.push(fp_core::asmir::AsmBlock {
+                    id: block_id,
+                    label: None,
+                    instructions: std::mem::take(&mut instructions),
+                    terminator: fp_core::asmir::AsmTerminator::Return(return_value),
+                    predecessors: Vec::new(),
+                    successors: Vec::new(),
+                });
+                terminated = true;
+                break;
+            }
+
+            if let Some(target) = decode_b_immediate(word, cursor)? {
+                let dest = offset_to_block
+                    .get(&target)
+                    .copied()
+                    .ok_or_else(|| Error::from("missing aarch64 branch target block"))?;
+                basic_blocks.push(fp_core::asmir::AsmBlock {
+                    id: block_id,
+                    label: None,
+                    instructions: std::mem::take(&mut instructions),
+                    terminator: fp_core::asmir::AsmTerminator::Br(dest),
+                    predecessors: Vec::new(),
+                    successors: Vec::new(),
+                });
+                terminated = true;
+                break;
+            }
+
+            if (word & 0xFC000000) == 0x94000000 {
+                let reloc = relocation_at(relocs, cursor)
+                    .ok_or_else(|| Error::from("unsupported aarch64 bl without relocation"))?;
+                let id = next_id;
+                instructions.push(AsmInstruction {
+                    id,
+                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
+                    kind: AsmInstructionKind::Call {
+                        function: AsmValue::Function(reloc.symbol.clone()),
+                        args: Vec::new(),
+                        calling_convention: CallingConvention::AAPCS,
+                        tail_call: false,
+                    },
+                    type_hint: Some(AsmType::Void),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                });
+                next_id += 1;
+                cursor += 4;
+                continue;
+            }
+
+            lift_instruction(word, &mut ctx, &mut instructions, &mut next_id)?;
+            cursor += 4;
+        }
+
+        if !terminated {
+            let terminator = if block_index + 1 < block_starts.len() {
+                fp_core::asmir::AsmTerminator::Br((block_index + 1) as u32)
+            } else {
+                fp_core::asmir::AsmTerminator::Return(None)
+            };
+            basic_blocks.push(fp_core::asmir::AsmBlock {
+                id: block_id,
+                label: None,
                 instructions,
-                terminator: Some(AsmTerminator::Return(return_value)),
-                locals: ctx.locals,
+                terminator,
+                predecessors: Vec::new(),
+                successors: Vec::new(),
             });
         }
-        if word == 0xD503201F {
-            index += 4;
-            continue;
-        }
-
-        if (word & 0xFC000000) == 0x94000000 {
-            let reloc = relocation_at(relocs, index as u64)
-                .ok_or_else(|| Error::from("unsupported aarch64 bl without relocation"))?;
-            let id = next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function(reloc.symbol.clone()),
-                    args: Vec::new(),
-                    calling_convention: CallingConvention::AAPCS,
-                    tail_call: false,
-                },
-                type_hint: Some(AsmType::Void),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            next_id += 1;
-            index += 4;
-            continue;
-        }
-
-        lift_instruction(word, &mut ctx, &mut instructions, &mut next_id)?;
-        index += 4;
     }
 
+    wire_block_edges(&mut basic_blocks);
+
     Ok(LiftedFunction {
-        instructions,
-        terminator: None,
+        basic_blocks,
         locals: ctx.locals,
     })
 }
 
 fn relocation_at<'a>(relocs: &'a [TextRelocation], offset: u64) -> Option<&'a TextRelocation> {
     relocs.iter().find(|reloc| reloc.offset == offset)
+}
+
+fn decode_b_immediate(word: u32, offset: u64) -> Result<Option<u64>> {
+    // B immediate.
+    if (word & 0xFC000000) != 0x14000000 {
+        return Ok(None);
+    }
+    let imm26 = (word & 0x03FF_FFFF) as i32;
+    let imm26 = (imm26 << 6) >> 6;
+    let target = (offset as i64)
+        .saturating_add(4)
+        .saturating_add((imm26 as i64) << 2);
+    if target < 0 {
+        return Err(Error::from("aarch64 branch target underflow"));
+    }
+    if target % 4 != 0 {
+        return Err(Error::from("aarch64 branch target is not aligned"));
+    }
+    Ok(Some(target as u64))
 }
 
 fn lift_instruction(
@@ -196,9 +306,6 @@ fn decode_add_immediate(word: u32) -> Option<(u8, u8, i64)> {
     let imm12 = ((word >> 10) & 0xFFF) as i64;
     let rn = ((word >> 5) & 0x1F) as u8;
     let rd = (word & 0x1F) as u8;
-    if rn == 31 || rd == 31 {
-        return None;
-    }
     Some((rd, rn, imm12))
 }
 
@@ -220,9 +327,6 @@ fn decode_sub_immediate(word: u32) -> Option<(u8, u8, i64)> {
     let imm12 = ((word >> 10) & 0xFFF) as i64;
     let rn = ((word >> 5) & 0x1F) as u8;
     let rd = (word & 0x1F) as u8;
-    if rn == 31 || rd == 31 {
-        return None;
-    }
     Some((rd, rn, imm12))
 }
 
@@ -234,7 +338,7 @@ fn decode_ldr_immediate(word: u32) -> Option<(u8, u8, i64)> {
     let imm12 = ((word >> 10) & 0xFFF) as i64;
     let rn = ((word >> 5) & 0x1F) as u8;
     let rt = (word & 0x1F) as u8;
-    if rn == 31 || rt == 31 {
+    if rt == 31 {
         return None;
     }
     let disp = imm12 * 8;
@@ -249,7 +353,7 @@ fn decode_str_immediate(word: u32) -> Option<(u8, u8, i64)> {
     let imm12 = ((word >> 10) & 0xFFF) as i64;
     let rn = ((word >> 5) & 0x1F) as u8;
     let rt = (word & 0x1F) as u8;
-    if rn == 31 || rt == 31 {
+    if rt == 31 {
         return None;
     }
     let disp = imm12 * 8;
@@ -315,7 +419,10 @@ impl RegisterLiftContext {
         self.locals.push(AsmLocal {
             id: local_id,
             ty: AsmType::I64,
-            name: Some(format!("x{reg}")),
+            name: Some(match reg {
+                31 => "sp".to_string(),
+                _ => format!("x{reg}"),
+            }),
             is_argument,
         });
     }
