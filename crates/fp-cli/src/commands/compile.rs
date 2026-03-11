@@ -148,7 +148,11 @@ pub struct CompileArgs {
     pub single_world: bool,
 }
 
-async fn maybe_transpile_cil(input: &Path, output: &Path, args: &CompileArgs) -> Result<Option<PathBuf>> {
+async fn maybe_transpile_cil(
+    input: &Path,
+    output: &Path,
+    args: &CompileArgs,
+) -> Result<Option<PathBuf>> {
     if detect_container_transpile_source(args.source_language.as_deref(), input)
         != Some(ContainerTranspileSource::Cil)
     {
@@ -170,11 +174,9 @@ async fn maybe_transpile_cil(input: &Path, output: &Path, args: &CompileArgs) ->
     let text = if is_binary_pe {
         String::new()
     } else {
-        async_fs::read_to_string(input)
-            .await
-            .map_err(|err| {
-                CliError::Io(io::Error::other(format!("Failed to read CIL input: {err}")))
-            })?
+        async_fs::read_to_string(input).await.map_err(|err| {
+            CliError::Io(io::Error::other(format!("Failed to read CIL input: {err}")))
+        })?
     };
 
     match args.backend {
@@ -192,9 +194,11 @@ async fn maybe_transpile_cil(input: &Path, output: &Path, args: &CompileArgs) ->
             if let Some(parent) = output_path.parent() {
                 std::fs::create_dir_all(parent).map_err(CliError::Io)?;
             }
-            async_fs::write(&output_path, text)
-                .await
-                .map_err(|err| CliError::Io(io::Error::other(format!("Failed to write CIL output: {err}"))))?;
+            async_fs::write(&output_path, text).await.map_err(|err| {
+                CliError::Io(io::Error::other(format!(
+                    "Failed to write CIL output: {err}"
+                )))
+            })?;
             Ok(Some(output_path))
         }
         BackendKind::Dotnet => {
@@ -207,24 +211,22 @@ async fn maybe_transpile_cil(input: &Path, output: &Path, args: &CompileArgs) ->
                 if let Some(parent) = output_path.parent() {
                     std::fs::create_dir_all(parent).map_err(CliError::Io)?;
                 }
-                async_fs::copy(input, &output_path)
-                    .await
-                    .map_err(|err| {
-                        CliError::Io(io::Error::other(format!(
-                            "Failed to copy dotnet assembly: {err}"
-                        )))
-                    })?;
+                async_fs::copy(input, &output_path).await.map_err(|err| {
+                    CliError::Io(io::Error::other(format!(
+                        "Failed to copy dotnet assembly: {err}"
+                    )))
+                })?;
             } else {
-                fp_dotnet::assemble_cil_text(&text, &output_path)
-                    .map_err(|err| CliError::Compilation(format!("Failed to assemble CIL: {err}")))?;
+                fp_dotnet::assemble_cil_text(&text, &output_path).map_err(|err| {
+                    CliError::Compilation(format!("Failed to assemble CIL: {err}"))
+                })?;
             }
             Ok(Some(output_path))
         }
         BackendKind::Binary => {
             if is_binary_pe {
                 return Err(CliError::InvalidInput(
-                    "binary .dll/.exe -> native transpilation is not implemented yet"
-                        .to_string(),
+                    "binary .dll/.exe -> native transpilation is not implemented yet".to_string(),
                 ));
             }
             let lir_program = fp_dotnet::parse_cil_program(&text)
@@ -245,8 +247,10 @@ async fn maybe_transpile_cil(input: &Path, output: &Path, args: &CompileArgs) ->
                 EmitterKind::Native => {
                     let (format, arch) = emit::detect_target(args.target_triple.as_deref())
                         .map_err(|err| CliError::Compilation(err.to_string()))?;
-                    let plan = fp_native::emit::emit_plan(&lir_program, format, arch)
-                        .map_err(|err| CliError::Compilation(format!("Failed to emit native object: {err}")))?;
+                    let plan =
+                        fp_native::emit::emit_plan(&lir_program, format, arch).map_err(|err| {
+                            CliError::Compilation(format!("Failed to emit native object: {err}"))
+                        })?;
                     fp_native::emit::write_object(&output_path, &plan).map_err(|err| {
                         CliError::Compilation(format!("Failed to write object output: {err}"))
                     })?;
@@ -298,10 +302,17 @@ async fn maybe_transpile_jvm_bytecode(
         ));
     }
 
-    let bytes = async_fs::read(input)
-        .await
-        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read class input: {err}"))))?;
-    if !bytes.starts_with(&[0xCA, 0xFE, 0xBA, 0xBE]) {
+    let bytes = async_fs::read(input).await.map_err(|err| {
+        CliError::Io(io::Error::other(format!(
+            "Failed to read class input: {err}"
+        )))
+    })?;
+    let extension = input
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+    let is_jar = matches!(extension.as_deref(), Some("jar"));
+    if !is_jar && !bytes.starts_with(&[0xCA, 0xFE, 0xBA, 0xBE]) {
         return Err(CliError::InvalidInput(
             "invalid .class input (missing CAFEBABE header)".to_string(),
         ));
@@ -314,30 +325,46 @@ async fn maybe_transpile_jvm_bytecode(
 
     match args.backend {
         BackendKind::JvmBytecode => {
-            match output_path
+            let out_ext = output_path
                 .extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| ext.to_ascii_lowercase())
-                .as_deref()
-            {
+                .map(|ext| ext.to_ascii_lowercase());
+            match out_ext.as_deref() {
                 Some("jar") => {
-                    let stem = input
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
-                    let jar = fp_jvm::emit_executable_jar(
-                        &[fp_jvm::EmittedClass {
-                            internal_name: stem.to_string(),
-                            bytes,
-                        }],
-                        stem,
-                    )
-                    .map_err(|err| CliError::Compilation(format!("Failed to emit jar: {err}")))?;
-                    async_fs::write(&output_path, jar).await.map_err(|err| {
-                        CliError::Io(io::Error::other(format!("Failed to write jar output: {err}")))
-                    })?;
+                    if is_jar {
+                        async_fs::write(&output_path, bytes).await.map_err(|err| {
+                            CliError::Io(io::Error::other(format!(
+                                "Failed to write jar output: {err}"
+                            )))
+                        })?;
+                    } else {
+                        let stem = input.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+                            CliError::InvalidInput("Invalid input filename".to_string())
+                        })?;
+                        let jar = fp_jvm::emit_executable_jar(
+                            &[fp_jvm::EmittedClass {
+                                internal_name: stem.to_string(),
+                                bytes,
+                            }],
+                            stem,
+                        )
+                        .map_err(|err| {
+                            CliError::Compilation(format!("Failed to emit jar: {err}"))
+                        })?;
+                        async_fs::write(&output_path, jar).await.map_err(|err| {
+                            CliError::Io(io::Error::other(format!(
+                                "Failed to write jar output: {err}"
+                            )))
+                        })?;
+                    }
                 }
                 _ => {
+                    if is_jar {
+                        return Err(CliError::InvalidInput(
+                            "JAR input requires output extension `.jar` when using `--backend jvm-bytecode`"
+                                .to_string(),
+                        ));
+                    }
                     async_fs::write(&output_path, bytes).await.map_err(|err| {
                         CliError::Io(io::Error::other(format!(
                             "Failed to write class output: {err}"
@@ -347,16 +374,34 @@ async fn maybe_transpile_jvm_bytecode(
             }
         }
         BackendKind::Binary => {
-            let lir_program = fp_jvm::parse_class_to_lir(&bytes)
-                .map_err(|err| CliError::Compilation(format!("Failed to parse classfile: {err}")))?;
+            let lir_program = if is_jar {
+                let classes = fp_jvm::extract_class_files_from_jar(&bytes)
+                    .map_err(|err| CliError::Compilation(format!("Failed to parse jar: {err}")))?;
+                let mut merged = fp_core::lir::LirProgram::new();
+                for class in classes {
+                    let program = fp_jvm::parse_class_to_lir(&class.bytes).map_err(|err| {
+                        CliError::Compilation(format!(
+                            "Failed to parse classfile {}: {err}",
+                            class.internal_name
+                        ))
+                    })?;
+                    merged.extend(program);
+                }
+                merged
+            } else {
+                fp_jvm::parse_class_to_lir(&bytes).map_err(|err| {
+                    CliError::Compilation(format!("Failed to parse classfile: {err}"))
+                })?
+            };
 
             match args.emitter {
                 EmitterKind::Native => {
                     let (format, arch) = emit::detect_target(args.target_triple.as_deref())
                         .map_err(|err| CliError::Compilation(err.to_string()))?;
-                    let plan = fp_native::emit::emit_plan(&lir_program, format, arch).map_err(|err| {
-                        CliError::Compilation(format!("Failed to emit native object: {err}"))
-                    })?;
+                    let plan =
+                        fp_native::emit::emit_plan(&lir_program, format, arch).map_err(|err| {
+                            CliError::Compilation(format!("Failed to emit native object: {err}"))
+                        })?;
                     fp_native::emit::write_object(&output_path, &plan).map_err(|err| {
                         CliError::Compilation(format!("Failed to write object output: {err}"))
                     })?;
@@ -394,7 +439,11 @@ async fn maybe_transpile_jvm_bytecode(
     Ok(Some(output_path))
 }
 
-async fn maybe_transpile_goasm(input: &Path, output: &Path, args: &CompileArgs) -> Result<Option<PathBuf>> {
+async fn maybe_transpile_goasm(
+    input: &Path,
+    output: &Path,
+    args: &CompileArgs,
+) -> Result<Option<PathBuf>> {
     if detect_container_transpile_source(args.source_language.as_deref(), input)
         != Some(ContainerTranspileSource::GoAsm)
     {
@@ -412,9 +461,11 @@ async fn maybe_transpile_goasm(input: &Path, output: &Path, args: &CompileArgs) 
         ));
     }
 
-    let text = async_fs::read_to_string(input)
-        .await
-        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read goasm input: {err}"))))?;
+    let text = async_fs::read_to_string(input).await.map_err(|err| {
+        CliError::Io(io::Error::other(format!(
+            "Failed to read goasm input: {err}"
+        )))
+    })?;
     let (lir_program, _source_target) = fp_goasm::parse_program(&text)
         .map_err(|err| CliError::Compilation(format!("Failed to parse goasm: {err}")))?;
 
@@ -450,10 +501,12 @@ async fn maybe_transpile_goasm(input: &Path, output: &Path, args: &CompileArgs) 
         EmitterKind::Native => {
             let (format, arch) = emit::detect_target(args.target_triple.as_deref())
                 .map_err(|err| CliError::Compilation(err.to_string()))?;
-            let plan = fp_native::emit::emit_plan(&lir_program, format, arch)
-                .map_err(|err| CliError::Compilation(format!("Failed to emit native object: {err}")))?;
-            fp_native::emit::write_object(&output_path, &plan)
-                .map_err(|err| CliError::Compilation(format!("Failed to write object output: {err}")))?;
+            let plan = fp_native::emit::emit_plan(&lir_program, format, arch).map_err(|err| {
+                CliError::Compilation(format!("Failed to emit native object: {err}"))
+            })?;
+            fp_native::emit::write_object(&output_path, &plan).map_err(|err| {
+                CliError::Compilation(format!("Failed to write object output: {err}"))
+            })?;
         }
         other => {
             return Err(CliError::InvalidInput(format!(
@@ -466,7 +519,11 @@ async fn maybe_transpile_goasm(input: &Path, output: &Path, args: &CompileArgs) 
     Ok(Some(output_path))
 }
 
-async fn maybe_transpile_urcl(input: &Path, output: &Path, args: &CompileArgs) -> Result<Option<PathBuf>> {
+async fn maybe_transpile_urcl(
+    input: &Path,
+    output: &Path,
+    args: &CompileArgs,
+) -> Result<Option<PathBuf>> {
     if detect_container_transpile_source(args.source_language.as_deref(), input)
         != Some(ContainerTranspileSource::Urcl)
     {
@@ -484,9 +541,11 @@ async fn maybe_transpile_urcl(input: &Path, output: &Path, args: &CompileArgs) -
         ));
     }
 
-    let text = async_fs::read_to_string(input)
-        .await
-        .map_err(|err| CliError::Io(io::Error::other(format!("Failed to read URCL input: {err}"))))?;
+    let text = async_fs::read_to_string(input).await.map_err(|err| {
+        CliError::Io(io::Error::other(format!(
+            "Failed to read URCL input: {err}"
+        )))
+    })?;
     let lir_program = fp_urcl::parse_program(&text)
         .map_err(|err| CliError::Compilation(format!("Failed to parse URCL: {err}")))?;
 
@@ -522,10 +581,12 @@ async fn maybe_transpile_urcl(input: &Path, output: &Path, args: &CompileArgs) -
         EmitterKind::Native => {
             let (format, arch) = emit::detect_target(args.target_triple.as_deref())
                 .map_err(|err| CliError::Compilation(err.to_string()))?;
-            let plan = fp_native::emit::emit_plan(&lir_program, format, arch)
-                .map_err(|err| CliError::Compilation(format!("Failed to emit native object: {err}")))?;
-            fp_native::emit::write_object(&output_path, &plan)
-                .map_err(|err| CliError::Compilation(format!("Failed to write object output: {err}")))?;
+            let plan = fp_native::emit::emit_plan(&lir_program, format, arch).map_err(|err| {
+                CliError::Compilation(format!("Failed to emit native object: {err}"))
+            })?;
+            fp_native::emit::write_object(&output_path, &plan).map_err(|err| {
+                CliError::Compilation(format!("Failed to write object output: {err}"))
+            })?;
         }
         other => {
             return Err(CliError::InvalidInput(format!(
@@ -565,7 +626,7 @@ fn detect_container_transpile_source(
         match lang.as_str() {
             "goasm" | "go-asm" => return Some(ContainerTranspileSource::GoAsm),
             "urcl" => return Some(ContainerTranspileSource::Urcl),
-            "jvm" | "jvm-bytecode" | "bytecode-jvm" | "class" => {
+            "jvm" | "jvm-bytecode" | "bytecode-jvm" | "class" | "jar" => {
                 return Some(ContainerTranspileSource::JvmBytecode);
             }
             "cil" | "msil" | "dotnet-cil" => return Some(ContainerTranspileSource::Cil),
@@ -581,7 +642,7 @@ fn detect_container_transpile_source(
     {
         Some("goasm") => Some(ContainerTranspileSource::GoAsm),
         Some("urcl") => Some(ContainerTranspileSource::Urcl),
-        Some("class") => Some(ContainerTranspileSource::JvmBytecode),
+        Some("class" | "jar") => Some(ContainerTranspileSource::JvmBytecode),
         Some("il") => Some(ContainerTranspileSource::Cil),
         Some("dll" | "exe") => Some(ContainerTranspileSource::Cil),
         _ => None,

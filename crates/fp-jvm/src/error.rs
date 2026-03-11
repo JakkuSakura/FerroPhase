@@ -22,4 +22,7 @@ pub enum JvmError {
 
     #[error("invalid JVM classfile: {0}")]
     InvalidClassFile(String),
+
+    #[error("invalid JAR container: {0}")]
+    InvalidJar(String),
 }

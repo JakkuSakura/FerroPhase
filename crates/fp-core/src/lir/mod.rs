@@ -430,6 +430,12 @@ impl LirProgram {
     pub fn add_global(&mut self, global: LirGlobal) {
         self.globals.push(global);
     }
+
+    pub fn extend(&mut self, mut other: LirProgram) {
+        self.functions.append(&mut other.functions);
+        self.globals.append(&mut other.globals);
+        self.type_definitions.append(&mut other.type_definitions);
+    }
 }
 
 impl LirFunction {
