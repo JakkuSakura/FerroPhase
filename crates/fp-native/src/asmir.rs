@@ -137,6 +137,17 @@ pub fn select_program(
     Ok(program)
 }
 
+fn register_bank_id(bank: AsmRegisterBank) -> u8 {
+    match bank {
+        AsmRegisterBank::General => 0,
+        AsmRegisterBank::Float => 1,
+        AsmRegisterBank::Vector => 2,
+        AsmRegisterBank::Predicate => 3,
+        AsmRegisterBank::Special => 4,
+        AsmRegisterBank::Custom(_) => 5,
+    }
+}
+
 pub fn lower_to_x86_64(program: &AsmProgram) -> x86_64_asm::AsmX86_64Program {
     x86_64_asm::AsmX86_64Program {
         functions: program
@@ -221,9 +232,316 @@ pub fn lower_to_aarch64(program: &AsmProgram) -> aarch64_asm::AsmAarch64Program 
     }
 }
 
+fn canonicalize_physical_registers(program: &mut AsmProgram) {
+    let mut next_virtual_id = max_virtual_register_id(program)
+        .unwrap_or(0)
+        .saturating_add(1);
+    let mut map: std::collections::HashMap<(String, u16, u8), u32> =
+        std::collections::HashMap::new();
+
+    for function in &mut program.functions {
+        for block in &mut function.basic_blocks {
+            for instruction in &mut block.instructions {
+                canonicalize_instruction_registers(instruction, &mut map, &mut next_virtual_id);
+            }
+            canonicalize_terminator_registers(
+                &mut block.terminator,
+                &mut map,
+                &mut next_virtual_id,
+            );
+        }
+    }
+}
+
+fn max_virtual_register_id(program: &AsmProgram) -> Option<u32> {
+    let mut max_id: Option<u32> = None;
+    for function in &program.functions {
+        for block in &function.basic_blocks {
+            for instruction in &block.instructions {
+                for operand in &instruction.operands {
+                    let AsmOperand::Register {
+                        reg: AsmRegister::Virtual { id, .. },
+                        ..
+                    } = operand
+                    else {
+                        continue;
+                    };
+                    max_id = Some(max_id.map_or(*id, |current| current.max(*id)));
+                }
+            }
+        }
+    }
+    max_id
+}
+
+fn canonicalize_instruction_registers(
+    instruction: &mut AsmInstruction,
+    map: &mut std::collections::HashMap<(String, u16, u8), u32>,
+    next_virtual_id: &mut u32,
+) {
+    canonicalize_instruction_kind_registers(&mut instruction.kind, map, next_virtual_id);
+    instruction
+        .operands
+        .iter_mut()
+        .for_each(|operand| canonicalize_operand_registers(operand, map, next_virtual_id));
+    instruction
+        .implicit_uses
+        .iter_mut()
+        .for_each(|reg| canonicalize_register(reg, map, next_virtual_id));
+    instruction
+        .implicit_defs
+        .iter_mut()
+        .for_each(|reg| canonicalize_register(reg, map, next_virtual_id));
+}
+
+fn canonicalize_instruction_kind_registers(
+    kind: &mut AsmInstructionKind,
+    map: &mut std::collections::HashMap<(String, u16, u8), u32>,
+    next_virtual_id: &mut u32,
+) {
+    match kind {
+        AsmInstructionKind::Add(lhs, rhs)
+        | AsmInstructionKind::Sub(lhs, rhs)
+        | AsmInstructionKind::Mul(lhs, rhs)
+        | AsmInstructionKind::Div(lhs, rhs)
+        | AsmInstructionKind::Rem(lhs, rhs)
+        | AsmInstructionKind::And(lhs, rhs)
+        | AsmInstructionKind::Or(lhs, rhs)
+        | AsmInstructionKind::Xor(lhs, rhs)
+        | AsmInstructionKind::Shl(lhs, rhs)
+        | AsmInstructionKind::Shr(lhs, rhs)
+        | AsmInstructionKind::Eq(lhs, rhs)
+        | AsmInstructionKind::Ne(lhs, rhs)
+        | AsmInstructionKind::Lt(lhs, rhs)
+        | AsmInstructionKind::Le(lhs, rhs)
+        | AsmInstructionKind::Gt(lhs, rhs)
+        | AsmInstructionKind::Ge(lhs, rhs) => {
+            canonicalize_value(lhs, map, next_virtual_id);
+            canonicalize_value(rhs, map, next_virtual_id);
+        }
+        AsmInstructionKind::Bitcast(value, _)
+        | AsmInstructionKind::Trunc(value, _)
+        | AsmInstructionKind::ZExt(value, _)
+        | AsmInstructionKind::SExt(value, _)
+        | AsmInstructionKind::FPExt(value, _)
+        | AsmInstructionKind::FPTrunc(value, _)
+        | AsmInstructionKind::FPToUI(value, _)
+        | AsmInstructionKind::FPToSI(value, _)
+        | AsmInstructionKind::UIToFP(value, _)
+        | AsmInstructionKind::SIToFP(value, _)
+        | AsmInstructionKind::SextOrTrunc(value, _) => {
+            canonicalize_value(value, map, next_virtual_id);
+        }
+        AsmInstructionKind::Not(value)
+        | AsmInstructionKind::PtrToInt(value)
+        | AsmInstructionKind::IntToPtr(value)
+        | AsmInstructionKind::Freeze(value) => {
+            canonicalize_value(value, map, next_virtual_id);
+        }
+        AsmInstructionKind::Load { address, .. } => {
+            canonicalize_value(address, map, next_virtual_id);
+        }
+        AsmInstructionKind::Store { value, address, .. } => {
+            canonicalize_value(value, map, next_virtual_id);
+            canonicalize_value(address, map, next_virtual_id);
+        }
+        AsmInstructionKind::Alloca { size, .. } => {
+            canonicalize_value(size, map, next_virtual_id);
+        }
+        AsmInstructionKind::GetElementPtr { ptr, indices, .. } => {
+            canonicalize_value(ptr, map, next_virtual_id);
+            for index in indices {
+                canonicalize_value(index, map, next_virtual_id);
+            }
+        }
+        AsmInstructionKind::ExtractValue { aggregate, .. } => {
+            canonicalize_value(aggregate, map, next_virtual_id);
+        }
+        AsmInstructionKind::InsertValue {
+            aggregate, element, ..
+        } => {
+            canonicalize_value(aggregate, map, next_virtual_id);
+            canonicalize_value(element, map, next_virtual_id);
+        }
+        AsmInstructionKind::Call { function, args, .. } => {
+            canonicalize_value(function, map, next_virtual_id);
+            for arg in args {
+                canonicalize_value(arg, map, next_virtual_id);
+            }
+        }
+        AsmInstructionKind::IntrinsicCall { args, .. } => {
+            for arg in args {
+                canonicalize_value(arg, map, next_virtual_id);
+            }
+        }
+        AsmInstructionKind::Phi { incoming } => {
+            for (value, _) in incoming {
+                canonicalize_value(value, map, next_virtual_id);
+            }
+        }
+        AsmInstructionKind::Select {
+            condition,
+            if_true,
+            if_false,
+        } => {
+            canonicalize_value(condition, map, next_virtual_id);
+            canonicalize_value(if_true, map, next_virtual_id);
+            canonicalize_value(if_false, map, next_virtual_id);
+        }
+        AsmInstructionKind::InlineAsm { inputs, .. } => {
+            for input in inputs {
+                canonicalize_value(input, map, next_virtual_id);
+            }
+        }
+        AsmInstructionKind::LandingPad {
+            personality,
+            clauses,
+            ..
+        } => {
+            if let Some(personality) = personality {
+                canonicalize_value(personality, map, next_virtual_id);
+            }
+            for clause in clauses {
+                match clause {
+                    fp_core::asmir::AsmLandingPadClause::Catch(value) => {
+                        canonicalize_value(value, map, next_virtual_id);
+                    }
+                    fp_core::asmir::AsmLandingPadClause::Filter(values) => {
+                        for value in values {
+                            canonicalize_value(value, map, next_virtual_id);
+                        }
+                    }
+                }
+            }
+        }
+        AsmInstructionKind::Unreachable => {}
+    }
+}
+
+fn canonicalize_terminator_registers(
+    terminator: &mut AsmTerminator,
+    map: &mut std::collections::HashMap<(String, u16, u8), u32>,
+    next_virtual_id: &mut u32,
+) {
+    match terminator {
+        AsmTerminator::Return(Some(value)) => canonicalize_value(value, map, next_virtual_id),
+        AsmTerminator::CondBr { condition, .. } => {
+            canonicalize_value(condition, map, next_virtual_id)
+        }
+        AsmTerminator::Switch { value, .. } => canonicalize_value(value, map, next_virtual_id),
+        AsmTerminator::IndirectBr { address, .. } => {
+            canonicalize_value(address, map, next_virtual_id)
+        }
+        AsmTerminator::Invoke { function, args, .. } => {
+            canonicalize_value(function, map, next_virtual_id);
+            for arg in args {
+                canonicalize_value(arg, map, next_virtual_id);
+            }
+        }
+        AsmTerminator::Resume(value) => canonicalize_value(value, map, next_virtual_id),
+        AsmTerminator::CleanupRet { cleanup_pad, .. } => {
+            canonicalize_value(cleanup_pad, map, next_virtual_id);
+        }
+        AsmTerminator::CatchRet { catch_pad, .. } => {
+            canonicalize_value(catch_pad, map, next_virtual_id)
+        }
+        AsmTerminator::CatchSwitch { parent_pad, .. } => {
+            if let Some(parent) = parent_pad {
+                canonicalize_value(parent, map, next_virtual_id);
+            }
+        }
+        AsmTerminator::Return(None) | AsmTerminator::Br(_) | AsmTerminator::Unreachable => {}
+    }
+}
+
+fn canonicalize_operand_registers(
+    operand: &mut AsmOperand,
+    map: &mut std::collections::HashMap<(String, u16, u8), u32>,
+    next_virtual_id: &mut u32,
+) {
+    match operand {
+        AsmOperand::Register { reg, .. } => canonicalize_register(reg, map, next_virtual_id),
+        AsmOperand::Memory(memory) => {
+            if let Some(base) = &mut memory.base {
+                canonicalize_register(base, map, next_virtual_id);
+            }
+            if let Some(index) = &mut memory.index {
+                canonicalize_register(index, map, next_virtual_id);
+            }
+            if let Some(segment) = &mut memory.segment {
+                canonicalize_register(segment, map, next_virtual_id);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn canonicalize_register(
+    reg: &mut AsmRegister,
+    map: &mut std::collections::HashMap<(String, u16, u8), u32>,
+    next_virtual_id: &mut u32,
+) {
+    let AsmRegister::Physical(physical) = reg else {
+        return;
+    };
+    let key = (
+        physical.name.to_ascii_lowercase(),
+        physical.size_bits,
+        register_bank_id(physical.bank.clone()),
+    );
+    let id = *map.entry(key).or_insert_with(|| {
+        let id = *next_virtual_id;
+        *next_virtual_id = next_virtual_id.saturating_add(1);
+        id
+    });
+    *reg = AsmRegister::Virtual {
+        id,
+        bank: physical.bank.clone(),
+        size_bits: physical.size_bits,
+    };
+}
+
+fn canonicalize_value(
+    value: &mut AsmValue,
+    map: &mut std::collections::HashMap<(String, u16, u8), u32>,
+    next_virtual_id: &mut u32,
+) {
+    match value {
+        AsmValue::PhysicalRegister(register) => {
+            let key = (
+                register.name.to_ascii_lowercase(),
+                register.size_bits,
+                register_bank_id(register.bank.clone()),
+            );
+            let id = *map.entry(key).or_insert_with(|| {
+                let id = *next_virtual_id;
+                *next_virtual_id = next_virtual_id.saturating_add(1);
+                id
+            });
+            *value = AsmValue::Register(id);
+        }
+        AsmValue::Address(address) => {
+            if let Some(base) = &mut address.base {
+                canonicalize_value(base, map, next_virtual_id);
+            }
+            if let Some(index) = &mut address.index {
+                canonicalize_value(index, map, next_virtual_id);
+            }
+            if let Some(segment) = &mut address.segment {
+                canonicalize_value(segment, map, next_virtual_id);
+            }
+        }
+        AsmValue::Comparison(comparison) => {
+            canonicalize_value(&mut comparison.lhs, map, next_virtual_id);
+            canonicalize_value(&mut comparison.rhs, map, next_virtual_id);
+        }
+        _ => {}
+    }
+}
+
 pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> AsmProgram {
     let mut next_instruction_id = 0u32;
-    AsmProgram {
+    let mut lifted = AsmProgram {
         target: AsmTarget {
             architecture: AsmArchitecture::X86_64,
             object_format: AsmObjectFormat::Raw,
@@ -286,12 +604,14 @@ pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> AsmProgram {
                 is_declaration: false,
             })
             .collect(),
-    }
+    };
+    canonicalize_physical_registers(&mut lifted);
+    lifted
 }
 
 pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> AsmProgram {
     let mut next_instruction_id = 0u32;
-    AsmProgram {
+    let mut lifted = AsmProgram {
         target: AsmTarget {
             architecture: AsmArchitecture::Aarch64,
             object_format: AsmObjectFormat::Raw,
@@ -355,7 +675,9 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> AsmProgram
                 is_declaration: false,
             })
             .collect(),
-    }
+    };
+    canonicalize_physical_registers(&mut lifted);
+    lifted
 }
 
 fn normalize_program_for_target(program: &mut AsmProgram) {
@@ -364,6 +686,10 @@ fn normalize_program_for_target(program: &mut AsmProgram) {
         AsmArchitecture::Aarch64 => normalize_program_for_aarch64(program),
         _ => normalize_program_generic(program),
     }
+}
+
+pub fn normalize_for_target(program: &mut AsmProgram) {
+    normalize_program_for_target(program);
 }
 
 fn normalize_program_generic(program: &mut AsmProgram) {
@@ -4158,10 +4484,48 @@ mod tests {
         let asmir = lift_from_x86_64(&x86);
         let lowered = lower_to_x86_64(&asmir);
 
-        assert_eq!(
-            lowered.functions[0].blocks[0].instructions,
-            x86.functions[0].blocks[0].instructions
-        );
+        let instructions = &lowered.functions[0].blocks[0].instructions;
+        assert_eq!(instructions.len(), 2);
+
+        let X86InstructionDetail {
+            operands: mov_operands,
+            ..
+        } = &instructions[0];
+        let [
+            X86Operand::Register {
+                reg: X86Register::Virtual { id: dst_id, .. },
+                ..
+            },
+            X86Operand::Memory(mem),
+        ] = mov_operands.as_slice()
+        else {
+            panic!("unexpected x86 mov operands: {mov_operands:?}");
+        };
+        assert_eq!(mem.scale, 2);
+        assert_eq!(mem.displacement, 8);
+        assert_eq!(mem.size_bytes, Some(8));
+        assert!(matches!(mem.base, Some(X86Register::Virtual { .. })));
+        assert!(matches!(mem.index, Some(X86Register::Virtual { .. })));
+
+        let X86InstructionDetail {
+            operands: call_operands,
+            call_target,
+            ..
+        } = &instructions[1];
+        let [
+            X86Operand::Register {
+                reg: X86Register::Virtual { id: call_id, .. },
+                ..
+            },
+        ] = call_operands.as_slice()
+        else {
+            panic!("unexpected x86 call operands: {call_operands:?}");
+        };
+        assert_eq!(dst_id, call_id);
+        assert!(matches!(
+            call_target,
+            Some(X86CallTarget::Register(X86Register::Virtual { id, .. })) if id == call_id
+        ));
     }
 
     #[test]
@@ -4229,9 +4593,46 @@ mod tests {
         let asmir = lift_from_aarch64(&aarch64);
         let lowered = lower_to_aarch64(&asmir);
 
-        assert_eq!(
-            lowered.functions[0].blocks[0].instructions,
-            aarch64.functions[0].blocks[0].instructions
-        );
+        let instructions = &lowered.functions[0].blocks[0].instructions;
+        assert_eq!(instructions.len(), 2);
+
+        let Aarch64InstructionDetail {
+            operands: store_operands,
+            ..
+        } = &instructions[0];
+        let [
+            Aarch64Operand::Register {
+                reg: Aarch64Register::Virtual { .. },
+                ..
+            },
+            Aarch64Operand::Memory(mem),
+        ] = store_operands.as_slice()
+        else {
+            panic!("unexpected aarch64 store operands: {store_operands:?}");
+        };
+        assert_eq!(mem.scale, 3);
+        assert_eq!(mem.displacement, 16);
+        assert_eq!(mem.size_bytes, Some(8));
+        assert!(matches!(mem.base, Some(Aarch64Register::Virtual { .. })));
+        assert!(matches!(mem.index, Some(Aarch64Register::Virtual { .. })));
+
+        let Aarch64InstructionDetail {
+            operands: call_operands,
+            call_target,
+            ..
+        } = &instructions[1];
+        let [
+            Aarch64Operand::Register {
+                reg: Aarch64Register::Virtual { id: call_id, .. },
+                ..
+            },
+        ] = call_operands.as_slice()
+        else {
+            panic!("unexpected aarch64 call operands: {call_operands:?}");
+        };
+        assert!(matches!(
+            call_target,
+            Some(Aarch64CallTarget::Register(Aarch64Register::Virtual { id, .. })) if id == call_id
+        ));
     }
 }

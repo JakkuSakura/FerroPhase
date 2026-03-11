@@ -563,6 +563,7 @@ async fn maybe_transpile_native_asm(
             } else {
                 let mut target_program = lift_from_x86_64(&program);
                 target_program.target.architecture = fp_core::asmir::AsmArchitecture::Aarch64;
+                fp_native::asmir::normalize_for_target(&mut target_program);
                 lower_to_aarch64(&target_program).to_text()
             }
         }
@@ -572,6 +573,7 @@ async fn maybe_transpile_native_asm(
             } else {
                 let mut target_program = lift_from_aarch64(&program);
                 target_program.target.architecture = fp_core::asmir::AsmArchitecture::X86_64;
+                fp_native::asmir::normalize_for_target(&mut target_program);
                 lower_to_x86_64(&target_program).to_text()
             }
         }
