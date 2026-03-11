@@ -1,7 +1,8 @@
 pub mod asm;
+pub mod asmir;
 pub mod binary;
 pub mod config;
-pub mod asmir;
+pub mod container;
 pub mod emit;
 pub mod ffi;
 pub mod jit;
