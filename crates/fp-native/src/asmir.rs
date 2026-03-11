@@ -605,6 +605,22 @@ pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> AsmProgram {
             })
             .collect(),
     };
+    if let Some(abi) = crate::abi::default_abi_for_target(
+        &lifted.target.architecture,
+        &lifted.target.object_format,
+    ) {
+        for function in &mut lifted.functions {
+            crate::abi::raise_implicit_call_arguments(function, abi);
+        }
+    }
+    if let Some(abi) = crate::abi::default_abi_for_target(
+        &lifted.target.architecture,
+        &lifted.target.object_format,
+    ) {
+        for function in &mut lifted.functions {
+            crate::abi::raise_implicit_call_arguments(function, abi);
+        }
+    }
     canonicalize_physical_registers(&mut lifted);
     lifted
 }
