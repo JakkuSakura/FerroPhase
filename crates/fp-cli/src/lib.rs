@@ -5,9 +5,9 @@
 
 pub mod cli;
 pub mod codegen;
-pub mod container;
 pub mod commands;
 pub mod compilation;
+pub mod container;
 pub mod diagnostics;
 pub mod languages;
 pub mod pipeline;

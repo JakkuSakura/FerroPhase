@@ -223,8 +223,8 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     for (_i, input_file) in args.input.iter().enumerate() {
         progress.set_message(format!("Compiling {}", input_file.display()));
 
-        let container_kind = container_registry
-            .detect_input_kind(input_file, args.source_language.as_deref());
+        let container_kind =
+            container_registry.detect_input_kind(input_file, args.source_language.as_deref());
         let urcl_container_input =
             container_kind == Some(crate::container::ContainerInputKind::Urcl);
         let goasm_container_input =
@@ -232,6 +232,8 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         let cil_container_input = container_kind == Some(crate::container::ContainerInputKind::Cil);
         let jvm_container_input =
             container_kind == Some(crate::container::ContainerInputKind::JvmBytecode);
+        let archive_container_input =
+            container_kind == Some(crate::container::ContainerInputKind::NativeArchive);
 
         let output_file = determine_output_path(
             input_file,
@@ -241,6 +243,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             args.target_triple.as_deref(),
             detect_native_asm_source(args.source_language.as_deref(), input_file).is_some(),
             detect_native_object_source(args.source_language.as_deref(), input_file),
+            archive_container_input,
             urcl_container_input,
             goasm_container_input,
             cil_container_input,
@@ -365,7 +368,9 @@ async fn compile_file(
         return Ok(Some(artifact));
     }
 
-    if let Some(artifact) = crate::container::maybe_transpile_container(input, output, args, _config).await? {
+    if let Some(artifact) =
+        crate::container::maybe_transpile_container(input, output, args, _config).await?
+    {
         return Ok(Some(artifact));
     }
 
@@ -1082,6 +1087,7 @@ fn determine_output_path(
     target_triple: Option<&str>,
     native_asm_input: bool,
     native_object_input: bool,
+    native_archive_input: bool,
     urcl_container_input: bool,
     goasm_container_input: bool,
     cil_container_input: bool,
@@ -1117,6 +1123,9 @@ fn determine_output_path(
     let native_object_target = matches!(backend, BackendKind::Binary)
         && emitter == EmitterKind::Native
         && native_object_input;
+    let native_archive_target = matches!(backend, BackendKind::Binary)
+        && emitter == EmitterKind::Native
+        && native_archive_input;
     let urcl_object_target = matches!(backend, BackendKind::Binary)
         && emitter == EmitterKind::Native
         && urcl_container_input;
@@ -1142,6 +1151,8 @@ fn determine_output_path(
                         "s"
                     } else if native_object_target {
                         "o"
+                    } else if native_archive_target {
+                        "a"
                     } else if urcl_object_target {
                         "o"
                     } else if goasm_object_target {
@@ -1192,6 +1203,7 @@ fn determine_output_path(
             && !urcl_text_target
             && !native_asm_text_target
             && !native_object_target
+            && !native_archive_target
             && !urcl_object_target
             && !goasm_object_target
             && !cil_object_target
@@ -1218,6 +1230,10 @@ fn determine_output_path(
         }
 
         if native_asm_text_target {
+            return Ok(output.clone());
+        }
+
+        if native_archive_target {
             return Ok(output.clone());
         }
 

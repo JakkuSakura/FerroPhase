@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod asm;
 pub mod asmir;
 pub mod binary;

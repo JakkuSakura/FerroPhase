@@ -8,6 +8,7 @@ use crate::error::{CliError, Result};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContainerInputKind {
     NativeObject,
+    NativeArchive,
     JvmBytecode,
     Cil,
     GoAsm,
@@ -45,6 +46,9 @@ impl ContainerRegistry {
                 "object" | "native-object" | "obj" | "native-obj" | "o" => {
                     return Some(ContainerInputKind::NativeObject);
                 }
+                "archive" | "ar" | "native-archive" | "a" | "lib" => {
+                    return Some(ContainerInputKind::NativeArchive);
+                }
                 "jvm" | "jvm-bytecode" | "bytecode-jvm" | "class" | "jar" => {
                     return Some(ContainerInputKind::JvmBytecode);
                 }
@@ -63,6 +67,7 @@ impl ContainerRegistry {
 
         match extension.as_deref() {
             Some("o" | "obj") => Some(ContainerInputKind::NativeObject),
+            Some("a" | "lib") => Some(ContainerInputKind::NativeArchive),
             Some("class" | "jar") => Some(ContainerInputKind::JvmBytecode),
             Some("il" | "dll" | "exe") => Some(ContainerInputKind::Cil),
             Some("goasm") => Some(ContainerInputKind::GoAsm),
@@ -86,6 +91,27 @@ impl ContainerRegistry {
                 self.object_reader.read(&payload).map_err(|err| {
                     CliError::Compilation(format!("Failed to parse object container: {err}"))
                 })?
+            }
+            ContainerInputKind::NativeArchive => {
+                if !fp_native::archive::can_read_archive(&payload) {
+                    return Err(CliError::InvalidInput(
+                        "input is not a recognized native archive container".to_string(),
+                    ));
+                }
+
+                let mut file = ContainerFile::new(
+                    ContainerKind::Archive,
+                    ContainerFormat::Other("archive(ar)".to_string()),
+                    ContainerArchitecture::Other("native".to_string()),
+                    ContainerEndianness::Little,
+                );
+                file.sections.push(ContainerSection {
+                    name: ".container".to_string(),
+                    kind: ContainerSectionKind::Other,
+                    align: 1,
+                    data: payload.clone(),
+                });
+                file
             }
             ContainerInputKind::JvmBytecode => {
                 // Keep this container representation lossless by storing raw bytes.
@@ -165,4 +191,3 @@ impl ContainerRegistry {
         Ok(ReadContainer { kind, payload })
     }
 }
-
