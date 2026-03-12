@@ -43,6 +43,58 @@ fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileAr
     }
 }
 
+fn build_x86_64_elf_object_with_getpid_syscall() -> Vec<u8> {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+
+    // mov rax, 39; syscall; ret
+    let mut text = Vec::new();
+    text.extend_from_slice(&[0x48, 0xB8]);
+    text.extend_from_slice(&39u64.to_le_bytes());
+    text.extend_from_slice(&[0x0F, 0x05, 0xC3]);
+    obj.append_section_data(section_id, &text, 1);
+
+    obj.add_symbol(Symbol {
+        name: b"main".to_vec(),
+        value: 0,
+        size: text.len() as u64,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section_id),
+        flags: SymbolFlags::None,
+    });
+
+    obj.write().expect("write ELF object")
+}
+
+#[tokio::test]
+async fn compile_linux_getpid_syscall_exec_to_windows_import_call() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("main.exe");
+
+    fs::write(&input_file, build_x86_64_elf_object_with_getpid_syscall()).unwrap();
+    let mut args = base_args(input_file, output_file.clone());
+    args.target_triple = Some("x86_64-pc-windows-msvc".to_string());
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let bytes = fs::read(&output_file).unwrap();
+    assert!(
+        bytes.windows(2).all(|w| w != [0x0F, 0x05]),
+        "unexpected syscall bytes in Windows output"
+    );
+    let haystack = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
+    assert!(
+        haystack.contains("kernel32.dll"),
+        "missing kernel32.dll import"
+    );
+    assert!(
+        haystack.contains("getcurrentprocessid"),
+        "missing GetCurrentProcessId import"
+    );
+}
+
 fn build_x86_64_elf_object_with_seek_syscall() -> Vec<u8> {
     let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
     let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);

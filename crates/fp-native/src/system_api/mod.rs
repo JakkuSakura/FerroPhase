@@ -10,6 +10,8 @@ pub enum SystemApiOp {
     Exit {
         code: AsmValue,
     },
+    GetPid,
+    GetTid,
     Write {
         fd: AsmValue,
         buffer: AsmValue,
@@ -426,6 +428,15 @@ fn detect_system_api_from_windows_import(
                 .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)));
             Some(SystemApiOp::Exit { code })
         }
+        "GetCurrentProcessId" => Some(SystemApiOp::GetPid),
+        "GetCurrentThreadId"
+            if matches!(
+                convention,
+                AsmSyscallConvention::LinuxX86_64 | AsmSyscallConvention::LinuxAarch64
+            ) =>
+        {
+            Some(SystemApiOp::GetTid)
+        }
         "CreateFileA" => {
             if args.len() != 7 {
                 return None;
@@ -585,12 +596,16 @@ fn detect_system_api_from_syscall(
                 .cloned()
                 .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
         }),
+        AsmSyscallConvention::LinuxX86_64 if num == 39 => Some(SystemApiOp::GetPid),
+        AsmSyscallConvention::LinuxX86_64 if num == 186 => Some(SystemApiOp::GetTid),
         AsmSyscallConvention::LinuxAarch64 if num == 93 => Some(SystemApiOp::Exit {
             code: args
                 .get(0)
                 .cloned()
                 .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
         }),
+        AsmSyscallConvention::LinuxAarch64 if num == 172 => Some(SystemApiOp::GetPid),
+        AsmSyscallConvention::LinuxAarch64 if num == 178 => Some(SystemApiOp::GetTid),
         AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
             if num == 0x2000_0001 =>
         {
@@ -600,6 +615,11 @@ fn detect_system_api_from_syscall(
                     .cloned()
                     .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
             })
+        }
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
+            if num == 0x2000_0014 =>
+        {
+            Some(SystemApiOp::GetPid)
         }
         AsmSyscallConvention::LinuxX86_64 if num == 1 => Some(SystemApiOp::Write {
             fd: args.get(0)?.clone(),
@@ -787,6 +807,40 @@ fn lower_system_api_to_windows_import(
                 tail_call: false,
             },
             type_hint: Some(AsmType::Void),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        })),
+        SystemApiOp::GetPid => Ok(LoweredWindows::Single(AsmInstruction {
+            id: replaces_id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+            kind: AsmInstructionKind::Call {
+                function: AsmValue::Function("kernel32!GetCurrentProcessId".to_string()),
+                args: Vec::new(),
+                calling_convention: CallingConvention::Win64,
+                tail_call: false,
+            },
+            type_hint: Some(AsmType::I64),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        })),
+        SystemApiOp::GetTid => Ok(LoweredWindows::Single(AsmInstruction {
+            id: replaces_id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+            kind: AsmInstructionKind::Call {
+                function: AsmValue::Function("kernel32!GetCurrentThreadId".to_string()),
+                args: Vec::new(),
+                calling_convention: CallingConvention::Win64,
+                tail_call: false,
+            },
+            type_hint: Some(AsmType::I64),
             operands: Vec::new(),
             implicit_uses: Vec::new(),
             implicit_defs: Vec::new(),
@@ -2066,6 +2120,35 @@ fn lower_system_api_to_syscall(
                 convention,
                 number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
                 args: vec![code],
+            }
+        }
+        SystemApiOp::GetPid => {
+            let number = match convention {
+                AsmSyscallConvention::LinuxX86_64 => 39,
+                AsmSyscallConvention::LinuxAarch64 => 172,
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    0x2000_0014
+                }
+            };
+            AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                args: Vec::new(),
+            }
+        }
+        SystemApiOp::GetTid => {
+            let number = match convention {
+                AsmSyscallConvention::LinuxX86_64 => 186,
+                AsmSyscallConvention::LinuxAarch64 => 178,
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    // No stable cross-version darwin thread id syscall.
+                    0
+                }
+            };
+            AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                args: Vec::new(),
             }
         }
         SystemApiOp::Write { fd, buffer, len } => {
