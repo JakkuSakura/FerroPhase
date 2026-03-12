@@ -168,7 +168,7 @@ fn compare_kind_from_cond(
 pub fn lift_function_bytes(
     bytes: &[u8],
     relocs: &[TextRelocation],
-    syscall_convention: AsmSyscallConvention,
+    syscall_convention: Option<AsmSyscallConvention>,
 ) -> Result<LiftedFunction> {
     if bytes.len() % 4 != 0 {
         return Err(Error::from("aarch64 function size is not 4-byte aligned"));
@@ -375,6 +375,9 @@ pub fn lift_function_bytes(
 
             if (word & 0xFFE0_001F) == 0xD400_0001 {
                 // SVC #imm16
+                let syscall_convention = syscall_convention.ok_or_else(|| {
+                    Error::from("aarch64 syscall lifting is disabled for COFF/PE")
+                })?;
                 let imm16 = ((word >> 5) & 0xFFFF) as u16;
                 match (syscall_convention, imm16) {
                     (AsmSyscallConvention::LinuxAarch64, 0)

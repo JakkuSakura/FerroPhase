@@ -9,6 +9,7 @@ pub mod emit;
 pub mod ffi;
 pub mod jit;
 pub mod link;
+pub mod system_api;
 
 use crate::config::{EmitKind, NativeConfig};
 use crate::emit::{detect_target, resolve_native_target};

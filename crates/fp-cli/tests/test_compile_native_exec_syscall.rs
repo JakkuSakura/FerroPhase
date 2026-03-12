@@ -43,6 +43,106 @@ fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileAr
     }
 }
 
+#[tokio::test]
+async fn compile_linux_syscall_exec_to_windows_import_call() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("main.exe");
+
+    fs::write(&input_file, build_x86_64_elf_object_with_exit_syscall()).unwrap();
+    let mut args = base_args(input_file, output_file.clone());
+    args.target_triple = Some("x86_64-pc-windows-msvc".to_string());
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let bytes = fs::read(&output_file).unwrap();
+    assert!(
+        bytes.windows(2).all(|w| w != [0x0F, 0x05]),
+        "unexpected syscall bytes in Windows output"
+    );
+    let haystack = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
+    assert!(
+        haystack.contains("kernel32.dll"),
+        "missing kernel32.dll import"
+    );
+    assert!(
+        haystack.contains("exitprocess"),
+        "missing ExitProcess import"
+    );
+}
+
+#[tokio::test]
+async fn compile_windows_import_exec_to_linux_syscall() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.obj");
+    let output_file = temp_dir.path().join("main.out");
+
+    fs::write(
+        &input_file,
+        build_x86_64_coff_object_with_exitprocess_import(),
+    )
+    .unwrap();
+    let args = base_args(input_file, output_file.clone());
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let bytes = fs::read(&output_file).unwrap();
+    assert!(
+        bytes.windows(2).any(|w| w == [0x0F, 0x05]),
+        "missing syscall bytes in Linux output"
+    );
+}
+
+fn build_x86_64_coff_object_with_exitprocess_import() -> Vec<u8> {
+    let mut obj = Object::new(BinaryFormat::Coff, Architecture::X86_64, Endianness::Little);
+    let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+
+    // mov rcx, 0; call kernel32!ExitProcess; ret
+    let mut text = Vec::new();
+    text.extend_from_slice(&[0x48, 0xC7, 0xC1]);
+    text.extend_from_slice(&0u32.to_le_bytes());
+    text.extend_from_slice(&[0xE8, 0, 0, 0, 0]);
+    text.push(0xC3);
+    obj.append_section_data(section_id, &text, 1);
+
+    let callee_id = obj.add_symbol(Symbol {
+        name: b"kernel32!ExitProcess".to_vec(),
+        value: 0,
+        size: 0,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Undefined,
+        flags: SymbolFlags::None,
+    });
+
+    obj.add_relocation(
+        section_id,
+        object::write::Relocation {
+            offset: 8,
+            symbol: callee_id,
+            addend: 0,
+            flags: object::RelocationFlags::Generic {
+                kind: object::RelocationKind::Relative,
+                encoding: object::RelocationEncoding::X86Branch,
+                size: 32,
+            },
+        },
+    )
+    .unwrap();
+
+    obj.add_symbol(Symbol {
+        name: b"main".to_vec(),
+        value: 0,
+        size: text.len() as u64,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section_id),
+        flags: SymbolFlags::None,
+    });
+
+    obj.write().expect("write COFF object")
+}
+
 fn build_x86_64_elf_object_with_exit_syscall() -> Vec<u8> {
     let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
     let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);

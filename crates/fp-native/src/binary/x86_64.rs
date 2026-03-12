@@ -11,7 +11,7 @@ use fp_core::lir::{CallingConvention, Name};
 pub fn lift_function_bytes(
     bytes: &[u8],
     relocs: &[TextRelocation],
-    syscall_convention: AsmSyscallConvention,
+    syscall_convention: Option<AsmSyscallConvention>,
 ) -> Result<LiftedFunction> {
     let decoded = decode_stream(bytes)?;
     let block_starts = determine_block_starts(&decoded)?;
@@ -391,7 +391,7 @@ fn lift_non_terminator(
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
     last_compare: &mut Option<LastCompare>,
-    syscall_convention: AsmSyscallConvention,
+    syscall_convention: Option<AsmSyscallConvention>,
 ) -> Result<()> {
     match inst.kind {
         Decoded::Nop => Ok(()),
@@ -684,6 +684,9 @@ fn lift_non_terminator(
             Ok(())
         }
         Decoded::Syscall => {
+            let syscall_convention = syscall_convention.ok_or_else(|| {
+                Error::from("x86_64 syscall lifting is disabled for COFF/PE targets")
+            })?;
             let number = ctx.read_gpr(0)?;
             let args = vec![
                 ctx.read_gpr(7)?,
@@ -924,6 +927,27 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
                 imm,
             },
             opcode_index + 1 + 8,
+        )));
+    }
+
+    // MOV r/m64, imm32: REX.W C7 /0 imm32 (sign-extended).
+    if rex_w && opcode == 0xC7 {
+        let (reg, rm, consumed) = decode_modrm(bytes, opcode_index + 1)?;
+        if reg != 0 {
+            return Err(Error::from("unsupported x86_64 C7 opcode extension"));
+        }
+        let RmOperand::Reg(dst) = rm else {
+            return Err(Error::from("unsupported x86_64 mov imm32 to memory"));
+        };
+        let imm_offset = opcode_index + 1 + consumed;
+        let imm = read_i32(bytes, imm_offset)? as i64;
+        return Ok(Some((
+            Decoded::MovImm64 {
+                dst,
+                imm_offset,
+                imm,
+            },
+            imm_offset + 4,
         )));
     }
 

@@ -125,17 +125,23 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
             .collect::<Vec<_>>();
 
         let syscall_convention = match (&architecture, &object_format) {
-            (AsmArchitecture::X86_64, AsmObjectFormat::Elf) => AsmSyscallConvention::LinuxX86_64,
-            (AsmArchitecture::X86_64, AsmObjectFormat::MachO) => AsmSyscallConvention::DarwinX86_64,
-            (AsmArchitecture::Aarch64, AsmObjectFormat::Elf) => AsmSyscallConvention::LinuxAarch64,
+            (AsmArchitecture::X86_64, AsmObjectFormat::Elf) => {
+                Some(AsmSyscallConvention::LinuxX86_64)
+            }
+            (AsmArchitecture::X86_64, AsmObjectFormat::MachO) => {
+                Some(AsmSyscallConvention::DarwinX86_64)
+            }
+            (AsmArchitecture::Aarch64, AsmObjectFormat::Elf) => {
+                Some(AsmSyscallConvention::LinuxAarch64)
+            }
             (AsmArchitecture::Aarch64, AsmObjectFormat::MachO) => {
-                AsmSyscallConvention::DarwinAarch64
+                Some(AsmSyscallConvention::DarwinAarch64)
             }
-            _ => {
-                return Err(Error::from(
-                    "object lift currently supports syscalls only for ELF/Mach-O x86_64/aarch64",
-                ));
-            }
+            // COFF/PE lifting is supported, but we intentionally do not interpret raw syscalls
+            // as a stable Windows mechanism.
+            (AsmArchitecture::X86_64 | AsmArchitecture::Aarch64, AsmObjectFormat::Coff)
+            | (AsmArchitecture::X86_64 | AsmArchitecture::Aarch64, AsmObjectFormat::Pe) => None,
+            _ => None,
         };
 
         let mut lifted = match &architecture {

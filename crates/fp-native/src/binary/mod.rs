@@ -38,7 +38,8 @@ mod tests {
     fn x86_64_lifter_splits_blocks_for_unconditional_jump() {
         let bytes = [0xEB, 0x01, 0xC3, 0xC3];
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], AsmSyscallConvention::LinuxX86_64).unwrap();
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+                .unwrap();
         assert_eq!(lifted.basic_blocks.len(), 3);
         assert_eq!(lifted.basic_blocks[0].id, 0);
         assert!(matches!(
@@ -65,7 +66,8 @@ mod tests {
         bytes.push(0xC3);
 
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], AsmSyscallConvention::LinuxX86_64).unwrap();
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+                .unwrap();
         assert_eq!(lifted.basic_blocks.len(), 3);
         assert!(matches!(
             lifted.basic_blocks[0].terminator,
@@ -96,7 +98,8 @@ mod tests {
         bytes.extend_from_slice(&ret);
 
         let lifted =
-            aarch64::lift_function_bytes(&bytes, &[], AsmSyscallConvention::LinuxAarch64).unwrap();
+            aarch64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxAarch64))
+                .unwrap();
         assert_eq!(lifted.basic_blocks.len(), 3);
         assert!(matches!(
             lifted.basic_blocks[0].terminator,
@@ -126,7 +129,8 @@ mod tests {
         bytes.extend_from_slice(&ret);
 
         let lifted =
-            aarch64::lift_function_bytes(&bytes, &[], AsmSyscallConvention::LinuxAarch64).unwrap();
+            aarch64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxAarch64))
+                .unwrap();
         assert_eq!(lifted.basic_blocks.len(), 3);
         assert!(matches!(
             lifted.basic_blocks[0].terminator,
