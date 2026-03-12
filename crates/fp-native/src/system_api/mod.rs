@@ -23,23 +23,125 @@ pub enum SystemApiOp {
     Close {
         fd: AsmValue,
     },
+    Open {
+        path: AsmValue,
+        flags: AsmValue,
+        mode: AsmValue,
+        flag_style: PosixFlagStyle,
+    },
+}
+
+fn windows_createfile_disposition_from_flags(style: PosixFlagStyle, flags: i64) -> i64 {
+    match style {
+        PosixFlagStyle::Linux => windows_createfile_disposition_linux(flags),
+        PosixFlagStyle::Darwin => windows_createfile_disposition_darwin(flags),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PosixFlagStyle {
+    Linux,
+    Darwin,
+}
+
+fn windows_createfile_desired_access(flags: i64) -> i64 {
+    // POSIX: O_RDONLY=0, O_WRONLY=1, O_RDWR=2
+    // Win32: GENERIC_READ=0x80000000, GENERIC_WRITE=0x40000000
+    const GENERIC_READ: i64 = 0x8000_0000u32 as i64;
+    const GENERIC_WRITE: i64 = 0x4000_0000u32 as i64;
+    match flags & 0b11 {
+        0 => GENERIC_READ,
+        1 => GENERIC_WRITE,
+        2 => GENERIC_READ | GENERIC_WRITE,
+        _ => GENERIC_READ,
+    }
+}
+
+fn windows_createfile_disposition_linux(flags: i64) -> i64 {
+    // Win32 creation disposition values:
+    // 1 CREATE_NEW, 2 CREATE_ALWAYS, 3 OPEN_EXISTING, 4 OPEN_ALWAYS, 5 TRUNCATE_EXISTING
+    const O_CREAT: i64 = 64;
+    const O_EXCL: i64 = 128;
+    const O_TRUNC: i64 = 512;
+    let has_creat = (flags & O_CREAT) != 0;
+    let has_excl = (flags & O_EXCL) != 0;
+    let has_trunc = (flags & O_TRUNC) != 0;
+    match (has_creat, has_excl, has_trunc) {
+        (true, true, _) => 1,
+        (true, false, true) => 2,
+        (true, false, false) => 4,
+        (false, _, true) => 5,
+        _ => 3,
+    }
+}
+
+fn windows_createfile_disposition_darwin(flags: i64) -> i64 {
+    // Darwin flag constants differ.
+    const O_CREAT: i64 = 0x200;
+    const O_EXCL: i64 = 0x800;
+    const O_TRUNC: i64 = 0x400;
+    let has_creat = (flags & O_CREAT) != 0;
+    let has_excl = (flags & O_EXCL) != 0;
+    let has_trunc = (flags & O_TRUNC) != 0;
+    match (has_creat, has_excl, has_trunc) {
+        (true, true, _) => 1,
+        (true, false, true) => 2,
+        (true, false, false) => 4,
+        (false, _, true) => 5,
+        _ => 3,
+    }
 }
 
 fn match_closehandle_sequence_to_syscall(
     instructions: &[AsmInstruction],
     convention: AsmSyscallConvention,
 ) -> Result<Option<(AsmInstruction, usize)>> {
-    if instructions.len() < 4 {
+    // Pattern A (stdio):
+    //   GetStdHandle; CloseHandle; Eq; Select
+    // Pattern B (direct handle):
+    //   CloseHandle; Eq; Select
+    if instructions.len() < 3 {
         return Ok(None);
     }
-    let getstd = &instructions[0];
-    let close = &instructions[1];
-    let cmp = &instructions[2];
-    let select = &instructions[3];
 
-    if !is_call_named(getstd, "kernel32.dll", "GetStdHandle") {
-        return Ok(None);
+    let mut base = 0usize;
+    let mut fd_value: Option<AsmValue> = None;
+
+    if is_call_named(&instructions[0], "kernel32.dll", "GetStdHandle") {
+        if instructions.len() < 4 {
+            return Ok(None);
+        }
+        let getstd = &instructions[0];
+        let AsmInstructionKind::Call {
+            args: getstd_args, ..
+        } = &getstd.kind
+        else {
+            return Ok(None);
+        };
+        let Some(handle_code) = getstd_args
+            .first()
+            .and_then(|value| resolve_i64(value, instructions).ok())
+        else {
+            return Ok(None);
+        };
+        let fd = match handle_code {
+            Some(-10) => 0u64,
+            Some(-11) => 1u64,
+            Some(-12) => 2u64,
+            _ => return Ok(None),
+        };
+        fd_value = Some(AsmValue::Constant(AsmConstant::UInt(fd, AsmType::I64)));
+        base = 1;
     }
+
+    let close = &instructions[base];
+    let cmp = instructions.get(base + 1).ok_or_else(|| {
+        fp_core::error::Error::from("missing Eq instruction in CloseHandle sequence")
+    })?;
+    let select = instructions.get(base + 2).ok_or_else(|| {
+        fp_core::error::Error::from("missing Select instruction in CloseHandle sequence")
+    })?;
+
     if !is_call_named(close, "kernel32.dll", "CloseHandle") {
         return Ok(None);
     }
@@ -51,25 +153,6 @@ fn match_closehandle_sequence_to_syscall(
     }
 
     let AsmInstructionKind::Call {
-        args: getstd_args, ..
-    } = &getstd.kind
-    else {
-        return Ok(None);
-    };
-    let Some(handle_code) = getstd_args
-        .first()
-        .and_then(|value| resolve_i64(value, instructions).ok())
-    else {
-        return Ok(None);
-    };
-    let fd = match handle_code {
-        Some(-10) => 0u64,
-        Some(-11) => 1u64,
-        Some(-12) => 2u64,
-        _ => return Ok(None),
-    };
-
-    let AsmInstructionKind::Call {
         args: close_args, ..
     } = &close.kind
     else {
@@ -78,13 +161,12 @@ fn match_closehandle_sequence_to_syscall(
     if close_args.len() != 1 {
         return Ok(None);
     }
-    if close_args[0] != AsmValue::Register(getstd.id) {
+    if base == 1 && close_args[0] != AsmValue::Register(instructions[0].id) {
         return Ok(None);
     }
 
-    let op = SystemApiOp::Close {
-        fd: AsmValue::Constant(AsmConstant::UInt(fd, AsmType::I64)),
-    };
+    let fd = fd_value.unwrap_or_else(|| close_args[0].clone());
+    let op = SystemApiOp::Close { fd };
     let kind = lower_system_api_to_syscall(op, convention);
 
     Ok(Some((
@@ -100,7 +182,7 @@ fn match_closehandle_sequence_to_syscall(
             debug_info: None,
             annotations: Vec::new(),
         },
-        4,
+        base + 3,
     )))
 }
 
@@ -237,7 +319,7 @@ fn rewrite_windows_imports_to_syscalls(program: &mut AsmProgram) -> Result<()> {
                 }
 
                 let mut inst = block.instructions[i].clone();
-                if let Some(op) = detect_system_api_from_windows_import(&inst.kind) {
+                if let Some(op) = detect_system_api_from_windows_import(&inst.kind, convention) {
                     inst.kind = lower_system_api_to_syscall(op, convention);
                     inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Syscall);
                     inst.type_hint = Some(AsmType::I64);
@@ -251,7 +333,10 @@ fn rewrite_windows_imports_to_syscalls(program: &mut AsmProgram) -> Result<()> {
     Ok(())
 }
 
-fn detect_system_api_from_windows_import(kind: &AsmInstructionKind) -> Option<SystemApiOp> {
+fn detect_system_api_from_windows_import(
+    kind: &AsmInstructionKind,
+    convention: AsmSyscallConvention,
+) -> Option<SystemApiOp> {
     let AsmInstructionKind::Call { function, args, .. } = kind else {
         return None;
     };
@@ -271,8 +356,98 @@ fn detect_system_api_from_windows_import(kind: &AsmInstructionKind) -> Option<Sy
                 .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)));
             Some(SystemApiOp::Exit { code })
         }
+        "CreateFileA" => {
+            if args.len() != 7 {
+                return None;
+            }
+            let path = args[0].clone();
+            let desired_access = resolve_i64(&args[1], &[]).ok().flatten()?;
+            let disposition = resolve_i64(&args[4], &[]).ok().flatten()?;
+            let flags = posix_flags_from_createfile(convention, desired_access, disposition);
+            Some(SystemApiOp::Open {
+                path,
+                flags: AsmValue::Constant(AsmConstant::Int(flags, AsmType::I64)),
+                mode: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
+                flag_style: match convention {
+                    AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                        PosixFlagStyle::Darwin
+                    }
+                    _ => PosixFlagStyle::Linux,
+                },
+            })
+        }
+        "WriteFile" => {
+            if args.len() < 3 {
+                return None;
+            }
+            Some(SystemApiOp::Write {
+                fd: args[0].clone(),
+                buffer: args[1].clone(),
+                len: args[2].clone(),
+            })
+        }
+        "ReadFile" => {
+            if args.len() < 3 {
+                return None;
+            }
+            Some(SystemApiOp::Read {
+                fd: args[0].clone(),
+                buffer: args[1].clone(),
+                len: args[2].clone(),
+            })
+        }
+        "CloseHandle" => {
+            if args.len() != 1 {
+                return None;
+            }
+            Some(SystemApiOp::Close {
+                fd: args[0].clone(),
+            })
+        }
         _ => None,
     }
+}
+
+fn posix_flags_from_createfile(
+    convention: AsmSyscallConvention,
+    desired_access: i64,
+    disposition: i64,
+) -> i64 {
+    // Win32:
+    //   GENERIC_READ=0x80000000, GENERIC_WRITE=0x40000000
+    // POSIX:
+    //   O_RDONLY=0, O_WRONLY=1, O_RDWR=2
+    //   O_CREAT,O_TRUNC,O_EXCL are platform-specific.
+    const GENERIC_READ: i64 = 0x8000_0000u32 as i64;
+    const GENERIC_WRITE: i64 = 0x4000_0000u32 as i64;
+
+    let mut flags = match (
+        (desired_access & GENERIC_READ) != 0,
+        (desired_access & GENERIC_WRITE) != 0,
+    ) {
+        (true, true) => 2,
+        (false, true) => 1,
+        _ => 0,
+    };
+
+    let (o_creat, o_trunc, o_excl) = match convention {
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 =>
+        // macOS
+        {
+            (0x200i64, 0x400i64, 0x800i64)
+        }
+        _ => (64i64, 512i64, 128i64),
+    };
+
+    match disposition {
+        1 => flags |= o_creat | o_excl,
+        2 => flags |= o_creat | o_trunc,
+        4 => flags |= o_creat,
+        5 => flags |= o_trunc,
+        _ => {}
+    }
+
+    flags
 }
 
 fn detect_system_api_from_syscall(
@@ -357,6 +532,51 @@ fn detect_system_api_from_syscall(
                 fd: args.get(0)?.clone(),
             })
         }
+        AsmSyscallConvention::LinuxX86_64 if num == 2 => Some(SystemApiOp::Open {
+            path: args.get(0)?.clone(),
+            flags: args.get(1)?.clone(),
+            mode: args.get(2)?.clone(),
+            flag_style: PosixFlagStyle::Linux,
+        }),
+        AsmSyscallConvention::LinuxX86_64 if num == 257 => {
+            // openat(dirfd, path, flags, mode)
+            let dirfd = args.get(0)?.clone();
+            let dirfd = resolve_i64(&dirfd, instructions).ok().flatten()?;
+            // AT_FDCWD=-100
+            if dirfd != -100 {
+                return None;
+            }
+            Some(SystemApiOp::Open {
+                path: args.get(1)?.clone(),
+                flags: args.get(2)?.clone(),
+                mode: args.get(3)?.clone(),
+                flag_style: PosixFlagStyle::Linux,
+            })
+        }
+        AsmSyscallConvention::LinuxAarch64 if num == 56 => {
+            // openat(dirfd, path, flags, mode)
+            let dirfd = args.get(0)?.clone();
+            let dirfd = resolve_i64(&dirfd, instructions).ok().flatten()?;
+            if dirfd != -100 {
+                return None;
+            }
+            Some(SystemApiOp::Open {
+                path: args.get(1)?.clone(),
+                flags: args.get(2)?.clone(),
+                mode: args.get(3)?.clone(),
+                flag_style: PosixFlagStyle::Linux,
+            })
+        }
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
+            if num == 0x2000_0005 =>
+        {
+            Some(SystemApiOp::Open {
+                path: args.get(0)?.clone(),
+                flags: args.get(1)?.clone(),
+                mode: args.get(2)?.clone(),
+                flag_style: PosixFlagStyle::Darwin,
+            })
+        }
         _ => None,
     }
 }
@@ -392,15 +612,19 @@ fn lower_system_api_to_windows_import(
             annotations: Vec::new(),
         })),
         SystemApiOp::Write { fd, buffer, len } => {
-            let Some(fd) = resolve_i64(&fd, instructions)? else {
-                return Ok(LoweredWindows::Unchanged);
-            };
-            let Some(std_handle_code) = fd_to_std_handle_code(fd) else {
-                return Ok(LoweredWindows::Unchanged);
-            };
-            if fd == 0 {
-                return Ok(LoweredWindows::Unchanged);
-            }
+            let (handle_value, std_handle_code) =
+                match resolve_i64(&fd, instructions).ok().flatten() {
+                    Some(fd) => {
+                        if fd == 0 {
+                            return Ok(LoweredWindows::Unchanged);
+                        }
+                        let Some(code) = fd_to_std_handle_code(fd) else {
+                            return Ok(LoweredWindows::Unchanged);
+                        };
+                        (None, Some(code))
+                    }
+                    None => (Some(fd), None),
+                };
 
             let getstd_id = *next_id;
             *next_id = next_id.saturating_add(1);
@@ -413,25 +637,34 @@ fn lower_system_api_to_windows_import(
             let cmp_id = *next_id;
             *next_id = next_id.saturating_add(1);
 
-            let getstd = AsmInstruction {
-                id: getstd_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
-                    args: vec![AsmValue::Constant(AsmConstant::Int(
-                        std_handle_code,
-                        AsmType::I64,
-                    ))],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
+            let (prefix, handle_arg) = if let Some(std_handle_code) = std_handle_code {
+                let getstd = AsmInstruction {
+                    id: getstd_id,
+                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                    kind: AsmInstructionKind::Call {
+                        function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
+                        args: vec![AsmValue::Constant(AsmConstant::Int(
+                            std_handle_code,
+                            AsmType::I64,
+                        ))],
+                        calling_convention: CallingConvention::Win64,
+                        tail_call: false,
+                    },
+                    type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                };
+                (Some(getstd), AsmValue::Register(getstd_id))
+            } else {
+                (
+                    None,
+                    handle_value
+                        .ok_or_else(|| fp_core::error::Error::from("missing write handle"))?,
+                )
             };
 
             let alloca_written = AsmInstruction {
@@ -456,7 +689,7 @@ fn lower_system_api_to_windows_import(
                 kind: AsmInstructionKind::Call {
                     function: AsmValue::Function("kernel32!WriteFile".to_string()),
                     args: vec![
-                        AsmValue::Register(getstd_id),
+                        handle_arg,
                         buffer,
                         len,
                         AsmValue::Register(alloca_id),
@@ -524,22 +757,19 @@ fn lower_system_api_to_windows_import(
                 annotations: Vec::new(),
             };
 
-            Ok(LoweredWindows::Sequence(vec![
-                getstd,
-                alloca_written,
-                writefile,
-                load_written,
-                cmp,
-                select,
-            ]))
+            let mut seq = Vec::new();
+            if let Some(prefix) = prefix {
+                seq.push(prefix);
+            }
+            seq.extend_from_slice(&[alloca_written, writefile, load_written, cmp, select]);
+            Ok(LoweredWindows::Sequence(seq))
         }
         SystemApiOp::Read { fd, buffer, len } => {
-            let Some(fd) = resolve_i64(&fd, instructions)? else {
-                return Ok(LoweredWindows::Unchanged);
+            let (handle_value, use_stdio) = match resolve_i64(&fd, instructions).ok().flatten() {
+                Some(0) => (None, true),
+                Some(_) => return Ok(LoweredWindows::Unchanged),
+                None => (Some(fd), false),
             };
-            if fd != 0 {
-                return Ok(LoweredWindows::Unchanged);
-            }
 
             let getstd_id = *next_id;
             *next_id = next_id.saturating_add(1);
@@ -552,22 +782,31 @@ fn lower_system_api_to_windows_import(
             let cmp_id = *next_id;
             *next_id = next_id.saturating_add(1);
 
-            let getstd = AsmInstruction {
-                id: getstd_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
-                    args: vec![AsmValue::Constant(AsmConstant::Int(-10, AsmType::I64))],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
+            let (prefix, handle_arg) = if use_stdio {
+                let getstd = AsmInstruction {
+                    id: getstd_id,
+                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                    kind: AsmInstructionKind::Call {
+                        function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
+                        args: vec![AsmValue::Constant(AsmConstant::Int(-10, AsmType::I64))],
+                        calling_convention: CallingConvention::Win64,
+                        tail_call: false,
+                    },
+                    type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                };
+                (Some(getstd), AsmValue::Register(getstd_id))
+            } else {
+                (
+                    None,
+                    handle_value
+                        .ok_or_else(|| fp_core::error::Error::from("missing read handle"))?,
+                )
             };
 
             let alloca_read = AsmInstruction {
@@ -592,7 +831,7 @@ fn lower_system_api_to_windows_import(
                 kind: AsmInstructionKind::Call {
                     function: AsmValue::Function("kernel32!ReadFile".to_string()),
                     args: vec![
-                        AsmValue::Register(getstd_id),
+                        handle_arg,
                         buffer,
                         len,
                         AsmValue::Register(alloca_id),
@@ -660,22 +899,24 @@ fn lower_system_api_to_windows_import(
                 annotations: Vec::new(),
             };
 
-            Ok(LoweredWindows::Sequence(vec![
-                getstd,
-                alloca_read,
-                readfile,
-                load_read,
-                cmp,
-                select,
-            ]))
+            let mut seq = Vec::new();
+            if let Some(prefix) = prefix {
+                seq.push(prefix);
+            }
+            seq.extend_from_slice(&[alloca_read, readfile, load_read, cmp, select]);
+            Ok(LoweredWindows::Sequence(seq))
         }
         SystemApiOp::Close { fd } => {
-            let Some(fd) = resolve_i64(&fd, instructions)? else {
-                return Ok(LoweredWindows::Unchanged);
-            };
-            let Some(std_handle_code) = fd_to_std_handle_code(fd) else {
-                return Ok(LoweredWindows::Unchanged);
-            };
+            let (handle_value, std_handle_code) =
+                match resolve_i64(&fd, instructions).ok().flatten() {
+                    Some(fd) => {
+                        let Some(code) = fd_to_std_handle_code(fd) else {
+                            return Ok(LoweredWindows::Unchanged);
+                        };
+                        (None, Some(code))
+                    }
+                    None => (Some(fd), None),
+                };
 
             let getstd_id = *next_id;
             *next_id = next_id.saturating_add(1);
@@ -684,25 +925,34 @@ fn lower_system_api_to_windows_import(
             let cmp_id = *next_id;
             *next_id = next_id.saturating_add(1);
 
-            let getstd = AsmInstruction {
-                id: getstd_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
-                    args: vec![AsmValue::Constant(AsmConstant::Int(
-                        std_handle_code,
-                        AsmType::I64,
-                    ))],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
+            let (prefix, handle_arg) = if let Some(std_handle_code) = std_handle_code {
+                let getstd = AsmInstruction {
+                    id: getstd_id,
+                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                    kind: AsmInstructionKind::Call {
+                        function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
+                        args: vec![AsmValue::Constant(AsmConstant::Int(
+                            std_handle_code,
+                            AsmType::I64,
+                        ))],
+                        calling_convention: CallingConvention::Win64,
+                        tail_call: false,
+                    },
+                    type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                };
+                (Some(getstd), AsmValue::Register(getstd_id))
+            } else {
+                (
+                    None,
+                    handle_value
+                        .ok_or_else(|| fp_core::error::Error::from("missing close handle"))?,
+                )
             };
 
             let close = AsmInstruction {
@@ -710,7 +960,7 @@ fn lower_system_api_to_windows_import(
                 opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
                 kind: AsmInstructionKind::Call {
                     function: AsmValue::Function("kernel32!CloseHandle".to_string()),
-                    args: vec![AsmValue::Register(getstd_id)],
+                    args: vec![handle_arg],
                     calling_convention: CallingConvention::Win64,
                     tail_call: false,
                 },
@@ -756,7 +1006,60 @@ fn lower_system_api_to_windows_import(
                 annotations: Vec::new(),
             };
 
-            Ok(LoweredWindows::Sequence(vec![getstd, close, cmp, select]))
+            let mut seq = Vec::new();
+            if let Some(prefix) = prefix {
+                seq.push(prefix);
+            }
+            seq.extend_from_slice(&[close, cmp, select]);
+            Ok(LoweredWindows::Sequence(seq))
+        }
+        SystemApiOp::Open {
+            path,
+            flags,
+            flag_style,
+            ..
+        } => {
+            let Some(flags) = resolve_i64(&flags, instructions)? else {
+                return Ok(LoweredWindows::Unchanged);
+            };
+
+            // Win32 constants.
+            const FILE_SHARE_READ: i64 = 0x0000_0001;
+            const FILE_SHARE_WRITE: i64 = 0x0000_0002;
+            const FILE_SHARE_DELETE: i64 = 0x0000_0004;
+            const FILE_ATTRIBUTE_NORMAL: i64 = 0x0000_0080;
+
+            let desired_access = windows_createfile_desired_access(flags);
+            let disposition = windows_createfile_disposition_from_flags(flag_style, flags);
+
+            Ok(LoweredWindows::Single(AsmInstruction {
+                id: replaces_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function("kernel32!CreateFileA".to_string()),
+                    args: vec![
+                        path,
+                        AsmValue::Constant(AsmConstant::Int(desired_access, AsmType::I64)),
+                        AsmValue::Constant(AsmConstant::Int(
+                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                            AsmType::I64,
+                        )),
+                        AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
+                        AsmValue::Constant(AsmConstant::Int(disposition, AsmType::I64)),
+                        AsmValue::Constant(AsmConstant::Int(FILE_ATTRIBUTE_NORMAL, AsmType::I64)),
+                        AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
+                    ],
+                    calling_convention: CallingConvention::Win64,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            }))
         }
     }
 }
@@ -765,17 +1068,53 @@ fn match_writefile_sequence_to_syscall(
     instructions: &[AsmInstruction],
     convention: AsmSyscallConvention,
 ) -> Result<Option<(AsmInstruction, usize)>> {
-    if instructions.len() < 4 {
+    // Pattern A (stdio):
+    //   GetStdHandle; Alloca; WriteFile; Load; [Eq; Select]
+    // Pattern B (direct handle):
+    //   Alloca; WriteFile; Load; [Eq; Select]
+    if instructions.len() < 3 {
         return Ok(None);
     }
-    let getstd = &instructions[0];
-    let alloca = &instructions[1];
-    let writefile = &instructions[2];
-    let load = &instructions[3];
 
-    if !is_call_named(getstd, "kernel32.dll", "GetStdHandle") {
-        return Ok(None);
+    let mut base = 0usize;
+    let mut fd_value: Option<AsmValue> = None;
+    let handle_value: AsmValue;
+
+    if is_call_named(&instructions[0], "kernel32.dll", "GetStdHandle") {
+        if instructions.len() < 4 {
+            return Ok(None);
+        }
+        let getstd = &instructions[0];
+        let AsmInstructionKind::Call { args, .. } = &getstd.kind else {
+            return Ok(None);
+        };
+        let Some(handle_code) = args
+            .first()
+            .and_then(|value| resolve_i64(value, instructions).ok())
+        else {
+            return Ok(None);
+        };
+        let fd = match handle_code {
+            Some(-11) => 1u64,
+            Some(-12) => 2u64,
+            _ => return Ok(None),
+        };
+        fd_value = Some(AsmValue::Constant(AsmConstant::UInt(fd, AsmType::I64)));
+        handle_value = AsmValue::Register(getstd.id);
+        base = 1;
+    } else {
+        // Handle comes directly from the WriteFile call's first arg.
+        handle_value = AsmValue::Undef(AsmType::I64);
     }
+
+    let alloca = &instructions[base];
+    let writefile = instructions
+        .get(base + 1)
+        .ok_or_else(|| fp_core::error::Error::from("missing WriteFile instruction in sequence"))?;
+    let load = instructions
+        .get(base + 2)
+        .ok_or_else(|| fp_core::error::Error::from("missing Load instruction in sequence"))?;
+
     if !matches!(alloca.kind, AsmInstructionKind::Alloca { .. }) {
         return Ok(None);
     }
@@ -789,43 +1128,33 @@ fn match_writefile_sequence_to_syscall(
         return Ok(None);
     }
 
-    let AsmInstructionKind::Call { args, .. } = &getstd.kind else {
-        return Ok(None);
-    };
-    let Some(handle_code) = args
-        .first()
-        .and_then(|value| resolve_i64(value, instructions).ok())
-    else {
-        return Ok(None);
-    };
-    let fd = match handle_code {
-        Some(-11) => 1u64,
-        Some(-12) => 2u64,
-        _ => return Ok(None),
-    };
-
     let AsmInstructionKind::Call { args, .. } = &writefile.kind else {
         return Ok(None);
     };
     if args.len() < 5 {
         return Ok(None);
     }
-
-    // args: (handle, buffer, len, written_ptr, overlapped)
-    if args[0] != AsmValue::Register(getstd.id) {
-        return Ok(None);
-    }
     if args[3] != AsmValue::Register(alloca.id) {
         return Ok(None);
     }
+    let handle_arg = if base == 1 {
+        if args[0] != handle_value {
+            return Ok(None);
+        }
+        handle_value
+    } else {
+        args[0].clone()
+    };
 
+    let fd = fd_value.unwrap_or(handle_arg);
     let op = SystemApiOp::Write {
-        fd: AsmValue::Constant(AsmConstant::UInt(fd, AsmType::I64)),
+        fd,
         buffer: args[1].clone(),
         len: args[2].clone(),
     };
 
-    let (dest_id, consumed) = match_result_chain(instructions, load.id);
+    let load_index = base + 2;
+    let (dest_id, consumed_tail) = match_result_chain_at(instructions, load_index, load.id);
     let kind = lower_system_api_to_syscall(op, convention);
 
     Ok(Some((
@@ -841,7 +1170,7 @@ fn match_writefile_sequence_to_syscall(
             debug_info: None,
             annotations: Vec::new(),
         },
-        consumed,
+        consumed_tail,
     )))
 }
 
@@ -849,17 +1178,51 @@ fn match_readfile_sequence_to_syscall(
     instructions: &[AsmInstruction],
     convention: AsmSyscallConvention,
 ) -> Result<Option<(AsmInstruction, usize)>> {
-    if instructions.len() < 4 {
+    // Pattern A (stdio):
+    //   GetStdHandle; Alloca; ReadFile; Load; [Eq; Select]
+    // Pattern B (direct handle):
+    //   Alloca; ReadFile; Load; [Eq; Select]
+    if instructions.len() < 3 {
         return Ok(None);
     }
-    let getstd = &instructions[0];
-    let alloca = &instructions[1];
-    let readfile = &instructions[2];
-    let load = &instructions[3];
 
-    if !is_call_named(getstd, "kernel32.dll", "GetStdHandle") {
-        return Ok(None);
+    let mut base = 0usize;
+    let mut fd_value: Option<AsmValue> = None;
+    let handle_value: AsmValue;
+
+    if is_call_named(&instructions[0], "kernel32.dll", "GetStdHandle") {
+        if instructions.len() < 4 {
+            return Ok(None);
+        }
+        let getstd = &instructions[0];
+        let AsmInstructionKind::Call { args, .. } = &getstd.kind else {
+            return Ok(None);
+        };
+        let Some(handle_code) = args
+            .first()
+            .and_then(|value| resolve_i64(value, instructions).ok())
+        else {
+            return Ok(None);
+        };
+        match handle_code {
+            Some(-10) => {}
+            _ => return Ok(None),
+        }
+        fd_value = Some(AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)));
+        handle_value = AsmValue::Register(getstd.id);
+        base = 1;
+    } else {
+        handle_value = AsmValue::Undef(AsmType::I64);
     }
+
+    let alloca = &instructions[base];
+    let readfile = instructions
+        .get(base + 1)
+        .ok_or_else(|| fp_core::error::Error::from("missing ReadFile instruction in sequence"))?;
+    let load = instructions
+        .get(base + 2)
+        .ok_or_else(|| fp_core::error::Error::from("missing Load instruction in sequence"))?;
+
     if !matches!(alloca.kind, AsmInstructionKind::Alloca { .. }) {
         return Ok(None);
     }
@@ -873,41 +1236,33 @@ fn match_readfile_sequence_to_syscall(
         return Ok(None);
     }
 
-    let AsmInstructionKind::Call { args, .. } = &getstd.kind else {
-        return Ok(None);
-    };
-    let Some(handle_code) = args
-        .first()
-        .and_then(|value| resolve_i64(value, instructions).ok())
-    else {
-        return Ok(None);
-    };
-    match handle_code {
-        Some(-10) => {}
-        _ => return Ok(None),
-    }
-
     let AsmInstructionKind::Call { args, .. } = &readfile.kind else {
         return Ok(None);
     };
     if args.len() < 5 {
         return Ok(None);
     }
-
-    if args[0] != AsmValue::Register(getstd.id) {
-        return Ok(None);
-    }
     if args[3] != AsmValue::Register(alloca.id) {
         return Ok(None);
     }
+    let handle_arg = if base == 1 {
+        if args[0] != handle_value {
+            return Ok(None);
+        }
+        handle_value
+    } else {
+        args[0].clone()
+    };
 
+    let fd = fd_value.unwrap_or(handle_arg);
     let op = SystemApiOp::Read {
-        fd: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+        fd,
         buffer: args[1].clone(),
         len: args[2].clone(),
     };
 
-    let (dest_id, consumed) = match_result_chain(instructions, load.id);
+    let load_index = base + 2;
+    let (dest_id, consumed_tail) = match_result_chain_at(instructions, load_index, load.id);
     let kind = lower_system_api_to_syscall(op, convention);
 
     Ok(Some((
@@ -923,26 +1278,30 @@ fn match_readfile_sequence_to_syscall(
             debug_info: None,
             annotations: Vec::new(),
         },
-        consumed,
+        consumed_tail,
     )))
 }
 
-fn match_result_chain(instructions: &[AsmInstruction], load_id: u32) -> (u32, usize) {
+fn match_result_chain_at(
+    instructions: &[AsmInstruction],
+    load_index: usize,
+    load_id: u32,
+) -> (u32, usize) {
     // Accept both:
-    //   GetStdHandle; alloca; FileOp; Load
-    //   GetStdHandle; alloca; FileOp; Load; Eq; Select
-    if instructions.len() >= 6 {
-        if !matches!(instructions[4].kind, AsmInstructionKind::Eq(_, _)) {
-            return (load_id, 4);
-        }
-        let select = &instructions[5];
-        if let AsmInstructionKind::Select { if_false, .. } = &select.kind {
-            if if_false == &AsmValue::Register(load_id) {
-                return (select.id, 6);
+    //   ...; Load
+    //   ...; Load; Eq; Select  (Select.if_false == Load)
+    if instructions.len() >= load_index + 3 {
+        let eq = &instructions[load_index + 1];
+        let select = &instructions[load_index + 2];
+        if matches!(eq.kind, AsmInstructionKind::Eq(_, _)) {
+            if let AsmInstructionKind::Select { if_false, .. } = &select.kind {
+                if if_false == &AsmValue::Register(load_id) {
+                    return (select.id, load_index + 3);
+                }
             }
         }
     }
-    (load_id, 4)
+    (load_id, load_index + 1)
 }
 
 fn is_call_named(inst: &AsmInstruction, dll: &str, name: &str) -> bool {
@@ -1015,6 +1374,31 @@ fn lower_system_api_to_syscall(
                 convention,
                 number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
                 args: vec![fd],
+            }
+        }
+        SystemApiOp::Open {
+            path, flags, mode, ..
+        } => {
+            let number = match convention {
+                AsmSyscallConvention::LinuxX86_64 => 2,
+                AsmSyscallConvention::LinuxAarch64 => 56,
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    0x2000_0005
+                }
+            };
+            let args = match convention {
+                AsmSyscallConvention::LinuxAarch64 => vec![
+                    AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                    path,
+                    flags,
+                    mode,
+                ],
+                _ => vec![path, flags, mode],
+            };
+            AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                args,
             }
         }
     }
