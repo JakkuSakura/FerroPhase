@@ -51,6 +51,73 @@ fn base_args(
     }
 }
 
+fn build_x86_64_elf_object_with_rip_store_reloc() -> Vec<u8> {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    // mov [rip + global], rax; ret
+    obj.append_section_data(section_id, &[0x48, 0x89, 0x05, 0, 0, 0, 0, 0xC3], 1);
+
+    let global_id = obj.add_symbol(Symbol {
+        name: b"global".to_vec(),
+        value: 0,
+        size: 0,
+        kind: SymbolKind::Data,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Undefined,
+        flags: SymbolFlags::None,
+    });
+
+    obj.add_relocation(
+        section_id,
+        object::write::Relocation {
+            offset: 3,
+            symbol: global_id,
+            addend: 0,
+            flags: RelocationFlags::Generic {
+                kind: RelocationKind::Relative,
+                encoding: RelocationEncoding::X86RipRelative,
+                size: 32,
+            },
+        },
+    )
+    .unwrap();
+
+    obj.add_symbol(Symbol {
+        name: b"main".to_vec(),
+        value: 0,
+        size: 8,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section_id),
+        flags: SymbolFlags::None,
+    });
+
+    obj.write().expect("write ELF object")
+}
+
+#[tokio::test]
+async fn compile_native_object_preserves_rip_relative_store_reloc_x86_64_to_aarch64() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("main.aarch64.o");
+
+    fs::write(&input_file, build_x86_64_elf_object_with_rip_store_reloc()).unwrap();
+    let args = base_args(input_file, output_file.clone(), "aarch64-apple-darwin");
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let bytes = fs::read(&output_file).unwrap();
+    let file = object::File::parse(bytes.as_slice()).unwrap();
+    assert_eq!(file.format(), BinaryFormat::MachO);
+    assert_eq!(file.architecture(), Architecture::Aarch64);
+    assert!(
+        find_any_relocation_target(&file, "global") || find_any_relocation_target(&file, "_global"),
+        "missing relocation to global; saw: {:?}",
+        collect_any_relocation_targets(&file)
+    );
+}
+
 fn build_x86_64_elf_object_with_rip_load_reloc() -> Vec<u8> {
     let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
     let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);

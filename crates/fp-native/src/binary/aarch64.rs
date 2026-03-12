@@ -424,6 +424,73 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
                 }
             }
 
+            if let Some((dst, base, disp)) = decode_ldr_immediate(word) {
+                if let Some(reloc) = relocation_at(relocs, cursor) {
+                    let base_value = ctx.read_gpr(base)?;
+                    let addr = pointer_add_immediate(
+                        base_value,
+                        disp.saturating_add(reloc.addend),
+                        &mut instructions,
+                        &mut next_id,
+                    )?;
+                    let id = next_id;
+                    instructions.push(AsmInstruction {
+                        id,
+                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
+                        kind: AsmInstructionKind::Load {
+                            address: addr,
+                            alignment: None,
+                            volatile: false,
+                        },
+                        type_hint: Some(AsmType::I64),
+                        operands: Vec::new(),
+                        implicit_uses: Vec::new(),
+                        implicit_defs: Vec::new(),
+                        encoding: None,
+                        debug_info: None,
+                        annotations: Vec::new(),
+                    });
+                    next_id += 1;
+                    ctx.write_gpr(dst, AsmValue::Register(id));
+                    cursor += 4;
+                    continue;
+                }
+            }
+
+            if let Some((value, base, disp)) = decode_str_immediate(word) {
+                if let Some(reloc) = relocation_at(relocs, cursor) {
+                    let base_value = ctx.read_gpr(base)?;
+                    let addr = pointer_add_immediate(
+                        base_value,
+                        disp.saturating_add(reloc.addend),
+                        &mut instructions,
+                        &mut next_id,
+                    )?;
+                    let stored = ctx.read_gpr(value)?;
+                    let id = next_id;
+                    instructions.push(AsmInstruction {
+                        id,
+                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
+                        kind: AsmInstructionKind::Store {
+                            value: stored,
+                            address: addr,
+                            alignment: None,
+                            volatile: false,
+                        },
+                        type_hint: Some(AsmType::Void),
+                        operands: Vec::new(),
+                        implicit_uses: Vec::new(),
+                        implicit_defs: Vec::new(),
+                        encoding: None,
+                        debug_info: None,
+                        annotations: Vec::new(),
+                    });
+                    next_id += 1;
+                    cursor += 4;
+                    continue;
+                }
+            }
+
             lift_instruction(word, &mut ctx, &mut instructions, &mut next_id)?;
             cursor += 4;
         }
