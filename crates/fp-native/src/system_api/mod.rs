@@ -23,6 +23,20 @@ pub enum SystemApiOp {
     Dlclose {
         handle: AsmValue,
     },
+    Unlink {
+        path: AsmValue,
+    },
+    Mkdir {
+        path: AsmValue,
+        mode: AsmValue,
+    },
+    Rmdir {
+        path: AsmValue,
+    },
+    Rename {
+        from: AsmValue,
+        to: AsmValue,
+    },
     Write {
         fd: AsmValue,
         buffer: AsmValue,
@@ -160,6 +174,38 @@ fn detect_system_api_from_posix_call(kind: &AsmInstructionKind) -> Option<System
                 .get(0)
                 .cloned()
                 .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64))),
+        }),
+        "unlink" => Some(SystemApiOp::Unlink {
+            path: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+        }),
+        "mkdir" => Some(SystemApiOp::Mkdir {
+            path: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+            mode: args
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
+        }),
+        "rmdir" => Some(SystemApiOp::Rmdir {
+            path: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+        }),
+        "rename" => Some(SystemApiOp::Rename {
+            from: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+            to: args
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
         }),
         _ => None,
     }
@@ -544,6 +590,38 @@ fn rewrite_windows_imports_to_syscalls(program: &mut AsmProgram) -> Result<()> {
                 }
 
                 if let Some((rewritten, consumed)) =
+                    match_deletefile_sequence_to_syscall(&block.instructions[i..], convention)?
+                {
+                    out.push(rewritten);
+                    i = i.saturating_add(consumed);
+                    continue;
+                }
+
+                if let Some((rewritten, consumed)) =
+                    match_createdirectory_sequence_to_syscall(&block.instructions[i..], convention)?
+                {
+                    out.push(rewritten);
+                    i = i.saturating_add(consumed);
+                    continue;
+                }
+
+                if let Some((rewritten, consumed)) =
+                    match_removedirectory_sequence_to_syscall(&block.instructions[i..], convention)?
+                {
+                    out.push(rewritten);
+                    i = i.saturating_add(consumed);
+                    continue;
+                }
+
+                if let Some((rewritten, consumed)) =
+                    match_movefileex_sequence_to_syscall(&block.instructions[i..], convention)?
+                {
+                    out.push(rewritten);
+                    i = i.saturating_add(consumed);
+                    continue;
+                }
+
+                if let Some((rewritten, consumed)) =
                     match_freelibrary_sequence_to_unix_call(&block.instructions[i..], convention)?
                 {
                     out.push(rewritten);
@@ -678,6 +756,39 @@ fn detect_system_api_from_windows_import(
             }
             Some(SystemApiOp::Dlclose {
                 handle: args[0].clone(),
+            })
+        }
+        "DeleteFileA" => {
+            let path = args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))));
+            Some(SystemApiOp::Unlink { path })
+        }
+        "CreateDirectoryA" => {
+            if args.len() < 1 {
+                return None;
+            }
+            Some(SystemApiOp::Mkdir {
+                path: args[0].clone(),
+                mode: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
+            })
+        }
+        "RemoveDirectoryA" => {
+            if args.len() < 1 {
+                return None;
+            }
+            Some(SystemApiOp::Rmdir {
+                path: args[0].clone(),
+            })
+        }
+        "MoveFileExA" => {
+            if args.len() < 2 {
+                return None;
+            }
+            Some(SystemApiOp::Rename {
+                from: args[0].clone(),
+                to: args[1].clone(),
             })
         }
         "CreateFileA" => {
@@ -979,6 +1090,134 @@ fn detect_system_api_from_syscall(
                 whence: args.get(2)?.clone(),
             })
         }
+        AsmSyscallConvention::LinuxX86_64 if num == 87 => Some(SystemApiOp::Unlink {
+            path: args.get(0)?.clone(),
+        }),
+        AsmSyscallConvention::LinuxX86_64 if num == 263 => {
+            // unlinkat(dirfd, path, flags)
+            let dirfd = args.get(0)?.clone();
+            let dirfd = resolve_i64(&dirfd, instructions).ok().flatten()?;
+            if dirfd != -100 {
+                return None;
+            }
+            let flags = args.get(2)?.clone();
+            let flags = resolve_i64(&flags, instructions).ok().flatten()?;
+            // AT_REMOVEDIR=0x200
+            if (flags & 0x200) != 0 {
+                return Some(SystemApiOp::Rmdir {
+                    path: args.get(1)?.clone(),
+                });
+            }
+            Some(SystemApiOp::Unlink {
+                path: args.get(1)?.clone(),
+            })
+        }
+        AsmSyscallConvention::LinuxAarch64 if num == 35 => {
+            // unlinkat(dirfd, path, flags)
+            let dirfd = args.get(0)?.clone();
+            let dirfd = resolve_i64(&dirfd, instructions).ok().flatten()?;
+            if dirfd != -100 {
+                return None;
+            }
+            let flags = args.get(2)?.clone();
+            let flags = resolve_i64(&flags, instructions).ok().flatten()?;
+            if (flags & 0x200) != 0 {
+                return Some(SystemApiOp::Rmdir {
+                    path: args.get(1)?.clone(),
+                });
+            }
+            Some(SystemApiOp::Unlink {
+                path: args.get(1)?.clone(),
+            })
+        }
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
+            if num == 0x2000_000a =>
+        {
+            Some(SystemApiOp::Unlink {
+                path: args.get(0)?.clone(),
+            })
+        }
+        AsmSyscallConvention::LinuxX86_64 if num == 83 => Some(SystemApiOp::Mkdir {
+            path: args.get(0)?.clone(),
+            mode: args.get(1)?.clone(),
+        }),
+        AsmSyscallConvention::LinuxX86_64 if num == 258 => {
+            // mkdirat(dirfd, path, mode)
+            let dirfd = args.get(0)?.clone();
+            let dirfd = resolve_i64(&dirfd, instructions).ok().flatten()?;
+            if dirfd != -100 {
+                return None;
+            }
+            Some(SystemApiOp::Mkdir {
+                path: args.get(1)?.clone(),
+                mode: args.get(2)?.clone(),
+            })
+        }
+        AsmSyscallConvention::LinuxAarch64 if num == 34 => {
+            // mkdirat(dirfd, path, mode)
+            let dirfd = args.get(0)?.clone();
+            let dirfd = resolve_i64(&dirfd, instructions).ok().flatten()?;
+            if dirfd != -100 {
+                return None;
+            }
+            Some(SystemApiOp::Mkdir {
+                path: args.get(1)?.clone(),
+                mode: args.get(2)?.clone(),
+            })
+        }
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
+            if num == 0x2000_0088 =>
+        {
+            Some(SystemApiOp::Mkdir {
+                path: args.get(0)?.clone(),
+                mode: args.get(1)?.clone(),
+            })
+        }
+        AsmSyscallConvention::LinuxX86_64 if num == 84 => Some(SystemApiOp::Rmdir {
+            path: args.get(0)?.clone(),
+        }),
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
+            if num == 0x2000_0089 =>
+        {
+            Some(SystemApiOp::Rmdir {
+                path: args.get(0)?.clone(),
+            })
+        }
+        AsmSyscallConvention::LinuxX86_64 if num == 82 => Some(SystemApiOp::Rename {
+            from: args.get(0)?.clone(),
+            to: args.get(1)?.clone(),
+        }),
+        AsmSyscallConvention::LinuxX86_64 if num == 264 => {
+            // renameat(olddirfd, oldpath, newdirfd, newpath)
+            let olddirfd = resolve_i64(args.get(0)?, instructions).ok().flatten()?;
+            let newdirfd = resolve_i64(args.get(2)?, instructions).ok().flatten()?;
+            if olddirfd != -100 || newdirfd != -100 {
+                return None;
+            }
+            Some(SystemApiOp::Rename {
+                from: args.get(1)?.clone(),
+                to: args.get(3)?.clone(),
+            })
+        }
+        AsmSyscallConvention::LinuxAarch64 if num == 38 => {
+            let olddirfd = resolve_i64(args.get(0)?, instructions).ok().flatten()?;
+            let newdirfd = resolve_i64(args.get(2)?, instructions).ok().flatten()?;
+            if olddirfd != -100 || newdirfd != -100 {
+                return None;
+            }
+            Some(SystemApiOp::Rename {
+                from: args.get(1)?.clone(),
+                to: args.get(3)?.clone(),
+            })
+        }
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
+            if num == 0x2000_0080 =>
+        {
+            Some(SystemApiOp::Rename {
+                from: args.get(0)?.clone(),
+                to: args.get(1)?.clone(),
+            })
+        }
         AsmSyscallConvention::LinuxX86_64 if num == 9 => Some(SystemApiOp::Mmap {
             addr: args.get(0)?.clone(),
             len: args.get(1)?.clone(),
@@ -1183,6 +1422,240 @@ fn lower_system_api_to_windows_import(
             };
 
             Ok(LoweredWindows::Sequence(vec![freelib, cmp, select]))
+        }
+        SystemApiOp::Unlink { path } => {
+            let call_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let cmp_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+
+            let call = AsmInstruction {
+                id: call_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function("kernel32!DeleteFileA".to_string()),
+                    args: vec![path],
+                    calling_convention: CallingConvention::Win64,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+            let cmp = AsmInstruction {
+                id: cmp_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
+                kind: AsmInstructionKind::Eq(
+                    AsmValue::Register(call_id),
+                    AsmValue::Constant(AsmConstant::Bool(false)),
+                ),
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+            let select = AsmInstruction {
+                id: replaces_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
+                kind: AsmInstructionKind::Select {
+                    condition: AsmValue::Register(cmp_id),
+                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+            Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
+        }
+        SystemApiOp::Mkdir { path, .. } => {
+            let call_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let cmp_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+
+            let call = AsmInstruction {
+                id: call_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function("kernel32!CreateDirectoryA".to_string()),
+                    args: vec![path, AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))],
+                    calling_convention: CallingConvention::Win64,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+            let cmp = AsmInstruction {
+                id: cmp_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
+                kind: AsmInstructionKind::Eq(
+                    AsmValue::Register(call_id),
+                    AsmValue::Constant(AsmConstant::Bool(false)),
+                ),
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+            let select = AsmInstruction {
+                id: replaces_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
+                kind: AsmInstructionKind::Select {
+                    condition: AsmValue::Register(cmp_id),
+                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+            Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
+        }
+        SystemApiOp::Rmdir { path } => {
+            let call_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let cmp_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+
+            let call = AsmInstruction {
+                id: call_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function("kernel32!RemoveDirectoryA".to_string()),
+                    args: vec![path],
+                    calling_convention: CallingConvention::Win64,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+            let cmp = AsmInstruction {
+                id: cmp_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
+                kind: AsmInstructionKind::Eq(
+                    AsmValue::Register(call_id),
+                    AsmValue::Constant(AsmConstant::Bool(false)),
+                ),
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+            let select = AsmInstruction {
+                id: replaces_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
+                kind: AsmInstructionKind::Select {
+                    condition: AsmValue::Register(cmp_id),
+                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+            Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
+        }
+        SystemApiOp::Rename { from, to } => {
+            // MOVEFILE_REPLACE_EXISTING=1
+            const MOVEFILE_REPLACE_EXISTING: i64 = 1;
+
+            let call_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let cmp_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+
+            let call = AsmInstruction {
+                id: call_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function("kernel32!MoveFileExA".to_string()),
+                    args: vec![
+                        from,
+                        to,
+                        AsmValue::Constant(AsmConstant::Int(
+                            MOVEFILE_REPLACE_EXISTING,
+                            AsmType::I64,
+                        )),
+                    ],
+                    calling_convention: CallingConvention::Win64,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+            let cmp = AsmInstruction {
+                id: cmp_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
+                kind: AsmInstructionKind::Eq(
+                    AsmValue::Register(call_id),
+                    AsmValue::Constant(AsmConstant::Bool(false)),
+                ),
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+            let select = AsmInstruction {
+                id: replaces_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
+                kind: AsmInstructionKind::Select {
+                    condition: AsmValue::Register(cmp_id),
+                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+            Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
         }
         SystemApiOp::Write { fd, buffer, len } => {
             let (handle_value, std_handle_code) =
@@ -2406,6 +2879,158 @@ fn match_virtualfree_sequence_to_syscall(
     )))
 }
 
+fn match_kernel32_bool_call_sequence_to_syscall(
+    instructions: &[AsmInstruction],
+    proc_name: &str,
+    op: SystemApiOp,
+    convention: AsmSyscallConvention,
+) -> Result<Option<(AsmInstruction, usize)>> {
+    // Pattern:
+    //   <proc>; Eq; Select
+    if instructions.len() < 3 {
+        return Ok(None);
+    }
+    let call = &instructions[0];
+    let eq = &instructions[1];
+    let select = &instructions[2];
+
+    if !is_call_named(call, "kernel32.dll", proc_name) {
+        return Ok(None);
+    }
+    if !matches!(eq.kind, AsmInstructionKind::Eq(_, _)) {
+        return Ok(None);
+    }
+    let AsmInstructionKind::Select {
+        if_true, if_false, ..
+    } = &select.kind
+    else {
+        return Ok(None);
+    };
+    if if_true != &AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)) {
+        return Ok(None);
+    }
+    if if_false != &AsmValue::Constant(AsmConstant::Int(0, AsmType::I64))
+        && if_false != &AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64))
+    {
+        return Ok(None);
+    }
+
+    let kind = lower_system_api_to_syscall(op, convention);
+    Ok(Some((
+        AsmInstruction {
+            id: select.id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
+            kind,
+            type_hint: Some(AsmType::I64),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        },
+        3,
+    )))
+}
+
+fn match_deletefile_sequence_to_syscall(
+    instructions: &[AsmInstruction],
+    convention: AsmSyscallConvention,
+) -> Result<Option<(AsmInstruction, usize)>> {
+    let call = instructions.first();
+    let Some(call) = call else {
+        return Ok(None);
+    };
+    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+        return Ok(None);
+    };
+    if args.len() != 1 {
+        return Ok(None);
+    }
+    match_kernel32_bool_call_sequence_to_syscall(
+        instructions,
+        "DeleteFileA",
+        SystemApiOp::Unlink {
+            path: args[0].clone(),
+        },
+        convention,
+    )
+}
+
+fn match_createdirectory_sequence_to_syscall(
+    instructions: &[AsmInstruction],
+    convention: AsmSyscallConvention,
+) -> Result<Option<(AsmInstruction, usize)>> {
+    let call = instructions.first();
+    let Some(call) = call else {
+        return Ok(None);
+    };
+    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+        return Ok(None);
+    };
+    if args.len() != 2 {
+        return Ok(None);
+    }
+    match_kernel32_bool_call_sequence_to_syscall(
+        instructions,
+        "CreateDirectoryA",
+        SystemApiOp::Mkdir {
+            path: args[0].clone(),
+            mode: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
+        },
+        convention,
+    )
+}
+
+fn match_removedirectory_sequence_to_syscall(
+    instructions: &[AsmInstruction],
+    convention: AsmSyscallConvention,
+) -> Result<Option<(AsmInstruction, usize)>> {
+    let call = instructions.first();
+    let Some(call) = call else {
+        return Ok(None);
+    };
+    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+        return Ok(None);
+    };
+    if args.len() != 1 {
+        return Ok(None);
+    }
+    match_kernel32_bool_call_sequence_to_syscall(
+        instructions,
+        "RemoveDirectoryA",
+        SystemApiOp::Rmdir {
+            path: args[0].clone(),
+        },
+        convention,
+    )
+}
+
+fn match_movefileex_sequence_to_syscall(
+    instructions: &[AsmInstruction],
+    convention: AsmSyscallConvention,
+) -> Result<Option<(AsmInstruction, usize)>> {
+    let call = instructions.first();
+    let Some(call) = call else {
+        return Ok(None);
+    };
+    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+        return Ok(None);
+    };
+    if args.len() != 3 {
+        return Ok(None);
+    }
+    match_kernel32_bool_call_sequence_to_syscall(
+        instructions,
+        "MoveFileExA",
+        SystemApiOp::Rename {
+            from: args[0].clone(),
+            to: args[1].clone(),
+        },
+        convention,
+    )
+}
+
 fn match_result_chain_at(
     instructions: &[AsmInstruction],
     load_index: usize,
@@ -2503,6 +3128,91 @@ fn lower_system_api_to_syscall(
         }
         SystemApiOp::Dlopen { .. } | SystemApiOp::Dlsym { .. } | SystemApiOp::Dlclose { .. } => {
             AsmInstructionKind::Freeze(AsmValue::Undef(AsmType::I64))
+        }
+        SystemApiOp::Unlink { path } => {
+            let (number, args) = match convention {
+                AsmSyscallConvention::LinuxX86_64 => (87, vec![path]),
+                AsmSyscallConvention::LinuxAarch64 => (
+                    35,
+                    vec![
+                        AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                        path,
+                        AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                    ],
+                ),
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    (0x2000_000a, vec![path])
+                }
+            };
+            AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                args,
+            }
+        }
+        SystemApiOp::Mkdir { path, mode } => {
+            let (number, args) = match convention {
+                AsmSyscallConvention::LinuxX86_64 => (83, vec![path, mode]),
+                AsmSyscallConvention::LinuxAarch64 => (
+                    34,
+                    vec![
+                        AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                        path,
+                        mode,
+                    ],
+                ),
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    (0x2000_0088, vec![path, mode])
+                }
+            };
+            AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                args,
+            }
+        }
+        SystemApiOp::Rmdir { path } => {
+            let (number, args) = match convention {
+                AsmSyscallConvention::LinuxX86_64 => (84, vec![path]),
+                AsmSyscallConvention::LinuxAarch64 => (
+                    35,
+                    vec![
+                        AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                        path,
+                        AsmValue::Constant(AsmConstant::Int(0x200, AsmType::I64)),
+                    ],
+                ),
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    (0x2000_0089, vec![path])
+                }
+            };
+            AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                args,
+            }
+        }
+        SystemApiOp::Rename { from, to } => {
+            let (number, args) = match convention {
+                AsmSyscallConvention::LinuxX86_64 => (82, vec![from, to]),
+                AsmSyscallConvention::LinuxAarch64 => (
+                    38,
+                    vec![
+                        AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                        from,
+                        AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                        to,
+                    ],
+                ),
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    (0x2000_0080, vec![from, to])
+                }
+            };
+            AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                args,
+            }
         }
         SystemApiOp::Read { fd, buffer, len } => {
             let number = match convention {
