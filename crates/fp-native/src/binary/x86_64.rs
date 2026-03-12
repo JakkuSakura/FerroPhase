@@ -618,6 +618,25 @@ fn lift_non_terminator(
             ctx.write_gpr(dst, AsmValue::Register(id));
             Ok(())
         }
+        Decoded::Lea { dst, src } => {
+            let addr = compute_address(ctx, src, inst.offset, relocs, instructions, next_id)?;
+            let id = *next_id;
+            instructions.push(AsmInstruction {
+                id,
+                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
+                kind: AsmInstructionKind::Freeze(addr),
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            });
+            *next_id += 1;
+            ctx.write_gpr(dst, AsmValue::Register(id));
+            Ok(())
+        }
         Decoded::CallRel32 { imm_offset } => {
             let reloc_offset = inst
                 .offset
@@ -678,6 +697,10 @@ enum Decoded {
         dst: u8,
         imm_offset: usize,
         imm: i64,
+    },
+    Lea {
+        dst: u8,
+        src: X86Memory,
     },
     MovRmToReg {
         dst: u8,
@@ -846,6 +869,21 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
                 imm,
             },
             opcode_index + 1 + 8,
+        )));
+    }
+
+    // LEA r64, m: REX.W 8D /r.
+    if rex_w && opcode == 0x8D {
+        let (reg, rm, consumed) = decode_modrm(bytes, opcode_index + 1)?;
+        let RmOperand::Mem(memory) = rm else {
+            return Err(Error::from("unsupported x86_64 lea with register operand"));
+        };
+        return Ok(Some((
+            Decoded::Lea {
+                dst: reg,
+                src: memory,
+            },
+            opcode_index + 1 + consumed,
         )));
     }
 

@@ -3,7 +3,7 @@ use std::fs;
 use object::Object as _;
 use object::ObjectSection as _;
 use object::ObjectSymbol as _;
-use object::macho::ARM64_RELOC_PAGE21;
+use object::macho::{ARM64_RELOC_PAGE21, ARM64_RELOC_PAGEOFF12};
 use object::write::{Object, Symbol, SymbolSection};
 use object::{
     Architecture, BinaryFormat, Endianness, RelocationEncoding, RelocationFlags, RelocationKind,
@@ -49,6 +49,73 @@ fn base_args(
         type_defs: false,
         single_world: false,
     }
+}
+
+fn build_x86_64_elf_object_with_rip_load_reloc() -> Vec<u8> {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    // mov rax, [rip + global]; ret
+    obj.append_section_data(section_id, &[0x48, 0x8B, 0x05, 0, 0, 0, 0, 0xC3], 1);
+
+    let global_id = obj.add_symbol(Symbol {
+        name: b"global".to_vec(),
+        value: 0,
+        size: 0,
+        kind: SymbolKind::Data,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Undefined,
+        flags: SymbolFlags::None,
+    });
+
+    obj.add_relocation(
+        section_id,
+        object::write::Relocation {
+            offset: 3,
+            symbol: global_id,
+            addend: 0,
+            flags: RelocationFlags::Generic {
+                kind: RelocationKind::Relative,
+                encoding: RelocationEncoding::X86RipRelative,
+                size: 32,
+            },
+        },
+    )
+    .unwrap();
+
+    obj.add_symbol(Symbol {
+        name: b"main".to_vec(),
+        value: 0,
+        size: 8,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section_id),
+        flags: SymbolFlags::None,
+    });
+
+    obj.write().expect("write ELF object")
+}
+
+#[tokio::test]
+async fn compile_native_object_preserves_rip_relative_load_reloc_x86_64_to_aarch64() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("main.aarch64.o");
+
+    fs::write(&input_file, build_x86_64_elf_object_with_rip_load_reloc()).unwrap();
+    let args = base_args(input_file, output_file.clone(), "aarch64-apple-darwin");
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let bytes = fs::read(&output_file).unwrap();
+    let file = object::File::parse(bytes.as_slice()).unwrap();
+    assert_eq!(file.format(), BinaryFormat::MachO);
+    assert_eq!(file.architecture(), Architecture::Aarch64);
+    assert!(
+        find_any_relocation_target(&file, "global") || find_any_relocation_target(&file, "_global"),
+        "missing relocation to global; saw: {:?}",
+        collect_any_relocation_targets(&file)
+    );
 }
 
 fn build_x86_64_elf_object_with_data_reloc() -> Vec<u8> {
@@ -126,11 +193,12 @@ fn build_aarch64_macho_object_with_adrp_reloc() -> Vec<u8> {
         Endianness::Little,
     );
     let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
-    // adrp x0, global; ret
+    // adrp x0, global; add x0, x0, #0; ret
     obj.append_section_data(
         section_id,
         &[
             0x00, 0x00, 0x00, 0x90, // adrp x0, #0
+            0x00, 0x00, 0x00, 0x91, // add x0, x0, #0
             0xC0, 0x03, 0x5F, 0xD6, // ret
         ],
         4,
@@ -162,10 +230,25 @@ fn build_aarch64_macho_object_with_adrp_reloc() -> Vec<u8> {
     )
     .unwrap();
 
+    obj.add_relocation(
+        section_id,
+        object::write::Relocation {
+            offset: 4,
+            symbol: global_id,
+            addend: 0,
+            flags: RelocationFlags::MachO {
+                r_type: ARM64_RELOC_PAGEOFF12,
+                r_pcrel: false,
+                r_length: 2,
+            },
+        },
+    )
+    .unwrap();
+
     obj.add_symbol(Symbol {
         name: b"main".to_vec(),
         value: 0,
-        size: 8,
+        size: 12,
         kind: SymbolKind::Text,
         scope: SymbolScope::Linkage,
         weak: false,

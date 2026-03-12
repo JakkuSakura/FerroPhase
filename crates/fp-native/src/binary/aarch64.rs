@@ -404,6 +404,26 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
                 continue;
             }
 
+            if let Some((dst, src, imm)) = decode_add_immediate(word) {
+                if let Some(reloc) = relocation_at(relocs, cursor) {
+                    let lhs = ctx.read_gpr(src)?;
+                    let rhs = AsmValue::Constant(AsmConstant::Int(
+                        reloc.addend.saturating_add(imm),
+                        AsmType::I64,
+                    ));
+                    let id = next_id;
+                    instructions.push(build_binop(
+                        id,
+                        AsmInstructionKind::Add(lhs, rhs),
+                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
+                    ));
+                    next_id += 1;
+                    ctx.write_gpr(dst, AsmValue::Register(id));
+                    cursor += 4;
+                    continue;
+                }
+            }
+
             lift_instruction(word, &mut ctx, &mut instructions, &mut next_id)?;
             cursor += 4;
         }
