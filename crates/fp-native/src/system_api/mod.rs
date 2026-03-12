@@ -1,81 +1,93 @@
 use fp_core::asmir::{
-    AsmConstant, AsmInstructionKind, AsmObjectFormat, AsmProgram, AsmSyscallConvention, AsmType,
-    AsmValue,
+    AsmConstant, AsmGenericOpcode, AsmInstruction, AsmInstructionKind, AsmObjectFormat, AsmOpcode,
+    AsmProgram, AsmSyscallConvention, AsmType, AsmValue,
 };
 use fp_core::error::Result;
 use fp_core::lir::CallingConvention;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SystemApiOp {
-    Exit { code: AsmValue },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum SystemApiMechanism {
-    LinuxSyscall,
-    DarwinSyscall,
-    WindowsImport { dll: String, name: String },
+    Exit {
+        code: AsmValue,
+    },
+    Write {
+        fd: AsmValue,
+        buffer: AsmValue,
+        len: AsmValue,
+    },
 }
 
 pub fn rewrite_program_for_target(program: &mut AsmProgram) -> Result<()> {
     if program.target.object_format == AsmObjectFormat::Coff
         || program.target.object_format == AsmObjectFormat::Pe
     {
-        // Windows: avoid raw syscalls; prefer import calls.
-        rewrite_syscalls_to_windows_imports(program);
+        // Windows: avoid raw syscalls; prefer stable user-mode APIs.
+        rewrite_syscalls_to_windows_imports(program)?;
     } else {
-        // Unix targets: if we see a known Windows import, rewrite it back to syscalls.
-        rewrite_windows_imports_to_syscalls(program);
+        // Unix targets: if we see known Windows API patterns, rewrite them back to syscalls.
+        rewrite_windows_imports_to_syscalls(program)?;
     }
     Ok(())
 }
 
-fn rewrite_syscalls_to_windows_imports(program: &mut AsmProgram) {
+fn rewrite_syscalls_to_windows_imports(program: &mut AsmProgram) -> Result<()> {
     for function in &mut program.functions {
         if function.is_declaration {
             continue;
         }
 
+        let mut next_id = function
+            .basic_blocks
+            .iter()
+            .flat_map(|block| block.instructions.iter().map(|inst| inst.id))
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+
         for block in &mut function.basic_blocks {
-            let instructions_snapshot = block.instructions.clone();
-            for inst in &mut block.instructions {
-                let inst_id = inst.id;
+            let snapshot = block.instructions.clone();
+            let mut out = Vec::with_capacity(block.instructions.len());
+
+            for inst in &block.instructions {
                 let AsmInstructionKind::Syscall {
                     convention,
                     number,
                     args,
                 } = &inst.kind
                 else {
+                    out.push(inst.clone());
                     continue;
                 };
 
-                let Some(op) = detect_system_api_from_syscall(
-                    convention,
-                    number,
-                    args,
-                    &instructions_snapshot,
-                ) else {
+                let Some(op) = detect_system_api_from_syscall(convention, number, args, &snapshot)
+                else {
+                    out.push(inst.clone());
                     continue;
                 };
 
-                if let Some(rewritten) = lower_system_api_to_windows_import(op) {
-                    inst.kind = rewritten;
-                    inst.opcode =
-                        fp_core::asmir::AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call);
-                    inst.type_hint = Some(AsmType::Void);
-
-                    if let fp_core::asmir::AsmTerminator::Return(Some(value)) = &block.terminator {
-                        if value == &AsmValue::Register(inst_id) {
-                            block.terminator = fp_core::asmir::AsmTerminator::Return(None);
+                match lower_system_api_to_windows_import(op, inst.id, &snapshot, &mut next_id)? {
+                    LoweredWindows::Unchanged => out.push(inst.clone()),
+                    LoweredWindows::Single(lowered) => {
+                        if let fp_core::asmir::AsmTerminator::Return(Some(value)) =
+                            &block.terminator
+                        {
+                            if value == &AsmValue::Register(inst.id) {
+                                block.terminator = fp_core::asmir::AsmTerminator::Return(None);
+                            }
                         }
+                        out.push(lowered);
                     }
+                    LoweredWindows::Sequence(mut seq) => out.append(&mut seq),
                 }
             }
+
+            block.instructions = out;
         }
     }
+    Ok(())
 }
 
-fn rewrite_windows_imports_to_syscalls(program: &mut AsmProgram) {
+fn rewrite_windows_imports_to_syscalls(program: &mut AsmProgram) -> Result<()> {
     let convention = match program.target.object_format {
         AsmObjectFormat::Elf => match program.target.architecture {
             fp_core::asmir::AsmArchitecture::X86_64 => Some(AsmSyscallConvention::LinuxX86_64),
@@ -91,7 +103,7 @@ fn rewrite_windows_imports_to_syscalls(program: &mut AsmProgram) {
     };
 
     let Some(convention) = convention else {
-        return;
+        return Ok(());
     };
 
     for function in &mut program.functions {
@@ -100,28 +112,36 @@ fn rewrite_windows_imports_to_syscalls(program: &mut AsmProgram) {
         }
 
         for block in &mut function.basic_blocks {
-            for inst in &mut block.instructions {
-                let AsmInstructionKind::Call { function, args, .. } = &inst.kind else {
+            let mut out = Vec::with_capacity(block.instructions.len());
+            let mut i = 0usize;
+            while i < block.instructions.len() {
+                if let Some((rewritten, consumed)) =
+                    match_writefile_sequence_to_syscall(&block.instructions[i..], convention)?
+                {
+                    out.push(rewritten);
+                    i = i.saturating_add(consumed);
                     continue;
-                };
+                }
 
-                let Some(op) = detect_system_api_from_windows_import(function, args) else {
-                    continue;
-                };
-
-                inst.kind = lower_system_api_to_syscall(op, convention);
-                inst.opcode =
-                    fp_core::asmir::AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Syscall);
-                inst.type_hint = Some(AsmType::I64);
+                let mut inst = block.instructions[i].clone();
+                if let Some(op) = detect_system_api_from_windows_import(&inst.kind) {
+                    inst.kind = lower_system_api_to_syscall(op, convention);
+                    inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Syscall);
+                    inst.type_hint = Some(AsmType::I64);
+                }
+                out.push(inst);
+                i += 1;
             }
+            block.instructions = out;
         }
     }
+    Ok(())
 }
 
-fn detect_system_api_from_windows_import(
-    function: &AsmValue,
-    args: &[AsmValue],
-) -> Option<SystemApiOp> {
+fn detect_system_api_from_windows_import(kind: &AsmInstructionKind) -> Option<SystemApiOp> {
+    let AsmInstructionKind::Call { function, args, .. } = kind else {
+        return None;
+    };
     let AsmValue::Function(name) = function else {
         return None;
     };
@@ -129,49 +149,299 @@ fn detect_system_api_from_windows_import(
     if !dll.eq_ignore_ascii_case("kernel32.dll") {
         return None;
     }
-    if proc_name != "ExitProcess" {
-        return None;
+
+    match proc_name.as_str() {
+        "ExitProcess" => {
+            let code = args
+                .first()
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)));
+            Some(SystemApiOp::Exit { code })
+        }
+        _ => None,
     }
-    let code = args
-        .first()
-        .cloned()
-        .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)));
-    Some(SystemApiOp::Exit { code })
 }
 
 fn detect_system_api_from_syscall(
     convention: &AsmSyscallConvention,
     number: &AsmValue,
     args: &[AsmValue],
-    instructions: &[fp_core::asmir::AsmInstruction],
+    instructions: &[AsmInstruction],
 ) -> Option<SystemApiOp> {
     let num = resolve_u64(number, instructions)?;
-    let is_exit = match convention {
-        AsmSyscallConvention::LinuxX86_64 => num == 60,
-        AsmSyscallConvention::LinuxAarch64 => num == 93,
-        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
-            num == 0x2000_0001
+
+    match convention {
+        AsmSyscallConvention::LinuxX86_64 if num == 60 => Some(SystemApiOp::Exit {
+            code: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
+        }),
+        AsmSyscallConvention::LinuxAarch64 if num == 93 => Some(SystemApiOp::Exit {
+            code: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
+        }),
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
+            if num == 0x2000_0001 =>
+        {
+            Some(SystemApiOp::Exit {
+                code: args
+                    .get(0)
+                    .cloned()
+                    .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
+            })
         }
-    };
-    if !is_exit {
-        return None;
+        AsmSyscallConvention::LinuxX86_64 if num == 1 => Some(SystemApiOp::Write {
+            fd: args.get(0)?.clone(),
+            buffer: args.get(1)?.clone(),
+            len: args.get(2)?.clone(),
+        }),
+        AsmSyscallConvention::LinuxAarch64 if num == 64 => Some(SystemApiOp::Write {
+            fd: args.get(0)?.clone(),
+            buffer: args.get(1)?.clone(),
+            len: args.get(2)?.clone(),
+        }),
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
+            if num == 0x2000_0004 =>
+        {
+            Some(SystemApiOp::Write {
+                fd: args.get(0)?.clone(),
+                buffer: args.get(1)?.clone(),
+                len: args.get(2)?.clone(),
+            })
+        }
+        _ => None,
     }
-    let code = args
-        .first()
-        .cloned()
-        .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)));
-    Some(SystemApiOp::Exit { code })
 }
 
-fn lower_system_api_to_windows_import(op: SystemApiOp) -> Option<AsmInstructionKind> {
+enum LoweredWindows {
+    Unchanged,
+    Single(AsmInstruction),
+    Sequence(Vec<AsmInstruction>),
+}
+
+fn lower_system_api_to_windows_import(
+    op: SystemApiOp,
+    replaces_id: u32,
+    instructions: &[AsmInstruction],
+    next_id: &mut u32,
+) -> Result<LoweredWindows> {
     match op {
-        SystemApiOp::Exit { code } => Some(AsmInstructionKind::Call {
-            function: AsmValue::Function("kernel32!ExitProcess".to_string()),
-            args: vec![code],
-            calling_convention: CallingConvention::Win64,
-            tail_call: false,
-        }),
+        SystemApiOp::Exit { code } => Ok(LoweredWindows::Single(AsmInstruction {
+            id: replaces_id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+            kind: AsmInstructionKind::Call {
+                function: AsmValue::Function("kernel32!ExitProcess".to_string()),
+                args: vec![code],
+                calling_convention: CallingConvention::Win64,
+                tail_call: false,
+            },
+            type_hint: Some(AsmType::Void),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        })),
+        SystemApiOp::Write { fd, buffer, len } => {
+            let Some(fd) = resolve_i64(&fd, instructions)? else {
+                return Ok(LoweredWindows::Unchanged);
+            };
+            let std_handle_code = match fd {
+                1 => -11i64,
+                2 => -12i64,
+                _ => return Ok(LoweredWindows::Unchanged),
+            };
+
+            let getstd_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let alloca_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let writefile_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+
+            let getstd = AsmInstruction {
+                id: getstd_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
+                    args: vec![AsmValue::Constant(AsmConstant::Int(
+                        std_handle_code,
+                        AsmType::I64,
+                    ))],
+                    calling_convention: CallingConvention::Win64,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let alloca_written = AsmInstruction {
+                id: alloca_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Alloca),
+                kind: AsmInstructionKind::Alloca {
+                    size: AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                    alignment: 8,
+                },
+                type_hint: Some(AsmType::Ptr(Box::new(AsmType::I64))),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let writefile = AsmInstruction {
+                id: writefile_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function("kernel32!WriteFile".to_string()),
+                    args: vec![
+                        AsmValue::Register(getstd_id),
+                        buffer,
+                        len,
+                        AsmValue::Register(alloca_id),
+                        AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
+                    ],
+                    calling_convention: CallingConvention::Win64,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let load_written = AsmInstruction {
+                id: replaces_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Load),
+                kind: AsmInstructionKind::Load {
+                    address: AsmValue::Register(alloca_id),
+                    alignment: Some(8),
+                    volatile: false,
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            Ok(LoweredWindows::Sequence(vec![
+                getstd,
+                alloca_written,
+                writefile,
+                load_written,
+            ]))
+        }
     }
+}
+
+fn match_writefile_sequence_to_syscall(
+    instructions: &[AsmInstruction],
+    convention: AsmSyscallConvention,
+) -> Result<Option<(AsmInstruction, usize)>> {
+    if instructions.len() < 4 {
+        return Ok(None);
+    }
+    let getstd = &instructions[0];
+    let alloca = &instructions[1];
+    let writefile = &instructions[2];
+    let load = &instructions[3];
+
+    if !is_call_named(getstd, "kernel32.dll", "GetStdHandle") {
+        return Ok(None);
+    }
+    if !matches!(alloca.kind, AsmInstructionKind::Alloca { .. }) {
+        return Ok(None);
+    }
+    if !is_call_named(writefile, "kernel32.dll", "WriteFile") {
+        return Ok(None);
+    }
+    let AsmInstructionKind::Load { address, .. } = &load.kind else {
+        return Ok(None);
+    };
+    if address != &AsmValue::Register(alloca.id) {
+        return Ok(None);
+    }
+
+    let AsmInstructionKind::Call { args, .. } = &getstd.kind else {
+        return Ok(None);
+    };
+    let Some(handle_code) = args
+        .first()
+        .and_then(|value| resolve_i64(value, instructions).ok())
+    else {
+        return Ok(None);
+    };
+    let fd = match handle_code {
+        Some(-11) => 1u64,
+        Some(-12) => 2u64,
+        _ => return Ok(None),
+    };
+
+    let AsmInstructionKind::Call { args, .. } = &writefile.kind else {
+        return Ok(None);
+    };
+    if args.len() < 5 {
+        return Ok(None);
+    }
+
+    // args: (handle, buffer, len, written_ptr, overlapped)
+    if args[0] != AsmValue::Register(getstd.id) {
+        return Ok(None);
+    }
+    if args[3] != AsmValue::Register(alloca.id) {
+        return Ok(None);
+    }
+
+    let op = SystemApiOp::Write {
+        fd: AsmValue::Constant(AsmConstant::UInt(fd, AsmType::I64)),
+        buffer: args[1].clone(),
+        len: args[2].clone(),
+    };
+    let kind = lower_system_api_to_syscall(op, convention);
+
+    Ok(Some((
+        AsmInstruction {
+            id: load.id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
+            kind,
+            type_hint: Some(AsmType::I64),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        },
+        4,
+    )))
+}
+
+fn is_call_named(inst: &AsmInstruction, dll: &str, name: &str) -> bool {
+    let AsmInstructionKind::Call { function, .. } = &inst.kind else {
+        return false;
+    };
+    let AsmValue::Function(symbol) = function else {
+        return false;
+    };
+    let (sym_dll, sym_name) = split_import_symbol(symbol);
+    sym_dll.eq_ignore_ascii_case(dll) && sym_name == name
 }
 
 fn lower_system_api_to_syscall(
@@ -193,10 +463,24 @@ fn lower_system_api_to_syscall(
                 args: vec![code],
             }
         }
+        SystemApiOp::Write { fd, buffer, len } => {
+            let number = match convention {
+                AsmSyscallConvention::LinuxX86_64 => 1,
+                AsmSyscallConvention::LinuxAarch64 => 64,
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    0x2000_0004
+                }
+            };
+            AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                args: vec![fd, buffer, len],
+            }
+        }
     }
 }
 
-fn resolve_u64(value: &AsmValue, instructions: &[fp_core::asmir::AsmInstruction]) -> Option<u64> {
+fn resolve_u64(value: &AsmValue, instructions: &[AsmInstruction]) -> Option<u64> {
     match value {
         AsmValue::Constant(AsmConstant::UInt(x, _)) => Some(*x),
         AsmValue::Constant(AsmConstant::Int(x, _)) => (*x).try_into().ok(),
@@ -211,6 +495,23 @@ fn resolve_u64(value: &AsmValue, instructions: &[fp_core::asmir::AsmInstruction]
     }
 }
 
+fn resolve_i64(value: &AsmValue, instructions: &[AsmInstruction]) -> Result<Option<i64>> {
+    Ok(match value {
+        AsmValue::Constant(AsmConstant::Int(x, _)) => Some(*x),
+        AsmValue::Constant(AsmConstant::UInt(x, _)) => i64::try_from(*x).ok(),
+        AsmValue::Register(id) => {
+            let Some(inst) = instructions.iter().find(|inst| inst.id == *id) else {
+                return Ok(None);
+            };
+            match &inst.kind {
+                AsmInstructionKind::Freeze(inner) => resolve_i64(inner, instructions)?,
+                _ => None,
+            }
+        }
+        _ => None,
+    })
+}
+
 fn split_import_symbol(symbol: &str) -> (String, String) {
     const DEFAULT_DLL: &str = "msvcrt.dll";
     if let Some((dll, name)) = symbol.split_once('!') {
@@ -221,4 +522,202 @@ fn split_import_symbol(symbol: &str) -> (String, String) {
         return (dll, name.trim().to_string());
     }
     (DEFAULT_DLL.to_string(), symbol.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fp_core::asmir::{AsmArchitecture, AsmEndianness, AsmTarget};
+
+    fn program(target_format: AsmObjectFormat) -> AsmProgram {
+        AsmProgram::new(AsmTarget {
+            architecture: AsmArchitecture::X86_64,
+            object_format: target_format,
+            endianness: AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: None,
+        })
+    }
+
+    #[test]
+    fn rewrite_linux_write_syscall_to_windows_writefile_sequence() {
+        let mut prog = program(AsmObjectFormat::Coff);
+        prog.functions.push(fp_core::asmir::AsmFunction {
+            name: fp_core::lir::Name::new("main"),
+            signature: fp_core::asmir::AsmFunctionSignature {
+                params: Vec::new(),
+                return_type: AsmType::Void,
+                is_variadic: false,
+            },
+            basic_blocks: vec![fp_core::asmir::AsmBlock {
+                id: 0,
+                label: None,
+                instructions: vec![AsmInstruction {
+                    id: 0,
+                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
+                    kind: AsmInstructionKind::Syscall {
+                        convention: AsmSyscallConvention::LinuxX86_64,
+                        number: AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                        args: vec![
+                            AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
+                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                        ],
+                    },
+                    type_hint: Some(AsmType::I64),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                }],
+                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
+                predecessors: Vec::new(),
+                successors: Vec::new(),
+            }],
+            locals: Vec::new(),
+            stack_slots: Vec::new(),
+            frame: None,
+            linkage: fp_core::lir::Linkage::External,
+            visibility: fp_core::lir::Visibility::Default,
+            calling_convention: None,
+            section: None,
+            is_declaration: false,
+        });
+
+        rewrite_program_for_target(&mut prog).unwrap();
+        let block = &prog.functions[0].basic_blocks[0];
+        assert!(block.instructions.iter().any(|inst| is_call_named(
+            inst,
+            "kernel32.dll",
+            "WriteFile"
+        )));
+        assert!(block.instructions.iter().any(|inst| is_call_named(
+            inst,
+            "kernel32.dll",
+            "GetStdHandle"
+        )));
+        assert!(matches!(
+            block.terminator,
+            fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0)))
+        ));
+    }
+
+    #[test]
+    fn rewrite_windows_writefile_sequence_back_to_linux_syscall() {
+        let mut prog = program(AsmObjectFormat::Elf);
+        prog.functions.push(fp_core::asmir::AsmFunction {
+            name: fp_core::lir::Name::new("main"),
+            signature: fp_core::asmir::AsmFunctionSignature {
+                params: Vec::new(),
+                return_type: AsmType::Void,
+                is_variadic: false,
+            },
+            basic_blocks: vec![fp_core::asmir::AsmBlock {
+                id: 0,
+                label: None,
+                instructions: vec![
+                    // GetStdHandle(-11)
+                    AsmInstruction {
+                        id: 1,
+                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                        kind: AsmInstructionKind::Call {
+                            function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
+                            args: vec![AsmValue::Constant(AsmConstant::Int(-11, AsmType::I64))],
+                            calling_convention: CallingConvention::Win64,
+                            tail_call: false,
+                        },
+                        type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                        operands: Vec::new(),
+                        implicit_uses: Vec::new(),
+                        implicit_defs: Vec::new(),
+                        encoding: None,
+                        debug_info: None,
+                        annotations: Vec::new(),
+                    },
+                    // alloca written
+                    AsmInstruction {
+                        id: 2,
+                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Alloca),
+                        kind: AsmInstructionKind::Alloca {
+                            size: AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                            alignment: 8,
+                        },
+                        type_hint: Some(AsmType::Ptr(Box::new(AsmType::I64))),
+                        operands: Vec::new(),
+                        implicit_uses: Vec::new(),
+                        implicit_defs: Vec::new(),
+                        encoding: None,
+                        debug_info: None,
+                        annotations: Vec::new(),
+                    },
+                    // WriteFile(handle, null, 0, ptr, null)
+                    AsmInstruction {
+                        id: 3,
+                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                        kind: AsmInstructionKind::Call {
+                            function: AsmValue::Function("kernel32!WriteFile".to_string()),
+                            args: vec![
+                                AsmValue::Register(1),
+                                AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
+                                AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                                AsmValue::Register(2),
+                                AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
+                            ],
+                            calling_convention: CallingConvention::Win64,
+                            tail_call: false,
+                        },
+                        type_hint: Some(AsmType::I1),
+                        operands: Vec::new(),
+                        implicit_uses: Vec::new(),
+                        implicit_defs: Vec::new(),
+                        encoding: None,
+                        debug_info: None,
+                        annotations: Vec::new(),
+                    },
+                    // load written -> id 0
+                    AsmInstruction {
+                        id: 0,
+                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Load),
+                        kind: AsmInstructionKind::Load {
+                            address: AsmValue::Register(2),
+                            alignment: Some(8),
+                            volatile: false,
+                        },
+                        type_hint: Some(AsmType::I64),
+                        operands: Vec::new(),
+                        implicit_uses: Vec::new(),
+                        implicit_defs: Vec::new(),
+                        encoding: None,
+                        debug_info: None,
+                        annotations: Vec::new(),
+                    },
+                ],
+                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
+                predecessors: Vec::new(),
+                successors: Vec::new(),
+            }],
+            locals: Vec::new(),
+            stack_slots: Vec::new(),
+            frame: None,
+            linkage: fp_core::lir::Linkage::External,
+            visibility: fp_core::lir::Visibility::Default,
+            calling_convention: None,
+            section: None,
+            is_declaration: false,
+        });
+
+        rewrite_program_for_target(&mut prog).unwrap();
+        let block = &prog.functions[0].basic_blocks[0];
+        assert!(block.instructions.iter().any(|inst| {
+            matches!(
+                inst.kind,
+                AsmInstructionKind::Syscall {
+                    number: AsmValue::Constant(AsmConstant::UInt(1, _)),
+                    ..
+                }
+            )
+        }));
+    }
 }

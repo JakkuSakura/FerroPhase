@@ -162,6 +162,7 @@ pub fn emit_plan(
     let asmir = asmir::select_program(&lowered_lir, format, arch)?;
     let mut asmir = asmir;
     crate::system_api::rewrite_program_for_target(&mut asmir)?;
+    crate::asmir::normalize_for_target(&mut asmir);
     let output = codegen::emit_text_from_selection(&lowered_lir, &asmir, format, arch)?;
     Ok(EmitPlan {
         format,
@@ -192,6 +193,7 @@ pub fn emit_plan_from_asmir(
     };
 
     crate::system_api::rewrite_program_for_target(&mut asmir)?;
+    crate::asmir::normalize_for_target(&mut asmir);
 
     let output = match arch {
         TargetArch::X86_64 => crate::emit::x86_64::emit_text_from_asmir(&asmir, format)?,
