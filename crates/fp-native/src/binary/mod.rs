@@ -11,6 +11,10 @@ pub struct TextRelocation {
     pub offset: u64,
     pub symbol: String,
     pub addend: i64,
+    pub kind: object::RelocationKind,
+    pub encoding: object::RelocationEncoding,
+    pub size: u8,
+    pub flags: object::RelocationFlags,
 }
 
 pub struct LiftedFunction {

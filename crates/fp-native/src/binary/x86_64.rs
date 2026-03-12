@@ -644,6 +644,17 @@ fn lift_non_terminator(
                 .ok_or_else(|| Error::from("x86_64 call relocation overflow"))?;
             let reloc = relocation_at(relocs, reloc_offset)
                 .ok_or_else(|| Error::from("unsupported x86_64 call without relocation"))?;
+            if reloc.kind != object::RelocationKind::Relative
+                && reloc.kind != object::RelocationKind::PltRelative
+            {
+                return Err(Error::from("unsupported x86_64 call relocation kind"));
+            }
+            if reloc.encoding != object::RelocationEncoding::X86Branch
+                && reloc.encoding != object::RelocationEncoding::Generic
+                && reloc.encoding != object::RelocationEncoding::Unknown
+            {
+                return Err(Error::from("unsupported x86_64 call relocation encoding"));
+            }
             let id = *next_id;
             instructions.push(AsmInstruction {
                 id,
@@ -1121,6 +1132,22 @@ fn compute_address(
             .checked_add(displacement_offset as u64)
             .ok_or_else(|| Error::from("x86_64 relocation offset overflow"))?;
         if let Some(reloc) = relocation_at(relocs, relocation_offset) {
+            if reloc.kind != object::RelocationKind::Relative
+                && reloc.kind != object::RelocationKind::Absolute
+            {
+                return Err(Error::from(
+                    "unsupported x86_64 relocation kind for address",
+                ));
+            }
+            if reloc.encoding != object::RelocationEncoding::X86RipRelative
+                && reloc.encoding != object::RelocationEncoding::X86RipRelativeMovq
+                && reloc.encoding != object::RelocationEncoding::Generic
+                && reloc.encoding != object::RelocationEncoding::Unknown
+            {
+                return Err(Error::from(
+                    "unsupported x86_64 relocation encoding for address",
+                ));
+            }
             let symbol_const = AsmValue::Constant(AsmConstant::GlobalRef(
                 Name::new(reloc.symbol.clone()),
                 AsmType::Ptr(Box::new(AsmType::I8)),
@@ -1156,6 +1183,17 @@ fn compute_address(
             }
 
             return Ok(addr);
+        }
+
+        // `mod=00 rm=101 disp32` is RIP-relative addressing on x86_64.
+        // Without a relocation we cannot safely lift it.
+        //
+        // Note: `SIB + base=101` (no base) is a different encoding that can
+        // still be lifted as an absolute address expression.
+        if memory.base.is_none() && memory.index.is_none() {
+            return Err(Error::from(
+                "unsupported x86_64 RIP-relative address without relocation",
+            ));
         }
     }
 

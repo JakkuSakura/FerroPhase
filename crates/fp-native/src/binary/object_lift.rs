@@ -53,6 +53,10 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
             offset,
             symbol: name,
             addend: relocation.addend(),
+            kind: relocation.kind(),
+            encoding: relocation.encoding(),
+            size: relocation.size(),
+            flags: relocation.flags(),
         });
     }
 
@@ -112,6 +116,10 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                 offset: reloc.offset - symbol_offset as u64,
                 symbol: reloc.symbol.clone(),
                 addend: reloc.addend,
+                kind: reloc.kind,
+                encoding: reloc.encoding,
+                size: reloc.size,
+                flags: reloc.flags,
             })
             .collect::<Vec<_>>();
 
