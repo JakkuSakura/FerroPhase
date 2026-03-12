@@ -1,6 +1,7 @@
 use fp_core::asmir::{
     AsmArchitecture, AsmBlock, AsmBlockId as BasicBlockId, AsmConstant, AsmFunction,
-    AsmInstructionKind, AsmIntrinsicKind, AsmProgram, AsmTerminator, AsmType, AsmValue,
+    AsmInstructionKind, AsmIntrinsicKind, AsmProgram, AsmSyscallConvention, AsmTerminator, AsmType,
+    AsmValue,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::layout::{align_of, size_of, struct_layout};
@@ -21,6 +22,47 @@ enum Reg {
     R11,
     Rbp,
     Rsp,
+}
+
+fn emit_syscall(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    convention: AsmSyscallConvention,
+    number: &AsmValue,
+    args: &[AsmValue],
+    ret_ty: &AsmType,
+    reg_types: &HashMap<u32, AsmType>,
+    local_types: &HashMap<u32, AsmType>,
+    format: TargetFormat,
+) -> Result<()> {
+    match (format, convention) {
+        (TargetFormat::Elf, AsmSyscallConvention::LinuxX86_64)
+        | (TargetFormat::MachO, AsmSyscallConvention::DarwinX86_64) => {}
+        (TargetFormat::Coff, _) => {
+            return Err(Error::from(
+                "syscall emission is not supported for COFF targets",
+            ));
+        }
+        _ => {
+            return Err(Error::from(
+                "syscall convention does not match output target",
+            ));
+        }
+    }
+
+    load_value(asm, layout, number, Reg::Rax, reg_types, local_types)?;
+
+    for (idx, arg) in args.iter().take(SYSCALL_ARGS.len()).enumerate() {
+        load_value(asm, layout, arg, SYSCALL_ARGS[idx], reg_types, local_types)?;
+    }
+
+    asm.extend(&[0x0F, 0x05]);
+
+    if !matches!(ret_ty, AsmType::Void) {
+        store_vreg(asm, layout, dst_id, Reg::Rax)?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2246,6 +2288,25 @@ fn emit_block(
                     rodata_pool,
                 )?;
             }
+            AsmInstructionKind::Syscall {
+                convention,
+                number,
+                args,
+            } => {
+                let ty = inst.type_hint.as_ref().cloned().unwrap_or(AsmType::I64);
+                emit_syscall(
+                    asm,
+                    layout,
+                    inst.id,
+                    *convention,
+                    number,
+                    args,
+                    &ty,
+                    reg_types,
+                    local_types,
+                    format,
+                )?;
+            }
             AsmInstructionKind::IntrinsicCall {
                 kind,
                 format: format_str,
@@ -3199,6 +3260,8 @@ const SYSV_FLOAT_ARGS: [FReg; 8] = [
 ];
 const WIN_INT_ARGS: [Reg; 4] = [Reg::Rcx, Reg::Rdx, Reg::R8, Reg::R9];
 const WIN_FLOAT_ARGS: [FReg; 4] = [FReg::Xmm0, FReg::Xmm1, FReg::Xmm2, FReg::Xmm3];
+
+const SYSCALL_ARGS: [Reg; 6] = [Reg::Rdi, Reg::Rsi, Reg::Rdx, Reg::R10, Reg::R8, Reg::R9];
 
 fn call_abi(format: TargetFormat) -> (&'static [Reg], &'static [FReg], bool) {
     match format {

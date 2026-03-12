@@ -2,12 +2,17 @@ use crate::binary::cfg::wire_block_edges;
 use crate::binary::{LiftedFunction, TextRelocation};
 use fp_core::asmir::AsmLocal;
 use fp_core::asmir::{
-    AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmType, AsmValue,
+    AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmSyscallConvention, AsmType,
+    AsmValue,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Name};
 
-pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<LiftedFunction> {
+pub fn lift_function_bytes(
+    bytes: &[u8],
+    relocs: &[TextRelocation],
+    syscall_convention: AsmSyscallConvention,
+) -> Result<LiftedFunction> {
     let decoded = decode_stream(bytes)?;
     let block_starts = determine_block_starts(&decoded)?;
     let offset_to_block = block_starts
@@ -64,6 +69,7 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
                 &mut instructions,
                 &mut next_id,
                 &mut last_compare,
+                syscall_convention,
             )?;
             cursor = cursor
                 .checked_add(inst.len as u64)
@@ -385,6 +391,7 @@ fn lift_non_terminator(
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
     last_compare: &mut Option<LastCompare>,
+    syscall_convention: AsmSyscallConvention,
 ) -> Result<()> {
     match inst.kind {
         Decoded::Nop => Ok(()),
@@ -676,6 +683,39 @@ fn lift_non_terminator(
             *next_id += 1;
             Ok(())
         }
+        Decoded::Syscall => {
+            let number = ctx.read_gpr(0)?;
+            let args = vec![
+                ctx.read_gpr(7)?,
+                ctx.read_gpr(6)?,
+                ctx.read_gpr(2)?,
+                ctx.read_gpr(10)?,
+                ctx.read_gpr(8)?,
+                ctx.read_gpr(9)?,
+            ];
+            let id = *next_id;
+            instructions.push(AsmInstruction {
+                id,
+                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Syscall),
+                kind: AsmInstructionKind::Syscall {
+                    convention: syscall_convention,
+                    number,
+                    args,
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            });
+            *next_id += 1;
+            ctx.write_gpr(0, AsmValue::Register(id));
+            ctx.write_gpr(1, AsmValue::Undef(AsmType::I64));
+            ctx.write_gpr(11, AsmValue::Undef(AsmType::I64));
+            Ok(())
+        }
         Decoded::Ret | Decoded::JmpRel { .. } | Decoded::JccRel { .. } => Ok(()),
     }
 }
@@ -731,6 +771,7 @@ enum Decoded {
         condition: u8,
         target: u64,
     },
+    Syscall,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -800,6 +841,9 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
         let ext = *bytes
             .get(opcode_index + 1)
             .ok_or_else(|| Error::from("truncated 0f opcode"))?;
+        if ext == 0x05 {
+            return Ok(Some((Decoded::Syscall, opcode_index + 2)));
+        }
         if (0x80..=0x8F).contains(&ext) {
             // Jcc rel32.
             let imm = read_i32(bytes, opcode_index + 2)? as i64;

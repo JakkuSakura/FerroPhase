@@ -65,6 +65,7 @@ pub enum X86Opcode {
     InlineAsm,
     LandingPad,
     Ud2,
+    Syscall,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,6 +171,7 @@ impl X86Opcode {
             X86Opcode::InlineAsm => "inlineasm",
             X86Opcode::LandingPad => "landingpad",
             X86Opcode::Ud2 => "ud2",
+            X86Opcode::Syscall => "syscall",
         }
     }
 }
@@ -559,6 +561,7 @@ fn parse_opcode(token: &str) -> Result<X86Opcode> {
         "inlineasm" => Ok(X86Opcode::InlineAsm),
         "landingpad" => Ok(X86Opcode::LandingPad),
         "ud2" => Ok(X86Opcode::Ud2),
+        "syscall" => Ok(X86Opcode::Syscall),
         _ => Err(Error::from(format!("unknown x86 opcode: {token}"))),
     }
 }
@@ -566,7 +569,11 @@ fn parse_opcode(token: &str) -> Result<X86Opcode> {
 fn operand_access(opcode: &X86Opcode, index: usize) -> OperandAccess {
     if matches!(
         opcode,
-        X86Opcode::Cmp | X86Opcode::Call | X86Opcode::InlineAsm | X86Opcode::LandingPad
+        X86Opcode::Cmp
+            | X86Opcode::Call
+            | X86Opcode::InlineAsm
+            | X86Opcode::LandingPad
+            | X86Opcode::Syscall
     ) {
         OperandAccess::Read
     } else if index == 0 {

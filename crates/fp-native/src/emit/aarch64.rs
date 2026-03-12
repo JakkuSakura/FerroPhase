@@ -1,6 +1,6 @@
 use fp_core::asmir::{
     AsmBlock, AsmBlockId as BasicBlockId, AsmConstant, AsmFunction, AsmInstructionKind,
-    AsmIntrinsicKind, AsmProgram, AsmTerminator, AsmType, AsmValue,
+    AsmIntrinsicKind, AsmProgram, AsmSyscallConvention, AsmTerminator, AsmType, AsmValue,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::layout::{align_of, size_of, struct_layout};
@@ -31,6 +31,81 @@ enum Reg {
     X29,
     X30,
     X31,
+}
+
+fn emit_syscall(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    convention: AsmSyscallConvention,
+    number: &AsmValue,
+    args: &[AsmValue],
+    ret_ty: &AsmType,
+    reg_types: &HashMap<u32, AsmType>,
+    local_types: &HashMap<u32, AsmType>,
+    format: TargetFormat,
+) -> Result<()> {
+    let (number_reg, arg_regs, svc_imm) = match convention {
+        AsmSyscallConvention::LinuxAarch64 => (
+            Reg::X8,
+            [
+                Reg::X0,
+                Reg::X1,
+                Reg::X2,
+                Reg::X3,
+                Reg::X4,
+                Reg::X5,
+                Reg::X6,
+                Reg::X7,
+            ],
+            0u16,
+        ),
+        AsmSyscallConvention::DarwinAarch64 => (
+            Reg::X16,
+            [
+                Reg::X0,
+                Reg::X1,
+                Reg::X2,
+                Reg::X3,
+                Reg::X4,
+                Reg::X5,
+                Reg::X6,
+                Reg::X7,
+            ],
+            0x80u16,
+        ),
+        _ => {
+            return Err(Error::from(
+                "unsupported syscall convention for aarch64 emitter",
+            ));
+        }
+    };
+
+    match (format, convention) {
+        (TargetFormat::Elf, AsmSyscallConvention::LinuxAarch64)
+        | (TargetFormat::MachO, AsmSyscallConvention::DarwinAarch64) => {}
+        (TargetFormat::Coff, _) => {
+            return Err(Error::from(
+                "syscall emission is not supported for COFF targets",
+            ));
+        }
+        _ => {
+            return Err(Error::from(
+                "syscall convention does not match output target",
+            ));
+        }
+    }
+
+    load_value(asm, layout, number, number_reg, reg_types, local_types)?;
+    for (idx, arg) in args.iter().take(arg_regs.len()).enumerate() {
+        load_value(asm, layout, arg, arg_regs[idx], reg_types, local_types)?;
+    }
+    emit_svc_imm(asm, svc_imm);
+
+    if !matches!(ret_ty, AsmType::Void) {
+        store_vreg(asm, layout, dst_id, Reg::X0)?;
+    }
+    Ok(())
 }
 
 impl Reg {
@@ -4362,7 +4437,13 @@ fn emit_exit_syscall_reg(asm: &mut Assembler, reg: Reg) -> Result<()> {
 }
 
 fn emit_svc(asm: &mut Assembler) {
-    asm.extend(&0xD400_0001u32.to_le_bytes());
+    emit_svc_imm(asm, 0);
+}
+
+fn emit_svc_imm(asm: &mut Assembler, imm16: u16) {
+    let imm = (imm16 as u32) & 0xFFFF;
+    let instr = 0xD400_0001u32 | (imm << 5);
+    asm.extend(&instr.to_le_bytes());
 }
 
 fn emit_sub_sp(asm: &mut Assembler, imm: u32) {
@@ -5098,6 +5179,25 @@ fn emit_block(
                     format,
                     rodata,
                     rodata_pool,
+                )?;
+            }
+            AsmInstructionKind::Syscall {
+                convention,
+                number,
+                args,
+            } => {
+                let ty = inst.type_hint.as_ref().cloned().unwrap_or(AsmType::I64);
+                emit_syscall(
+                    asm,
+                    layout,
+                    inst.id,
+                    *convention,
+                    number,
+                    args,
+                    &ty,
+                    reg_types,
+                    local_types,
+                    format,
                 )?;
             }
             AsmInstructionKind::IntrinsicCall {

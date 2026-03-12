@@ -12,8 +12,9 @@ use fp_core::asmir::{
     AsmAddressValue, AsmArchitecture, AsmBlock, AsmConditionCode, AsmConstant, AsmEndianness,
     AsmFunction, AsmFunctionSignature, AsmGenericOpcode, AsmGlobal, AsmInstruction,
     AsmInstructionKind, AsmIntrinsicKind, AsmLandingPadClause, AsmMemoryOperand, AsmObjectFormat,
-    AsmOpcode, AsmOperand, AsmProgram, AsmRegister, AsmRegisterBank, AsmSection, AsmSectionFlag,
-    AsmSectionKind, AsmTarget, AsmTerminator, AsmType, AsmTypeDefinition, AsmValue, OperandAccess,
+    AsmOpcode, AsmOperand, AsmPhysicalRegister, AsmProgram, AsmRegister, AsmRegisterBank,
+    AsmSection, AsmSectionFlag, AsmSectionKind, AsmSyscallConvention, AsmTarget, AsmTerminator,
+    AsmType, AsmTypeDefinition, AsmValue, OperandAccess,
 };
 use fp_core::error::Result;
 use fp_core::lir::layout::size_of;
@@ -374,6 +375,12 @@ fn canonicalize_instruction_kind_registers(
             }
         }
         AsmInstructionKind::IntrinsicCall { args, .. } => {
+            for arg in args {
+                canonicalize_value(arg, map, next_virtual_id);
+            }
+        }
+        AsmInstructionKind::Syscall { number, args, .. } => {
+            canonicalize_value(number, map, next_virtual_id);
             for arg in args {
                 canonicalize_value(arg, map, next_virtual_id);
             }
@@ -1278,6 +1285,7 @@ fn x86_typed_operands(
                 operands.push(x86_operand(personality, ctx));
             }
         }
+        AsmInstructionKind::Syscall { .. } => {}
         AsmInstructionKind::Unreachable => {}
     }
 
@@ -1530,6 +1538,7 @@ fn aarch64_opcode_name(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> &'sta
         AsmInstructionKind::Select { .. } => "csel",
         AsmInstructionKind::InlineAsm { .. } => "inlineasm",
         AsmInstructionKind::LandingPad { .. } => "landingpad",
+        AsmInstructionKind::Syscall { .. } => "svc",
         AsmInstructionKind::Unreachable => "brk",
     }
 }
@@ -1658,6 +1667,14 @@ fn aarch64_typed_operands(
             if let Some(personality) = personality {
                 operands.push(aarch64_operand(personality, ctx));
             }
+        }
+        AsmInstructionKind::Syscall { convention, .. } => {
+            let imm = match convention {
+                AsmSyscallConvention::LinuxAarch64 => 0,
+                AsmSyscallConvention::DarwinAarch64 => 0x80,
+                _ => 0,
+            };
+            operands.push(Aarch64Operand::Immediate(imm));
         }
         AsmInstructionKind::Unreachable => {}
     }
@@ -1862,6 +1879,7 @@ fn x86_opcode(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> X86Opcode {
         AsmInstructionKind::Select { .. } => X86Opcode::CMov,
         AsmInstructionKind::InlineAsm { .. } => X86Opcode::InlineAsm,
         AsmInstructionKind::LandingPad { .. } => X86Opcode::LandingPad,
+        AsmInstructionKind::Syscall { .. } => X86Opcode::Syscall,
         AsmInstructionKind::Unreachable => X86Opcode::Ud2,
     }
 }
@@ -1996,6 +2014,7 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
                 operands.push(value_operand(personality));
             }
         }
+        AsmInstructionKind::Syscall { .. } => {}
         AsmInstructionKind::Unreachable => {}
     }
 
@@ -3168,6 +3187,46 @@ fn semanticize_x86_detail(
     let (base, condition) = parse_x86_custom_opcode(&opcode_name);
     let values = collect_machine_values(operands)?;
     match base {
+        "syscall" => Ok(AsmInstructionKind::Syscall {
+            convention: AsmSyscallConvention::LinuxX86_64,
+            number: AsmValue::PhysicalRegister(AsmPhysicalRegister {
+                name: "rax".to_string(),
+                bank: AsmRegisterBank::General,
+                size_bits: 64,
+            }),
+            args: vec![
+                AsmValue::PhysicalRegister(AsmPhysicalRegister {
+                    name: "rdi".to_string(),
+                    bank: AsmRegisterBank::General,
+                    size_bits: 64,
+                }),
+                AsmValue::PhysicalRegister(AsmPhysicalRegister {
+                    name: "rsi".to_string(),
+                    bank: AsmRegisterBank::General,
+                    size_bits: 64,
+                }),
+                AsmValue::PhysicalRegister(AsmPhysicalRegister {
+                    name: "rdx".to_string(),
+                    bank: AsmRegisterBank::General,
+                    size_bits: 64,
+                }),
+                AsmValue::PhysicalRegister(AsmPhysicalRegister {
+                    name: "r10".to_string(),
+                    bank: AsmRegisterBank::General,
+                    size_bits: 64,
+                }),
+                AsmValue::PhysicalRegister(AsmPhysicalRegister {
+                    name: "r8".to_string(),
+                    bank: AsmRegisterBank::General,
+                    size_bits: 64,
+                }),
+                AsmValue::PhysicalRegister(AsmPhysicalRegister {
+                    name: "r9".to_string(),
+                    bank: AsmRegisterBank::General,
+                    size_bits: 64,
+                }),
+            ],
+        }),
         "add" => binary_value_kind(operands, &values, AsmInstructionKind::Add),
         "sub" => binary_value_kind(operands, &values, AsmInstructionKind::Sub),
         "imul" | "mulss" | "mulsd" => binary_value_kind(operands, &values, AsmInstructionKind::Mul),
@@ -3197,6 +3256,41 @@ fn semanticize_aarch64_detail(
     let (base, condition) = parse_aarch64_custom_opcode(&opcode_name);
     let values = collect_machine_values(operands)?;
     match base {
+        "svc" => {
+            let imm = operands
+                .iter()
+                .find_map(|operand| match operand {
+                    AsmOperand::Immediate(value) => Some(*value),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            let convention = match imm {
+                0 => AsmSyscallConvention::LinuxAarch64,
+                0x80 => AsmSyscallConvention::DarwinAarch64,
+                _ => AsmSyscallConvention::LinuxAarch64,
+            };
+            let number_reg = match convention {
+                AsmSyscallConvention::DarwinAarch64 => "x16",
+                _ => "x8",
+            };
+            Ok(AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::PhysicalRegister(AsmPhysicalRegister {
+                    name: number_reg.to_string(),
+                    bank: AsmRegisterBank::General,
+                    size_bits: 64,
+                }),
+                args: (0..6)
+                    .map(|idx| {
+                        AsmValue::PhysicalRegister(AsmPhysicalRegister {
+                            name: format!("x{idx}"),
+                            bank: AsmRegisterBank::General,
+                            size_bits: 64,
+                        })
+                    })
+                    .collect(),
+            })
+        }
         "add" => binary_value_kind(operands, &values, AsmInstructionKind::Add),
         "sub" => binary_value_kind(operands, &values, AsmInstructionKind::Sub),
         "mul" | "fmul.s" | "fmul.d" => {
@@ -3651,6 +3745,7 @@ fn generic_opcode(kind: &AsmInstructionKind) -> AsmGenericOpcode {
         AsmInstructionKind::LandingPad { .. } => AsmGenericOpcode::LandingPad,
         AsmInstructionKind::Unreachable => AsmGenericOpcode::Unreachable,
         AsmInstructionKind::Freeze(..) => AsmGenericOpcode::Freeze,
+        AsmInstructionKind::Syscall { .. } => AsmGenericOpcode::Syscall,
     }
 }
 

@@ -3,7 +3,8 @@ use crate::binary::TextRelocation;
 use crate::binary::cfg::wire_block_edges;
 use fp_core::asmir::AsmLocal;
 use fp_core::asmir::{
-    AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmType, AsmValue,
+    AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmSyscallConvention, AsmType,
+    AsmValue,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Name};
@@ -164,7 +165,11 @@ fn compare_kind_from_cond(
     })
 }
 
-pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<LiftedFunction> {
+pub fn lift_function_bytes(
+    bytes: &[u8],
+    relocs: &[TextRelocation],
+    syscall_convention: AsmSyscallConvention,
+) -> Result<LiftedFunction> {
     if bytes.len() % 4 != 0 {
         return Err(Error::from("aarch64 function size is not 4-byte aligned"));
     }
@@ -364,6 +369,61 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
                     )?;
                 }
                 ctx.write_gpr(rd, value);
+                cursor += 4;
+                continue;
+            }
+
+            if (word & 0xFFE0_001F) == 0xD400_0001 {
+                // SVC #imm16
+                let imm16 = ((word >> 5) & 0xFFFF) as u16;
+                match (syscall_convention, imm16) {
+                    (AsmSyscallConvention::LinuxAarch64, 0)
+                    | (AsmSyscallConvention::DarwinAarch64, 0x80) => {}
+                    _ => {
+                        return Err(Error::from(
+                            "unsupported aarch64 svc immediate for syscall convention",
+                        ));
+                    }
+                }
+
+                let number_reg = match syscall_convention {
+                    AsmSyscallConvention::LinuxAarch64 => 8,
+                    AsmSyscallConvention::DarwinAarch64 => 16,
+                    _ => {
+                        return Err(Error::from(
+                            "unsupported syscall convention for aarch64 lifter",
+                        ));
+                    }
+                };
+                let number = ctx.read_gpr(number_reg)?;
+                let args = vec![
+                    ctx.read_gpr(0)?,
+                    ctx.read_gpr(1)?,
+                    ctx.read_gpr(2)?,
+                    ctx.read_gpr(3)?,
+                    ctx.read_gpr(4)?,
+                    ctx.read_gpr(5)?,
+                ];
+
+                let id = next_id;
+                instructions.push(AsmInstruction {
+                    id,
+                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Syscall),
+                    kind: AsmInstructionKind::Syscall {
+                        convention: syscall_convention,
+                        number,
+                        args,
+                    },
+                    type_hint: Some(AsmType::I64),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                });
+                next_id += 1;
+                ctx.write_gpr(0, AsmValue::Register(id));
                 cursor += 4;
                 continue;
             }

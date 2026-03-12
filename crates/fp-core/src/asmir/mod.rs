@@ -283,6 +283,7 @@ pub enum AsmGenericOpcode {
     LandingPad,
     Unreachable,
     Freeze,
+    Syscall,
 }
 
 impl AsmOpcode {
@@ -345,8 +346,17 @@ impl AsmGenericOpcode {
             AsmGenericOpcode::LandingPad => "landingpad",
             AsmGenericOpcode::Unreachable => "unreachable",
             AsmGenericOpcode::Freeze => "freeze",
+            AsmGenericOpcode::Syscall => "syscall",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AsmSyscallConvention {
+    LinuxX86_64,
+    LinuxAarch64,
+    DarwinX86_64,
+    DarwinAarch64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -449,6 +459,11 @@ pub enum AsmInstructionKind {
     },
     Unreachable,
     Freeze(AsmValue),
+    Syscall {
+        convention: AsmSyscallConvention,
+        number: AsmValue,
+        args: Vec<AsmValue>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

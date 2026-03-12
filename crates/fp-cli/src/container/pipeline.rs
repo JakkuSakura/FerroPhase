@@ -20,12 +20,6 @@ pub(crate) async fn maybe_transpile_container(
         return Ok(None);
     };
 
-    if args.exec {
-        return Err(CliError::InvalidInput(
-            "`--exec` is not supported for container transpilation".to_string(),
-        ));
-    }
-
     let payload = tokio::fs::read(input).await.map_err(|err| {
         CliError::Io(std::io::Error::other(format!(
             "Failed to read container input: {err}"
@@ -75,15 +69,27 @@ async fn transpile_native_object(
         .map_err(|err| CliError::Compilation(format!("Failed to emit target object: {err}")))?;
 
     let output_path = if args.output.is_none() {
-        input.with_extension("o")
+        if args.exec {
+            input.with_extension("out")
+        } else {
+            input.with_extension("o")
+        }
     } else {
         output.to_path_buf()
     };
     if let Some(parent) = output_path.parent() {
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
     }
-    fp_native::emit::write_object(&output_path, &plan)
-        .map_err(|err| CliError::Compilation(format!("Failed to write object output: {err}")))?;
+
+    if args.exec {
+        fp_native::emit::write_executable(&output_path, &plan).map_err(|err| {
+            CliError::Compilation(format!("Failed to write executable output: {err}"))
+        })?;
+    } else {
+        fp_native::emit::write_object(&output_path, &plan).map_err(|err| {
+            CliError::Compilation(format!("Failed to write object output: {err}"))
+        })?;
+    }
 
     Ok(Some(output_path))
 }

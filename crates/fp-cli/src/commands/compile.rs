@@ -148,6 +148,26 @@ pub struct CompileArgs {
     pub single_world: bool,
 }
 
+fn target_triple_matches_host(target_triple: &str) -> bool {
+    let target_triple = target_triple.to_ascii_lowercase();
+    let (host_arch, host_os) = (std::env::consts::ARCH, std::env::consts::OS);
+    let arch_ok = match host_arch {
+        "x86_64" => target_triple.starts_with("x86_64-"),
+        "aarch64" => target_triple.starts_with("aarch64-") || target_triple.starts_with("arm64-"),
+        other => target_triple.starts_with(&format!("{other}-")),
+    };
+    if !arch_ok {
+        return false;
+    }
+
+    match host_os {
+        "macos" => target_triple.contains("darwin"),
+        "linux" => target_triple.contains("linux"),
+        "windows" => target_triple.contains("windows"),
+        other => target_triple.contains(other),
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum CompileTarget {
     Backend(BackendKind),
@@ -270,6 +290,15 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     // Execute if requested
     if args.exec {
+        if let Some(target_triple) = args.target_triple.as_deref() {
+            if !target_triple_matches_host(target_triple) {
+                warn!(
+                    "Skipping `--exec`: target triple `{}` does not match host",
+                    target_triple
+                );
+                return Ok(());
+            }
+        }
         if matches!(target, CompileTarget::Ast(_)) {
             return Err(CliError::InvalidInput(
                 "--exec is not supported for AST targets".to_string(),

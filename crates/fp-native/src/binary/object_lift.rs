@@ -1,7 +1,8 @@
 use crate::binary::{TextRelocation, aarch64, x86_64};
 use fp_core::asmir::{
     AsmArchitecture, AsmEndianness, AsmFunction, AsmFunctionSignature, AsmObjectFormat, AsmProgram,
-    AsmSection, AsmSectionFlag, AsmSectionKind, AsmStackFrame, AsmTarget, AsmTerminator, AsmType,
+    AsmSection, AsmSectionFlag, AsmSectionKind, AsmStackFrame, AsmSyscallConvention, AsmTarget,
+    AsmTerminator, AsmType,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
@@ -123,11 +124,27 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
             })
             .collect::<Vec<_>>();
 
+        let syscall_convention = match (&architecture, &object_format) {
+            (AsmArchitecture::X86_64, AsmObjectFormat::Elf) => AsmSyscallConvention::LinuxX86_64,
+            (AsmArchitecture::X86_64, AsmObjectFormat::MachO) => AsmSyscallConvention::DarwinX86_64,
+            (AsmArchitecture::Aarch64, AsmObjectFormat::Elf) => AsmSyscallConvention::LinuxAarch64,
+            (AsmArchitecture::Aarch64, AsmObjectFormat::MachO) => {
+                AsmSyscallConvention::DarwinAarch64
+            }
+            _ => {
+                return Err(Error::from(
+                    "object lift currently supports syscalls only for ELF/Mach-O x86_64/aarch64",
+                ));
+            }
+        };
+
         let mut lifted = match &architecture {
             AsmArchitecture::Aarch64 => {
-                aarch64::lift_function_bytes(code, symbol_relocs.as_slice())?
+                aarch64::lift_function_bytes(code, symbol_relocs.as_slice(), syscall_convention)?
             }
-            AsmArchitecture::X86_64 => x86_64::lift_function_bytes(code, symbol_relocs.as_slice())?,
+            AsmArchitecture::X86_64 => {
+                x86_64::lift_function_bytes(code, symbol_relocs.as_slice(), syscall_convention)?
+            }
             _ => {
                 return Err(Error::from(
                     "object lift internal error: unsupported architecture",
