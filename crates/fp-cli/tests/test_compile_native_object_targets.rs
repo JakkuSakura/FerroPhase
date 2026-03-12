@@ -3,6 +3,7 @@ use std::fs;
 use object::Object as _;
 use object::ObjectSection as _;
 use object::ObjectSymbol as _;
+use object::macho::ARM64_RELOC_PAGE21;
 use object::write::{Object, Symbol, SymbolSection};
 use object::{
     Architecture, BinaryFormat, Endianness, RelocationEncoding, RelocationFlags, RelocationKind,
@@ -48,6 +49,191 @@ fn base_args(
         type_defs: false,
         single_world: false,
     }
+}
+
+fn build_x86_64_elf_object_with_data_reloc() -> Vec<u8> {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    // mov rax, global; ret
+    // 48 B8 imm64; C3
+    obj.append_section_data(section_id, &[0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xC3], 1);
+
+    let global_id = obj.add_symbol(Symbol {
+        name: b"global".to_vec(),
+        value: 0,
+        size: 0,
+        kind: SymbolKind::Data,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Undefined,
+        flags: SymbolFlags::None,
+    });
+
+    obj.add_relocation(
+        section_id,
+        object::write::Relocation {
+            offset: 2,
+            symbol: global_id,
+            addend: 0,
+            flags: RelocationFlags::Generic {
+                kind: RelocationKind::Absolute,
+                encoding: RelocationEncoding::Generic,
+                size: 64,
+            },
+        },
+    )
+    .unwrap();
+
+    obj.add_symbol(Symbol {
+        name: b"main".to_vec(),
+        value: 0,
+        size: 11,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section_id),
+        flags: SymbolFlags::None,
+    });
+
+    obj.write().expect("write ELF object")
+}
+
+#[tokio::test]
+async fn compile_native_object_preserves_data_relocations_x86_64_to_aarch64() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("main.aarch64.o");
+
+    fs::write(&input_file, build_x86_64_elf_object_with_data_reloc()).unwrap();
+    let args = base_args(input_file, output_file.clone(), "aarch64-apple-darwin");
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let bytes = fs::read(&output_file).unwrap();
+    let file = object::File::parse(bytes.as_slice()).unwrap();
+    assert_eq!(file.format(), BinaryFormat::MachO);
+    assert_eq!(file.architecture(), Architecture::Aarch64);
+    assert!(
+        find_any_relocation_target(&file, "global") || find_any_relocation_target(&file, "_global"),
+        "missing relocation to global; saw: {:?}",
+        collect_any_relocation_targets(&file)
+    );
+}
+
+fn build_aarch64_macho_object_with_adrp_reloc() -> Vec<u8> {
+    let mut obj = Object::new(
+        BinaryFormat::MachO,
+        Architecture::Aarch64,
+        Endianness::Little,
+    );
+    let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    // adrp x0, global; ret
+    obj.append_section_data(
+        section_id,
+        &[
+            0x00, 0x00, 0x00, 0x90, // adrp x0, #0
+            0xC0, 0x03, 0x5F, 0xD6, // ret
+        ],
+        4,
+    );
+
+    let global_id = obj.add_symbol(Symbol {
+        name: b"global".to_vec(),
+        value: 0,
+        size: 0,
+        kind: SymbolKind::Data,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Undefined,
+        flags: SymbolFlags::None,
+    });
+
+    obj.add_relocation(
+        section_id,
+        object::write::Relocation {
+            offset: 0,
+            symbol: global_id,
+            addend: 0,
+            flags: RelocationFlags::MachO {
+                r_type: ARM64_RELOC_PAGE21,
+                r_pcrel: true,
+                r_length: 2,
+            },
+        },
+    )
+    .unwrap();
+
+    obj.add_symbol(Symbol {
+        name: b"main".to_vec(),
+        value: 0,
+        size: 8,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section_id),
+        flags: SymbolFlags::None,
+    });
+
+    obj.write().expect("write Mach-O object")
+}
+
+#[tokio::test]
+async fn compile_native_object_preserves_data_relocations_aarch64_to_x86_64() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("main.x86_64.o");
+
+    fs::write(&input_file, build_aarch64_macho_object_with_adrp_reloc()).unwrap();
+    let args = base_args(input_file, output_file.clone(), "x86_64-unknown-linux-gnu");
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let bytes = fs::read(&output_file).unwrap();
+    let file = object::File::parse(bytes.as_slice()).unwrap();
+    assert_eq!(file.format(), BinaryFormat::Elf);
+    assert_eq!(file.architecture(), Architecture::X86_64);
+    assert!(
+        find_any_relocation_target(&file, "global") || find_any_relocation_target(&file, "_global"),
+        "missing relocation to global; saw: {:?}",
+        collect_any_relocation_targets(&file)
+    );
+}
+
+fn find_any_relocation_target(file: &object::File<'_>, target: &str) -> bool {
+    for section in file.sections() {
+        for (_offset, reloc) in section.relocations() {
+            let object::RelocationTarget::Symbol(symbol_index) = reloc.target() else {
+                continue;
+            };
+            let Ok(symbol) = file.symbol_by_index(symbol_index) else {
+                continue;
+            };
+            let Ok(name) = symbol.name() else {
+                continue;
+            };
+            if name == target {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn collect_any_relocation_targets(file: &object::File<'_>) -> Vec<String> {
+    let mut targets = Vec::new();
+    for section in file.sections() {
+        for (_offset, reloc) in section.relocations() {
+            let object::RelocationTarget::Symbol(symbol_index) = reloc.target() else {
+                continue;
+            };
+            let Ok(symbol) = file.symbol_by_index(symbol_index) else {
+                continue;
+            };
+            let Ok(name) = symbol.name() else {
+                continue;
+            };
+            targets.push(name.to_string());
+        }
+    }
+    targets
 }
 
 #[tokio::test]

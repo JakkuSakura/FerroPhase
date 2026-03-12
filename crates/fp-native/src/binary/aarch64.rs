@@ -6,7 +6,7 @@ use fp_core::asmir::{
     AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmType, AsmValue,
 };
 use fp_core::error::{Error, Result};
-use fp_core::lir::CallingConvention;
+use fp_core::lir::{CallingConvention, Name};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LastCompare {
@@ -322,6 +322,48 @@ pub fn lift_function_bytes(bytes: &[u8], relocs: &[TextRelocation]) -> Result<Li
                     annotations: Vec::new(),
                 });
                 next_id += 1;
+                cursor += 4;
+                continue;
+            }
+
+            if (word & 0x9F000000) == 0x90000000 {
+                // ADRP Xd, label@PAGE
+                //
+                // The immediate encoding is PC-relative and page-based. For semantic lifting we
+                // rely on the relocation target rather than reconstructing the page delta.
+                let rd = (word & 0x1F) as u8;
+                let reloc = relocation_at(relocs, cursor)
+                    .ok_or_else(|| Error::from("unsupported aarch64 adrp without relocation"))?;
+                let symbol_const = AsmValue::Constant(AsmConstant::GlobalRef(
+                    Name::new(reloc.symbol.clone()),
+                    AsmType::Ptr(Box::new(AsmType::I8)),
+                    vec![0],
+                ));
+                let symbol_id = next_id;
+                instructions.push(AsmInstruction {
+                    id: symbol_id,
+                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
+                    kind: AsmInstructionKind::Freeze(symbol_const),
+                    type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                });
+                next_id += 1;
+
+                let mut value = AsmValue::Register(symbol_id);
+                if reloc.addend != 0 {
+                    value = pointer_add_immediate(
+                        value,
+                        reloc.addend,
+                        &mut instructions,
+                        &mut next_id,
+                    )?;
+                }
+                ctx.write_gpr(rd, value);
                 cursor += 4;
                 continue;
             }

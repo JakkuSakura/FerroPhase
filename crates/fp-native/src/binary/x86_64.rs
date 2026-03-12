@@ -553,6 +553,71 @@ fn lift_non_terminator(
                 }
             }
         }
+        Decoded::MovImm64 {
+            dst,
+            imm_offset,
+            imm,
+        } => {
+            let reloc_offset = inst
+                .offset
+                .checked_add(imm_offset as u64)
+                .ok_or_else(|| Error::from("x86_64 mov imm64 relocation overflow"))?;
+            if let Some(reloc) = relocation_at(relocs, reloc_offset) {
+                let symbol_const = AsmValue::Constant(AsmConstant::GlobalRef(
+                    Name::new(reloc.symbol.clone()),
+                    AsmType::Ptr(Box::new(AsmType::I8)),
+                    vec![0],
+                ));
+                let symbol_id = *next_id;
+                instructions.push(AsmInstruction {
+                    id: symbol_id,
+                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
+                    kind: AsmInstructionKind::Freeze(symbol_const),
+                    type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                });
+                *next_id += 1;
+
+                let mut value = AsmValue::Register(symbol_id);
+                let addend = reloc.addend.saturating_add(imm);
+                if addend != 0 {
+                    let rhs = AsmValue::Constant(AsmConstant::Int(addend, AsmType::I64));
+                    let id = *next_id;
+                    instructions.push(build_binop(
+                        id,
+                        AsmInstructionKind::Add(value, rhs),
+                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
+                    ));
+                    *next_id += 1;
+                    value = AsmValue::Register(id);
+                }
+                ctx.write_gpr(dst, value);
+                return Ok(());
+            }
+
+            let value = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
+            let id = *next_id;
+            instructions.push(AsmInstruction {
+                id,
+                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
+                kind: AsmInstructionKind::Freeze(value),
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            });
+            *next_id += 1;
+            ctx.write_gpr(dst, AsmValue::Register(id));
+            Ok(())
+        }
         Decoded::CallRel32 { imm_offset } => {
             let reloc_offset = inst
                 .offset
@@ -593,15 +658,45 @@ fn relocation_at<'a>(relocs: &'a [TextRelocation], offset: u64) -> Option<&'a Te
 enum Decoded {
     Nop,
     Ret,
-    AddImm { dst: u8, imm: i64 },
-    SubImm { dst: u8, imm: i64 },
-    Cmp { lhs: Operand, rhs: Operand },
-    Test { lhs: Operand, rhs: Operand },
-    MovRmToReg { dst: u8, src: RmOperand },
-    MovRegToRm { dst: RmOperand, src: u8 },
-    CallRel32 { imm_offset: usize },
-    JmpRel { target: u64 },
-    JccRel { condition: u8, target: u64 },
+    AddImm {
+        dst: u8,
+        imm: i64,
+    },
+    SubImm {
+        dst: u8,
+        imm: i64,
+    },
+    Cmp {
+        lhs: Operand,
+        rhs: Operand,
+    },
+    Test {
+        lhs: Operand,
+        rhs: Operand,
+    },
+    MovImm64 {
+        dst: u8,
+        imm_offset: usize,
+        imm: i64,
+    },
+    MovRmToReg {
+        dst: u8,
+        src: RmOperand,
+    },
+    MovRegToRm {
+        dst: RmOperand,
+        src: u8,
+    },
+    CallRel32 {
+        imm_offset: usize,
+    },
+    JmpRel {
+        target: u64,
+    },
+    JccRel {
+        condition: u8,
+        target: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -737,6 +832,20 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
                 imm_offset: opcode_index + 1,
             },
             opcode_index + 1 + 4,
+        )));
+    }
+
+    // MOV r64, imm64: REX.W B8+rd imm64.
+    if rex_w && (0xB8..=0xBF).contains(&opcode) {
+        let dst = opcode - 0xB8;
+        let imm = read_i64(bytes, opcode_index + 1)?;
+        return Ok(Some((
+            Decoded::MovImm64 {
+                dst,
+                imm_offset: opcode_index + 1,
+                imm,
+            },
+            opcode_index + 1 + 8,
         )));
     }
 
@@ -882,6 +991,13 @@ fn read_i32(bytes: &[u8], index: usize) -> Result<i32> {
         .get(index..index + 4)
         .ok_or_else(|| Error::from("truncated immediate"))?;
     Ok(i32::from_le_bytes(imm.try_into().unwrap()))
+}
+
+fn read_i64(bytes: &[u8], index: usize) -> Result<i64> {
+    let imm = bytes
+        .get(index..index + 8)
+        .ok_or_else(|| Error::from("truncated immediate"))?;
+    Ok(i64::from_le_bytes(imm.try_into().unwrap()))
 }
 
 fn decode_modrm(bytes: &[u8], index: usize) -> Result<(u8, RmOperand, usize)> {
