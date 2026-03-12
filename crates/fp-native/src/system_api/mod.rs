@@ -29,6 +29,23 @@ pub enum SystemApiOp {
         mode: AsmValue,
         flag_style: PosixFlagStyle,
     },
+    Seek {
+        fd: AsmValue,
+        offset: AsmValue,
+        whence: AsmValue,
+    },
+    Mmap {
+        addr: AsmValue,
+        len: AsmValue,
+        prot: AsmValue,
+        flags: AsmValue,
+        fd: AsmValue,
+        offset: AsmValue,
+    },
+    Munmap {
+        addr: AsmValue,
+        len: AsmValue,
+    },
 }
 
 fn windows_createfile_disposition_from_flags(style: PosixFlagStyle, flags: i64) -> i64 {
@@ -42,6 +59,34 @@ fn windows_createfile_disposition_from_flags(style: PosixFlagStyle, flags: i64) 
 pub enum PosixFlagStyle {
     Linux,
     Darwin,
+}
+
+fn posix_mmap_flags_anonymous_private(style: PosixFlagStyle) -> i64 {
+    match style {
+        // MAP_PRIVATE=0x02, MAP_ANONYMOUS=0x20
+        PosixFlagStyle::Linux => 0x02 | 0x20,
+        // MAP_PRIVATE=0x02, MAP_ANON=0x1000
+        PosixFlagStyle::Darwin => 0x02 | 0x1000,
+    }
+}
+
+fn windows_page_protection_from_posix(prot: i64) -> i64 {
+    // PROT_READ=1, PROT_WRITE=2, PROT_EXEC=4
+    // PAGE_NOACCESS=0x01
+    // PAGE_READONLY=0x02
+    // PAGE_READWRITE=0x04
+    // PAGE_EXECUTE_READ=0x20
+    // PAGE_EXECUTE_READWRITE=0x40
+    let read = (prot & 1) != 0;
+    let write = (prot & 2) != 0;
+    let exec = (prot & 4) != 0;
+    match (exec, write, read) {
+        (true, true, _) => 0x40,
+        (true, false, true) => 0x20,
+        (false, true, _) => 0x04,
+        (false, false, true) => 0x02,
+        _ => 0x01,
+    }
 }
 
 fn windows_createfile_desired_access(flags: i64) -> i64 {
@@ -318,6 +363,31 @@ fn rewrite_windows_imports_to_syscalls(program: &mut AsmProgram) -> Result<()> {
                     continue;
                 }
 
+                if let Some((rewritten, consumed)) = match_setfilepointerex_sequence_to_syscall(
+                    &block.instructions[i..],
+                    convention,
+                )? {
+                    out.push(rewritten);
+                    i = i.saturating_add(consumed);
+                    continue;
+                }
+
+                if let Some((rewritten, consumed)) =
+                    match_virtualalloc_sequence_to_syscall(&block.instructions[i..], convention)?
+                {
+                    out.push(rewritten);
+                    i = i.saturating_add(consumed);
+                    continue;
+                }
+
+                if let Some((rewritten, consumed)) =
+                    match_virtualfree_sequence_to_syscall(&block.instructions[i..], convention)?
+                {
+                    out.push(rewritten);
+                    i = i.saturating_add(consumed);
+                    continue;
+                }
+
                 let mut inst = block.instructions[i].clone();
                 if let Some(op) = detect_system_api_from_windows_import(&inst.kind, convention) {
                     inst.kind = lower_system_api_to_syscall(op, convention);
@@ -402,6 +472,56 @@ fn detect_system_api_from_windows_import(
             }
             Some(SystemApiOp::Close {
                 fd: args[0].clone(),
+            })
+        }
+        "SetFilePointerEx" => {
+            if args.len() != 4 {
+                return None;
+            }
+            Some(SystemApiOp::Seek {
+                fd: args[0].clone(),
+                offset: args[1].clone(),
+                // dwMoveMethod
+                whence: args[3].clone(),
+            })
+        }
+        "VirtualAlloc" => {
+            if args.len() != 4 {
+                return None;
+            }
+            // Treat VirtualAlloc as anonymous mmap.
+            let style = match convention {
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    PosixFlagStyle::Darwin
+                }
+                _ => PosixFlagStyle::Linux,
+            };
+            let page_prot = resolve_i64(&args[3], &[]).ok().flatten().unwrap_or(0x04);
+            let prot = match page_prot {
+                0x40 | 0x20 => 0x1 | 0x4,
+                0x04 => 0x1 | 0x2,
+                0x02 => 0x1,
+                _ => 0x1 | 0x2,
+            };
+            Some(SystemApiOp::Mmap {
+                addr: args[0].clone(),
+                len: args[1].clone(),
+                prot: AsmValue::Constant(AsmConstant::Int(prot, AsmType::I64)),
+                flags: AsmValue::Constant(AsmConstant::Int(
+                    posix_mmap_flags_anonymous_private(style),
+                    AsmType::I64,
+                )),
+                fd: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                offset: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+            })
+        }
+        "VirtualFree" => {
+            if args.len() != 3 {
+                return None;
+            }
+            Some(SystemApiOp::Munmap {
+                addr: args[0].clone(),
+                len: args[1].clone(),
             })
         }
         _ => None,
@@ -575,6 +695,69 @@ fn detect_system_api_from_syscall(
                 flags: args.get(1)?.clone(),
                 mode: args.get(2)?.clone(),
                 flag_style: PosixFlagStyle::Darwin,
+            })
+        }
+        AsmSyscallConvention::LinuxX86_64 if num == 8 => Some(SystemApiOp::Seek {
+            fd: args.get(0)?.clone(),
+            offset: args.get(1)?.clone(),
+            whence: args.get(2)?.clone(),
+        }),
+        AsmSyscallConvention::LinuxAarch64 if num == 62 => Some(SystemApiOp::Seek {
+            fd: args.get(0)?.clone(),
+            offset: args.get(1)?.clone(),
+            whence: args.get(2)?.clone(),
+        }),
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
+            if num == 0x2000_00c7 =>
+        {
+            Some(SystemApiOp::Seek {
+                fd: args.get(0)?.clone(),
+                offset: args.get(1)?.clone(),
+                whence: args.get(2)?.clone(),
+            })
+        }
+        AsmSyscallConvention::LinuxX86_64 if num == 9 => Some(SystemApiOp::Mmap {
+            addr: args.get(0)?.clone(),
+            len: args.get(1)?.clone(),
+            prot: args.get(2)?.clone(),
+            flags: args.get(3)?.clone(),
+            fd: args.get(4)?.clone(),
+            offset: args.get(5)?.clone(),
+        }),
+        AsmSyscallConvention::LinuxAarch64 if num == 222 => Some(SystemApiOp::Mmap {
+            addr: args.get(0)?.clone(),
+            len: args.get(1)?.clone(),
+            prot: args.get(2)?.clone(),
+            flags: args.get(3)?.clone(),
+            fd: args.get(4)?.clone(),
+            offset: args.get(5)?.clone(),
+        }),
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
+            if num == 0x2000_00c5 =>
+        {
+            Some(SystemApiOp::Mmap {
+                addr: args.get(0)?.clone(),
+                len: args.get(1)?.clone(),
+                prot: args.get(2)?.clone(),
+                flags: args.get(3)?.clone(),
+                fd: args.get(4)?.clone(),
+                offset: args.get(5)?.clone(),
+            })
+        }
+        AsmSyscallConvention::LinuxX86_64 if num == 11 => Some(SystemApiOp::Munmap {
+            addr: args.get(0)?.clone(),
+            len: args.get(1)?.clone(),
+        }),
+        AsmSyscallConvention::LinuxAarch64 if num == 215 => Some(SystemApiOp::Munmap {
+            addr: args.get(0)?.clone(),
+            len: args.get(1)?.clone(),
+        }),
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
+            if num == 0x2000_0049 =>
+        {
+            Some(SystemApiOp::Munmap {
+                addr: args.get(0)?.clone(),
+                len: args.get(1)?.clone(),
             })
         }
         _ => None,
@@ -1061,6 +1244,298 @@ fn lower_system_api_to_windows_import(
                 annotations: Vec::new(),
             }))
         }
+        SystemApiOp::Seek { fd, offset, whence } => {
+            let (handle_value, std_handle_code) =
+                match resolve_i64(&fd, instructions).ok().flatten() {
+                    Some(fd) => {
+                        let Some(code) = fd_to_std_handle_code(fd) else {
+                            return Ok(LoweredWindows::Unchanged);
+                        };
+                        (None, Some(code))
+                    }
+                    None => (Some(fd), None),
+                };
+
+            let getstd_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let alloca_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let setfp_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let load_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let cmp_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+
+            let (prefix, handle_arg) = if let Some(std_handle_code) = std_handle_code {
+                let getstd = AsmInstruction {
+                    id: getstd_id,
+                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                    kind: AsmInstructionKind::Call {
+                        function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
+                        args: vec![AsmValue::Constant(AsmConstant::Int(
+                            std_handle_code,
+                            AsmType::I64,
+                        ))],
+                        calling_convention: CallingConvention::Win64,
+                        tail_call: false,
+                    },
+                    type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                };
+                (Some(getstd), AsmValue::Register(getstd_id))
+            } else {
+                (
+                    None,
+                    handle_value
+                        .ok_or_else(|| fp_core::error::Error::from("missing seek handle"))?,
+                )
+            };
+
+            let alloca_new_pos = AsmInstruction {
+                id: alloca_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Alloca),
+                kind: AsmInstructionKind::Alloca {
+                    size: AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                    alignment: 8,
+                },
+                type_hint: Some(AsmType::Ptr(Box::new(AsmType::I64))),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let setfp = AsmInstruction {
+                id: setfp_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function("kernel32!SetFilePointerEx".to_string()),
+                    args: vec![handle_arg, offset, AsmValue::Register(alloca_id), whence],
+                    calling_convention: CallingConvention::Win64,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let load_new_pos = AsmInstruction {
+                id: load_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Load),
+                kind: AsmInstructionKind::Load {
+                    address: AsmValue::Register(alloca_id),
+                    alignment: Some(8),
+                    volatile: false,
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let cmp = AsmInstruction {
+                id: cmp_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
+                kind: AsmInstructionKind::Eq(
+                    AsmValue::Register(setfp_id),
+                    AsmValue::Constant(AsmConstant::Bool(false)),
+                ),
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let select = AsmInstruction {
+                id: replaces_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
+                kind: AsmInstructionKind::Select {
+                    condition: AsmValue::Register(cmp_id),
+                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    if_false: AsmValue::Register(load_id),
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let mut seq = Vec::new();
+            if let Some(prefix) = prefix {
+                seq.push(prefix);
+            }
+            seq.extend_from_slice(&[alloca_new_pos, setfp, load_new_pos, cmp, select]);
+            Ok(LoweredWindows::Sequence(seq))
+        }
+        SystemApiOp::Mmap {
+            addr,
+            len,
+            prot,
+            flags: _,
+            fd,
+            offset,
+        } => {
+            let fd_value = resolve_i64(&fd, instructions).ok().flatten();
+            let offset_value = resolve_i64(&offset, instructions).ok().flatten();
+            if fd_value != Some(-1) || offset_value != Some(0) {
+                return Ok(LoweredWindows::Unchanged);
+            }
+            let Some(prot) = resolve_i64(&prot, instructions).ok().flatten() else {
+                return Ok(LoweredWindows::Unchanged);
+            };
+
+            // MEM_COMMIT=0x1000, MEM_RESERVE=0x2000
+            const MEM_COMMIT_RESERVE: i64 = 0x3000;
+            let protection = windows_page_protection_from_posix(prot);
+
+            let call_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let cmp_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+
+            let call = AsmInstruction {
+                id: call_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function("kernel32!VirtualAlloc".to_string()),
+                    args: vec![
+                        addr,
+                        len,
+                        AsmValue::Constant(AsmConstant::Int(MEM_COMMIT_RESERVE, AsmType::I64)),
+                        AsmValue::Constant(AsmConstant::Int(protection, AsmType::I64)),
+                    ],
+                    calling_convention: CallingConvention::Win64,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let cmp = AsmInstruction {
+                id: cmp_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
+                kind: AsmInstructionKind::Eq(
+                    AsmValue::Register(call_id),
+                    AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                ),
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let select = AsmInstruction {
+                id: replaces_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
+                kind: AsmInstructionKind::Select {
+                    condition: AsmValue::Register(cmp_id),
+                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    if_false: AsmValue::Register(call_id),
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
+        }
+        SystemApiOp::Munmap { addr, len: _ } => {
+            const MEM_RELEASE: i64 = 0x8000;
+            let call_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let cmp_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+
+            let call = AsmInstruction {
+                id: call_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function("kernel32!VirtualFree".to_string()),
+                    args: vec![
+                        addr,
+                        AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                        AsmValue::Constant(AsmConstant::Int(MEM_RELEASE, AsmType::I64)),
+                    ],
+                    calling_convention: CallingConvention::Win64,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let cmp = AsmInstruction {
+                id: cmp_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
+                kind: AsmInstructionKind::Eq(
+                    AsmValue::Register(call_id),
+                    AsmValue::Constant(AsmConstant::Bool(false)),
+                ),
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let select = AsmInstruction {
+                id: replaces_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
+                kind: AsmInstructionKind::Select {
+                    condition: AsmValue::Register(cmp_id),
+                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    if_false: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
+        }
     }
 }
 
@@ -1282,6 +1757,265 @@ fn match_readfile_sequence_to_syscall(
     )))
 }
 
+fn match_setfilepointerex_sequence_to_syscall(
+    instructions: &[AsmInstruction],
+    convention: AsmSyscallConvention,
+) -> Result<Option<(AsmInstruction, usize)>> {
+    // Pattern A (stdio):
+    //   GetStdHandle; Alloca; SetFilePointerEx; Load; [Eq; Select]
+    // Pattern B (direct handle):
+    //   Alloca; SetFilePointerEx; Load; [Eq; Select]
+    if instructions.len() < 3 {
+        return Ok(None);
+    }
+
+    let mut base = 0usize;
+    let mut fd_value: Option<AsmValue> = None;
+    let handle_value: AsmValue;
+
+    if is_call_named(&instructions[0], "kernel32.dll", "GetStdHandle") {
+        if instructions.len() < 4 {
+            return Ok(None);
+        }
+        let getstd = &instructions[0];
+        let AsmInstructionKind::Call { args, .. } = &getstd.kind else {
+            return Ok(None);
+        };
+        let Some(handle_code) = args
+            .first()
+            .and_then(|value| resolve_i64(value, instructions).ok())
+        else {
+            return Ok(None);
+        };
+        let fd = match handle_code {
+            Some(-10) => 0u64,
+            Some(-11) => 1u64,
+            Some(-12) => 2u64,
+            _ => return Ok(None),
+        };
+        fd_value = Some(AsmValue::Constant(AsmConstant::UInt(fd, AsmType::I64)));
+        handle_value = AsmValue::Register(getstd.id);
+        base = 1;
+    } else {
+        handle_value = AsmValue::Undef(AsmType::I64);
+    }
+
+    let alloca = &instructions[base];
+    let setfp = instructions.get(base + 1).ok_or_else(|| {
+        fp_core::error::Error::from("missing SetFilePointerEx instruction in sequence")
+    })?;
+    let load = instructions
+        .get(base + 2)
+        .ok_or_else(|| fp_core::error::Error::from("missing Load instruction in sequence"))?;
+
+    if !matches!(alloca.kind, AsmInstructionKind::Alloca { .. }) {
+        return Ok(None);
+    }
+    if !is_call_named(setfp, "kernel32.dll", "SetFilePointerEx") {
+        return Ok(None);
+    }
+    let AsmInstructionKind::Load { address, .. } = &load.kind else {
+        return Ok(None);
+    };
+    if address != &AsmValue::Register(alloca.id) {
+        return Ok(None);
+    }
+
+    let AsmInstructionKind::Call { args, .. } = &setfp.kind else {
+        return Ok(None);
+    };
+    if args.len() != 4 {
+        return Ok(None);
+    }
+    if args[2] != AsmValue::Register(alloca.id) {
+        return Ok(None);
+    }
+    let handle_arg = if base == 1 {
+        if args[0] != handle_value {
+            return Ok(None);
+        }
+        handle_value
+    } else {
+        args[0].clone()
+    };
+
+    let fd = fd_value.unwrap_or(handle_arg);
+    let op = SystemApiOp::Seek {
+        fd,
+        offset: args[1].clone(),
+        whence: args[3].clone(),
+    };
+
+    let load_index = base + 2;
+    let (dest_id, consumed_tail) = match_result_chain_at(instructions, load_index, load.id);
+    let kind = lower_system_api_to_syscall(op, convention);
+
+    Ok(Some((
+        AsmInstruction {
+            id: dest_id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
+            kind,
+            type_hint: Some(AsmType::I64),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        },
+        consumed_tail,
+    )))
+}
+
+fn match_virtualalloc_sequence_to_syscall(
+    instructions: &[AsmInstruction],
+    convention: AsmSyscallConvention,
+) -> Result<Option<(AsmInstruction, usize)>> {
+    // Pattern:
+    //   VirtualAlloc; Eq; Select
+    if instructions.len() < 3 {
+        return Ok(None);
+    }
+    let call = &instructions[0];
+    let eq = &instructions[1];
+    let select = &instructions[2];
+
+    if !is_call_named(call, "kernel32.dll", "VirtualAlloc") {
+        return Ok(None);
+    }
+    if !matches!(eq.kind, AsmInstructionKind::Eq(_, _)) {
+        return Ok(None);
+    }
+    let AsmInstructionKind::Select {
+        if_true, if_false, ..
+    } = &select.kind
+    else {
+        return Ok(None);
+    };
+    if if_false != &AsmValue::Register(call.id) {
+        return Ok(None);
+    }
+    if if_true != &AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)) {
+        return Ok(None);
+    }
+
+    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+        return Ok(None);
+    };
+    if args.len() != 4 {
+        return Ok(None);
+    }
+
+    let style = match convention {
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+            PosixFlagStyle::Darwin
+        }
+        _ => PosixFlagStyle::Linux,
+    };
+
+    let page_prot = resolve_i64(&args[3], instructions)
+        .ok()
+        .flatten()
+        .unwrap_or(0x04);
+    let prot = match page_prot {
+        0x40 | 0x20 => 0x1 | 0x4,
+        0x04 => 0x1 | 0x2,
+        0x02 => 0x1,
+        _ => 0x1 | 0x2,
+    };
+
+    let op = SystemApiOp::Mmap {
+        addr: args[0].clone(),
+        len: args[1].clone(),
+        prot: AsmValue::Constant(AsmConstant::Int(prot, AsmType::I64)),
+        flags: AsmValue::Constant(AsmConstant::Int(
+            posix_mmap_flags_anonymous_private(style),
+            AsmType::I64,
+        )),
+        fd: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
+        offset: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+    };
+
+    let kind = lower_system_api_to_syscall(op, convention);
+    Ok(Some((
+        AsmInstruction {
+            id: select.id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
+            kind,
+            type_hint: Some(AsmType::I64),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        },
+        3,
+    )))
+}
+
+fn match_virtualfree_sequence_to_syscall(
+    instructions: &[AsmInstruction],
+    convention: AsmSyscallConvention,
+) -> Result<Option<(AsmInstruction, usize)>> {
+    // Pattern:
+    //   VirtualFree; Eq; Select
+    if instructions.len() < 3 {
+        return Ok(None);
+    }
+    let call = &instructions[0];
+    let eq = &instructions[1];
+    let select = &instructions[2];
+
+    if !is_call_named(call, "kernel32.dll", "VirtualFree") {
+        return Ok(None);
+    }
+    if !matches!(eq.kind, AsmInstructionKind::Eq(_, _)) {
+        return Ok(None);
+    }
+    let AsmInstructionKind::Select {
+        if_true, if_false, ..
+    } = &select.kind
+    else {
+        return Ok(None);
+    };
+    if if_true != &AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)) {
+        return Ok(None);
+    }
+    if if_false != &AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)) {
+        return Ok(None);
+    }
+
+    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+        return Ok(None);
+    };
+    if args.len() != 3 {
+        return Ok(None);
+    }
+
+    let op = SystemApiOp::Munmap {
+        addr: args[0].clone(),
+        len: args[1].clone(),
+    };
+
+    let kind = lower_system_api_to_syscall(op, convention);
+    Ok(Some((
+        AsmInstruction {
+            id: select.id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
+            kind,
+            type_hint: Some(AsmType::I64),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        },
+        3,
+    )))
+}
+
 fn match_result_chain_at(
     instructions: &[AsmInstruction],
     load_index: usize,
@@ -1399,6 +2133,55 @@ fn lower_system_api_to_syscall(
                 convention,
                 number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
                 args,
+            }
+        }
+        SystemApiOp::Seek { fd, offset, whence } => {
+            let number = match convention {
+                AsmSyscallConvention::LinuxX86_64 => 8,
+                AsmSyscallConvention::LinuxAarch64 => 62,
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    0x2000_00c7
+                }
+            };
+            AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                args: vec![fd, offset, whence],
+            }
+        }
+        SystemApiOp::Mmap {
+            addr,
+            len,
+            prot,
+            flags,
+            fd,
+            offset,
+        } => {
+            let number = match convention {
+                AsmSyscallConvention::LinuxX86_64 => 9,
+                AsmSyscallConvention::LinuxAarch64 => 222,
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    0x2000_00c5
+                }
+            };
+            AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                args: vec![addr, len, prot, flags, fd, offset],
+            }
+        }
+        SystemApiOp::Munmap { addr, len } => {
+            let number = match convention {
+                AsmSyscallConvention::LinuxX86_64 => 11,
+                AsmSyscallConvention::LinuxAarch64 => 215,
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    0x2000_0049
+                }
+            };
+            AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                args: vec![addr, len],
             }
         }
     }

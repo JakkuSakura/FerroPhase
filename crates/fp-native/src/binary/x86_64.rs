@@ -803,10 +803,10 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
         return Ok(None);
     }
 
-    // Minimal prefix handling: accept `REX.W`.
-    let (rex_w, opcode_index) = match bytes[0] {
-        0x48 => (true, 1usize),
-        _ => (false, 0usize),
+    // Minimal prefix handling: accept REX prefixes (0x40..0x4F).
+    let (rex_w, rex_b, opcode_index) = match bytes[0] {
+        rex @ 0x40..=0x4F => (((rex >> 3) & 1) != 0, (rex & 1) != 0, 1usize),
+        _ => (false, false, 0usize),
     };
     let Some(opcode) = bytes.get(opcode_index).copied() else {
         return Ok(None);
@@ -918,7 +918,10 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
 
     // MOV r64, imm64: REX.W B8+rd imm64.
     if rex_w && (0xB8..=0xBF).contains(&opcode) {
-        let dst = opcode - 0xB8;
+        let mut dst = opcode - 0xB8;
+        if rex_b {
+            dst = dst.saturating_add(8);
+        }
         let imm = read_i64(bytes, opcode_index + 1)?;
         return Ok(Some((
             Decoded::MovImm64 {
