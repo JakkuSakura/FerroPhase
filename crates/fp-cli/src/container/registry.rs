@@ -72,7 +72,35 @@ impl ContainerRegistry {
             Some("il" | "dll" | "exe") => Some(ContainerInputKind::Cil),
             Some("goasm") => Some(ContainerInputKind::GoAsm),
             Some("urcl") => Some(ContainerInputKind::Urcl),
-            _ => None,
+            _ => {
+                // Magic sniff: allow container inputs without a canonical extension.
+                // This is intentionally shallow (header-based), matching `inspect` behavior.
+                let prefix = {
+                    use std::io::Read;
+
+                    let mut file = std::fs::File::open(input).ok()?;
+                    let mut buf = vec![0u8; 4096];
+                    let n = file.read(&mut buf).ok()?;
+                    buf.truncate(n);
+                    buf
+                };
+
+                if self.object_reader.can_read(&prefix) {
+                    return Some(ContainerInputKind::NativeObject);
+                }
+                if fp_native::archive::can_read_archive(&prefix) {
+                    return Some(ContainerInputKind::NativeArchive);
+                }
+                if prefix.starts_with(b"PK\x03\x04") || prefix.starts_with(b"\xCA\xFE\xBA\xBE") {
+                    return Some(ContainerInputKind::JvmBytecode);
+                }
+                if prefix.starts_with(b"MZ") {
+                    // This could also be a native PE, but we default to the .NET ecosystem
+                    // container unless explicitly overridden via `--source-language`.
+                    return Some(ContainerInputKind::Cil);
+                }
+                None
+            }
         }
     }
 
