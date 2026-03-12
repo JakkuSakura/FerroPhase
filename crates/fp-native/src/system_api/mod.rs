@@ -37,6 +37,10 @@ pub enum SystemApiOp {
         from: AsmValue,
         to: AsmValue,
     },
+    Access {
+        path: AsmValue,
+        mode: AsmValue,
+    },
     Write {
         fd: AsmValue,
         buffer: AsmValue,
@@ -73,6 +77,38 @@ pub enum SystemApiOp {
         addr: AsmValue,
         len: AsmValue,
     },
+}
+
+fn match_getfileattributes_sequence_to_syscall(
+    instructions: &[AsmInstruction],
+    convention: AsmSyscallConvention,
+) -> Result<Option<(AsmInstruction, usize)>> {
+    // Pattern:
+    //   GetFileAttributesA; Eq; Select
+    if instructions.len() < 3 {
+        return Ok(None);
+    }
+
+    let call = &instructions[0];
+    if !is_call_named(call, "kernel32.dll", "GetFileAttributesA") {
+        return Ok(None);
+    }
+    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+        return Ok(None);
+    };
+    if args.len() != 1 {
+        return Ok(None);
+    }
+
+    match_kernel32_bool_call_sequence_to_syscall(
+        instructions,
+        "GetFileAttributesA",
+        SystemApiOp::Access {
+            path: args[0].clone(),
+            mode: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
+        },
+        convention,
+    )
 }
 
 fn match_freelibrary_sequence_to_unix_call(
@@ -206,6 +242,16 @@ fn detect_system_api_from_posix_call(kind: &AsmInstructionKind) -> Option<System
                 .get(1)
                 .cloned()
                 .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+        }),
+        "access" => Some(SystemApiOp::Access {
+            path: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+            mode: args
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
         }),
         _ => None,
     }
@@ -621,6 +667,15 @@ fn rewrite_windows_imports_to_syscalls(program: &mut AsmProgram) -> Result<()> {
                     continue;
                 }
 
+                if let Some((rewritten, consumed)) = match_getfileattributes_sequence_to_syscall(
+                    &block.instructions[i..],
+                    convention,
+                )? {
+                    out.push(rewritten);
+                    i = i.saturating_add(consumed);
+                    continue;
+                }
+
                 if let Some((rewritten, consumed)) =
                     match_freelibrary_sequence_to_unix_call(&block.instructions[i..], convention)?
                 {
@@ -789,6 +844,16 @@ fn detect_system_api_from_windows_import(
             Some(SystemApiOp::Rename {
                 from: args[0].clone(),
                 to: args[1].clone(),
+            })
+        }
+        "GetFileAttributesA" => {
+            let path = args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))));
+            Some(SystemApiOp::Access {
+                path,
+                mode: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
             })
         }
         "CreateFileA" => {
@@ -1216,6 +1281,40 @@ fn detect_system_api_from_syscall(
             Some(SystemApiOp::Rename {
                 from: args.get(0)?.clone(),
                 to: args.get(1)?.clone(),
+            })
+        }
+        AsmSyscallConvention::LinuxX86_64 if num == 21 => Some(SystemApiOp::Access {
+            path: args.get(0)?.clone(),
+            mode: args.get(1)?.clone(),
+        }),
+        AsmSyscallConvention::LinuxX86_64 if num == 269 => {
+            // faccessat(dirfd, path, mode, flags)
+            let dirfd = resolve_i64(args.get(0)?, instructions).ok().flatten()?;
+            if dirfd != -100 {
+                return None;
+            }
+            Some(SystemApiOp::Access {
+                path: args.get(1)?.clone(),
+                mode: args.get(2)?.clone(),
+            })
+        }
+        AsmSyscallConvention::LinuxAarch64 if num == 48 => {
+            // faccessat(dirfd, path, mode, flags)
+            let dirfd = resolve_i64(args.get(0)?, instructions).ok().flatten()?;
+            if dirfd != -100 {
+                return None;
+            }
+            Some(SystemApiOp::Access {
+                path: args.get(1)?.clone(),
+                mode: args.get(2)?.clone(),
+            })
+        }
+        AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
+            if num == 0x2000_0021 =>
+        {
+            Some(SystemApiOp::Access {
+                path: args.get(0)?.clone(),
+                mode: args.get(1)?.clone(),
             })
         }
         AsmSyscallConvention::LinuxX86_64 if num == 9 => Some(SystemApiOp::Mmap {
@@ -1655,6 +1754,65 @@ fn lower_system_api_to_windows_import(
                 debug_info: None,
                 annotations: Vec::new(),
             };
+            Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
+        }
+        SystemApiOp::Access { path, .. } => {
+            let call_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let cmp_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+
+            let call = AsmInstruction {
+                id: call_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function("kernel32!GetFileAttributesA".to_string()),
+                    args: vec![path],
+                    calling_convention: CallingConvention::Win64,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let cmp = AsmInstruction {
+                id: cmp_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
+                kind: AsmInstructionKind::Eq(
+                    AsmValue::Register(call_id),
+                    AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                ),
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let select = AsmInstruction {
+                id: replaces_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
+                kind: AsmInstructionKind::Select {
+                    condition: AsmValue::Register(cmp_id),
+                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
             Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
         }
         SystemApiOp::Write { fd, buffer, len } => {
@@ -3206,6 +3364,28 @@ fn lower_system_api_to_syscall(
                 ),
                 AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
                     (0x2000_0080, vec![from, to])
+                }
+            };
+            AsmInstructionKind::Syscall {
+                convention,
+                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                args,
+            }
+        }
+        SystemApiOp::Access { path, mode } => {
+            let (number, args) = match convention {
+                AsmSyscallConvention::LinuxX86_64 => (21, vec![path, mode]),
+                AsmSyscallConvention::LinuxAarch64 => (
+                    48,
+                    vec![
+                        AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                        path,
+                        mode,
+                        AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                    ],
+                ),
+                AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
+                    (0x2000_0021, vec![path, mode])
                 }
             };
             AsmInstructionKind::Syscall {
