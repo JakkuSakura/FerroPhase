@@ -12,6 +12,17 @@ pub enum SystemApiOp {
     },
     GetPid,
     GetTid,
+    Dlopen {
+        path: AsmValue,
+        flags: AsmValue,
+    },
+    Dlsym {
+        handle: AsmValue,
+        symbol: AsmValue,
+    },
+    Dlclose {
+        handle: AsmValue,
+    },
     Write {
         fd: AsmValue,
         buffer: AsmValue,
@@ -48,6 +59,110 @@ pub enum SystemApiOp {
         addr: AsmValue,
         len: AsmValue,
     },
+}
+
+fn match_freelibrary_sequence_to_unix_call(
+    instructions: &[AsmInstruction],
+    convention: AsmSyscallConvention,
+) -> Result<Option<(AsmInstruction, usize)>> {
+    // Pattern:
+    //   FreeLibrary; Eq; Select
+    if instructions.len() < 3 {
+        return Ok(None);
+    }
+    let call = &instructions[0];
+    let eq = &instructions[1];
+    let select = &instructions[2];
+
+    if !is_call_named(call, "kernel32.dll", "FreeLibrary") {
+        return Ok(None);
+    }
+    if !matches!(eq.kind, AsmInstructionKind::Eq(_, _)) {
+        return Ok(None);
+    }
+    let AsmInstructionKind::Select {
+        if_true, if_false, ..
+    } = &select.kind
+    else {
+        return Ok(None);
+    };
+    if if_true != &AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)) {
+        return Ok(None);
+    }
+    if if_false != &AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)) {
+        return Ok(None);
+    }
+
+    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+        return Ok(None);
+    };
+    if args.len() != 1 {
+        return Ok(None);
+    }
+
+    let op = SystemApiOp::Dlclose {
+        handle: args[0].clone(),
+    };
+    let (opcode, kind, type_hint) = lower_system_api_to_unix(op, convention);
+    Ok(Some((
+        AsmInstruction {
+            id: select.id,
+            opcode,
+            kind,
+            type_hint: Some(type_hint),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        },
+        3,
+    )))
+}
+
+fn normalize_proc_name(symbol: &str) -> String {
+    let base = symbol.split('!').last().unwrap_or(symbol).trim();
+    base.trim_start_matches('_').to_ascii_lowercase()
+}
+
+fn detect_system_api_from_posix_call(kind: &AsmInstructionKind) -> Option<SystemApiOp> {
+    let AsmInstructionKind::Call { function, args, .. } = kind else {
+        return None;
+    };
+    let AsmValue::Function(symbol) = function else {
+        return None;
+    };
+    let name = normalize_proc_name(symbol);
+    match name.as_str() {
+        "dlopen" => Some(SystemApiOp::Dlopen {
+            path: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+            flags: args
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
+        }),
+        "dlsym" => Some(SystemApiOp::Dlsym {
+            handle: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64))),
+            symbol: args
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+        }),
+        "dlclose" => Some(SystemApiOp::Dlclose {
+            handle: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64))),
+        }),
+        _ => None,
+    }
 }
 
 fn windows_createfile_disposition_from_flags(style: PosixFlagStyle, flags: i64) -> i64 {
@@ -248,10 +363,48 @@ pub fn rewrite_program_for_target(program: &mut AsmProgram) -> Result<()> {
         || program.target.object_format == AsmObjectFormat::Pe
     {
         // Windows: avoid raw syscalls; prefer stable user-mode APIs.
+        rewrite_posix_calls_to_windows_imports(program)?;
         rewrite_syscalls_to_windows_imports(program)?;
     } else {
         // Unix targets: if we see known Windows API patterns, rewrite them back to syscalls.
         rewrite_windows_imports_to_syscalls(program)?;
+    }
+    Ok(())
+}
+
+fn rewrite_posix_calls_to_windows_imports(program: &mut AsmProgram) -> Result<()> {
+    for function in &mut program.functions {
+        if function.is_declaration {
+            continue;
+        }
+
+        let mut next_id = function
+            .basic_blocks
+            .iter()
+            .flat_map(|block| block.instructions.iter().map(|inst| inst.id))
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+
+        for block in &mut function.basic_blocks {
+            let snapshot = block.instructions.clone();
+            let mut out = Vec::with_capacity(block.instructions.len());
+
+            for inst in &block.instructions {
+                let Some(op) = detect_system_api_from_posix_call(&inst.kind) else {
+                    out.push(inst.clone());
+                    continue;
+                };
+
+                match lower_system_api_to_windows_import(op, inst.id, &snapshot, &mut next_id)? {
+                    LoweredWindows::Unchanged => out.push(inst.clone()),
+                    LoweredWindows::Single(lowered) => out.push(lowered),
+                    LoweredWindows::Sequence(mut seq) => out.append(&mut seq),
+                }
+            }
+
+            block.instructions = out;
+        }
     }
     Ok(())
 }
@@ -390,11 +543,20 @@ fn rewrite_windows_imports_to_syscalls(program: &mut AsmProgram) -> Result<()> {
                     continue;
                 }
 
+                if let Some((rewritten, consumed)) =
+                    match_freelibrary_sequence_to_unix_call(&block.instructions[i..], convention)?
+                {
+                    out.push(rewritten);
+                    i = i.saturating_add(consumed);
+                    continue;
+                }
+
                 let mut inst = block.instructions[i].clone();
                 if let Some(op) = detect_system_api_from_windows_import(&inst.kind, convention) {
-                    inst.kind = lower_system_api_to_syscall(op, convention);
-                    inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Syscall);
-                    inst.type_hint = Some(AsmType::I64);
+                    let (opcode, kind, type_hint) = lower_system_api_to_unix(op, convention);
+                    inst.kind = kind;
+                    inst.opcode = opcode;
+                    inst.type_hint = Some(type_hint);
                 }
                 out.push(inst);
                 i += 1;
@@ -403,6 +565,60 @@ fn rewrite_windows_imports_to_syscalls(program: &mut AsmProgram) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn unix_calling_convention(convention: AsmSyscallConvention) -> CallingConvention {
+    match convention {
+        AsmSyscallConvention::LinuxX86_64 | AsmSyscallConvention::DarwinX86_64 => {
+            CallingConvention::X86_64SysV
+        }
+        AsmSyscallConvention::LinuxAarch64 | AsmSyscallConvention::DarwinAarch64 => {
+            CallingConvention::AAPCS
+        }
+    }
+}
+
+fn lower_system_api_to_unix(
+    op: SystemApiOp,
+    convention: AsmSyscallConvention,
+) -> (AsmOpcode, AsmInstructionKind, AsmType) {
+    match op {
+        SystemApiOp::Dlopen { path, flags } => (
+            AsmOpcode::Generic(AsmGenericOpcode::Call),
+            AsmInstructionKind::Call {
+                function: AsmValue::Function("dlopen".to_string()),
+                args: vec![path, flags],
+                calling_convention: unix_calling_convention(convention),
+                tail_call: false,
+            },
+            AsmType::I64,
+        ),
+        SystemApiOp::Dlsym { handle, symbol } => (
+            AsmOpcode::Generic(AsmGenericOpcode::Call),
+            AsmInstructionKind::Call {
+                function: AsmValue::Function("dlsym".to_string()),
+                args: vec![handle, symbol],
+                calling_convention: unix_calling_convention(convention),
+                tail_call: false,
+            },
+            AsmType::I64,
+        ),
+        SystemApiOp::Dlclose { handle } => (
+            AsmOpcode::Generic(AsmGenericOpcode::Call),
+            AsmInstructionKind::Call {
+                function: AsmValue::Function("dlclose".to_string()),
+                args: vec![handle],
+                calling_convention: unix_calling_convention(convention),
+                tail_call: false,
+            },
+            AsmType::I64,
+        ),
+        other => (
+            AsmOpcode::Generic(AsmGenericOpcode::Syscall),
+            lower_system_api_to_syscall(other, convention),
+            AsmType::I64,
+        ),
+    }
 }
 
 fn detect_system_api_from_windows_import(
@@ -436,6 +652,33 @@ fn detect_system_api_from_windows_import(
             ) =>
         {
             Some(SystemApiOp::GetTid)
+        }
+        "LoadLibraryA" => {
+            let path = args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))));
+            Some(SystemApiOp::Dlopen {
+                path,
+                flags: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
+            })
+        }
+        "GetProcAddress" => {
+            if args.len() < 2 {
+                return None;
+            }
+            Some(SystemApiOp::Dlsym {
+                handle: args[0].clone(),
+                symbol: args[1].clone(),
+            })
+        }
+        "FreeLibrary" => {
+            if args.len() != 1 {
+                return None;
+            }
+            Some(SystemApiOp::Dlclose {
+                handle: args[0].clone(),
+            })
         }
         "CreateFileA" => {
             if args.len() != 7 {
@@ -848,6 +1091,99 @@ fn lower_system_api_to_windows_import(
             debug_info: None,
             annotations: Vec::new(),
         })),
+        SystemApiOp::Dlopen { path, .. } => Ok(LoweredWindows::Single(AsmInstruction {
+            id: replaces_id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+            kind: AsmInstructionKind::Call {
+                function: AsmValue::Function("kernel32!LoadLibraryA".to_string()),
+                args: vec![path],
+                calling_convention: CallingConvention::Win64,
+                tail_call: false,
+            },
+            type_hint: Some(AsmType::I64),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        })),
+        SystemApiOp::Dlsym { handle, symbol } => Ok(LoweredWindows::Single(AsmInstruction {
+            id: replaces_id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+            kind: AsmInstructionKind::Call {
+                function: AsmValue::Function("kernel32!GetProcAddress".to_string()),
+                args: vec![handle, symbol],
+                calling_convention: CallingConvention::Win64,
+                tail_call: false,
+            },
+            type_hint: Some(AsmType::I64),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        })),
+        SystemApiOp::Dlclose { handle } => {
+            let freelib_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+            let cmp_id = *next_id;
+            *next_id = next_id.saturating_add(1);
+
+            let freelib = AsmInstruction {
+                id: freelib_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                kind: AsmInstructionKind::Call {
+                    function: AsmValue::Function("kernel32!FreeLibrary".to_string()),
+                    args: vec![handle],
+                    calling_convention: CallingConvention::Win64,
+                    tail_call: false,
+                },
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let cmp = AsmInstruction {
+                id: cmp_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
+                kind: AsmInstructionKind::Eq(
+                    AsmValue::Register(freelib_id),
+                    AsmValue::Constant(AsmConstant::Bool(false)),
+                ),
+                type_hint: Some(AsmType::I1),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            let select = AsmInstruction {
+                id: replaces_id,
+                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
+                kind: AsmInstructionKind::Select {
+                    condition: AsmValue::Register(cmp_id),
+                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: Vec::new(),
+            };
+
+            Ok(LoweredWindows::Sequence(vec![freelib, cmp, select]))
+        }
         SystemApiOp::Write { fd, buffer, len } => {
             let (handle_value, std_handle_code) =
                 match resolve_i64(&fd, instructions).ok().flatten() {
@@ -2164,6 +2500,9 @@ fn lower_system_api_to_syscall(
                 number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
                 args: vec![fd, buffer, len],
             }
+        }
+        SystemApiOp::Dlopen { .. } | SystemApiOp::Dlsym { .. } | SystemApiOp::Dlclose { .. } => {
+            AsmInstructionKind::Freeze(AsmValue::Undef(AsmType::I64))
         }
         SystemApiOp::Read { fd, buffer, len } => {
             let number = match convention {

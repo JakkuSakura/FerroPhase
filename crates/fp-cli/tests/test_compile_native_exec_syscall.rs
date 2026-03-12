@@ -3,7 +3,8 @@ use std::fs;
 use object::Object as _;
 use object::write::{Object, Symbol, SymbolSection};
 use object::{
-    Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope,
+    Architecture, BinaryFormat, Endianness, RelocationEncoding, RelocationFlags, RelocationKind,
+    SectionKind, SymbolFlags, SymbolKind, SymbolScope,
 };
 use tempfile::TempDir;
 
@@ -41,6 +42,78 @@ fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileAr
         type_defs: false,
         single_world: false,
     }
+}
+
+fn build_x86_64_elf_object_with_dlopen_call() -> Vec<u8> {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+
+    // call dlopen; ret
+    let text: [u8; 6] = [0xE8, 0x00, 0x00, 0x00, 0x00, 0xC3];
+    obj.append_section_data(section_id, &text, 1);
+
+    let main_symbol = obj.add_symbol(Symbol {
+        name: b"main".to_vec(),
+        value: 0,
+        size: text.len() as u64,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section_id),
+        flags: SymbolFlags::None,
+    });
+
+    let dlopen_symbol = obj.add_symbol(Symbol {
+        name: b"dlopen".to_vec(),
+        value: 0,
+        size: 0,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Unknown,
+        weak: false,
+        section: SymbolSection::Undefined,
+        flags: SymbolFlags::None,
+    });
+
+    obj.add_relocation(
+        section_id,
+        object::write::Relocation {
+            offset: 1,
+            symbol: dlopen_symbol,
+            addend: 0,
+            flags: RelocationFlags::Generic {
+                kind: RelocationKind::Relative,
+                encoding: RelocationEncoding::X86Branch,
+                size: 32,
+            },
+        },
+    )
+    .expect("add relocation");
+
+    let _ = main_symbol;
+    obj.write().expect("write ELF object")
+}
+
+#[tokio::test]
+async fn compile_linux_dlopen_call_exec_to_windows_import_call() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("main.exe");
+
+    fs::write(&input_file, build_x86_64_elf_object_with_dlopen_call()).unwrap();
+    let mut args = base_args(input_file, output_file.clone());
+    args.target_triple = Some("x86_64-pc-windows-msvc".to_string());
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let bytes = fs::read(&output_file).unwrap();
+    let haystack = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
+    assert!(
+        haystack.contains("kernel32.dll"),
+        "missing kernel32.dll import"
+    );
+    assert!(
+        haystack.contains("loadlibrarya"),
+        "missing LoadLibraryA import"
+    );
 }
 
 fn build_x86_64_elf_object_with_getpid_syscall() -> Vec<u8> {
