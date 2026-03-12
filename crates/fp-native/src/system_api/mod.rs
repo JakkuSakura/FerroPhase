@@ -458,8 +458,64 @@ pub fn rewrite_program_for_target(program: &mut AsmProgram) -> Result<()> {
         rewrite_posix_calls_to_windows_imports(program)?;
         rewrite_syscalls_to_windows_imports(program)?;
     } else {
+        // Normalize recognized syscalls to the destination unix ABI.
+        rewrite_syscalls_to_target_unix_convention(program)?;
         // Unix targets: if we see known Windows API patterns, rewrite them back to syscalls.
         rewrite_windows_imports_to_syscalls(program)?;
+    }
+    Ok(())
+}
+
+fn target_syscall_convention(program: &AsmProgram) -> Option<AsmSyscallConvention> {
+    match program.target.object_format {
+        AsmObjectFormat::Elf => match program.target.architecture {
+            fp_core::asmir::AsmArchitecture::X86_64 => Some(AsmSyscallConvention::LinuxX86_64),
+            fp_core::asmir::AsmArchitecture::Aarch64 => Some(AsmSyscallConvention::LinuxAarch64),
+            _ => None,
+        },
+        AsmObjectFormat::MachO => match program.target.architecture {
+            fp_core::asmir::AsmArchitecture::X86_64 => Some(AsmSyscallConvention::DarwinX86_64),
+            fp_core::asmir::AsmArchitecture::Aarch64 => Some(AsmSyscallConvention::DarwinAarch64),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn rewrite_syscalls_to_target_unix_convention(program: &mut AsmProgram) -> Result<()> {
+    let Some(target_convention) = target_syscall_convention(program) else {
+        return Ok(());
+    };
+
+    for function in &mut program.functions {
+        if function.is_declaration {
+            continue;
+        }
+
+        for block in &mut function.basic_blocks {
+            let snapshot = block.instructions.clone();
+            for inst in &mut block.instructions {
+                let AsmInstructionKind::Syscall {
+                    convention,
+                    number,
+                    args,
+                } = &inst.kind
+                else {
+                    continue;
+                };
+                if *convention == target_convention {
+                    continue;
+                }
+
+                let Some(op) = detect_system_api_from_syscall(convention, number, args, &snapshot)
+                else {
+                    continue;
+                };
+                inst.kind = lower_system_api_to_syscall(op, target_convention);
+                inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Syscall);
+                inst.type_hint = Some(AsmType::I64);
+            }
+        }
     }
     Ok(())
 }
