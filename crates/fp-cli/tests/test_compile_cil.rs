@@ -46,6 +46,7 @@ fn main() -> i64 {
         include: Vec::new(),
         define: Vec::new(),
         exec: false,
+        link: false,
         save_intermediates: false,
         lossy: true,
         max_errors: 0,

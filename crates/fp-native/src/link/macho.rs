@@ -765,6 +765,11 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                 add |= imm12 << 10;
                 out[add_offset..add_offset + 4].copy_from_slice(&add.to_le_bytes());
             }
+            RelocKind::Aarch64GotLoad => {
+                return Err(Error::from(
+                    "Aarch64GotLoad relocations are not supported by the internal Mach-O linker",
+                ));
+            }
             RelocKind::CallRel32 => {
                 let target = externs
                     .iter()

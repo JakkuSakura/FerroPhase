@@ -24,6 +24,14 @@ enum Reg {
     Rsp,
 }
 
+fn emit_punpckldq_xmm_xmm(asm: &mut Assembler, dst: FReg, src: FReg) {
+    asm.push(0x66);
+    emit_rex(asm, false, dst.id(), src.id());
+    asm.push(0x0F);
+    asm.push(0x62);
+    emit_modrm(asm, 0b11, dst.id(), src.id());
+}
+
 fn emit_syscall(
     asm: &mut Assembler,
     layout: &FrameLayout,
@@ -380,11 +388,19 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
     };
     let mut asm = Assembler::new();
     let mut rodata = Vec::new();
+    let mut data = Vec::new();
     let mut rodata_pool = HashMap::new();
     let mut rodata_symbols = HashMap::new();
+    let mut data_symbols = HashMap::new();
     let mut entry_offset = None;
 
-    emit_const_globals(program, &mut rodata, &mut rodata_symbols)?;
+    emit_const_globals(
+        program,
+        &mut rodata,
+        &mut rodata_symbols,
+        &mut data,
+        &mut data_symbols,
+    )?;
 
     let defined_functions: Vec<&AsmFunction> = program
         .functions
@@ -443,9 +459,11 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
     Ok(CodegenOutput {
         text,
         rodata,
+        data,
         relocs,
         symbols,
         rodata_symbols,
+        data_symbols,
         entry_offset,
     })
 }
@@ -454,28 +472,69 @@ fn emit_const_globals(
     program: &AsmProgram,
     rodata: &mut Vec<u8>,
     rodata_symbols: &mut HashMap<String, u64>,
+    data: &mut Vec<u8>,
+    data_symbols: &mut HashMap<String, u64>,
 ) -> Result<()> {
+    let mut emit_global =
+        |global: &fp_core::asmir::AsmGlobal,
+         initializer: &AsmConstant,
+         bytes_out: &mut Vec<u8>,
+         symbols_out: &mut HashMap<String, u64>|
+         -> Result<()> {
+            let align = global
+                .alignment
+                .map(|value| value as i32)
+                .unwrap_or_else(|| align_of(&global.ty) as i32);
+            let offset = align_to(bytes_out.len() as i32, align) as usize;
+            if offset > bytes_out.len() {
+                bytes_out.resize(offset, 0);
+            }
+            let bytes = encode_const_bytes(initializer, &global.ty)?;
+            bytes_out.extend_from_slice(&bytes);
+            symbols_out.insert(global.name.to_string(), offset as u64);
+            Ok(())
+        };
+
     for global in &program.globals {
         let Some(initializer) = &global.initializer else {
             continue;
         };
-        let align = global
-            .alignment
-            .map(|value| value as i32)
-            .unwrap_or_else(|| align_of(&global.ty) as i32);
-        let offset = align_to(rodata.len() as i32, align) as usize;
-        if offset > rodata.len() {
-            rodata.resize(offset, 0);
+
+        let section_kind = global
+            .section
+            .as_deref()
+            .and_then(|name| {
+                program
+                    .sections
+                    .iter()
+                    .find(|section| section.name == name)
+                    .map(|section| section.kind.clone())
+            })
+            .unwrap_or_else(|| {
+                if global.is_constant {
+                    fp_core::asmir::AsmSectionKind::ReadOnlyData
+                } else {
+                    fp_core::asmir::AsmSectionKind::Data
+                }
+            });
+
+        match section_kind {
+            fp_core::asmir::AsmSectionKind::Data | fp_core::asmir::AsmSectionKind::Bss => {
+                emit_global(global, initializer, data, data_symbols)?;
+            }
+            _ => {
+                emit_global(global, initializer, rodata, rodata_symbols)?;
+            }
         }
-        let bytes = encode_const_bytes(initializer, &global.ty)?;
-        rodata.extend_from_slice(&bytes);
-        rodata_symbols.insert(global.name.to_string(), offset as u64);
     }
     Ok(())
 }
 
 fn encode_const_bytes(constant: &AsmConstant, ty: &AsmType) -> Result<Vec<u8>> {
     match (constant, ty) {
+        (AsmConstant::Bytes(bytes), AsmType::Array(elem, _)) if **elem == AsmType::I8 => {
+            Ok(bytes.clone())
+        }
         (AsmConstant::Array(values, _), AsmType::Array(_, len))
             if values.is_empty() || *len == 0 =>
         {
@@ -1457,12 +1516,20 @@ fn load_value_float(
     match value {
         AsmValue::Register(id) => {
             let offset = vreg_offset(layout, *id)?;
-            emit_movsd_xm64(asm, dst, Reg::Rbp, offset, ty);
+            if matches!(ty, AsmType::Vector(_, _) if size_of(ty) == 16) {
+                emit_movdqu_xm128(asm, dst, Reg::Rbp, offset);
+            } else {
+                emit_movsd_xm64(asm, dst, Reg::Rbp, offset, ty);
+            }
             Ok(())
         }
         AsmValue::Local(id) => {
             let offset = local_offset(layout, *id)?;
-            emit_movsd_xm64(asm, dst, Reg::Rbp, offset, ty);
+            if matches!(ty, AsmType::Vector(_, _) if size_of(ty) == 16) {
+                emit_movdqu_xm128(asm, dst, Reg::Rbp, offset);
+            } else {
+                emit_movsd_xm64(asm, dst, Reg::Rbp, offset, ty);
+            }
             Ok(())
         }
         AsmValue::Constant(AsmConstant::Float(value, _)) => {
@@ -1566,7 +1633,11 @@ fn store_vreg_float(
     ty: &AsmType,
 ) -> Result<()> {
     let offset = vreg_offset(layout, id)?;
-    emit_movsd_m64x(asm, Reg::Rbp, offset, src, ty);
+    if matches!(ty, AsmType::Vector(_, _) if size_of(ty) == 16) {
+        emit_movdqu_m128x(asm, Reg::Rbp, offset, src);
+    } else {
+        emit_movsd_m64x(asm, Reg::Rbp, offset, src, ty);
+    }
     Ok(())
 }
 
@@ -1575,10 +1646,11 @@ fn is_float_type(ty: &AsmType) -> bool {
 }
 
 fn is_aggregate_type(ty: &AsmType) -> bool {
-    matches!(
-        ty,
-        AsmType::Struct { .. } | AsmType::Array(_, _) | AsmType::Vector(_, _)
-    )
+    matches!(ty, AsmType::Struct { .. } | AsmType::Array(_, _))
+}
+
+fn is_vector_type(ty: &AsmType) -> bool {
+    matches!(ty, AsmType::Vector(_, _))
 }
 
 fn is_large_aggregate(ty: &AsmType) -> bool {
@@ -1615,6 +1687,7 @@ fn constant_type(constant: &AsmConstant) -> AsmType {
         AsmConstant::Float(_, ty) => ty.clone(),
         AsmConstant::Bool(_) => AsmType::I1,
         AsmConstant::String(_) => AsmType::Ptr(Box::new(AsmType::I8)),
+        AsmConstant::Bytes(bytes) => AsmType::Array(Box::new(AsmType::I8), bytes.len() as u64),
         AsmConstant::Null(ty) => ty.clone(),
         AsmConstant::Undef(ty) => ty.clone(),
         AsmConstant::Array(_, ty) => ty.clone(),
@@ -1937,6 +2010,16 @@ fn emit_shl_imm8(asm: &mut Assembler, dst: Reg, imm: u8) {
     asm.push(imm);
 }
 
+fn emit_pextrq_r64_xmm_imm8(asm: &mut Assembler, dst: Reg, src: FReg, imm: u8) {
+    asm.push(0x66);
+    emit_rex(asm, true, dst.id(), src.id());
+    asm.push(0x0F);
+    asm.push(0x3A);
+    asm.push(0x16);
+    emit_modrm(asm, 0b11, dst.id(), src.id());
+    asm.push(imm);
+}
+
 fn emit_shr_imm8(asm: &mut Assembler, dst: Reg, imm: u8) {
     emit_rex(asm, true, 0, dst.id());
     asm.push(0xC1);
@@ -2105,6 +2188,162 @@ fn emit_block(
                     local_types,
                     format,
                 )?
+            }
+            AsmInstructionKind::Splat {
+                value,
+                lane_bits,
+                lanes,
+            } => {
+                let result_ty = inst
+                    .type_hint
+                    .as_ref()
+                    .ok_or_else(|| Error::from("missing type for splat"))?;
+                if !matches!(result_ty, AsmType::Vector(_, _) if size_of(result_ty) == 16) {
+                    return Err(Error::from("splat expects 128-bit vector result"));
+                }
+
+                if *lane_bits != 64 || *lanes != 2 {
+                    return Err(Error::from("x86_64 splat only supports 2x64 lanes for now"));
+                }
+
+                load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+                emit_movq_xmm_r64(asm, FReg::Xmm0, Reg::R10);
+                emit_punpcklqdq_xmm_xmm(asm, FReg::Xmm0, FReg::Xmm0);
+                store_vreg_float(asm, layout, inst.id, FReg::Xmm0, result_ty)?;
+            }
+            AsmInstructionKind::BuildVector { elements } => {
+                let result_ty = inst
+                    .type_hint
+                    .as_ref()
+                    .ok_or_else(|| Error::from("missing type for build_vector"))?;
+                let AsmType::Vector(elem_ty, lanes) = result_ty else {
+                    return Err(Error::from("build_vector expects vector result type"));
+                };
+                if size_of(result_ty) != 16 {
+                    return Err(Error::from("build_vector only supports 128-bit vectors"));
+                }
+                if *elem_ty.as_ref() != AsmType::I64 || *lanes != 2 {
+                    return Err(Error::from(
+                        "build_vector currently only supports <2 x i64> on x86_64",
+                    ));
+                }
+                if elements.len() != 2 {
+                    return Err(Error::from("build_vector lane count mismatch"));
+                }
+                if !matches!(
+                    elements[1],
+                    AsmValue::Constant(AsmConstant::Int(0, _))
+                        | AsmValue::Constant(AsmConstant::UInt(0, _))
+                        | AsmValue::Null(_)
+                ) {
+                    return Err(Error::from(
+                        "build_vector currently requires lane1=0 for x86_64",
+                    ));
+                }
+
+                load_value(asm, layout, &elements[0], Reg::R10, reg_types, local_types)?;
+                emit_movq_xmm_r64(asm, FReg::Xmm0, Reg::R10);
+                store_vreg_float(asm, layout, inst.id, FReg::Xmm0, result_ty)?;
+            }
+            AsmInstructionKind::ExtractLane { vector, lane } => {
+                let result_ty = inst
+                    .type_hint
+                    .as_ref()
+                    .ok_or_else(|| Error::from("missing type for extract_lane"))?;
+                if *result_ty != AsmType::I64 {
+                    return Err(Error::from("extract_lane only supports i64 for now"));
+                }
+
+                let vector_ty = value_type(vector, reg_types, local_types)?;
+                if !matches!(vector_ty, AsmType::Vector(_, _) if size_of(&vector_ty) == 16) {
+                    return Err(Error::from("extract_lane expects 128-bit vector input"));
+                }
+                if *lane > 1 {
+                    return Err(Error::from("extract_lane lane out of range"));
+                }
+
+                load_value_float(
+                    asm,
+                    layout,
+                    vector,
+                    FReg::Xmm0,
+                    &vector_ty,
+                    reg_types,
+                    local_types,
+                )?;
+                if *lane == 0 {
+                    emit_movq_r64_xmm(asm, Reg::R10, FReg::Xmm0);
+                } else {
+                    emit_pextrq_r64_xmm_imm8(asm, Reg::R10, FReg::Xmm0, *lane as u8);
+                }
+                store_vreg(asm, layout, inst.id, Reg::R10)?;
+            }
+            AsmInstructionKind::InsertLane { vector, lane, value } => {
+                let result_ty = inst
+                    .type_hint
+                    .as_ref()
+                    .ok_or_else(|| Error::from("missing type for insert_lane"))?;
+                if !matches!(result_ty, AsmType::Vector(_, _) if size_of(result_ty) == 16) {
+                    return Err(Error::from("insert_lane expects 128-bit vector result"));
+                }
+                if *lane > 1 {
+                    return Err(Error::from("insert_lane lane out of range"));
+                }
+
+                let vector_ty = value_type(vector, reg_types, local_types)?;
+                load_value_float(
+                    asm,
+                    layout,
+                    vector,
+                    FReg::Xmm0,
+                    &vector_ty,
+                    reg_types,
+                    local_types,
+                )?;
+                load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+                emit_pinsrq_xmm_r64_imm8(asm, FReg::Xmm0, Reg::R10, *lane as u8);
+                store_vreg_float(asm, layout, inst.id, FReg::Xmm0, result_ty)?;
+            }
+            AsmInstructionKind::ZipLow { lhs, rhs, lane_bits } => {
+                let result_ty = inst
+                    .type_hint
+                    .as_ref()
+                    .ok_or_else(|| Error::from("missing type for zip_low"))?;
+                if !matches!(result_ty, AsmType::Vector(_, _) if size_of(result_ty) == 16) {
+                    return Err(Error::from("zip_low expects 128-bit vector result"));
+                }
+                if !matches!(*lane_bits, 16 | 32 | 64) {
+                    return Err(Error::from(
+                        "x86_64 zip_low only supports 16/32/64-bit lanes for now",
+                    ));
+                }
+
+                let lhs_ty = value_type(lhs, reg_types, local_types)?;
+                load_value_float(
+                    asm,
+                    layout,
+                    lhs,
+                    FReg::Xmm0,
+                    &lhs_ty,
+                    reg_types,
+                    local_types,
+                )?;
+                let rhs_ty = value_type(rhs, reg_types, local_types)?;
+                load_value_float(
+                    asm,
+                    layout,
+                    rhs,
+                    FReg::Xmm1,
+                    &rhs_ty,
+                    reg_types,
+                    local_types,
+                )?;
+                match *lane_bits {
+                    16 => emit_punpcklwd_xmm_xmm(asm, FReg::Xmm0, FReg::Xmm1),
+                    32 => emit_punpckldq_xmm_xmm(asm, FReg::Xmm0, FReg::Xmm1),
+                    _ => emit_punpcklqdq_xmm_xmm(asm, FReg::Xmm0, FReg::Xmm1),
+                }
+                store_vreg_float(asm, layout, inst.id, FReg::Xmm0, result_ty)?;
             }
             AsmInstructionKind::And(lhs, rhs) => emit_bitwise_binop(
                 asm,
@@ -2788,6 +3027,13 @@ fn emit_cond_branch(
             }
         }
         AsmValue::Register(id) => {
+            let offset = vreg_offset(layout, *id)?;
+            emit_mov_rm64(asm, Reg::R10, Reg::Rbp, offset);
+            emit_cmp_imm32(asm, Reg::R10, 0);
+            asm.emit_jcc(0x85, if_true);
+            asm.emit_jmp(if_false);
+        }
+        AsmValue::Flags(id) => {
             let offset = vreg_offset(layout, *id)?;
             emit_mov_rm64(asm, Reg::R10, Reg::Rbp, offset);
             emit_cmp_imm32(asm, Reg::R10, 0);
@@ -4320,6 +4566,56 @@ fn emit_movq_xmm_r64(asm: &mut Assembler, dst: FReg, src: Reg) {
     asm.push(0x0F);
     asm.push(0x6E);
     emit_modrm(asm, 0b11, dst.id(), src.id());
+}
+
+fn emit_movq_r64_xmm(asm: &mut Assembler, dst: Reg, src: FReg) {
+    asm.push(0x66);
+    emit_rex(asm, true, src.id(), dst.id());
+    asm.push(0x0F);
+    asm.push(0x7E);
+    emit_modrm(asm, 0b11, src.id(), dst.id());
+}
+
+fn emit_movdqu_xm128(asm: &mut Assembler, dst: FReg, base: Reg, disp: i32) {
+    asm.push(0xF3);
+    emit_rex(asm, false, dst.id(), base.id());
+    asm.push(0x0F);
+    asm.push(0x6F);
+    emit_modrm_disp32(asm, dst.id(), base.id(), disp);
+}
+
+fn emit_movdqu_m128x(asm: &mut Assembler, base: Reg, disp: i32, src: FReg) {
+    asm.push(0xF3);
+    emit_rex(asm, false, src.id(), base.id());
+    asm.push(0x0F);
+    asm.push(0x7F);
+    emit_modrm_disp32(asm, src.id(), base.id(), disp);
+}
+
+fn emit_punpcklqdq_xmm_xmm(asm: &mut Assembler, dst: FReg, src: FReg) {
+    asm.push(0x66);
+    emit_rex(asm, false, dst.id(), src.id());
+    asm.push(0x0F);
+    asm.push(0x6C);
+    emit_modrm(asm, 0b11, dst.id(), src.id());
+}
+
+fn emit_punpcklwd_xmm_xmm(asm: &mut Assembler, dst: FReg, src: FReg) {
+    asm.push(0x66);
+    emit_rex(asm, false, dst.id(), src.id());
+    asm.push(0x0F);
+    asm.push(0x61);
+    emit_modrm(asm, 0b11, dst.id(), src.id());
+}
+
+fn emit_pinsrq_xmm_r64_imm8(asm: &mut Assembler, dst: FReg, src: Reg, imm: u8) {
+    asm.push(0x66);
+    emit_rex(asm, true, dst.id(), src.id());
+    asm.push(0x0F);
+    asm.push(0x3A);
+    asm.push(0x22);
+    emit_modrm(asm, 0b11, dst.id(), src.id());
+    asm.push(imm);
 }
 
 fn emit_addsd(asm: &mut Assembler, dst: FReg, src: FReg, ty: &AsmType) {

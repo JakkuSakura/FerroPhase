@@ -284,6 +284,11 @@ pub enum AsmGenericOpcode {
     Unreachable,
     Freeze,
     Syscall,
+    Splat,
+    BuildVector,
+    ExtractLane,
+    InsertLane,
+    ZipLow,
 }
 
 impl AsmOpcode {
@@ -347,6 +352,11 @@ impl AsmGenericOpcode {
             AsmGenericOpcode::Unreachable => "unreachable",
             AsmGenericOpcode::Freeze => "freeze",
             AsmGenericOpcode::Syscall => "syscall",
+            AsmGenericOpcode::Splat => "splat",
+            AsmGenericOpcode::BuildVector => "build_vector",
+            AsmGenericOpcode::ExtractLane => "extract_lane",
+            AsmGenericOpcode::InsertLane => "insert_lane",
+            AsmGenericOpcode::ZipLow => "zip_low",
         }
     }
 }
@@ -464,6 +474,40 @@ pub enum AsmInstructionKind {
         number: AsmValue,
         args: Vec<AsmValue>,
     },
+    /// Replicates a scalar value into all lanes of a vector.
+    ///
+    /// `lane_bits * lanes` must match the destination vector size.
+    Splat {
+        value: AsmValue,
+        lane_bits: u16,
+        lanes: u16,
+    },
+    /// Constructs a vector value from explicit lane values.
+    ///
+    /// Lane types are derived from the destination instruction `type_hint`.
+    BuildVector {
+        elements: Vec<AsmValue>,
+    },
+    /// Extract a lane (0-based) from a vector value.
+    ExtractLane {
+        vector: AsmValue,
+        lane: u16,
+    },
+    /// Produces a new vector with one lane overwritten.
+    InsertLane {
+        vector: AsmValue,
+        lane: u16,
+        value: AsmValue,
+    },
+    /// Interleaves low lanes from two vectors.
+    ///
+    /// For example with `lane_bits=16`, the result is the equivalent of:
+    /// `zip1 vD.8h, vLhs.8h, vRhs.8h` on AArch64 or `punpcklwd` on x86_64.
+    ZipLow {
+        lhs: AsmValue,
+        rhs: AsmValue,
+        lane_bits: u16,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -575,6 +619,7 @@ pub enum AsmConstant {
     Float(f64, AsmType),
     Bool(bool),
     String(String),
+    Bytes(Vec<u8>),
     Array(Vec<AsmConstant>, AsmType),
     Struct(Vec<AsmConstant>, AsmType),
     GlobalRef(Name, AsmType, Vec<u64>),

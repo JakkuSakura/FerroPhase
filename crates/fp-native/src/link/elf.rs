@@ -522,6 +522,11 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                 add |= imm12 << 10;
                 out[add_offset..add_offset + 4].copy_from_slice(&add.to_le_bytes());
             }
+            crate::emit::RelocKind::Aarch64GotLoad => {
+                return Err(Error::from(
+                    "Aarch64GotLoad relocations are not supported in ELF executables",
+                ));
+            }
         }
     }
 

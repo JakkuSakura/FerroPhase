@@ -423,9 +423,19 @@ pub fn emit_object_coff(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Resul
                     reloc_type: IMAGE_REL_ARM64_ADD_LO12,
                 });
             }
+            (TargetArch::Aarch64, RelocKind::Aarch64GotLoad) => {
+                return Err(Error::from(
+                    "Aarch64GotLoad relocations are not supported for COFF",
+                ));
+            }
             (_, RelocKind::Aarch64AdrpAdd) => {
                 return Err(Error::from(
                     "AArch64 relocations are not supported for x86_64 COFF",
+                ));
+            }
+            (_, RelocKind::Aarch64GotLoad) => {
+                return Err(Error::from(
+                    "Aarch64GotLoad relocations are not supported for x86_64 COFF",
                 ));
             }
         }
@@ -949,6 +959,11 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
                 add &= !(0xfff << 10);
                 add |= imm12 << 10;
                 out[add_offset..add_offset + 4].copy_from_slice(&add.to_le_bytes());
+            }
+            crate::emit::RelocKind::Aarch64GotLoad => {
+                return Err(Error::from(
+                    "Aarch64GotLoad relocations are not supported in PE executables",
+                ));
             }
         }
     }

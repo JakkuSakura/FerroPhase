@@ -116,18 +116,22 @@ pub struct EmitPlan {
     pub asmir: AsmProgram,
     pub text: Vec<u8>,
     pub rodata: Vec<u8>,
+    pub data: Vec<u8>,
     pub relocs: Vec<Relocation>,
     pub symbols: HashMap<String, u64>,
     pub rodata_symbols: HashMap<String, u64>,
+    pub data_symbols: HashMap<String, u64>,
     pub entry_offset: u64,
 }
 
 pub struct CodegenOutput {
     pub text: Vec<u8>,
     pub rodata: Vec<u8>,
+    pub data: Vec<u8>,
     pub relocs: Vec<Relocation>,
     pub symbols: HashMap<String, u64>,
     pub rodata_symbols: HashMap<String, u64>,
+    pub data_symbols: HashMap<String, u64>,
     pub entry_offset: u64,
 }
 
@@ -136,6 +140,7 @@ pub enum RelocKind {
     CallRel32,
     Abs64,
     Aarch64AdrpAdd,
+    Aarch64GotLoad,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,9 +175,11 @@ pub fn emit_plan(
         asmir,
         text: output.text,
         rodata: output.rodata,
+        data: output.data,
         relocs: output.relocs,
         symbols: output.symbols,
         rodata_symbols: output.rodata_symbols,
+        data_symbols: output.data_symbols,
         entry_offset: output.entry_offset,
     })
 }
@@ -205,9 +212,11 @@ pub fn emit_plan_from_asmir(
         asmir,
         text: output.text,
         rodata: output.rodata,
+        data: output.data,
         relocs: output.relocs,
         symbols: output.symbols,
         rodata_symbols: output.rodata_symbols,
+        data_symbols: output.data_symbols,
         entry_offset: output.entry_offset,
     })
 }

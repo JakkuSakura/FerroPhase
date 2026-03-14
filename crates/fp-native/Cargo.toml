@@ -11,6 +11,8 @@ thiserror = "1.0"
 tracing = "0.1"
 libc = "0.2"
 object = { version = "0.37.3", features = ["write"] }
+capstone = "0.14.0"
+goblin = "0.10.0"
 
 [dev-dependencies]
 tempfile = "3.8"

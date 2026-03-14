@@ -724,11 +724,20 @@ fn pe_executable_emits_rdata_base_relocs() {
     let arch = host_arch();
     let mut symbols = HashMap::new();
     symbols.insert("main".to_string(), 0);
+    let asmir = fp_core::asmir::AsmProgram::new(fp_core::asmir::AsmTarget {
+        architecture: fp_core::asmir::AsmArchitecture::X86_64,
+        object_format: fp_core::asmir::AsmObjectFormat::Coff,
+        endianness: fp_core::asmir::AsmEndianness::Little,
+        pointer_width: 64,
+        default_calling_convention: None,
+    });
     let plan = emit::EmitPlan {
         format: TargetFormat::Coff,
         arch,
+        asmir,
         text: vec![0xC3],
         rodata: vec![0u8; 8],
+        data: Vec::new(),
         relocs: vec![Relocation {
             offset: 0,
             kind: RelocKind::Abs64,
@@ -737,6 +746,8 @@ fn pe_executable_emits_rdata_base_relocs() {
             addend: 0,
         }],
         symbols,
+        rodata_symbols: HashMap::new(),
+        data_symbols: HashMap::new(),
         entry_offset: 0,
     };
     let out_dir = tempfile::tempdir().unwrap();

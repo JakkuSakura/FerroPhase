@@ -260,9 +260,11 @@ mod tests {
             asmir,
             text: vec![0xC3],
             rodata: Vec::new(),
+            data: Vec::new(),
             relocs: Vec::new(),
             symbols,
             rodata_symbols: HashMap::new(),
+            data_symbols: HashMap::new(),
             entry_offset: 0,
         };
         let container = crate::link::object_writer::container_from_emit_plan(

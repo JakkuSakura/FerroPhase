@@ -57,6 +57,7 @@ async fn compile_jvm_jar_to_native_object() {
         include: Vec::new(),
         define: Vec::new(),
         exec: false,
+        link: false,
         save_intermediates: false,
         lossy: false,
         max_errors: 10,

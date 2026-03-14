@@ -58,6 +58,7 @@ fn base_compile_args(input: PathBuf, output: PathBuf) -> CompileArgs {
         include: Vec::new(),
         define: Vec::new(),
         exec: false,
+        link: false,
         save_intermediates: false,
         lossy: false,
         max_errors: 10,

@@ -137,6 +137,11 @@ impl JitEngine {
                         target,
                     )?;
                 }
+                RelocKind::Aarch64GotLoad => {
+                    return Err(Error::from(
+                        "Aarch64GotLoad relocations are not supported by the JIT",
+                    ));
+                }
             }
         }
         Ok(())

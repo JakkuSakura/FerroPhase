@@ -34,6 +34,7 @@ fn base_args(
         include: Vec::new(),
         define: Vec::new(),
         exec: false,
+        link: false,
         save_intermediates: false,
         lossy: false,
         max_errors: 10,

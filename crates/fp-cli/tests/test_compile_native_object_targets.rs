@@ -40,6 +40,7 @@ fn base_args(
         include: Vec::new(),
         define: Vec::new(),
         exec: false,
+        link: false,
         save_intermediates: false,
         lossy: false,
         max_errors: 10,
@@ -49,6 +50,24 @@ fn base_args(
         type_defs: false,
         single_world: false,
     }
+}
+
+#[tokio::test]
+async fn compile_native_object_link_writes_executable_without_running() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("main.out");
+
+    fs::write(&input_file, build_x86_64_elf_object_with_call_reloc()).unwrap();
+    let mut args = base_args(input_file, output_file.clone(), "aarch64-apple-darwin");
+    args.link = true;
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let bytes = fs::read(&output_file).unwrap();
+    let file = object::File::parse(bytes.as_slice()).unwrap();
+    assert_eq!(file.kind(), object::ObjectKind::Executable);
+    assert_eq!(file.format(), BinaryFormat::MachO);
+    assert_eq!(file.architecture(), Architecture::Aarch64);
 }
 
 #[tokio::test]

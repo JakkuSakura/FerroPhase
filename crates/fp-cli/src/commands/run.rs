@@ -75,6 +75,7 @@ pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
         include: Vec::new(),
         define: Vec::new(),
         exec: true,
+        link: false,
         save_intermediates: false,
         lossy: false,
         max_errors: 50,

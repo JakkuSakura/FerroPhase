@@ -580,6 +580,7 @@ pub fn lift_function_bytes(
     Ok(LiftedFunction {
         basic_blocks,
         locals: ctx.locals,
+        direct_call_targets: Vec::new(),
     })
 }
 

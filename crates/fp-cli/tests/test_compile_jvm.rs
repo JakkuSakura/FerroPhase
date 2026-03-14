@@ -26,6 +26,7 @@ fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileAr
         include: Vec::new(),
         define: Vec::new(),
         exec: false,
+        link: false,
         save_intermediates: false,
         lossy: false,
         max_errors: 10,

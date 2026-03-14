@@ -55,6 +55,11 @@ fn relocation_flags(kind: RelocKind, arch: TargetArch) -> Result<RelocationFlags
                     "unsupported Aarch64AdrpAdd relocation for object emission",
                 ));
             }
+            RelocKind::Aarch64GotLoad => {
+                return Err(Error::from(
+                    "unsupported Aarch64GotLoad relocation for object emission",
+                ));
+            }
         },
         encoding: match kind {
             RelocKind::Abs64 => RelocationEncoding::Generic,
@@ -63,11 +68,13 @@ fn relocation_flags(kind: RelocKind, arch: TargetArch) -> Result<RelocationFlags
                 TargetArch::Aarch64 => RelocationEncoding::AArch64Call,
             },
             RelocKind::Aarch64AdrpAdd => RelocationEncoding::Unknown,
+            RelocKind::Aarch64GotLoad => RelocationEncoding::Unknown,
         },
         size: match kind {
             RelocKind::Abs64 => 64,
             RelocKind::CallRel32 => 32,
             RelocKind::Aarch64AdrpAdd => 0,
+            RelocKind::Aarch64GotLoad => 0,
         },
     })
 }
@@ -120,10 +127,275 @@ pub fn emit_object(
     arch: TargetArch,
     plan: &EmitPlan,
 ) -> Result<()> {
+    if format == TargetFormat::MachO && arch == TargetArch::Aarch64 {
+        let bytes = write_macho_aarch64_object(plan)?;
+        std::fs::write(path, bytes).map_err(|err| Error::from(err.to_string()))?;
+        return Ok(());
+    }
     let container = container_from_emit_plan(format, arch, plan)?;
     let bytes = write_object_container(&container)?;
     std::fs::write(path, bytes).map_err(|err| Error::from(err.to_string()))?;
     Ok(())
+}
+
+fn write_macho_aarch64_object(plan: &EmitPlan) -> Result<Vec<u8>> {
+    use object::macho;
+
+    let format = BinaryFormat::MachO;
+    let architecture = Architecture::Aarch64;
+    let mut obj = Object::new(format, architecture, Endianness::Little);
+    obj.set_mangling(Mangling::default(format, architecture));
+
+    let text_id = obj.section_id(StandardSection::Text);
+    if !plan.text.is_empty() {
+        obj.append_section_data(text_id, &plan.text, 16);
+    }
+    let rodata_id = if plan.rodata.is_empty() {
+        None
+    } else {
+        let section = obj.section_id(StandardSection::ReadOnlyData);
+        obj.append_section_data(section, &plan.rodata, 16);
+        Some(section)
+    };
+    let data_id = if plan.data.is_empty() {
+        None
+    } else {
+        let section = obj.section_id(StandardSection::Data);
+        obj.append_section_data(section, &plan.data, 16);
+        Some(section)
+    };
+
+    let mut symbol_ids: HashMap<String, object::write::SymbolId> = HashMap::new();
+
+    let mangle_undefined = |raw: &str| -> String {
+        if raw.starts_with("__") {
+            format!("_{raw}")
+        } else if raw.starts_with('_') {
+            raw.to_string()
+        } else {
+            format!("_{raw}")
+        }
+    };
+
+    for (name, offset) in &plan.symbols {
+        let section = SymbolSection::Section(text_id);
+        let id = intern_symbol(
+            &mut obj,
+            &mut symbol_ids,
+            name,
+            SymbolKind::Text,
+            section,
+            *offset,
+        );
+        let _ = id;
+    }
+    if let Some(rodata_id) = rodata_id {
+        for (name, offset) in &plan.rodata_symbols {
+            let section = SymbolSection::Section(rodata_id);
+            intern_symbol(
+                &mut obj,
+                &mut symbol_ids,
+                name,
+                SymbolKind::Data,
+                section,
+                *offset,
+            );
+        }
+    }
+    if let Some(data_id) = data_id {
+        for (name, offset) in &plan.data_symbols {
+            let section = SymbolSection::Section(data_id);
+            intern_symbol(
+                &mut obj,
+                &mut symbol_ids,
+                name,
+                SymbolKind::Data,
+                section,
+                *offset,
+            );
+        }
+    }
+
+    let ensure_undefined =
+        |obj: &mut Object,
+         symbol_ids: &mut HashMap<String, object::write::SymbolId>,
+         unmangled: &str|
+         -> object::write::SymbolId {
+            if unmangled.is_empty() {
+                return intern_symbol(
+                    obj,
+                    symbol_ids,
+                    unmangled,
+                    SymbolKind::Unknown,
+                    SymbolSection::Undefined,
+                    0,
+                );
+            }
+            let mangled = mangle_undefined(unmangled);
+            let id = intern_symbol(
+                obj,
+                symbol_ids,
+                mangled.as_str(),
+                SymbolKind::Unknown,
+                SymbolSection::Undefined,
+                0,
+            );
+            symbol_ids.insert(unmangled.to_string(), id);
+            id
+    };
+
+    for reloc in &plan.relocs {
+        if reloc.symbol.is_empty() {
+            return Err(Error::from("relocation refers to empty symbol"));
+        }
+        let section_id = match reloc.section {
+            RelocSection::Text => text_id,
+            RelocSection::Rdata => rodata_id.ok_or_else(|| Error::from("relocation refers to missing .rodata"))?,
+        };
+
+        let target_symbol = if reloc.symbol == ".rodata" {
+            if let Some(rodata_id) = rodata_id {
+                // Mach-O section relocations need a symbol; create one if needed.
+                intern_symbol(
+                    &mut obj,
+                    &mut symbol_ids,
+                    ".rodata",
+                    SymbolKind::Section,
+                    SymbolSection::Section(rodata_id),
+                    0,
+                )
+            } else {
+                intern_symbol(
+                    &mut obj,
+                    &mut symbol_ids,
+                    ".rodata",
+                    SymbolKind::Unknown,
+                    SymbolSection::Undefined,
+                    0,
+                )
+            }
+        } else if let Some(id) = symbol_ids.get(&reloc.symbol) {
+            *id
+        } else {
+            ensure_undefined(&mut obj, &mut symbol_ids, reloc.symbol.as_str())
+        };
+
+        match reloc.kind {
+            RelocKind::Abs64 => {
+                obj.add_relocation(
+                    section_id,
+                    Relocation {
+                        offset: reloc.offset,
+                        symbol: target_symbol,
+                        addend: reloc.addend,
+                        flags: RelocationFlags::MachO {
+                            r_type: macho::ARM64_RELOC_UNSIGNED,
+                            r_pcrel: false,
+                            r_length: 3,
+                        },
+                    },
+                )
+                .map_err(|err| Error::from(err.to_string()))?;
+            }
+            RelocKind::CallRel32 => {
+                if reloc.addend != 0 {
+                    return Err(Error::from("Mach-O call relocations do not support addends"));
+                }
+                obj.add_relocation(
+                    section_id,
+                    Relocation {
+                        offset: reloc.offset,
+                        symbol: target_symbol,
+                        addend: 0,
+                        flags: RelocationFlags::MachO {
+                            r_type: macho::ARM64_RELOC_BRANCH26,
+                            r_pcrel: true,
+                            r_length: 2,
+                        },
+                    },
+                )
+                .map_err(|err| Error::from(err.to_string()))?;
+            }
+            RelocKind::Aarch64AdrpAdd => {
+                if reloc.addend != 0 {
+                    return Err(Error::from(
+                        "Mach-O ADRP/ADD relocations do not support addends",
+                    ));
+                }
+                obj.add_relocation(
+                    section_id,
+                    Relocation {
+                        offset: reloc.offset,
+                        symbol: target_symbol,
+                        addend: 0,
+                        flags: RelocationFlags::MachO {
+                            r_type: macho::ARM64_RELOC_PAGE21,
+                            r_pcrel: true,
+                            r_length: 2,
+                        },
+                    },
+                )
+                .map_err(|err| Error::from(err.to_string()))?;
+                obj.add_relocation(
+                    section_id,
+                    Relocation {
+                        offset: reloc
+                            .offset
+                            .checked_add(4)
+                            .ok_or_else(|| Error::from("relocation offset overflow"))?,
+                        symbol: target_symbol,
+                        addend: 0,
+                        flags: RelocationFlags::MachO {
+                            r_type: macho::ARM64_RELOC_PAGEOFF12,
+                            r_pcrel: false,
+                            r_length: 2,
+                        },
+                    },
+                )
+                .map_err(|err| Error::from(err.to_string()))?;
+            }
+            RelocKind::Aarch64GotLoad => {
+                if reloc.addend != 0 {
+                    return Err(Error::from(
+                        "Mach-O GOT relocations do not support addends",
+                    ));
+                }
+                obj.add_relocation(
+                    section_id,
+                    Relocation {
+                        offset: reloc.offset,
+                        symbol: target_symbol,
+                        addend: 0,
+                        flags: RelocationFlags::MachO {
+                            r_type: macho::ARM64_RELOC_GOT_LOAD_PAGE21,
+                            r_pcrel: true,
+                            r_length: 2,
+                        },
+                    },
+                )
+                .map_err(|err| Error::from(err.to_string()))?;
+                obj.add_relocation(
+                    section_id,
+                    Relocation {
+                        offset: reloc
+                            .offset
+                            .checked_add(4)
+                            .ok_or_else(|| Error::from("relocation offset overflow"))?,
+                        symbol: target_symbol,
+                        addend: 0,
+                        flags: RelocationFlags::MachO {
+                            r_type: macho::ARM64_RELOC_GOT_LOAD_PAGEOFF12,
+                            r_pcrel: false,
+                            r_length: 2,
+                        },
+                    },
+                )
+                .map_err(|err| Error::from(err.to_string()))?;
+            }
+        }
+    }
+
+    obj.write().map_err(|err| Error::from(err.to_string()))
 }
 
 pub fn container_from_emit_plan(
@@ -164,6 +436,16 @@ pub fn container_from_emit_plan(
             data: plan.rodata.clone(),
         }))
     };
+    let data_section = if plan.data.is_empty() {
+        None
+    } else {
+        Some(container.add_section(ContainerSection {
+            name: ".data".to_string(),
+            kind: ContainerSectionKind::Data,
+            align: 16,
+            data: plan.data.clone(),
+        }))
+    };
 
     for (name, offset) in &plan.symbols {
         container.add_symbol(ContainerSymbol {
@@ -188,7 +470,23 @@ pub fn container_from_emit_plan(
         }
     }
 
+    if let Some(data_section) = data_section {
+        for (name, offset) in &plan.data_symbols {
+            container.add_symbol(ContainerSymbol {
+                name: name.clone(),
+                kind: ContainerSymbolKind::Data,
+                scope: ContainerSymbolScope::Global,
+                section: Some(data_section),
+                value: *offset,
+                size: 0,
+            });
+        }
+    }
+
     for reloc in &plan.relocs {
+        if reloc.symbol.is_empty() {
+            return Err(Error::from("relocation refers to empty symbol"));
+        }
         let section = match reloc.section {
             RelocSection::Text => text_section,
             RelocSection::Rdata => {
@@ -390,9 +688,11 @@ mod tests {
             asmir,
             text: vec![0xC3],
             rodata: Vec::new(),
+            data: Vec::new(),
             relocs: Vec::new(),
             symbols,
             rodata_symbols: HashMap::new(),
+            data_symbols: HashMap::new(),
             entry_offset: 0,
         };
 

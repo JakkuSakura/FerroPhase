@@ -24,6 +24,7 @@ use fp_sycl::SyclSerializer;
 use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
 use fp_wit::{WitOptions, WitSerializer, WorldMode};
 use fp_zig::ZigSerializer;
+use object::Object as _;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};
@@ -114,6 +115,13 @@ pub struct CompileArgs {
     /// Execute the compiled binary using exec clib function
     #[arg(short, long)]
     pub exec: bool,
+
+    /// Link native object/binary inputs into an executable (without running it).
+    ///
+    /// This is primarily useful for native container inputs such as ELF/PE/Mach-O,
+    /// where the default transpile output is an object file (`.o`).
+    #[arg(long)]
+    pub link: bool,
 
     /// Persist intermediate representations to disk
     #[arg(long)]
@@ -270,6 +278,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             jvm_container_input,
             emit_text_bytecode,
             output_is_dir,
+            args.link || args.exec,
             args.exec,
         )?;
 
@@ -543,14 +552,33 @@ fn detect_native_object_source(source_language: Option<&str>, input: &Path) -> b
         }
     }
 
-    matches!(
+    let extension_matches = matches!(
         input
             .extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_ascii_lowercase())
             .as_deref(),
         Some("o" | "obj")
-    )
+    );
+
+    if extension_matches {
+        return true;
+    }
+
+    // Fallback: header sniffing (no full parse).
+    // This enables `fp compile --backend binary` to accept native objects/binaries
+    // without relying on filename extensions (e.g. `/tmp/ls`).
+    let mut buf = [0u8; 4096];
+    let mut file = match std::fs::File::open(input) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let read_len = match std::io::Read::read(&mut file, &mut buf) {
+        Ok(len) => len,
+        Err(_) => return false,
+    };
+
+    object::read::FileKind::parse(&buf[..read_len]).is_ok()
 }
 
 async fn maybe_transpile_native_asm(
@@ -903,12 +931,27 @@ fn resolve_compile_target(args: &CompileArgs) -> Result<CompileTarget> {
 }
 
 async fn exec_compiled_binary(path: &Path) -> Result<()> {
-    let is_executable = path
+    let extension_allows_exec = path
         .extension()
         .map_or(false, |ext| ext == "out" || ext == "exe")
         || (cfg!(unix) && path.extension().is_none());
 
-    if !is_executable {
+    let header_allows_exec = if extension_allows_exec {
+        true
+    } else {
+        // Native transpilation supports emitting executables with arbitrary suffixes
+        // (e.g. `ls.aarch64`). Use header sniffing so `--exec` does not depend on
+        // naming conventions.
+        match tokio::fs::read(path).await {
+            Ok(bytes) => match object::File::parse(bytes.as_slice()) {
+                Ok(file) => file.kind() == object::ObjectKind::Executable,
+                Err(_) => false,
+            },
+            Err(_) => false,
+        }
+    };
+
+    if !header_allows_exec {
         return Err(CliError::Compilation(format!(
             "Refusing to execute '{}': unsupported binary extension",
             path.display()
@@ -1125,6 +1168,7 @@ fn determine_output_path(
     jvm_container_input: bool,
     emit_text_bytecode: bool,
     output_is_dir: bool,
+    native_link_requested: bool,
     exec_requested: bool,
 ) -> Result<PathBuf> {
     let backend = match target {
@@ -1181,9 +1225,17 @@ fn determine_output_path(
                     } else if native_asm_text_target {
                         "s"
                     } else if native_object_target {
-                        "o"
+                        if native_link_requested {
+                            "out"
+                        } else {
+                            "o"
+                        }
                     } else if native_archive_target {
-                        "a"
+                        if native_link_requested {
+                            "out"
+                        } else {
+                            "a"
+                        }
                     } else if urcl_object_target {
                         "o"
                     } else if goasm_object_target {
@@ -1318,6 +1370,10 @@ fn determine_output_path(
                     "urcl"
                 } else if native_asm_text_target {
                     "s"
+                } else if native_object_target {
+                    "o"
+                } else if native_archive_target {
+                    "a"
                 } else if urcl_object_target {
                     "o"
                 } else if goasm_object_target {

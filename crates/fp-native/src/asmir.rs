@@ -19,9 +19,10 @@ use fp_core::asmir::{
 use fp_core::error::Result;
 use fp_core::lir::layout::size_of;
 use fp_core::lir::{
-    LirConstant, LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirValue, Name,
-    Visibility,
+    Linkage, LirConstant, LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirValue,
+    Name, Visibility,
 };
+use std::collections::HashMap;
 
 pub fn select_program(
     lir_program: &LirProgram,
@@ -324,6 +325,10 @@ fn canonicalize_instruction_kind_registers(
             canonicalize_value(lhs, map, next_virtual_id);
             canonicalize_value(rhs, map, next_virtual_id);
         }
+        AsmInstructionKind::ZipLow { lhs, rhs, .. } => {
+            canonicalize_value(lhs, map, next_virtual_id);
+            canonicalize_value(rhs, map, next_virtual_id);
+        }
         AsmInstructionKind::Bitcast(value, _)
         | AsmInstructionKind::Trunc(value, _)
         | AsmInstructionKind::ZExt(value, _)
@@ -384,6 +389,21 @@ fn canonicalize_instruction_kind_registers(
             for arg in args {
                 canonicalize_value(arg, map, next_virtual_id);
             }
+        }
+        AsmInstructionKind::Splat { value, .. } => {
+            canonicalize_value(value, map, next_virtual_id);
+        }
+        AsmInstructionKind::BuildVector { elements } => {
+            for element in elements {
+                canonicalize_value(element, map, next_virtual_id);
+            }
+        }
+        AsmInstructionKind::ExtractLane { vector, .. } => {
+            canonicalize_value(vector, map, next_virtual_id);
+        }
+        AsmInstructionKind::InsertLane { vector, value, .. } => {
+            canonicalize_value(vector, map, next_virtual_id);
+            canonicalize_value(value, map, next_virtual_id);
         }
         AsmInstructionKind::Phi { incoming } => {
             for (value, _) in incoming {
@@ -710,10 +730,386 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> AsmProgram
 }
 
 fn normalize_program_for_target(program: &mut AsmProgram) {
+    intern_string_constants(program);
+    normalize_syscall_conventions_for_target(program);
     match program.target.architecture {
         AsmArchitecture::X86_64 => normalize_program_for_x86_64(program),
         AsmArchitecture::Aarch64 => normalize_program_for_aarch64(program),
         _ => normalize_program_generic(program),
+    }
+}
+
+fn intern_string_constants(program: &mut AsmProgram) {
+    #[derive(Default)]
+    struct InternContext {
+        seen: HashMap<String, Name>,
+        globals: Vec<AsmGlobal>,
+        next_id: u32,
+    }
+
+    impl InternContext {
+        fn intern_cstring(&mut self, text: &str) -> Name {
+            if let Some(name) = self.seen.get(text) {
+                return name.clone();
+            }
+
+            self.next_id += 1;
+            let name = Name::new(format!("fp_str_{}", self.next_id));
+
+            let mut bytes = Vec::with_capacity(text.len() + 1);
+            bytes.extend_from_slice(text.as_bytes());
+            bytes.push(0);
+
+            let initializer = AsmConstant::Array(
+                bytes
+                    .iter()
+                    .map(|byte| AsmConstant::UInt(*byte as u64, AsmType::I8))
+                    .collect(),
+                AsmType::I8,
+            );
+            let ty = AsmType::Array(Box::new(AsmType::I8), bytes.len() as u64);
+
+            self.globals.push(AsmGlobal {
+                name: name.clone(),
+                ty,
+                initializer: Some(initializer),
+                section: Some(".rodata".to_string()),
+                linkage: Linkage::Private,
+                visibility: Visibility::Default,
+                alignment: Some(1),
+                is_constant: true,
+            });
+            self.seen.insert(text.to_string(), name.clone());
+            name
+        }
+    }
+
+    fn rewrite_value(value: &mut AsmValue, ctx: &mut InternContext) {
+        match value {
+            AsmValue::Constant(constant) => rewrite_constant(constant, ctx),
+            AsmValue::Address(address) => {
+                if let Some(base) = address.base.as_deref_mut() {
+                    rewrite_value(base, ctx);
+                }
+                if let Some(index) = address.index.as_deref_mut() {
+                    rewrite_value(index, ctx);
+                }
+                if let Some(segment) = address.segment.as_deref_mut() {
+                    rewrite_value(segment, ctx);
+                }
+            }
+            AsmValue::Comparison(comparison) => {
+                rewrite_value(&mut comparison.lhs, ctx);
+                rewrite_value(&mut comparison.rhs, ctx);
+            }
+            _ => {}
+        }
+    }
+
+    fn rewrite_constant(constant: &mut AsmConstant, ctx: &mut InternContext) {
+        match constant {
+            AsmConstant::String(text) => {
+                let symbol = ctx.intern_cstring(text);
+                *constant = AsmConstant::GlobalRef(
+                    symbol,
+                    AsmType::Ptr(Box::new(AsmType::I8)),
+                    Vec::new(),
+                );
+            }
+            AsmConstant::Array(values, _) | AsmConstant::Struct(values, _) => {
+                for value in values {
+                    rewrite_constant(value, ctx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn rewrite_instruction(kind: &mut AsmInstructionKind, ctx: &mut InternContext) {
+        match kind {
+            AsmInstructionKind::Add(lhs, rhs)
+            | AsmInstructionKind::Sub(lhs, rhs)
+            | AsmInstructionKind::Mul(lhs, rhs)
+            | AsmInstructionKind::Div(lhs, rhs)
+            | AsmInstructionKind::Rem(lhs, rhs)
+            | AsmInstructionKind::And(lhs, rhs)
+            | AsmInstructionKind::Or(lhs, rhs)
+            | AsmInstructionKind::Xor(lhs, rhs)
+            | AsmInstructionKind::Shl(lhs, rhs)
+            | AsmInstructionKind::Shr(lhs, rhs)
+            | AsmInstructionKind::Eq(lhs, rhs)
+            | AsmInstructionKind::Ne(lhs, rhs)
+            | AsmInstructionKind::Lt(lhs, rhs)
+            | AsmInstructionKind::Le(lhs, rhs)
+            | AsmInstructionKind::Gt(lhs, rhs)
+            | AsmInstructionKind::Ge(lhs, rhs)
+            | AsmInstructionKind::Ult(lhs, rhs)
+            | AsmInstructionKind::Ule(lhs, rhs)
+            | AsmInstructionKind::Ugt(lhs, rhs)
+            | AsmInstructionKind::Uge(lhs, rhs)
+            | AsmInstructionKind::ZipLow { lhs, rhs, .. } => {
+                rewrite_value(lhs, ctx);
+                rewrite_value(rhs, ctx);
+            }
+            AsmInstructionKind::Not(value)
+            | AsmInstructionKind::PtrToInt(value)
+            | AsmInstructionKind::IntToPtr(value)
+            | AsmInstructionKind::Freeze(value)
+            | AsmInstructionKind::ExtractLane { vector: value, .. } => {
+                rewrite_value(value, ctx);
+            }
+            AsmInstructionKind::Load { address, .. } => {
+                rewrite_value(address, ctx);
+            }
+            AsmInstructionKind::Store {
+                value,
+                address,
+                ..
+            } => {
+                rewrite_value(value, ctx);
+                rewrite_value(address, ctx);
+            }
+            AsmInstructionKind::Alloca { size, .. } => {
+                rewrite_value(size, ctx);
+            }
+            AsmInstructionKind::GetElementPtr { ptr, indices, .. } => {
+                rewrite_value(ptr, ctx);
+                for index in indices {
+                    rewrite_value(index, ctx);
+                }
+            }
+            AsmInstructionKind::Bitcast(value, _)
+            | AsmInstructionKind::Trunc(value, _)
+            | AsmInstructionKind::ZExt(value, _)
+            | AsmInstructionKind::SExt(value, _)
+            | AsmInstructionKind::FPExt(value, _)
+            | AsmInstructionKind::FPTrunc(value, _)
+            | AsmInstructionKind::FPToUI(value, _)
+            | AsmInstructionKind::FPToSI(value, _)
+            | AsmInstructionKind::UIToFP(value, _)
+            | AsmInstructionKind::SIToFP(value, _) => {
+                rewrite_value(value, ctx);
+            }
+            AsmInstructionKind::ExtractValue { aggregate, .. } => {
+                rewrite_value(aggregate, ctx);
+            }
+            AsmInstructionKind::InsertValue {
+                aggregate, element, ..
+            } => {
+                rewrite_value(aggregate, ctx);
+                rewrite_value(element, ctx);
+            }
+            AsmInstructionKind::Call { function, args, .. } => {
+                rewrite_value(function, ctx);
+                for arg in args {
+                    rewrite_value(arg, ctx);
+                }
+            }
+            AsmInstructionKind::IntrinsicCall { args, .. } => {
+                for arg in args {
+                    rewrite_value(arg, ctx);
+                }
+            }
+            AsmInstructionKind::SextOrTrunc(value, _) => {
+                rewrite_value(value, ctx);
+            }
+            AsmInstructionKind::Phi { incoming } => {
+                for (value, _) in incoming {
+                    rewrite_value(value, ctx);
+                }
+            }
+            AsmInstructionKind::Select {
+                condition,
+                if_true,
+                if_false,
+            } => {
+                rewrite_value(condition, ctx);
+                rewrite_value(if_true, ctx);
+                rewrite_value(if_false, ctx);
+            }
+            AsmInstructionKind::InlineAsm { inputs, .. } => {
+                for input in inputs {
+                    rewrite_value(input, ctx);
+                }
+            }
+            AsmInstructionKind::LandingPad {
+                personality, clauses, ..
+            } => {
+                if let Some(personality) = personality {
+                    rewrite_value(personality, ctx);
+                }
+                for clause in clauses {
+                    match clause {
+                        AsmLandingPadClause::Catch(value) => rewrite_value(value, ctx),
+                        AsmLandingPadClause::Filter(values) => {
+                            for value in values {
+                                rewrite_value(value, ctx);
+                            }
+                        }
+                    }
+                }
+            }
+            AsmInstructionKind::Syscall { number, args, .. } => {
+                rewrite_value(number, ctx);
+                for arg in args {
+                    rewrite_value(arg, ctx);
+                }
+            }
+            AsmInstructionKind::Splat { value, .. } => rewrite_value(value, ctx),
+            AsmInstructionKind::BuildVector { elements } => {
+                for element in elements {
+                    rewrite_value(element, ctx);
+                }
+            }
+            AsmInstructionKind::InsertLane { vector, value, .. } => {
+                rewrite_value(vector, ctx);
+                rewrite_value(value, ctx);
+            }
+            AsmInstructionKind::Unreachable => {}
+        }
+    }
+
+    fn rewrite_terminator(terminator: &mut AsmTerminator, ctx: &mut InternContext) {
+        match terminator {
+            AsmTerminator::Return(value) => {
+                if let Some(value) = value {
+                    rewrite_value(value, ctx);
+                }
+            }
+            AsmTerminator::CondBr { condition, .. } => rewrite_value(condition, ctx),
+            AsmTerminator::Switch { value, .. } => rewrite_value(value, ctx),
+            AsmTerminator::IndirectBr { address, .. } => rewrite_value(address, ctx),
+            AsmTerminator::Invoke { function, args, .. } => {
+                rewrite_value(function, ctx);
+                for arg in args {
+                    rewrite_value(arg, ctx);
+                }
+            }
+            AsmTerminator::Resume(value)
+            | AsmTerminator::CleanupRet {
+                cleanup_pad: value, ..
+            }
+            | AsmTerminator::CatchRet { catch_pad: value, .. } => rewrite_value(value, ctx),
+            AsmTerminator::CatchSwitch { parent_pad, .. } => {
+                if let Some(value) = parent_pad {
+                    rewrite_value(value, ctx);
+                }
+            }
+            AsmTerminator::Br(..) | AsmTerminator::Unreachable => {}
+        }
+    }
+
+    let mut ctx = InternContext::default();
+
+    for global in &mut program.globals {
+        if let Some(initializer) = &mut global.initializer {
+            rewrite_constant(initializer, &mut ctx);
+        }
+    }
+
+    for function in &mut program.functions {
+        for block in &mut function.basic_blocks {
+            for instruction in &mut block.instructions {
+                rewrite_instruction(&mut instruction.kind, &mut ctx);
+            }
+            rewrite_terminator(&mut block.terminator, &mut ctx);
+        }
+    }
+
+    program.globals.extend(ctx.globals);
+}
+
+fn normalize_syscall_conventions_for_target(program: &mut AsmProgram) {
+    let Some(convention) = syscall_convention_for_target(&program.target) else {
+        return;
+    };
+
+    for function in &mut program.functions {
+        for block in &mut function.basic_blocks {
+            let mut last_constants: HashMap<u32, AsmConstant> = HashMap::new();
+            for instruction in &mut block.instructions {
+                if let AsmInstructionKind::Freeze(AsmValue::Constant(constant)) =
+                    &instruction.kind
+                {
+                    last_constants.insert(instruction.id, constant.clone());
+                }
+
+                if let AsmInstructionKind::Syscall {
+                    convention: c,
+                    number,
+                    ..
+                } = &mut instruction.kind
+                {
+                    let old_convention = *c;
+                    *c = convention;
+
+                    if matches!(
+                        (old_convention, convention),
+                        (
+                            AsmSyscallConvention::DarwinX86_64,
+                            AsmSyscallConvention::DarwinAarch64
+                        )
+                            | (
+                                AsmSyscallConvention::DarwinAarch64,
+                                AsmSyscallConvention::DarwinX86_64
+                            )
+                    ) {
+                        let constant_number = match number {
+                            AsmValue::Constant(AsmConstant::UInt(value, ty)) => {
+                                Some((*value as i64, ty.clone()))
+                            }
+                            AsmValue::Constant(AsmConstant::Int(value, ty)) => {
+                                Some((*value, ty.clone()))
+                            }
+                            AsmValue::Register(id) => last_constants
+                                .get(id)
+                                .and_then(|constant| match constant {
+                                    AsmConstant::UInt(value, ty) => {
+                                        Some((*value as i64, ty.clone()))
+                                    }
+                                    AsmConstant::Int(value, ty) => Some((*value, ty.clone())),
+                                    _ => None,
+                                }),
+                            _ => None,
+                        };
+
+                        if let Some((value, ty)) = constant_number {
+                            let translated = match (old_convention, convention) {
+                                (
+                                    AsmSyscallConvention::DarwinX86_64,
+                                    AsmSyscallConvention::DarwinAarch64,
+                                ) => value.saturating_sub(0x0200_0000),
+                                (
+                                    AsmSyscallConvention::DarwinAarch64,
+                                    AsmSyscallConvention::DarwinX86_64,
+                                ) => value.saturating_add(0x0200_0000),
+                                _ => value,
+                            };
+
+                            if translated != value {
+                                *number = AsmValue::Constant(AsmConstant::Int(translated, ty));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn syscall_convention_for_target(target: &AsmTarget) -> Option<AsmSyscallConvention> {
+    use fp_core::asmir::AsmObjectFormat;
+
+    match (&target.architecture, &target.object_format) {
+        (AsmArchitecture::X86_64, AsmObjectFormat::Elf) => Some(AsmSyscallConvention::LinuxX86_64),
+        (AsmArchitecture::X86_64, AsmObjectFormat::MachO) => {
+            Some(AsmSyscallConvention::DarwinX86_64)
+        }
+        (AsmArchitecture::Aarch64, AsmObjectFormat::Elf) => Some(AsmSyscallConvention::LinuxAarch64),
+        (AsmArchitecture::Aarch64, AsmObjectFormat::MachO) => {
+            Some(AsmSyscallConvention::DarwinAarch64)
+        }
+        _ => None,
     }
 }
 
@@ -1199,6 +1595,10 @@ fn x86_typed_operands(
             operands.push(x86_operand(lhs, ctx));
             operands.push(x86_operand(rhs, ctx));
         }
+        AsmInstructionKind::ZipLow { lhs, rhs, .. } => {
+            operands.push(x86_operand(lhs, ctx));
+            operands.push(x86_operand(rhs, ctx));
+        }
         AsmInstructionKind::Not(value)
         | AsmInstructionKind::PtrToInt(value)
         | AsmInstructionKind::IntToPtr(value)
@@ -1286,6 +1686,19 @@ fn x86_typed_operands(
             }
         }
         AsmInstructionKind::Syscall { .. } => {}
+        AsmInstructionKind::Splat { value, .. } => operands.push(x86_operand(value, ctx)),
+        AsmInstructionKind::BuildVector { elements } => {
+            operands.extend(elements.iter().map(|value| x86_operand(value, ctx)));
+        }
+        AsmInstructionKind::ExtractLane { vector, lane } => {
+            operands.push(x86_operand(vector, ctx));
+            operands.push(X86Operand::Immediate((*lane).into()));
+        }
+        AsmInstructionKind::InsertLane { vector, value, lane } => {
+            operands.push(x86_operand(vector, ctx));
+            operands.push(x86_operand(value, ctx));
+            operands.push(X86Operand::Immediate((*lane).into()));
+        }
         AsmInstructionKind::Unreachable => {}
     }
 
@@ -1539,6 +1952,11 @@ fn aarch64_opcode_name(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> &'sta
         AsmInstructionKind::InlineAsm { .. } => "inlineasm",
         AsmInstructionKind::LandingPad { .. } => "landingpad",
         AsmInstructionKind::Syscall { .. } => "svc",
+        AsmInstructionKind::Splat { .. } => "dup",
+        AsmInstructionKind::BuildVector { .. } => "build_vector",
+        AsmInstructionKind::ExtractLane { .. } => "extract_lane",
+        AsmInstructionKind::InsertLane { .. } => "insert_lane",
+        AsmInstructionKind::ZipLow { .. } => "zip1",
         AsmInstructionKind::Unreachable => "brk",
     }
 }
@@ -1675,6 +2093,25 @@ fn aarch64_typed_operands(
                 _ => 0,
             };
             operands.push(Aarch64Operand::Immediate(imm));
+        }
+        AsmInstructionKind::Splat { value, .. } => {
+            operands.push(aarch64_operand(value, ctx));
+        }
+        AsmInstructionKind::BuildVector { elements } => {
+            operands.extend(elements.iter().map(|value| aarch64_operand(value, ctx)));
+        }
+        AsmInstructionKind::ExtractLane { vector, lane } => {
+            operands.push(aarch64_operand(vector, ctx));
+            operands.push(Aarch64Operand::Immediate((*lane).into()));
+        }
+        AsmInstructionKind::InsertLane { vector, value, lane } => {
+            operands.push(aarch64_operand(vector, ctx));
+            operands.push(aarch64_operand(value, ctx));
+            operands.push(Aarch64Operand::Immediate((*lane).into()));
+        }
+        AsmInstructionKind::ZipLow { lhs, rhs, .. } => {
+            operands.push(aarch64_operand(lhs, ctx));
+            operands.push(aarch64_operand(rhs, ctx));
         }
         AsmInstructionKind::Unreachable => {}
     }
@@ -1880,6 +2317,13 @@ fn x86_opcode(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> X86Opcode {
         AsmInstructionKind::InlineAsm { .. } => X86Opcode::InlineAsm,
         AsmInstructionKind::LandingPad { .. } => X86Opcode::LandingPad,
         AsmInstructionKind::Syscall { .. } => X86Opcode::Syscall,
+        AsmInstructionKind::Splat { .. } => X86Opcode::Mov,
+        AsmInstructionKind::BuildVector { .. }
+        | AsmInstructionKind::ExtractLane { .. }
+        | AsmInstructionKind::InsertLane { .. }
+        | AsmInstructionKind::ZipLow { .. } => {
+            X86Opcode::Mov
+        }
         AsmInstructionKind::Unreachable => X86Opcode::Ud2,
     }
 }
@@ -1932,6 +2376,10 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
         | AsmInstructionKind::Ule(lhs, rhs)
         | AsmInstructionKind::Ugt(lhs, rhs)
         | AsmInstructionKind::Uge(lhs, rhs) => {
+            operands.push(value_operand(lhs));
+            operands.push(value_operand(rhs));
+        }
+        AsmInstructionKind::ZipLow { lhs, rhs, .. } => {
             operands.push(value_operand(lhs));
             operands.push(value_operand(rhs));
         }
@@ -2015,6 +2463,19 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
             }
         }
         AsmInstructionKind::Syscall { .. } => {}
+        AsmInstructionKind::Splat { value, .. } => operands.push(value_operand(value)),
+        AsmInstructionKind::BuildVector { elements } => {
+            operands.extend(elements.iter().map(value_operand));
+        }
+        AsmInstructionKind::ExtractLane { vector, lane } => {
+            operands.push(value_operand(vector));
+            operands.push(AsmOperand::Immediate((*lane).into()));
+        }
+        AsmInstructionKind::InsertLane { vector, lane, value } => {
+            operands.push(value_operand(vector));
+            operands.push(value_operand(value));
+            operands.push(AsmOperand::Immediate((*lane).into()));
+        }
         AsmInstructionKind::Unreachable => {}
     }
 
@@ -2135,6 +2596,7 @@ fn x86_constant_operand(constant: &AsmConstant) -> X86Operand {
         AsmConstant::String(value) => {
             X86Operand::Symbol(Name::new(format!("str.{}", sanitize_symbol(value))))
         }
+        AsmConstant::Bytes(..) => X86Operand::Symbol(Name::new("const.bytes")),
         AsmConstant::GlobalRef(name, _, _) | AsmConstant::FunctionRef(name, _) => {
             X86Operand::Symbol(name.clone())
         }
@@ -2382,6 +2844,7 @@ fn constant_operand(constant: &AsmConstant) -> AsmOperand {
         AsmConstant::String(value) => {
             AsmOperand::Symbol(Name::new(format!("str.{}", sanitize_symbol(value))))
         }
+        AsmConstant::Bytes(..) => AsmOperand::Symbol(Name::new("const.bytes")),
         AsmConstant::GlobalRef(name, _, _) | AsmConstant::FunctionRef(name, _) => {
             AsmOperand::Symbol(name.clone())
         }
@@ -3626,6 +4089,7 @@ fn aarch64_constant_operand(constant: &AsmConstant) -> Aarch64Operand {
         AsmConstant::String(value) => {
             Aarch64Operand::Symbol(Name::new(format!("str.{}", sanitize_symbol(value))))
         }
+        AsmConstant::Bytes(..) => Aarch64Operand::Symbol(Name::new("const.bytes")),
         AsmConstant::GlobalRef(name, _, _) | AsmConstant::FunctionRef(name, _) => {
             Aarch64Operand::Symbol(name.clone())
         }
@@ -3746,6 +4210,11 @@ fn generic_opcode(kind: &AsmInstructionKind) -> AsmGenericOpcode {
         AsmInstructionKind::Unreachable => AsmGenericOpcode::Unreachable,
         AsmInstructionKind::Freeze(..) => AsmGenericOpcode::Freeze,
         AsmInstructionKind::Syscall { .. } => AsmGenericOpcode::Syscall,
+        AsmInstructionKind::Splat { .. } => AsmGenericOpcode::Splat,
+        AsmInstructionKind::BuildVector { .. } => AsmGenericOpcode::BuildVector,
+        AsmInstructionKind::ExtractLane { .. } => AsmGenericOpcode::ExtractLane,
+        AsmInstructionKind::InsertLane { .. } => AsmGenericOpcode::InsertLane,
+        AsmInstructionKind::ZipLow { .. } => AsmGenericOpcode::ZipLow,
     }
 }
 

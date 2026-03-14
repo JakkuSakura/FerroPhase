@@ -28,6 +28,7 @@ fn base_compile_args(input: std::path::PathBuf, output: std::path::PathBuf) -> C
         include: Vec::new(),
         define: Vec::new(),
         exec: false,
+        link: false,
         save_intermediates: false,
         lossy: true,
         max_errors: 0,
