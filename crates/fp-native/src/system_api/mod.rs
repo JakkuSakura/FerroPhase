@@ -1,83 +1,11 @@
 use fp_core::asmir::{
     AsmConstant, AsmGenericOpcode, AsmInstruction, AsmInstructionKind, AsmObjectFormat, AsmOpcode,
-    AsmProgram, AsmSyscallConvention, AsmType, AsmValue,
+    AsmProgram, AsmSysOp, AsmSyscallConvention, AsmType, AsmValue, PosixFlagStyle,
 };
 use fp_core::error::Result;
 use fp_core::lir::CallingConvention;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum SystemApiOp {
-    Exit {
-        code: AsmValue,
-    },
-    GetPid,
-    GetTid,
-    Dlopen {
-        path: AsmValue,
-        flags: AsmValue,
-    },
-    Dlsym {
-        handle: AsmValue,
-        symbol: AsmValue,
-    },
-    Dlclose {
-        handle: AsmValue,
-    },
-    Unlink {
-        path: AsmValue,
-    },
-    Mkdir {
-        path: AsmValue,
-        mode: AsmValue,
-    },
-    Rmdir {
-        path: AsmValue,
-    },
-    Rename {
-        from: AsmValue,
-        to: AsmValue,
-    },
-    Access {
-        path: AsmValue,
-        mode: AsmValue,
-    },
-    Write {
-        fd: AsmValue,
-        buffer: AsmValue,
-        len: AsmValue,
-    },
-    Read {
-        fd: AsmValue,
-        buffer: AsmValue,
-        len: AsmValue,
-    },
-    Close {
-        fd: AsmValue,
-    },
-    Open {
-        path: AsmValue,
-        flags: AsmValue,
-        mode: AsmValue,
-        flag_style: PosixFlagStyle,
-    },
-    Seek {
-        fd: AsmValue,
-        offset: AsmValue,
-        whence: AsmValue,
-    },
-    Mmap {
-        addr: AsmValue,
-        len: AsmValue,
-        prot: AsmValue,
-        flags: AsmValue,
-        fd: AsmValue,
-        offset: AsmValue,
-    },
-    Munmap {
-        addr: AsmValue,
-        len: AsmValue,
-    },
-}
+type SystemApiOp = AsmSysOp;
 
 fn match_getfileattributes_sequence_to_syscall(
     instructions: &[AsmInstruction],
@@ -109,6 +37,49 @@ fn match_getfileattributes_sequence_to_syscall(
         },
         convention,
     )
+}
+
+pub fn rewrite_program_to_sys_ops(program: &mut AsmProgram) -> Result<()> {
+    let syscall_convention = target_syscall_convention(program);
+    for func in &mut program.functions {
+        if func.is_declaration {
+            continue;
+        }
+        for block in &mut func.basic_blocks {
+            let snapshot = block.instructions.clone();
+            for inst in &mut block.instructions {
+                if let AsmInstructionKind::Syscall {
+                    convention,
+                    number,
+                    args,
+                } = &inst.kind
+                {
+                    if let Some(op) =
+                        detect_system_api_from_syscall(convention, number, args, &snapshot)
+                    {
+                        inst.kind = AsmInstructionKind::SysOp(op);
+                        inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::SysOp);
+                    }
+                    continue;
+                }
+
+                if let Some(op) = detect_system_api_from_posix_call(&inst.kind) {
+                    inst.kind = AsmInstructionKind::SysOp(op);
+                    inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::SysOp);
+                    continue;
+                }
+
+                if let Some(convention) = syscall_convention {
+                    if let Some(op) = detect_system_api_from_windows_import(&inst.kind, convention)
+                    {
+                        inst.kind = AsmInstructionKind::SysOp(op);
+                        inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::SysOp);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn match_freelibrary_sequence_to_unix_call(
@@ -262,12 +233,6 @@ fn windows_createfile_disposition_from_flags(style: PosixFlagStyle, flags: i64) 
         PosixFlagStyle::Linux => windows_createfile_disposition_linux(flags),
         PosixFlagStyle::Darwin => windows_createfile_disposition_darwin(flags),
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PosixFlagStyle {
-    Linux,
-    Darwin,
 }
 
 fn posix_mmap_flags_anonymous_private(style: PosixFlagStyle) -> i64 {
@@ -451,17 +416,82 @@ fn fd_to_std_handle_code(fd: i64) -> Option<i64> {
 }
 
 pub fn rewrite_program_for_target(program: &mut AsmProgram) -> Result<()> {
+    rewrite_program_to_sys_ops(program)?;
+    lower_sys_ops_for_target(program)
+}
+
+pub fn lower_sys_ops_for_target(program: &mut AsmProgram) -> Result<()> {
     if program.target.object_format == AsmObjectFormat::Coff
         || program.target.object_format == AsmObjectFormat::Pe
     {
-        // Windows: avoid raw syscalls; prefer stable user-mode APIs.
-        rewrite_posix_calls_to_windows_imports(program)?;
-        rewrite_syscalls_to_windows_imports(program)?;
+        lower_sys_ops_to_windows_imports(program)
     } else {
-        // Normalize recognized syscalls to the destination unix ABI.
-        rewrite_syscalls_to_target_unix_convention(program)?;
-        // Unix targets: if we see known Windows API patterns, rewrite them back to syscalls.
-        rewrite_windows_imports_to_syscalls(program)?;
+        lower_sys_ops_to_unix_syscalls(program)
+    }
+}
+
+fn lower_sys_ops_to_unix_syscalls(program: &mut AsmProgram) -> Result<()> {
+    let Some(target_convention) = target_syscall_convention(program) else {
+        return Ok(());
+    };
+
+    for function in &mut program.functions {
+        if function.is_declaration {
+            continue;
+        }
+
+        for block in &mut function.basic_blocks {
+            for inst in &mut block.instructions {
+                let AsmInstructionKind::SysOp(op) = &inst.kind else {
+                    continue;
+                };
+                inst.kind = lower_system_api_to_syscall(op.clone(), target_convention);
+                inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Syscall);
+                inst.type_hint = Some(AsmType::I64);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn lower_sys_ops_to_windows_imports(program: &mut AsmProgram) -> Result<()> {
+    for function in &mut program.functions {
+        if function.is_declaration {
+            continue;
+        }
+
+        let mut next_id = function
+            .basic_blocks
+            .iter()
+            .flat_map(|block| block.instructions.iter().map(|inst| inst.id))
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+
+        for block in &mut function.basic_blocks {
+            let snapshot = block.instructions.clone();
+            let mut out = Vec::with_capacity(block.instructions.len());
+
+            for inst in &block.instructions {
+                let AsmInstructionKind::SysOp(op) = &inst.kind else {
+                    out.push(inst.clone());
+                    continue;
+                };
+
+                match lower_system_api_to_windows_import(
+                    op.clone(),
+                    inst.id,
+                    &snapshot,
+                    &mut next_id,
+                )? {
+                    LoweredWindows::Unchanged => out.push(inst.clone()),
+                    LoweredWindows::Single(lowered) => out.push(lowered),
+                    LoweredWindows::Sequence(mut seq) => out.append(&mut seq),
+                }
+            }
+
+            block.instructions = out;
+        }
     }
     Ok(())
 }
@@ -1443,7 +1473,11 @@ fn lower_system_api_to_windows_import(
                 calling_convention: CallingConvention::Win64,
                 tail_call: false,
             },
-            type_hint: Some(AsmType::Void),
+            // ExitProcess is `noreturn` at the OS ABI level, but our AsmIR currently
+            // models call results as SSA values that may be referenced by later
+            // instructions (e.g. through generic lowering patterns). Keep this typed
+            // as an integer to avoid codegen attempting to materialize a `Void` value.
+            type_hint: Some(AsmType::I64),
             operands: Vec::new(),
             implicit_uses: Vec::new(),
             implicit_defs: Vec::new(),

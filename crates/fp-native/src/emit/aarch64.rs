@@ -495,7 +495,8 @@ fn build_reg_types(func: &AsmFunction) -> HashMap<u32, AsmType> {
                     }
                     AsmInstructionKind::Call { .. }
                     | AsmInstructionKind::IntrinsicCall { .. }
-                    | AsmInstructionKind::Syscall { .. } => Some(AsmType::I64),
+                    | AsmInstructionKind::Syscall { .. }
+                    | AsmInstructionKind::SysOp(..) => Some(AsmType::I64),
                     AsmInstructionKind::Unreachable | AsmInstructionKind::Store { .. } => None,
                 };
 
@@ -6643,6 +6644,7 @@ mod tests {
                 pointer_width: 64,
                 default_calling_convention: None,
             },
+            container: None,
             sections: Vec::new(),
             globals: Vec::new(),
             functions: vec![AsmFunction {
@@ -6682,6 +6684,7 @@ mod tests {
                 pointer_width: 64,
                 default_calling_convention: None,
             },
+            container: None,
             sections: Vec::new(),
             globals: Vec::new(),
             functions: vec![AsmFunction {

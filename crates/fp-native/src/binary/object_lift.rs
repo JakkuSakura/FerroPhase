@@ -4,6 +4,12 @@ use fp_core::asmir::{
     AsmLocal, AsmObjectFormat, AsmProgram, AsmSection, AsmSectionFlag, AsmSectionKind,
     AsmStackFrame, AsmSyscallConvention, AsmTarget, AsmTerminator, AsmType,
 };
+use fp_core::container::{
+    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerFormat, ContainerKind,
+    ContainerRelocation, ContainerRelocationEncoding, ContainerRelocationKind,
+    ContainerRelocationSpec, ContainerRelocationTarget, ContainerSection, ContainerSectionKind,
+    ContainerSymbol, ContainerSymbolKind, ContainerSymbolScope,
+};
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
 use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget, SymbolKind};
@@ -47,6 +53,158 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         object::BinaryFormat::Coff => AsmObjectFormat::Coff,
         _ => AsmObjectFormat::Raw,
     };
+
+    let container_kind = match file.kind() {
+        object::ObjectKind::Executable => ContainerKind::Executable,
+        _ => ContainerKind::Object,
+    };
+    let container_format = match file.format() {
+        object::BinaryFormat::Elf => ContainerFormat::Elf,
+        object::BinaryFormat::MachO => ContainerFormat::MachO,
+        object::BinaryFormat::Coff => ContainerFormat::Coff,
+        object::BinaryFormat::Pe => ContainerFormat::Pe,
+        other => ContainerFormat::Other(format!("{other:?}")),
+    };
+    let container_arch = match file.architecture() {
+        object::Architecture::X86_64 => ContainerArchitecture::X86_64,
+        object::Architecture::Aarch64 => ContainerArchitecture::Aarch64,
+        other => ContainerArchitecture::Other(format!("{other:?}")),
+    };
+    let mut container = ContainerFile::new(
+        container_kind,
+        container_format,
+        container_arch,
+        ContainerEndianness::Little,
+    );
+    let mut section_ids: HashMap<object::SectionIndex, usize> = HashMap::new();
+    for section in file.sections() {
+        let name = section
+            .name()
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or("<anon>");
+        let kind = match section.kind() {
+            object::SectionKind::Text => ContainerSectionKind::Text,
+            object::SectionKind::ReadOnlyData => ContainerSectionKind::ReadOnlyData,
+            object::SectionKind::Data => ContainerSectionKind::Data,
+            object::SectionKind::UninitializedData => ContainerSectionKind::Bss,
+            object::SectionKind::Debug => ContainerSectionKind::Debug,
+            _ => ContainerSectionKind::Other,
+        };
+        let align = section.align();
+        let data = match section.kind() {
+            object::SectionKind::UninitializedData => vec![0u8; section.size() as usize],
+            _ => section.data().map(|data| data.to_vec()).unwrap_or_default(),
+        };
+        let id = container.add_section(ContainerSection {
+            name: name.to_string(),
+            kind,
+            align,
+            data,
+        });
+        section_ids.insert(section.index(), id);
+    }
+
+    for symbol in file.symbols() {
+        let name = match symbol.name() {
+            Ok(name) if !name.is_empty() => name,
+            _ => continue,
+        };
+        let kind = match symbol.kind() {
+            object::SymbolKind::Text => ContainerSymbolKind::Text,
+            object::SymbolKind::Data => ContainerSymbolKind::Data,
+            object::SymbolKind::Section => ContainerSymbolKind::Section,
+            _ => ContainerSymbolKind::Other,
+        };
+        let scope = match symbol.scope() {
+            object::SymbolScope::Compilation | object::SymbolScope::Linkage => {
+                ContainerSymbolScope::Local
+            }
+            object::SymbolScope::Dynamic => ContainerSymbolScope::Global,
+            object::SymbolScope::Unknown => ContainerSymbolScope::Local,
+        };
+        let section = symbol.section_index().and_then(|idx| section_ids.get(&idx).copied());
+        let value = if let Some(idx) = symbol.section_index() {
+            file.section_by_index(idx)
+                .ok()
+                .map(|section| symbol.address().saturating_sub(section.address()))
+                .unwrap_or(symbol.address())
+        } else {
+            symbol.address()
+        };
+        container.add_symbol(ContainerSymbol {
+            name: name.to_string(),
+            kind,
+            scope,
+            section,
+            value,
+            size: symbol.size(),
+        });
+    }
+
+    for section in file.sections() {
+        let Some(&container_section) = section_ids.get(&section.index()) else {
+            continue;
+        };
+        for (offset, relocation) in section.relocations() {
+            let target = match relocation.target() {
+                RelocationTarget::Symbol(symbol_index) => {
+                    let symbol = match file.symbol_by_index(symbol_index) {
+                        Ok(symbol) => symbol,
+                        Err(_) => continue,
+                    };
+                    let name = symbol
+                        .name()
+                        .ok()
+                        .filter(|value| !value.is_empty())
+                        .map(|value| value.to_string())
+                        .or_else(|| {
+                            symbol
+                                .section_index()
+                                .and_then(|idx| file.section_by_index(idx).ok())
+                                .and_then(|section| section.name().ok())
+                                .filter(|value| !value.is_empty())
+                                .map(|value| value.to_string())
+                        })
+                        .unwrap_or_default();
+                    ContainerRelocationTarget::Symbol(name)
+                }
+                RelocationTarget::Section(section_index) => {
+                    let Some(&target_id) = section_ids.get(&section_index) else {
+                        continue;
+                    };
+                    ContainerRelocationTarget::Section(target_id)
+                }
+                _ => continue,
+            };
+            let kind = match relocation.kind() {
+                object::RelocationKind::Absolute => ContainerRelocationKind::Absolute,
+                object::RelocationKind::Relative
+                | object::RelocationKind::PltRelative
+                | object::RelocationKind::ImageOffset => ContainerRelocationKind::Relative,
+                _ => ContainerRelocationKind::Other,
+            };
+            let encoding = match relocation.encoding() {
+                object::RelocationEncoding::Generic => ContainerRelocationEncoding::Generic,
+                object::RelocationEncoding::X86Branch => ContainerRelocationEncoding::X86Branch,
+                object::RelocationEncoding::AArch64Call => {
+                    ContainerRelocationEncoding::Aarch64Call
+                }
+                _ => ContainerRelocationEncoding::Other,
+            };
+            container.add_relocation(ContainerRelocation {
+                section: container_section,
+                offset,
+                target,
+                addend: relocation.addend(),
+                spec: ContainerRelocationSpec {
+                    kind,
+                    encoding,
+                    size: relocation.size() as u8,
+                },
+            });
+        }
+    }
 
     let elf_rip_symbols = if is_executable
         && matches!(architecture, AsmArchitecture::X86_64)
@@ -109,6 +267,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         pointer_width: 64,
         default_calling_convention: None,
     });
+    program.container = Some(container);
     program.sections.push(AsmSection {
         name: ".text".to_string(),
         kind: AsmSectionKind::Text,

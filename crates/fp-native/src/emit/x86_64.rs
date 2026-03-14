@@ -5639,6 +5639,7 @@ mod tests {
                 pointer_width: 64,
                 default_calling_convention: None,
             },
+            container: None,
             sections: Vec::new(),
             globals: Vec::new(),
             type_definitions: Vec::new(),

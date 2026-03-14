@@ -1,6 +1,9 @@
 pub mod pretty;
+pub mod sysop;
 
 use crate::lir::{CallingConvention, DebugInfo, Linkage, Name, StackSlot, Ty, Visibility};
+use crate::{container::ContainerFile};
+pub use sysop::{AsmSysOp, PosixFlagStyle};
 
 pub type AsmBlockId = u32;
 pub type AsmInstrId = u32;
@@ -10,6 +13,7 @@ pub type AsmType = Ty;
 #[derive(Debug, Clone, PartialEq)]
 pub struct AsmProgram {
     pub target: AsmTarget,
+    pub container: Option<ContainerFile>,
     pub sections: Vec<AsmSection>,
     pub globals: Vec<AsmGlobal>,
     pub functions: Vec<AsmFunction>,
@@ -284,6 +288,7 @@ pub enum AsmGenericOpcode {
     Unreachable,
     Freeze,
     Syscall,
+    SysOp,
     Splat,
     BuildVector,
     ExtractLane,
@@ -352,6 +357,7 @@ impl AsmGenericOpcode {
             AsmGenericOpcode::Unreachable => "unreachable",
             AsmGenericOpcode::Freeze => "freeze",
             AsmGenericOpcode::Syscall => "syscall",
+            AsmGenericOpcode::SysOp => "sysop",
             AsmGenericOpcode::Splat => "splat",
             AsmGenericOpcode::BuildVector => "build_vector",
             AsmGenericOpcode::ExtractLane => "extract_lane",
@@ -474,6 +480,7 @@ pub enum AsmInstructionKind {
         number: AsmValue,
         args: Vec<AsmValue>,
     },
+    SysOp(AsmSysOp),
     /// Replicates a scalar value into all lanes of a vector.
     ///
     /// `lane_bits * lanes` must match the destination vector size.
@@ -654,6 +661,7 @@ impl AsmProgram {
     pub fn new(target: AsmTarget) -> Self {
         Self {
             target,
+            container: None,
             sections: Vec::new(),
             globals: Vec::new(),
             functions: Vec::new(),

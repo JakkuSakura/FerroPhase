@@ -390,6 +390,82 @@ fn canonicalize_instruction_kind_registers(
                 canonicalize_value(arg, map, next_virtual_id);
             }
         }
+        AsmInstructionKind::SysOp(op) => match op {
+            fp_core::asmir::AsmSysOp::Exit { code } => {
+                canonicalize_value(code, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::GetPid | fp_core::asmir::AsmSysOp::GetTid => {}
+            fp_core::asmir::AsmSysOp::Dlopen { path, flags } => {
+                canonicalize_value(path, map, next_virtual_id);
+                canonicalize_value(flags, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Dlsym { handle, symbol } => {
+                canonicalize_value(handle, map, next_virtual_id);
+                canonicalize_value(symbol, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Dlclose { handle } => {
+                canonicalize_value(handle, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Unlink { path }
+            | fp_core::asmir::AsmSysOp::Rmdir { path } => {
+                canonicalize_value(path, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Mkdir { path, mode } => {
+                canonicalize_value(path, map, next_virtual_id);
+                canonicalize_value(mode, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Rename { from, to } => {
+                canonicalize_value(from, map, next_virtual_id);
+                canonicalize_value(to, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Access { path, mode } => {
+                canonicalize_value(path, map, next_virtual_id);
+                canonicalize_value(mode, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Write { fd, buffer, len }
+            | fp_core::asmir::AsmSysOp::Read { fd, buffer, len } => {
+                canonicalize_value(fd, map, next_virtual_id);
+                canonicalize_value(buffer, map, next_virtual_id);
+                canonicalize_value(len, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Close { fd } => {
+                canonicalize_value(fd, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Open {
+                path,
+                flags,
+                mode,
+                ..
+            } => {
+                canonicalize_value(path, map, next_virtual_id);
+                canonicalize_value(flags, map, next_virtual_id);
+                canonicalize_value(mode, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Seek { fd, offset, whence } => {
+                canonicalize_value(fd, map, next_virtual_id);
+                canonicalize_value(offset, map, next_virtual_id);
+                canonicalize_value(whence, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Mmap {
+                addr,
+                len,
+                prot,
+                flags,
+                fd,
+                offset,
+            } => {
+                canonicalize_value(addr, map, next_virtual_id);
+                canonicalize_value(len, map, next_virtual_id);
+                canonicalize_value(prot, map, next_virtual_id);
+                canonicalize_value(flags, map, next_virtual_id);
+                canonicalize_value(fd, map, next_virtual_id);
+                canonicalize_value(offset, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Munmap { addr, len } => {
+                canonicalize_value(addr, map, next_virtual_id);
+                canonicalize_value(len, map, next_virtual_id);
+            }
+        },
         AsmInstructionKind::Splat { value, .. } => {
             canonicalize_value(value, map, next_virtual_id);
         }
@@ -580,6 +656,7 @@ pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> AsmProgram {
             pointer_width: 64,
             default_calling_convention: None,
         },
+        container: None,
         sections: vec![AsmSection {
             name: ".text".to_string(),
             kind: AsmSectionKind::Text,
@@ -659,6 +736,7 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> AsmProgram
             pointer_width: 64,
             default_calling_convention: None,
         },
+        container: None,
         sections: vec![AsmSection {
             name: ".text".to_string(),
             kind: AsmSectionKind::Text,
@@ -955,6 +1033,74 @@ fn intern_string_constants(program: &mut AsmProgram) {
                     rewrite_value(arg, ctx);
                 }
             }
+            AsmInstructionKind::SysOp(op) => match op {
+                fp_core::asmir::AsmSysOp::Exit { code } => rewrite_value(code, ctx),
+                fp_core::asmir::AsmSysOp::GetPid | fp_core::asmir::AsmSysOp::GetTid => {}
+                fp_core::asmir::AsmSysOp::Dlopen { path, flags } => {
+                    rewrite_value(path, ctx);
+                    rewrite_value(flags, ctx);
+                }
+                fp_core::asmir::AsmSysOp::Dlsym { handle, symbol } => {
+                    rewrite_value(handle, ctx);
+                    rewrite_value(symbol, ctx);
+                }
+                fp_core::asmir::AsmSysOp::Dlclose { handle } => rewrite_value(handle, ctx),
+                fp_core::asmir::AsmSysOp::Unlink { path }
+                | fp_core::asmir::AsmSysOp::Rmdir { path } => rewrite_value(path, ctx),
+                fp_core::asmir::AsmSysOp::Mkdir { path, mode } => {
+                    rewrite_value(path, ctx);
+                    rewrite_value(mode, ctx);
+                }
+                fp_core::asmir::AsmSysOp::Rename { from, to } => {
+                    rewrite_value(from, ctx);
+                    rewrite_value(to, ctx);
+                }
+                fp_core::asmir::AsmSysOp::Access { path, mode } => {
+                    rewrite_value(path, ctx);
+                    rewrite_value(mode, ctx);
+                }
+                fp_core::asmir::AsmSysOp::Write { fd, buffer, len }
+                | fp_core::asmir::AsmSysOp::Read { fd, buffer, len } => {
+                    rewrite_value(fd, ctx);
+                    rewrite_value(buffer, ctx);
+                    rewrite_value(len, ctx);
+                }
+                fp_core::asmir::AsmSysOp::Close { fd } => rewrite_value(fd, ctx),
+                fp_core::asmir::AsmSysOp::Open {
+                    path,
+                    flags,
+                    mode,
+                    ..
+                } => {
+                    rewrite_value(path, ctx);
+                    rewrite_value(flags, ctx);
+                    rewrite_value(mode, ctx);
+                }
+                fp_core::asmir::AsmSysOp::Seek { fd, offset, whence } => {
+                    rewrite_value(fd, ctx);
+                    rewrite_value(offset, ctx);
+                    rewrite_value(whence, ctx);
+                }
+                fp_core::asmir::AsmSysOp::Mmap {
+                    addr,
+                    len,
+                    prot,
+                    flags,
+                    fd,
+                    offset,
+                } => {
+                    rewrite_value(addr, ctx);
+                    rewrite_value(len, ctx);
+                    rewrite_value(prot, ctx);
+                    rewrite_value(flags, ctx);
+                    rewrite_value(fd, ctx);
+                    rewrite_value(offset, ctx);
+                }
+                fp_core::asmir::AsmSysOp::Munmap { addr, len } => {
+                    rewrite_value(addr, ctx);
+                    rewrite_value(len, ctx);
+                }
+            },
             AsmInstructionKind::Splat { value, .. } => rewrite_value(value, ctx),
             AsmInstructionKind::BuildVector { elements } => {
                 for element in elements {
@@ -1685,7 +1831,7 @@ fn x86_typed_operands(
                 operands.push(x86_operand(personality, ctx));
             }
         }
-        AsmInstructionKind::Syscall { .. } => {}
+        AsmInstructionKind::Syscall { .. } | AsmInstructionKind::SysOp(_) => {}
         AsmInstructionKind::Splat { value, .. } => operands.push(x86_operand(value, ctx)),
         AsmInstructionKind::BuildVector { elements } => {
             operands.extend(elements.iter().map(|value| x86_operand(value, ctx)));
@@ -1957,6 +2103,7 @@ fn aarch64_opcode_name(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> &'sta
         AsmInstructionKind::ExtractLane { .. } => "extract_lane",
         AsmInstructionKind::InsertLane { .. } => "insert_lane",
         AsmInstructionKind::ZipLow { .. } => "zip1",
+        AsmInstructionKind::SysOp(_) => "sysop",
         AsmInstructionKind::Unreachable => "brk",
     }
 }
@@ -2094,6 +2241,7 @@ fn aarch64_typed_operands(
             };
             operands.push(Aarch64Operand::Immediate(imm));
         }
+        AsmInstructionKind::SysOp(_) => {}
         AsmInstructionKind::Splat { value, .. } => {
             operands.push(aarch64_operand(value, ctx));
         }
@@ -2317,6 +2465,7 @@ fn x86_opcode(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> X86Opcode {
         AsmInstructionKind::InlineAsm { .. } => X86Opcode::InlineAsm,
         AsmInstructionKind::LandingPad { .. } => X86Opcode::LandingPad,
         AsmInstructionKind::Syscall { .. } => X86Opcode::Syscall,
+        AsmInstructionKind::SysOp(_) => X86Opcode::InlineAsm,
         AsmInstructionKind::Splat { .. } => X86Opcode::Mov,
         AsmInstructionKind::BuildVector { .. }
         | AsmInstructionKind::ExtractLane { .. }
@@ -2463,6 +2612,7 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
             }
         }
         AsmInstructionKind::Syscall { .. } => {}
+        AsmInstructionKind::SysOp(_) => {}
         AsmInstructionKind::Splat { value, .. } => operands.push(value_operand(value)),
         AsmInstructionKind::BuildVector { elements } => {
             operands.extend(elements.iter().map(value_operand));
@@ -4210,6 +4360,7 @@ fn generic_opcode(kind: &AsmInstructionKind) -> AsmGenericOpcode {
         AsmInstructionKind::Unreachable => AsmGenericOpcode::Unreachable,
         AsmInstructionKind::Freeze(..) => AsmGenericOpcode::Freeze,
         AsmInstructionKind::Syscall { .. } => AsmGenericOpcode::Syscall,
+        AsmInstructionKind::SysOp(..) => AsmGenericOpcode::SysOp,
         AsmInstructionKind::Splat { .. } => AsmGenericOpcode::Splat,
         AsmInstructionKind::BuildVector { .. } => AsmGenericOpcode::BuildVector,
         AsmInstructionKind::ExtractLane { .. } => AsmGenericOpcode::ExtractLane,
