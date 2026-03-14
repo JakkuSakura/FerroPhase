@@ -1,8 +1,10 @@
 use fp_core::asmir::{
     AsmConstant, AsmGenericOpcode, AsmInstruction, AsmInstructionKind, AsmObjectFormat, AsmOpcode,
-    AsmProgram, AsmSysOp, AsmSyscallConvention, AsmType, AsmValue, PosixFlagStyle,
+    AsmProgram, AsmSysOp, AsmSyscallConvention, AsmType, AsmValue, PosixDirentStyle,
+    PosixFlagStyle,
 };
-use fp_core::error::Result;
+use fp_core::container::ContainerFormat;
+use fp_core::error::{Error, Result};
 use fp_core::lir::CallingConvention;
 
 type SystemApiOp = AsmSysOp;
@@ -41,6 +43,24 @@ fn match_getfileattributes_sequence_to_syscall(
 
 pub fn rewrite_program_to_sys_ops(program: &mut AsmProgram) -> Result<()> {
     let syscall_convention = target_syscall_convention(program);
+    let target_object_format = program.target.object_format.clone();
+    let source_format = program
+        .container
+        .as_ref()
+        .map(|container| container.format.clone())
+        .unwrap_or_else(|| match target_object_format {
+            AsmObjectFormat::MachO => ContainerFormat::MachO,
+            AsmObjectFormat::Elf => ContainerFormat::Elf,
+            AsmObjectFormat::Coff => ContainerFormat::Coff,
+            AsmObjectFormat::Pe => ContainerFormat::Pe,
+            AsmObjectFormat::Wasm => ContainerFormat::Other("wasm".to_string()),
+            AsmObjectFormat::Raw => ContainerFormat::Other("raw".to_string()),
+            AsmObjectFormat::Custom(format) => ContainerFormat::Other(format.clone()),
+        });
+    let posix_dirent_style = match source_format {
+        ContainerFormat::MachO => PosixDirentStyle::Darwin,
+        _ => PosixDirentStyle::Linux,
+    };
     for func in &mut program.functions {
         if func.is_declaration {
             continue;
@@ -63,7 +83,8 @@ pub fn rewrite_program_to_sys_ops(program: &mut AsmProgram) -> Result<()> {
                     continue;
                 }
 
-                if let Some(op) = detect_system_api_from_posix_call(&inst.kind) {
+                if let Some(op) = detect_system_api_from_posix_call(&inst.kind, posix_dirent_style)
+                {
                     inst.kind = AsmInstructionKind::SysOp(op);
                     inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::SysOp);
                     continue;
@@ -147,7 +168,10 @@ fn normalize_proc_name(symbol: &str) -> String {
     base.trim_start_matches('_').to_ascii_lowercase()
 }
 
-fn detect_system_api_from_posix_call(kind: &AsmInstructionKind) -> Option<SystemApiOp> {
+fn detect_system_api_from_posix_call(
+    kind: &AsmInstructionKind,
+    dirent_style: PosixDirentStyle,
+) -> Option<SystemApiOp> {
     let AsmInstructionKind::Call { function, args, .. } = kind else {
         return None;
     };
@@ -156,6 +180,25 @@ fn detect_system_api_from_posix_call(kind: &AsmInstructionKind) -> Option<System
     };
     let name = normalize_proc_name(symbol);
     match name.as_str() {
+        "opendir" => Some(SystemApiOp::Opendir {
+            path: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+        }),
+        "readdir" | "readdir64" => Some(SystemApiOp::Readdir {
+            dir: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+            dirent_style,
+        }),
+        "closedir" => Some(SystemApiOp::Closedir {
+            dir: args
+                .get(0)
+                .cloned()
+                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+        }),
         "dlopen" => Some(SystemApiOp::Dlopen {
             path: args
                 .get(0)
@@ -435,6 +478,36 @@ fn lower_sys_ops_to_unix_syscalls(program: &mut AsmProgram) -> Result<()> {
         return Ok(());
     };
 
+    let default_cc = program
+        .target
+        .default_calling_convention
+        .clone()
+        .unwrap_or(CallingConvention::C);
+    let target_dirent_style = match program.target.object_format {
+        AsmObjectFormat::MachO => PosixDirentStyle::Darwin,
+        _ => PosixDirentStyle::Linux,
+    };
+
+    if target_dirent_style == PosixDirentStyle::Darwin
+        && program
+            .functions
+            .iter()
+            .filter(|f| !f.is_declaration)
+            .flat_map(|f| f.basic_blocks.iter())
+            .flat_map(|b| b.instructions.iter())
+            .any(|inst| {
+                matches!(
+                    &inst.kind,
+                    AsmInstructionKind::SysOp(AsmSysOp::Readdir {
+                        dirent_style: PosixDirentStyle::Linux,
+                        ..
+                    })
+                )
+            })
+    {
+        inject_linux_readdir_shim(program, default_cc.clone())?;
+    }
+
     for function in &mut program.functions {
         if function.is_declaration {
             continue;
@@ -445,13 +518,399 @@ fn lower_sys_ops_to_unix_syscalls(program: &mut AsmProgram) -> Result<()> {
                 let AsmInstructionKind::SysOp(op) = &inst.kind else {
                     continue;
                 };
-                inst.kind = lower_system_api_to_syscall(op.clone(), target_convention);
-                inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Syscall);
-                inst.type_hint = Some(AsmType::I64);
+
+                match op {
+                    AsmSysOp::Opendir { path } => {
+                        inst.kind = AsmInstructionKind::Call {
+                            function: AsmValue::Function("opendir".to_string()),
+                            args: vec![path.clone()],
+                            calling_convention: default_cc.clone(),
+                            tail_call: false,
+                        };
+                        inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Call);
+                        inst.type_hint = Some(AsmType::Ptr(Box::new(AsmType::I8)));
+                    }
+                    AsmSysOp::Readdir { dir, dirent_style } => {
+                        let name = if *dirent_style != target_dirent_style {
+                            "fp_linux_readdir"
+                        } else {
+                            "readdir"
+                        };
+                        inst.kind = AsmInstructionKind::Call {
+                            function: AsmValue::Function(name.to_string()),
+                            args: vec![dir.clone()],
+                            calling_convention: default_cc.clone(),
+                            tail_call: false,
+                        };
+                        inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Call);
+                        inst.type_hint = Some(AsmType::Ptr(Box::new(AsmType::I8)));
+                    }
+                    AsmSysOp::Closedir { dir } => {
+                        inst.kind = AsmInstructionKind::Call {
+                            function: AsmValue::Function("closedir".to_string()),
+                            args: vec![dir.clone()],
+                            calling_convention: default_cc.clone(),
+                            tail_call: false,
+                        };
+                        inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Call);
+                        inst.type_hint = Some(AsmType::I64);
+                    }
+                    _ => {
+                        inst.kind = lower_system_api_to_syscall(op.clone(), target_convention);
+                        inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Syscall);
+                        inst.type_hint = Some(AsmType::I64);
+                    }
+                }
             }
         }
     }
     Ok(())
+}
+
+fn inject_linux_readdir_shim(program: &mut AsmProgram, cc: CallingConvention) -> Result<()> {
+    if program
+        .functions
+        .iter()
+        .any(|f| f.name.as_str() == "fp_linux_readdir")
+    {
+        return Ok(());
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (program, cc);
+        return Err(Error::from("fp_linux_readdir shim requires a unix host"));
+    }
+
+    #[cfg(unix)]
+    {
+        use fp_core::asmir::{AsmBlock, AsmFunction, AsmFunctionSignature, AsmLocal, AsmTerminator};
+        use fp_core::lir::{Linkage, Name, Visibility};
+
+        let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
+        let null_ptr = AsmValue::Null(ptr_i8.clone());
+
+        const LINUX_DIRENT_SIZE: u64 = 280;
+        const LINUX_D_NAME_OFFSET: u64 = 19;
+        const LINUX_D_INO_OFFSET: u64 = 0;
+        const LINUX_D_RECLEN_OFFSET: u64 = 16;
+        const LINUX_D_TYPE_OFFSET: u64 = 18;
+        const LINUX_D_NAME_MAX: u64 = 255;
+
+        let host_d_name_offset: u64 = core::mem::offset_of!(libc::dirent, d_name) as u64;
+        let host_d_ino_offset: u64 = core::mem::offset_of!(libc::dirent, d_ino) as u64;
+        let host_d_type_offset: u64 = core::mem::offset_of!(libc::dirent, d_type) as u64;
+
+        let mut next_id: u32 = program
+            .functions
+            .iter()
+            .flat_map(|f| f.basic_blocks.iter())
+            .flat_map(|b| b.instructions.iter().map(|i| i.id))
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+
+        let call = |id: u32, name: &str, args: Vec<AsmValue>, ret: AsmType| AsmInstruction {
+            id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+            kind: AsmInstructionKind::Call {
+                function: AsmValue::Function(name.to_string()),
+                args,
+                calling_convention: cc.clone(),
+                tail_call: false,
+            },
+            type_hint: Some(ret),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        };
+
+        let add = |id: u32, lhs: AsmValue, rhs: AsmValue, ty: AsmType| AsmInstruction {
+            id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Add),
+            kind: AsmInstructionKind::Add(lhs, rhs),
+            type_hint: Some(ty),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        };
+
+        let load = |id: u32, address: AsmValue, ty: AsmType| AsmInstruction {
+            id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Load),
+            kind: AsmInstructionKind::Load {
+                address,
+                alignment: None,
+                volatile: false,
+            },
+            type_hint: Some(ty),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        };
+
+        let store = |id: u32, value: AsmValue, address: AsmValue| AsmInstruction {
+            id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Store),
+            kind: AsmInstructionKind::Store {
+                value,
+                address,
+                alignment: None,
+                volatile: false,
+            },
+            type_hint: Some(AsmType::Void),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        };
+
+        let eq = |id: u32, lhs: AsmValue, rhs: AsmValue| AsmInstruction {
+            id,
+            opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
+            kind: AsmInstructionKind::Eq(lhs, rhs),
+            type_hint: Some(AsmType::I1),
+            operands: Vec::new(),
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        };
+
+        let dir_local = AsmLocal {
+            id: 0,
+            ty: ptr_i8.clone(),
+            name: Some("dir".to_string()),
+            is_argument: true,
+        };
+
+        // entry:
+        //   entry = readdir(dir)
+        //   if entry == null { return null }
+        //   out = malloc(LINUX_DIRENT_SIZE)
+        //   memset(out, 0, LINUX_DIRENT_SIZE)
+        //   out->d_ino = entry->d_ino
+        //   out->d_reclen = LINUX_DIRENT_SIZE
+        //   out->d_type = entry->d_type
+        //   strncpy(out->d_name, entry->d_name, LINUX_D_NAME_MAX)
+        //   return out
+
+        let call_readdir_id = next_id;
+        next_id += 1;
+        let entry_ptr = AsmValue::Register(call_readdir_id);
+
+        let is_null_id = next_id;
+        next_id += 1;
+
+        let alloc_id = next_id;
+        next_id += 1;
+        let out_ptr = AsmValue::Register(alloc_id);
+
+        let entry_ino_addr_id = next_id;
+        next_id += 1;
+        let entry_ino_id = next_id;
+        next_id += 1;
+
+        let entry_type_addr_id = next_id;
+        next_id += 1;
+        let entry_type_id = next_id;
+        next_id += 1;
+
+        let out_ino_addr_id = next_id;
+        next_id += 1;
+        let out_reclen_addr_id = next_id;
+        next_id += 1;
+        let out_type_addr_id = next_id;
+        next_id += 1;
+
+        let out_name_ptr_id = next_id;
+        next_id += 1;
+        let entry_name_ptr_id = next_id;
+        next_id += 1;
+
+        let mut entry_insts = Vec::new();
+        entry_insts.push(call(
+            call_readdir_id,
+            "readdir",
+            vec![AsmValue::Local(dir_local.id)],
+            ptr_i8.clone(),
+        ));
+        entry_insts.push(eq(is_null_id, entry_ptr.clone(), null_ptr.clone()));
+
+        let entry_block = AsmBlock {
+            id: 0,
+            label: Some(Name::new("entry")),
+            instructions: entry_insts,
+            terminator: AsmTerminator::CondBr {
+                condition: AsmValue::Register(is_null_id),
+                if_true: 1,
+                if_false: 2,
+            },
+            predecessors: Vec::new(),
+            successors: vec![1, 2],
+        };
+
+        let null_block = AsmBlock {
+            id: 1,
+            label: Some(Name::new("return_null")),
+            instructions: Vec::new(),
+            terminator: AsmTerminator::Return(Some(null_ptr.clone())),
+            predecessors: vec![0],
+            successors: Vec::new(),
+        };
+
+        let mut alloc_insts = Vec::new();
+        alloc_insts.push(call(
+            alloc_id,
+            "malloc",
+            vec![AsmValue::Constant(AsmConstant::UInt(
+                LINUX_DIRENT_SIZE,
+                AsmType::I64,
+            ))],
+            ptr_i8.clone(),
+        ));
+        alloc_insts.push(call(
+            next_id,
+            "memset",
+            vec![
+                out_ptr.clone(),
+                AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
+                AsmValue::Constant(AsmConstant::UInt(LINUX_DIRENT_SIZE, AsmType::I64)),
+            ],
+            ptr_i8.clone(),
+        ));
+        next_id += 1;
+
+        alloc_insts.push(add(
+            entry_ino_addr_id,
+            entry_ptr.clone(),
+            AsmValue::Constant(AsmConstant::UInt(host_d_ino_offset, AsmType::I64)),
+            ptr_i8.clone(),
+        ));
+        alloc_insts.push(load(
+            entry_ino_id,
+            AsmValue::Register(entry_ino_addr_id),
+            AsmType::I64,
+        ));
+
+        alloc_insts.push(add(
+            out_ino_addr_id,
+            out_ptr.clone(),
+            AsmValue::Constant(AsmConstant::UInt(LINUX_D_INO_OFFSET, AsmType::I64)),
+            ptr_i8.clone(),
+        ));
+        alloc_insts.push(store(
+            next_id,
+            AsmValue::Register(entry_ino_id),
+            AsmValue::Register(out_ino_addr_id),
+        ));
+        next_id += 1;
+
+        alloc_insts.push(add(
+            out_reclen_addr_id,
+            out_ptr.clone(),
+            AsmValue::Constant(AsmConstant::UInt(LINUX_D_RECLEN_OFFSET, AsmType::I64)),
+            ptr_i8.clone(),
+        ));
+        alloc_insts.push(store(
+            next_id,
+            AsmValue::Constant(AsmConstant::UInt(
+                LINUX_DIRENT_SIZE,
+                AsmType::I16,
+            )),
+            AsmValue::Register(out_reclen_addr_id),
+        ));
+        next_id += 1;
+
+        alloc_insts.push(add(
+            entry_type_addr_id,
+            entry_ptr.clone(),
+            AsmValue::Constant(AsmConstant::UInt(host_d_type_offset, AsmType::I64)),
+            ptr_i8.clone(),
+        ));
+        alloc_insts.push(load(
+            entry_type_id,
+            AsmValue::Register(entry_type_addr_id),
+            AsmType::I8,
+        ));
+        alloc_insts.push(add(
+            out_type_addr_id,
+            out_ptr.clone(),
+            AsmValue::Constant(AsmConstant::UInt(LINUX_D_TYPE_OFFSET, AsmType::I64)),
+            ptr_i8.clone(),
+        ));
+        alloc_insts.push(store(
+            next_id,
+            AsmValue::Register(entry_type_id),
+            AsmValue::Register(out_type_addr_id),
+        ));
+        next_id += 1;
+
+        alloc_insts.push(add(
+            out_name_ptr_id,
+            out_ptr.clone(),
+            AsmValue::Constant(AsmConstant::UInt(LINUX_D_NAME_OFFSET, AsmType::I64)),
+            ptr_i8.clone(),
+        ));
+        alloc_insts.push(add(
+            entry_name_ptr_id,
+            entry_ptr.clone(),
+            AsmValue::Constant(AsmConstant::UInt(host_d_name_offset, AsmType::I64)),
+            ptr_i8.clone(),
+        ));
+
+        alloc_insts.push(call(
+            next_id,
+            "strncpy",
+            vec![
+                AsmValue::Register(out_name_ptr_id),
+                AsmValue::Register(entry_name_ptr_id),
+                AsmValue::Constant(AsmConstant::UInt(LINUX_D_NAME_MAX, AsmType::I64)),
+            ],
+            ptr_i8.clone(),
+        ));
+        next_id += 1;
+
+        let alloc_block = AsmBlock {
+            id: 2,
+            label: Some(Name::new("alloc")),
+            instructions: alloc_insts,
+            terminator: AsmTerminator::Return(Some(out_ptr.clone())),
+            predecessors: vec![0],
+            successors: Vec::new(),
+        };
+
+        program.functions.push(AsmFunction {
+            name: Name::new("fp_linux_readdir"),
+            signature: AsmFunctionSignature {
+                params: vec![ptr_i8.clone()],
+                return_type: ptr_i8,
+                is_variadic: false,
+            },
+            basic_blocks: vec![entry_block, null_block, alloc_block],
+            locals: vec![dir_local],
+            stack_slots: Vec::new(),
+            frame: None,
+            linkage: Linkage::External,
+            visibility: Visibility::Default,
+            calling_convention: Some(cc),
+            section: Some(".text".to_string()),
+            is_declaration: false,
+        });
+        Ok(())
+    }
 }
 
 fn lower_sys_ops_to_windows_imports(program: &mut AsmProgram) -> Result<()> {
@@ -569,7 +1028,9 @@ fn rewrite_posix_calls_to_windows_imports(program: &mut AsmProgram) -> Result<()
             let mut out = Vec::with_capacity(block.instructions.len());
 
             for inst in &block.instructions {
-                let Some(op) = detect_system_api_from_posix_call(&inst.kind) else {
+                let Some(op) =
+                    detect_system_api_from_posix_call(&inst.kind, PosixDirentStyle::Linux)
+                else {
                     out.push(inst.clone());
                     continue;
                 };
@@ -2647,6 +3108,12 @@ fn lower_system_api_to_windows_import(
 
             Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
         }
+
+        SystemApiOp::Opendir { .. } | SystemApiOp::Readdir { .. } | SystemApiOp::Closedir { .. } => {
+            Err(Error::from(
+                "directory SysOps are not supported for Windows targets yet",
+            ))
+        }
     }
 }
 
@@ -3377,6 +3844,11 @@ fn lower_system_api_to_syscall(
         SystemApiOp::Dlopen { .. } | SystemApiOp::Dlsym { .. } | SystemApiOp::Dlclose { .. } => {
             AsmInstructionKind::Freeze(AsmValue::Undef(AsmType::I64))
         }
+        SystemApiOp::Opendir { .. }
+        | SystemApiOp::Readdir { .. }
+        | SystemApiOp::Closedir { .. } => {
+            unreachable!("directory SysOps must not be lowered via syscalls")
+        }
         SystemApiOp::Unlink { path } => {
             let (number, args) = match convention {
                 AsmSyscallConvention::LinuxX86_64 => (87, vec![path]),
@@ -3637,6 +4109,9 @@ fn split_import_symbol(symbol: &str) -> (String, String) {
 mod tests {
     use super::*;
     use fp_core::asmir::{AsmArchitecture, AsmEndianness, AsmTarget};
+    use fp_core::container::{
+        ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerFormat, ContainerKind,
+    };
 
     fn program(target_format: AsmObjectFormat) -> AsmProgram {
         AsmProgram::new(AsmTarget {
@@ -3646,6 +4121,95 @@ mod tests {
             pointer_width: 64,
             default_calling_convention: None,
         })
+    }
+
+    #[test]
+    fn rewrite_linux_readdir_call_to_darwin_shim() {
+        let mut prog = program(AsmObjectFormat::MachO);
+        prog.container = Some(ContainerFile::new(
+            ContainerKind::Object,
+            ContainerFormat::Elf,
+            ContainerArchitecture::X86_64,
+            ContainerEndianness::Little,
+        ));
+
+        let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
+        prog.functions.push(fp_core::asmir::AsmFunction {
+            name: fp_core::lir::Name::new("main"),
+            signature: fp_core::asmir::AsmFunctionSignature {
+                params: Vec::new(),
+                return_type: ptr_i8.clone(),
+                is_variadic: false,
+            },
+            basic_blocks: vec![fp_core::asmir::AsmBlock {
+                id: 0,
+                label: None,
+                instructions: vec![
+                    AsmInstruction {
+                        id: 0,
+                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                        kind: AsmInstructionKind::Call {
+                            function: AsmValue::Function("opendir".to_string()),
+                            args: vec![AsmValue::Null(ptr_i8.clone())],
+                            calling_convention: CallingConvention::C,
+                            tail_call: false,
+                        },
+                        type_hint: Some(ptr_i8.clone()),
+                        operands: Vec::new(),
+                        implicit_uses: Vec::new(),
+                        implicit_defs: Vec::new(),
+                        encoding: None,
+                        debug_info: None,
+                        annotations: Vec::new(),
+                    },
+                    AsmInstruction {
+                        id: 1,
+                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
+                        kind: AsmInstructionKind::Call {
+                            function: AsmValue::Function("readdir".to_string()),
+                            args: vec![AsmValue::Register(0)],
+                            calling_convention: CallingConvention::C,
+                            tail_call: false,
+                        },
+                        type_hint: Some(ptr_i8.clone()),
+                        operands: Vec::new(),
+                        implicit_uses: Vec::new(),
+                        implicit_defs: Vec::new(),
+                        encoding: None,
+                        debug_info: None,
+                        annotations: Vec::new(),
+                    },
+                ],
+                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(1))),
+                predecessors: Vec::new(),
+                successors: Vec::new(),
+            }],
+            locals: Vec::new(),
+            stack_slots: Vec::new(),
+            frame: None,
+            linkage: fp_core::lir::Linkage::External,
+            visibility: fp_core::lir::Visibility::Default,
+            calling_convention: None,
+            section: None,
+            is_declaration: false,
+        });
+
+        rewrite_program_for_target(&mut prog).unwrap();
+        assert!(
+            prog.functions
+                .iter()
+                .any(|f| f.name.as_str() == "fp_linux_readdir"),
+            "expected fp_linux_readdir shim to be injected"
+        );
+
+        let block = &prog.functions.iter().find(|f| f.name.as_str() == "main").unwrap().basic_blocks[0];
+        assert!(block.instructions.iter().any(|inst| {
+            matches!(
+                &inst.kind,
+                AsmInstructionKind::Call { function: AsmValue::Function(name), .. }
+                    if name == "fp_linux_readdir"
+            )
+        }));
     }
 
     #[test]

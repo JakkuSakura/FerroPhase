@@ -465,6 +465,13 @@ fn canonicalize_instruction_kind_registers(
                 canonicalize_value(addr, map, next_virtual_id);
                 canonicalize_value(len, map, next_virtual_id);
             }
+            fp_core::asmir::AsmSysOp::Opendir { path } => {
+                canonicalize_value(path, map, next_virtual_id);
+            }
+            fp_core::asmir::AsmSysOp::Readdir { dir, .. }
+            | fp_core::asmir::AsmSysOp::Closedir { dir } => {
+                canonicalize_value(dir, map, next_virtual_id);
+            }
         },
         AsmInstructionKind::Splat { value, .. } => {
             canonicalize_value(value, map, next_virtual_id);
@@ -1100,6 +1107,9 @@ fn intern_string_constants(program: &mut AsmProgram) {
                     rewrite_value(addr, ctx);
                     rewrite_value(len, ctx);
                 }
+                fp_core::asmir::AsmSysOp::Opendir { path } => rewrite_value(path, ctx),
+                fp_core::asmir::AsmSysOp::Readdir { dir, .. }
+                | fp_core::asmir::AsmSysOp::Closedir { dir } => rewrite_value(dir, ctx),
             },
             AsmInstructionKind::Splat { value, .. } => rewrite_value(value, ctx),
             AsmInstructionKind::BuildVector { elements } => {

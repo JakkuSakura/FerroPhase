@@ -6,6 +6,12 @@ pub enum PosixFlagStyle {
     Darwin,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PosixDirentStyle {
+    Linux,
+    Darwin,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AsmSysOp {
     Exit {
@@ -77,6 +83,17 @@ pub enum AsmSysOp {
     Munmap {
         addr: AsmValue,
         len: AsmValue,
+    },
+
+    Opendir {
+        path: AsmValue,
+    },
+    Readdir {
+        dir: AsmValue,
+        dirent_style: PosixDirentStyle,
+    },
+    Closedir {
+        dir: AsmValue,
     },
 }
 
