@@ -104,6 +104,37 @@ pub fn rewrite_program_to_sys_ops(program: &mut AsmProgram) -> Result<()> {
     Ok(())
 }
 
+fn ensure_glibc_fpending(program: &mut AsmProgram) -> Result<()> {
+    ensure_function(program, AsmFunction {
+        name: Name::new("__fpending"),
+        signature: AsmFunctionSignature {
+            params: vec![AsmType::Ptr(Box::new(AsmType::I8))],
+            return_type: AsmType::I64,
+            is_variadic: false,
+        },
+        basic_blocks: vec![AsmBlock {
+            id: 0,
+            label: None,
+            instructions: Vec::new(),
+            terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::UInt(
+                0,
+                AsmType::I64,
+            )))),
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }],
+        locals: Vec::new(),
+        stack_slots: Vec::new(),
+        frame: None,
+        linkage: Linkage::External,
+        visibility: Visibility::Default,
+        calling_convention: Some(CallingConvention::C),
+        section: Some(".text".to_string()),
+        is_declaration: false,
+    });
+    Ok(())
+}
+
 fn ensure_glibc_errno_location(program: &mut AsmProgram) -> Result<()> {
     ensure_function(program, AsmFunction {
         name: Name::new("__errno_location"),
@@ -588,6 +619,7 @@ fn inject_linux_compat_runtime_for_darwin(program: &mut AsmProgram) -> Result<()
     ensure_ctype_mb_cur_max(program)?;
     ensure_glibc_assert_fail(program)?;
     ensure_glibc_errno_location(program)?;
+    ensure_glibc_fpending(program)?;
 
     Ok(())
 }
