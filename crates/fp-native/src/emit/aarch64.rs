@@ -921,10 +921,13 @@ fn encode_const_bytes(constant: &AsmConstant, ty: &AsmType) -> Result<Vec<u8>> {
         (AsmConstant::Int(value, _), AsmType::I32) => Ok((*value as i32).to_le_bytes().to_vec()),
         (AsmConstant::UInt(value, _), AsmType::I64) => Ok(value.to_le_bytes().to_vec()),
         (AsmConstant::Int(value, _), AsmType::I64) => Ok(value.to_le_bytes().to_vec()),
+        (AsmConstant::UInt(value, _), AsmType::Ptr(_)) => Ok(value.to_le_bytes().to_vec()),
+        (AsmConstant::Int(value, _), AsmType::Ptr(_)) => Ok(value.to_le_bytes().to_vec()),
         (AsmConstant::Null(_) | AsmConstant::Undef(_), AsmType::I8) => Ok(vec![0u8]),
         (AsmConstant::Null(_) | AsmConstant::Undef(_), AsmType::I16) => Ok(vec![0u8; 2]),
         (AsmConstant::Null(_) | AsmConstant::Undef(_), AsmType::I32) => Ok(vec![0u8; 4]),
         (AsmConstant::Null(_) | AsmConstant::Undef(_), AsmType::I64) => Ok(vec![0u8; 8]),
+        (AsmConstant::Null(_) | AsmConstant::Undef(_), AsmType::Ptr(_)) => Ok(vec![0u8; 8]),
         (AsmConstant::Bytes(bytes), AsmType::Array(elem, _)) if **elem == AsmType::I8 => {
             Ok(bytes.clone())
         }
