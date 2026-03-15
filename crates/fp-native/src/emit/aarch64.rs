@@ -688,6 +688,7 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
     let mut rodata_pool = HashMap::new();
     let mut rodata_symbols = HashMap::new();
     let mut data_symbols = HashMap::new();
+    let mut global_relocs = Vec::new();
     let mut entry_offset = None;
 
     emit_const_globals(
@@ -696,6 +697,7 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
         &mut rodata_symbols,
         &mut data,
         &mut data_symbols,
+        &mut global_relocs,
     )?;
 
     for (index, func) in program.functions.iter().enumerate() {
@@ -751,7 +753,8 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
             symbols.insert("fp_panic".to_string(), *offset);
         }
     }
-    let (text, relocs) = asm.finish()?;
+    let (text, mut relocs) = asm.finish()?;
+    relocs.extend(global_relocs);
     Ok(CodegenOutput {
         text,
         rodata,
@@ -826,11 +829,13 @@ fn emit_const_globals(
     rodata_symbols: &mut HashMap<String, u64>,
     data: &mut Vec<u8>,
     data_symbols: &mut HashMap<String, u64>,
+    relocs_out: &mut Vec<crate::emit::Relocation>,
 ) -> Result<()> {
     let mut emit_global = |global: &fp_core::asmir::AsmGlobal,
                            initializer: &AsmConstant,
                            bytes_out: &mut Vec<u8>,
-                           symbols_out: &mut HashMap<String, u64>|
+                           symbols_out: &mut HashMap<String, u64>,
+                           reloc_section: crate::emit::RelocSection|
      -> Result<()> {
         let align = global
             .alignment
@@ -843,6 +848,19 @@ fn emit_const_globals(
         let bytes = encode_const_bytes(initializer, &global.ty)?;
         bytes_out.extend_from_slice(&bytes);
         symbols_out.insert(global.name.to_string(), offset as u64);
+
+        for reloc in &global.relocations {
+            let kind = match reloc.kind {
+                fp_core::asmir::AsmRelocationKind::Abs64 => crate::emit::RelocKind::Abs64,
+            };
+            relocs_out.push(crate::emit::Relocation {
+                offset: offset as u64 + reloc.offset,
+                kind,
+                section: reloc_section,
+                symbol: reloc.symbol.to_string(),
+                addend: reloc.addend,
+            });
+        }
         Ok(())
     };
 
@@ -871,10 +889,22 @@ fn emit_const_globals(
 
         match section_kind {
             fp_core::asmir::AsmSectionKind::Data | fp_core::asmir::AsmSectionKind::Bss => {
-                emit_global(global, initializer, data, data_symbols)?;
+                emit_global(
+                    global,
+                    initializer,
+                    data,
+                    data_symbols,
+                    crate::emit::RelocSection::Data,
+                )?;
             }
             _ => {
-                emit_global(global, initializer, rodata, rodata_symbols)?;
+                emit_global(
+                    global,
+                    initializer,
+                    rodata,
+                    rodata_symbols,
+                    crate::emit::RelocSection::Rdata,
+                )?;
             }
         }
     }
@@ -883,6 +913,18 @@ fn emit_const_globals(
 
 fn encode_const_bytes(constant: &AsmConstant, ty: &AsmType) -> Result<Vec<u8>> {
     match (constant, ty) {
+        (AsmConstant::UInt(value, _), AsmType::I8) => Ok(vec![*value as u8]),
+        (AsmConstant::Int(value, _), AsmType::I8) => Ok(vec![*value as u8]),
+        (AsmConstant::UInt(value, _), AsmType::I16) => Ok((*value as u16).to_le_bytes().to_vec()),
+        (AsmConstant::Int(value, _), AsmType::I16) => Ok((*value as i16).to_le_bytes().to_vec()),
+        (AsmConstant::UInt(value, _), AsmType::I32) => Ok((*value as u32).to_le_bytes().to_vec()),
+        (AsmConstant::Int(value, _), AsmType::I32) => Ok((*value as i32).to_le_bytes().to_vec()),
+        (AsmConstant::UInt(value, _), AsmType::I64) => Ok(value.to_le_bytes().to_vec()),
+        (AsmConstant::Int(value, _), AsmType::I64) => Ok(value.to_le_bytes().to_vec()),
+        (AsmConstant::Null(_) | AsmConstant::Undef(_), AsmType::I8) => Ok(vec![0u8]),
+        (AsmConstant::Null(_) | AsmConstant::Undef(_), AsmType::I16) => Ok(vec![0u8; 2]),
+        (AsmConstant::Null(_) | AsmConstant::Undef(_), AsmType::I32) => Ok(vec![0u8; 4]),
+        (AsmConstant::Null(_) | AsmConstant::Undef(_), AsmType::I64) => Ok(vec![0u8; 8]),
         (AsmConstant::Bytes(bytes), AsmType::Array(elem, _)) if **elem == AsmType::I8 => {
             Ok(bytes.clone())
         }

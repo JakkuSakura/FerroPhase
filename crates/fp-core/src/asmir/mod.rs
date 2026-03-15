@@ -93,11 +93,25 @@ pub struct AsmGlobal {
     pub name: Name,
     pub ty: AsmType,
     pub initializer: Option<AsmConstant>,
+    pub relocations: Vec<AsmGlobalRelocation>,
     pub section: Option<String>,
     pub linkage: Linkage,
     pub visibility: Visibility,
     pub alignment: Option<u32>,
     pub is_constant: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AsmRelocationKind {
+    Abs64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsmGlobalRelocation {
+    pub offset: u64,
+    pub kind: AsmRelocationKind,
+    pub symbol: Name,
+    pub addend: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -910,6 +910,11 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
                         }
                         rdata_raw_offset as usize + reloc.offset as usize
                     }
+                    crate::emit::RelocSection::Data => {
+                        return Err(Error::from(
+                            "data relocations are not supported in PE executable emission yet",
+                        ));
+                    }
                 };
                 if offset + 8 > out.len() {
                     return Err(Error::from("relocation offset out of range"));

@@ -1,8 +1,9 @@
 use crate::binary::{DataRegion, RipSymbol, RipSymbolKind, TextRelocation, aarch64, x86_64};
 use fp_core::asmir::{
     AsmArchitecture, AsmConstant, AsmEndianness, AsmFunction, AsmFunctionSignature, AsmGlobal,
-    AsmLocal, AsmObjectFormat, AsmProgram, AsmSection, AsmSectionFlag, AsmSectionKind,
-    AsmStackFrame, AsmSyscallConvention, AsmTarget, AsmTerminator, AsmType,
+    AsmGlobalRelocation, AsmLocal, AsmObjectFormat, AsmProgram, AsmRelocationKind, AsmSection,
+    AsmSectionFlag, AsmSectionKind, AsmStackFrame, AsmSyscallConvention, AsmTarget, AsmTerminator,
+    AsmType,
 };
 use fp_core::container::{
     ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerFormat, ContainerKind,
@@ -14,6 +15,7 @@ use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
 use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget, SymbolKind};
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 fn normalize_symbol_name<'a>(object_format: &AsmObjectFormat, raw: &'a str) -> &'a str {
     match object_format {
@@ -206,13 +208,13 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         }
     }
 
-    let elf_rip_symbols = if is_executable
+    let (elf_rip_symbols, elf_got_globals, elf_weak_imports) = if is_executable
         && matches!(architecture, AsmArchitecture::X86_64)
         && matches!(object_format, AsmObjectFormat::Elf)
     {
         build_elf_dynamic_symbol_map(bytes)
     } else {
-        HashMap::new()
+        (HashMap::new(), Vec::new(), HashSet::new())
     };
 
     // Prefer the conventional `.text`/`__text` section name first.
@@ -232,6 +234,8 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         .map_err(|err| Error::from(err.to_string()))?;
 
     let mut relocs = Vec::new();
+    let mut got_slot_by_symbol: HashMap<String, String> = HashMap::new();
+    let mut got_globals: Vec<AsmGlobal> = elf_got_globals;
     for (offset, relocation) in text_section.relocations() {
         let RelocationTarget::Symbol(symbol_index) = relocation.target() else {
             continue;
@@ -249,9 +253,72 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                 .map(|name| name.to_string())
                 .unwrap_or_default(),
         };
+
+        let symbol_name = if object_format == AsmObjectFormat::Elf
+            && architecture == AsmArchitecture::X86_64
+            && matches!(relocation.flags(), object::RelocationFlags::Elf { .. })
+        {
+            let elf_type = match relocation.flags() {
+                object::RelocationFlags::Elf { r_type } => r_type,
+                _ => 0,
+            };
+            let is_got = matches!(
+                elf_type,
+                object::elf::R_X86_64_GOT32
+                    | object::elf::R_X86_64_GOTPCREL
+                    | object::elf::R_X86_64_GOTPC32
+                    | object::elf::R_X86_64_GOT64
+                    | object::elf::R_X86_64_GOTPCREL64
+                    | object::elf::R_X86_64_GOTPC64
+                    | object::elf::R_X86_64_GOTPLT64
+                    | object::elf::R_X86_64_GOTPCRELX
+                    | object::elf::R_X86_64_REX_GOTPCRELX
+            );
+            if is_got {
+                let got_name = got_slot_by_symbol
+                    .entry(name.clone())
+                    .or_insert_with(|| {
+                        let mut sanitized = String::with_capacity(name.len());
+                        for ch in name.chars() {
+                            if ch.is_ascii_alphanumeric() {
+                                sanitized.push(ch);
+                            } else {
+                                sanitized.push('_');
+                            }
+                        }
+                        format!("fp_got_{sanitized}")
+                    })
+                    .clone();
+
+                if !got_globals.iter().any(|global| global.name.as_str() == got_name) {
+                    got_globals.push(AsmGlobal {
+                        name: Name::new(got_name.clone()),
+                        ty: AsmType::Array(Box::new(AsmType::I8), 8),
+                        initializer: Some(AsmConstant::Bytes(vec![0u8; 8])),
+                        relocations: vec![AsmGlobalRelocation {
+                            offset: 0,
+                            kind: AsmRelocationKind::Abs64,
+                            symbol: Name::new(normalize_symbol_name(&object_format, &name)),
+                            addend: 0,
+                        }],
+                        section: Some(".data".to_string()),
+                        linkage: Linkage::Private,
+                        visibility: Visibility::Default,
+                        alignment: Some(8),
+                        is_constant: false,
+                    });
+                }
+
+                got_name
+            } else {
+                name.clone()
+            }
+        } else {
+            name.clone()
+        };
         relocs.push(TextRelocation {
             offset,
-            symbol: name,
+            symbol: symbol_name,
             addend: relocation.addend(),
             kind: relocation.kind(),
             encoding: relocation.encoding(),
@@ -267,6 +334,50 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         pointer_width: 64,
         default_calling_convention: None,
     });
+
+    if !got_globals.is_empty() {
+        program.globals.extend(got_globals);
+        if !program.sections.iter().any(|section| section.name == ".data") {
+            program.sections.push(AsmSection {
+                name: ".data".to_string(),
+                kind: AsmSectionKind::Data,
+                flags: vec![AsmSectionFlag::Allocate, AsmSectionFlag::Write],
+                alignment: Some(16),
+            });
+        }
+    }
+
+    if !elf_weak_imports.is_empty() {
+        let mut seen_undefined: HashSet<String> = HashSet::new();
+        for symbol in container.symbols.iter_mut() {
+            if symbol.section.is_some() {
+                continue;
+            }
+            let base = symbol
+                .name
+                .split_once('@')
+                .map(|(head, _)| head)
+                .unwrap_or(symbol.name.as_str());
+            seen_undefined.insert(base.to_string());
+            if elf_weak_imports.contains(base) {
+                symbol.scope = ContainerSymbolScope::Weak;
+            }
+        }
+
+        for import in &elf_weak_imports {
+            if seen_undefined.contains(import) {
+                continue;
+            }
+            container.symbols.push(ContainerSymbol {
+                name: import.clone(),
+                kind: ContainerSymbolKind::Other,
+                scope: ContainerSymbolScope::Weak,
+                section: None,
+                value: 0,
+                size: 0,
+            });
+        }
+    }
     program.container = Some(container);
     program.sections.push(AsmSection {
         name: ".text".to_string(),
@@ -374,6 +485,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                 name: Name::new(name),
                 ty: AsmType::Array(Box::new(AsmType::I8), symbol_size as u64),
                 initializer: Some(AsmConstant::Bytes(bytes.to_vec())),
+                relocations: Vec::new(),
                 section: Some(".rodata".to_string()),
                 linkage: Linkage::External,
                 visibility: Visibility::Default,
@@ -391,6 +503,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                         name: Name::new(section_name),
                         ty: AsmType::Array(Box::new(AsmType::I8), section_bytes.len() as u64),
                         initializer: Some(AsmConstant::Bytes(section_bytes.to_vec())),
+                        relocations: Vec::new(),
                         section: Some(".rodata".to_string()),
                         linkage: Linkage::Internal,
                         visibility: Visibility::Default,
@@ -444,10 +557,37 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
             end,
             symbol: symbol.clone(),
         });
+
+        let mut relocations = Vec::new();
+        for (offset, relocation) in section.relocations() {
+            if relocation.kind() != object::RelocationKind::Absolute {
+                continue;
+            }
+            if relocation.size() != 64 {
+                continue;
+            }
+            let object::RelocationTarget::Symbol(symbol_index) = relocation.target() else {
+                continue;
+            };
+            let Ok(symbol) = file.symbol_by_index(symbol_index) else {
+                continue;
+            };
+            let Ok(name) = symbol.name() else {
+                continue;
+            };
+            let name = normalize_symbol_name(&object_format, name);
+            relocations.push(fp_core::asmir::AsmGlobalRelocation {
+                offset,
+                kind: fp_core::asmir::AsmRelocationKind::Abs64,
+                symbol: Name::new(name),
+                addend: relocation.addend(),
+            });
+        }
         program.globals.push(AsmGlobal {
             name: Name::new(symbol.clone()),
             ty: AsmType::Array(Box::new(AsmType::I8), bytes.len() as u64),
             initializer: Some(AsmConstant::Bytes(bytes)),
+            relocations,
             section: Some(".data".to_string()),
             linkage: Linkage::Private,
             visibility: Visibility::Default,
@@ -457,12 +597,14 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         saw_data = true;
     }
     if saw_data {
-        program.sections.push(AsmSection {
-            name: ".data".to_string(),
-            kind: AsmSectionKind::Data,
-            flags: vec![AsmSectionFlag::Allocate, AsmSectionFlag::Write],
-            alignment: Some(16),
-        });
+        if !program.sections.iter().any(|section| section.name == ".data") {
+            program.sections.push(AsmSection {
+                name: ".data".to_string(),
+                kind: AsmSectionKind::Data,
+                flags: vec![AsmSectionFlag::Allocate, AsmSectionFlag::Write],
+                alignment: Some(16),
+            });
+        }
     }
 
     let mut text_symbols = file
@@ -771,13 +913,19 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
     Ok(program)
 }
 
-fn build_elf_dynamic_symbol_map(bytes: &[u8]) -> HashMap<u64, RipSymbol> {
+fn build_elf_dynamic_symbol_map(
+    bytes: &[u8],
+) -> (HashMap<u64, RipSymbol>, Vec<AsmGlobal>, HashSet<String>) {
     let mut out = HashMap::new();
+    let mut got_globals: Vec<AsmGlobal> = Vec::new();
+    let mut weak_imports: HashSet<String> = HashSet::new();
     let Ok(elf) = goblin::elf::Elf::parse(bytes) else {
-        return out;
+        return (out, got_globals, weak_imports);
     };
 
     for reloc in elf.pltrelocs.iter().chain(elf.dynrelas.iter()) {
+        use goblin::elf::sym;
+
         let sym = reloc.r_sym;
         let Some(symbol) = elf.dynsyms.get(sym) else {
             continue;
@@ -789,21 +937,53 @@ fn build_elf_dynamic_symbol_map(bytes: &[u8]) -> HashMap<u64, RipSymbol> {
             continue;
         }
 
-        let kind = match symbol.st_type() {
-            goblin::elf::sym::STT_FUNC | goblin::elf::sym::STT_GNU_IFUNC => RipSymbolKind::Function,
-            _ => RipSymbolKind::Data,
-        };
+        // Dynamic relocations in ELF executables typically describe GOT slots.
+        // The relocation offset refers to the slot address, not the final symbol
+        // address, so treat them as data and model them as explicit, relocatable
+        // globals.
+        let import = normalize_elf_import_symbol(name);
+        if sym::st_bind(symbol.st_info) == sym::STB_WEAK {
+            weak_imports.insert(import.clone());
+        }
+        let mut sanitized = String::with_capacity(import.len());
+        for ch in import.chars() {
+            if ch.is_ascii_alphanumeric() {
+                sanitized.push(ch);
+            } else {
+                sanitized.push('_');
+            }
+        }
+        let got_name = format!("fp_got_{sanitized}");
 
         out.insert(
             reloc.r_offset,
             RipSymbol {
-                name: normalize_elf_import_symbol(name),
-                kind,
+                name: got_name.clone(),
+                kind: RipSymbolKind::Data,
             },
         );
+
+        if !got_globals.iter().any(|global| global.name.as_str() == got_name) {
+            got_globals.push(AsmGlobal {
+                name: Name::new(got_name),
+                ty: AsmType::Array(Box::new(AsmType::I8), 8),
+                initializer: Some(AsmConstant::Bytes(vec![0u8; 8])),
+                relocations: vec![AsmGlobalRelocation {
+                    offset: 0,
+                    kind: AsmRelocationKind::Abs64,
+                    symbol: Name::new(import),
+                    addend: reloc.r_addend.unwrap_or(0),
+                }],
+                section: Some(".data".to_string()),
+                linkage: Linkage::Private,
+                visibility: Visibility::Default,
+                alignment: Some(8),
+                is_constant: false,
+            });
+        }
     }
 
-    out
+    (out, got_globals, weak_imports)
 }
 
 fn normalize_elf_import_symbol(name: &str) -> String {

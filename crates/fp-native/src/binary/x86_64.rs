@@ -3028,7 +3028,10 @@ pub(super) fn find_elf_sysv_main_offset(
                         symbol.kind
                     );
                 }
-                if symbol.name != "__libc_start_main" {
+
+                let symbol_name = symbol.name.strip_prefix("fp_got_").unwrap_or(&symbol.name);
+
+                if symbol_name != "__libc_start_main" {
                     continue;
                 }
                 let offset = usize::try_from(candidate.checked_sub(text_address)?).ok()?;

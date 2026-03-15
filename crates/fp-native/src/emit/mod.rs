@@ -147,6 +147,7 @@ pub enum RelocKind {
 pub enum RelocSection {
     Text,
     Rdata,
+    Data,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,9 +231,7 @@ pub fn write_object(path: &Path, plan: &EmitPlan) -> Result<()> {
 }
 
 pub fn write_object_bytes(plan: &EmitPlan) -> Result<Vec<u8>> {
-    let container =
-        crate::link::object_writer::container_from_emit_plan(plan.format, plan.arch, plan)?;
-    crate::link::object_writer::write_object_container(&container)
+    crate::link::object_writer::write_object_bytes_for_plan(plan.format, plan.arch, plan)
 }
 
 pub fn write_executable(path: &Path, plan: &EmitPlan) -> Result<()> {

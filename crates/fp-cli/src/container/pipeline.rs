@@ -129,7 +129,6 @@ async fn link_native_object_with_clang(
     format: emit::TargetFormat,
     arch: emit::TargetArch,
 ) -> Result<()> {
-    const DARWIN_GLIBC_SHIMS: &str = include_str!("darwin_glibc_shims.c");
     const DARWIN_LINUX_MAIN_WRAPPER: &str = r#"
 #include <stdint.h>
 
@@ -154,8 +153,6 @@ int main(int argc, char **argv, char **envp) {
     ));
     std::fs::create_dir_all(&tmp_dir).map_err(CliError::Io)?;
     let object_path = tmp_dir.join("input.o");
-    let shims_c_path = tmp_dir.join("shims.c");
-    let shims_object_path = tmp_dir.join("shims.o");
     let wrapper_c_path = tmp_dir.join("wrapper.c");
     let wrapper_object_path = tmp_dir.join("wrapper.o");
 
@@ -167,35 +164,6 @@ int main(int argc, char **argv, char **envp) {
     if matches!(format, emit::TargetFormat::MachO)
         && matches!(arch, emit::TargetArch::Aarch64 | emit::TargetArch::X86_64)
     {
-        std::fs::write(&shims_c_path, DARWIN_GLIBC_SHIMS).map_err(CliError::Io)?;
-
-        let mut cc = Command::new(&args.linker);
-        if let Some(sysroot) = &args.target_sysroot {
-            cc.arg(format!("--sysroot={}", sysroot.display()));
-        }
-        if let Some(ld) = &args.target_linker {
-            cc.arg(format!("-fuse-ld={}", ld.display()));
-        }
-        match arch {
-            emit::TargetArch::Aarch64 => cc.args(["-arch", "arm64"]),
-            emit::TargetArch::X86_64 => cc.args(["-arch", "x86_64"]),
-        };
-        cc.args(["-c", "-x", "c"]);
-        cc.arg(&shims_c_path);
-        cc.arg("-o").arg(&shims_object_path);
-
-        let output = cc.output().await.map_err(|err| {
-            CliError::Compilation(format!("Failed to invoke compiler '{}': {err}", args.linker))
-        })?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            return Err(CliError::Compilation(format!(
-                "Failed to compile Darwin shims (status {:?}).\nstdout:\n{stdout}\nstderr:\n{stderr}",
-                output.status.code()
-            )));
-        }
-
         let needs_main_wrapper = !plan.symbols.contains_key("main")
             && plan.symbols.contains_key("fp_lifted_main");
         if needs_main_wrapper {
@@ -261,9 +229,6 @@ int main(int argc, char **argv, char **envp) {
     if wrapper_object_path.exists() {
         cmd.arg(&wrapper_object_path);
     }
-    if shims_object_path.exists() {
-        cmd.arg(&shims_object_path);
-    }
     cmd.arg(&object_path);
 
     let output = cmd.output().await.map_err(|err| {
@@ -290,8 +255,6 @@ int main(int argc, char **argv, char **envp) {
 
     // Best-effort cleanup.
     let _ = std::fs::remove_file(&object_path);
-    let _ = std::fs::remove_file(&shims_object_path);
-    let _ = std::fs::remove_file(&shims_c_path);
     let _ = std::fs::remove_file(&wrapper_object_path);
     let _ = std::fs::remove_file(&wrapper_c_path);
     let _ = std::fs::remove_dir(&tmp_dir);

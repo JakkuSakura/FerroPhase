@@ -96,6 +96,11 @@ impl JitEngine {
             let (section_base, section_mem) = match reloc.section {
                 RelocSection::Text => (text_base, text),
                 RelocSection::Rdata => (rodata_base, rodata),
+                RelocSection::Data => {
+                    return Err(Error::from(
+                        "JIT does not support relocations against writable .data",
+                    ));
+                }
             };
             let location = section_base
                 .checked_add(reloc.offset)

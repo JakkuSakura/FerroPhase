@@ -13,6 +13,8 @@ use object::{
 };
 use std::collections::HashMap;
 
+type WriteSymbolFlags = SymbolFlags<object::write::SectionId, object::write::SymbolId>;
+
 fn binary_format_for_container(format: &ContainerFormat) -> Result<BinaryFormat> {
     Ok(match format {
         ContainerFormat::Elf => BinaryFormat::Elf,
@@ -96,13 +98,15 @@ fn relocation_flags_for_container(spec: ContainerRelocationSpec) -> Result<Reloc
     })
 }
 
-fn intern_symbol(
+fn intern_symbol_with_flags(
     obj: &mut Object,
     symbol_ids: &mut HashMap<String, object::write::SymbolId>,
     name: &str,
     kind: SymbolKind,
     section: SymbolSection,
     value: u64,
+    weak: bool,
+    flags: WriteSymbolFlags,
 ) -> object::write::SymbolId {
     if let Some(id) = symbol_ids.get(name) {
         return *id;
@@ -113,12 +117,32 @@ fn intern_symbol(
         size: 0,
         kind,
         scope: SymbolScope::Linkage,
-        weak: false,
+        weak,
         section,
-        flags: SymbolFlags::None,
+        flags,
     });
     symbol_ids.insert(name.to_string(), id);
     id
+}
+
+fn intern_symbol(
+    obj: &mut Object,
+    symbol_ids: &mut HashMap<String, object::write::SymbolId>,
+    name: &str,
+    kind: SymbolKind,
+    section: SymbolSection,
+    value: u64,
+) -> object::write::SymbolId {
+    intern_symbol_with_flags(
+        obj,
+        symbol_ids,
+        name,
+        kind,
+        section,
+        value,
+        false,
+        SymbolFlags::None,
+    )
 }
 
 pub fn emit_object(
@@ -127,15 +151,21 @@ pub fn emit_object(
     arch: TargetArch,
     plan: &EmitPlan,
 ) -> Result<()> {
-    if format == TargetFormat::MachO && arch == TargetArch::Aarch64 {
-        let bytes = write_macho_aarch64_object(plan)?;
-        std::fs::write(path, bytes).map_err(|err| Error::from(err.to_string()))?;
-        return Ok(());
-    }
-    let container = container_from_emit_plan(format, arch, plan)?;
-    let bytes = write_object_container(&container)?;
+    let bytes = write_object_bytes_for_plan(format, arch, plan)?;
     std::fs::write(path, bytes).map_err(|err| Error::from(err.to_string()))?;
     Ok(())
+}
+
+pub fn write_object_bytes_for_plan(
+    format: TargetFormat,
+    arch: TargetArch,
+    plan: &EmitPlan,
+) -> Result<Vec<u8>> {
+    if format == TargetFormat::MachO && arch == TargetArch::Aarch64 {
+        return write_macho_aarch64_object(plan);
+    }
+    let container = container_from_emit_plan(format, arch, plan)?;
+    write_object_container(&container)
 }
 
 fn write_macho_aarch64_object(plan: &EmitPlan) -> Result<Vec<u8>> {
@@ -157,6 +187,28 @@ fn write_macho_aarch64_object(plan: &EmitPlan) -> Result<Vec<u8>> {
         obj.append_section_data(section, &plan.rodata, 16);
         Some(section)
     };
+
+    let weak_undefined: std::collections::HashSet<String> = plan
+        .asmir
+        .container
+        .as_ref()
+        .map(|container| {
+            container
+                .symbols
+                .iter()
+                .filter(|symbol| symbol.section.is_none())
+                .filter(|symbol| matches!(symbol.scope, ContainerSymbolScope::Weak))
+                .map(|symbol| {
+                    symbol
+                        .name
+                        .split_once('@')
+                        .map(|(head, _)| head)
+                        .unwrap_or(symbol.name.as_str())
+                        .to_string()
+                })
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
     let data_id = if plan.data.is_empty() {
         None
     } else {
@@ -231,14 +283,30 @@ fn write_macho_aarch64_object(plan: &EmitPlan) -> Result<Vec<u8>> {
                     0,
                 );
             }
+
+            let base = unmangled
+                .split_once('@')
+                .map(|(head, _)| head)
+                .unwrap_or(unmangled);
+            let is_weak = weak_undefined.contains(base);
+            let flags = if is_weak {
+                SymbolFlags::MachO {
+                    n_desc: macho::N_WEAK_REF,
+                }
+            } else {
+                SymbolFlags::None
+            };
+
             let mangled = mangle_undefined(unmangled);
-            let id = intern_symbol(
+            let id = intern_symbol_with_flags(
                 obj,
                 symbol_ids,
                 mangled.as_str(),
                 SymbolKind::Unknown,
                 SymbolSection::Undefined,
                 0,
+                false,
+                flags,
             );
             symbol_ids.insert(unmangled.to_string(), id);
             id
@@ -250,7 +318,12 @@ fn write_macho_aarch64_object(plan: &EmitPlan) -> Result<Vec<u8>> {
         }
         let section_id = match reloc.section {
             RelocSection::Text => text_id,
-            RelocSection::Rdata => rodata_id.ok_or_else(|| Error::from("relocation refers to missing .rodata"))?,
+            RelocSection::Rdata => {
+                rodata_id.ok_or_else(|| Error::from("relocation refers to missing .rodata"))?
+            }
+            RelocSection::Data => {
+                data_id.ok_or_else(|| Error::from("relocation refers to missing .data"))?
+            }
         };
 
         let target_symbol = if reloc.symbol == ".rodata" {
@@ -491,6 +564,9 @@ pub fn container_from_emit_plan(
             RelocSection::Text => text_section,
             RelocSection::Rdata => {
                 rodata_section.ok_or_else(|| Error::from("relocation refers to missing .rodata"))?
+            }
+            RelocSection::Data => {
+                data_section.ok_or_else(|| Error::from("relocation refers to missing .data"))?
             }
         };
         let target = if reloc.symbol == ".rodata" {
