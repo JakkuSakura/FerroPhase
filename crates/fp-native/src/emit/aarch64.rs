@@ -800,8 +800,8 @@ fn initialize_lifted_stack_pointer(
         return Ok(());
     }
 
-    // 1 MiB is enough for most leaf / startup frames while we iterate.
-    const EMULATED_STACK_SIZE: u64 = 1024 * 1024;
+    // Provide ample headroom for translated userspace stacks while we iterate.
+    const EMULATED_STACK_SIZE: u64 = 16 * 1024 * 1024;
 
     // malloc(EMULATED_STACK_SIZE)
     emit_mov_imm64(asm, Reg::X0, EMULATED_STACK_SIZE);
@@ -1364,7 +1364,7 @@ fn emit_binop(
         AsmValue::Constant(constant) => {
             let imm = constant_to_i64(constant)?;
             if imm < 0 || imm > u16::MAX as i64 {
-                emit_mov_imm16(asm, Reg::X17, (imm as u64 & 0xffff) as u16);
+                emit_mov_imm64(asm, Reg::X17, imm as u64);
                 match op {
                     BinOp::Add => emit_add_reg(asm, Reg::X16, Reg::X16, Reg::X17),
                     BinOp::Sub => emit_sub_reg(asm, Reg::X16, Reg::X16, Reg::X17),
@@ -1372,11 +1372,19 @@ fn emit_binop(
                 }
             } else {
                 match op {
-                    BinOp::Add => emit_add_imm12(asm, Reg::X16, Reg::X16, imm as u32),
-                    BinOp::Sub => emit_sub_imm12(asm, Reg::X16, Reg::X16, imm as u32),
+                    BinOp::Add if imm <= 4095 => emit_add_imm12(asm, Reg::X16, Reg::X16, imm as u32),
+                    BinOp::Sub if imm <= 4095 => emit_sub_imm12(asm, Reg::X16, Reg::X16, imm as u32),
                     BinOp::Mul => {
                         emit_mov_imm16(asm, Reg::X17, imm as u16);
                         emit_mul_reg(asm, Reg::X16, Reg::X16, Reg::X17);
+                    }
+                    _ => {
+                        emit_mov_imm16(asm, Reg::X17, imm as u16);
+                        match op {
+                            BinOp::Add => emit_add_reg(asm, Reg::X16, Reg::X16, Reg::X17),
+                            BinOp::Sub => emit_sub_reg(asm, Reg::X16, Reg::X16, Reg::X17),
+                            BinOp::Mul => unreachable!(),
+                        }
                     }
                 }
             }
