@@ -41,7 +41,7 @@ pub enum AsmArchitecture {
     Custom(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AsmObjectFormat {
     Elf,
     MachO,

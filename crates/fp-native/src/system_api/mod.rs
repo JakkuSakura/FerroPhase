@@ -4,7 +4,6 @@ use fp_core::asmir::{
     AsmProgram, AsmRelocationKind, AsmSection, AsmSectionFlag, AsmSectionKind, AsmSysOp,
     AsmSyscallConvention, AsmTerminator, AsmType, AsmValue, PosixDirentStyle, PosixFlagStyle,
 };
-use fp_core::container::ContainerFormat;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
 
@@ -394,17 +393,9 @@ pub fn rewrite_program_to_sys_ops(program: &mut AsmProgram) -> Result<()> {
         .container
         .as_ref()
         .map(|container| container.format.clone())
-        .unwrap_or_else(|| match target_object_format {
-            AsmObjectFormat::MachO => ContainerFormat::MachO,
-            AsmObjectFormat::Elf => ContainerFormat::Elf,
-            AsmObjectFormat::Coff => ContainerFormat::Coff,
-            AsmObjectFormat::Pe => ContainerFormat::Pe,
-            AsmObjectFormat::Wasm => ContainerFormat::Other("wasm".to_string()),
-            AsmObjectFormat::Raw => ContainerFormat::Other("raw".to_string()),
-            AsmObjectFormat::Custom(format) => ContainerFormat::Other(format.clone()),
-        });
+        .unwrap_or(target_object_format);
     let posix_dirent_style = match source_format {
-        ContainerFormat::MachO => PosixDirentStyle::Darwin,
+        AsmObjectFormat::MachO => PosixDirentStyle::Darwin,
         _ => PosixDirentStyle::Linux,
     };
     for func in &mut program.functions {
@@ -1066,7 +1057,7 @@ fn inject_linux_compat_runtime_for_darwin(program: &mut AsmProgram) -> Result<()
     let Some(container) = program.container.as_ref() else {
         return Ok(());
     };
-    if container.format != ContainerFormat::Elf {
+    if container.format != AsmObjectFormat::Elf {
         return Ok(());
     }
 
@@ -5020,9 +5011,7 @@ fn split_import_symbol(symbol: &str) -> (String, String) {
 mod tests {
     use super::*;
     use fp_core::asmir::{AsmArchitecture, AsmEndianness, AsmTarget};
-    use fp_core::container::{
-        ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerFormat, ContainerKind,
-    };
+    use fp_core::container::{ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerKind};
 
     fn program(target_format: AsmObjectFormat) -> AsmProgram {
         AsmProgram::new(AsmTarget {
@@ -5039,7 +5028,7 @@ mod tests {
         let mut prog = program(AsmObjectFormat::MachO);
         prog.container = Some(ContainerFile::new(
             ContainerKind::Object,
-            ContainerFormat::Elf,
+            AsmObjectFormat::Elf,
             ContainerArchitecture::X86_64,
             ContainerEndianness::Little,
         ));

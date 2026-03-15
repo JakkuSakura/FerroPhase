@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use crate::asmir::AsmObjectFormat;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerKind {
@@ -6,18 +7,6 @@ pub enum ContainerKind {
     Executable,
     Archive,
     Other,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContainerFormat {
-    Elf,
-    MachO,
-    Coff,
-    Pe,
-    Jar,
-    Class,
-    Cil,
-    Other(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,7 +106,7 @@ pub struct ContainerRelocation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerFile {
     pub kind: ContainerKind,
-    pub format: ContainerFormat,
+    pub format: AsmObjectFormat,
     pub architecture: ContainerArchitecture,
     pub endianness: ContainerEndianness,
 
@@ -129,7 +118,7 @@ pub struct ContainerFile {
 impl ContainerFile {
     pub fn new(
         kind: ContainerKind,
-        format: ContainerFormat,
+        format: AsmObjectFormat,
         architecture: ContainerArchitecture,
         endianness: ContainerEndianness,
     ) -> Self {
@@ -165,7 +154,7 @@ pub trait ContainerReader {
 }
 
 pub trait ContainerWriter {
-    fn can_write(&self, format: &ContainerFormat) -> bool;
+    fn can_write(&self, format: &AsmObjectFormat) -> bool;
     fn write(&self, container: &ContainerFile) -> Result<Vec<u8>>;
 }
 

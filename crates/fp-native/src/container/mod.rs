@@ -1,8 +1,9 @@
+use fp_core::asmir::AsmObjectFormat;
 use fp_core::container::{
-    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerFormat, ContainerKind,
-    ContainerReader, ContainerRelocation, ContainerRelocationEncoding, ContainerRelocationKind,
-    ContainerRelocationSpec, ContainerRelocationTarget, ContainerSection, ContainerSectionKind,
-    ContainerSymbol, ContainerSymbolKind, ContainerSymbolScope,
+    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerKind, ContainerReader,
+    ContainerRelocation, ContainerRelocationEncoding, ContainerRelocationKind, ContainerRelocationSpec,
+    ContainerRelocationTarget, ContainerSection, ContainerSectionKind, ContainerSymbol,
+    ContainerSymbolKind, ContainerSymbolScope,
 };
 use fp_core::error::{Error, Result};
 use object::read::FileKind;
@@ -45,11 +46,11 @@ impl ContainerReader for ObjectContainerReader {
         let file = object::File::parse(bytes).map_err(|err| Error::from(err.to_string()))?;
 
         let format = match file.format() {
-            object::BinaryFormat::Elf => ContainerFormat::Elf,
-            object::BinaryFormat::MachO => ContainerFormat::MachO,
-            object::BinaryFormat::Coff => ContainerFormat::Coff,
-            object::BinaryFormat::Pe => ContainerFormat::Pe,
-            other => ContainerFormat::Other(format!("{other:?}")),
+            object::BinaryFormat::Elf => AsmObjectFormat::Elf,
+            object::BinaryFormat::MachO => AsmObjectFormat::MachO,
+            object::BinaryFormat::Coff => AsmObjectFormat::Coff,
+            object::BinaryFormat::Pe => AsmObjectFormat::Pe,
+            other => AsmObjectFormat::Custom(format!("{other:?}")),
         };
         let architecture = match file.architecture() {
             object::Architecture::X86_64 => ContainerArchitecture::X86_64,
@@ -222,10 +223,10 @@ impl Default for ObjectContainerWriter {
 }
 
 impl fp_core::container::ContainerWriter for ObjectContainerWriter {
-    fn can_write(&self, format: &ContainerFormat) -> bool {
+    fn can_write(&self, format: &AsmObjectFormat) -> bool {
         matches!(
             format,
-            ContainerFormat::Elf | ContainerFormat::MachO | ContainerFormat::Coff
+            AsmObjectFormat::Elf | AsmObjectFormat::MachO | AsmObjectFormat::Coff
         )
     }
 
@@ -276,7 +277,7 @@ mod tests {
         let bytes = ObjectContainerWriter::new().write(&container).unwrap();
 
         let roundtripped = ObjectContainerReader::new().read(&bytes).unwrap();
-        assert_eq!(roundtripped.format, ContainerFormat::Elf);
+        assert_eq!(roundtripped.format, AsmObjectFormat::Elf);
         assert_eq!(roundtripped.architecture, ContainerArchitecture::X86_64);
         assert!(roundtripped.sections.iter().any(|s| s.name == ".text"));
     }

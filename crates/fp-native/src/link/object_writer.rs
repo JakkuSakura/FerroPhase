@@ -1,6 +1,7 @@
 use crate::emit::{EmitPlan, RelocKind, RelocSection, TargetArch, TargetFormat};
+use fp_core::asmir::AsmObjectFormat;
 use fp_core::container::{
-    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerFormat, ContainerKind,
+    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerKind,
     ContainerRelocation, ContainerRelocationEncoding, ContainerRelocationKind,
     ContainerRelocationSpec, ContainerRelocationTarget, ContainerSection, ContainerSectionKind,
     ContainerSymbol, ContainerSymbolKind, ContainerSymbolScope,
@@ -15,11 +16,11 @@ use std::collections::HashMap;
 
 type WriteSymbolFlags = SymbolFlags<object::write::SectionId, object::write::SymbolId>;
 
-fn binary_format_for_container(format: &ContainerFormat) -> Result<BinaryFormat> {
+fn binary_format_for_container(format: &AsmObjectFormat) -> Result<BinaryFormat> {
     Ok(match format {
-        ContainerFormat::Elf => BinaryFormat::Elf,
-        ContainerFormat::MachO => BinaryFormat::MachO,
-        ContainerFormat::Coff => BinaryFormat::Coff,
+        AsmObjectFormat::Elf => BinaryFormat::Elf,
+        AsmObjectFormat::MachO => BinaryFormat::MachO,
+        AsmObjectFormat::Coff => BinaryFormat::Coff,
         other => {
             return Err(Error::from(format!(
                 "unsupported container format for object emission: {other:?}"
@@ -477,9 +478,9 @@ pub fn container_from_emit_plan(
     plan: &EmitPlan,
 ) -> Result<ContainerFile> {
     let format = match format {
-        TargetFormat::Elf => ContainerFormat::Elf,
-        TargetFormat::MachO => ContainerFormat::MachO,
-        TargetFormat::Coff => ContainerFormat::Coff,
+        TargetFormat::Elf => AsmObjectFormat::Elf,
+        TargetFormat::MachO => AsmObjectFormat::MachO,
+        TargetFormat::Coff => AsmObjectFormat::Coff,
     };
     let architecture = match arch {
         TargetArch::X86_64 => ContainerArchitecture::X86_64,

@@ -1,6 +1,7 @@
+use fp_core::asmir::AsmObjectFormat;
 use fp_core::container::{
-    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerFormat, ContainerKind,
-    ContainerReader, ContainerSection, ContainerSectionKind,
+    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerKind, ContainerReader,
+    ContainerSection, ContainerSectionKind,
 };
 
 use crate::error::{CliError, Result};
@@ -129,7 +130,7 @@ impl ContainerRegistry {
 
                 let mut file = ContainerFile::new(
                     ContainerKind::Archive,
-                    ContainerFormat::Other("archive(ar)".to_string()),
+                    AsmObjectFormat::Custom("archive(ar)".to_string()),
                     ContainerArchitecture::Other("native".to_string()),
                     ContainerEndianness::Little,
                 );
@@ -144,9 +145,9 @@ impl ContainerRegistry {
             ContainerInputKind::JvmBytecode => {
                 // Keep this container representation lossless by storing raw bytes.
                 let format = if payload.starts_with(b"PK\x03\x04") {
-                    ContainerFormat::Jar
+                    AsmObjectFormat::Custom("jar".to_string())
                 } else {
-                    ContainerFormat::Class
+                    AsmObjectFormat::Custom("class".to_string())
                 };
                 let mut file = ContainerFile::new(
                     ContainerKind::Other,
@@ -166,9 +167,9 @@ impl ContainerRegistry {
                 // `.il` is textual; `.dll/.exe` is PE. We keep both lossless.
                 let is_pe = payload.starts_with(b"MZ");
                 let format = if is_pe {
-                    ContainerFormat::Pe
+                    AsmObjectFormat::Pe
                 } else {
-                    ContainerFormat::Cil
+                    AsmObjectFormat::Custom("cil".to_string())
                 };
                 let mut file = ContainerFile::new(
                     ContainerKind::Other,
@@ -187,7 +188,7 @@ impl ContainerRegistry {
             ContainerInputKind::GoAsm => {
                 let mut file = ContainerFile::new(
                     ContainerKind::Other,
-                    ContainerFormat::Other("goasm".to_string()),
+                    AsmObjectFormat::Custom("goasm".to_string()),
                     ContainerArchitecture::Other("goasm".to_string()),
                     ContainerEndianness::Little,
                 );
@@ -202,7 +203,7 @@ impl ContainerRegistry {
             ContainerInputKind::Urcl => {
                 let mut file = ContainerFile::new(
                     ContainerKind::Other,
-                    ContainerFormat::Other("urcl".to_string()),
+                    AsmObjectFormat::Custom("urcl".to_string()),
                     ContainerArchitecture::Other("urcl".to_string()),
                     ContainerEndianness::Little,
                 );

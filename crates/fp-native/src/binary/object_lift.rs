@@ -6,7 +6,7 @@ use fp_core::asmir::{
     AsmType,
 };
 use fp_core::container::{
-    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerFormat, ContainerKind,
+    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerKind,
     ContainerRelocation, ContainerRelocationEncoding, ContainerRelocationKind,
     ContainerRelocationSpec, ContainerRelocationTarget, ContainerSection, ContainerSectionKind,
     ContainerSymbol, ContainerSymbolKind, ContainerSymbolScope,
@@ -61,11 +61,11 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         _ => ContainerKind::Object,
     };
     let container_format = match file.format() {
-        object::BinaryFormat::Elf => ContainerFormat::Elf,
-        object::BinaryFormat::MachO => ContainerFormat::MachO,
-        object::BinaryFormat::Coff => ContainerFormat::Coff,
-        object::BinaryFormat::Pe => ContainerFormat::Pe,
-        other => ContainerFormat::Other(format!("{other:?}")),
+        object::BinaryFormat::Elf => AsmObjectFormat::Elf,
+        object::BinaryFormat::MachO => AsmObjectFormat::MachO,
+        object::BinaryFormat::Coff => AsmObjectFormat::Coff,
+        object::BinaryFormat::Pe => AsmObjectFormat::Pe,
+        other => AsmObjectFormat::Custom(format!("{other:?}")),
     };
     let container_arch = match file.architecture() {
         object::Architecture::X86_64 => ContainerArchitecture::X86_64,
