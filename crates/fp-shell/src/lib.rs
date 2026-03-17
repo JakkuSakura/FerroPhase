@@ -1,87 +1,21 @@
-use fp_bash::{BashTarget, InventoryHost, ShellInventory};
-use fp_core::ast::{AstTarget, AstTargetOutput};
+mod inventory;
+mod lower;
+
+use fp_core::ast::AstTargetOutput;
 use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
 use fp_interpret::const_eval::ConstEvaluationOrchestrator;
 use fp_lang::FerroFrontend;
+use fp_shell_core::{ScriptRenderer, ScriptTarget, ShellInventory};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+pub use fp_shell_core::{InventoryHost, ScriptTarget as ShellTarget, TransportKind};
+pub use inventory::load_inventory;
 
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
     pub inventory: Option<ShellInventory>,
-}
-
-#[derive(Debug, serde::Deserialize, Default)]
-struct InventoryDocument {
-    #[serde(default)]
-    groups: std::collections::HashMap<String, Vec<String>>,
-    #[serde(default)]
-    hosts: std::collections::HashMap<String, InventoryHostDocument>,
-}
-
-#[derive(Debug, serde::Deserialize, Default)]
-struct InventoryHostDocument {
-    address: Option<String>,
-    user: Option<String>,
-    port: Option<u16>,
-}
-
-pub fn load_inventory(path: &Path) -> Result<ShellInventory, ShellError> {
-    let content = fs::read_to_string(path)?;
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
-    let parsed: InventoryDocument = if extension == "json" {
-        serde_json::from_str(&content)
-            .map_err(|err| ShellError::Parse(format!("invalid inventory json: {}", err)))?
-    } else {
-        toml::from_str(&content)
-            .map_err(|err| ShellError::Parse(format!("invalid inventory toml: {}", err)))?
-    };
-
-    let hosts = parsed
-        .hosts
-        .into_iter()
-        .map(|(name, host)| {
-            (
-                name,
-                InventoryHost {
-                    address: host.address,
-                    user: host.user,
-                    port: host.port,
-                },
-            )
-        })
-        .collect();
-
-    Ok(ShellInventory {
-        groups: parsed.groups,
-        hosts,
-    })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ShellTarget {
-    Bash,
-}
-
-impl ShellTarget {
-    pub fn parse(raw: &str) -> Result<Self, ShellError> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "bash" => Ok(Self::Bash),
-            other => Err(ShellError::UnsupportedTarget(other.to_string())),
-        }
-    }
-
-    pub fn extension(&self) -> &'static str {
-        match self {
-            Self::Bash => "sh",
-        }
-    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -90,16 +24,28 @@ pub enum ShellError {
     Io(#[from] std::io::Error),
     #[error("failed to parse source: {0}")]
     Parse(String),
+    #[error("failed to lower source: {0}")]
+    Lower(String),
     #[error("failed to emit target: {0}")]
     Emit(String),
+    #[error("failed to parse inventory: {0}")]
+    Inventory(String),
     #[error("unsupported target: {0}")]
     UnsupportedTarget(String),
+}
+
+pub fn parse_target(raw: &str) -> Result<ScriptTarget, ShellError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "bash" => Ok(ScriptTarget::Bash),
+        "powershell" | "pwsh" | "ps" => Ok(ScriptTarget::PowerShell),
+        other => Err(ShellError::UnsupportedTarget(other.to_string())),
+    }
 }
 
 pub fn compile_source(
     source: &str,
     source_path: &Path,
-    target: ShellTarget,
+    target: ScriptTarget,
 ) -> Result<AstTargetOutput, ShellError> {
     compile_source_with_options(source, source_path, target, &CompileOptions::default())
 }
@@ -107,7 +53,7 @@ pub fn compile_source(
 pub fn compile_source_with_options(
     source: &str,
     source_path: &Path,
-    target: ShellTarget,
+    target: ScriptTarget,
     options: &CompileOptions,
 ) -> Result<AstTargetOutput, ShellError> {
     let frontend = FerroFrontend::new();
@@ -127,25 +73,28 @@ pub fn compile_source_with_options(
         )
         .map_err(|err| ShellError::Parse(err.to_string()))?;
 
-    match target {
-        ShellTarget::Bash => {
-            if let Some(inventory) = &options.inventory {
-                BashTarget::with_inventory(inventory.clone())
-                    .emit_node(&ast)
-                    .map_err(|err| ShellError::Emit(err.to_string()))
-            } else {
-                BashTarget::new()
-                    .emit_node(&ast)
-                    .map_err(|err| ShellError::Emit(err.to_string()))
-            }
-        }
-    }
+    let inventory = options.inventory.clone().unwrap_or_default();
+    let program = lower::lower_node(&ast, &inventory).map_err(ShellError::Lower)?;
+
+    let code = match target {
+        ScriptTarget::Bash => fp_bash::BashTarget::new()
+            .render(&program, &inventory)
+            .map_err(|err| ShellError::Emit(err.to_string()))?,
+        ScriptTarget::PowerShell => fp_powershell::PowerShellTarget::new()
+            .render(&program, &inventory)
+            .map_err(|err| ShellError::Emit(err.to_string()))?,
+    };
+
+    Ok(AstTargetOutput {
+        code,
+        side_files: Vec::new(),
+    })
 }
 
 pub fn compile_file(
     input: &Path,
     output: Option<&Path>,
-    target: ShellTarget,
+    target: ScriptTarget,
 ) -> Result<PathBuf, ShellError> {
     compile_file_with_options(input, output, target, &CompileOptions::default())
 }
@@ -153,11 +102,11 @@ pub fn compile_file(
 pub fn compile_file_with_options(
     input: &Path,
     output: Option<&Path>,
-    target: ShellTarget,
+    target: ScriptTarget,
     options: &CompileOptions,
 ) -> Result<PathBuf, ShellError> {
     let source = fs::read_to_string(input)?;
-    let generated = compile_source_with_options(&source, input, target.clone(), options)?;
+    let generated = compile_source_with_options(&source, input, target, options)?;
 
     let destination = output
         .map(Path::to_path_buf)
@@ -173,6 +122,7 @@ pub fn compile_file_with_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn compile_source_generates_bash_script() {
@@ -182,7 +132,7 @@ const fn main() {
 }
 "#;
 
-        let rendered = compile_source(source, Path::new("sample.fp"), ShellTarget::Bash)
+        let rendered = compile_source(source, Path::new("sample.fp"), ScriptTarget::Bash)
             .expect("source should compile");
 
         assert!(rendered.code.contains("#!/usr/bin/env bash"));
@@ -190,65 +140,204 @@ const fn main() {
     }
 
     #[test]
-    fn compile_file_writes_default_extension() {
-        let directory = tempfile::tempdir().expect("tempdir should be created");
-        let input = directory.path().join("deploy.fp");
-        fs::write(
-            &input,
-            r#"
-const fn main() {
-    std::server::shell("echo hi");
-}
-"#,
-        )
-        .expect("input should be written");
-
-        let output = compile_file(&input, None, ShellTarget::Bash).expect("file should compile");
-
-        assert_eq!(output, directory.path().join("deploy.sh"));
-        let content = fs::read_to_string(output).expect("output should be readable");
-        assert!(content.contains("echo hi"));
-    }
-
-    #[test]
-    fn host_on_requires_closure_body() {
+    fn compile_source_generates_powershell_script() {
         let source = r#"
 const fn main() {
-    std::host::on("web-1", {
-        std::server::shell("uptime");
-    });
+    std::server::shell("Write-Host hello");
 }
 "#;
 
-        let error = compile_source(source, Path::new("sample.fp"), ShellTarget::Bash)
-            .expect_err("non-closure host scope should fail");
+        let rendered = compile_source(source, Path::new("sample.fp"), ScriptTarget::PowerShell)
+            .expect("source should compile");
 
-        assert!(
-            error
-                .to_string()
-                .contains("requires closure body syntax: std::host::on(hosts, || { ... })")
-        );
+        assert!(rendered.code.contains("Set-StrictMode -Version Latest"));
+        assert!(rendered.code.contains("Write-Host hello"));
     }
 
     #[test]
-    fn parses_inventory_from_toml() {
+    fn load_inventory_supports_multiple_transports() {
         let directory = tempfile::tempdir().expect("tempdir should be created");
         let path = directory.path().join("inventory.toml");
         fs::write(
             &path,
             r#"
-[groups]
-web = ["web-1", "web-2"]
+[hosts.app]
+transport = "docker"
+container = "app-container"
 
-[hosts.web-1]
-address = "10.0.0.10"
-user = "deploy"
+[hosts.api]
+transport = "kubectl"
+pod = "api-pod"
+namespace = "prod"
+
+[hosts.win]
+transport = "winrm"
+address = "10.0.0.21"
+user = "Administrator"
+password = "secret"
 "#,
         )
         .expect("inventory should be written");
 
         let inventory = load_inventory(&path).expect("inventory should parse");
+        assert_eq!(inventory.hosts["app"].transport, TransportKind::Docker);
+        assert_eq!(inventory.hosts["api"].transport, TransportKind::Kubectl);
+        assert_eq!(inventory.hosts["win"].transport, TransportKind::Winrm);
+        assert_eq!(inventory.hosts["win"].winrm.as_ref().and_then(|entry| entry.password.as_deref()), Some("secret"));
+    }
+
+    #[test]
+    fn load_inventory_supports_fp_format() {
+        let directory = tempfile::tempdir().expect("tempdir should be created");
+        let path = directory.path().join("inventory.fp");
+        fs::write(
+            &path,
+            r#"
+use std::collections::HashMap;
+
+struct Inventory {
+    groups: HashMap<&'static str, [&'static str; 2]>,
+    hosts: HashMap<&'static str, Host>,
+}
+
+struct Host {
+    transport: &'static str,
+    address: &'static str,
+    user: &'static str,
+}
+
+const fn inventory() -> Inventory {
+    Inventory {
+        groups: HashMap::from([
+            ("web", ["web-1", "web-2"]),
+        ]),
+        hosts: HashMap::from([
+            ("web-1", Host {
+                transport: "ssh",
+                address: "10.0.0.11",
+                user: "deploy",
+            }),
+            ("web-2", Host {
+                transport: "ssh",
+                address: "10.0.0.12",
+                user: "deploy",
+            }),
+        ]),
+    }
+}
+"#,
+        )
+        .expect("inventory should be written");
+
+        let inventory = load_inventory(&path).expect("fp inventory should parse");
         assert_eq!(inventory.groups["web"].len(), 2);
-        assert_eq!(inventory.hosts["web-1"].user.as_deref(), Some("deploy"));
+        assert_eq!(inventory.hosts["web-1"].transport, TransportKind::Ssh);
+        assert_eq!(inventory.hosts["web-2"].transport, TransportKind::Ssh);
+    }
+
+    #[test]
+    fn load_inventory_supports_fp_multiple_transports() {
+        let directory = tempfile::tempdir().expect("tempdir should be created");
+        let path = directory.path().join("inventory.fp");
+        fs::write(
+            &path,
+            r#"
+use std::collections::HashMap;
+
+struct Inventory {
+    groups: HashMap<&'static str, [&'static str; 4]>,
+    hosts: HashMap<&'static str, Host>,
+}
+
+struct Host {
+    transport: &'static str,
+    address: &'static str,
+    user: &'static str,
+    password: &'static str,
+    port: u16,
+    container: &'static str,
+    pod: &'static str,
+    namespace: &'static str,
+    context: &'static str,
+    scheme: &'static str,
+}
+
+const fn inventory() -> Inventory {
+    Inventory {
+        groups: HashMap::from([("mixed", ["ssh-1", "docker-1", "k8s-1", "win-1"])]),
+        hosts: HashMap::from([
+            ("ssh-1", Host {
+                transport: "ssh",
+                address: "10.0.0.11",
+                user: "deploy",
+                password: "",
+                port: 22,
+                container: "",
+                pod: "",
+                namespace: "",
+                context: "",
+                scheme: "",
+            }),
+            ("docker-1", Host {
+                transport: "docker",
+                address: "",
+                user: "root",
+                password: "",
+                port: 0,
+                container: "app",
+                pod: "",
+                namespace: "",
+                context: "",
+                scheme: "",
+            }),
+            ("k8s-1", Host {
+                transport: "kubectl",
+                address: "",
+                user: "",
+                password: "",
+                port: 0,
+                container: "api",
+                pod: "api-123",
+                namespace: "prod",
+                context: "prod-cluster",
+                scheme: "",
+            }),
+            ("win-1", Host {
+                transport: "winrm",
+                address: "10.0.0.21",
+                user: "Administrator",
+                password: "secret",
+                port: 5985,
+                container: "",
+                pod: "",
+                namespace: "",
+                context: "",
+                scheme: "http",
+            }),
+        ]),
+    }
+}
+"#,
+        )
+        .expect("inventory should be written");
+
+        let inventory = load_inventory(&path).expect("fp inventory should parse");
+        assert_eq!(inventory.groups["mixed"].len(), 4);
+        assert_eq!(inventory.hosts["ssh-1"].transport, TransportKind::Ssh);
+        assert_eq!(inventory.hosts["docker-1"].transport, TransportKind::Docker);
+        assert_eq!(inventory.hosts["k8s-1"].transport, TransportKind::Kubectl);
+        assert_eq!(inventory.hosts["win-1"].transport, TransportKind::Winrm);
+        assert_eq!(
+            inventory.hosts["docker-1"].docker.as_ref().map(|entry| entry.container.as_str()),
+            Some("app")
+        );
+        assert_eq!(
+            inventory.hosts["k8s-1"].kubectl.as_ref().map(|entry| entry.pod.as_str()),
+            Some("api-123")
+        );
+        assert_eq!(
+            inventory.hosts["win-1"].winrm.as_ref().and_then(|entry| entry.password.as_deref()),
+            Some("secret")
+        );
     }
 }

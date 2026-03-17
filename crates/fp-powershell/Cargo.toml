@@ -1,9 +1,7 @@
 [package]
-name = "fp-bash"
+name = "fp-powershell"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 fp-shell-core = { path = "../fp-shell-core" }
-
-[dev-dependencies]

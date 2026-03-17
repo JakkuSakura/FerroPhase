@@ -82,6 +82,6 @@ web = ["web-1", "web-2"]
     );
 
     let script = fs::read_to_string(output).expect("output script should be readable");
-    assert!(script.contains("run_remote 'web-1' 'uptime'"));
-    assert!(script.contains("run_remote 'web-2' 'uptime'"));
+    assert!(script.contains("run_host 'web-1' 'uptime'"));
+    assert!(script.contains("run_host 'web-2' 'uptime'"));
 }

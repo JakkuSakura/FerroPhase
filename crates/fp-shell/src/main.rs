@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand};
-use fp_shell::{CompileOptions, ShellTarget, compile_file_with_options, load_inventory};
+use fp_shell::{CompileOptions, compile_file_with_options, load_inventory, parse_target};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -47,7 +47,7 @@ fn run() -> Result<(), fp_shell::ShellError> {
     let cli = Cli::parse();
     match cli.command {
         Command::Compile(args) => {
-            let target = ShellTarget::parse(&args.target)?;
+            let target = parse_target(&args.target)?;
             let inventory = if let Some(path) = args.inventory.as_deref() {
                 Some(load_inventory(path)?)
             } else {
