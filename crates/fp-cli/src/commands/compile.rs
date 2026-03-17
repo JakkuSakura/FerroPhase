@@ -1299,13 +1299,10 @@ fn determine_output_path(
                 "out"
             };
 
-            let needs_update = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext != desired_ext)
-                .unwrap_or(true);
-
-            if needs_update {
+            // Respect explicit `-o <path>.<ext>` even when the extension differs
+            // from the default (`.out`/`.exe`). Only fill the extension when the
+            // user did not provide one.
+            if path.extension().is_none() {
                 path.set_extension(desired_ext);
             }
 
@@ -1338,7 +1335,9 @@ fn determine_output_path(
 
         if matches!(backend, BackendKind::Bytecode) && emit_text_bytecode {
             let mut path = output.clone();
-            path.set_extension("ftbc");
+            if path.extension().is_none() {
+                path.set_extension("ftbc");
+            }
             return Ok(path);
         }
 
@@ -1349,12 +1348,7 @@ fn determine_output_path(
                 Some(ext) if ext.eq_ignore_ascii_case("exe") => "exe",
                 _ => "exe",
             };
-            let needs_update = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| !ext.eq_ignore_ascii_case(desired_ext))
-                .unwrap_or(true);
-            if needs_update {
+            if path.extension().is_none() {
                 path.set_extension(desired_ext);
             }
             return Ok(path);

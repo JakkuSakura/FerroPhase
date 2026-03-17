@@ -373,6 +373,12 @@ pub enum CallingConvention {
     X86VectorCall,
     Win64,
     X86_64SysV,
+    /// Internal calling convention used by the native binary lifters.
+    ///
+    /// Lifted x86_64 machine code models the architectural register file as a
+    /// shared memory blob. Calls between lifted functions pass a single hidden
+    /// pointer to that register file (instead of using the platform ABI).
+    FpLiftedX86_64RegFile,
     AAPCS,
     AAPCSVfp,
 }

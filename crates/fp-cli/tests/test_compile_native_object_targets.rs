@@ -53,6 +53,69 @@ fn base_args(
 }
 
 #[tokio::test]
+async fn compile_native_object_roundtrips_simple_x86_64_elf_add_ret_text() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("main.out.o");
+
+    let input_bytes = build_x86_64_elf_object_with_add_rax_imm8_ret();
+    fs::write(&input_file, &input_bytes).unwrap();
+
+    let args = base_args(input_file.clone(), output_file.clone(), "x86_64-unknown-linux-gnu");
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let output_bytes = fs::read(&output_file).unwrap();
+    let input_obj = object::File::parse(input_bytes.as_slice()).unwrap();
+    let output_obj = object::File::parse(output_bytes.as_slice()).unwrap();
+
+    let input_text = input_obj
+        .section_by_name(".text")
+        .unwrap()
+        .data()
+        .unwrap();
+    let output_text = output_obj
+        .section_by_name(".text")
+        .unwrap()
+        .data()
+        .unwrap();
+    assert_eq!(output_text, input_text);
+}
+
+fn build_x86_64_elf_object_with_add_rax_imm8_ret() -> Vec<u8> {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    // add rax, 1; ret
+    obj.append_section_data(section_id, &[0x48, 0x83, 0xC0, 0x01, 0xC3], 1);
+    obj.add_symbol(Symbol {
+        name: b"foo".to_vec(),
+        value: 0,
+        size: 5,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section_id),
+        flags: SymbolFlags::None,
+    });
+    obj.write().expect("write ELF object")
+}
+
+#[tokio::test]
+async fn compile_respects_explicit_output_extension_for_native_object_link() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("ls.aarch64");
+    let unexpected_out = temp_dir.path().join("ls.out");
+
+    fs::write(&input_file, build_x86_64_elf_object_with_call_reloc()).unwrap();
+    let mut args = base_args(input_file, output_file.clone(), "aarch64-apple-darwin");
+    args.link = true;
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    assert!(output_file.exists());
+    assert!(!unexpected_out.exists());
+}
+
+#[tokio::test]
 async fn compile_native_object_link_writes_executable_without_running() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("main.o");
@@ -68,6 +131,150 @@ async fn compile_native_object_link_writes_executable_without_running() {
     assert_eq!(file.kind(), object::ObjectKind::Executable);
     assert_eq!(file.format(), BinaryFormat::MachO);
     assert_eq!(file.architecture(), Architecture::Aarch64);
+}
+
+fn build_x86_64_elf_object_with_ret_only() -> Vec<u8> {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    obj.append_section_data(section_id, &[0xC3], 1);
+    obj.add_symbol(Symbol {
+        name: b"foo".to_vec(),
+        value: 0,
+        size: 1,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section_id),
+        flags: SymbolFlags::None,
+    });
+    obj.write().expect("write ELF object")
+}
+
+#[tokio::test]
+async fn compile_native_object_roundtrips_simple_x86_64_elf_text() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("main.out.o");
+
+    let input_bytes = build_x86_64_elf_object_with_ret_only();
+    fs::write(&input_file, &input_bytes).unwrap();
+
+    let args = base_args(input_file.clone(), output_file.clone(), "x86_64-unknown-linux-gnu");
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let output_bytes = fs::read(&output_file).unwrap();
+    let input_obj = object::File::parse(input_bytes.as_slice()).unwrap();
+    let output_obj = object::File::parse(output_bytes.as_slice()).unwrap();
+
+    let input_text = input_obj
+        .section_by_name(".text")
+        .unwrap()
+        .data()
+        .unwrap();
+    let output_text = output_obj
+        .section_by_name(".text")
+        .unwrap()
+        .data()
+        .unwrap();
+    assert_eq!(output_text, input_text);
+}
+
+fn build_aarch64_macho_object_with_ret_only() -> Vec<u8> {
+    let mut obj = Object::new(BinaryFormat::MachO, Architecture::Aarch64, Endianness::Little);
+    let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    obj.append_section_data(section_id, &0xD65F03C0u32.to_le_bytes(), 4);
+    obj.add_symbol(Symbol {
+        name: b"foo".to_vec(),
+        value: 0,
+        size: 4,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section_id),
+        flags: SymbolFlags::None,
+    });
+    obj.write().expect("write Mach-O object")
+}
+
+fn build_aarch64_macho_object_with_add_ret() -> Vec<u8> {
+    let mut obj = Object::new(BinaryFormat::MachO, Architecture::Aarch64, Endianness::Little);
+    let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    // add x0, x0, #1; ret
+    obj.append_section_data(section_id, &0x91000400u32.to_le_bytes(), 4);
+    obj.append_section_data(section_id, &0xD65F03C0u32.to_le_bytes(), 4);
+    obj.add_symbol(Symbol {
+        name: b"foo".to_vec(),
+        value: 0,
+        size: 8,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section_id),
+        flags: SymbolFlags::None,
+    });
+    obj.write().expect("write Mach-O object")
+}
+
+#[tokio::test]
+async fn compile_native_object_roundtrips_simple_aarch64_macho_text() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("main.out.o");
+
+    let input_bytes = build_aarch64_macho_object_with_ret_only();
+    fs::write(&input_file, &input_bytes).unwrap();
+
+    let args = base_args(input_file.clone(), output_file.clone(), "aarch64-apple-darwin");
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let output_bytes = fs::read(&output_file).unwrap();
+    let input_obj = object::File::parse(input_bytes.as_slice()).unwrap();
+    let output_obj = object::File::parse(output_bytes.as_slice()).unwrap();
+
+    let input_text = input_obj
+        .section_by_name("__text")
+        .or_else(|| input_obj.section_by_name(".text"))
+        .unwrap()
+        .data()
+        .unwrap();
+    let output_text = output_obj
+        .section_by_name("__text")
+        .or_else(|| output_obj.section_by_name(".text"))
+        .unwrap()
+        .data()
+        .unwrap();
+    assert_eq!(output_text, input_text);
+}
+
+#[tokio::test]
+async fn compile_native_object_roundtrips_simple_aarch64_macho_add_ret_text() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.o");
+    let output_file = temp_dir.path().join("main.out.o");
+
+    let input_bytes = build_aarch64_macho_object_with_add_ret();
+    fs::write(&input_file, &input_bytes).unwrap();
+
+    let args = base_args(input_file.clone(), output_file.clone(), "aarch64-apple-darwin");
+    compile_command(args, &CliConfig::default()).await.unwrap();
+
+    let output_bytes = fs::read(&output_file).unwrap();
+    let input_obj = object::File::parse(input_bytes.as_slice()).unwrap();
+    let output_obj = object::File::parse(output_bytes.as_slice()).unwrap();
+
+    let input_text = input_obj
+        .section_by_name("__text")
+        .or_else(|| input_obj.section_by_name(".text"))
+        .unwrap()
+        .data()
+        .unwrap();
+    let output_text = output_obj
+        .section_by_name("__text")
+        .or_else(|| output_obj.section_by_name(".text"))
+        .unwrap()
+        .data()
+        .unwrap();
+    assert_eq!(output_text, input_text);
 }
 
 #[tokio::test]

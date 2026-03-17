@@ -85,6 +85,13 @@ async fn transpile_native_object(
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
     }
 
+    if args.save_intermediates {
+        let dump_path = output_path.with_extension("asm");
+        fp_native::emit::dump_asm(&dump_path, &plan).map_err(|err| {
+            CliError::Compilation(format!("Failed to dump native AsmIR plan: {err}"))
+        })?;
+    }
+
     if link_requested {
         let needs_external_link = format == emit::TargetFormat::MachO
             && plan_has_undefined_symbols(&plan)

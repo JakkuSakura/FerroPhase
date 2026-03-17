@@ -184,7 +184,15 @@ fn write_macho_aarch64_object(plan: &EmitPlan) -> Result<Vec<u8>> {
     let rodata_id = if plan.rodata.is_empty() {
         None
     } else {
-        let section = obj.section_id(StandardSection::ReadOnlyData);
+        // The lifted ELF inputs often contain read-only data that needs
+        // relocations (e.g. option tables with pointer fields). On Darwin,
+        // leaving that data in the __TEXT segment triggers "illegal
+        // text-relocations" at link time. Place it in __DATA_CONST instead.
+        let section = obj.add_section(
+            b"__DATA_CONST".to_vec(),
+            b"__const".to_vec(),
+            SectionKind::ReadOnlyData,
+        );
         obj.append_section_data(section, &plan.rodata, 16);
         Some(section)
     };
@@ -221,13 +229,12 @@ fn write_macho_aarch64_object(plan: &EmitPlan) -> Result<Vec<u8>> {
     let mut symbol_ids: HashMap<String, object::write::SymbolId> = HashMap::new();
 
     let mangle_undefined = |raw: &str| -> String {
-        if raw.starts_with("__") {
-            format!("_{raw}")
-        } else if raw.starts_with('_') {
-            raw.to_string()
-        } else {
-            format!("_{raw}")
+        if raw.is_empty() {
+            return raw.to_string();
         }
+        // Mach-O symbols always carry a leading ABI underscore. Keep the IR
+        // surface ABI-agnostic and apply the underscore here.
+        format!("_{raw}")
     };
 
     for (name, offset) in &plan.symbols {

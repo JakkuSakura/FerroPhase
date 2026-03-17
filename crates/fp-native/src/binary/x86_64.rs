@@ -2,12 +2,672 @@ use crate::binary::cfg::wire_block_edges;
 use crate::binary::{DataRegion, LiftedFunction, RipSymbol, RipSymbolKind, TextRelocation};
 use fp_core::asmir::AsmLocal;
 use fp_core::asmir::{
-    AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmSyscallConvention, AsmType,
-    AsmValue,
+    AsmAnnotation, AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmSyscallConvention,
+    AsmType, AsmValue,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Name};
 use std::collections::HashMap;
+
+#[derive(Clone, Debug)]
+struct JumpTable {
+    jmp_offset: u64,
+    capture_offset: u64,
+    index_reg: u8,
+    default_offset: Option<u64>,
+    target_offsets: Vec<u64>,
+}
+
+fn x86_opcode_after_prefixes(bytes: &[u8], inst: &DecodedInstruction) -> Result<u8> {
+    let start = inst.offset as usize;
+    let end = (inst.offset + inst.len as u64) as usize;
+    let raw = bytes
+        .get(start..end)
+        .ok_or_else(|| Error::from("x86 opcode slice out of range"))?;
+    let mut idx = 0usize;
+    while idx < raw.len() {
+        let byte = raw[idx];
+        let is_prefix = matches!(
+            byte,
+            0x66 | 0x67 | 0xF2 | 0xF3 | 0x2E | 0x36 | 0x3E | 0x26 | 0x64 | 0x65
+        ) || (0x40..=0x4F).contains(&byte);
+        if !is_prefix {
+            break;
+        }
+        idx += 1;
+    }
+    raw.get(idx)
+        .copied()
+        .ok_or_else(|| Error::from("missing x86 opcode"))
+}
+
+fn discover_jump_tables(
+    decoded: &[DecodedInstruction],
+    code_bytes: &[u8],
+    code_base_address: u64,
+    data_regions: Option<&[DataRegion]>,
+    bytes_len: u64,
+    reachable_bounds: Option<(u64, u64)>,
+) -> Vec<JumpTable> {
+    let Some(data_regions) = data_regions else {
+        return Vec::new();
+    };
+
+    let inst_map = decoded
+        .iter()
+        .map(|inst| (inst.offset, inst))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let find_region = |address: u64| -> Option<(&[u8], usize)> {
+        if let Some((region, offset)) = data_regions.iter().find_map(|region| {
+            if address >= region.start && address < region.end {
+                Some((region, (address - region.start) as usize))
+            } else {
+                None
+            }
+        }) {
+            return Some((region.bytes.as_slice(), offset));
+        }
+
+        if address >= code_base_address && address < code_base_address.saturating_add(bytes_len) {
+            let offset = address.saturating_sub(code_base_address) as usize;
+            return Some((code_bytes, offset));
+        }
+
+        None
+    };
+
+    let trace = std::env::var_os("FP_JUMPTABLE_TRACE").is_some();
+    let mut trace_count = 0usize;
+    let mut trace_detail = 0usize;
+
+    fn kind_tag(kind: &Decoded) -> &'static str {
+        match kind {
+            Decoded::Lea { .. } => "lea",
+            Decoded::MovSxd { .. } => "movsxd",
+            Decoded::MovRmToReg { .. } => "mov",
+            Decoded::AddRegRm { .. } | Decoded::AddRmReg { .. } => "add",
+            Decoded::JmpRm { .. } => "jmp_rm",
+            Decoded::JmpRel { .. } => "jmp",
+            Decoded::JccRel { .. } => "jcc",
+            Decoded::Cmp { .. } => "cmp",
+            _ => "other",
+        }
+    }
+
+    let mut tables = Vec::new();
+    let mut i = 0usize;
+
+    fn resolve_reg_const_address(
+        decoded: &[DecodedInstruction],
+        code_base_address: u64,
+        search_start: usize,
+        search_end_exclusive: usize,
+        reg: u8,
+    ) -> Option<u64> {
+        // Very small constant-prop for jump-table base discovery.
+        // We only handle "address-like" patterns that commonly occur for
+        // switch jump tables in PIC/PIE:
+        // - lea reg, [rip + disp]
+        // - mov reg, imm64
+        // - mov reg, other_reg
+        // - add/sub reg, imm
+        let mut cur_reg = reg;
+        let mut cur_limit = search_end_exclusive;
+        let mut addend: i64 = 0;
+
+        for _ in 0..8 {
+            let mut found = None;
+            for pos in (search_start..cur_limit).rev() {
+                let inst = &decoded[pos];
+                match &inst.kind {
+                    Decoded::Lea { dst, src, width_bits } if *dst == cur_reg && *width_bits == 64 => {
+                        if src.base == Some(16) && src.index.is_none() {
+                            let pc = (code_base_address as i64)
+                                .saturating_add(inst.offset as i64)
+                                .saturating_add(inst.len as i64);
+                            let base = pc.saturating_add(src.displacement);
+                            return Some((base.saturating_add(addend)) as u64);
+                        }
+                    }
+                    Decoded::MovImm64 { dst, imm, .. } if *dst == cur_reg => {
+                        return Some(((*imm as i64).saturating_add(addend)) as u64);
+                    }
+                    Decoded::MovRmToReg {
+                        dst,
+                        src: RmOperand::Reg(src_reg),
+                        width_bits,
+                    } if *dst == cur_reg && *width_bits == 64 => {
+                        found = Some((*src_reg, pos));
+                        break;
+                    }
+                    Decoded::AddImm {
+                        dst,
+                        imm,
+                        width_bits,
+                    } if *dst == cur_reg && *width_bits == 64 => {
+                        addend = addend.saturating_add(*imm as i64);
+                        cur_limit = pos;
+                        found = Some((cur_reg, pos));
+                        break;
+                    }
+                    Decoded::SubImm {
+                        dst,
+                        imm,
+                        width_bits,
+                    } if *dst == cur_reg && *width_bits == 64 => {
+                        addend = addend.saturating_sub(*imm as i64);
+                        cur_limit = pos;
+                        found = Some((cur_reg, pos));
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            match found {
+                Some((next_reg, next_limit)) => {
+                    cur_reg = next_reg;
+                    cur_limit = next_limit;
+                }
+                None => return None,
+            }
+        }
+
+        None
+    }
+    while i < decoded.len() {
+        let inst = &decoded[i];
+        let Decoded::JmpRm {
+            target: RmOperand::Reg(jmp_reg),
+        } = inst.kind
+        else {
+            i += 1;
+            continue;
+        };
+
+        // Heuristic: restrict jump-table targets to a neighborhood around the
+        // indirect jump instruction. When lifting whole `.text` slices (for
+        // example, when starting from a SysV `main`), scanning the entire
+        // address space can match unrelated tables and accidentally create CFG
+        // edges into unrelated code.
+        let local_lo = inst.offset.saturating_sub(0x20_000);
+        let local_hi = inst.offset.saturating_add(0x20_000);
+        let effective_bounds = match reachable_bounds {
+            Some((lo, hi)) => {
+                let lo = lo.max(local_lo);
+                let hi = hi.min(local_hi);
+                (lo <= hi).then_some((lo, hi))
+            }
+            None => Some((local_lo, local_hi)),
+        };
+
+        if trace && trace_count < 20 {
+            let window_start = i.saturating_sub(8);
+            let tags = (window_start..=i)
+                .map(|idx| kind_tag(&decoded[idx].kind))
+                .collect::<Vec<_>>();
+            eprintln!(
+                "[fp-native] jmp_rm reg={} at 0x{:x} prev={:?}",
+                jmp_reg, inst.offset, tags
+            );
+
+            if trace_count == 0 {
+                for idx in window_start..=i {
+                    let di = &decoded[idx];
+                    match &di.kind {
+                        Decoded::Lea { dst, src, width_bits } => {
+                            eprintln!(
+                                "[fp-native]   0x{:x}: lea r{} <= [base={:?} idx={:?} scale={} disp={}] w{}",
+                                di.offset,
+                                dst,
+                                src.base,
+                                src.index,
+                                src.scale,
+                                src.displacement,
+                                width_bits
+                            );
+                        }
+                        Decoded::MovSxd { dst, src } => {
+                            eprintln!(
+                                "[fp-native]   0x{:x}: movsxd r{} <= {:?}",
+                                di.offset, dst, src
+                            );
+                        }
+                        Decoded::MovRmToReg { dst, src, width_bits } => {
+                            eprintln!(
+                                "[fp-native]   0x{:x}: mov r{} <= {:?} w{}",
+                                di.offset, dst, src, width_bits
+                            );
+                        }
+                        Decoded::AddRegRm { dst, src } => {
+                            eprintln!(
+                                "[fp-native]   0x{:x}: add r{} += {:?}",
+                                di.offset, dst, src
+                            );
+                        }
+                        Decoded::AddRmReg { dst, src, width_bits } => {
+                            eprintln!(
+                                "[fp-native]   0x{:x}: add {:?} += r{} w{}",
+                                di.offset, dst, src, width_bits
+                            );
+                        }
+                        Decoded::JmpRm { target } => {
+                            eprintln!("[fp-native]   0x{:x}: jmp {:?}", di.offset, target);
+                        }
+                        _ => {
+                            eprintln!("[fp-native]   0x{:x}: {}", di.offset, kind_tag(&di.kind));
+                        }
+                    }
+                }
+            }
+            trace_count += 1;
+        }
+
+        // Match common PIC jump-table pattern:
+        //   lea base, [rip + disp]
+        //   movsxd jmp_reg, dword ptr [base + index*4]
+        //   add jmp_reg, base
+        //   jmp jmp_reg
+        let search_window_start = i.saturating_sub(1024);
+
+        // (base_reg, index_reg, entry_disp, lea_inst, capture_offset, default_offset)
+        let mut matched: Option<(u8, u8, i64, Option<&DecodedInstruction>, u64, Option<u64>)> =
+            None;
+
+        // Find the `movsxd` (or `mov` + `movsxd`) that loads the jump-table entry.
+        'search: for mov_pos in (search_window_start..i).rev() {
+            let mut off_reg: u8;
+            let mut base_reg: u8;
+            let mut index_reg: u8;
+            let mut table_entry_disp: i64;
+
+            match &decoded[mov_pos].kind {
+                Decoded::MovSxd {
+                    dst,
+                    src:
+                        RmOperand::Mem(X86Memory {
+                            base: Some(mem_base),
+                            index: Some(mem_index),
+                            scale: 4,
+                            displacement: mem_disp,
+                            ..
+                        }),
+                } => {
+                    off_reg = *dst;
+                    base_reg = *mem_base;
+                    index_reg = *mem_index;
+                    table_entry_disp = *mem_disp;
+                }
+                Decoded::MovSxd {
+                    dst,
+                    src: RmOperand::Reg(tmp_reg),
+                } => {
+                    if mov_pos == 0 {
+                        continue;
+                    }
+                    let Decoded::MovRmToReg {
+                        dst: prev_dst,
+                        src:
+                            RmOperand::Mem(X86Memory {
+                                base: Some(mem_base),
+                                index: Some(mem_index),
+                                scale: 4,
+                                displacement: mem_disp,
+                                ..
+                            }),
+                        width_bits,
+                    } = &decoded[mov_pos - 1].kind
+                    else {
+                        continue;
+                    };
+                    if *prev_dst != *tmp_reg || *width_bits != 32 {
+                        continue;
+                    }
+                    off_reg = *dst;
+                    base_reg = *mem_base;
+                    index_reg = *mem_index;
+                    table_entry_disp = *mem_disp;
+                }
+                _ => continue,
+            }
+
+            // Find an `add` between `movsxd` and `jmp` that combines the base and offset.
+            let mut add_ok = false;
+            for add_pos in mov_pos + 1..i {
+                match &decoded[add_pos].kind {
+                    Decoded::AddRegRm {
+                        dst,
+                        src: RmOperand::Reg(src_reg),
+                    } if (*dst == off_reg && *src_reg == base_reg && jmp_reg == off_reg)
+                        || (*dst == base_reg && *src_reg == off_reg && jmp_reg == base_reg) =>
+                    {
+                        add_ok = true;
+                        break;
+                    }
+                    Decoded::AddRmReg {
+                        dst: RmOperand::Reg(dst),
+                        src,
+                        width_bits,
+                    } if *width_bits == 64
+                        && (((*dst == off_reg && *src == base_reg && jmp_reg == off_reg)
+                            || (*dst == base_reg && *src == off_reg && jmp_reg == base_reg))) =>
+                    {
+                        add_ok = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            if !add_ok {
+                continue;
+            }
+
+            // Find the `lea` that defines the base register.
+            for lea_pos in (search_window_start..mov_pos).rev() {
+                let Decoded::Lea { dst, src, width_bits } = &decoded[lea_pos].kind else {
+                    continue;
+                };
+                if *dst != base_reg || *width_bits != 64 {
+                    continue;
+                }
+                if src.base != Some(16) || src.index.is_some() {
+                    continue;
+                }
+                let default_offset = if mov_pos > 0 {
+                    let prev = &decoded[mov_pos - 1];
+                    match prev.kind {
+                        Decoded::JccRel { target, .. }
+                            if prev.offset + prev.len as u64 == decoded[mov_pos].offset =>
+                        {
+                            Some(target)
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                matched = Some((
+                    base_reg,
+                    index_reg,
+                    table_entry_disp,
+                    Some(&decoded[lea_pos]),
+                    decoded[mov_pos].offset,
+                    default_offset,
+                ));
+                break 'search;
+            }
+
+            // Some compilers keep the jump-table base address in a callee-saved
+            // register (often via a prologue `lea` or a copy from another reg).
+            // In that case we still accept the pattern, and resolve the base
+            // address via local constant-prop.
+            let default_offset = if mov_pos > 0 {
+                let prev = &decoded[mov_pos - 1];
+                match prev.kind {
+                    Decoded::JccRel { target, .. }
+                        if prev.offset + prev.len as u64 == decoded[mov_pos].offset =>
+                    {
+                        Some(target)
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            matched = Some((
+                base_reg,
+                index_reg,
+                table_entry_disp,
+                None,
+                decoded[mov_pos].offset,
+                default_offset,
+            ));
+            break;
+        }
+
+        let Some((base_reg, index_reg, table_entry_disp, lea_inst, capture_offset, default_offset)) =
+            matched
+        else {
+            if trace && trace_detail < 5 {
+                eprintln!("[fp-native] jt no-match at 0x{:x}", inst.offset);
+                trace_detail += 1;
+            }
+            i += 1;
+            continue;
+        };
+
+        // Compute the table's absolute VA within the input image.
+        fn parse_jump_table_targets(
+            inst_map: &std::collections::HashMap<u64, &DecodedInstruction>,
+            code_base_address: u64,
+            bytes_len: u64,
+            table_bytes: &[u8],
+            region_offset: usize,
+            table_label_va: i64,
+            reachable_bounds: Option<(u64, u64)>,
+        ) -> Vec<u64> {
+            let mut targets = Vec::new();
+            let mut entry_index = 0usize;
+            while targets.len() < 4096 {
+                let entry_offset = region_offset.saturating_add(entry_index * 4);
+                if entry_offset.saturating_add(4) > table_bytes.len() {
+                    break;
+                }
+                let raw = &table_bytes[entry_offset..entry_offset + 4];
+                let rel = i32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as i64;
+                let target_va = table_label_va.saturating_add(rel) as u64;
+                if target_va < code_base_address
+                    || target_va >= code_base_address.saturating_add(bytes_len)
+                {
+                    break;
+                }
+                let target_offset = target_va.saturating_sub(code_base_address);
+                if let Some((lo, hi)) = reachable_bounds {
+                    if target_offset < lo || target_offset > hi {
+                        break;
+                    }
+                }
+                if !inst_map.contains_key(&target_offset) {
+                    break;
+                }
+                targets.push(target_offset);
+                entry_index += 1;
+            }
+            targets
+        }
+
+        fn scan_for_jump_table_base(
+            inst_map: &std::collections::HashMap<u64, &DecodedInstruction>,
+            data_regions: &[DataRegion],
+            code_bytes: &[u8],
+            code_base_address: u64,
+            bytes_len: u64,
+            table_entry_disp: i64,
+            reachable_bounds: Option<(u64, u64)>,
+        ) -> Option<(i64, Vec<u64>)> {
+            let mut scan_region = |start_va: u64, bytes: &[u8]| -> Option<(i64, Vec<u64>)> {
+                let disp = table_entry_disp;
+                if disp.abs() > (bytes.len() as i64) {
+                    return None;
+                }
+
+                // Scan 4-byte aligned candidates.
+                let max_off = bytes.len().saturating_sub(16);
+                for base_off in (0..max_off).step_by(4) {
+                    let entry_off_i = (base_off as i64).saturating_add(disp);
+                    if entry_off_i < 0 {
+                        continue;
+                    }
+                    let entry_off = entry_off_i as usize;
+                    if entry_off.saturating_add(12) > bytes.len() {
+                        continue;
+                    }
+
+                    let label_va = (start_va as i64).saturating_add(base_off as i64);
+
+                    // Quick plausibility: first 3 entries must land on decoded instruction boundaries.
+                    let mut ok = true;
+                    for idx in 0..3 {
+                        let raw = &bytes[entry_off + idx * 4..entry_off + idx * 4 + 4];
+                        let rel = i32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as i64;
+                        let target_va = label_va.saturating_add(rel) as u64;
+                        if target_va < code_base_address
+                            || target_va >= code_base_address.saturating_add(bytes_len)
+                        {
+                            ok = false;
+                            break;
+                        }
+                        let target_offset = target_va.saturating_sub(code_base_address);
+                        if let Some((lo, hi)) = reachable_bounds {
+                            if target_offset < lo || target_offset > hi {
+                                ok = false;
+                                break;
+                            }
+                        }
+                        if !inst_map.contains_key(&target_offset) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if !ok {
+                        continue;
+                    }
+
+                    let targets = parse_jump_table_targets(
+                        inst_map,
+                        code_base_address,
+                        bytes_len,
+                        bytes,
+                        entry_off,
+                        label_va,
+                        reachable_bounds,
+                    );
+                    if targets.len() >= 2 {
+                        return Some((label_va, targets));
+                    }
+                }
+
+                None
+            };
+
+            for region in data_regions {
+                if let Some(found) = scan_region(region.start, &region.bytes) {
+                    return Some(found);
+                }
+            }
+
+            // Some binaries place small jump tables into the code section.
+            scan_region(code_base_address, code_bytes)
+        }
+
+        let (table_label_va, targets) = if let Some(lea_inst) = lea_inst {
+            let Decoded::Lea { src, .. } = &lea_inst.kind else {
+                i += 1;
+                continue;
+            };
+            let pc = (code_base_address as i64)
+                .saturating_add(lea_inst.offset as i64)
+                .saturating_add(lea_inst.len as i64);
+            let label_va = pc.saturating_add(src.displacement);
+
+            let table_entry_va = label_va.saturating_add(table_entry_disp) as u64;
+            let Some((table_bytes, region_offset)) = find_region(table_entry_va) else {
+                i += 1;
+                continue;
+            };
+
+            let targets = parse_jump_table_targets(
+                &inst_map,
+                code_base_address,
+                bytes_len,
+                table_bytes,
+                region_offset,
+                label_va,
+                effective_bounds,
+            );
+            (label_va, targets)
+        } else {
+            let resolved = resolve_reg_const_address(
+                decoded,
+                code_base_address,
+                search_window_start,
+                i,
+                base_reg,
+            );
+
+            match resolved {
+                Some(resolved) => {
+                    let label_va = resolved as i64;
+                    let table_entry_va = label_va.saturating_add(table_entry_disp) as u64;
+                    let Some((table_bytes, region_offset)) = find_region(table_entry_va) else {
+                        i += 1;
+                        continue;
+                    };
+                    let targets = parse_jump_table_targets(
+                        &inst_map,
+                        code_base_address,
+                        bytes_len,
+                        table_bytes,
+                        region_offset,
+                        label_va,
+                        effective_bounds,
+                    );
+                    (label_va, targets)
+                }
+                None => {
+                    if let Some(found) = scan_for_jump_table_base(
+                        &inst_map,
+                        data_regions,
+                        code_bytes,
+                        code_base_address,
+                        bytes_len,
+                        table_entry_disp,
+                        effective_bounds,
+                    ) {
+                        found
+                    } else {
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+        };
+
+        if trace && trace_detail < 5 {
+            eprintln!(
+                "[fp-native] jt probe jmp=0x{:x} label_va=0x{:x} entry_va=0x{:x} region_off=0x{:x}",
+                inst.offset,
+                table_label_va as u64,
+                (table_label_va.saturating_add(table_entry_disp) as u64),
+                0
+            );
+            trace_detail += 1;
+        }
+
+        if targets.len() >= 2 {
+            if trace {
+                eprintln!(
+                    "[fp-native] matched jump table at 0x{:x} entries={}",
+                    inst.offset,
+                    targets.len()
+                );
+            }
+            tables.push(JumpTable {
+                jmp_offset: inst.offset,
+                capture_offset,
+                index_reg,
+                default_offset,
+                target_offsets: targets,
+            });
+        }
+
+        i += 1;
+    }
+
+    tables
+}
 
 pub fn lift_function_bytes(
     bytes: &[u8],
@@ -23,7 +683,10 @@ pub fn lift_function_bytes(
         None,
         None,
         None,
+        None,
         0,
+        true,
+        false,
     )
 }
 
@@ -33,13 +696,30 @@ pub(super) fn lift_function_bytes_with_symbols(
     syscall_convention: Option<AsmSyscallConvention>,
     code_base_address: u64,
     rip_symbols: Option<&HashMap<u64, RipSymbol>>,
+    plt_targets: Option<&HashMap<u64, String>>,
     rodata_cstrings: Option<&HashMap<String, String>>,
     rodata_cstrings_by_addr: Option<&HashMap<u64, String>>,
     data_regions: Option<&[DataRegion]>,
     entry_offset: u64,
+    initialize_reg_file_from_locals: bool,
+    use_lifted_regfile_calls: bool,
 ) -> Result<LiftedFunction> {
     let decoded = decode_stream(bytes)?;
-    let sorted_starts = determine_block_starts(&decoded, bytes.len() as u64, entry_offset)?;
+
+    let jump_tables = discover_jump_tables(
+        &decoded,
+        bytes,
+        code_base_address,
+        data_regions,
+        bytes.len() as u64,
+        None,
+    );
+    let sorted_starts = determine_block_starts(
+        &decoded,
+        bytes.len() as u64,
+        entry_offset,
+        &jump_tables,
+    )?;
     let offset_to_sorted_index = sorted_starts
         .iter()
         .enumerate()
@@ -63,15 +743,31 @@ pub(super) fn lift_function_bytes_with_symbols(
         .map(|(idx, offset)| (*offset, idx as u32))
         .collect::<std::collections::HashMap<_, _>>();
 
+    let jump_table_by_jmp_offset = jump_tables
+        .into_iter()
+        .map(|table| (table.jmp_offset, table))
+        .collect::<std::collections::HashMap<_, _>>();
+    let jump_table_by_capture_offset = jump_table_by_jmp_offset
+        .values()
+        .map(|table| (table.capture_offset, (table.jmp_offset, table.index_reg)))
+        .collect::<std::collections::HashMap<_, _>>();
+    let switch_default_block = block_starts.len() as u32;
+    let mut saw_switch = false;
+
     let mut ctx = RegisterLiftContext::new(
         code_base_address,
         rip_symbols,
+        plt_targets,
         rodata_cstrings,
         rodata_cstrings_by_addr,
         data_regions,
+        initialize_reg_file_from_locals,
+        use_lifted_regfile_calls,
     );
     let mut next_id = 0u32;
     let mut basic_blocks = Vec::new();
+
+    let stack_slots = ctx.initialize_reg_file_slots();
 
     for (block_index, &block_offset) in block_starts.iter().enumerate() {
         let block_id = block_index as u32;
@@ -83,6 +779,11 @@ pub(super) fn lift_function_bytes_with_symbols(
             .copied()
             .unwrap_or(bytes.len() as u64);
         let mut instructions = Vec::new();
+
+        if block_offset == entry_offset && initialize_reg_file_from_locals {
+            ctx.emit_reg_file_init_stores(&mut instructions, &mut next_id)?;
+        }
+        ctx.begin_block(&mut instructions, &mut next_id)?;
         let mut terminated = false;
         let mut last_compare: Option<LastCompare> = None;
 
@@ -97,16 +798,23 @@ pub(super) fn lift_function_bytes_with_symbols(
                 let terminator = lift_terminator(
                     &mut ctx,
                     inst,
+                    bytes,
                     &mut instructions,
                     &mut next_id,
                     &offset_to_block,
+                    &jump_table_by_jmp_offset,
+                    switch_default_block,
+                    &mut saw_switch,
                     &mut last_compare,
                 )?;
+
+                ctx.end_block(&mut instructions, &mut next_id)?;
                 basic_blocks.push(fp_core::asmir::AsmBlock {
                     id: block_id,
                     label: None,
                     instructions: std::mem::take(&mut instructions),
                     terminator,
+                    terminator_encoding: None,
                     predecessors: Vec::new(),
                     successors: Vec::new(),
                 });
@@ -117,11 +825,13 @@ pub(super) fn lift_function_bytes_with_symbols(
             lift_non_terminator(
                 &mut ctx,
                 inst,
+                bytes,
                 relocs,
                 &mut instructions,
                 &mut next_id,
                 &mut last_compare,
                 syscall_convention,
+                &jump_table_by_capture_offset,
             )?;
             cursor = cursor
                 .checked_add(inst.len as u64)
@@ -139,15 +849,30 @@ pub(super) fn lift_function_bytes_with_symbols(
             } else {
                 fp_core::asmir::AsmTerminator::Return(None)
             };
+
+            ctx.end_block(&mut instructions, &mut next_id)?;
             basic_blocks.push(fp_core::asmir::AsmBlock {
                 id: block_id,
                 label: None,
                 instructions,
                 terminator,
+                terminator_encoding: None,
                 predecessors: Vec::new(),
                 successors: Vec::new(),
             });
         }
+    }
+
+    if saw_switch {
+        basic_blocks.push(fp_core::asmir::AsmBlock {
+            id: switch_default_block,
+            label: None,
+            instructions: Vec::new(),
+            terminator: fp_core::asmir::AsmTerminator::Unreachable,
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        });
     }
 
     wire_block_edges(&mut basic_blocks);
@@ -155,6 +880,7 @@ pub(super) fn lift_function_bytes_with_symbols(
     Ok(LiftedFunction {
         basic_blocks,
         locals: ctx.locals,
+        stack_slots,
         direct_call_targets: ctx.direct_call_targets,
     })
 }
@@ -605,7 +1331,17 @@ fn value_from_operand_with_width(
     next_id: &mut u32,
 ) -> Result<AsmValue> {
     match operand {
-        Operand::Imm(imm) => Ok(AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64))),
+        Operand::Imm(imm) => {
+            if width_bits >= 64 {
+                return Ok(AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64)));
+            }
+            let mask: i128 = (1i128 << width_bits) - 1;
+            let truncated = (imm as i128) & mask;
+            Ok(AsmValue::Constant(AsmConstant::UInt(
+                truncated as u64,
+                AsmType::I64,
+            )))
+        }
         Operand::Rm(rm) => value_from_rm_with_width(
             ctx,
             rm,
@@ -633,6 +1369,92 @@ fn value_from_rm_with_width(
             if memory.segment.is_some() {
                 return Ok(AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)));
             }
+
+            if width_bits == 64 {
+                if let Some(displacement_offset) = memory.displacement_offset {
+                    let relocation_offset = inst
+                        .offset
+                        .checked_add(displacement_offset as u64)
+                        .ok_or_else(|| Error::from("x86_64 relocation offset overflow"))?;
+                    if let Some(reloc) = relocation_at(relocs, relocation_offset) {
+                        if reloc.is_got {
+                            let id = *next_id;
+                            instructions.push(AsmInstruction {
+                                id,
+                                opcode: AsmOpcode::Generic(
+                                    fp_core::asmir::AsmGenericOpcode::SymbolAddress,
+                                ),
+                                kind: AsmInstructionKind::SymbolAddress {
+                                    symbol: reloc.symbol.clone(),
+                                    kind: fp_core::asmir::AsmSymbolAddressKind::Got,
+                                },
+                                type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                                operands: Vec::new(),
+                                implicit_uses: Vec::new(),
+                                implicit_defs: Vec::new(),
+                                encoding: None,
+                                debug_info: None,
+                                annotations: Vec::new(),
+                            });
+                            *next_id += 1;
+                            return Ok(AsmValue::Register(id));
+                        }
+                    }
+                }
+
+                if let Some(symbol) = ctx.resolve_rip_symbol(&memory, inst.offset, inst.len) {
+                    if symbol.is_got {
+                        let id = *next_id;
+                        let target = symbol.import.clone().unwrap_or_else(|| symbol.name.clone());
+                        instructions.push(AsmInstruction {
+                            id,
+                            opcode: AsmOpcode::Generic(
+                                fp_core::asmir::AsmGenericOpcode::SymbolAddress,
+                            ),
+                            kind: AsmInstructionKind::SymbolAddress {
+                                symbol: target,
+                                kind: fp_core::asmir::AsmSymbolAddressKind::Got,
+                            },
+                            type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                            operands: Vec::new(),
+                            implicit_uses: Vec::new(),
+                            implicit_defs: Vec::new(),
+                            encoding: None,
+                            debug_info: None,
+                            annotations: Vec::new(),
+                        });
+                        *next_id += 1;
+                        return Ok(AsmValue::Register(id));
+                    }
+                }
+
+                if let Some(symbol) = ctx.resolve_disp32_symbol(&memory, inst.offset, inst.len) {
+                    if symbol.is_got {
+                        let id = *next_id;
+                        let target = symbol.import.clone().unwrap_or_else(|| symbol.name.clone());
+                        instructions.push(AsmInstruction {
+                            id,
+                            opcode: AsmOpcode::Generic(
+                                fp_core::asmir::AsmGenericOpcode::SymbolAddress,
+                            ),
+                            kind: AsmInstructionKind::SymbolAddress {
+                                symbol: target,
+                                kind: fp_core::asmir::AsmSymbolAddressKind::Got,
+                            },
+                            type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                            operands: Vec::new(),
+                            implicit_uses: Vec::new(),
+                            implicit_defs: Vec::new(),
+                            encoding: None,
+                            debug_info: None,
+                            annotations: Vec::new(),
+                        });
+                        *next_id += 1;
+                        return Ok(AsmValue::Register(id));
+                    }
+                }
+            }
+
             let addr = compute_address(
                 ctx,
                 memory,
@@ -662,7 +1484,7 @@ fn value_from_rm_with_width(
                 implicit_defs: Vec::new(),
                 encoding: None,
                 debug_info: None,
-                annotations: Vec::new(),
+                annotations: synthesized_annotations("x86.regfile_init_store"),
             });
             *next_id += 1;
 
@@ -681,7 +1503,7 @@ fn value_from_rm_with_width(
                 implicit_defs: Vec::new(),
                 encoding: None,
                 debug_info: None,
-                annotations: Vec::new(),
+                annotations: synthesized_annotations("x86.regfile_load"),
             });
             *next_id += 1;
 
@@ -3029,8 +3851,7 @@ pub(super) fn find_elf_sysv_main_offset(
                     );
                 }
 
-                let symbol_name = symbol.name.strip_prefix("fp_got_").unwrap_or(&symbol.name);
-
+                let symbol_name = symbol.import.as_deref().unwrap_or(symbol.name.as_str());
                 if symbol_name != "__libc_start_main" {
                     continue;
                 }
@@ -3053,6 +3874,7 @@ fn determine_block_starts(
     decoded: &[DecodedInstruction],
     bytes_len: u64,
     entry_offset: u64,
+    jump_tables: &[JumpTable],
 ) -> Result<Vec<u64>> {
     let inst_map = decoded
         .iter()
@@ -3070,6 +3892,18 @@ fn determine_block_starts(
 
     let mut queue = std::collections::VecDeque::new();
     queue.push_back(entry_offset);
+
+    for table in jump_tables {
+        for &target in &table.target_offsets {
+            starts.insert(target);
+            queue.push_back(target);
+        }
+
+        if let Some(default_offset) = table.default_offset {
+            starts.insert(default_offset);
+            queue.push_back(default_offset);
+        }
+    }
     let mut visited = std::collections::HashSet::new();
 
     while let Some(entry) = queue.pop_front() {
@@ -3167,9 +4001,13 @@ fn synthesize_fallthrough_compare(
 fn lift_terminator(
     ctx: &mut RegisterLiftContext,
     inst: &DecodedInstruction,
+    _bytes: &[u8],
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
     offset_to_block: &std::collections::HashMap<u64, u32>,
+    jump_tables: &std::collections::HashMap<u64, JumpTable>,
+    switch_default_block: u32,
+    saw_switch: &mut bool,
     last_compare: &mut Option<LastCompare>,
 ) -> Result<fp_core::asmir::AsmTerminator> {
     match inst.kind {
@@ -3213,6 +4051,72 @@ fn lift_terminator(
             Ok(fp_core::asmir::AsmTerminator::Br(dest))
         }
         Decoded::JmpRm { target } => {
+            if let Some(table) = jump_tables.get(&inst.offset) {
+                let value = ctx
+                    .pending_jump_table_index
+                    .remove(&inst.offset)
+                    .or_else(|| ctx.read_gpr(table.index_reg).ok())
+                    .unwrap_or_else(|| AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)));
+
+                let mut cases = Vec::with_capacity(table.target_offsets.len());
+                for (idx, target) in table.target_offsets.iter().enumerate() {
+                    if let Some(&dest) = offset_to_block.get(target) {
+                        cases.push((idx as u64, dest));
+                    }
+                }
+                if cases.len() >= 2 {
+                    *saw_switch = true;
+                    let default = table
+                        .default_offset
+                        .and_then(|offset| offset_to_block.get(&offset).copied())
+                        .unwrap_or(switch_default_block);
+                    return Ok(fp_core::asmir::AsmTerminator::Switch {
+                        value,
+                        default,
+                        cases,
+                    });
+                }
+            }
+
+            // Modern ELF binaries (notably those built with `-fno-plt`) may use
+            // `jmp *<import>@GOTPCREL(%rip)` as a tail call into an imported
+            // function. Treat these as an external call followed by a return
+            // so that we marshal arguments through the target ABI instead of
+            // emitting a raw indirect branch into the host's function pointer.
+            if let RmOperand::Mem(memory) = &target {
+                let symbol = ctx
+                    .resolve_rip_symbol(memory, inst.offset, inst.len)
+                    .or_else(|| ctx.resolve_disp32_symbol(memory, inst.offset, inst.len));
+                if let Some(symbol) = symbol {
+                    if let Some(import) = symbol.import.clone() {
+                        let args = x86_64_sysv_call_args(ctx)?;
+                        let id = *next_id;
+                        instructions.push(AsmInstruction {
+                            id,
+                            opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
+                            kind: AsmInstructionKind::Call {
+                                function: AsmValue::Function(import),
+                                args,
+                                calling_convention: CallingConvention::X86_64SysV,
+                                tail_call: false,
+                            },
+                            type_hint: Some(AsmType::I64),
+                            operands: Vec::new(),
+                            implicit_uses: Vec::new(),
+                            implicit_defs: Vec::new(),
+                            encoding: None,
+                            debug_info: None,
+                            annotations: Vec::new(),
+                        });
+                        *next_id += 1;
+                        ctx.write_gpr(0, AsmValue::Register(id));
+                        return Ok(fp_core::asmir::AsmTerminator::Return(Some(
+                            AsmValue::Register(id),
+                        )));
+                    }
+                }
+            }
+
             // Indirect branches show up in jump tables / PLT stubs.
             let address = match target {
                 RmOperand::Reg(reg) => ctx.read_gpr(reg)?,
@@ -3263,14 +4167,45 @@ fn lift_terminator(
 fn lift_non_terminator(
     ctx: &mut RegisterLiftContext,
     inst: &DecodedInstruction,
+    bytes: &[u8],
     relocs: &[TextRelocation],
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
     last_compare: &mut Option<LastCompare>,
     syscall_convention: Option<AsmSyscallConvention>,
+    jump_table_by_capture_offset: &std::collections::HashMap<u64, (u64, u8)>,
 ) -> Result<()> {
+    if let Some((jmp_offset, index_reg)) = jump_table_by_capture_offset.get(&inst.offset) {
+        // Capture the jump-table index *before* it is overwritten by the
+        // `movsxd` load.
+        if matches!(&inst.kind, Decoded::MovSxd { .. }) {
+            if let Ok(value) = ctx.read_gpr(*index_reg) {
+                ctx.pending_jump_table_index.insert(*jmp_offset, value);
+            }
+        }
+    }
+
     match inst.kind {
-        Decoded::Nop => Ok(()),
+        Decoded::Nop => {
+            let nop_id = *next_id;
+            instructions.push(AsmInstruction {
+                id: nop_id,
+                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Nop),
+                kind: AsmInstructionKind::Nop,
+                type_hint: None,
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: vec![AsmAnnotation {
+                    key: "fp.preserve.x86_64.nop_len".to_string(),
+                    value: inst.len.to_string(),
+                }],
+            });
+            *next_id += 1;
+            Ok(())
+        }
         Decoded::Hlt => Err(Error::from("internal error: unexpected hlt in non-terminator")),
         Decoded::Leave => {
             let rbp = ctx.read_gpr(5)?;
@@ -3291,7 +4226,7 @@ fn lift_non_terminator(
                 implicit_defs: Vec::new(),
                 encoding: None,
                 debug_info: None,
-                annotations: Vec::new(),
+                annotations: synthesized_annotations("x86.regfile_store"),
             });
             *next_id += 1;
 
@@ -3380,7 +4315,7 @@ fn lift_non_terminator(
             Ok(())
         }
         Decoded::CallRm { target } => {
-            let args = x86_64_sysv_call_args(ctx)?;
+            let mut call_is_external = false;
             let function = match target {
                 RmOperand::Reg(reg) => ctx.read_gpr(reg)?,
                 RmOperand::Mem(memory) => {
@@ -3390,11 +4325,16 @@ fn lift_non_terminator(
                             .checked_add(displacement_offset as u64)
                             .ok_or_else(|| Error::from("x86_64 call relocation overflow"))?;
                         if let Some(reloc) = relocation_at(relocs, relocation_offset) {
+                            call_is_external = relocation_is_external_call(reloc);
                             AsmValue::Function(reloc.symbol.clone())
                         } else {
                             if let Some(symbol) =
                                 ctx.resolve_rip_symbol(&memory, inst.offset, inst.len)
                             {
+                                if let Some(import) = symbol.import.as_ref() {
+                                    call_is_external = true;
+                                    AsmValue::Function(import.clone())
+                                } else
                                 if symbol.kind == RipSymbolKind::Function {
                                     AsmValue::Function(symbol.name.clone())
                                 } else {
@@ -3430,6 +4370,10 @@ fn lift_non_terminator(
                             } else if let Some(symbol) =
                                 ctx.resolve_disp32_symbol(&memory, inst.offset, inst.len)
                             {
+                                if let Some(import) = symbol.import.as_ref() {
+                                    call_is_external = true;
+                                    AsmValue::Function(import.clone())
+                                } else
                                 if symbol.kind == RipSymbolKind::Function {
                                     AsmValue::Function(symbol.name.clone())
                                 } else {
@@ -3526,6 +4470,29 @@ fn lift_non_terminator(
                 }
             };
 
+            let call_return_model = if call_is_external {
+                match &function {
+                    AsmValue::Function(name) => external_call_return_model(name),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
+            let is_lifted_internal = ctx.use_lifted_regfile_calls
+                && !call_is_external
+                && matches!(&function, AsmValue::Function(_));
+
+            if is_lifted_internal {
+                ctx.end_block(instructions, next_id)?;
+            }
+
+            let args = if is_lifted_internal {
+                Vec::new()
+            } else {
+                x86_64_sysv_call_args(ctx)?
+            };
+
             let id = *next_id;
             instructions.push(AsmInstruction {
                 id,
@@ -3533,10 +4500,20 @@ fn lift_non_terminator(
                 kind: AsmInstructionKind::Call {
                     function,
                     args,
-                    calling_convention: CallingConvention::X86_64SysV,
+                    calling_convention: if is_lifted_internal {
+                        CallingConvention::FpLiftedX86_64RegFile
+                    } else {
+                        CallingConvention::X86_64SysV
+                    },
                     tail_call: false,
                 },
-                type_hint: Some(AsmType::Void),
+                type_hint: Some(if is_lifted_internal {
+                    AsmType::Void
+                } else if call_is_external {
+                    AsmType::I64
+                } else {
+                    AsmType::I64
+                }),
                 operands: Vec::new(),
                 implicit_uses: Vec::new(),
                 implicit_defs: Vec::new(),
@@ -3545,6 +4522,31 @@ fn lift_non_terminator(
                 annotations: Vec::new(),
             });
             *next_id += 1;
+            if is_lifted_internal {
+                ctx.begin_block(instructions, next_id)?;
+            } else if call_is_external {
+                if let Some(model) = call_return_model {
+                    match model {
+                        ExternalCallReturnModel::I64 => {
+                            ctx.write_gpr(0, AsmValue::Register(id));
+                        }
+                        ExternalCallReturnModel::I32 => {
+                            write_gpr_with_width(
+                                ctx,
+                                0,
+                                AsmValue::Register(id),
+                                32,
+                                instructions,
+                                next_id,
+                            )?;
+                        }
+                    }
+                } else {
+                    ctx.write_gpr(0, AsmValue::Register(id));
+                }
+            } else {
+                ctx.write_gpr(0, AsmValue::Register(id));
+            }
             Ok(())
         }
         Decoded::PushRm { src } => {
@@ -3696,6 +4698,7 @@ fn lift_non_terminator(
                 imm,
                 width_bits,
                 *inst,
+                bytes,
                 relocs,
                 instructions,
                 next_id,
@@ -3754,6 +4757,7 @@ fn lift_non_terminator(
             imm,
             width_bits,
             *inst,
+            bytes,
             relocs,
             instructions,
             next_id,
@@ -3955,6 +4959,7 @@ fn lift_non_terminator(
                 imm,
                 width_bits,
                 *inst,
+                bytes,
                 relocs,
                 instructions,
                 next_id,
@@ -4624,24 +5629,48 @@ fn lift_non_terminator(
             imm,
             width_bits,
         } => {
+            let opcode = x86_opcode_after_prefixes(bytes, inst)?;
+            let imm_width_bits = match opcode {
+                0x83 => 8u16,
+                0x81 => 32u16,
+                0x05 => 32u16,
+                _ => {
+                    return Err(Error::from(
+                        "x86_64 add imm preservation requires 81/83/05 encoding",
+                    ));
+                }
+            };
             let lhs = ctx.read_gpr(dst)?;
             let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
             let id = *next_id;
-            instructions.push(build_binop(
+            let mut inst = build_binop(
                 id,
                 AsmInstructionKind::Add(lhs.clone(), rhs.clone()),
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-            ));
+            );
+            inst.annotations.extend([
+                AsmAnnotation {
+                    key: "fp.preserve.x86_64.dst_gpr".to_string(),
+                    value: dst.to_string(),
+                },
+                AsmAnnotation {
+                    key: "fp.preserve.x86_64.imm_width_bits".to_string(),
+                    value: imm_width_bits.to_string(),
+                },
+            ]);
+            instructions.push(inst);
             *next_id += 1;
             let mut value = AsmValue::Register(id);
             if width_bits == 32 {
                 let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
                 let and_id = *next_id;
-                instructions.push(build_binop(
+                let mut inst = build_binop(
                     and_id,
                     AsmInstructionKind::And(value, mask),
                     AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
+                );
+                inst.annotations = synthesized_annotations("x86.zeroext32");
+                instructions.push(inst);
                 *next_id += 1;
                 value = AsmValue::Register(and_id);
             }
@@ -4658,6 +5687,7 @@ fn lift_non_terminator(
             imm,
             width_bits,
             *inst,
+            bytes,
             relocs,
             instructions,
             next_id,
@@ -4668,24 +5698,48 @@ fn lift_non_terminator(
             imm,
             width_bits,
         } => {
+            let opcode = x86_opcode_after_prefixes(bytes, inst)?;
+            let imm_width_bits = match opcode {
+                0x83 => 8u16,
+                0x81 => 32u16,
+                0x2D => 32u16,
+                _ => {
+                    return Err(Error::from(
+                        "x86_64 sub imm preservation requires 81/83/2D encoding",
+                    ));
+                }
+            };
             let lhs = ctx.read_gpr(dst)?;
             let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
             let id = *next_id;
-            instructions.push(build_binop(
+            let mut inst = build_binop(
                 id,
                 AsmInstructionKind::Sub(lhs.clone(), rhs.clone()),
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-            ));
+            );
+            inst.annotations.extend([
+                AsmAnnotation {
+                    key: "fp.preserve.x86_64.dst_gpr".to_string(),
+                    value: dst.to_string(),
+                },
+                AsmAnnotation {
+                    key: "fp.preserve.x86_64.imm_width_bits".to_string(),
+                    value: imm_width_bits.to_string(),
+                },
+            ]);
+            instructions.push(inst);
             *next_id += 1;
             let mut value = AsmValue::Register(id);
             if width_bits == 32 {
                 let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
                 let and_id = *next_id;
-                instructions.push(build_binop(
+                let mut inst = build_binop(
                     and_id,
                     AsmInstructionKind::And(value, mask),
                     AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
+                );
+                inst.annotations = synthesized_annotations("x86.zeroext32");
+                instructions.push(inst);
                 *next_id += 1;
                 value = AsmValue::Register(and_id);
             }
@@ -4702,6 +5756,7 @@ fn lift_non_terminator(
             imm,
             width_bits,
             *inst,
+            bytes,
             relocs,
             instructions,
             next_id,
@@ -5802,6 +6857,7 @@ fn lift_non_terminator(
             imm,
             width_bits,
             *inst,
+            bytes,
             relocs,
             instructions,
             next_id,
@@ -5817,6 +6873,7 @@ fn lift_non_terminator(
             imm,
             width_bits,
             *inst,
+            bytes,
             relocs,
             instructions,
             next_id,
@@ -7105,6 +8162,8 @@ fn lift_non_terminator(
                 .checked_add(imm_offset as u64)
                 .ok_or_else(|| Error::from("x86_64 call relocation overflow"))?;
 
+            let mut call_is_external = false;
+
             let function = if let Some(reloc) = relocation_at(relocs, reloc_offset) {
                 if reloc.kind != object::RelocationKind::Relative
                     && reloc.kind != object::RelocationKind::PltRelative
@@ -7117,7 +8176,11 @@ fn lift_non_terminator(
                 {
                     return Err(Error::from("unsupported x86_64 call relocation encoding"));
                 }
+                call_is_external = relocation_is_external_call(reloc);
                 AsmValue::Function(reloc.symbol.clone())
+            } else if let Some(symbol) = ctx.plt_targets.get(&target) {
+                call_is_external = true;
+                AsmValue::Function(symbol.clone())
             } else {
                 // Executables frequently use direct calls that do not carry
                 // relocations. We represent the callee as a synthetic symbol
@@ -7127,17 +8190,50 @@ fn lift_non_terminator(
                 AsmValue::Function(format!("sub_{target:x}"))
             };
 
+            let call_return_model = if call_is_external {
+                match &function {
+                    AsmValue::Function(name) => external_call_return_model(name),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
+            let is_lifted_internal = ctx.use_lifted_regfile_calls
+                && !call_is_external
+                && matches!(&function, AsmValue::Function(_));
+
+            if is_lifted_internal {
+                ctx.end_block(instructions, next_id)?;
+            }
+
+            let args = if is_lifted_internal {
+                Vec::new()
+            } else {
+                x86_64_sysv_call_args(ctx)?
+            };
+
             let id = *next_id;
             instructions.push(AsmInstruction {
                 id,
                 opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
                 kind: AsmInstructionKind::Call {
                     function,
-                    args: x86_64_sysv_call_args(ctx)?,
-                    calling_convention: CallingConvention::X86_64SysV,
+                    args,
+                    calling_convention: if is_lifted_internal {
+                        CallingConvention::FpLiftedX86_64RegFile
+                    } else {
+                        CallingConvention::X86_64SysV
+                    },
                     tail_call: false,
                 },
-                type_hint: Some(AsmType::Void),
+                type_hint: Some(if is_lifted_internal {
+                    AsmType::Void
+                } else if call_is_external {
+                    AsmType::I64
+                } else {
+                    AsmType::I64
+                }),
                 operands: Vec::new(),
                 implicit_uses: Vec::new(),
                 implicit_defs: Vec::new(),
@@ -7146,6 +8242,31 @@ fn lift_non_terminator(
                 annotations: Vec::new(),
             });
             *next_id += 1;
+            if is_lifted_internal {
+                ctx.begin_block(instructions, next_id)?;
+            } else if call_is_external {
+                if let Some(model) = call_return_model {
+                    match model {
+                        ExternalCallReturnModel::I64 => {
+                            ctx.write_gpr(0, AsmValue::Register(id));
+                        }
+                        ExternalCallReturnModel::I32 => {
+                            write_gpr_with_width(
+                                ctx,
+                                0,
+                                AsmValue::Register(id),
+                                32,
+                                instructions,
+                                next_id,
+                            )?;
+                        }
+                    }
+                } else {
+                    ctx.write_gpr(0, AsmValue::Register(id));
+                }
+            } else {
+                ctx.write_gpr(0, AsmValue::Register(id));
+            }
             Ok(())
         }
         Decoded::IncRm { target, width_bits } => {
@@ -7258,6 +8379,7 @@ fn lift_non_terminator(
             1,
             width_bits,
             *inst,
+            bytes,
             relocs,
             instructions,
             next_id,
@@ -12164,6 +13286,35 @@ fn relocation_at<'a>(relocs: &'a [TextRelocation], offset: u64) -> Option<&'a Te
     relocs.iter().find(|reloc| reloc.offset == offset)
 }
 
+fn relocation_is_external_call(reloc: &TextRelocation) -> bool {
+    reloc.is_import
+}
+
+fn base_symbol_name(name: &str) -> &str {
+    name.split_once('@').map(|(head, _)| head).unwrap_or(name)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExternalCallReturnModel {
+    I32,
+    I64,
+}
+
+fn external_call_return_model(name: &str) -> Option<ExternalCallReturnModel> {
+    Some(match base_symbol_name(name) {
+        "dcgettext" | "dgettext" | "gettext" => ExternalCallReturnModel::I64,
+
+        // getopt family returns an `int` in EAX.
+        "getopt" | "getopt_long" | "getopt_long_only" => ExternalCallReturnModel::I32,
+
+        // Common libc helpers that return pointers.
+        "strchr" | "strrchr" | "memchr" | "strstr" | "strpbrk" => {
+            ExternalCallReturnModel::I64
+        }
+        _ => return None,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Decoded {
     Nop,
@@ -13772,11 +14923,16 @@ fn lift_rm_imm_binop(
     imm: i64,
     width_bits: u16,
     inst: DecodedInstruction,
+    bytes: &[u8],
     relocs: &[TextRelocation],
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
     opcode: fp_core::asmir::AsmGenericOpcode,
 ) -> Result<()> {
+    let preserve_dst_reg = match dst {
+        RmOperand::Reg(reg) => Some(reg),
+        _ => None,
+    };
     let lhs = value_from_rm_with_width(
         ctx,
         dst,
@@ -13797,7 +14953,29 @@ fn lift_rm_imm_binop(
         fp_core::asmir::AsmGenericOpcode::Xor => AsmInstructionKind::Xor(lhs, rhs),
         _ => return Err(Error::from("unsupported rm+imm binop opcode")),
     };
-    instructions.push(build_binop(id, kind, AsmOpcode::Generic(opcode)));
+    let opcode_copy = opcode.clone();
+    let mut binop_inst = build_binop(id, kind, AsmOpcode::Generic(opcode_copy));
+    if let (Some(dst_reg), fp_core::asmir::AsmGenericOpcode::Add | fp_core::asmir::AsmGenericOpcode::Sub) =
+        (preserve_dst_reg, opcode)
+    {
+        let raw_opcode = x86_opcode_after_prefixes(bytes, &inst)?;
+        let imm_width_bits = match raw_opcode {
+            0x83 => 8u16,
+            0x81 => 32u16,
+            _ => width_bits,
+        };
+        binop_inst.annotations.extend([
+            AsmAnnotation {
+                key: "fp.preserve.x86_64.dst_gpr".to_string(),
+                value: dst_reg.to_string(),
+            },
+            AsmAnnotation {
+                key: "fp.preserve.x86_64.imm_width_bits".to_string(),
+                value: imm_width_bits.to_string(),
+            },
+        ]);
+    }
+    instructions.push(binop_inst);
     *next_id += 1;
 
     match dst {
@@ -14398,19 +15576,34 @@ struct RegisterLiftContext {
     next_local_id: u32,
     code_base_address: u64,
     rip_symbols: HashMap<u64, RipSymbol>,
+    plt_targets: HashMap<u64, String>,
     rodata_cstrings: HashMap<String, String>,
     rodata_cstrings_by_addr: HashMap<u64, String>,
     data_regions: Vec<DataRegion>,
     direct_call_targets: Vec<u64>,
+    gpr_slot_by_reg: std::collections::HashMap<u8, u32>,
+    pending_jump_table_index: std::collections::HashMap<u64, AsmValue>,
+    mark_sysv_args: bool,
+    use_lifted_regfile_calls: bool,
+}
+
+fn synthesized_annotations(reason: &str) -> Vec<AsmAnnotation> {
+    vec![AsmAnnotation {
+        key: "fp.synthesized".to_string(),
+        value: reason.to_string(),
+    }]
 }
 
 impl RegisterLiftContext {
     fn new(
         code_base_address: u64,
         rip_symbols: Option<&HashMap<u64, RipSymbol>>,
+        plt_targets: Option<&HashMap<u64, String>>,
         rodata_cstrings: Option<&HashMap<String, String>>,
         rodata_cstrings_by_addr: Option<&HashMap<u64, String>>,
         data_regions: Option<&[DataRegion]>,
+        mark_sysv_args: bool,
+        use_lifted_regfile_calls: bool,
     ) -> Self {
         Self {
             locals: Vec::new(),
@@ -14422,11 +15615,156 @@ impl RegisterLiftContext {
             next_local_id: 0,
             code_base_address,
             rip_symbols: rip_symbols.cloned().unwrap_or_default(),
+            plt_targets: plt_targets.cloned().unwrap_or_default(),
             rodata_cstrings: rodata_cstrings.cloned().unwrap_or_default(),
             rodata_cstrings_by_addr: rodata_cstrings_by_addr.cloned().unwrap_or_default(),
             data_regions: data_regions.map(|regions| regions.to_vec()).unwrap_or_default(),
             direct_call_targets: Vec::new(),
+            gpr_slot_by_reg: std::collections::HashMap::new(),
+            pending_jump_table_index: std::collections::HashMap::new(),
+            mark_sysv_args,
+            use_lifted_regfile_calls,
         }
+    }
+
+    fn initialize_reg_file_slots(&mut self) -> Vec<fp_core::asmir::AsmStackSlot> {
+        let mut slots = Vec::new();
+
+        for reg in 0u8..=15 {
+            let slot_id = u32::from(reg);
+            self.gpr_slot_by_reg.insert(reg, slot_id);
+            let is_argument = self.mark_sysv_args && matches!(reg, 7 | 6 | 2 | 1 | 8 | 9);
+            self.ensure_local(reg, is_argument);
+            slots.push(fp_core::asmir::AsmStackSlot {
+                id: slot_id,
+                size: 8,
+                alignment: 8,
+                name: Some(format!("x86.{}", reg_name(reg))),
+            });
+        }
+
+        slots
+    }
+
+    fn emit_reg_file_init_stores(
+        &mut self,
+        instructions: &mut Vec<AsmInstruction>,
+        next_id: &mut u32,
+    ) -> Result<()> {
+        for reg in 0u8..=15 {
+            let local_id = *self
+                .locals_by_register
+                .get(&reg)
+                .ok_or_else(|| Error::from("missing x86 register local"))?;
+            let slot_id = *self
+                .gpr_slot_by_reg
+                .get(&reg)
+                .ok_or_else(|| Error::from("missing x86 register slot"))?;
+
+            let store_id = *next_id;
+            instructions.push(AsmInstruction {
+                id: store_id,
+                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
+                kind: AsmInstructionKind::Store {
+                    value: AsmValue::Local(local_id),
+                    address: AsmValue::StackSlot(slot_id),
+                    alignment: Some(8),
+                    volatile: false,
+                },
+                type_hint: None,
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: synthesized_annotations("x86.regfile.init"),
+            });
+            *next_id += 1;
+        }
+        Ok(())
+    }
+
+    fn begin_block(
+        &mut self,
+        instructions: &mut Vec<AsmInstruction>,
+        next_id: &mut u32,
+    ) -> Result<()> {
+        self.registers.clear();
+        self.vec_registers.clear();
+        self.x87_stack.clear();
+        self.pending_jump_table_index.clear();
+
+        for reg in 0u8..=15 {
+            let slot_id = *self
+                .gpr_slot_by_reg
+                .get(&reg)
+                .ok_or_else(|| Error::from("missing x86 register slot"))?;
+            let load_id = *next_id;
+            instructions.push(AsmInstruction {
+                id: load_id,
+                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
+                kind: AsmInstructionKind::Load {
+                    address: AsmValue::StackSlot(slot_id),
+                    alignment: Some(8),
+                    volatile: false,
+                },
+                type_hint: Some(AsmType::I64),
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: synthesized_annotations("x86.regfile.begin"),
+            });
+            *next_id += 1;
+            self.registers.insert(reg, AsmValue::Register(load_id));
+        }
+
+        Ok(())
+    }
+
+    fn end_block(
+        &mut self,
+        instructions: &mut Vec<AsmInstruction>,
+        next_id: &mut u32,
+    ) -> Result<()> {
+        for reg in 0u8..=15 {
+            let slot_id = *self
+                .gpr_slot_by_reg
+                .get(&reg)
+                .ok_or_else(|| Error::from("missing x86 register slot"))?;
+            let value = if let Some(value) = self.registers.get(&reg).cloned() {
+                value
+            } else {
+                let local_id = *self
+                    .locals_by_register
+                    .get(&reg)
+                    .ok_or_else(|| Error::from("missing x86 register local"))?;
+                AsmValue::Local(local_id)
+            };
+
+            let store_id = *next_id;
+            instructions.push(AsmInstruction {
+                id: store_id,
+                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
+                kind: AsmInstructionKind::Store {
+                    value,
+                    address: AsmValue::StackSlot(slot_id),
+                    alignment: Some(8),
+                    volatile: false,
+                },
+                type_hint: None,
+                operands: Vec::new(),
+                implicit_uses: Vec::new(),
+                implicit_defs: Vec::new(),
+                encoding: None,
+                debug_info: None,
+                annotations: synthesized_annotations("x86.regfile.end"),
+            });
+            *next_id += 1;
+        }
+
+        Ok(())
     }
 
     fn resolve_data_region(&self, address: u64) -> Option<(&DataRegion, u64)> {
@@ -14526,7 +15864,8 @@ impl RegisterLiftContext {
         if let Some(value) = self.registers.get(&reg).cloned() {
             return Ok(value);
         }
-        let is_argument = matches!(reg, 7 | 6 | 2 | 1 | 8 | 9);
+
+        let is_argument = self.mark_sysv_args && matches!(reg, 7 | 6 | 2 | 1 | 8 | 9);
         self.ensure_local(reg, is_argument);
         let local_id = *self
             .locals_by_register

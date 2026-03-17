@@ -1,9 +1,9 @@
 use fp_core::asmir::{
     AsmBlock, AsmConstant, AsmFunction, AsmFunctionSignature, AsmGenericOpcode, AsmGlobal,
     AsmGlobalRelocation, AsmInstruction, AsmInstructionKind, AsmLocal, AsmObjectFormat, AsmOpcode,
-    AsmLandingPadClause, AsmProgram, AsmRelocationKind, AsmSection, AsmSectionFlag, AsmSectionKind,
-    AsmSysOp, AsmSyscallConvention, AsmTerminator, AsmType, AsmValue, PosixDirentStyle,
-    PosixFlagStyle,
+    AsmProgram, AsmRelocationKind, AsmSection,
+    AsmSectionFlag, AsmSectionKind, AsmSysOp, AsmSyscallConvention, AsmTerminator, AsmType,
+    AsmValue, PosixDirentStyle, PosixFlagStyle,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
@@ -40,318 +40,6 @@ fn match_getfileattributes_sequence_to_syscall(
         },
         convention,
     )
-}
-
-fn rewrite_linux_stdio_globals_to_darwin(program: &mut AsmProgram) {
-    fn map_stdio_symbol(name: &str) -> Option<&'static str> {
-        Some(match name {
-            "stderr" => "__stderrp",
-            "stdout" => "__stdoutp",
-            "stdin" => "__stdinp",
-            _ => return None,
-        })
-    }
-
-    fn rewrite_value(value: &mut AsmValue) {
-        match value {
-            AsmValue::Global(name, _) => {
-                if let Some(mapped) = map_stdio_symbol(name) {
-                    *name = mapped.to_string();
-                }
-            }
-            AsmValue::Address(address) => {
-                if let Some(base) = address.base.as_mut() {
-                    rewrite_value(base);
-                }
-                if let Some(index) = address.index.as_mut() {
-                    rewrite_value(index);
-                }
-                if let Some(segment) = address.segment.as_mut() {
-                    rewrite_value(segment);
-                }
-            }
-            AsmValue::Comparison(comparison) => {
-                rewrite_value(&mut comparison.lhs);
-                rewrite_value(&mut comparison.rhs);
-            }
-            _ => {}
-        }
-    }
-
-    fn rewrite_constant(constant: &mut AsmConstant) {
-        match constant {
-            AsmConstant::Array(values, _) | AsmConstant::Struct(values, _) => {
-                for value in values {
-                    rewrite_constant(value);
-                }
-            }
-            AsmConstant::GlobalRef(name, _, _) => {
-                if let Some(mapped) = map_stdio_symbol(name.as_str()) {
-                    *name = Name::new(mapped);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn rewrite_instruction_kind(kind: &mut AsmInstructionKind) {
-        match kind {
-            AsmInstructionKind::Add(a, b)
-            | AsmInstructionKind::Sub(a, b)
-            | AsmInstructionKind::Mul(a, b)
-            | AsmInstructionKind::Div(a, b)
-            | AsmInstructionKind::Rem(a, b)
-            | AsmInstructionKind::And(a, b)
-            | AsmInstructionKind::Or(a, b)
-            | AsmInstructionKind::Xor(a, b)
-            | AsmInstructionKind::Shl(a, b)
-            | AsmInstructionKind::Shr(a, b)
-            | AsmInstructionKind::Eq(a, b)
-            | AsmInstructionKind::Ne(a, b)
-            | AsmInstructionKind::Lt(a, b)
-            | AsmInstructionKind::Le(a, b)
-            | AsmInstructionKind::Gt(a, b)
-            | AsmInstructionKind::Ge(a, b)
-            | AsmInstructionKind::Ult(a, b)
-            | AsmInstructionKind::Ule(a, b)
-            | AsmInstructionKind::Ugt(a, b)
-            | AsmInstructionKind::Uge(a, b) => {
-                rewrite_value(a);
-                rewrite_value(b);
-            }
-            AsmInstructionKind::Not(value)
-            | AsmInstructionKind::PtrToInt(value)
-            | AsmInstructionKind::IntToPtr(value)
-            | AsmInstructionKind::Freeze(value)
-            | AsmInstructionKind::SextOrTrunc(value, _) => {
-                rewrite_value(value);
-            }
-            AsmInstructionKind::Bitcast(value, _)
-            | AsmInstructionKind::Trunc(value, _)
-            | AsmInstructionKind::ZExt(value, _)
-            | AsmInstructionKind::SExt(value, _)
-            | AsmInstructionKind::FPExt(value, _)
-            | AsmInstructionKind::FPTrunc(value, _)
-            | AsmInstructionKind::FPToUI(value, _)
-            | AsmInstructionKind::FPToSI(value, _)
-            | AsmInstructionKind::UIToFP(value, _)
-            | AsmInstructionKind::SIToFP(value, _) => {
-                rewrite_value(value);
-            }
-            AsmInstructionKind::Load { address, .. } => {
-                rewrite_value(address);
-            }
-            AsmInstructionKind::Store { value, address, .. } => {
-                rewrite_value(value);
-                rewrite_value(address);
-            }
-            AsmInstructionKind::Alloca { size, .. } => {
-                rewrite_value(size);
-            }
-            AsmInstructionKind::GetElementPtr { ptr, indices, .. } => {
-                rewrite_value(ptr);
-                for index in indices {
-                    rewrite_value(index);
-                }
-            }
-            AsmInstructionKind::ExtractValue { aggregate, .. } => {
-                rewrite_value(aggregate);
-            }
-            AsmInstructionKind::InsertValue {
-                aggregate, element, ..
-            } => {
-                rewrite_value(aggregate);
-                rewrite_value(element);
-            }
-            AsmInstructionKind::Call { function, args, .. } => {
-                rewrite_value(function);
-                for arg in args {
-                    rewrite_value(arg);
-                }
-            }
-            AsmInstructionKind::IntrinsicCall { args, .. } => {
-                for arg in args {
-                    rewrite_value(arg);
-                }
-            }
-            AsmInstructionKind::Phi { incoming } => {
-                for (value, _) in incoming {
-                    rewrite_value(value);
-                }
-            }
-            AsmInstructionKind::Select {
-                condition,
-                if_true,
-                if_false,
-            } => {
-                rewrite_value(condition);
-                rewrite_value(if_true);
-                rewrite_value(if_false);
-            }
-            AsmInstructionKind::InlineAsm { inputs, .. } => {
-                for input in inputs {
-                    rewrite_value(input);
-                }
-            }
-            AsmInstructionKind::LandingPad {
-                personality,
-                clauses,
-                ..
-            } => {
-                if let Some(personality) = personality.as_mut() {
-                    rewrite_value(personality);
-                }
-                for clause in clauses {
-                    match clause {
-                        AsmLandingPadClause::Catch(value) => {
-                            rewrite_value(value);
-                        }
-                        AsmLandingPadClause::Filter(values) => {
-                            for value in values {
-                                rewrite_value(value);
-                            }
-                        }
-                    }
-                }
-            }
-            AsmInstructionKind::Syscall { number, args, .. } => {
-                rewrite_value(number);
-                for arg in args {
-                    rewrite_value(arg);
-                }
-            }
-            AsmInstructionKind::SysOp(op) => match op {
-                AsmSysOp::Exit { code } => rewrite_value(code),
-                AsmSysOp::GetPid | AsmSysOp::GetTid => {}
-                AsmSysOp::Dlopen { path, flags } => {
-                    rewrite_value(path);
-                    rewrite_value(flags);
-                }
-                AsmSysOp::Dlsym { handle, symbol } => {
-                    rewrite_value(handle);
-                    rewrite_value(symbol);
-                }
-                AsmSysOp::Dlclose { handle } => rewrite_value(handle),
-                AsmSysOp::Unlink { path } => rewrite_value(path),
-                AsmSysOp::Mkdir { path, mode } => {
-                    rewrite_value(path);
-                    rewrite_value(mode);
-                }
-                AsmSysOp::Rmdir { path } => rewrite_value(path),
-                AsmSysOp::Rename { from, to } => {
-                    rewrite_value(from);
-                    rewrite_value(to);
-                }
-                AsmSysOp::Access { path, mode } => {
-                    rewrite_value(path);
-                    rewrite_value(mode);
-                }
-                AsmSysOp::Write { fd, buffer, len } | AsmSysOp::Read { fd, buffer, len } => {
-                    rewrite_value(fd);
-                    rewrite_value(buffer);
-                    rewrite_value(len);
-                }
-                AsmSysOp::Close { fd } => rewrite_value(fd),
-                AsmSysOp::Open { path, flags, mode, .. } => {
-                    rewrite_value(path);
-                    rewrite_value(flags);
-                    rewrite_value(mode);
-                }
-                AsmSysOp::Seek { fd, offset, whence } => {
-                    rewrite_value(fd);
-                    rewrite_value(offset);
-                    rewrite_value(whence);
-                }
-                AsmSysOp::Mmap {
-                    addr,
-                    len,
-                    prot,
-                    flags,
-                    fd,
-                    offset,
-                } => {
-                    rewrite_value(addr);
-                    rewrite_value(len);
-                    rewrite_value(prot);
-                    rewrite_value(flags);
-                    rewrite_value(fd);
-                    rewrite_value(offset);
-                }
-                AsmSysOp::Munmap { addr, len } => {
-                    rewrite_value(addr);
-                    rewrite_value(len);
-                }
-                AsmSysOp::Opendir { path } => rewrite_value(path),
-                AsmSysOp::Readdir { dir, .. } => rewrite_value(dir),
-                AsmSysOp::Closedir { dir } => rewrite_value(dir),
-            },
-            AsmInstructionKind::Splat { value, .. } => rewrite_value(value),
-            AsmInstructionKind::BuildVector { elements } => {
-                for element in elements {
-                    rewrite_value(element);
-                }
-            }
-            AsmInstructionKind::ExtractLane { vector, .. } => {
-                rewrite_value(vector);
-            }
-            AsmInstructionKind::InsertLane { vector, value, .. } => {
-                rewrite_value(vector);
-                rewrite_value(value);
-            }
-            AsmInstructionKind::ZipLow { lhs, rhs, .. } => {
-                rewrite_value(lhs);
-                rewrite_value(rhs);
-            }
-            AsmInstructionKind::Unreachable => {}
-        }
-    }
-
-    fn rewrite_terminator(terminator: &mut AsmTerminator) {
-        match terminator {
-            AsmTerminator::Return(Some(value)) => rewrite_value(value),
-            AsmTerminator::CondBr { condition, .. } => rewrite_value(condition),
-            AsmTerminator::Switch { value, .. } => rewrite_value(value),
-            AsmTerminator::IndirectBr { address, .. } => rewrite_value(address),
-            AsmTerminator::Invoke { function, args, .. } => {
-                rewrite_value(function);
-                for arg in args {
-                    rewrite_value(arg);
-                }
-            }
-            AsmTerminator::Resume(value) => rewrite_value(value),
-            AsmTerminator::CleanupRet { cleanup_pad, .. } => rewrite_value(cleanup_pad),
-            AsmTerminator::CatchRet { catch_pad, .. } => rewrite_value(catch_pad),
-            AsmTerminator::CatchSwitch { parent_pad, .. } => {
-                if let Some(parent_pad) = parent_pad.as_mut() {
-                    rewrite_value(parent_pad);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    for global in &mut program.globals {
-        if let Some(initializer) = global.initializer.as_mut() {
-            rewrite_constant(initializer);
-        }
-        for reloc in &mut global.relocations {
-            if let Some(mapped) = map_stdio_symbol(reloc.symbol.as_str()) {
-                reloc.symbol = Name::new(mapped);
-            }
-        }
-    }
-
-    for func in &mut program.functions {
-        if func.is_declaration {
-            continue;
-        }
-        for block in &mut func.basic_blocks {
-            for inst in &mut block.instructions {
-                rewrite_instruction_kind(&mut inst.kind);
-            }
-            rewrite_terminator(&mut block.terminator);
-        }
-    }
 }
 
 fn ensure_glibc_progname_globals(program: &mut AsmProgram) {
@@ -423,6 +111,7 @@ fn ensure_glibc_overflow(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -504,6 +193,7 @@ fn ensure_glibc_mempcpy(program: &mut AsmProgram) -> Result<()> {
                 },
             ],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(1))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -641,6 +331,7 @@ fn ensure_glibc_start_main(program: &mut AsmProgram) -> Result<()> {
                 },
             ],
             terminator: AsmTerminator::Unreachable,
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -899,6 +590,7 @@ fn ensure_glibc_fpending(program: &mut AsmProgram) -> Result<()> {
                 0,
                 AsmType::I64,
             )))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -943,6 +635,7 @@ fn ensure_glibc_errno_location(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -992,6 +685,7 @@ fn ensure_glibc_assert_fail(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Unreachable,
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -1381,7 +1075,6 @@ fn inject_linux_compat_runtime_for_darwin(program: &mut AsmProgram) -> Result<()
     }
 
     rewrite_glibc_chk_calls_to_libc(program);
-    rewrite_linux_stdio_globals_to_darwin(program);
 
     ensure_section(
         program,
@@ -1453,6 +1146,7 @@ fn ensure_glibc_rawmemchr(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -1543,6 +1237,7 @@ fn ensure_linux_statx_stub(program: &mut AsmProgram) -> Result<()> {
                 -1,
                 AsmType::I32,
             )))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -1655,6 +1350,7 @@ fn ensure_glibc_mbrtoc32(program: &mut AsmProgram) -> Result<()> {
                 },
             ],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(4))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -1740,6 +1436,7 @@ fn ensure_linux_xattr_wrappers(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -1813,6 +1510,7 @@ fn ensure_linux_xattr_wrappers(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -1888,6 +1586,7 @@ fn ensure_linux_xattr_wrappers(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -1966,6 +1665,7 @@ fn ensure_linux_xattr_wrappers(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2031,6 +1731,7 @@ fn ensure_glibc_stdio_unlocked(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2083,6 +1784,7 @@ fn ensure_glibc_stdio_unlocked(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2155,6 +1857,7 @@ fn ensure_glibc_stdio_unlocked(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2222,6 +1925,7 @@ fn ensure_glibc_stdio_unlocked(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2277,6 +1981,7 @@ fn ensure_glibc_stdio_unlocked(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2332,6 +2037,7 @@ fn ensure_glibc_stdio_unlocked(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2379,6 +2085,7 @@ fn ensure_glibc_stdio_unlocked(program: &mut AsmProgram) -> Result<()> {
                 annotations: Vec::new(),
             }],
             terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2442,6 +2149,7 @@ fn ensure_linux_libcap_stubs(program: &mut AsmProgram) -> Result<()> {
                 0,
                 AsmType::I32,
             )))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2473,6 +2181,7 @@ fn ensure_linux_libcap_stubs(program: &mut AsmProgram) -> Result<()> {
             label: None,
             instructions: Vec::new(),
             terminator: AsmTerminator::Return(Some(AsmValue::Null(ptr_i8.clone()))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2507,6 +2216,7 @@ fn ensure_linux_libcap_stubs(program: &mut AsmProgram) -> Result<()> {
                 0,
                 AsmType::I32,
             )))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2549,6 +2259,7 @@ fn ensure_linux_libcap_stubs(program: &mut AsmProgram) -> Result<()> {
                 "fp_linux_empty_cstring".to_string(),
                 ptr_i8.clone(),
             ))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2594,6 +2305,7 @@ fn ensure_glibc_gettext_stubs(program: &mut AsmProgram) -> Result<()> {
             label: None,
             instructions: Vec::new(),
             terminator: AsmTerminator::Return(Some(AsmValue::Local(1))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2633,6 +2345,7 @@ fn ensure_glibc_gettext_stubs(program: &mut AsmProgram) -> Result<()> {
             label: None,
             instructions: Vec::new(),
             terminator: AsmTerminator::Return(Some(AsmValue::Local(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2664,6 +2377,7 @@ fn ensure_glibc_gettext_stubs(program: &mut AsmProgram) -> Result<()> {
             label: None,
             instructions: Vec::new(),
             terminator: AsmTerminator::Return(Some(AsmValue::Local(1))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2709,6 +2423,7 @@ fn ensure_glibc_gettext_stubs(program: &mut AsmProgram) -> Result<()> {
             label: None,
             instructions: Vec::new(),
             terminator: AsmTerminator::Return(Some(AsmValue::Local(1))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2748,6 +2463,7 @@ fn ensure_glibc_gettext_stubs(program: &mut AsmProgram) -> Result<()> {
             label: None,
             instructions: Vec::new(),
             terminator: AsmTerminator::Return(Some(AsmValue::Local(0))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2938,6 +2654,7 @@ fn ensure_ctype_loc_functions(program: &mut AsmProgram) -> Result<()> {
                 AsmType::Ptr(Box::new(AsmType::I8)),
                 vec![0],
             )))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2967,6 +2684,7 @@ fn ensure_ctype_loc_functions(program: &mut AsmProgram) -> Result<()> {
                 AsmType::Ptr(Box::new(AsmType::I8)),
                 vec![0],
             )))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -2996,6 +2714,7 @@ fn ensure_ctype_loc_functions(program: &mut AsmProgram) -> Result<()> {
                 AsmType::Ptr(Box::new(AsmType::I8)),
                 vec![0],
             )))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -3028,6 +2747,7 @@ fn ensure_ctype_mb_cur_max(program: &mut AsmProgram) -> Result<()> {
                 1,
                 AsmType::I64,
             )))),
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -3339,6 +3059,7 @@ fn inject_linux_readdir_shim(program: &mut AsmProgram, cc: CallingConvention) ->
                 if_true: 1,
                 if_false: 2,
             },
+            terminator_encoding: None,
             predecessors: Vec::new(),
             successors: vec![1, 2],
         };
@@ -3348,6 +3069,7 @@ fn inject_linux_readdir_shim(program: &mut AsmProgram, cc: CallingConvention) ->
             label: Some(Name::new("return_null")),
             instructions: Vec::new(),
             terminator: AsmTerminator::Return(Some(null_ptr.clone())),
+            terminator_encoding: None,
             predecessors: vec![0],
             successors: Vec::new(),
         };
@@ -3469,6 +3191,7 @@ fn inject_linux_readdir_shim(program: &mut AsmProgram, cc: CallingConvention) ->
             label: Some(Name::new("alloc")),
             instructions: alloc_insts,
             terminator: AsmTerminator::Return(Some(out_ptr.clone())),
+            terminator_encoding: None,
             predecessors: vec![0],
             successors: Vec::new(),
         };
@@ -6760,6 +6483,7 @@ mod tests {
                     },
                 ],
                 terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(1))),
+                terminator_encoding: None,
                 predecessors: Vec::new(),
                 successors: Vec::new(),
             }],
@@ -6825,6 +6549,7 @@ mod tests {
                     annotations: Vec::new(),
                 }],
                 terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
+                terminator_encoding: None,
                 predecessors: Vec::new(),
                 successors: Vec::new(),
             }],
@@ -6947,6 +6672,7 @@ mod tests {
                     },
                 ],
                 terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
+                terminator_encoding: None,
                 predecessors: Vec::new(),
                 successors: Vec::new(),
             }],
@@ -7007,6 +6733,7 @@ mod tests {
                     annotations: Vec::new(),
                 }],
                 terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
+                terminator_encoding: None,
                 predecessors: Vec::new(),
                 successors: Vec::new(),
             }],
@@ -7129,6 +6856,7 @@ mod tests {
                     },
                 ],
                 terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
+                terminator_encoding: None,
                 predecessors: Vec::new(),
                 successors: Vec::new(),
             }],
@@ -7185,6 +6913,7 @@ mod tests {
                     annotations: Vec::new(),
                 }],
                 terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
+                terminator_encoding: None,
                 predecessors: Vec::new(),
                 successors: Vec::new(),
             }],
@@ -7293,6 +7022,7 @@ mod tests {
                     },
                 ],
                 terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
+                terminator_encoding: None,
                 predecessors: Vec::new(),
                 successors: Vec::new(),
             }],

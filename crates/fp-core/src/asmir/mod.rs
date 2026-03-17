@@ -13,6 +13,10 @@ pub type AsmType = Ty;
 #[derive(Debug, Clone, PartialEq)]
 pub struct AsmProgram {
     pub target: AsmTarget,
+    /// If this program was lifted from an existing container / assembly stream,
+    /// this records the original target so emitters can decide whether it is
+    /// safe to reuse preserved machine encodings.
+    pub lifted_from: Option<AsmTarget>,
     pub container: Option<ContainerFile>,
     pub sections: Vec<AsmSection>,
     pub globals: Vec<AsmGlobal>,
@@ -149,6 +153,9 @@ pub struct AsmBlock {
     pub label: Option<Name>,
     pub instructions: Vec<AsmInstruction>,
     pub terminator: AsmTerminator,
+    /// When lifting from an existing object, this may contain the original
+    /// machine encoding for the terminator.
+    pub terminator_encoding: Option<Vec<u8>>,
     pub predecessors: Vec<AsmBlockId>,
     pub successors: Vec<AsmBlockId>,
 }
@@ -253,6 +260,7 @@ pub enum AsmOpcode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AsmGenericOpcode {
+    Nop,
     Add,
     Sub,
     Mul,
@@ -308,6 +316,7 @@ pub enum AsmGenericOpcode {
     ExtractLane,
     InsertLane,
     ZipLow,
+    SymbolAddress,
 }
 
 impl AsmOpcode {
@@ -322,6 +331,7 @@ impl AsmOpcode {
 impl AsmGenericOpcode {
     pub fn mnemonic(&self) -> &str {
         match self {
+            AsmGenericOpcode::Nop => "nop",
             AsmGenericOpcode::Add => "add",
             AsmGenericOpcode::Sub => "sub",
             AsmGenericOpcode::Mul => "mul",
@@ -377,6 +387,7 @@ impl AsmGenericOpcode {
             AsmGenericOpcode::ExtractLane => "extract_lane",
             AsmGenericOpcode::InsertLane => "insert_lane",
             AsmGenericOpcode::ZipLow => "zip_low",
+            AsmGenericOpcode::SymbolAddress => "symbol_address",
         }
     }
 }
@@ -391,6 +402,7 @@ pub enum AsmSyscallConvention {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AsmInstructionKind {
+    Nop,
     Add(AsmValue, AsmValue),
     Sub(AsmValue, AsmValue),
     Mul(AsmValue, AsmValue),
@@ -529,6 +541,21 @@ pub enum AsmInstructionKind {
         rhs: AsmValue,
         lane_bits: u16,
     },
+
+    /// Produces the address of a symbol.
+    ///
+    /// This is used to represent ELF GOT/PLT indirections explicitly during
+    /// cross-format transpilation.
+    SymbolAddress {
+        symbol: String,
+        kind: AsmSymbolAddressKind,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AsmSymbolAddressKind {
+    Direct,
+    Got,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -675,6 +702,7 @@ impl AsmProgram {
     pub fn new(target: AsmTarget) -> Self {
         Self {
             target,
+            lifted_from: None,
             container: None,
             sections: Vec::new(),
             globals: Vec::new(),
@@ -745,6 +773,7 @@ mod tests {
                     0,
                     Ty::I32,
                 )))),
+                terminator_encoding: None,
                 predecessors: Vec::new(),
                 successors: Vec::new(),
             }],

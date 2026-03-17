@@ -801,6 +801,7 @@ fn format_calling_convention(cc: &CallingConvention) -> &'static str {
         X86VectorCall => "x86_vectorcall",
         Win64 => "win64",
         X86_64SysV => "x86_64_sysv",
+        FpLiftedX86_64RegFile => "fp_lifted_x86_64_regfile",
         AAPCS => "aapcs",
         AAPCSVfp => "aapcs_vfp",
     }

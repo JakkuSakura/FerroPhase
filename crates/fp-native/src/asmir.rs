@@ -126,6 +126,7 @@ pub fn select_program(
                 label: block.label.clone(),
                 instructions,
                 terminator: map_terminator(&block.terminator),
+                terminator_encoding: None,
                 predecessors: block.predecessors.clone(),
                 successors: block.successors.clone(),
             });
@@ -303,6 +304,7 @@ fn canonicalize_instruction_kind_registers(
     next_virtual_id: &mut u32,
 ) {
     match kind {
+        AsmInstructionKind::Nop => {}
         AsmInstructionKind::Add(lhs, rhs)
         | AsmInstructionKind::Sub(lhs, rhs)
         | AsmInstructionKind::Mul(lhs, rhs)
@@ -359,6 +361,7 @@ fn canonicalize_instruction_kind_registers(
         AsmInstructionKind::Alloca { size, .. } => {
             canonicalize_value(size, map, next_virtual_id);
         }
+        AsmInstructionKind::SymbolAddress { .. } => {}
         AsmInstructionKind::GetElementPtr { ptr, indices, .. } => {
             canonicalize_value(ptr, map, next_virtual_id);
             for index in indices {
@@ -664,6 +667,13 @@ pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> AsmProgram {
             pointer_width: 64,
             default_calling_convention: None,
         },
+        lifted_from: Some(AsmTarget {
+            architecture: AsmArchitecture::X86_64,
+            object_format: AsmObjectFormat::Raw,
+            endianness: AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: None,
+        }),
         container: None,
         sections: vec![AsmSection {
             name: ".text".to_string(),
@@ -705,6 +715,7 @@ pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> AsmProgram {
                             label: Some(Name::new(format!("bb{}", block.id))),
                             instructions,
                             terminator,
+                            terminator_encoding: None,
                             predecessors: Vec::new(),
                             successors: block.terminator.targets.clone(),
                         }
@@ -744,6 +755,13 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> AsmProgram
             pointer_width: 64,
             default_calling_convention: None,
         },
+        lifted_from: Some(AsmTarget {
+            architecture: AsmArchitecture::Aarch64,
+            object_format: AsmObjectFormat::Raw,
+            endianness: AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: None,
+        }),
         container: None,
         sections: vec![AsmSection {
             name: ".text".to_string(),
@@ -786,6 +804,7 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> AsmProgram
                             label: Some(Name::new(format!("bb{}", block.id))),
                             instructions,
                             terminator,
+                            terminator_encoding: None,
                             predecessors: Vec::new(),
                             successors: block.terminator.targets.clone(),
                         }
@@ -914,6 +933,7 @@ fn intern_string_constants(program: &mut AsmProgram) {
 
     fn rewrite_instruction(kind: &mut AsmInstructionKind, ctx: &mut InternContext) {
         match kind {
+            AsmInstructionKind::Nop => {}
             AsmInstructionKind::Add(lhs, rhs)
             | AsmInstructionKind::Sub(lhs, rhs)
             | AsmInstructionKind::Mul(lhs, rhs)
@@ -959,6 +979,7 @@ fn intern_string_constants(program: &mut AsmProgram) {
             AsmInstructionKind::Alloca { size, .. } => {
                 rewrite_value(size, ctx);
             }
+            AsmInstructionKind::SymbolAddress { .. } => {}
             AsmInstructionKind::GetElementPtr { ptr, indices, .. } => {
                 rewrite_value(ptr, ctx);
                 for index in indices {
@@ -988,7 +1009,21 @@ fn intern_string_constants(program: &mut AsmProgram) {
             }
             AsmInstructionKind::Call { function, args, .. } => {
                 rewrite_value(function, ctx);
+                let preserve_strings = matches!(
+                    function,
+                    AsmValue::Function(name)
+                        if matches!(
+                            name.as_str(),
+                            "printf" | "fprintf" | "sprintf" | "snprintf" | "dprintf" | "vprintf"
+                                | "vfprintf" | "vsprintf" | "vsnprintf" | "vdprintf"
+                        )
+                );
                 for arg in args {
+                    if preserve_strings {
+                        if matches!(arg, AsmValue::Constant(AsmConstant::String(_))) {
+                            continue;
+                        }
+                    }
                     rewrite_value(arg, ctx);
                 }
             }
@@ -1730,6 +1765,7 @@ fn x86_typed_operands(
     }
 
     match kind {
+        AsmInstructionKind::Nop => {}
         AsmInstructionKind::Add(lhs, rhs)
         | AsmInstructionKind::Sub(lhs, rhs)
         | AsmInstructionKind::Mul(lhs, rhs)
@@ -1856,6 +1892,9 @@ fn x86_typed_operands(
             operands.push(x86_operand(vector, ctx));
             operands.push(x86_operand(value, ctx));
             operands.push(X86Operand::Immediate((*lane).into()));
+        }
+        AsmInstructionKind::SymbolAddress { symbol, .. } => {
+            operands.push(X86Operand::Symbol(Name::new(symbol.clone())));
         }
         AsmInstructionKind::Unreachable => {}
     }
@@ -2051,6 +2090,7 @@ fn aarch64_detail(
 
 fn aarch64_opcode_name(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> &'static str {
     match kind {
+        AsmInstructionKind::Nop => "nop",
         AsmInstructionKind::Add(..) => "add",
         AsmInstructionKind::Sub(..) => "sub",
         AsmInstructionKind::Mul(..) if is_float_type_opt(ty) => {
@@ -2115,6 +2155,10 @@ fn aarch64_opcode_name(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> &'sta
         AsmInstructionKind::ExtractLane { .. } => "extract_lane",
         AsmInstructionKind::InsertLane { .. } => "insert_lane",
         AsmInstructionKind::ZipLow { .. } => "zip1",
+        AsmInstructionKind::SymbolAddress { kind, .. } => match kind {
+            fp_core::asmir::AsmSymbolAddressKind::Direct => "symaddr.direct",
+            fp_core::asmir::AsmSymbolAddressKind::Got => "symaddr.got",
+        },
         AsmInstructionKind::SysOp(_) => "sysop",
         AsmInstructionKind::Unreachable => "brk",
     }
@@ -2136,6 +2180,7 @@ fn aarch64_typed_operands(
         }
     }
     match kind {
+        AsmInstructionKind::Nop => {}
         AsmInstructionKind::Add(lhs, rhs)
         | AsmInstructionKind::Sub(lhs, rhs)
         | AsmInstructionKind::Mul(lhs, rhs)
@@ -2272,6 +2317,9 @@ fn aarch64_typed_operands(
         AsmInstructionKind::ZipLow { lhs, rhs, .. } => {
             operands.push(aarch64_operand(lhs, ctx));
             operands.push(aarch64_operand(rhs, ctx));
+        }
+        AsmInstructionKind::SymbolAddress { symbol, .. } => {
+            operands.push(Aarch64Operand::Symbol(Name::new(symbol.clone())));
         }
         AsmInstructionKind::Unreachable => {}
     }
@@ -2428,6 +2476,7 @@ fn resolve_aarch64_branch_condition(
 
 fn x86_opcode(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> X86Opcode {
     match kind {
+        AsmInstructionKind::Nop => X86Opcode::Nop,
         AsmInstructionKind::Add(..) => X86Opcode::Add,
         AsmInstructionKind::Sub(..) => X86Opcode::Sub,
         AsmInstructionKind::Mul(..) if is_float_type_opt(ty) => float_binop_opcode("mul", ty),
@@ -2485,6 +2534,7 @@ fn x86_opcode(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> X86Opcode {
         | AsmInstructionKind::ZipLow { .. } => {
             X86Opcode::Mov
         }
+        AsmInstructionKind::SymbolAddress { .. } => X86Opcode::Mov,
         AsmInstructionKind::Unreachable => X86Opcode::Ud2,
     }
 }
@@ -2517,6 +2567,7 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
     }
 
     match kind {
+        AsmInstructionKind::Nop => {}
         AsmInstructionKind::Add(lhs, rhs)
         | AsmInstructionKind::Sub(lhs, rhs)
         | AsmInstructionKind::Mul(lhs, rhs)
@@ -2637,6 +2688,9 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
             operands.push(value_operand(vector));
             operands.push(value_operand(value));
             operands.push(AsmOperand::Immediate((*lane).into()));
+        }
+        AsmInstructionKind::SymbolAddress { symbol, .. } => {
+            operands.push(AsmOperand::Symbol(Name::new(symbol.clone())));
         }
         AsmInstructionKind::Unreachable => {}
     }
@@ -4323,6 +4377,7 @@ fn sanitize_symbol(value: &str) -> String {
 
 fn generic_opcode(kind: &AsmInstructionKind) -> AsmGenericOpcode {
     match kind {
+        AsmInstructionKind::Nop => AsmGenericOpcode::Nop,
         AsmInstructionKind::Add(..) => AsmGenericOpcode::Add,
         AsmInstructionKind::Sub(..) => AsmGenericOpcode::Sub,
         AsmInstructionKind::Mul(..) => AsmGenericOpcode::Mul,
@@ -4378,6 +4433,7 @@ fn generic_opcode(kind: &AsmInstructionKind) -> AsmGenericOpcode {
         AsmInstructionKind::ExtractLane { .. } => AsmGenericOpcode::ExtractLane,
         AsmInstructionKind::InsertLane { .. } => AsmGenericOpcode::InsertLane,
         AsmInstructionKind::ZipLow { .. } => AsmGenericOpcode::ZipLow,
+        AsmInstructionKind::SymbolAddress { .. } => AsmGenericOpcode::SymbolAddress,
     }
 }
 

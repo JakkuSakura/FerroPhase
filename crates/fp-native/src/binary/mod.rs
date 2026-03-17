@@ -16,17 +16,21 @@ pub enum RipSymbolKind {
 pub struct RipSymbol {
     pub name: String,
     pub kind: RipSymbolKind,
+    pub import: Option<String>,
+    pub is_got: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextRelocation {
     pub offset: u64,
     pub symbol: String,
+    pub is_import: bool,
     pub addend: i64,
     pub kind: object::RelocationKind,
     pub encoding: object::RelocationEncoding,
     pub size: u8,
     pub flags: object::RelocationFlags,
+    pub is_got: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,11 +38,13 @@ pub struct DataRegion {
     pub start: u64,
     pub end: u64,
     pub symbol: String,
+    pub bytes: Vec<u8>,
 }
 
 pub struct LiftedFunction {
     pub basic_blocks: Vec<fp_core::asmir::AsmBlock>,
     pub locals: Vec<fp_core::asmir::AsmLocal>,
+    pub stack_slots: Vec<fp_core::asmir::AsmStackSlot>,
     pub direct_call_targets: Vec<u64>,
 }
 
@@ -52,8 +58,11 @@ pub fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
 #[cfg(test)]
 mod tests {
     use super::{aarch64, x86_64};
+    use super::{RipSymbol, RipSymbolKind};
+    use super::TextRelocation;
     use fp_core::asmir::{AsmConstant, AsmInstructionKind};
     use fp_core::asmir::AsmSyscallConvention;
+    use object::{RelocationEncoding, RelocationFlags, RelocationKind};
     use std::collections::HashMap;
 
     #[test]
@@ -72,6 +81,208 @@ mod tests {
             lifted.basic_blocks[1].terminator,
             fp_core::asmir::AsmTerminator::Return(_)
         ));
+    }
+
+    #[test]
+    fn x86_64_lifter_lowers_got_tail_jump_to_external_call() {
+        // Encoding: `jmpq *disp32(%rip)`
+        //   ff 25 <disp32>
+        // Followed by an unreachable `ret` to keep the byte stream finite.
+        let code_base_address = 0x1000u64;
+        let got_slot_address = 0x2000u64;
+        let jmp_len = 6u64;
+        let disp = (got_slot_address as i64) - (code_base_address as i64 + jmp_len as i64);
+        let disp32 = disp as i32;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&[0xff, 0x25]);
+        bytes.extend_from_slice(&disp32.to_le_bytes());
+        bytes.push(0xc3);
+
+        let mut rip_symbols = HashMap::new();
+        rip_symbols.insert(
+            got_slot_address,
+            RipSymbol {
+                name: "memmove".to_string(),
+                kind: RipSymbolKind::Data,
+                import: Some("memmove".to_string()),
+                is_got: true,
+            },
+        );
+
+        let lifted = x86_64::lift_function_bytes_with_symbols(
+            &bytes,
+            &[],
+            None,
+            code_base_address,
+            Some(&rip_symbols),
+            None,
+            None,
+            None,
+            None,
+            0,
+            true,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(lifted.basic_blocks.len(), 1);
+        let block = &lifted.basic_blocks[0];
+        let mut saw_memmove_call = false;
+        for inst in &block.instructions {
+            if let AsmInstructionKind::Call { function, .. } = &inst.kind {
+                if matches!(function, fp_core::asmir::AsmValue::Function(name) if name == "memmove") {
+                    saw_memmove_call = true;
+                }
+            }
+        }
+        assert!(saw_memmove_call, "expected tail jump to become a call");
+
+        assert!(matches!(
+            block.terminator,
+            fp_core::asmir::AsmTerminator::Return(Some(_))
+        ));
+    }
+
+    #[test]
+    fn x86_64_lifter_models_strchr_return_via_rax_for_following_calls() {
+        let bytes = [
+            0xE8, 0x00, 0x00, 0x00, 0x00, // call rel32 strchr
+            0x48, 0x89, 0xC2, // mov rdx, rax
+            0xE8, 0x00, 0x00, 0x00, 0x00, // call rel32 fprintf
+            0xC3, // ret
+        ];
+        let relocs = [
+            TextRelocation {
+                offset: 1,
+                symbol: "strchr".to_string(),
+                is_import: true,
+                addend: 0,
+                kind: RelocationKind::Relative,
+                encoding: RelocationEncoding::X86Branch,
+                size: 32,
+                flags: RelocationFlags::Elf {
+                    r_type: object::elf::R_X86_64_PLT32,
+                },
+                is_got: false,
+            },
+            TextRelocation {
+                offset: 9,
+                symbol: "fprintf".to_string(),
+                is_import: true,
+                addend: 0,
+                kind: RelocationKind::Relative,
+                encoding: RelocationEncoding::X86Branch,
+                size: 32,
+                flags: RelocationFlags::Elf {
+                    r_type: object::elf::R_X86_64_PLT32,
+                },
+                is_got: false,
+            },
+        ];
+
+        let lifted = x86_64::lift_function_bytes(
+            &bytes,
+            &relocs,
+            Some(AsmSyscallConvention::LinuxX86_64),
+        )
+        .unwrap();
+        let instructions = &lifted.basic_blocks[0].instructions;
+
+        let inst_by_id: HashMap<u32, &AsmInstructionKind> =
+            instructions.iter().map(|inst| (inst.id, &inst.kind)).collect();
+
+        let mut calls = instructions
+            .iter()
+            .filter_map(|inst| match &inst.kind {
+                AsmInstructionKind::Call { args, .. } => Some((inst.id, args.clone())),
+                _ => None,
+            });
+        let (strchr_call_id, _) = calls.next().expect("missing strchr call");
+        let (_, fprintf_args) = calls.next().expect("missing fprintf call");
+
+        let Some(fp_core::asmir::AsmValue::Register(arg_id)) = fprintf_args.get(2) else {
+            panic!("expected fprintf third argument to be a register");
+        };
+        let arg_resolves_to_return = *arg_id == strchr_call_id
+            || matches!(
+                inst_by_id.get(arg_id),
+                Some(AsmInstructionKind::Freeze(fp_core::asmir::AsmValue::Register(id))) if *id == strchr_call_id
+            );
+        assert!(
+            arg_resolves_to_return,
+            "expected fprintf third argument to read strchr return via rax"
+        );
+    }
+
+    #[test]
+    fn x86_64_lifter_models_dcgettext_return_via_rax_for_following_calls() {
+        let bytes = [
+            0xE8, 0x00, 0x00, 0x00, 0x00, // call rel32 dcgettext
+            0x48, 0x89, 0xC2, // mov rdx, rax
+            0xE8, 0x00, 0x00, 0x00, 0x00, // call rel32 fprintf
+            0xC3, // ret
+        ];
+        let relocs = [
+            TextRelocation {
+                offset: 1,
+                symbol: "dcgettext".to_string(),
+                is_import: true,
+                addend: 0,
+                kind: RelocationKind::Relative,
+                encoding: RelocationEncoding::X86Branch,
+                size: 32,
+                flags: RelocationFlags::Elf {
+                    r_type: object::elf::R_X86_64_PLT32,
+                },
+                is_got: false,
+            },
+            TextRelocation {
+                offset: 9,
+                symbol: "fprintf".to_string(),
+                is_import: true,
+                addend: 0,
+                kind: RelocationKind::Relative,
+                encoding: RelocationEncoding::X86Branch,
+                size: 32,
+                flags: RelocationFlags::Elf {
+                    r_type: object::elf::R_X86_64_PLT32,
+                },
+                is_got: false,
+            },
+        ];
+
+        let lifted = x86_64::lift_function_bytes(
+            &bytes,
+            &relocs,
+            Some(AsmSyscallConvention::LinuxX86_64),
+        )
+        .unwrap();
+        let instructions = &lifted.basic_blocks[0].instructions;
+
+        let inst_by_id: HashMap<u32, &AsmInstructionKind> =
+            instructions.iter().map(|inst| (inst.id, &inst.kind)).collect();
+
+        let mut calls = instructions
+            .iter()
+            .filter_map(|inst| match &inst.kind {
+                AsmInstructionKind::Call { args, .. } => Some((inst.id, args.clone())),
+                _ => None,
+            });
+        let (dcgettext_call_id, _) = calls.next().expect("missing dcgettext call");
+        let (_, fprintf_args) = calls.next().expect("missing fprintf call");
+
+        let Some(fp_core::asmir::AsmValue::Register(arg_id)) = fprintf_args.get(2) else {
+            panic!("expected fprintf third argument to be a register");
+        };
+        let arg_resolves_to_return = *arg_id == dcgettext_call_id
+            || matches!(
+                inst_by_id.get(arg_id),
+                Some(AsmInstructionKind::Freeze(fp_core::asmir::AsmValue::Register(id))) if *id == dcgettext_call_id
+            );
+        assert!(
+            arg_resolves_to_return,
+            "expected fprintf third argument to read dcgettext return via rax"
+        );
     }
 
     #[test]
@@ -94,39 +305,52 @@ mod tests {
             0x1000,
             None,
             None,
+            None,
             Some(&cstrings),
             None,
             0,
+            true,
+            true,
         )
         .unwrap();
 
-        let calls = lifted.basic_blocks[0]
+        let call_args = lifted.basic_blocks[0]
             .instructions
             .iter()
-            .filter_map(|inst| match &inst.kind {
-                AsmInstructionKind::Call { args, .. } => Some(args.clone()),
+            .find_map(|inst| match &inst.kind {
+                AsmInstructionKind::Call { args, .. } => Some(args),
                 _ => None,
             })
-            .collect::<Vec<_>>();
-        assert_eq!(calls.len(), 1);
-        let arg0 = calls[0].get(0).cloned().expect("missing arg0");
-        let string_value = match arg0 {
-            fp_core::asmir::AsmValue::Constant(AsmConstant::String(text)) => text,
-            fp_core::asmir::AsmValue::Register(id) => {
-                lifted.basic_blocks[0]
-                    .instructions
-                    .iter()
-                    .find(|inst| inst.id == id)
-                    .and_then(|inst| match &inst.kind {
-                        AsmInstructionKind::Freeze(fp_core::asmir::AsmValue::Constant(
-                            AsmConstant::String(text),
-                        )) => Some(text.clone()),
+            .expect("missing call");
+        assert!(call_args.is_empty(), "expected lifted internal call to carry no args");
+
+        let string_value = lifted.basic_blocks[0]
+            .instructions
+            .iter()
+            .find_map(|inst| match &inst.kind {
+                AsmInstructionKind::Store { value, address, .. }
+                    if matches!(address, fp_core::asmir::AsmValue::StackSlot(7)) =>
+                {
+                    match value {
+                        fp_core::asmir::AsmValue::Constant(AsmConstant::String(text)) => {
+                            Some(text.clone())
+                        }
+                        fp_core::asmir::AsmValue::Register(id) => lifted.basic_blocks[0]
+                            .instructions
+                            .iter()
+                            .find(|inst| inst.id == *id)
+                            .and_then(|inst| match &inst.kind {
+                                AsmInstructionKind::Freeze(fp_core::asmir::AsmValue::Constant(
+                                    AsmConstant::String(text),
+                                )) => Some(text.clone()),
+                                _ => None,
+                            }),
                         _ => None,
-                    })
-                    .expect("arg0 register not defined as frozen string")
-            }
-            other => panic!("unexpected arg0 value: {other:?}"),
-        };
+                    }
+                }
+                _ => None,
+            })
+            .expect("expected rdi regfile slot to store string literal");
         assert_eq!(string_value, "hello");
     }
 

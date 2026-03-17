@@ -15,6 +15,13 @@ struct LastCompare {
     index: usize,
 }
 
+fn synthesized_annotations(reason: &str) -> Vec<fp_core::asmir::AsmAnnotation> {
+    vec![fp_core::asmir::AsmAnnotation {
+        key: "fp.synthesized".to_string(),
+        value: reason.to_string(),
+    }]
+}
+
 fn decode_b_cond_immediate(word: u32, offset: u64) -> Result<Option<(u8, u64)>> {
     // B.cond immediate.
     if (word & 0xFF000010) != 0x54000000 {
@@ -240,6 +247,20 @@ pub fn lift_function_bytes(
             );
 
             if word == 0xD503201F {
+                let nop_id = next_id;
+                instructions.push(AsmInstruction {
+                    id: nop_id,
+                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Nop),
+                    kind: AsmInstructionKind::Nop,
+                    type_hint: None,
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                });
+                next_id += 1;
                 cursor += 4;
                 continue;
             }
@@ -251,6 +272,7 @@ pub fn lift_function_bytes(
                     label: None,
                     instructions: std::mem::take(&mut instructions),
                     terminator: fp_core::asmir::AsmTerminator::Return(return_value),
+                    terminator_encoding: None,
                     predecessors: Vec::new(),
                     successors: Vec::new(),
                 });
@@ -281,6 +303,7 @@ pub fn lift_function_bytes(
                         if_true,
                         if_false,
                     },
+                    terminator_encoding: None,
                     predecessors: Vec::new(),
                     successors: Vec::new(),
                 });
@@ -298,6 +321,7 @@ pub fn lift_function_bytes(
                     label: None,
                     instructions: std::mem::take(&mut instructions),
                     terminator: fp_core::asmir::AsmTerminator::Br(dest),
+                    terminator_encoding: None,
                     predecessors: Vec::new(),
                     successors: Vec::new(),
                 });
@@ -569,6 +593,7 @@ pub fn lift_function_bytes(
                 label: None,
                 instructions,
                 terminator,
+                terminator_encoding: None,
                 predecessors: Vec::new(),
                 successors: Vec::new(),
             });
@@ -580,6 +605,7 @@ pub fn lift_function_bytes(
     Ok(LiftedFunction {
         basic_blocks,
         locals: ctx.locals,
+        stack_slots: Vec::new(),
         direct_call_targets: Vec::new(),
     })
 }
@@ -617,11 +643,26 @@ fn lift_instruction(
         let lhs = ctx.read_gpr(src)?;
         let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
         let id = *next_id;
-        instructions.push(build_binop(
+        let mut inst = build_binop(
             id,
             AsmInstructionKind::Add(lhs.clone(), rhs.clone()),
             AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-        ));
+        );
+        inst.annotations.extend([
+            fp_core::asmir::AsmAnnotation {
+                key: "fp.preserve.aarch64.dst_gpr".to_string(),
+                value: dst.to_string(),
+            },
+            fp_core::asmir::AsmAnnotation {
+                key: "fp.preserve.aarch64.src_gpr".to_string(),
+                value: src.to_string(),
+            },
+            fp_core::asmir::AsmAnnotation {
+                key: "fp.preserve.aarch64.imm".to_string(),
+                value: imm.to_string(),
+            },
+        ]);
+        instructions.push(inst);
         *next_id += 1;
         ctx.write_gpr(dst, AsmValue::Register(id));
         return Ok(());
@@ -631,11 +672,26 @@ fn lift_instruction(
         let lhs = ctx.read_gpr(src)?;
         let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
         let id = *next_id;
-        instructions.push(build_binop(
+        let mut inst = build_binop(
             id,
             AsmInstructionKind::Sub(lhs.clone(), rhs.clone()),
             AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-        ));
+        );
+        inst.annotations.extend([
+            fp_core::asmir::AsmAnnotation {
+                key: "fp.preserve.aarch64.dst_gpr".to_string(),
+                value: dst.to_string(),
+            },
+            fp_core::asmir::AsmAnnotation {
+                key: "fp.preserve.aarch64.src_gpr".to_string(),
+                value: src.to_string(),
+            },
+            fp_core::asmir::AsmAnnotation {
+                key: "fp.preserve.aarch64.imm".to_string(),
+                value: imm.to_string(),
+            },
+        ]);
+        instructions.push(inst);
         *next_id += 1;
         ctx.write_gpr(dst, AsmValue::Register(id));
         return Ok(());
@@ -863,11 +919,13 @@ fn pointer_add_immediate(
     }
     let rhs = AsmValue::Constant(AsmConstant::Int(displacement, AsmType::I64));
     let id = *next_id;
-    instructions.push(build_binop(
+    let mut inst = build_binop(
         id,
         AsmInstructionKind::Add(base, rhs),
         AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-    ));
+    );
+    inst.annotations = synthesized_annotations("aarch64.addr");
+    instructions.push(inst);
     *next_id += 1;
     Ok(AsmValue::Register(id))
 }

@@ -3,11 +3,259 @@ use fp_core::asmir::{
     AsmInstructionKind, AsmIntrinsicKind, AsmProgram, AsmSyscallConvention, AsmTerminator, AsmType,
     AsmValue,
 };
+use fp_core::container::ContainerKind;
 use fp_core::error::{Error, Result};
 use fp_core::lir::layout::{align_of, size_of, struct_layout};
 use std::collections::{BTreeSet, HashMap};
 
 use crate::emit::{CodegenOutput, RelocKind, Relocation, TargetFormat};
+
+const X86_CANON_NOP: [u8; 1] = [0x90];
+const X86_CANON_RET: [u8; 1] = [0xC3];
+const X86_CANON_SYSCALL: [u8; 2] = [0x0F, 0x05];
+
+fn annotation_value<'a>(
+    annotations: &'a [fp_core::asmir::AsmAnnotation],
+    key: &str,
+) -> Option<&'a str> {
+    annotations
+        .iter()
+        .find(|annotation| annotation.key == key)
+        .map(|annotation| annotation.value.as_str())
+}
+
+fn encode_x86_nop_sequence(len: usize) -> Vec<u8> {
+    // Use standard Intel multi-byte NOP encodings.
+    // These are deterministic and stable, and for compiler-produced code often
+    // match the source encoding for padding regions.
+    const NOP_2: [u8; 2] = [0x66, 0x90];
+    const NOP_3: [u8; 3] = [0x0F, 0x1F, 0x00];
+    const NOP_4: [u8; 4] = [0x0F, 0x1F, 0x40, 0x00];
+    const NOP_5: [u8; 5] = [0x0F, 0x1F, 0x44, 0x00, 0x00];
+    const NOP_6: [u8; 6] = [0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00];
+    const NOP_7: [u8; 7] = [0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00];
+    const NOP_8: [u8; 8] = [0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00];
+    const NOP_9: [u8; 9] = [0x66, 0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+    let mut remaining = len;
+    let mut out = Vec::new();
+    while remaining > 0 {
+        match remaining {
+            1 => {
+                out.extend_from_slice(X86_CANON_NOP.as_slice());
+                remaining = 0;
+            }
+            2 => {
+                out.extend_from_slice(&NOP_2);
+                remaining = 0;
+            }
+            3 => {
+                out.extend_from_slice(&NOP_3);
+                remaining = 0;
+            }
+            4 => {
+                out.extend_from_slice(&NOP_4);
+                remaining = 0;
+            }
+            5 => {
+                out.extend_from_slice(&NOP_5);
+                remaining = 0;
+            }
+            6 => {
+                out.extend_from_slice(&NOP_6);
+                remaining = 0;
+            }
+            7 => {
+                out.extend_from_slice(&NOP_7);
+                remaining = 0;
+            }
+            8 => {
+                out.extend_from_slice(&NOP_8);
+                remaining = 0;
+            }
+            9 => {
+                out.extend_from_slice(&NOP_9);
+                remaining = 0;
+            }
+            _ => {
+                out.extend_from_slice(&NOP_9);
+                remaining -= 9;
+            }
+        }
+    }
+    out
+}
+
+fn encode_x86_addsub_imm(dst_gpr: u8, imm: i64, imm_width_bits: u16, subopcode: u8) -> Option<Vec<u8>> {
+    // Encodes: (REX.W) (81/83) /subopcode r/m64, imm{32|8}
+    // This is sufficient for our current preserved subset.
+    let rex = 0x48 | if dst_gpr >= 8 { 0x01 } else { 0x00 };
+    let rm = dst_gpr & 7;
+    let modrm = (0b11 << 6) | ((subopcode & 0b111) << 3) | rm;
+    match imm_width_bits {
+        8 => {
+            let imm8 = i8::try_from(imm).ok()?;
+            Some(vec![rex, 0x83, modrm, imm8 as u8])
+        }
+        32 => {
+            let imm32 = i32::try_from(imm).ok()?;
+            let mut out = vec![rex, 0x81, modrm];
+            out.extend_from_slice(&imm32.to_le_bytes());
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+fn first_opcode_after_prefixes(encoding: &[u8]) -> Option<(usize, u8)> {
+    let mut idx = 0usize;
+    while idx < encoding.len() {
+        let byte = encoding[idx];
+        let is_prefix = matches!(
+            byte,
+            0x66 | 0x67 | 0xF2 | 0xF3 | 0x2E | 0x36 | 0x3E | 0x26 | 0x64 | 0x65
+        ) || (0x40..=0x4F).contains(&byte);
+        if !is_prefix {
+            break;
+        }
+        idx += 1;
+    }
+
+    let opcode = *encoding.get(idx)?;
+    Some((idx, opcode))
+}
+
+fn instruction_encoding_matches_kind(inst: &fp_core::asmir::AsmInstruction) -> bool {
+    let Some(encoding) = inst.encoding.as_deref() else {
+        return false;
+    };
+    let Some((idx, opcode)) = first_opcode_after_prefixes(encoding) else {
+        return false;
+    };
+
+    match inst.kind {
+        AsmInstructionKind::Nop => !encoding.is_empty(),
+        AsmInstructionKind::Syscall { .. } => encoding == X86_CANON_SYSCALL,
+        AsmInstructionKind::Add(_, _) => {
+            if opcode == 0x05 {
+                // add rax, imm32
+                return true;
+            }
+            if opcode == 0x01 || opcode == 0x03 {
+                // add r/m64, r64 OR add r64, r/m64
+                return true;
+            }
+            if opcode == 0x81 || opcode == 0x83 {
+                // group 1 immediate
+                let Some(modrm) = encoding.get(idx + 1) else {
+                    return false;
+                };
+                let subopcode = (modrm >> 3) & 0b111;
+                return subopcode == 0;
+            }
+            false
+        }
+        AsmInstructionKind::Sub(_, _) => {
+            if opcode == 0x2D {
+                // sub rax, imm32
+                return true;
+            }
+            if opcode == 0x29 || opcode == 0x2B {
+                // sub r/m64, r64 OR sub r64, r/m64
+                return true;
+            }
+            if opcode == 0x81 || opcode == 0x83 {
+                // group 1 immediate
+                let Some(modrm) = encoding.get(idx + 1) else {
+                    return false;
+                };
+                let subopcode = (modrm >> 3) & 0b111;
+                return subopcode == 5;
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+fn is_synthesized_instruction(inst: &fp_core::asmir::AsmInstruction) -> bool {
+    inst.annotations
+        .iter()
+        .any(|annotation| annotation.key == "fp.synthesized")
+}
+
+fn terminator_encoding_matches_kind(block: &AsmBlock) -> bool {
+    let Some(encoding) = &block.terminator_encoding else {
+        return false;
+    };
+
+    match &block.terminator {
+        AsmTerminator::Return(_) => encoding.as_slice() == X86_CANON_RET,
+        _ => false,
+    }
+}
+
+fn collect_preserved_single_block_bytes(_program: &AsmProgram, func: &AsmFunction) -> Option<Vec<u8>> {
+    if func.basic_blocks.len() != 1 {
+        return None;
+    }
+    let block = func.basic_blocks.first()?;
+    let terminator_encoding: &[u8] = match &block.terminator {
+        AsmTerminator::Return(_) => X86_CANON_RET.as_slice(),
+        _ => return None,
+    };
+
+    let mut out = Vec::new();
+    for inst in &block.instructions {
+        if is_synthesized_instruction(inst) {
+            continue;
+        }
+
+        match inst.kind {
+            AsmInstructionKind::Nop => {
+                let len = annotation_value(&inst.annotations, "fp.preserve.x86_64.nop_len")
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .or_else(|| inst.encoding.as_ref().map(|encoding| encoding.len()))
+                    .unwrap_or(1);
+                out.extend_from_slice(&encode_x86_nop_sequence(len));
+            }
+            AsmInstructionKind::Syscall { .. } => {
+                out.extend_from_slice(X86_CANON_SYSCALL.as_slice());
+            }
+            AsmInstructionKind::Add(_, _) | AsmInstructionKind::Sub(_, _) => {
+                let dst = annotation_value(&inst.annotations, "fp.preserve.x86_64.dst_gpr")
+                    .and_then(|value| value.parse::<u8>().ok());
+                let imm_width_bits = annotation_value(&inst.annotations, "fp.preserve.x86_64.imm_width_bits")
+                    .and_then(|value| value.parse::<u16>().ok());
+
+                if let (Some(dst), Some(imm_width_bits)) = (dst, imm_width_bits) {
+                    let (subopcode, imm) = match &inst.kind {
+                        AsmInstructionKind::Add(_, rhs) => (0, rhs),
+                        AsmInstructionKind::Sub(_, rhs) => (5, rhs),
+                        _ => return None,
+                    };
+                    let imm = match imm {
+                        AsmValue::Constant(AsmConstant::Int(value, _)) => *value,
+                        _ => return None,
+                    };
+                    let bytes = encode_x86_addsub_imm(dst, imm, imm_width_bits, subopcode)?;
+                    out.extend_from_slice(&bytes);
+                    continue;
+                }
+
+                // Backward compatible fallback for older lifters.
+                if instruction_encoding_matches_kind(inst) {
+                    out.extend_from_slice(inst.encoding.as_deref()?);
+                    continue;
+                }
+                return None;
+            }
+            _ => return None,
+        }
+    }
+    out.extend_from_slice(terminator_encoding);
+    Some(out)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Reg {
@@ -387,6 +635,11 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
         None
     };
     let mut asm = Assembler::new();
+    asm.entry_returns_exit = matches!(format, TargetFormat::Elf)
+        && program
+            .container
+            .as_ref()
+            .is_some_and(|container| container.kind == ContainerKind::Executable);
     let mut rodata = Vec::new();
     let mut data = Vec::new();
     let mut rodata_pool = HashMap::new();
@@ -415,6 +668,14 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
         if entry_offset.is_none() && func.name.as_str() == "main" {
             entry_offset = Some(asm.buf.len() as u64);
         }
+
+        if let Some(preserved) = collect_preserved_single_block_bytes(program, func) {
+            let block_id = func.basic_blocks.first().map(|block| block.id).unwrap_or(0);
+            asm.bind(Label::Block(index as u32, block_id));
+            asm.extend(&preserved);
+            continue;
+        }
+
         let reg_types = build_reg_types(func);
         let layout = build_frame_layout(func, format, &reg_types)?;
         let local_types = build_local_types(func);
@@ -2165,6 +2426,9 @@ fn emit_block(
 ) -> Result<()> {
     for inst in &block.instructions {
         match &inst.kind {
+            AsmInstructionKind::Nop => {
+                asm.push(0x90);
+            }
             AsmInstructionKind::Add(lhs, rhs) => {
                 let ty = inst
                     .type_hint
@@ -2555,6 +2819,10 @@ fn emit_block(
             AsmInstructionKind::GetElementPtr { ptr, indices, .. } => {
                 emit_gep(asm, layout, inst.id, ptr, indices, reg_types, local_types)?;
             }
+            AsmInstructionKind::SymbolAddress { symbol, .. } => {
+                asm.emit_mov_imm64_reloc(Reg::R10, symbol.as_str(), 0);
+                store_vreg(asm, layout, inst.id, Reg::R10)?;
+            }
             AsmInstructionKind::Call { function, args, .. } => {
                 let ty = inst.type_hint.as_ref().cloned().unwrap_or(AsmType::Void);
                 emit_call(
@@ -2757,7 +3025,7 @@ fn emit_block(
             if asm.needs_frame {
                 emit_epilogue(asm);
             }
-            if matches!(format, TargetFormat::Elf) && asm.is_entry() {
+            if asm.entry_returns_exit && asm.is_entry() {
                 emit_exit_syscall(asm, 0)?;
             } else {
                 emit_mov_imm64(asm, Reg::Rax, 0);
@@ -2826,7 +3094,7 @@ fn emit_block(
             if asm.needs_frame {
                 emit_epilogue(asm);
             }
-            if matches!(format, TargetFormat::Elf) && asm.is_entry() {
+            if asm.entry_returns_exit && asm.is_entry() {
                 if let Some(reg) = exit_reg {
                     emit_exit_syscall_reg(asm, reg)?;
                 } else {
@@ -3125,6 +3393,7 @@ struct Assembler {
     needs_frame: bool,
     current_function: u32,
     relocs: Vec<Relocation>,
+    entry_returns_exit: bool,
 }
 
 fn emit_prologue(asm: &mut Assembler, layout: &FrameLayout) -> Result<()> {
@@ -3160,6 +3429,7 @@ impl Assembler {
             needs_frame: false,
             current_function: 0,
             relocs: Vec::new(),
+            entry_returns_exit: false,
         }
     }
 
@@ -5684,6 +5954,7 @@ mod tests {
                 pointer_width: 64,
                 default_calling_convention: None,
             },
+            lifted_from: None,
             container: None,
             sections: Vec::new(),
             globals: Vec::new(),
@@ -5700,6 +5971,7 @@ mod tests {
                     label: Some(Name::new("entry")),
                     instructions: Vec::new(),
                     terminator: AsmTerminator::Return(None),
+                    terminator_encoding: None,
                     predecessors: Vec::new(),
                     successors: Vec::new(),
                 }],

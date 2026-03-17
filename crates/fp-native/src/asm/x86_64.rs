@@ -35,6 +35,7 @@ pub struct X86InstructionDetail {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum X86Opcode {
+    Nop,
     Add,
     Sub,
     IMul,
@@ -141,6 +142,7 @@ pub enum X86TerminatorOpcode {
 impl X86Opcode {
     pub fn mnemonic(&self) -> &str {
         match self {
+            X86Opcode::Nop => "nop",
             X86Opcode::Add => "add",
             X86Opcode::Sub => "sub",
             X86Opcode::IMul => "imul",
@@ -531,6 +533,7 @@ fn parse_terminator(line: &str) -> Result<X86TerminatorDetail> {
 
 fn parse_opcode(token: &str) -> Result<X86Opcode> {
     match token {
+        "nop" => Ok(X86Opcode::Nop),
         "add" => Ok(X86Opcode::Add),
         "sub" => Ok(X86Opcode::Sub),
         "imul" => Ok(X86Opcode::IMul),
