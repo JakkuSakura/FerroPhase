@@ -1,13 +1,13 @@
 mod inventory;
 mod lower;
 
-use fp_core::ast::AstTargetOutput;
+use fp_core::ast::{AstTargetOutput, Item, ItemKind, Node, NodeKind};
 use fp_core::cfg::{TargetEnv, filter_items_in_node};
 use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
 use fp_interpret::const_eval::ConstEvaluationOrchestrator;
 use fp_lang::FerroFrontend;
-use fp_shell_core::{ScriptRenderer, ScriptTarget, ShellInventory};
+use fp_shell_core::{ScriptTarget, ShellInventory, validate_extern_decl};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -80,21 +80,17 @@ pub fn compile_source_with_options(
         .map_err(|err| ShellError::Parse(err.to_string()))?;
 
     let inventory = options.inventory.clone().unwrap_or_default();
-    let mut program = lower_runtime_helpers(&inventory, &target_env)?;
-    let user_program =
-        lower::lower_node(&ast, &inventory, target_env.lang.as_deref()).map_err(ShellError::Lower)?;
-    program.externs.extend(user_program.externs);
-    program.items.extend(user_program.items);
-    program
-        .validate_externs(target)
+    let merged = merge_runtime_helpers(ast, &target_env)?;
+    let lowered = lower::lower_node(&merged, &inventory, target_env.lang.as_deref())
         .map_err(ShellError::Lower)?;
+    validate_extern_decls(&lowered, target).map_err(ShellError::Lower)?;
 
     let code = match target {
         ScriptTarget::Bash => fp_bash::BashTarget::new()
-            .render(&program, &inventory)
+            .render(&lowered, &inventory)
             .map_err(|err| ShellError::Emit(err.to_string()))?,
         ScriptTarget::PowerShell => fp_powershell::PowerShellTarget::new()
-            .render(&program, &inventory)
+            .render(&lowered, &inventory)
             .map_err(|err| ShellError::Emit(err.to_string()))?,
     };
 
@@ -104,10 +100,7 @@ pub fn compile_source_with_options(
     })
 }
 
-fn lower_runtime_helpers(
-    inventory: &ShellInventory,
-    target_env: &TargetEnv,
-) -> Result<fp_shell_core::ScriptProgram, ShellError> {
+fn merge_runtime_helpers(ast: Node, target_env: &TargetEnv) -> Result<Node, ShellError> {
     let frontend = FerroFrontend::new();
     let backend = frontend
         .parse(
@@ -119,7 +112,56 @@ fn lower_runtime_helpers(
         })?;
     let mut backend_ast = backend.ast;
     filter_items_in_node(&mut backend_ast, target_env);
-    lower::lower_node(&backend_ast, inventory, target_env.lang.as_deref()).map_err(ShellError::Lower)
+    let (mut user_file, backend_file) = match (ast.kind, backend_ast.kind) {
+        (NodeKind::File(user_file), NodeKind::File(backend_file)) => (user_file, backend_file),
+        _ => {
+            return Err(ShellError::Lower(
+                "shell compilation requires file AST nodes".to_string(),
+            ));
+        }
+    };
+    let mut items = backend_file.items;
+    items.extend(user_file.items);
+    user_file.items = items;
+    Ok(Node::file(user_file))
+}
+
+fn validate_extern_decls(node: &Node, target: ScriptTarget) -> Result<(), String> {
+    match node.kind() {
+        NodeKind::File(file) => {
+            for item in &file.items {
+                validate_externs_in_item(item, target)?;
+            }
+            Ok(())
+        }
+        _ => Err("shell compilation requires file AST nodes".to_string()),
+    }
+}
+
+fn validate_externs_in_item(item: &Item, target: ScriptTarget) -> Result<(), String> {
+    match item.kind() {
+        ItemKind::DeclFunction(function) => {
+            if extern_matches_target(function, target) {
+                validate_extern_decl(function, target)?;
+            }
+            Ok(())
+        }
+        ItemKind::Module(module) => {
+            for child in &module.items {
+                validate_externs_in_item(child, target)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn extern_matches_target(function: &fp_core::ast::ItemDeclFunction, target: ScriptTarget) -> bool {
+    match (&function.sig.abi, target) {
+        (fp_core::ast::Abi::Named(abi), ScriptTarget::Bash) => abi == "bash",
+        (fp_core::ast::Abi::Named(abi), ScriptTarget::PowerShell) => abi == "pwsh",
+        _ => false,
+    }
 }
 
 fn shell_target_env(target: ScriptTarget) -> TargetEnv {

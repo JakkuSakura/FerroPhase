@@ -1,19 +1,24 @@
-generated: crates/fp-shell/examples/transports.ps1
-
+Set-StrictMode -Version Latest
+Set-PSDebug -Trace 1
 $ErrorActionPreference = 'Stop'
 $script:fpLastChanged = $false
 
 $script:FpHosts = @{}
-$script:FpHosts['docker-app'] = @{ transport = 'docker'; user = 'root'; container = 'app' }
-$script:FpHosts['ssh-web'] = @{ transport = 'ssh'; address = '10.0.0.11'; user = 'deploy'; port = 22 }
-$script:FpHosts['localhost'] = @{ transport = 'local' }
-$script:FpHosts['windows-admin'] = @{ transport = 'winrm'; address = '10.0.0.21'; user = 'Administrator'; port = 5985; password = 'change-me'; scheme = 'http' }
 $script:FpHosts['k8s-api'] = @{ transport = 'kubectl'; container = 'api'; pod = 'api-7f9f6'; namespace = 'prod'; context = 'prod-cluster' }
+$script:FpHosts['localhost'] = @{ transport = 'local' }
+$script:FpHosts['ssh-web'] = @{ transport = 'ssh'; address = '10.0.0.11'; user = 'deploy'; port = 22 }
+$script:FpHosts['windows-admin'] = @{ transport = 'winrm'; address = '10.0.0.21'; user = 'Administrator'; port = 5985; password = 'change-me'; scheme = 'http' }
+$script:FpHosts['docker-app'] = @{ transport = 'docker'; user = 'root'; container = 'app' }
 function Invoke-FpRuntimeValidation {
+    if (-not (Get-Command -Name 'Copy-Item' -ErrorAction SilentlyContinue)) { throw 'missing required command: Copy-Item' }
+    if (-not (Get-Command -Name 'Get-Content' -ErrorAction SilentlyContinue)) { throw 'missing required command: Get-Content' }
     if (-not (Get-Command -Name 'Invoke-Expression' -ErrorAction SilentlyContinue)) { throw 'missing required command: Invoke-Expression' }
     if (-not (Get-Command -Name 'New-PSSession' -ErrorAction SilentlyContinue)) { throw 'missing required command: New-PSSession' }
+    if (-not (Get-Command -Name 'Remove-Item' -ErrorAction SilentlyContinue)) { throw 'missing required command: Remove-Item' }
     if (-not (Get-Command -Name 'docker' -ErrorAction SilentlyContinue)) { throw 'missing required command: docker' }
     if (-not (Get-Command -Name 'kubectl' -ErrorAction SilentlyContinue)) { throw 'missing required command: kubectl' }
+    if (-not (Get-Command -Name 'rsync' -ErrorAction SilentlyContinue)) { throw 'missing required command: rsync' }
+    if (-not (Get-Command -Name 'scp' -ErrorAction SilentlyContinue)) { throw 'missing required command: scp' }
     if (-not (Get-Command -Name 'ssh' -ErrorAction SilentlyContinue)) { throw 'missing required command: ssh' }
 }
 

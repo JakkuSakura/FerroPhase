@@ -1,10 +1,14 @@
 use fp_core::ast::{
-    BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind, ExprMatch, ExprStringTemplate,
-    FormatArgRef, FormatTemplatePart, ItemDefFunction, PatternKind, Value,
+    Abi, BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind, ExprMatch, ExprStringTemplate,
+    FormatArgRef, FormatTemplatePart, ItemDeclFunction, ItemDefFunction, ItemKind, Node,
+    NodeKind, PatternKind, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
-use fp_shell_core::{ExternalFunction, ScriptItem, ScriptProgram, ScriptRenderer, ShellInventory, TransportKind};
+use fp_shell_core::{
+    ScriptTarget, ShellInventory, TransportKind, runtime_requirements, validate_extern_decl,
+};
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 
 pub struct PowerShellTarget;
@@ -21,24 +25,18 @@ impl Default for PowerShellTarget {
     }
 }
 
-impl ScriptRenderer for PowerShellTarget {
-    type Error = String;
-
-    fn render(
-        &self,
-        program: &ScriptProgram,
-        inventory: &ShellInventory,
-    ) -> Result<String, Self::Error> {
+impl PowerShellTarget {
+    pub fn render(&self, node: &Node, inventory: &ShellInventory) -> Result<String, String> {
         let mut renderer = PowerShellRenderer::new(inventory);
-        renderer.render_program(program)?;
+        renderer.render_program(node)?;
         Ok(renderer.finish())
     }
 }
 
 struct PowerShellRenderer<'a> {
     inventory: &'a ShellInventory,
-    externs: HashMap<String, ExternalFunction>,
-    used_externs: BTreeSet<String>,
+    externs: HashMap<String, ItemDeclFunction>,
+    required_commands: RefCell<BTreeSet<String>>,
     lines: Vec<String>,
 }
 
@@ -47,7 +45,7 @@ impl<'a> PowerShellRenderer<'a> {
         Self {
             inventory,
             externs: HashMap::new(),
-            used_externs: BTreeSet::new(),
+            required_commands: RefCell::new(BTreeSet::new()),
             lines: Vec::new(),
         }
     }
@@ -107,17 +105,16 @@ impl<'a> PowerShellRenderer<'a> {
         script
     }
 
-    fn render_program(&mut self, program: &ScriptProgram) -> Result<(), String> {
-        self.externs = program.externs.clone();
-        self.used_externs = program
-            .used_externs()
-            .into_iter()
-            .map(str::to_string)
-            .collect();
-        for item in &program.items {
-            match item {
-                ScriptItem::Function(def) => self.render_function(def)?,
-                ScriptItem::Expr(expr) => self.render_expr_statement(expr, 0)?,
+    fn render_program(&mut self, node: &Node) -> Result<(), String> {
+        let NodeKind::File(file) = node.kind() else {
+            return Err("powershell renderer requires file AST".to_string());
+        };
+        self.externs = extern_decl_map(file.items.iter(), ScriptTarget::PowerShell)?;
+        for item in &file.items {
+            match item.kind() {
+                ItemKind::DefFunction(def) => self.render_function(def)?,
+                ItemKind::Expr(expr) => self.render_expr_statement(expr, 0)?,
+                _ => {}
             }
         }
         Ok(())
@@ -189,7 +186,8 @@ impl<'a> PowerShellRenderer<'a> {
         args: &[Expr],
         indent: usize,
     ) -> Result<(), String> {
-        if self.externs.get(name).map(|decl| decl.abi.as_str()) == Some("pwsh") {
+        if self.externs.contains_key(name) {
+            self.note_extern_requirements(name);
             if self.render_pwsh_extern_statement(name, args, indent)? {
                 return Ok(());
             }
@@ -750,7 +748,8 @@ impl<'a> PowerShellRenderer<'a> {
     }
 
     fn render_call(&self, name: &str, args: &[Expr]) -> Result<String, String> {
-        if self.externs.get(name).map(|decl| decl.abi.as_str()) == Some("pwsh") {
+        if self.externs.contains_key(name) {
+            self.note_extern_requirements(name);
             return Ok(self.render_pwsh_extern_call(name, args)?);
         }
         let args = args
@@ -786,21 +785,13 @@ impl<'a> PowerShellRenderer<'a> {
     }
 
     fn render_runtime_validator(&self) -> String {
-        let mut commands = BTreeSet::new();
-        for name in &self.used_externs {
-            let Some(external) = self.externs.get(name) else {
-                continue;
-            };
-            for command in external.runtime_requirements(fp_shell_core::ScriptTarget::PowerShell) {
-                commands.insert(command);
-            }
-        }
+        let commands = self.required_commands.borrow();
         if commands.is_empty() {
             return String::new();
         }
         let mut script = String::new();
         script.push_str("function Invoke-FpRuntimeValidation {\n");
-        for command in commands {
+        for command in commands.iter() {
             script.push_str(&format!(
                 "    if (-not (Get-Command -Name {} -ErrorAction SilentlyContinue)) {{ throw {} }}\n",
                 ps_string(&command),
@@ -809,6 +800,16 @@ impl<'a> PowerShellRenderer<'a> {
         }
         script.push_str("}\n\nInvoke-FpRuntimeValidation\n\n");
         script
+    }
+
+    fn note_extern_requirements(&self, name: &str) {
+        let Some(function) = self.externs.get(name) else {
+            return;
+        };
+        let mut commands = self.required_commands.borrow_mut();
+        for command in runtime_requirements(function, ScriptTarget::PowerShell) {
+            commands.insert(command);
+        }
     }
 
     fn emit_host_entry(&mut self, indent: usize, host: &Expr) -> Result<(), String> {
@@ -1107,33 +1108,81 @@ fn ps_string(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+fn extern_decl_map<'a>(
+    items: impl Iterator<Item = &'a fp_core::ast::Item>,
+    target: ScriptTarget,
+) -> Result<HashMap<String, ItemDeclFunction>, String> {
+    let mut externs = HashMap::new();
+    for item in items {
+        match item.kind() {
+            ItemKind::DeclFunction(function) => {
+                if !matches!(&function.sig.abi, Abi::Named(abi) if abi == "pwsh") {
+                    continue;
+                }
+                validate_extern_decl(function, target)?;
+                externs.insert(function.name.as_str().to_string(), function.clone());
+            }
+            ItemKind::Module(module) => {
+                externs.extend(extern_decl_map(module.items.iter(), target)?);
+            }
+            _ => {}
+        }
+    }
+    Ok(externs)
+}
+
 
 const POWERSHELL_RUNTIME_UTILITIES: &str = "";
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fp_core::ast::{Expr, ExprInvoke, ExprInvokeTarget, ExprKind, Name};
-    use fp_shell_core::{
-        ExternalFunction, InventoryHost, InventoryValue, ScriptProgram, TransportKind,
+    use fp_core::ast::{
+        Abi, AttrMeta, AttrMetaNameValue, AttrStyle, Attribute, Expr, ExprInvoke,
+        ExprInvokeTarget, ExprKind, File, FunctionParam, FunctionSignature, Ident, Item,
+        ItemDeclFunction, ItemKind, Name, Node, Path, Ty,
     };
+    use fp_shell_core::{InventoryHost, InventoryValue, TransportKind};
     use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn extern_decl(name: &str, abi: &str, command: &str, param_count: usize) -> Item {
+        let mut sig = FunctionSignature::unit();
+        sig.abi = Abi::Named(abi.to_string());
+        sig.params = (0..param_count)
+            .map(|index| {
+                FunctionParam::new(Ident::new(format!("arg{}", index)), Ty::ident(Ident::new("str")))
+            })
+            .collect();
+        Item::from(ItemKind::DeclFunction(ItemDeclFunction {
+            attrs: vec![Attribute {
+                style: AttrStyle::Outer,
+                meta: AttrMeta::NameValue(AttrMetaNameValue {
+                    name: Path::from_ident(Ident::new("command")),
+                    value: Expr::value(Value::string(command.to_string())).into(),
+                }),
+            }],
+            ty_annotation: None,
+            name: Ident::new(name),
+            sig,
+        }))
+    }
+
+    fn render_node(decls: Vec<Item>, expr: Expr, inventory: &ShellInventory) -> String {
+        let mut items = decls;
+        items.push(Item::from(ItemKind::Expr(expr)));
+        let node = Node::file(File {
+            path: PathBuf::from("test.fp"),
+            items,
+        });
+        PowerShellTarget::new()
+            .render(&node, inventory)
+            .expect("render should succeed")
+    }
 
     #[test]
     fn renders_noninteractive_winrm_support() {
-        let mut externs = HashMap::new();
-        externs.insert(
-            "winrm_run".to_string(),
-            ExternalFunction {
-                name: "winrm_run".to_string(),
-                abi: "pwsh".to_string(),
-                param_count: 2,
-                command: Some("New-PSSession Invoke-Command Remove-PSSession".to_string()),
-            },
-        );
-        let program = ScriptProgram {
-            externs,
-            items: vec![ScriptItem::Expr(Expr::new(ExprKind::Invoke(ExprInvoke {
+        let expr = Expr::new(ExprKind::Invoke(ExprInvoke {
                 span: Default::default(),
                 target: ExprInvokeTarget::Function(Name::ident("winrm_run")),
                 args: vec![
@@ -1141,8 +1190,7 @@ mod tests {
                     Expr::value(Value::string("hostname".to_string())),
                 ],
                 kwargs: Vec::new(),
-            })))],
-        };
+            }));
         let mut hosts = HashMap::new();
         hosts.insert(
             "win-1".to_string(),
@@ -1173,28 +1221,23 @@ mod tests {
             groups: HashMap::new(),
             hosts,
         };
-        let script = PowerShellTarget::new()
-            .render(&program, &inventory)
-            .expect("render should succeed");
+        let script = render_node(
+            vec![extern_decl(
+                "winrm_run",
+                "pwsh",
+                "New-PSSession Invoke-Command Remove-PSSession",
+                2,
+            )],
+            expr,
+            &inventory,
+        );
         assert!(script.contains("password = 'secret'"));
         assert!(!script.contains("Get-Credential"));
     }
 
     #[test]
     fn renders_https_winrm_support() {
-        let mut externs = HashMap::new();
-        externs.insert(
-            "winrm_run".to_string(),
-            ExternalFunction {
-                name: "winrm_run".to_string(),
-                abi: "pwsh".to_string(),
-                param_count: 2,
-                command: Some("New-PSSession Invoke-Command Remove-PSSession".to_string()),
-            },
-        );
-        let program = ScriptProgram {
-            externs,
-            items: vec![ScriptItem::Expr(Expr::new(ExprKind::Invoke(ExprInvoke {
+        let expr = Expr::new(ExprKind::Invoke(ExprInvoke {
                 span: Default::default(),
                 target: ExprInvokeTarget::Function(Name::ident("winrm_run")),
                 args: vec![
@@ -1202,8 +1245,7 @@ mod tests {
                     Expr::value(Value::string("hostname".to_string())),
                 ],
                 kwargs: Vec::new(),
-            })))],
-        };
+            }));
         let mut hosts = HashMap::new();
         hosts.insert(
             "win-1".to_string(),
@@ -1234,9 +1276,16 @@ mod tests {
             groups: HashMap::new(),
             hosts,
         };
-        let script = PowerShellTarget::new()
-            .render(&program, &inventory)
-            .expect("render should succeed");
+        let script = render_node(
+            vec![extern_decl(
+                "winrm_run",
+                "pwsh",
+                "New-PSSession Invoke-Command Remove-PSSession",
+                2,
+            )],
+            expr,
+            &inventory,
+        );
         assert!(script.contains("scheme = 'https'"));
     }
 }

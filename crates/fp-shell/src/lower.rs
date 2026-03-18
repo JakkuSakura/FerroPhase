@@ -1,14 +1,15 @@
 use fp_core::ast::{
-    Abi, AttrMeta, AttributesExt, BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprFor, ExprIf,
-    ExprArray, ExprBinOp, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet,
-    ExprMatch, ExprMatchCase, ExprStringTemplate, ExprWhile, FormatArgRef,
-    FormatPlaceholder, FormatTemplatePart, Ident, Item, ItemDeclFunction, ItemDefFunction,
+    Abi, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprBinOp, ExprBlock, ExprFor, ExprIf,
+    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprMatch, ExprMatchCase,
+    ExprStringTemplate, ExprWhile, FormatArgRef,
+    FormatPlaceholder, FormatTemplatePart, File, Ident, Item, ItemDeclFunction, ItemDefFunction,
     ItemKind, Name, Node, NodeKind, Pattern, PatternIdent, PatternKind, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
-use fp_shell_core::{ExternalFunction, ScriptItem, ScriptProgram, ShellInventory};
+use fp_shell_core::ShellInventory;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 enum VarValue {
@@ -27,14 +28,18 @@ pub fn lower_node(
     node: &Node,
     inventory: &ShellInventory,
     preferred_abi: Option<&str>,
-) -> Result<ScriptProgram, String> {
+) -> Result<Node, String> {
     let mut lowerer = Lowerer::new(inventory, preferred_abi);
     lowerer.lower_node(node, &EmitContext::default())?;
-    Ok(lowerer.program)
+    Ok(Node::file(File {
+        path: lowerer.path,
+        items: lowerer.items,
+    }))
 }
 
 struct Lowerer<'a> {
-    program: ScriptProgram,
+    path: PathBuf,
+    items: Vec<Item>,
     scopes: Vec<HashMap<String, VarValue>>,
     known_functions: HashSet<String>,
     inventory: &'a ShellInventory,
@@ -45,7 +50,8 @@ struct Lowerer<'a> {
 impl<'a> Lowerer<'a> {
     fn new(inventory: &'a ShellInventory, preferred_abi: Option<&'a str>) -> Self {
         Self {
-            program: ScriptProgram::default(),
+            path: PathBuf::new(),
+            items: Vec::new(),
             scopes: vec![HashMap::new()],
             known_functions: HashSet::new(),
             inventory,
@@ -57,6 +63,7 @@ impl<'a> Lowerer<'a> {
     fn lower_node(&mut self, node: &Node, context: &EmitContext) -> Result<(), String> {
         match node.kind() {
             NodeKind::File(file) => {
+                self.path = file.path.clone();
                 for item in &file.items {
                     self.discover_functions(item);
                 }
@@ -68,9 +75,8 @@ impl<'a> Lowerer<'a> {
             NodeKind::Expr(expr) => {
                 let mut out = Vec::new();
                 self.lower_expr_into(expr, context, &mut out)?;
-                self.program
-                    .items
-                    .extend(out.into_iter().map(ScriptItem::Expr));
+                self.items
+                    .extend(out.into_iter().map(|expr| Item::from(ItemKind::Expr(expr))));
             }
             NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {}
         }
@@ -84,31 +90,9 @@ impl<'a> Lowerer<'a> {
                     .insert(function.name.as_str().to_string());
             }
             ItemKind::DeclFunction(function) => {
-                let abi = match &function.sig.abi {
-                    Abi::Rust => return,
-                    Abi::Named(name) => name.clone(),
-                };
-                let external = ExternalFunction {
-                    name: function.name.as_str().to_string(),
-                    abi: abi.clone(),
-                    param_count: function.sig.params.len(),
-                    command: extern_command(function),
-                };
-                match self.program.externs.entry(function.name.as_str().to_string()) {
-                    std::collections::hash_map::Entry::Vacant(entry) => {
-                        entry.insert(external);
-                    }
-                    std::collections::hash_map::Entry::Occupied(mut entry) => {
-                        let existing_matches = self
-                            .preferred_abi
-                            .is_some_and(|preferred| entry.get().abi == preferred);
-                        let new_matches = self
-                            .preferred_abi
-                            .is_some_and(|preferred| abi == preferred);
-                        if new_matches || !existing_matches {
-                            entry.insert(external);
-                        }
-                    }
+                if !matches!(function.sig.abi, Abi::Rust) {
+                    self.known_functions
+                        .insert(function.name.as_str().to_string());
                 }
             }
             ItemKind::Module(module) => {
@@ -135,9 +119,9 @@ impl<'a> Lowerer<'a> {
                     } else {
                         let mut temp = Vec::new();
                         self.lower_expr_into(&function.body, context, &mut temp)?;
-                        self.program
-                            .items
-                            .extend(temp.into_iter().map(ScriptItem::Expr));
+                        self.items.extend(
+                            temp.into_iter().map(|expr| Item::from(ItemKind::Expr(expr))),
+                        );
                     }
                 } else {
                     let def = self.lower_function(function)?;
@@ -159,16 +143,21 @@ impl<'a> Lowerer<'a> {
                     self.lower_item(child, context, target.as_deref_mut())?;
                 }
             }
-            ItemKind::DeclFunction(_) => {}
+            ItemKind::DeclFunction(function) => {
+                if matches!(function.sig.abi, Abi::Rust) {
+                    return Ok(());
+                }
+                self.insert_decl(function.clone());
+            }
             ItemKind::Expr(expr) => {
                 if let Some(target) = target {
                     self.lower_expr_into(expr, context, target)?;
                 } else {
                     let mut temp = Vec::new();
                     self.lower_expr_into(expr, context, &mut temp)?;
-                    self.program
-                        .items
-                        .extend(temp.into_iter().map(ScriptItem::Expr));
+                    self.items.extend(
+                        temp.into_iter().map(|expr| Item::from(ItemKind::Expr(expr))),
+                    );
                 }
             }
             _ => {}
@@ -1117,14 +1106,14 @@ impl<'a> Lowerer<'a> {
     }
 
     fn insert_function(&mut self, def: ItemDefFunction, target_lang: Option<&str>) {
-        let Some(index) = self.program.items.iter().position(|item| {
-            matches!(item, ScriptItem::Function(existing) if existing.name == def.name)
+        let Some(index) = self.items.iter().position(|item| {
+            matches!(item.kind(), ItemKind::DefFunction(existing) if existing.name == def.name)
         }) else {
             self.function_targets.insert(
                 def.name.as_str().to_string(),
                 target_lang.map(str::to_string),
             );
-            self.program.items.push(ScriptItem::Function(def));
+            self.items.push(Item::from(ItemKind::DefFunction(def)));
             return;
         };
         let key = def.name.as_str().to_string();
@@ -1138,11 +1127,37 @@ impl<'a> Lowerer<'a> {
         let new_matches = self
             .preferred_abi
             .is_some_and(|preferred| target_lang == Some(preferred));
-        let prefer_later = self.preferred_abi == Some("pwsh") && !existing_matches;
-        if new_matches || prefer_later {
+        if new_matches || !existing_matches {
             self.function_targets
                 .insert(key, target_lang.map(str::to_string));
-            self.program.items[index] = ScriptItem::Function(def);
+            self.items[index] = Item::from(ItemKind::DefFunction(def));
+        }
+    }
+
+    fn insert_decl(&mut self, decl: ItemDeclFunction) {
+        let Some(index) = self.items.iter().position(|item| {
+            matches!(item.kind(), ItemKind::DeclFunction(existing) if existing.name == decl.name)
+        }) else {
+            self.items.push(Item::from(ItemKind::DeclFunction(decl)));
+            return;
+        };
+        let abi = match &decl.sig.abi {
+            Abi::Rust => return,
+            Abi::Named(name) => name.as_str(),
+        };
+        let existing_abi = match self.items[index].kind() {
+            ItemKind::DeclFunction(existing) => match &existing.sig.abi {
+                Abi::Rust => "",
+                Abi::Named(name) => name.as_str(),
+            },
+            _ => "",
+        };
+        let existing_matches = self
+            .preferred_abi
+            .is_some_and(|preferred| existing_abi == preferred);
+        let new_matches = self.preferred_abi.is_some_and(|preferred| abi == preferred);
+        if new_matches || !existing_matches {
+            self.items[index] = Item::from(ItemKind::DeclFunction(decl));
         }
     }
 
@@ -1258,7 +1273,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn is_known_callable(&self, name: &str) -> bool {
-        self.known_functions.contains(name) || self.program.externs.contains_key(name)
+        self.known_functions.contains(name)
     }
 
     fn push_scope(&mut self) {
@@ -1392,18 +1407,6 @@ fn condition_command_expr(command: Expr) -> Expr {
     }))
 }
 
-fn extern_command(function: &ItemDeclFunction) -> Option<String> {
-    let AttrMeta::NameValue(meta) = function.attrs.find_by_name("command")? else {
-        return None;
-    };
-    let ExprKind::Value(value) = meta.value.kind() else {
-        return None;
-    };
-    let Value::String(text) = &**value else {
-        return None;
-    };
-    Some(text.value.clone())
-}
 
 fn invoke_target_segments(target: &ExprInvokeTarget) -> Option<Vec<String>> {
     match target {

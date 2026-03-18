@@ -1,5 +1,7 @@
-generated: crates/fp-shell/examples/runtime-if.sh
-changed=0
+#!/usr/bin/env bash
+set -xeuo pipefail
+
+__fp_last_changed=0
 
 declare -A FP_HOST_TRANSPORT=()
 declare -A FP_SSH_ADDRESS=()
@@ -17,26 +19,18 @@ declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
 
-FP_HOST_TRANSPORT['web-2']='ssh'
-FP_SSH_ADDRESS['web-2']='10.0.0.12'
-FP_WINRM_ADDRESS['web-2']='10.0.0.12'
-FP_SSH_USER['web-2']='deploy'
-FP_DOCKER_USER['web-2']='deploy'
-FP_WINRM_USER['web-2']='deploy'
-FP_HOST_TRANSPORT['web-1']='ssh'
-FP_SSH_ADDRESS['web-1']='10.0.0.11'
-FP_WINRM_ADDRESS['web-1']='10.0.0.11'
-FP_SSH_USER['web-1']='deploy'
-FP_DOCKER_USER['web-1']='deploy'
-FP_WINRM_USER['web-1']='deploy'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
 fp_validate_runtime() {
-  command -v 'bash' >/dev/null 2>&1 || { echo "missing required command: bash" >&2; exit 1; }
   command -v 'docker' >/dev/null 2>&1 || { echo "missing required command: docker" >&2; exit 1; }
+  command -v 'envsubst' >/dev/null 2>&1 || { echo "missing required command: envsubst" >&2; exit 1; }
   command -v 'kubectl' >/dev/null 2>&1 || { echo "missing required command: kubectl" >&2; exit 1; }
+  command -v 'mktemp' >/dev/null 2>&1 || { echo "missing required command: mktemp" >&2; exit 1; }
   command -v 'pwsh' >/dev/null 2>&1 || { echo "missing required command: pwsh" >&2; exit 1; }
+  command -v 'rm' >/dev/null 2>&1 || { echo "missing required command: rm" >&2; exit 1; }
+  command -v 'rsync' >/dev/null 2>&1 || { echo "missing required command: rsync" >&2; exit 1; }
+  command -v 'scp' >/dev/null 2>&1 || { echo "missing required command: scp" >&2; exit 1; }
   command -v 'ssh' >/dev/null 2>&1 || { echo "missing required command: ssh" >&2; exit 1; }
 }
 
@@ -137,13 +131,13 @@ host_transport() {
 
 run_local_host() {
     local cmd="$1"
-    bash -lc "${cmd}"
+    invoke_expression "${cmd}"
 }
 
 copy_local_host() {
     local src="$1"
     local dest="$2"
-    cp -- "${src}" "${dest}"
+    copy_item "${src}" "${dest}"
 }
 
 run_host() {

@@ -1,5 +1,7 @@
-generated: crates/fp-shell/examples/transports.sh
-changed=0
+#!/usr/bin/env bash
+set -xeuo pipefail
+
+__fp_last_changed=0
 
 declare -A FP_HOST_TRANSPORT=()
 declare -A FP_SSH_ADDRESS=()
@@ -23,7 +25,6 @@ FP_DOCKER_USER['docker-app']='root'
 FP_WINRM_USER['docker-app']='root'
 FP_DOCKER_CONTAINER['docker-app']='app'
 FP_K8S_CONTAINER['docker-app']='app'
-FP_HOST_TRANSPORT['localhost']='local'
 FP_HOST_TRANSPORT['k8s-api']='kubectl'
 FP_DOCKER_CONTAINER['k8s-api']='api'
 FP_K8S_CONTAINER['k8s-api']='api'
@@ -40,6 +41,7 @@ FP_SSH_PORT['windows-admin']='5985'
 FP_WINRM_PORT['windows-admin']='5985'
 FP_WINRM_PASSWORD['windows-admin']='change-me'
 FP_WINRM_SCHEME['windows-admin']='http'
+FP_HOST_TRANSPORT['localhost']='local'
 FP_HOST_TRANSPORT['ssh-web']='ssh'
 FP_SSH_ADDRESS['ssh-web']='10.0.0.11'
 FP_WINRM_ADDRESS['ssh-web']='10.0.0.11'
@@ -52,10 +54,14 @@ FP_WINRM_PORT['ssh-web']='22'
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
 fp_validate_runtime() {
-  command -v 'bash' >/dev/null 2>&1 || { echo "missing required command: bash" >&2; exit 1; }
   command -v 'docker' >/dev/null 2>&1 || { echo "missing required command: docker" >&2; exit 1; }
+  command -v 'envsubst' >/dev/null 2>&1 || { echo "missing required command: envsubst" >&2; exit 1; }
   command -v 'kubectl' >/dev/null 2>&1 || { echo "missing required command: kubectl" >&2; exit 1; }
+  command -v 'mktemp' >/dev/null 2>&1 || { echo "missing required command: mktemp" >&2; exit 1; }
   command -v 'pwsh' >/dev/null 2>&1 || { echo "missing required command: pwsh" >&2; exit 1; }
+  command -v 'rm' >/dev/null 2>&1 || { echo "missing required command: rm" >&2; exit 1; }
+  command -v 'rsync' >/dev/null 2>&1 || { echo "missing required command: rsync" >&2; exit 1; }
+  command -v 'scp' >/dev/null 2>&1 || { echo "missing required command: scp" >&2; exit 1; }
   command -v 'ssh' >/dev/null 2>&1 || { echo "missing required command: ssh" >&2; exit 1; }
 }
 
@@ -156,13 +162,13 @@ host_transport() {
 
 run_local_host() {
     local cmd="$1"
-    bash -lc "${cmd}"
+    invoke_expression "${cmd}"
 }
 
 copy_local_host() {
     local src="$1"
     local dest="$2"
-    cp -- "${src}" "${dest}"
+    copy_item "${src}" "${dest}"
 }
 
 run_host() {
