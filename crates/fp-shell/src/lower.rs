@@ -3,7 +3,7 @@ use fp_core::ast::{
     ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprMatch, ExprMatchCase,
     ExprStringTemplate, ExprWhile, FormatArgRef,
     FormatPlaceholder, FormatTemplatePart, File, Ident, Item, ItemDeclFunction, ItemDefFunction,
-    ItemKind, Name, Node, NodeKind, Pattern, PatternIdent, PatternKind, Value,
+    ItemKind, Name, Node, NodeKind, Pattern, PatternKind, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
@@ -11,25 +11,13 @@ use fp_shell_core::ShellInventory;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone)]
-enum VarValue {
-    String(Expr),
-    Int(i64),
-    Bool(bool),
-    StringList(Vec<Expr>),
-}
-
 #[derive(Debug, Clone, Default)]
 struct EmitContext {
     hosts: Option<Vec<Expr>>,
 }
 
-pub fn lower_node(
-    node: &Node,
-    inventory: &ShellInventory,
-    preferred_abi: Option<&str>,
-) -> Result<Node, String> {
-    let mut lowerer = Lowerer::new(inventory, preferred_abi);
+pub fn lower_node(node: &Node, inventory: &ShellInventory) -> Result<Node, String> {
+    let mut lowerer = Lowerer::new(inventory);
     lowerer.lower_node(node, &EmitContext::default())?;
     Ok(Node::file(File {
         path: lowerer.path,
@@ -40,23 +28,17 @@ pub fn lower_node(
 struct Lowerer<'a> {
     path: PathBuf,
     items: Vec<Item>,
-    scopes: Vec<HashMap<String, VarValue>>,
     known_functions: HashSet<String>,
     inventory: &'a ShellInventory,
-    preferred_abi: Option<&'a str>,
-    function_targets: HashMap<String, Option<String>>,
 }
 
 impl<'a> Lowerer<'a> {
-    fn new(inventory: &'a ShellInventory, preferred_abi: Option<&'a str>) -> Self {
+    fn new(inventory: &'a ShellInventory) -> Self {
         Self {
             path: PathBuf::new(),
             items: Vec::new(),
-            scopes: vec![HashMap::new()],
             known_functions: HashSet::new(),
             inventory,
-            preferred_abi,
-            function_targets: HashMap::new(),
         }
     }
 
@@ -125,7 +107,7 @@ impl<'a> Lowerer<'a> {
                     }
                 } else {
                     let def = self.lower_function(function)?;
-                    self.insert_function(def, cfg_target_lang(&function.attrs));
+                    self.insert_function(def);
                 }
             }
             ItemKind::DefConst(def) => {
@@ -166,14 +148,8 @@ impl<'a> Lowerer<'a> {
     }
 
     fn lower_function(&mut self, function: &ItemDefFunction) -> Result<ItemDefFunction, String> {
-        self.push_scope();
-        for param in &function.sig.params {
-            let name = param.name.as_str().to_string();
-            self.bind_var(name.clone(), VarValue::String(Expr::ident(Ident::new(name))));
-        }
         let mut body = Vec::new();
         self.lower_expr_into(&function.body, &EmitContext::default(), &mut body)?;
-        self.pop_scope();
         let mut lowered = function.clone();
         lowered.body = statements_to_block_expr(body).into_expr().into();
         Ok(lowered)
@@ -221,11 +197,7 @@ impl<'a> Lowerer<'a> {
                 Ok(())
             }
             fp_core::ast::ExprKind::Let(expr_let) => {
-                let Some(name) = expr_let.pat.as_ident() else {
-                    return Ok(());
-                };
                 let value = self.lower_value_expr(&expr_let.expr)?;
-                self.bind_value_expr(name.as_str().to_string(), &value);
                 out.push(Expr::new(ExprKind::Let(ExprLet {
                     span: expr_let.span,
                     pat: expr_let.pat.clone(),
@@ -243,20 +215,18 @@ impl<'a> Lowerer<'a> {
         context: &EmitContext,
         out: &mut Vec<Expr>,
     ) -> Result<(), String> {
-        self.push_scope();
         for statement in &block.stmts {
             match statement {
                 BlockStmt::Item(item) => self.lower_item(item, context, Some(out))?,
                 BlockStmt::Expr(expr) => self.lower_expr_into(&expr.expr, context, out)?,
                 BlockStmt::Let(stmt) => {
-                    let Some(name) = stmt.pat.as_ident() else {
+                    let Some(_name) = stmt.pat.as_ident() else {
                         continue;
                     };
                     let Some(init) = &stmt.init else {
                         continue;
                     };
                     let value = self.lower_value_expr(init)?;
-                    self.bind_value_expr(name.as_str().to_string(), &value);
                     out.push(Expr::new(ExprKind::Let(ExprLet {
                         span: init.span(),
                         pat: stmt.pat.clone().into(),
@@ -266,7 +236,6 @@ impl<'a> Lowerer<'a> {
                 BlockStmt::Noop | BlockStmt::Any(_) => {}
             }
         }
-        self.pop_scope();
         Ok(())
     }
 
@@ -708,24 +677,17 @@ impl<'a> Lowerer<'a> {
         expr_for: &ExprFor,
         context: &EmitContext,
     ) -> Result<Expr, String> {
-        let PatternKind::Ident(pattern) = expr_for.pat.kind() else {
+        let PatternKind::Ident(_pattern) = expr_for.pat.kind() else {
             return Err("for-loop pattern must be an identifier".to_string());
         };
-        let binding = pattern.ident.as_str().to_string();
         let values = self
             .resolve_string_list_expr(&expr_for.iter)
             .ok_or_else(|| "for-loop iterable must resolve to a string list".to_string())?;
-        self.push_scope();
-        self.bind_var(
-            binding.clone(),
-            VarValue::String(Expr::ident(Ident::new(binding.clone()))),
-        );
         let mut body = Vec::new();
         self.lower_expr_into(&expr_for.body, context, &mut body)?;
-        self.pop_scope();
         Ok(Expr::new(ExprKind::For(ExprFor {
             span: expr_for.span,
-            pat: Pattern::from(PatternKind::Ident(PatternIdent::new(Ident::new(binding)))).into(),
+            pat: expr_for.pat.clone(),
             iter: Expr::new(ExprKind::Array(ExprArray {
                 span: Default::default(),
                 values,
@@ -761,49 +723,60 @@ impl<'a> Lowerer<'a> {
     }
 
     fn lower_value_expr(&self, expr: &Expr) -> Result<Expr, String> {
-        if let fp_core::ast::ExprKind::Name(Name::Ident(ident)) = expr.kind() {
-            if let Some(value) = self.lookup_var(ident.as_str()) {
-                return Ok(match value {
-                    VarValue::String(value) => value.clone(),
-                    VarValue::Int(value) => Expr::value(Value::int(*value)),
-                    VarValue::Bool(value) => Expr::value(Value::bool(*value)),
-                    VarValue::StringList(values) => Expr::new(ExprKind::Array(ExprArray {
+        match expr.kind() {
+            ExprKind::Value(value) => match value.as_ref() {
+                Value::String(_) | Value::Int(_) | Value::Bool(_) => Ok(expr.clone()),
+                Value::List(list) => {
+                    let values = list
+                        .values
+                        .iter()
+                        .map(value_to_string_expr)
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| "expression could not be lowered".to_string())?;
+                    Ok(Expr::new(ExprKind::Array(ExprArray {
                         span: Default::default(),
-                        values: values.clone(),
-                    })),
-                });
-            }
+                        values,
+                    })))
+                }
+                _ => Err("expression could not be lowered".to_string()),
+            },
+            ExprKind::Name(_) => Ok(expr.clone()),
+            ExprKind::Array(array) => Ok(Expr::new(ExprKind::Array(ExprArray {
+                span: array.span,
+                values: array
+                    .values
+                    .iter()
+                    .map(|item| self.lower_string_expr(item))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| "expression could not be lowered".to_string())?,
+            }))),
+            ExprKind::Tuple(tuple) => Ok(Expr::new(ExprKind::Array(ExprArray {
+                span: tuple.span,
+                values: tuple
+                    .values
+                    .iter()
+                    .map(|item| self.lower_string_expr(item))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| "expression could not be lowered".to_string())?,
+            }))),
+            ExprKind::BinOp(_) => self
+                .lower_bool_expr(expr)
+                .or_else(|| self.lower_int_expr(expr))
+                .ok_or_else(|| "expression could not be lowered".to_string()),
+            ExprKind::FormatString(_)
+            | ExprKind::IntrinsicCall(_)
+            | ExprKind::Invoke(_)
+            | ExprKind::Paren(_) => self
+                .lower_string_expr(expr)
+                .ok_or_else(|| "expression could not be lowered".to_string()),
+            _ => Err("expression could not be lowered".to_string()),
         }
-        if let Some(values) = self.resolve_string_list_expr(expr) {
-            if values.len() > 1 {
-                return Ok(Expr::new(ExprKind::Array(ExprArray {
-                    span: Default::default(),
-                    values,
-                })));
-            }
-        }
-        if let Some(value) = self.lower_bool_expr(expr) {
-            return Ok(value);
-        }
-        if let Some(value) = self.lower_int_expr(expr) {
-            return Ok(value);
-        }
-        self.lower_string_expr(expr)
-            .ok_or_else(|| "expression could not be lowered".to_string())
     }
 
     fn lower_string_expr(&self, expr: &Expr) -> Option<Expr> {
-        if let Some(value) = self.lower_int_expr(expr) {
-            return match value.kind() {
-                ExprKind::Value(value) => match &**value {
-                    Value::Int(int_value) => Some(string_literal_expr(int_value.value.to_string())),
-                    _ => None,
-                },
-                ExprKind::Name(_) => Some(value),
-                _ => None,
-            };
-        }
         match expr.kind() {
+            ExprKind::Value(value) => value_to_string_expr(value),
+            ExprKind::Name(_) => Some(expr.clone()),
             fp_core::ast::ExprKind::Invoke(invoke) => {
                 let path = invoke_target_segments(&invoke.target)?;
                 if path.len() != 1 {
@@ -824,21 +797,6 @@ impl<'a> Lowerer<'a> {
                     kwargs: Vec::new(),
                 })))
             }
-            fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
-                Value::String(text) => Some(string_literal_expr(text.value.clone())),
-                Value::Int(int_value) => Some(string_literal_expr(int_value.value.to_string())),
-                Value::Bool(bool_value) => Some(string_literal_expr(bool_value.value.to_string())),
-                _ => None,
-            },
-            fp_core::ast::ExprKind::Name(Name::Ident(ident)) => self
-                .lookup_var(ident.as_str())
-                .and_then(|var| match var {
-                    VarValue::String(value) => Some(value.clone()),
-                    VarValue::Int(value) => Some(string_literal_expr(value.to_string())),
-                    VarValue::Bool(value) => Some(string_literal_expr(value.to_string())),
-                    VarValue::StringList(_) => Some(Expr::ident(Ident::new(ident.as_str()))),
-                })
-                .or_else(|| Some(Expr::ident(Ident::new(ident.as_str())))),
             fp_core::ast::ExprKind::FormatString(template) => {
                 if template.parts.iter().all(|part| {
                     matches!(
@@ -936,13 +894,7 @@ impl<'a> Lowerer<'a> {
                 Value::Bool(flag) => Some(Expr::value(Value::bool(flag.value))),
                 _ => None,
             },
-            fp_core::ast::ExprKind::Name(Name::Ident(ident)) => {
-                if let Some(VarValue::Bool(value)) = self.lookup_var(ident.as_str()) {
-                    Some(Expr::value(Value::bool(*value)))
-                } else {
-                    Some(Expr::ident(Ident::new(ident.as_str())))
-                }
-            }
+            fp_core::ast::ExprKind::Name(_) => Some(expr.clone()),
             fp_core::ast::ExprKind::Paren(paren) => self.lower_bool_expr(&paren.expr),
             _ => None,
         }
@@ -964,13 +916,7 @@ impl<'a> Lowerer<'a> {
                 Value::Int(int_value) => Some(Expr::value(Value::int(int_value.value))),
                 _ => None,
             },
-            fp_core::ast::ExprKind::Name(Name::Ident(ident)) => {
-                if let Some(VarValue::Int(value)) = self.lookup_var(ident.as_str()) {
-                    Some(Expr::value(Value::int(*value)))
-                } else {
-                    Some(Expr::ident(Ident::new(ident.as_str())))
-                }
-            }
+            fp_core::ast::ExprKind::Name(_) => Some(expr.clone()),
             fp_core::ast::ExprKind::Paren(paren) => self.lower_int_expr(&paren.expr),
             fp_core::ast::ExprKind::BinOp(bin_op) => {
                 match bin_op.kind {
@@ -994,34 +940,13 @@ impl<'a> Lowerer<'a> {
 
     fn resolve_string_list_expr(&self, expr: &Expr) -> Option<Vec<Expr>> {
         match expr.kind() {
-            fp_core::ast::ExprKind::Name(Name::Ident(ident)) => {
-                if let Some(var) = self.lookup_var(ident.as_str()) {
-                    return match var {
-                        VarValue::StringList(values) => Some(values.clone()),
-                        VarValue::String(value) => Some(vec![value.clone()]),
-                        VarValue::Int(value) => Some(vec![string_literal_expr(value.to_string())]),
-                        VarValue::Bool(value) => {
-                            Some(vec![string_literal_expr(value.to_string())])
-                        }
-                    };
-                }
-                Some(vec![Expr::ident(Ident::new(ident.as_str()))])
-            }
+            fp_core::ast::ExprKind::Name(_) => Some(vec![expr.clone()]),
             fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
-                Value::String(text) => Some(vec![string_literal_expr(text.value.clone())]),
-                Value::Int(int_value) => Some(vec![string_literal_expr(int_value.value.to_string())]),
+                Value::String(_) | Value::Int(_) | Value::Bool(_) => {
+                    Some(vec![value_to_string_expr(value)?])
+                }
                 Value::List(list) => {
-                    let mut values = Vec::new();
-                    for value in &list.values {
-                        match value {
-                            Value::String(text) => values.push(string_literal_expr(text.value.clone())),
-                            Value::Int(int_value) => {
-                                values.push(string_literal_expr(int_value.value.to_string()))
-                            }
-                            _ => return None,
-                        }
-                    }
-                    Some(values)
+                    list.values.iter().map(value_to_string_expr).collect()
                 }
                 _ => None,
             },
@@ -1099,39 +1024,14 @@ impl<'a> Lowerer<'a> {
             .unwrap_or_else(|| vec![string_literal_expr("localhost".to_string())])
     }
 
-    fn bind_var(&mut self, name: String, value: VarValue) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name, value);
-        }
-    }
-
-    fn insert_function(&mut self, def: ItemDefFunction, target_lang: Option<&str>) {
+    fn insert_function(&mut self, def: ItemDefFunction) {
         let Some(index) = self.items.iter().position(|item| {
             matches!(item.kind(), ItemKind::DefFunction(existing) if existing.name == def.name)
         }) else {
-            self.function_targets.insert(
-                def.name.as_str().to_string(),
-                target_lang.map(str::to_string),
-            );
             self.items.push(Item::from(ItemKind::DefFunction(def)));
             return;
         };
-        let key = def.name.as_str().to_string();
-        let existing_target = self
-            .function_targets
-            .get(&key)
-            .and_then(|value| value.as_deref());
-        let existing_matches = self
-            .preferred_abi
-            .is_some_and(|preferred| existing_target == Some(preferred));
-        let new_matches = self
-            .preferred_abi
-            .is_some_and(|preferred| target_lang == Some(preferred));
-        if new_matches || !existing_matches {
-            self.function_targets
-                .insert(key, target_lang.map(str::to_string));
-            self.items[index] = Item::from(ItemKind::DefFunction(def));
-        }
+        self.items[index] = Item::from(ItemKind::DefFunction(def));
     }
 
     fn insert_decl(&mut self, decl: ItemDeclFunction) {
@@ -1141,48 +1041,7 @@ impl<'a> Lowerer<'a> {
             self.items.push(Item::from(ItemKind::DeclFunction(decl)));
             return;
         };
-        let abi = match &decl.sig.abi {
-            Abi::Rust => return,
-            Abi::Named(name) => name.as_str(),
-        };
-        let existing_abi = match self.items[index].kind() {
-            ItemKind::DeclFunction(existing) => match &existing.sig.abi {
-                Abi::Rust => "",
-                Abi::Named(name) => name.as_str(),
-            },
-            _ => "",
-        };
-        let existing_matches = self
-            .preferred_abi
-            .is_some_and(|preferred| existing_abi == preferred);
-        let new_matches = self.preferred_abi.is_some_and(|preferred| abi == preferred);
-        if new_matches || !existing_matches {
-            self.items[index] = Item::from(ItemKind::DeclFunction(decl));
-        }
-    }
-
-    fn bind_value_expr(&mut self, name: String, value: &Expr) {
-        let entry = match value.kind() {
-            ExprKind::Value(value) => match &**value {
-                Value::String(text) => VarValue::String(string_literal_expr(text.value.clone())),
-                Value::Int(v) => VarValue::Int(v.value),
-                Value::Bool(v) => VarValue::Bool(v.value),
-                Value::List(list) => VarValue::StringList(
-                    list.values
-                        .iter()
-                        .filter_map(|value| match value {
-                            Value::String(text) => Some(string_literal_expr(text.value.clone())),
-                            Value::Int(v) => Some(string_literal_expr(v.value.to_string())),
-                            _ => None,
-                        })
-                        .collect(),
-                ),
-                _ => VarValue::String(Expr::ident(Ident::new(name.clone()))),
-            },
-            ExprKind::Array(array) => VarValue::StringList(array.values.clone()),
-            _ => VarValue::String(Expr::ident(Ident::new(name.clone()))),
-        };
-        self.bind_var(name, entry);
+        self.items[index] = Item::from(ItemKind::DeclFunction(decl));
     }
 
     fn lower_guard_expr(&self, invoke: &ExprInvoke, name: &str) -> Expr {
@@ -1263,50 +1122,9 @@ impl<'a> Lowerer<'a> {
         flags
     }
 
-    fn lookup_var(&self, name: &str) -> Option<&VarValue> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(value) = scope.get(name) {
-                return Some(value);
-            }
-        }
-        None
-    }
-
     fn is_known_callable(&self, name: &str) -> bool {
         self.known_functions.contains(name)
     }
-
-    fn push_scope(&mut self) {
-        self.scopes.push(HashMap::new());
-    }
-
-    fn pop_scope(&mut self) {
-        if self.scopes.len() > 1 {
-            let _ = self.scopes.pop();
-        }
-    }
-}
-
-fn cfg_target_lang(attrs: &[fp_core::ast::Attribute]) -> Option<&str> {
-    attrs.iter().find_map(|attr| match &attr.meta {
-        fp_core::ast::AttrMeta::List(list) if list.name.last().as_str() == "cfg" => {
-            list.items.iter().find_map(|meta| match meta {
-                fp_core::ast::AttrMeta::NameValue(name_value)
-                    if name_value.name.last().as_str() == "target_lang" =>
-                {
-                    match name_value.value.kind() {
-                        fp_core::ast::ExprKind::Value(value) => match &**value {
-                            Value::String(text) => Some(text.value.as_str()),
-                            _ => None,
-                        },
-                        _ => None,
-                    }
-                }
-                _ => None,
-            })
-        }
-        _ => None,
-    })
 }
 
 fn statements_to_block_expr(statements: Vec<Expr>) -> ExprBlock {
@@ -1357,6 +1175,15 @@ fn expr_match_span(cases: &[ExprMatchCase]) -> fp_core::span::Span {
 
 fn string_literal_expr(value: impl Into<String>) -> Expr {
     Expr::value(Value::string(value.into()))
+}
+
+fn value_to_string_expr(value: &Value) -> Option<Expr> {
+    match value {
+        Value::String(text) => Some(string_literal_expr(text.value.clone())),
+        Value::Int(int_value) => Some(string_literal_expr(int_value.value.to_string())),
+        Value::Bool(bool_value) => Some(string_literal_expr(bool_value.value.to_string())),
+        _ => None,
+    }
 }
 
 fn empty_string_expr() -> Expr {

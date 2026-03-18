@@ -4,10 +4,10 @@ $ErrorActionPreference = 'Stop'
 $script:fpLastChanged = $false
 
 $script:FpHosts = @{}
-$script:FpHosts['k8s-api'] = @{ transport = 'kubectl'; container = 'api'; pod = 'api-7f9f6'; namespace = 'prod'; context = 'prod-cluster' }
-$script:FpHosts['localhost'] = @{ transport = 'local' }
 $script:FpHosts['ssh-web'] = @{ transport = 'ssh'; address = '10.0.0.11'; user = 'deploy'; port = 22 }
+$script:FpHosts['k8s-api'] = @{ transport = 'kubectl'; container = 'api'; pod = 'api-7f9f6'; namespace = 'prod'; context = 'prod-cluster' }
 $script:FpHosts['windows-admin'] = @{ transport = 'winrm'; address = '10.0.0.21'; user = 'Administrator'; port = 5985; password = 'change-me'; scheme = 'http' }
+$script:FpHosts['localhost'] = @{ transport = 'local' }
 $script:FpHosts['docker-app'] = @{ transport = 'docker'; user = 'root'; container = 'app' }
 function Invoke-FpRuntimeValidation {
     if (-not (Get-Command -Name 'Copy-Item' -ErrorAction SilentlyContinue)) { throw 'missing required command: Copy-Item' }

@@ -81,8 +81,7 @@ pub fn compile_source_with_options(
 
     let inventory = options.inventory.clone().unwrap_or_default();
     let merged = merge_runtime_helpers(ast, &target_env)?;
-    let lowered = lower::lower_node(&merged, &inventory, target_env.lang.as_deref())
-        .map_err(ShellError::Lower)?;
+    let lowered = lower::lower_node(&merged, &inventory).map_err(ShellError::Lower)?;
     validate_extern_decls(&lowered, target).map_err(ShellError::Lower)?;
 
     let code = match target {
