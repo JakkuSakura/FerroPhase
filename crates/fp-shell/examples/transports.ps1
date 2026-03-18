@@ -1,14 +1,14 @@
-Set-StrictMode -Version Latest
-Set-PSDebug -Trace 1
+generated: crates/fp-shell/examples/transports.ps1
+
 $ErrorActionPreference = 'Stop'
 $script:fpLastChanged = $false
 
 $script:FpHosts = @{}
+$script:FpHosts['docker-app'] = @{ transport = 'docker'; user = 'root'; container = 'app' }
 $script:FpHosts['ssh-web'] = @{ transport = 'ssh'; address = '10.0.0.11'; user = 'deploy'; port = 22 }
 $script:FpHosts['localhost'] = @{ transport = 'local' }
-$script:FpHosts['docker-app'] = @{ transport = 'docker'; container = 'app'; user = 'root' }
-$script:FpHosts['k8s-api'] = @{ transport = 'kubectl'; pod = 'api-7f9f6'; namespace = 'prod'; container = 'api'; context = 'prod-cluster' }
-$script:FpHosts['windows-admin'] = @{ transport = 'winrm'; address = '10.0.0.21'; user = 'Administrator'; password = 'change-me'; port = 5985; scheme = 'http' }
+$script:FpHosts['windows-admin'] = @{ transport = 'winrm'; address = '10.0.0.21'; user = 'Administrator'; port = 5985; password = 'change-me'; scheme = 'http' }
+$script:FpHosts['k8s-api'] = @{ transport = 'kubectl'; container = 'api'; pod = 'api-7f9f6'; namespace = 'prod'; context = 'prod-cluster' }
 function Invoke-FpRuntimeValidation {
     if (-not (Get-Command -Name 'Invoke-Expression' -ErrorAction SilentlyContinue)) { throw 'missing required command: Invoke-Expression' }
     if (-not (Get-Command -Name 'New-PSSession' -ErrorAction SilentlyContinue)) { throw 'missing required command: New-PSSession' }

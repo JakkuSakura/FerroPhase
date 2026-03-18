@@ -1,7 +1,5 @@
-#!/usr/bin/env bash
-set -xeuo pipefail
-
-__fp_last_changed=0
+generated: crates/fp-shell/examples/transports.sh
+changed=0
 
 declare -A FP_HOST_TRANSPORT=()
 declare -A FP_SSH_ADDRESS=()
@@ -19,25 +17,37 @@ declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
 
-FP_HOST_TRANSPORT['windows-admin']='winrm'
-FP_WINRM_ADDRESS['windows-admin']='10.0.0.21'
-FP_WINRM_USER['windows-admin']='Administrator'
-FP_WINRM_PASSWORD['windows-admin']='change-me'
-FP_WINRM_PORT['windows-admin']='5985'
-FP_WINRM_SCHEME['windows-admin']='http'
+FP_HOST_TRANSPORT['docker-app']='docker'
+FP_SSH_USER['docker-app']='root'
+FP_DOCKER_USER['docker-app']='root'
+FP_WINRM_USER['docker-app']='root'
+FP_DOCKER_CONTAINER['docker-app']='app'
+FP_K8S_CONTAINER['docker-app']='app'
+FP_HOST_TRANSPORT['localhost']='local'
 FP_HOST_TRANSPORT['k8s-api']='kubectl'
+FP_DOCKER_CONTAINER['k8s-api']='api'
+FP_K8S_CONTAINER['k8s-api']='api'
 FP_K8S_POD['k8s-api']='api-7f9f6'
 FP_K8S_NAMESPACE['k8s-api']='prod'
-FP_K8S_CONTAINER['k8s-api']='api'
 FP_K8S_CONTEXT['k8s-api']='prod-cluster'
+FP_HOST_TRANSPORT['windows-admin']='winrm'
+FP_SSH_ADDRESS['windows-admin']='10.0.0.21'
+FP_WINRM_ADDRESS['windows-admin']='10.0.0.21'
+FP_SSH_USER['windows-admin']='Administrator'
+FP_DOCKER_USER['windows-admin']='Administrator'
+FP_WINRM_USER['windows-admin']='Administrator'
+FP_SSH_PORT['windows-admin']='5985'
+FP_WINRM_PORT['windows-admin']='5985'
+FP_WINRM_PASSWORD['windows-admin']='change-me'
+FP_WINRM_SCHEME['windows-admin']='http'
 FP_HOST_TRANSPORT['ssh-web']='ssh'
 FP_SSH_ADDRESS['ssh-web']='10.0.0.11'
+FP_WINRM_ADDRESS['ssh-web']='10.0.0.11'
 FP_SSH_USER['ssh-web']='deploy'
+FP_DOCKER_USER['ssh-web']='deploy'
+FP_WINRM_USER['ssh-web']='deploy'
 FP_SSH_PORT['ssh-web']='22'
-FP_HOST_TRANSPORT['localhost']='local'
-FP_HOST_TRANSPORT['docker-app']='docker'
-FP_DOCKER_CONTAINER['docker-app']='app'
-FP_DOCKER_USER['docker-app']='root'
+FP_WINRM_PORT['ssh-web']='22'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 

@@ -13,20 +13,30 @@ pub struct ShellInventory {
 #[derive(Debug, Clone)]
 pub struct InventoryHost {
     pub transport: TransportKind,
-    pub ssh: Option<SshInventory>,
-    pub docker: Option<DockerInventory>,
-    pub kubectl: Option<KubectlInventory>,
-    pub winrm: Option<WinRmInventory>,
+    pub fields: HashMap<String, InventoryValue>,
 }
 
 impl Default for InventoryHost {
     fn default() -> Self {
         Self {
             transport: TransportKind::Ssh,
-            ssh: Some(SshInventory::default()),
-            docker: None,
-            kubectl: None,
-            winrm: None,
+            fields: HashMap::new(),
+        }
+    }
+}
+
+impl InventoryHost {
+    pub fn get_string(&self, name: &str) -> Option<&str> {
+        match self.fields.get(name) {
+            Some(InventoryValue::String(value)) => Some(value.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn get_u16(&self, name: &str) -> Option<u16> {
+        match self.fields.get(name) {
+            Some(InventoryValue::U16(value)) => Some(*value),
+            _ => None,
         }
     }
 }
@@ -41,34 +51,10 @@ pub enum TransportKind {
     Winrm,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct SshInventory {
-    pub address: Option<String>,
-    pub user: Option<String>,
-    pub port: Option<u16>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct DockerInventory {
-    pub container: String,
-    pub user: Option<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct KubectlInventory {
-    pub pod: String,
-    pub namespace: Option<String>,
-    pub container: Option<String>,
-    pub context: Option<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct WinRmInventory {
-    pub address: String,
-    pub user: String,
-    pub password: Option<String>,
-    pub port: Option<u16>,
-    pub scheme: Option<String>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InventoryValue {
+    String(String),
+    U16(u16),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,89 +184,6 @@ pub enum ScriptItem {
     Expr(Expr),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ValueExpr {
-    String(StringExpr),
-    Int(IntExpr),
-    Bool(BoolExpr),
-    StringList(Vec<StringExpr>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConditionExpr {
-    Bool(BoolExpr),
-    Command(StringExpr),
-    StringTruthy(StringExpr),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum BoolExpr {
-    Literal(bool),
-    Variable(String),
-    IntComparison {
-        lhs: IntExpr,
-        op: ComparisonOp,
-        rhs: IntExpr,
-    },
-    StringComparison {
-        lhs: StringExpr,
-        op: StringComparisonOp,
-        rhs: StringExpr,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComparisonOp {
-    Gt,
-    Lt,
-    Ge,
-    Le,
-    Eq,
-    Ne,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StringComparisonOp {
-    Eq,
-    Ne,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum IntExpr {
-    Literal(i64),
-    Variable(String),
-    UnaryNeg(Box<IntExpr>),
-    Binary {
-        lhs: Box<IntExpr>,
-        op: ArithmeticOp,
-        rhs: Box<IntExpr>,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArithmeticOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum StringExpr {
-    Literal(String),
-    Variable(String),
-    Call { name: String, args: Vec<ValueExpr> },
-    Interpolated(Vec<StringPart>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum StringPart {
-    Literal(String),
-    Variable(String),
-    Call { name: String, args: Vec<ValueExpr> },
-}
-
 pub trait ScriptRenderer {
     type Error;
 
@@ -330,97 +233,6 @@ fn collect_block_stmt_externs<'a>(
             }
         }
         BlockStmt::Any(_) | BlockStmt::Item(_) | BlockStmt::Noop => {}
-    }
-}
-
-fn collect_condition_externs<'a>(
-    condition: &'a ConditionExpr,
-    functions: &HashMap<&'a str, &'a ItemDefFunction>,
-    externs: &HashMap<String, ExternalFunction>,
-    visited_functions: &mut HashSet<&'a str>,
-    used: &mut HashSet<&'a str>,
-) {
-    match condition {
-        ConditionExpr::Bool(BoolExpr::IntComparison { lhs, rhs, .. }) => {
-            collect_int_externs(lhs, used);
-            collect_int_externs(rhs, used);
-        }
-        ConditionExpr::Bool(BoolExpr::StringComparison { lhs, rhs, .. }) => {
-            collect_string_externs(lhs, functions, externs, visited_functions, used);
-            collect_string_externs(rhs, functions, externs, visited_functions, used);
-        }
-        ConditionExpr::Command(expr) | ConditionExpr::StringTruthy(expr) => {
-            collect_string_externs(expr, functions, externs, visited_functions, used);
-        }
-        ConditionExpr::Bool(BoolExpr::Literal(_) | BoolExpr::Variable(_)) => {}
-    }
-}
-
-fn collect_int_externs<'a>(expr: &'a IntExpr, used: &mut HashSet<&'a str>) {
-    match expr {
-        IntExpr::UnaryNeg(inner) => collect_int_externs(inner, used),
-        IntExpr::Binary { lhs, rhs, .. } => {
-            collect_int_externs(lhs, used);
-            collect_int_externs(rhs, used);
-        }
-        IntExpr::Literal(_) | IntExpr::Variable(_) => {}
-    }
-}
-
-fn collect_value_externs<'a>(
-    value: &'a ValueExpr,
-    functions: &HashMap<&'a str, &'a ItemDefFunction>,
-    externs: &HashMap<String, ExternalFunction>,
-    visited_functions: &mut HashSet<&'a str>,
-    used: &mut HashSet<&'a str>,
-) {
-    match value {
-        ValueExpr::String(expr) => {
-            collect_string_externs(expr, functions, externs, visited_functions, used)
-        }
-        ValueExpr::StringList(values) => {
-            for value in values {
-                collect_string_externs(value, functions, externs, visited_functions, used);
-            }
-        }
-        ValueExpr::Int(expr) => collect_int_externs(expr, used),
-        ValueExpr::Bool(BoolExpr::StringComparison { lhs, rhs, .. }) => {
-            collect_string_externs(lhs, functions, externs, visited_functions, used);
-            collect_string_externs(rhs, functions, externs, visited_functions, used);
-        }
-        ValueExpr::Bool(BoolExpr::IntComparison { lhs, rhs, .. }) => {
-            collect_int_externs(lhs, used);
-            collect_int_externs(rhs, used);
-        }
-        ValueExpr::Bool(BoolExpr::Literal(_) | BoolExpr::Variable(_)) => {}
-    }
-}
-
-fn collect_string_externs<'a>(
-    expr: &'a StringExpr,
-    functions: &HashMap<&'a str, &'a ItemDefFunction>,
-    externs: &HashMap<String, ExternalFunction>,
-    visited_functions: &mut HashSet<&'a str>,
-    used: &mut HashSet<&'a str>,
-) {
-    match expr {
-        StringExpr::Call { name, args } => {
-            collect_call_externs(name, functions, externs, visited_functions, used);
-            for arg in args {
-                collect_value_externs(arg, functions, externs, visited_functions, used);
-            }
-        }
-        StringExpr::Interpolated(parts) => {
-            for part in parts {
-                if let StringPart::Call { name, args } = part {
-                    collect_call_externs(name, functions, externs, visited_functions, used);
-                    for arg in args {
-                        collect_value_externs(arg, functions, externs, visited_functions, used);
-                    }
-                }
-            }
-        }
-        StringExpr::Literal(_) | StringExpr::Variable(_) => {}
     }
 }
 
@@ -484,6 +296,16 @@ fn collect_expr_externs<'a>(
         ExprKind::Let(expr_let) => {
             collect_expr_externs(&expr_let.expr, functions, externs, visited_functions, used)
         }
+        ExprKind::BinOp(bin_op) => {
+            collect_expr_externs(&bin_op.lhs, functions, externs, visited_functions, used);
+            collect_expr_externs(&bin_op.rhs, functions, externs, visited_functions, used);
+        }
+        ExprKind::UnOp(un_op) => {
+            collect_expr_externs(&un_op.val, functions, externs, visited_functions, used);
+        }
+        ExprKind::Paren(paren) => {
+            collect_expr_externs(&paren.expr, functions, externs, visited_functions, used);
+        }
         ExprKind::Invoke(invoke) => {
             match &invoke.target {
                 ExprInvokeTarget::Function(name) => {
@@ -511,6 +333,14 @@ fn collect_expr_externs<'a>(
                 collect_expr_externs(arg, functions, externs, visited_functions, used);
             }
             for kwarg in &invoke.kwargs {
+                collect_expr_externs(&kwarg.value, functions, externs, visited_functions, used);
+            }
+        }
+        ExprKind::IntrinsicCall(call) => {
+            for arg in &call.args {
+                collect_expr_externs(arg, functions, externs, visited_functions, used);
+            }
+            for kwarg in &call.kwargs {
                 collect_expr_externs(&kwarg.value, functions, externs, visited_functions, used);
             }
         }
@@ -544,13 +374,6 @@ fn collect_expr_externs<'a>(
                     collect_expr_externs(guard, functions, externs, visited_functions, used);
                 }
                 collect_expr_externs(body, functions, externs, visited_functions, used);
-            }
-        }
-        ExprKind::Any(any) => {
-            if let Some(value) = any.downcast_ref::<ValueExpr>() {
-                collect_value_externs(value, functions, externs, visited_functions, used);
-            } else if let Some(condition) = any.downcast_ref::<ConditionExpr>() {
-                collect_condition_externs(condition, functions, externs, visited_functions, used);
             }
         }
         _ => {}

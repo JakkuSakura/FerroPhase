@@ -227,10 +227,7 @@ password = "secret"
         assert_eq!(inventory.hosts["api"].transport, TransportKind::Kubectl);
         assert_eq!(inventory.hosts["win"].transport, TransportKind::Winrm);
         assert_eq!(
-            inventory.hosts["win"]
-                .winrm
-                .as_ref()
-                .and_then(|entry| entry.password.as_deref()),
+            inventory.hosts["win"].get_string("password"),
             Some("secret")
         );
     }
@@ -350,24 +347,15 @@ const fn inventory() -> Inventory {
         assert_eq!(inventory.hosts["k8s-1"].transport, TransportKind::Kubectl);
         assert_eq!(inventory.hosts["win-1"].transport, TransportKind::Winrm);
         assert_eq!(
-            inventory.hosts["docker-1"]
-                .docker
-                .as_ref()
-                .map(|entry| entry.container.as_str()),
+            inventory.hosts["docker-1"].get_string("container"),
             Some("app")
         );
         assert_eq!(
-            inventory.hosts["k8s-1"]
-                .kubectl
-                .as_ref()
-                .map(|entry| entry.pod.as_str()),
+            inventory.hosts["k8s-1"].get_string("pod"),
             Some("api-123")
         );
         assert_eq!(
-            inventory.hosts["win-1"]
-                .winrm
-                .as_ref()
-                .and_then(|entry| entry.password.as_deref()),
+            inventory.hosts["win-1"].get_string("password"),
             Some("secret")
         );
     }

@@ -1,25 +1,26 @@
 use fp_core::ast::{
     Abi, AttrMeta, AttributesExt, BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprFor, ExprIf,
-    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprMatch, ExprMatchCase,
-    ExprWhile, Ident, Item, ItemDeclFunction, ItemDefFunction, ItemKind, Name, Node, NodeKind,
-    Pattern, PatternIdent, PatternKind, Value,
+    ExprArray, ExprBinOp, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet,
+    ExprMatch, ExprMatchCase, ExprStringTemplate, ExprWhile, FormatArgRef,
+    FormatPlaceholder, FormatTemplatePart, Ident, Item, ItemDeclFunction, ItemDefFunction,
+    ItemKind, Name, Node, NodeKind, Pattern, PatternIdent, PatternKind, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
-use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_shell_core::{ArithmeticOp, BoolExpr, ComparisonOp, ConditionExpr, ExternalFunction, IntExpr, ScriptItem, ScriptProgram, ShellInventory, StringComparisonOp, StringExpr, StringPart, ValueExpr};
+use fp_core::ops::BinOpKind;
+use fp_shell_core::{ExternalFunction, ScriptItem, ScriptProgram, ShellInventory};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 enum VarValue {
-    String(StringExpr),
+    String(Expr),
     Int(i64),
     Bool(bool),
-    StringList(Vec<StringExpr>),
+    StringList(Vec<Expr>),
 }
 
 #[derive(Debug, Clone, Default)]
 struct EmitContext {
-    hosts: Option<Vec<StringExpr>>,
+    hosts: Option<Vec<Expr>>,
 }
 
 pub fn lower_node(
@@ -179,7 +180,7 @@ impl<'a> Lowerer<'a> {
         self.push_scope();
         for param in &function.sig.params {
             let name = param.name.as_str().to_string();
-            self.bind_var(name.clone(), VarValue::String(StringExpr::Variable(name)));
+            self.bind_var(name.clone(), VarValue::String(Expr::ident(Ident::new(name))));
         }
         let mut body = Vec::new();
         self.lower_expr_into(&function.body, &EmitContext::default(), &mut body)?;
@@ -221,7 +222,7 @@ impl<'a> Lowerer<'a> {
                 self.lower_expr_into(&expr_while.body, context, &mut body)?;
                 out.push(Expr::new(ExprKind::While(ExprWhile {
                     span: expr_while.span,
-                    cond: self.wrap_condition_expr(&expr_while.cond).into(),
+                    cond: self.lower_condition(&expr_while.cond).into(),
                     body: statements_to_block_expr(body).into_expr().into(),
                 })));
                 Ok(())
@@ -239,7 +240,7 @@ impl<'a> Lowerer<'a> {
                 out.push(Expr::new(ExprKind::Let(ExprLet {
                     span: expr_let.span,
                     pat: expr_let.pat.clone(),
-                    expr: self.wrap_value_expr(value).into(),
+                    expr: value.into(),
                 })));
                 Ok(())
             }
@@ -270,7 +271,7 @@ impl<'a> Lowerer<'a> {
                     out.push(Expr::new(ExprKind::Let(ExprLet {
                         span: init.span(),
                         pat: stmt.pat.clone().into(),
-                        expr: self.wrap_value_expr(value).into(),
+                        expr: value.into(),
                     })));
                 }
                 BlockStmt::Noop | BlockStmt::Any(_) => {}
@@ -316,8 +317,8 @@ impl<'a> Lowerer<'a> {
                         self.make_call(
                             "shell_run",
                             vec![
-                                ValueExpr::String(host),
-                                ValueExpr::String(command.clone()),
+                                host,
+                                command.clone(),
                                 self.lower_guard_expr(invoke, "only_if"),
                                 self.lower_guard_expr(invoke, "unless"),
                                 self.lower_guard_expr(invoke, "creates"),
@@ -355,9 +356,9 @@ impl<'a> Lowerer<'a> {
                         self.make_call(
                             "shell_copy",
                             vec![
-                                ValueExpr::String(host),
-                                ValueExpr::String(source.clone()),
-                                ValueExpr::String(destination.clone()),
+                                host,
+                                source.clone(),
+                                destination.clone(),
                                 self.lower_guard_expr(invoke, "only_if"),
                                 self.lower_guard_expr(invoke, "unless"),
                                 self.lower_guard_expr(invoke, "creates"),
@@ -391,7 +392,7 @@ impl<'a> Lowerer<'a> {
             let vars = kwarg_value(invoke, &["vars"])
                 .and_then(|expr| self.resolve_vars_map(expr))
                 .map(|vars| self.serialize_vars_map(vars))
-                .unwrap_or_else(|| StringExpr::Literal(String::new()));
+                .unwrap_or_else(empty_string_expr);
             let hosts = self.resolve_hosts(invoke, context);
             return Ok(Some(
                 hosts.into_iter()
@@ -399,10 +400,10 @@ impl<'a> Lowerer<'a> {
                         self.make_call(
                             "shell_template",
                             vec![
-                                ValueExpr::String(host),
-                                ValueExpr::String(source.clone()),
-                                ValueExpr::String(destination.clone()),
-                                ValueExpr::String(vars.clone()),
+                                host,
+                                source.clone(),
+                                destination.clone(),
+                                vars.clone(),
                                 self.lower_guard_expr(invoke, "only_if"),
                                 self.lower_guard_expr(invoke, "unless"),
                                 self.lower_guard_expr(invoke, "creates"),
@@ -433,7 +434,7 @@ impl<'a> Lowerer<'a> {
             let destination = self
                 .lower_string_expr(destination_expr)
                 .ok_or_else(|| "rsync destination must resolve to string".to_string())?;
-            let flags = StringExpr::Literal(self.rsync_flags(invoke));
+            let flags = string_literal_expr(self.rsync_flags(invoke));
             let hosts = self.resolve_hosts(invoke, context);
             return Ok(Some(
                 hosts.into_iter()
@@ -441,10 +442,10 @@ impl<'a> Lowerer<'a> {
                         self.make_call(
                             "shell_rsync",
                             vec![
-                                ValueExpr::String(host),
-                                ValueExpr::String(flags.clone()),
-                                ValueExpr::String(source.clone()),
-                                ValueExpr::String(destination.clone()),
+                                host,
+                                flags.clone(),
+                                source.clone(),
+                                destination.clone(),
                                 self.lower_guard_expr(invoke, "only_if"),
                                 self.lower_guard_expr(invoke, "unless"),
                                 self.lower_guard_expr(invoke, "creates"),
@@ -472,9 +473,9 @@ impl<'a> Lowerer<'a> {
                 .and_then(|expr| self.resolve_bool_expr(expr))
                 .unwrap_or(true);
             let command = apply_command_options(
-                StringExpr::Interpolated(vec![
-                    StringPart::Literal("systemctl restart ".to_string()),
-                    part_from_string_expr(service_name.clone()),
+                concat_string_exprs(vec![
+                    string_literal_expr("systemctl restart ".to_string()),
+                    service_name.clone(),
                 ]),
                 None,
                 sudo,
@@ -485,8 +486,8 @@ impl<'a> Lowerer<'a> {
                         self.make_call(
                             "shell_run",
                             vec![
-                                ValueExpr::String(host),
-                                ValueExpr::String(command.clone()),
+                                host,
+                                command.clone(),
                                 self.lower_guard_expr(invoke, "only_if"),
                                 self.lower_guard_expr(invoke, "unless"),
                                 self.lower_guard_expr(invoke, "creates"),
@@ -547,7 +548,7 @@ impl<'a> Lowerer<'a> {
         }
         let mut args = Vec::new();
         for arg in &invoke.args {
-            args.push(self.wrap_value_expr(self.lower_value_expr(arg)?));
+            args.push(self.lower_value_expr(arg)?);
         }
         Ok(Some(Expr::new(ExprKind::Invoke(ExprInvoke {
             span: invoke.span,
@@ -569,7 +570,7 @@ impl<'a> Lowerer<'a> {
         };
         Ok(Expr::new(ExprKind::If(ExprIf {
             span: expr_if.span,
-            cond: self.wrap_condition_expr(&expr_if.cond).into(),
+            cond: self.lower_condition(&expr_if.cond).into(),
             then: statements_to_block_expr(then_block).into_expr().into(),
             elze: else_block,
         })))
@@ -594,7 +595,7 @@ impl<'a> Lowerer<'a> {
 
     fn lower_match_native(
         &mut self,
-        scrutinee: &StringExpr,
+        scrutinee: &Expr,
         cases: &[ExprMatchCase],
         context: &EmitContext,
     ) -> Result<Vec<Expr>, String> {
@@ -614,14 +615,14 @@ impl<'a> Lowerer<'a> {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(vec![Expr::new(ExprKind::Match(ExprMatch {
             span: expr_match_span(cases),
-            scrutinee: Some(self.wrap_value_expr(ValueExpr::String(scrutinee.clone())).into()),
+            scrutinee: Some(scrutinee.clone().into()),
             cases: lowered_cases,
         }))])
     }
 
     fn lower_match_cases(
         &mut self,
-        scrutinee: &StringExpr,
+        scrutinee: &Expr,
         cases: &[ExprMatchCase],
         context: &EmitContext,
     ) -> Result<Vec<Expr>, String> {
@@ -634,7 +635,7 @@ impl<'a> Lowerer<'a> {
 
     fn lower_match_case(
         &mut self,
-        scrutinee: &StringExpr,
+        scrutinee: &Expr,
         case: &ExprMatchCase,
         context: &EmitContext,
         fallback: Vec<Expr>,
@@ -657,7 +658,7 @@ impl<'a> Lowerer<'a> {
         let guarded_body = if let Some(guard) = &case.guard {
             statements_to_block_expr(vec![Expr::new(ExprKind::If(ExprIf {
                 span: guard.span(),
-                cond: self.wrap_condition_expr(guard).into(),
+                cond: self.lower_condition(guard).into(),
                 then: body_block.into_expr().into(),
                 elze: fallback_opt.clone(),
             }))])
@@ -668,7 +669,7 @@ impl<'a> Lowerer<'a> {
         if let Some(condition) = pattern_condition {
             Ok(vec![Expr::new(ExprKind::If(ExprIf {
                 span: case.span,
-                cond: Expr::any(condition).into(),
+                cond: condition.into(),
                 then: guarded_body.into_expr().into(),
                 elze: fallback_opt,
             }))])
@@ -679,20 +680,21 @@ impl<'a> Lowerer<'a> {
 
     fn lower_match_case_pattern(
         &self,
-        scrutinee: &StringExpr,
+        scrutinee: &Expr,
         case: &ExprMatchCase,
-    ) -> Result<Option<ConditionExpr>, String> {
+    ) -> Result<Option<Expr>, String> {
         let Some(rhs) = self.lower_match_case_value(case)? else {
             return Ok(None);
         };
-        Ok(Some(ConditionExpr::Bool(BoolExpr::StringComparison {
-            lhs: scrutinee.clone(),
-            op: StringComparisonOp::Eq,
-            rhs,
-        })))
+        Ok(Some(Expr::new(ExprKind::BinOp(ExprBinOp {
+            span: Default::default(),
+            kind: BinOpKind::Eq,
+            lhs: scrutinee.clone().into(),
+            rhs: rhs.into(),
+        }))))
     }
 
-    fn lower_match_case_value(&self, case: &ExprMatchCase) -> Result<Option<StringExpr>, String> {
+    fn lower_match_case_value(&self, case: &ExprMatchCase) -> Result<Option<Expr>, String> {
         let Some(pattern) = &case.pat else {
             return Ok(None);
         };
@@ -727,7 +729,7 @@ impl<'a> Lowerer<'a> {
         self.push_scope();
         self.bind_var(
             binding.clone(),
-            VarValue::String(StringExpr::Variable(binding.clone())),
+            VarValue::String(Expr::ident(Ident::new(binding.clone()))),
         );
         let mut body = Vec::new();
         self.lower_expr_into(&expr_for.body, context, &mut body)?;
@@ -735,14 +737,18 @@ impl<'a> Lowerer<'a> {
         Ok(Expr::new(ExprKind::For(ExprFor {
             span: expr_for.span,
             pat: Pattern::from(PatternKind::Ident(PatternIdent::new(Ident::new(binding)))).into(),
-            iter: Expr::any(ValueExpr::StringList(values)).into(),
+            iter: Expr::new(ExprKind::Array(ExprArray {
+                span: Default::default(),
+                values,
+            }))
+            .into(),
             body: statements_to_block_expr(body).into_expr().into(),
         })))
     }
 
-    fn lower_condition(&self, expr: &Expr) -> ConditionExpr {
+    fn lower_condition(&self, expr: &Expr) -> Expr {
         if let Some(flag) = self.lower_bool_expr(expr) {
-            return ConditionExpr::Bool(flag);
+            return flag;
         }
         if let fp_core::ast::ExprKind::Invoke(invoke) = expr.kind() {
             if let Some(path) = invoke_target_segments(&invoke.target) {
@@ -753,52 +759,60 @@ impl<'a> Lowerer<'a> {
                         .or_else(|| kwarg_value(invoke, &["command", "cmd"]))
                     {
                         if let Some(command) = self.lower_string_expr(command_expr) {
-                            return ConditionExpr::Command(command);
+                            return condition_command_expr(command);
                         }
                     }
                 }
             }
         }
         if let Some(text) = self.lower_string_expr(expr) {
-            return ConditionExpr::StringTruthy(text);
+            return text;
         }
-        ConditionExpr::Bool(BoolExpr::Literal(true))
+        Expr::value(Value::bool(true))
     }
 
-    fn lower_value_expr(&self, expr: &Expr) -> Result<ValueExpr, String> {
+    fn lower_value_expr(&self, expr: &Expr) -> Result<Expr, String> {
         if let fp_core::ast::ExprKind::Name(Name::Ident(ident)) = expr.kind() {
             if let Some(value) = self.lookup_var(ident.as_str()) {
                 return Ok(match value {
-                    VarValue::String(value) => ValueExpr::String(value.clone()),
-                    VarValue::Int(value) => ValueExpr::Int(IntExpr::Literal(*value)),
-                    VarValue::Bool(value) => ValueExpr::Bool(BoolExpr::Literal(*value)),
-                    VarValue::StringList(values) => ValueExpr::StringList(values.clone()),
+                    VarValue::String(value) => value.clone(),
+                    VarValue::Int(value) => Expr::value(Value::int(*value)),
+                    VarValue::Bool(value) => Expr::value(Value::bool(*value)),
+                    VarValue::StringList(values) => Expr::new(ExprKind::Array(ExprArray {
+                        span: Default::default(),
+                        values: values.clone(),
+                    })),
                 });
             }
         }
         if let Some(values) = self.resolve_string_list_expr(expr) {
             if values.len() > 1 {
-                return Ok(ValueExpr::StringList(values));
+                return Ok(Expr::new(ExprKind::Array(ExprArray {
+                    span: Default::default(),
+                    values,
+                })));
             }
         }
         if let Some(value) = self.lower_bool_expr(expr) {
-            return Ok(ValueExpr::Bool(value));
+            return Ok(value);
         }
         if let Some(value) = self.lower_int_expr(expr) {
-            return Ok(ValueExpr::Int(value));
+            return Ok(value);
         }
         self.lower_string_expr(expr)
-            .map(ValueExpr::String)
             .ok_or_else(|| "expression could not be lowered".to_string())
     }
 
-    fn lower_string_expr(&self, expr: &Expr) -> Option<StringExpr> {
+    fn lower_string_expr(&self, expr: &Expr) -> Option<Expr> {
         if let Some(value) = self.lower_int_expr(expr) {
-            return Some(match value {
-                IntExpr::Literal(v) => StringExpr::Literal(v.to_string()),
-                IntExpr::Variable(name) => StringExpr::Variable(name),
-                _ => return None,
-            });
+            return match value.kind() {
+                ExprKind::Value(value) => match &**value {
+                    Value::Int(int_value) => Some(string_literal_expr(int_value.value.to_string())),
+                    _ => None,
+                },
+                ExprKind::Name(_) => Some(value),
+                _ => None,
+            };
         }
         match expr.kind() {
             fp_core::ast::ExprKind::Invoke(invoke) => {
@@ -814,47 +828,43 @@ impl<'a> Lowerer<'a> {
                 for arg in &invoke.args {
                     args.push(self.lower_value_expr(arg).ok()?);
                 }
-                Some(StringExpr::Call {
-                    name: name.clone(),
+                Some(Expr::new(ExprKind::Invoke(ExprInvoke {
+                    span: invoke.span,
+                    target: ExprInvokeTarget::Function(Name::ident(name)),
                     args,
-                })
+                    kwargs: Vec::new(),
+                })))
             }
             fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
-                Value::String(text) => Some(StringExpr::Literal(text.value.clone())),
-                Value::Int(int_value) => Some(StringExpr::Literal(int_value.value.to_string())),
-                Value::Bool(bool_value) => Some(StringExpr::Literal(bool_value.value.to_string())),
+                Value::String(text) => Some(string_literal_expr(text.value.clone())),
+                Value::Int(int_value) => Some(string_literal_expr(int_value.value.to_string())),
+                Value::Bool(bool_value) => Some(string_literal_expr(bool_value.value.to_string())),
                 _ => None,
             },
             fp_core::ast::ExprKind::Name(Name::Ident(ident)) => self
                 .lookup_var(ident.as_str())
                 .and_then(|var| match var {
                     VarValue::String(value) => Some(value.clone()),
-                    VarValue::Int(value) => Some(StringExpr::Literal(value.to_string())),
-                    VarValue::Bool(value) => Some(StringExpr::Literal(value.to_string())),
-                    VarValue::StringList(_) => {
-                        Some(StringExpr::Variable(ident.as_str().to_string()))
-                    }
+                    VarValue::Int(value) => Some(string_literal_expr(value.to_string())),
+                    VarValue::Bool(value) => Some(string_literal_expr(value.to_string())),
+                    VarValue::StringList(_) => Some(Expr::ident(Ident::new(ident.as_str()))),
                 })
-                .or_else(|| Some(StringExpr::Variable(ident.as_str().to_string()))),
+                .or_else(|| Some(Expr::ident(Ident::new(ident.as_str())))),
             fp_core::ast::ExprKind::FormatString(template) => {
-                let mut parts = Vec::new();
-                for part in &template.parts {
-                    match part {
-                        fp_core::ast::FormatTemplatePart::Literal(text) => {
-                            parts.push(StringPart::Literal(text.clone()))
-                        }
-                        fp_core::ast::FormatTemplatePart::Placeholder(placeholder) => {
-                            match &placeholder.arg_ref {
-                                fp_core::ast::FormatArgRef::Named(name) => {
-                                    parts.push(StringPart::Variable(name.clone()));
-                                }
-                                fp_core::ast::FormatArgRef::Implicit => return None,
-                                fp_core::ast::FormatArgRef::Positional(_) => return None,
-                            }
-                        }
-                    }
+                if template.parts.iter().all(|part| {
+                    matches!(
+                        part,
+                        FormatTemplatePart::Literal(_)
+                            | FormatTemplatePart::Placeholder(FormatPlaceholder {
+                                arg_ref: FormatArgRef::Named(_),
+                                ..
+                            })
+                    )
+                }) {
+                    Some(expr.clone())
+                } else {
+                    None
                 }
-                Some(StringExpr::Interpolated(parts))
             }
             fp_core::ast::ExprKind::IntrinsicCall(call) => self.lower_intrinsic_string(call),
             fp_core::ast::ExprKind::Paren(paren) => self.lower_string_expr(&paren.expr),
@@ -862,78 +872,87 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn lower_intrinsic_string(&self, call: &ExprIntrinsicCall) -> Option<StringExpr> {
-        if call.kind == IntrinsicCallKind::Format {
-            let fp_core::ast::ExprKind::FormatString(template) = call.args.first()?.kind() else {
-                return None;
-            };
-            let mut parts = Vec::new();
-            let mut implicit_index = 0usize;
-            for part in &template.parts {
-                match part {
-                    fp_core::ast::FormatTemplatePart::Literal(text) => {
-                        parts.push(StringPart::Literal(text.clone()))
-                    }
-                    fp_core::ast::FormatTemplatePart::Placeholder(placeholder) => {
-                        let string = match &placeholder.arg_ref {
-                            fp_core::ast::FormatArgRef::Named(name) => {
-                                StringExpr::Variable(name.clone())
-                            }
-                            fp_core::ast::FormatArgRef::Implicit => {
-                                let arg = call.args.get(implicit_index + 1)?;
-                                implicit_index += 1;
-                                self.lower_string_expr(arg)?
-                            }
-                            fp_core::ast::FormatArgRef::Positional(index) => {
-                                self.lower_string_expr(call.args.get(index + 1)?)?
-                            }
-                        };
-                        parts.push(part_from_string_expr(string));
-                    }
-                }
-            }
-            return Some(StringExpr::Interpolated(parts));
+    fn lower_intrinsic_string(&self, call: &ExprIntrinsicCall) -> Option<Expr> {
+        if call.kind != IntrinsicCallKind::Format {
+            return None;
         }
-        None
+        let fp_core::ast::ExprKind::FormatString(template) = call.args.first()?.kind() else {
+            return None;
+        };
+        let mut args = Vec::with_capacity(call.args.len());
+        args.push(Expr::new(ExprKind::FormatString(template.clone())));
+        let mut implicit_index = 0usize;
+        for part in &template.parts {
+            let FormatTemplatePart::Placeholder(placeholder) = part else {
+                continue;
+            };
+            let arg = match &placeholder.arg_ref {
+                FormatArgRef::Named(name) => Expr::ident(Ident::new(name.clone())),
+                FormatArgRef::Implicit => {
+                    let arg = call.args.get(implicit_index + 1)?;
+                    implicit_index += 1;
+                    self.lower_string_expr(arg)?
+                }
+                FormatArgRef::Positional(index) => self.lower_string_expr(call.args.get(index + 1)?)?,
+            };
+            args.push(arg);
+        }
+        Some(Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall {
+            span: call.span,
+            kind: IntrinsicCallKind::Format,
+            args,
+            kwargs: Vec::new(),
+        })))
     }
 
-    fn lower_bool_expr(&self, expr: &Expr) -> Option<BoolExpr> {
-        if let fp_core::ast::ExprKind::BinOp(bin_op) = expr.kind() {
-            let comparison = match bin_op.kind {
-                BinOpKind::Gt => Some(ComparisonOp::Gt),
-                BinOpKind::Lt => Some(ComparisonOp::Lt),
-                BinOpKind::Ge => Some(ComparisonOp::Ge),
-                BinOpKind::Le => Some(ComparisonOp::Le),
-                BinOpKind::Eq => Some(ComparisonOp::Eq),
-                BinOpKind::Ne => Some(ComparisonOp::Ne),
-                _ => None,
-            };
-            if let Some(op) = comparison {
-                if let (Some(lhs), Some(rhs)) = (
-                    self.lower_int_expr(&bin_op.lhs),
-                    self.lower_int_expr(&bin_op.rhs),
-                ) {
-                    return Some(BoolExpr::IntComparison { lhs, op, rhs });
-                }
-            }
-            let string_comparison = match bin_op.kind {
-                BinOpKind::Eq => Some(StringComparisonOp::Eq),
-                BinOpKind::Ne => Some(StringComparisonOp::Ne),
-                _ => None,
-            };
-            if let Some(op) = string_comparison {
-                let lhs = self.lower_string_expr(&bin_op.lhs)?;
-                let rhs = self.lower_string_expr(&bin_op.rhs)?;
-                return Some(BoolExpr::StringComparison { lhs, op, rhs });
-            }
-        }
+    fn lower_bool_expr(&self, expr: &Expr) -> Option<Expr> {
         match expr.kind() {
+            fp_core::ast::ExprKind::BinOp(bin_op) => {
+                let is_comparison = matches!(
+                    bin_op.kind,
+                    BinOpKind::Gt
+                        | BinOpKind::Lt
+                        | BinOpKind::Ge
+                        | BinOpKind::Le
+                        | BinOpKind::Eq
+                        | BinOpKind::Ne
+                );
+                if !is_comparison {
+                    return None;
+                }
+                let lhs = if matches!(
+                    bin_op.kind,
+                    BinOpKind::Gt | BinOpKind::Lt | BinOpKind::Ge | BinOpKind::Le
+                ) {
+                    self.lower_int_expr(&bin_op.lhs)?
+                } else {
+                    self.lower_value_expr(&bin_op.lhs).ok()?
+                };
+                let rhs = if matches!(
+                    bin_op.kind,
+                    BinOpKind::Gt | BinOpKind::Lt | BinOpKind::Ge | BinOpKind::Le
+                ) {
+                    self.lower_int_expr(&bin_op.rhs)?
+                } else {
+                    self.lower_value_expr(&bin_op.rhs).ok()?
+                };
+                Some(Expr::new(ExprKind::BinOp(ExprBinOp {
+                    span: Default::default(),
+                    kind: bin_op.kind,
+                    lhs: lhs.into(),
+                    rhs: rhs.into(),
+                })))
+            }
             fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
-                Value::Bool(flag) => Some(BoolExpr::Literal(flag.value)),
+                Value::Bool(flag) => Some(Expr::value(Value::bool(flag.value))),
                 _ => None,
             },
             fp_core::ast::ExprKind::Name(Name::Ident(ident)) => {
-                Some(BoolExpr::Variable(ident.as_str().to_string()))
+                if let Some(VarValue::Bool(value)) = self.lookup_var(ident.as_str()) {
+                    Some(Expr::value(Value::bool(*value)))
+                } else {
+                    Some(Expr::ident(Ident::new(ident.as_str())))
+                }
             }
             fp_core::ast::ExprKind::Paren(paren) => self.lower_bool_expr(&paren.expr),
             _ => None,
@@ -941,77 +960,74 @@ impl<'a> Lowerer<'a> {
     }
 
     fn resolve_bool_expr(&self, expr: &Expr) -> Option<bool> {
-        match self.lower_bool_expr(expr)? {
-            BoolExpr::Literal(value) => Some(value),
+        match self.lower_bool_expr(expr)?.kind() {
+            ExprKind::Value(value) => match &**value {
+                Value::Bool(flag) => Some(flag.value),
+                _ => None,
+            },
             _ => None,
         }
     }
 
-    fn lower_int_expr(&self, expr: &Expr) -> Option<IntExpr> {
+    fn lower_int_expr(&self, expr: &Expr) -> Option<Expr> {
         match expr.kind() {
             fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
-                Value::Int(int_value) => Some(IntExpr::Literal(int_value.value)),
+                Value::Int(int_value) => Some(Expr::value(Value::int(int_value.value))),
                 _ => None,
             },
             fp_core::ast::ExprKind::Name(Name::Ident(ident)) => {
-                Some(IntExpr::Variable(ident.as_str().to_string()))
-            }
-            fp_core::ast::ExprKind::Paren(paren) => self.lower_int_expr(&paren.expr),
-            fp_core::ast::ExprKind::UnOp(un_op) => {
-                let value = self.lower_int_expr(&un_op.val)?;
-                match un_op.op {
-                    UnOpKind::Neg => Some(IntExpr::UnaryNeg(Box::new(value))),
-                    _ => None,
+                if let Some(VarValue::Int(value)) = self.lookup_var(ident.as_str()) {
+                    Some(Expr::value(Value::int(*value)))
+                } else {
+                    Some(Expr::ident(Ident::new(ident.as_str())))
                 }
             }
+            fp_core::ast::ExprKind::Paren(paren) => self.lower_int_expr(&paren.expr),
             fp_core::ast::ExprKind::BinOp(bin_op) => {
-                let lhs = self.lower_int_expr(&bin_op.lhs)?;
-                let rhs = self.lower_int_expr(&bin_op.rhs)?;
-                let op = match bin_op.kind {
-                    BinOpKind::Add | BinOpKind::AddTrait => ArithmeticOp::Add,
-                    BinOpKind::Sub => ArithmeticOp::Sub,
-                    BinOpKind::Mul => ArithmeticOp::Mul,
-                    BinOpKind::Div => ArithmeticOp::Div,
-                    BinOpKind::Mod => ArithmeticOp::Mod,
+                match bin_op.kind {
+                    BinOpKind::Add
+                    | BinOpKind::AddTrait
+                    | BinOpKind::Sub
+                    | BinOpKind::Mul
+                    | BinOpKind::Div
+                    | BinOpKind::Mod => Some(Expr::new(ExprKind::BinOp(ExprBinOp {
+                        span: Default::default(),
+                        kind: bin_op.kind,
+                        lhs: self.lower_int_expr(&bin_op.lhs)?.into(),
+                        rhs: self.lower_int_expr(&bin_op.rhs)?.into(),
+                    }))),
                     _ => return None,
-                };
-                Some(IntExpr::Binary {
-                    lhs: Box::new(lhs),
-                    op,
-                    rhs: Box::new(rhs),
-                })
+                }
             }
             _ => None,
         }
     }
 
-    fn resolve_string_list_expr(&self, expr: &Expr) -> Option<Vec<StringExpr>> {
+    fn resolve_string_list_expr(&self, expr: &Expr) -> Option<Vec<Expr>> {
         match expr.kind() {
             fp_core::ast::ExprKind::Name(Name::Ident(ident)) => {
                 if let Some(var) = self.lookup_var(ident.as_str()) {
                     return match var {
                         VarValue::StringList(values) => Some(values.clone()),
                         VarValue::String(value) => Some(vec![value.clone()]),
-                        VarValue::Int(value) => Some(vec![StringExpr::Literal(value.to_string())]),
-                        VarValue::Bool(value) => Some(vec![StringExpr::Literal(value.to_string())]),
+                        VarValue::Int(value) => Some(vec![string_literal_expr(value.to_string())]),
+                        VarValue::Bool(value) => {
+                            Some(vec![string_literal_expr(value.to_string())])
+                        }
                     };
                 }
-                Some(vec![StringExpr::Variable(ident.as_str().to_string())])
+                Some(vec![Expr::ident(Ident::new(ident.as_str()))])
             }
             fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
-                Value::String(text) => Some(vec![StringExpr::Literal(text.value.clone())]),
-                Value::Int(int_value) => {
-                    Some(vec![StringExpr::Literal(int_value.value.to_string())])
-                }
+                Value::String(text) => Some(vec![string_literal_expr(text.value.clone())]),
+                Value::Int(int_value) => Some(vec![string_literal_expr(int_value.value.to_string())]),
                 Value::List(list) => {
                     let mut values = Vec::new();
                     for value in &list.values {
                         match value {
-                            Value::String(text) => {
-                                values.push(StringExpr::Literal(text.value.clone()))
-                            }
+                            Value::String(text) => values.push(string_literal_expr(text.value.clone())),
                             Value::Int(int_value) => {
-                                values.push(StringExpr::Literal(int_value.value.to_string()))
+                                values.push(string_literal_expr(int_value.value.to_string()))
                             }
                             _ => return None,
                         }
@@ -1039,7 +1055,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn resolve_vars_map(&self, expr: &Expr) -> Option<HashMap<String, StringExpr>> {
+    fn resolve_vars_map(&self, expr: &Expr) -> Option<HashMap<String, Expr>> {
         match expr.kind() {
             fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
                 Value::Map(map) => {
@@ -1050,12 +1066,10 @@ impl<'a> Lowerer<'a> {
                             _ => return None,
                         };
                         let value = match &entry.value {
-                            Value::String(text) => StringExpr::Literal(text.value.clone()),
-                            Value::Int(int_value) => {
-                                StringExpr::Literal(int_value.value.to_string())
-                            }
+                            Value::String(text) => string_literal_expr(text.value.clone()),
+                            Value::Int(int_value) => string_literal_expr(int_value.value.to_string()),
                             Value::Bool(bool_value) => {
-                                StringExpr::Literal(bool_value.value.to_string())
+                                string_literal_expr(bool_value.value.to_string())
                             }
                             _ => return None,
                         };
@@ -1069,38 +1083,31 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn parse_host_selector(&self, expr: &Expr) -> Option<Vec<StringExpr>> {
+    fn parse_host_selector(&self, expr: &Expr) -> Option<Vec<Expr>> {
         self.resolve_string_list_expr(expr).map(|hosts| {
             let mut selectors = Vec::new();
             for host in hosts {
-                match host {
-                    StringExpr::Literal(name) if name == "localhost" => {
-                        selectors.push(StringExpr::Literal(name))
-                    }
-                    StringExpr::Literal(name) => {
+                match string_literal_value(&host) {
+                    Some(name) if name == "localhost" => selectors.push(host),
+                    Some(name) => {
                         if let Some(group_hosts) = self.inventory.groups.get(&name) {
-                            selectors.extend(
-                                group_hosts
-                                    .iter()
-                                    .cloned()
-                                    .map(StringExpr::Literal),
-                            );
+                            selectors.extend(group_hosts.iter().cloned().map(string_literal_expr));
                         } else {
-                            selectors.push(StringExpr::Literal(name));
+                            selectors.push(string_literal_expr(name));
                         }
                     }
-                    other => selectors.push(other),
+                    None => selectors.push(host),
                 }
             }
             selectors
         })
     }
 
-    fn resolve_hosts(&self, invoke: &ExprInvoke, context: &EmitContext) -> Vec<StringExpr> {
+    fn resolve_hosts(&self, invoke: &ExprInvoke, context: &EmitContext) -> Vec<Expr> {
         kwarg_value(invoke, &["hosts", "host"])
             .and_then(|expr| self.parse_host_selector(expr))
             .or_else(|| context.hosts.clone())
-            .unwrap_or_else(|| vec![StringExpr::Literal("localhost".to_string())])
+            .unwrap_or_else(|| vec![string_literal_expr("localhost".to_string())])
     }
 
     fn bind_var(&mut self, name: String, value: VarValue) {
@@ -1139,59 +1146,65 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn bind_value_expr(&mut self, name: String, value: &ValueExpr) {
-        let entry = match value {
-            ValueExpr::String(StringExpr::Literal(value)) => {
-                VarValue::String(StringExpr::Literal(value.clone()))
-            }
-            ValueExpr::String(_) => VarValue::String(StringExpr::Variable(name.clone())),
-            ValueExpr::Int(IntExpr::Literal(v)) => VarValue::Int(*v),
-            ValueExpr::Bool(BoolExpr::Literal(v)) => VarValue::Bool(*v),
-            ValueExpr::StringList(values) => VarValue::StringList(values.clone()),
-            _ => return,
+    fn bind_value_expr(&mut self, name: String, value: &Expr) {
+        let entry = match value.kind() {
+            ExprKind::Value(value) => match &**value {
+                Value::String(text) => VarValue::String(string_literal_expr(text.value.clone())),
+                Value::Int(v) => VarValue::Int(v.value),
+                Value::Bool(v) => VarValue::Bool(v.value),
+                Value::List(list) => VarValue::StringList(
+                    list.values
+                        .iter()
+                        .filter_map(|value| match value {
+                            Value::String(text) => Some(string_literal_expr(text.value.clone())),
+                            Value::Int(v) => Some(string_literal_expr(v.value.to_string())),
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                _ => VarValue::String(Expr::ident(Ident::new(name.clone()))),
+            },
+            ExprKind::Array(array) => VarValue::StringList(array.values.clone()),
+            _ => VarValue::String(Expr::ident(Ident::new(name.clone()))),
         };
         self.bind_var(name, entry);
     }
 
-    fn wrap_value_expr(&self, value: ValueExpr) -> Expr {
-        Expr::any(value)
-    }
-
-    fn wrap_condition_expr(&self, expr: &Expr) -> Expr {
-        Expr::any(self.lower_condition(expr))
-    }
-
-    fn lower_guard_expr(&self, invoke: &ExprInvoke, name: &str) -> ValueExpr {
+    fn lower_guard_expr(&self, invoke: &ExprInvoke, name: &str) -> Expr {
         kwarg_value(invoke, &[name])
             .and_then(|expr| self.lower_string_expr(expr))
-            .map(ValueExpr::String)
-            .unwrap_or_else(|| ValueExpr::String(StringExpr::Literal(String::new())))
+            .unwrap_or_else(empty_string_expr)
     }
 
-    fn make_call(&self, name: &str, args: Vec<ValueExpr>) -> Expr {
+    fn make_call(&self, name: &str, args: Vec<Expr>) -> Expr {
         Expr::new(ExprKind::Invoke(ExprInvoke {
             span: Default::default(),
             target: ExprInvokeTarget::Function(Name::ident(name)),
-            args: args.into_iter().map(|value| self.wrap_value_expr(value)).collect(),
+            args,
             kwargs: Vec::new(),
         }))
     }
 
-    fn serialize_vars_map(&self, vars: HashMap<String, StringExpr>) -> StringExpr {
+    fn serialize_vars_map(&self, vars: HashMap<String, Expr>) -> Expr {
         let mut entries = vars.into_iter().collect::<Vec<_>>();
         entries.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
         let mut parts = Vec::new();
+        let mut args = Vec::new();
         for (index, (key, value)) in entries.into_iter().enumerate() {
             if index > 0 {
-                parts.push(StringPart::Literal(";".to_string()));
+                parts.push(FormatTemplatePart::Literal(";".to_string()));
             }
-            parts.push(StringPart::Literal(format!("{}=", key)));
-            parts.push(part_from_string_expr(value));
+            parts.push(FormatTemplatePart::Literal(format!("{}=", key)));
+            parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+                arg_ref: FormatArgRef::Implicit,
+                format_spec: None,
+            }));
+            args.push(value);
         }
         if parts.is_empty() {
-            StringExpr::Literal(String::new())
+            empty_string_expr()
         } else {
-            StringExpr::Interpolated(parts)
+            format_call_expr(parts, args)
         }
     }
 
@@ -1301,16 +1314,23 @@ fn block_to_statements(block: ExprBlock) -> Vec<Expr> {
         .collect()
 }
 
-fn lower_string_pattern(value: Option<StringExpr>) -> Option<Pattern> {
+fn lower_string_pattern(value: Option<Expr>) -> Option<Pattern> {
     value.map(|value| match value {
-        StringExpr::Literal(text) => Pattern::from(PatternKind::Variant(
-            fp_core::ast::PatternVariant {
-                name: Expr::value(Value::string(text)),
+        Expr {
+            kind: ExprKind::Value(value),
+            ..
+        } => match *value {
+            Value::String(text) => Pattern::from(PatternKind::Variant(fp_core::ast::PatternVariant {
+                name: Expr::value(Value::string(text.value)),
                 pattern: None,
-            },
-        )),
+            })),
+            other => Pattern::from(PatternKind::Variant(fp_core::ast::PatternVariant {
+                name: Expr::value(other),
+                pattern: None,
+            })),
+        },
         other => Pattern::from(PatternKind::Variant(fp_core::ast::PatternVariant {
-            name: Expr::any(ValueExpr::String(other)),
+            name: other,
             pattern: None,
         })),
     })
@@ -1318,6 +1338,58 @@ fn lower_string_pattern(value: Option<StringExpr>) -> Option<Pattern> {
 
 fn expr_match_span(cases: &[ExprMatchCase]) -> fp_core::span::Span {
     fp_core::span::Span::union(cases.iter().map(|case| case.span))
+}
+
+fn string_literal_expr(value: impl Into<String>) -> Expr {
+    Expr::value(Value::string(value.into()))
+}
+
+fn empty_string_expr() -> Expr {
+    string_literal_expr(String::new())
+}
+
+fn string_literal_value(expr: &Expr) -> Option<String> {
+    match expr.kind() {
+        ExprKind::Value(value) => match &**value {
+            Value::String(text) => Some(text.value.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn format_call_expr(parts: Vec<FormatTemplatePart>, mut args: Vec<Expr>) -> Expr {
+    let mut call_args = Vec::with_capacity(args.len() + 1);
+    call_args.push(Expr::new(ExprKind::FormatString(ExprStringTemplate { parts })));
+    call_args.append(&mut args);
+    Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall {
+        span: Default::default(),
+        kind: IntrinsicCallKind::Format,
+        args: call_args,
+        kwargs: Vec::new(),
+    }))
+}
+
+fn concat_string_exprs(values: Vec<Expr>) -> Expr {
+    format_call_expr(
+        values
+            .iter()
+            .map(|_| FormatTemplatePart::Placeholder(FormatPlaceholder {
+                arg_ref: FormatArgRef::Implicit,
+                format_spec: None,
+            }))
+            .collect(),
+        values,
+    )
+}
+
+fn condition_command_expr(command: Expr) -> Expr {
+    Expr::new(ExprKind::Invoke(ExprInvoke {
+        span: Default::default(),
+        target: ExprInvokeTarget::Function(Name::ident("__fp_condition_command")),
+        args: vec![command],
+        kwargs: Vec::new(),
+    }))
 }
 
 fn extern_command(function: &ItemDeclFunction) -> Option<String> {
@@ -1356,61 +1428,25 @@ fn kwarg_value<'a>(invoke: &'a ExprInvoke, names: &[&str]) -> Option<&'a Expr> {
         .map(|kwarg| &kwarg.value)
 }
 
-fn apply_command_options(command: StringExpr, cwd: Option<StringExpr>, sudo: bool) -> StringExpr {
+fn apply_command_options(command: Expr, cwd: Option<Expr>, sudo: bool) -> Expr {
     let mut parts = Vec::new();
+    let mut args = Vec::new();
     if sudo {
-        parts.push(StringPart::Literal("sudo ".to_string()));
+        parts.push(FormatTemplatePart::Literal("sudo ".to_string()));
     }
     if let Some(cwd) = cwd {
-        parts.push(StringPart::Literal("cd ".to_string()));
-        parts.push(part_from_string_expr(cwd));
-        parts.push(StringPart::Literal(" && ".to_string()));
+        parts.push(FormatTemplatePart::Literal("cd ".to_string()));
+        parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+            arg_ref: FormatArgRef::Implicit,
+            format_spec: None,
+        }));
+        args.push(cwd);
+        parts.push(FormatTemplatePart::Literal(" && ".to_string()));
     }
-    match command {
-        StringExpr::Literal(text) => {
-            parts.push(StringPart::Literal(text));
-            StringExpr::Interpolated(parts)
-        }
-        StringExpr::Variable(name) => {
-            parts.push(StringPart::Variable(name));
-            StringExpr::Interpolated(parts)
-        }
-        StringExpr::Call { name, args } => {
-            parts.push(StringPart::Call { name, args });
-            StringExpr::Interpolated(parts)
-        }
-        StringExpr::Interpolated(mut more) => {
-            parts.append(&mut more);
-            StringExpr::Interpolated(parts)
-        }
-    }
-}
-
-fn part_from_string_expr(expr: StringExpr) -> StringPart {
-    match expr {
-        StringExpr::Literal(text) => StringPart::Literal(text),
-        StringExpr::Variable(name) => StringPart::Variable(name),
-        StringExpr::Call { name, args } => StringPart::Call { name, args },
-        StringExpr::Interpolated(parts) => {
-            let mut flattened = String::new();
-            for part in parts {
-                match part {
-                    StringPart::Literal(text) => flattened.push_str(&text),
-                    StringPart::Variable(name) => {
-                        if !flattened.is_empty() {
-                            return StringPart::Literal(flattened);
-                        }
-                        return StringPart::Variable(name);
-                    }
-                    StringPart::Call { name, args } => {
-                        if !flattened.is_empty() {
-                            return StringPart::Literal(flattened);
-                        }
-                        return StringPart::Call { name, args };
-                    }
-                }
-            }
-            StringPart::Literal(flattened)
-        }
-    }
+    args.push(command);
+    parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+        arg_ref: FormatArgRef::Implicit,
+        format_spec: None,
+    }));
+    format_call_expr(parts, args)
 }

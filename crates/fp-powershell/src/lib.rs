@@ -1,11 +1,10 @@
 use fp_core::ast::{
-    BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind, ExprMatch, ItemDefFunction, PatternKind,
+    BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind, ExprMatch, ExprStringTemplate,
+    FormatArgRef, FormatTemplatePart, ItemDefFunction, PatternKind, Value,
 };
-use fp_shell_core::{
-    ArithmeticOp, BoolExpr, ComparisonOp, ConditionExpr, ExternalFunction, ScriptItem,
-    ScriptProgram, ScriptRenderer, ShellInventory, StringComparisonOp, StringExpr, StringPart,
-    TransportKind, ValueExpr,
-};
+use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::ops::BinOpKind;
+use fp_shell_core::{ExternalFunction, ScriptItem, ScriptProgram, ScriptRenderer, ShellInventory, TransportKind};
 use std::collections::{BTreeSet, HashMap};
 
 pub struct PowerShellTarget;
@@ -70,47 +69,32 @@ impl<'a> PowerShellRenderer<'a> {
                 ps_string(name),
                 ps_string(transport)
             ));
-            if let Some(ssh) = &host.ssh {
-                if let Some(address) = &ssh.address {
-                    script.push_str(&format!("; address = {}", ps_string(address)));
-                }
-                if let Some(user) = &ssh.user {
-                    script.push_str(&format!("; user = {}", ps_string(user)));
-                }
-                if let Some(port) = ssh.port {
-                    script.push_str(&format!("; port = {}", port));
-                }
+            if let Some(address) = host.get_string("address") {
+                script.push_str(&format!("; address = {}", ps_string(address)));
             }
-            if let Some(docker) = &host.docker {
-                script.push_str(&format!("; container = {}", ps_string(&docker.container)));
-                if let Some(user) = &docker.user {
-                    script.push_str(&format!("; user = {}", ps_string(user)));
-                }
+            if let Some(user) = host.get_string("user") {
+                script.push_str(&format!("; user = {}", ps_string(user)));
             }
-            if let Some(kubectl) = &host.kubectl {
-                script.push_str(&format!("; pod = {}", ps_string(&kubectl.pod)));
-                if let Some(namespace) = &kubectl.namespace {
-                    script.push_str(&format!("; namespace = {}", ps_string(namespace)));
-                }
-                if let Some(container) = &kubectl.container {
-                    script.push_str(&format!("; container = {}", ps_string(container)));
-                }
-                if let Some(context) = &kubectl.context {
-                    script.push_str(&format!("; context = {}", ps_string(context)));
-                }
+            if let Some(port) = host.get_u16("port") {
+                script.push_str(&format!("; port = {}", port));
             }
-            if let Some(winrm) = &host.winrm {
-                script.push_str(&format!("; address = {}", ps_string(&winrm.address)));
-                script.push_str(&format!("; user = {}", ps_string(&winrm.user)));
-                if let Some(password) = &winrm.password {
-                    script.push_str(&format!("; password = {}", ps_string(password)));
-                }
-                if let Some(port) = winrm.port {
-                    script.push_str(&format!("; port = {}", port));
-                }
-                if let Some(scheme) = &winrm.scheme {
-                    script.push_str(&format!("; scheme = {}", ps_string(scheme)));
-                }
+            if let Some(container) = host.get_string("container") {
+                script.push_str(&format!("; container = {}", ps_string(container)));
+            }
+            if let Some(pod) = host.get_string("pod") {
+                script.push_str(&format!("; pod = {}", ps_string(pod)));
+            }
+            if let Some(namespace) = host.get_string("namespace") {
+                script.push_str(&format!("; namespace = {}", ps_string(namespace)));
+            }
+            if let Some(context) = host.get_string("context") {
+                script.push_str(&format!("; context = {}", ps_string(context)));
+            }
+            if let Some(password) = host.get_string("password") {
+                script.push_str(&format!("; password = {}", ps_string(password)));
+            }
+            if let Some(scheme) = host.get_string("scheme") {
+                script.push_str(&format!("; scheme = {}", ps_string(scheme)));
             }
             script.push_str(" }\n");
         }
@@ -172,16 +156,13 @@ impl<'a> PowerShellRenderer<'a> {
             .scrutinee
             .as_deref()
             .ok_or_else(|| "powershell match requires scrutinee".to_string())?;
-        let ValueExpr::String(scrutinee) = self.extract_value_expr(scrutinee)? else {
-            return Err("powershell match scrutinee must be lowered string".to_string());
-        };
         self.push_line(
             indent,
-            &format!("switch -Exact ({}) {{", self.render_word(&scrutinee)),
+            &format!("switch -Exact ({}) {{", self.render_word(scrutinee)?),
         );
         for case in &expr_match.cases {
             let label = match case.pat.as_ref().and_then(|pat| extract_match_case_string(pat)) {
-                Some(pattern) => self.render_word(&pattern),
+                Some(pattern) => self.render_word(&pattern)?,
                 None => "default".to_string(),
             };
             if case
@@ -205,7 +186,7 @@ impl<'a> PowerShellRenderer<'a> {
     fn render_invoke_statement(
         &mut self,
         name: &str,
-        args: &[ValueExpr],
+        args: &[Expr],
         indent: usize,
     ) -> Result<(), String> {
         if self.externs.get(name).map(|decl| decl.abi.as_str()) == Some("pwsh") {
@@ -216,7 +197,7 @@ impl<'a> PowerShellRenderer<'a> {
         let args = args
             .iter()
             .map(|arg| self.render_value(arg))
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, _>>()?
             .join(" ");
         self.push_line(indent, &format!("{} {}", name, args));
         Ok(())
@@ -225,20 +206,20 @@ impl<'a> PowerShellRenderer<'a> {
     fn render_pwsh_extern_statement(
         &mut self,
         name: &str,
-        args: &[ValueExpr],
+        args: &[Expr],
         indent: usize,
     ) -> Result<bool, String> {
         match name {
             "invoke_expression" => {
                 self.push_line(
                     indent,
-                    &self.render_command_expr(self.expect_string_arg(args, 0)),
+                    &self.render_command_expr(self.expect_string_arg(args, 0))?,
                 );
             }
             "ssh" => {
                 let host = self.expect_string_arg(args, 0).clone();
                 let command = self.expect_string_arg(args, 1).clone();
-                self.emit_ssh_entry(indent, &host);
+                self.emit_ssh_entry(indent, &host)?;
                 self.push_line(
                     indent,
                     "$__fpTarget = if ($__fpEntry.user) { \"$($__fpEntry.user)@$($__fpAddress)\" } else { $__fpAddress }",
@@ -248,26 +229,26 @@ impl<'a> PowerShellRenderer<'a> {
                     indent + 1,
                     &format!(
                         "& ssh -p $__fpEntry.port $__fpTarget {}",
-                        self.render_word(&command)
+                        self.render_word(&command)?
                     ),
                 );
                 self.push_line(indent, "} else {");
                 self.push_line(
                     indent + 1,
-                    &format!("& ssh $__fpTarget {}", self.render_word(&command)),
+                    &format!("& ssh $__fpTarget {}", self.render_word(&command)?),
                 );
                 self.push_line(indent, "}");
             }
             "docker_exec" => {
                 let host = self.expect_string_arg(args, 0).clone();
                 let command = self.expect_string_arg(args, 1).clone();
-                self.emit_host_entry(indent, &host);
+                self.emit_host_entry(indent, &host)?;
                 self.push_line(indent, "if ($__fpEntry.user) {");
                 self.push_line(
                     indent + 1,
                     &format!(
                         "& docker exec --user $__fpEntry.user $__fpEntry.container sh -lc {}",
-                        self.render_word(&command)
+                        self.render_word(&command)?
                     ),
                 );
                 self.push_line(indent, "} else {");
@@ -275,7 +256,7 @@ impl<'a> PowerShellRenderer<'a> {
                     indent + 1,
                     &format!(
                         "& docker exec $__fpEntry.container sh -lc {}",
-                        self.render_word(&command)
+                        self.render_word(&command)?
                     ),
                 );
                 self.push_line(indent, "}");
@@ -283,7 +264,7 @@ impl<'a> PowerShellRenderer<'a> {
             "kubectl_exec" => {
                 let host = self.expect_string_arg(args, 0).clone();
                 let command = self.expect_string_arg(args, 1).clone();
-                self.emit_host_entry(indent, &host);
+                self.emit_host_entry(indent, &host)?;
                 self.push_line(indent, "$__fpArgs = @()");
                 self.push_line(
                     indent,
@@ -302,7 +283,7 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "$__fpArgs += @($__fpEntry.pod, '--', 'sh', '-lc', {})",
-                        self.render_word(&command)
+                        self.render_word(&command)?
                     ),
                 );
                 self.push_line(indent, "& kubectl @__fpArgs");
@@ -310,14 +291,14 @@ impl<'a> PowerShellRenderer<'a> {
             "winrm_run" => {
                 let host = self.expect_string_arg(args, 0).clone();
                 let command = self.expect_string_arg(args, 1).clone();
-                self.emit_host_entry(indent, &host);
+                self.emit_host_entry(indent, &host)?;
                 self.emit_winrm_session_setup(indent);
                 self.push_line(indent, "try {");
                 self.push_line(
                     indent + 1,
                     &format!(
                         "Invoke-Command -Session $__fpSession -ScriptBlock ([scriptblock]::Create({}))",
-                        self.render_word(&command)
+                        self.render_word(&command)?
                     ),
                 );
                 self.push_line(indent, "} finally {");
@@ -329,8 +310,8 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "Copy-Item -Force {} {}",
-                        self.render_word(self.expect_string_arg(args, 0)),
-                        self.render_word(self.expect_string_arg(args, 1))
+                        self.render_word(self.expect_string_arg(args, 0))?,
+                        self.render_word(self.expect_string_arg(args, 1))?
                     ),
                 );
             }
@@ -338,10 +319,10 @@ impl<'a> PowerShellRenderer<'a> {
                 let host = self.expect_string_arg(args, 0).clone();
                 let source = self.expect_string_arg(args, 1).clone();
                 let destination = self.expect_string_arg(args, 2).clone();
-                self.emit_ssh_entry(indent, &host);
+                self.emit_ssh_entry(indent, &host)?;
                 self.push_line(
                     indent,
-                    &format!("$__fpDestination = {}", self.render_word(&destination)),
+                    &format!("$__fpDestination = {}", self.render_word(&destination)?),
                 );
                 self.push_line(
                     indent,
@@ -352,13 +333,13 @@ impl<'a> PowerShellRenderer<'a> {
                     indent + 1,
                     &format!(
                         "& scp -P $__fpEntry.port {} $__fpTarget",
-                        self.render_word(&source)
+                        self.render_word(&source)?
                     ),
                 );
                 self.push_line(indent, "} else {");
                 self.push_line(
                     indent + 1,
-                    &format!("& scp {} $__fpTarget", self.render_word(&source)),
+                    &format!("& scp {} $__fpTarget", self.render_word(&source)?),
                 );
                 self.push_line(indent, "}");
             }
@@ -366,13 +347,13 @@ impl<'a> PowerShellRenderer<'a> {
                 let host = self.expect_string_arg(args, 0).clone();
                 let source = self.expect_string_arg(args, 1).clone();
                 let destination = self.expect_string_arg(args, 2).clone();
-                self.emit_host_entry(indent, &host);
+                self.emit_host_entry(indent, &host)?;
                 self.push_line(
                     indent,
                     &format!(
                         "& docker cp {} \"$($__fpEntry.container):{}\"",
-                        self.render_word(&source),
-                        self.render_command_expr(&destination)
+                        self.render_word(&source)?,
+                        self.render_command_expr(&destination)?
                     ),
                 );
             }
@@ -380,7 +361,7 @@ impl<'a> PowerShellRenderer<'a> {
                 let host = self.expect_string_arg(args, 0).clone();
                 let source = self.expect_string_arg(args, 1).clone();
                 let destination = self.expect_string_arg(args, 2).clone();
-                self.emit_host_entry(indent, &host);
+                self.emit_host_entry(indent, &host)?;
                 self.push_line(indent, "$__fpArgs = @()");
                 self.push_line(
                     indent,
@@ -394,8 +375,8 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "& kubectl cp @__fpArgs {} \"$($__fpEntry.pod):{}\"",
-                        self.render_word(&source),
-                        self.render_command_expr(&destination)
+                        self.render_word(&source)?,
+                        self.render_command_expr(&destination)?
                     ),
                 );
             }
@@ -403,11 +384,11 @@ impl<'a> PowerShellRenderer<'a> {
                 let host = self.expect_string_arg(args, 0).clone();
                 let source = self.expect_string_arg(args, 1).clone();
                 let destination = self.expect_string_arg(args, 2).clone();
-                self.emit_host_entry(indent, &host);
+                self.emit_host_entry(indent, &host)?;
                 self.emit_winrm_session_setup(indent);
                 self.push_line(
                     indent,
-                    &format!("$__fpDestination = {}", self.render_word(&destination)),
+                    &format!("$__fpDestination = {}", self.render_word(&destination)?),
                 );
                 self.push_line(
                     indent,
@@ -419,7 +400,10 @@ impl<'a> PowerShellRenderer<'a> {
                 self.push_line(indent + 1, "}");
                 self.push_line(
                     indent + 1,
-                    &format!("Copy-Item -ToSession $__fpSession -Path {} -Destination $__fpDestination -Force", self.render_word(&source)),
+                    &format!(
+                        "Copy-Item -ToSession $__fpSession -Path {} -Destination $__fpDestination -Force",
+                        self.render_word(&source)?
+                    ),
                 );
                 self.push_line(indent, "} finally {");
                 self.push_line(indent + 1, "Remove-PSSession -Session $__fpSession");
@@ -433,14 +417,14 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "$__fpContent = Get-Content -Raw {}",
-                        self.render_word(&source)
+                        self.render_word(&source)?
                     ),
                 );
                 self.push_line(
                     indent,
                     &format!(
                         "foreach ($pair in ({} -split ';')) {{",
-                        self.render_word(&vars)
+                        self.render_word(&vars)?
                     ),
                 );
                 self.push_line(indent + 1, "if ($pair) {");
@@ -455,7 +439,7 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "Set-Content -Path {} -Value $__fpContent",
-                        self.render_word(&destination)
+                        self.render_word(&destination)?
                     ),
                 );
             }
@@ -464,7 +448,7 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "Remove-Item -Force {} -ErrorAction SilentlyContinue",
-                        self.render_word(self.expect_string_arg(args, 0))
+                        self.render_word(self.expect_string_arg(args, 0))?
                     ),
                 );
             }
@@ -473,10 +457,10 @@ impl<'a> PowerShellRenderer<'a> {
                 let flags = self.expect_string_arg(args, 1).clone();
                 let source = self.expect_string_arg(args, 2).clone();
                 let destination = self.expect_string_arg(args, 3).clone();
-                self.emit_ssh_entry(indent, &host);
+                self.emit_ssh_entry(indent, &host)?;
                 self.push_line(
                     indent,
-                    &format!("$__fpDestination = {}", self.render_word(&destination)),
+                    &format!("$__fpDestination = {}", self.render_word(&destination)?),
                 );
                 self.push_line(
                     indent,
@@ -486,8 +470,8 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "& rsync {} -- {} $__fpTarget",
-                        self.render_word(&flags),
-                        self.render_word(&source)
+                        self.render_word(&flags)?,
+                        self.render_word(&source)?
                     ),
                 );
             }
@@ -496,7 +480,7 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "throw {}",
-                        self.render_word(self.expect_string_arg(args, 0))
+                        self.render_word(self.expect_string_arg(args, 0))?
                     ),
                 );
             }
@@ -505,10 +489,7 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "$script:fpLastChanged = {}",
-                        match args.first() {
-                            Some(ValueExpr::Bool(BoolExpr::Literal(true))) => "$true",
-                            _ => "$false",
-                        }
+                        if is_true_expr(args.first()) { "$true" } else { "$false" }
                     ),
                 );
             }
@@ -572,15 +553,11 @@ impl<'a> PowerShellRenderer<'a> {
                         "powershell renderer only supports identifier for bindings".to_string()
                     );
                 };
-                let ValueExpr::StringList(values) = self.extract_value_expr(&expr_for.iter)? else {
-                    return Err(
-                        "powershell renderer only supports string-list for iterables".to_string(),
-                    );
-                };
+                let values = self.extract_string_list(&expr_for.iter)?;
                 let values = values
                     .iter()
                     .map(|value| self.render_word(value))
-                    .collect::<Vec<_>>()
+                    .collect::<Result<Vec<_>, _>>()?
                     .join(", ");
                 self.push_line(
                     indent,
@@ -611,165 +588,159 @@ impl<'a> PowerShellRenderer<'a> {
                         "powershell renderer only supports identifier invocation targets".to_string(),
                     );
                 };
-                let args = invoke
-                    .args
-                    .iter()
-                    .map(|arg| self.extract_value_expr(arg))
-                    .collect::<Result<Vec<_>, _>>()?;
-                self.render_invoke_statement(ident.as_str(), &args, indent)
-            }
-            ExprKind::Any(any) if any.downcast_ref::<ValueExpr>().is_some() => {
-                self.push_line(indent, &self.render_expr_as_value(expr)?);
-                Ok(())
+                self.render_invoke_statement(ident.as_str(), &invoke.args, indent)
             }
             _ => Ok(()),
         }
     }
 
     fn render_expr_as_condition(&self, expr: &Expr) -> Result<String, String> {
-        let ExprKind::Any(any) = expr.kind() else {
-            return Err("powershell renderer expected lowered shell condition".to_string());
-        };
-        let Some(condition) = any.downcast_ref::<ConditionExpr>() else {
-            return Err("powershell renderer expected shell condition payload".to_string());
-        };
-        Ok(self.render_condition(condition))
+        self.render_condition(expr)
     }
 
     fn render_expr_as_value(&self, expr: &Expr) -> Result<String, String> {
-        Ok(self.render_value(&self.extract_value_expr(expr)?))
+        self.render_value(expr)
     }
 
-    fn extract_value_expr(&self, expr: &Expr) -> Result<ValueExpr, String> {
-        let ExprKind::Any(any) = expr.kind() else {
-            return Err("powershell renderer expected lowered shell value".to_string());
-        };
-        any.downcast_ref::<ValueExpr>()
-            .cloned()
-            .ok_or_else(|| "powershell renderer expected shell value payload".to_string())
-    }
-
-    fn render_condition(&self, condition: &ConditionExpr) -> String {
-        match condition {
-            ConditionExpr::Bool(BoolExpr::Literal(true)) => "$true".to_string(),
-            ConditionExpr::Bool(BoolExpr::Literal(false)) => "$false".to_string(),
-            ConditionExpr::Bool(BoolExpr::Variable(name)) => format!("${}", name),
-            ConditionExpr::Bool(BoolExpr::IntComparison { lhs, op, rhs }) => {
-                format!(
-                    "{} {} {}",
-                    self.render_int(lhs),
-                    render_comparison(*op),
-                    self.render_int(rhs)
-                )
+    fn render_condition(&self, expr: &Expr) -> Result<String, String> {
+        match expr.kind() {
+            ExprKind::Value(value) => match &**value {
+                Value::Bool(flag) => Ok(if flag.value { "$true" } else { "$false" }.to_string()),
+                _ => Ok(format!("({} -eq 'true')", self.render_word(expr)?)),
+            },
+            ExprKind::Name(name) => {
+                let ident = name
+                    .as_ident()
+                    .ok_or_else(|| "powershell condition only supports identifier names".to_string())?;
+                Ok(format!("${}", ident))
             }
-            ConditionExpr::Bool(BoolExpr::StringComparison { lhs, op, rhs }) => {
-                format!(
-                    "{} {} {}",
-                    self.render_word(lhs),
-                    render_string_comparison(*op),
-                    self.render_word(rhs)
-                )
-            }
-            ConditionExpr::Command(command) => self.render_command_expr(command),
-            ConditionExpr::StringTruthy(expr) => format!("({} -eq 'true')", self.render_word(expr)),
-        }
-    }
-
-    fn render_value(&self, value: &ValueExpr) -> String {
-        match value {
-            ValueExpr::String(expr) => self.render_word(expr),
-            ValueExpr::Int(expr) => self.render_int(expr),
-            ValueExpr::Bool(BoolExpr::Literal(value)) => {
-                if *value {
-                    "$true".to_string()
-                } else {
-                    "$false".to_string()
+            ExprKind::BinOp(bin_op) => {
+                if matches!(bin_op.kind, BinOpKind::Gt | BinOpKind::Lt | BinOpKind::Ge | BinOpKind::Le)
+                {
+                    return Ok(format!(
+                        "{} {} {}",
+                        self.render_int(&bin_op.lhs)?,
+                        render_comparison(bin_op.kind),
+                        self.render_int(&bin_op.rhs)?
+                    ));
                 }
-            }
-            ValueExpr::Bool(BoolExpr::Variable(name)) => format!("${}", name),
-            ValueExpr::Bool(BoolExpr::IntComparison { lhs, op, rhs }) => {
-                format!(
-                    "({} {} {})",
-                    self.render_int(lhs),
-                    render_comparison(*op),
-                    self.render_int(rhs)
-                )
-            }
-            ValueExpr::Bool(BoolExpr::StringComparison { lhs, op, rhs }) => {
-                format!(
-                    "({} {} {})",
-                    self.render_word(lhs),
-                    render_string_comparison(*op),
-                    self.render_word(rhs)
-                )
-            }
-            ValueExpr::StringList(values) => format!(
-                "@({})",
-                values
-                    .iter()
-                    .map(|value| self.render_word(value))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        }
-    }
-
-    fn render_int(&self, expr: &fp_shell_core::IntExpr) -> String {
-        match expr {
-            fp_shell_core::IntExpr::Literal(value) => value.to_string(),
-            fp_shell_core::IntExpr::Variable(name) => format!("${}", name),
-            fp_shell_core::IntExpr::UnaryNeg(value) => format!("-{}", self.render_int(value)),
-            fp_shell_core::IntExpr::Binary { lhs, op, rhs } => {
-                format!(
-                    "({} {} {})",
-                    self.render_int(lhs),
-                    render_arithmetic(*op),
-                    self.render_int(rhs)
-                )
-            }
-        }
-    }
-
-    fn render_word(&self, expr: &StringExpr) -> String {
-        match expr {
-            StringExpr::Literal(text) => ps_string(text),
-            StringExpr::Variable(name) => format!("${}", name),
-            StringExpr::Call { name, args } => format!("$({})", self.render_call(name, args)),
-            StringExpr::Interpolated(parts) => {
-                let mut out = String::from("\"");
-                for part in parts {
-                    match part {
-                        StringPart::Literal(text) => out.push_str(&text.replace('"', "`\"")),
-                        StringPart::Variable(name) => out.push_str(&format!("${}", name)),
-                        StringPart::Call { name, args } => {
-                            out.push_str(&format!("$({})", self.render_call(name, args)))
-                        }
-                    }
+                if matches!(bin_op.kind, BinOpKind::Eq | BinOpKind::Ne) {
+                    return Ok(format!(
+                        "{} {} {}",
+                        self.render_word(&bin_op.lhs)?,
+                        render_string_comparison(bin_op.kind),
+                        self.render_word(&bin_op.rhs)?
+                    ));
                 }
-                out.push('"');
-                out
+                Err("unsupported powershell condition expression".to_string())
             }
+            ExprKind::Invoke(invoke) if invoke_is_name(invoke, "__fp_condition_command") => {
+                self.render_command_expr(&invoke.args[0])
+            }
+            ExprKind::Paren(paren) => self.render_condition(&paren.expr),
+            _ => Ok(format!("({} -eq 'true')", self.render_word(expr)?)),
         }
     }
 
-    fn render_command_expr(&self, expr: &StringExpr) -> String {
-        match expr {
-            StringExpr::Literal(text) => text.clone(),
-            StringExpr::Variable(name) => format!("${}", name),
-            StringExpr::Call { name, args } => format!("$({})", self.render_call(name, args)),
-            StringExpr::Interpolated(parts) => {
-                let mut out = String::new();
-                for part in parts {
-                    match part {
-                        StringPart::Literal(text) => out.push_str(text),
-                        StringPart::Variable(name) => out.push_str(&format!("${}", name)),
-                        StringPart::Call { name, args } => {
-                            out.push_str(&format!("$({})", self.render_call(name, args)))
-                        }
-                    }
-                }
-                out
+    fn render_value(&self, expr: &Expr) -> Result<String, String> {
+        if let Ok(values) = self.extract_string_list(expr) {
+            return values
+                .iter()
+                .map(|value| self.render_word(value))
+                .collect::<Result<Vec<_>, _>>()
+                .map(|values| format!("@({})", values.join(", ")));
+        }
+        match expr.kind() {
+            ExprKind::Value(value) => match &**value {
+                Value::Bool(flag) => Ok(if flag.value { "$true" } else { "$false" }.to_string()),
+                _ => self.render_word(expr),
+            },
+            ExprKind::BinOp(_) => Ok(format!("({})", self.render_condition(expr)?)),
+            _ => self.render_word(expr),
+        }
+    }
+
+    fn render_int(&self, expr: &Expr) -> Result<String, String> {
+        match expr.kind() {
+            ExprKind::Value(value) => match &**value {
+                Value::Int(value) => Ok(value.value.to_string()),
+                _ => Err("expected int expression".to_string()),
+            },
+            ExprKind::Name(name) => {
+                let ident = name
+                    .as_ident()
+                    .ok_or_else(|| "powershell int expression only supports identifier names".to_string())?;
+                Ok(format!("${}", ident))
             }
+            ExprKind::BinOp(bin_op)
+                if matches!(
+                    bin_op.kind,
+                    BinOpKind::Add | BinOpKind::AddTrait | BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div | BinOpKind::Mod
+                ) =>
+            {
+                Ok(format!(
+                    "({} {} {})",
+                    self.render_int(&bin_op.lhs)?,
+                    render_arithmetic(bin_op.kind),
+                    self.render_int(&bin_op.rhs)?
+                ))
+            }
+            ExprKind::Paren(paren) => self.render_int(&paren.expr),
+            _ => Err("expected int expression".to_string()),
+        }
+    }
+
+    fn render_word(&self, expr: &Expr) -> Result<String, String> {
+        match expr.kind() {
+            ExprKind::Value(value) => match &**value {
+                Value::String(text) => Ok(ps_string(&text.value)),
+                Value::Int(value) => Ok(ps_string(&value.value.to_string())),
+                Value::Bool(value) => Ok(ps_string(&value.value.to_string())),
+                _ => Err("unsupported powershell value expression".to_string()),
+            },
+            ExprKind::Name(name) => {
+                let ident = name
+                    .as_ident()
+                    .ok_or_else(|| "powershell string expression only supports identifier names".to_string())?;
+                Ok(format!("${}", ident))
+            }
+            ExprKind::Invoke(invoke) => {
+                let name = invoke_function_name(invoke)?;
+                Ok(format!("$({})", self.render_call(name, &invoke.args)?))
+            }
+            ExprKind::FormatString(template) => self.render_format_template_word(template),
+            ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Format => {
+                self.render_format_call_word(call)
+            }
+            ExprKind::Paren(paren) => self.render_word(&paren.expr),
+            _ => Err("unsupported powershell string expression".to_string()),
+        }
+    }
+
+    fn render_command_expr(&self, expr: &Expr) -> Result<String, String> {
+        match expr.kind() {
+            ExprKind::Value(value) => match &**value {
+                Value::String(text) => Ok(text.value.clone()),
+                Value::Int(value) => Ok(value.value.to_string()),
+                Value::Bool(value) => Ok(value.value.to_string()),
+                _ => Err("unsupported powershell command expression".to_string()),
+            },
+            ExprKind::Name(name) => {
+                let ident = name
+                    .as_ident()
+                    .ok_or_else(|| "powershell command expression only supports identifier names".to_string())?;
+                Ok(format!("${}", ident))
+            }
+            ExprKind::Invoke(invoke) => {
+                let name = invoke_function_name(invoke)?;
+                Ok(format!("$({})", self.render_call(name, &invoke.args)?))
+            }
+            ExprKind::FormatString(template) => self.render_format_template_command(template),
+            ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Format => {
+                self.render_format_call_command(call)
+            }
+            ExprKind::Paren(paren) => self.render_command_expr(&paren.expr),
+            _ => Err("unsupported powershell command expression".to_string()),
         }
     }
 
@@ -778,40 +749,40 @@ impl<'a> PowerShellRenderer<'a> {
             .push(format!("{}{}", "    ".repeat(indent), text));
     }
 
-    fn render_call(&self, name: &str, args: &[ValueExpr]) -> String {
+    fn render_call(&self, name: &str, args: &[Expr]) -> Result<String, String> {
         if self.externs.get(name).map(|decl| decl.abi.as_str()) == Some("pwsh") {
-            return self.render_pwsh_extern_call(name, args);
+            return Ok(self.render_pwsh_extern_call(name, args)?);
         }
         let args = args
             .iter()
             .map(|arg| self.render_value(arg))
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
         if args.is_empty() {
-            name.to_string()
+            Ok(name.to_string())
         } else {
-            format!("{} {}", name, args.join(" "))
+            Ok(format!("{} {}", name, args.join(" ")))
         }
     }
 
-    fn render_pwsh_extern_call(&self, name: &str, args: &[ValueExpr]) -> String {
-        match name {
+    fn render_pwsh_extern_call(&self, name: &str, args: &[Expr]) -> Result<String, String> {
+        Ok(match name {
             "runtime_host_transport" => {
                 let host = self.expect_string_arg(args, 0);
-                format!("$script:FpHosts[{}].transport", self.render_word(host))
+                format!("$script:FpHosts[{}].transport", self.render_word(host)?)
             }
             "runtime_temp_path" => "[System.IO.Path]::GetTempFileName()".to_string(),
             other => {
                 let args = args
                     .iter()
                     .map(|arg| self.render_value(arg))
-                    .collect::<Vec<_>>();
+                    .collect::<Result<Vec<_>, _>>()?;
                 if args.is_empty() {
                     other.to_string()
                 } else {
                     format!("{} {}", other, args.join(" "))
                 }
             }
-        }
+        })
     }
 
     fn render_runtime_validator(&self) -> String {
@@ -840,17 +811,19 @@ impl<'a> PowerShellRenderer<'a> {
         script
     }
 
-    fn emit_host_entry(&mut self, indent: usize, host: &StringExpr) {
-        self.push_line(indent, &format!("$__fpHost = {}", self.render_word(host)));
+    fn emit_host_entry(&mut self, indent: usize, host: &Expr) -> Result<(), String> {
+        self.push_line(indent, &format!("$__fpHost = {}", self.render_word(host)?));
         self.push_line(indent, "$__fpEntry = $script:FpHosts[$__fpHost]");
+        Ok(())
     }
 
-    fn emit_ssh_entry(&mut self, indent: usize, host: &StringExpr) {
-        self.emit_host_entry(indent, host);
+    fn emit_ssh_entry(&mut self, indent: usize, host: &Expr) -> Result<(), String> {
+        self.emit_host_entry(indent, host)?;
         self.push_line(
             indent,
             "$__fpAddress = if ($__fpEntry.address) { $__fpEntry.address } else { $__fpHost }",
         );
+        Ok(())
     }
 
     fn emit_winrm_session_setup(&mut self, indent: usize) {
@@ -892,62 +865,242 @@ impl<'a> PowerShellRenderer<'a> {
         );
     }
 
-    fn expect_value_string<'b>(&self, args: &'b [ValueExpr], index: usize) -> &'b StringExpr {
-        match &args[index] {
-            ValueExpr::String(expr) => expr,
-            _ => panic!("expected string argument"),
+    fn expect_string_arg<'b>(&self, args: &'b [Expr], index: usize) -> &'b Expr {
+        &args[index]
+    }
+
+    fn extract_string_list<'b>(&self, expr: &'b Expr) -> Result<Vec<&'b Expr>, String> {
+        match expr.kind() {
+            ExprKind::Array(array) => Ok(array.values.iter().collect()),
+            ExprKind::Tuple(tuple) => Ok(tuple.values.iter().collect()),
+            _ => Err("powershell renderer only supports string-list for iterables".to_string()),
         }
     }
 
-    fn expect_string_arg<'b>(&self, args: &'b [ValueExpr], index: usize) -> &'b StringExpr {
-        self.expect_value_string(args, index)
+    fn render_format_template_word(&self, template: &ExprStringTemplate) -> Result<String, String> {
+        let mut out = String::from("\"");
+        for part in &template.parts {
+            match part {
+                FormatTemplatePart::Literal(text) => out.push_str(&text.replace('"', "`\"")),
+                FormatTemplatePart::Placeholder(placeholder) => match &placeholder.arg_ref {
+                    FormatArgRef::Named(name) => out.push_str(&format!("${}", name)),
+                    _ => return Err("powershell format strings only support named placeholders".to_string()),
+                },
+            }
+        }
+        out.push('"');
+        Ok(out)
+    }
+
+    fn render_format_template_command(&self, template: &ExprStringTemplate) -> Result<String, String> {
+        let mut out = String::new();
+        for part in &template.parts {
+            match part {
+                FormatTemplatePart::Literal(text) => out.push_str(text),
+                FormatTemplatePart::Placeholder(placeholder) => match &placeholder.arg_ref {
+                    FormatArgRef::Named(name) => out.push_str(&format!("${}", name)),
+                    _ => return Err("powershell format strings only support named placeholders".to_string()),
+                },
+            }
+        }
+        Ok(out)
+    }
+
+    fn render_format_call_word(&self, call: &fp_core::ast::ExprIntrinsicCall) -> Result<String, String> {
+        let Some(template) = call.args.first() else {
+            return Err("powershell format call missing template".to_string());
+        };
+        let ExprKind::FormatString(template) = template.kind() else {
+            return Err("powershell format call requires format template".to_string());
+        };
+        let mut out = String::from("\"");
+        let mut implicit_index = 1usize;
+        for part in &template.parts {
+            match part {
+                FormatTemplatePart::Literal(text) => out.push_str(&text.replace('"', "`\"")),
+                FormatTemplatePart::Placeholder(placeholder) => {
+                    let arg = match placeholder.arg_ref {
+                        FormatArgRef::Implicit => {
+                            let arg = call.args.get(implicit_index).ok_or_else(|| {
+                                "powershell format call missing implicit argument".to_string()
+                            })?;
+                            implicit_index += 1;
+                            arg
+                        }
+                        FormatArgRef::Positional(index) => call
+                            .args
+                            .get(index + 1)
+                            .ok_or_else(|| "powershell format call missing positional argument".to_string())?,
+                        FormatArgRef::Named(ref name) => call
+                            .args
+                            .iter()
+                            .skip(1)
+                            .find(|arg| matches!(arg.kind(), ExprKind::Name(found) if found.as_ident().is_some_and(|ident| ident.as_str() == name)))
+                            .ok_or_else(|| "powershell format call missing named argument".to_string())?,
+                    };
+                    out.push_str(&self.render_word_fragment(arg)?);
+                }
+            }
+        }
+        out.push('"');
+        Ok(out)
+    }
+
+    fn render_format_call_command(&self, call: &fp_core::ast::ExprIntrinsicCall) -> Result<String, String> {
+        let Some(template) = call.args.first() else {
+            return Err("powershell format call missing template".to_string());
+        };
+        let ExprKind::FormatString(template) = template.kind() else {
+            return Err("powershell format call requires format template".to_string());
+        };
+        let mut out = String::new();
+        let mut implicit_index = 1usize;
+        for part in &template.parts {
+            match part {
+                FormatTemplatePart::Literal(text) => out.push_str(text),
+                FormatTemplatePart::Placeholder(placeholder) => {
+                    let arg = match placeholder.arg_ref {
+                        FormatArgRef::Implicit => {
+                            let arg = call.args.get(implicit_index).ok_or_else(|| {
+                                "powershell format call missing implicit argument".to_string()
+                            })?;
+                            implicit_index += 1;
+                            arg
+                        }
+                        FormatArgRef::Positional(index) => call
+                            .args
+                            .get(index + 1)
+                            .ok_or_else(|| "powershell format call missing positional argument".to_string())?,
+                        FormatArgRef::Named(ref name) => call
+                            .args
+                            .iter()
+                            .skip(1)
+                            .find(|arg| matches!(arg.kind(), ExprKind::Name(found) if found.as_ident().is_some_and(|ident| ident.as_str() == name)))
+                            .ok_or_else(|| "powershell format call missing named argument".to_string())?,
+                    };
+                    out.push_str(&self.render_command_fragment(arg)?);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    fn render_word_fragment(&self, expr: &Expr) -> Result<String, String> {
+        match expr.kind() {
+            ExprKind::Value(value) => match &**value {
+                Value::String(text) => Ok(text.value.replace('"', "`\"")),
+                Value::Int(value) => Ok(value.value.to_string()),
+                Value::Bool(value) => Ok(value.value.to_string()),
+                _ => Err("unsupported powershell string fragment".to_string()),
+            },
+            ExprKind::Name(name) => {
+                let ident = name
+                    .as_ident()
+                    .ok_or_else(|| "powershell string fragment only supports identifier names".to_string())?;
+                Ok(format!("${}", ident))
+            }
+            ExprKind::Invoke(invoke) => {
+                let name = invoke_function_name(invoke)?;
+                Ok(format!("$({})", self.render_call(name, &invoke.args)?))
+            }
+            ExprKind::FormatString(template) => self.render_format_template_command(template),
+            ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Format => {
+                self.render_format_call_command(call)
+            }
+            ExprKind::Paren(paren) => self.render_word_fragment(&paren.expr),
+            _ => Err("unsupported powershell string fragment".to_string()),
+        }
+    }
+
+    fn render_command_fragment(&self, expr: &Expr) -> Result<String, String> {
+        match expr.kind() {
+            ExprKind::Value(value) => match &**value {
+                Value::String(text) => Ok(text.value.clone()),
+                Value::Int(value) => Ok(value.value.to_string()),
+                Value::Bool(value) => Ok(value.value.to_string()),
+                _ => Err("unsupported powershell command fragment".to_string()),
+            },
+            ExprKind::Name(name) => {
+                let ident = name
+                    .as_ident()
+                    .ok_or_else(|| "powershell command fragment only supports identifier names".to_string())?;
+                Ok(format!("${}", ident))
+            }
+            ExprKind::Invoke(invoke) => {
+                let name = invoke_function_name(invoke)?;
+                Ok(format!("$({})", self.render_call(name, &invoke.args)?))
+            }
+            ExprKind::FormatString(template) => self.render_format_template_command(template),
+            ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Format => {
+                self.render_format_call_command(call)
+            }
+            ExprKind::Paren(paren) => self.render_command_fragment(&paren.expr),
+            _ => Err("unsupported powershell command fragment".to_string()),
+        }
     }
 }
 
-fn extract_match_case_string(pattern: &fp_core::ast::Pattern) -> Option<StringExpr> {
+fn extract_match_case_string(pattern: &fp_core::ast::Pattern) -> Option<Expr> {
     match pattern.kind() {
         PatternKind::Wildcard(_) => None,
-        PatternKind::Variant(variant) if variant.pattern.is_none() => match variant.name.kind() {
-            ExprKind::Value(value) => match &**value {
-                fp_core::ast::Value::String(text) => Some(StringExpr::Literal(text.value.clone())),
-                _ => None,
-            },
-            ExprKind::Any(any) => any.downcast_ref::<ValueExpr>().and_then(|value| match value {
-                ValueExpr::String(value) => Some(value.clone()),
-                _ => None,
-            }),
-            _ => None,
-        },
+        PatternKind::Variant(variant) if variant.pattern.is_none() => Some(variant.name.clone()),
         _ => None,
     }
 }
 
-fn render_arithmetic(op: ArithmeticOp) -> &'static str {
+fn render_arithmetic(op: BinOpKind) -> &'static str {
     match op {
-        ArithmeticOp::Add => "+",
-        ArithmeticOp::Sub => "-",
-        ArithmeticOp::Mul => "*",
-        ArithmeticOp::Div => "/",
-        ArithmeticOp::Mod => "%",
+        BinOpKind::Add | BinOpKind::AddTrait => "+",
+        BinOpKind::Sub => "-",
+        BinOpKind::Mul => "*",
+        BinOpKind::Div => "/",
+        BinOpKind::Mod => "%",
+        _ => unreachable!(),
     }
 }
 
-fn render_comparison(op: ComparisonOp) -> &'static str {
+fn render_comparison(op: BinOpKind) -> &'static str {
     match op {
-        ComparisonOp::Gt => "-gt",
-        ComparisonOp::Lt => "-lt",
-        ComparisonOp::Ge => "-ge",
-        ComparisonOp::Le => "-le",
-        ComparisonOp::Eq => "-eq",
-        ComparisonOp::Ne => "-ne",
+        BinOpKind::Gt => "-gt",
+        BinOpKind::Lt => "-lt",
+        BinOpKind::Ge => "-ge",
+        BinOpKind::Le => "-le",
+        BinOpKind::Eq => "-eq",
+        BinOpKind::Ne => "-ne",
+        _ => unreachable!(),
     }
 }
 
-fn render_string_comparison(op: StringComparisonOp) -> &'static str {
+fn render_string_comparison(op: BinOpKind) -> &'static str {
     match op {
-        StringComparisonOp::Eq => "-eq",
-        StringComparisonOp::Ne => "-ne",
+        BinOpKind::Eq => "-eq",
+        BinOpKind::Ne => "-ne",
+        _ => unreachable!(),
     }
+}
+
+fn invoke_function_name<'a>(invoke: &'a fp_core::ast::ExprInvoke) -> Result<&'a str, String> {
+    let ExprInvokeTarget::Function(name) = &invoke.target else {
+        return Err("powershell renderer only supports function invocation targets".to_string());
+    };
+    let Some(ident) = name.as_ident() else {
+        return Err("powershell renderer only supports identifier invocation targets".to_string());
+    };
+    Ok(ident.as_str())
+}
+
+fn invoke_is_name(invoke: &fp_core::ast::ExprInvoke, expected: &str) -> bool {
+    matches!(
+        &invoke.target,
+        ExprInvokeTarget::Function(name) if name.as_ident().is_some_and(|ident| ident.as_str() == expected)
+    )
+}
+
+fn is_true_expr(expr: Option<&Expr>) -> bool {
+    matches!(
+        expr.map(Expr::kind),
+        Some(ExprKind::Value(value)) if matches!(&**value, Value::Bool(flag) if flag.value)
+    )
 }
 
 fn ps_string(value: &str) -> String {
@@ -961,7 +1114,9 @@ const POWERSHELL_RUNTIME_UTILITIES: &str = "";
 mod tests {
     use super::*;
     use fp_core::ast::{Expr, ExprInvoke, ExprInvokeTarget, ExprKind, Name};
-    use fp_shell_core::{ExternalFunction, InventoryHost, ScriptProgram, StringExpr, WinRmInventory};
+    use fp_shell_core::{
+        ExternalFunction, InventoryHost, InventoryValue, ScriptProgram, TransportKind,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -982,8 +1137,8 @@ mod tests {
                 span: Default::default(),
                 target: ExprInvokeTarget::Function(Name::ident("winrm_run")),
                 args: vec![
-                    Expr::any(ValueExpr::String(StringExpr::Literal("win-1".to_string()))),
-                    Expr::any(ValueExpr::String(StringExpr::Literal("hostname".to_string()))),
+                    Expr::value(Value::string("win-1".to_string())),
+                    Expr::value(Value::string("hostname".to_string())),
                 ],
                 kwargs: Vec::new(),
             })))],
@@ -993,16 +1148,25 @@ mod tests {
             "win-1".to_string(),
             InventoryHost {
                 transport: TransportKind::Winrm,
-                ssh: None,
-                docker: None,
-                kubectl: None,
-                winrm: Some(WinRmInventory {
-                    address: "10.0.0.21".to_string(),
-                    user: "Administrator".to_string(),
-                    password: Some("secret".to_string()),
-                    port: Some(5985),
-                    scheme: Some("http".to_string()),
-                }),
+                fields: HashMap::from([
+                    (
+                        "address".to_string(),
+                        InventoryValue::String("10.0.0.21".to_string()),
+                    ),
+                    (
+                        "user".to_string(),
+                        InventoryValue::String("Administrator".to_string()),
+                    ),
+                    (
+                        "password".to_string(),
+                        InventoryValue::String("secret".to_string()),
+                    ),
+                    ("port".to_string(), InventoryValue::U16(5985)),
+                    (
+                        "scheme".to_string(),
+                        InventoryValue::String("http".to_string()),
+                    ),
+                ]),
             },
         );
         let inventory = ShellInventory {
@@ -1034,8 +1198,8 @@ mod tests {
                 span: Default::default(),
                 target: ExprInvokeTarget::Function(Name::ident("winrm_run")),
                 args: vec![
-                    Expr::any(ValueExpr::String(StringExpr::Literal("win-1".to_string()))),
-                    Expr::any(ValueExpr::String(StringExpr::Literal("hostname".to_string()))),
+                    Expr::value(Value::string("win-1".to_string())),
+                    Expr::value(Value::string("hostname".to_string())),
                 ],
                 kwargs: Vec::new(),
             })))],
@@ -1045,16 +1209,25 @@ mod tests {
             "win-1".to_string(),
             InventoryHost {
                 transport: TransportKind::Winrm,
-                ssh: None,
-                docker: None,
-                kubectl: None,
-                winrm: Some(WinRmInventory {
-                    address: "10.0.0.21".to_string(),
-                    user: "Administrator".to_string(),
-                    password: Some("secret".to_string()),
-                    port: Some(5986),
-                    scheme: Some("https".to_string()),
-                }),
+                fields: HashMap::from([
+                    (
+                        "address".to_string(),
+                        InventoryValue::String("10.0.0.21".to_string()),
+                    ),
+                    (
+                        "user".to_string(),
+                        InventoryValue::String("Administrator".to_string()),
+                    ),
+                    (
+                        "password".to_string(),
+                        InventoryValue::String("secret".to_string()),
+                    ),
+                    ("port".to_string(), InventoryValue::U16(5986)),
+                    (
+                        "scheme".to_string(),
+                        InventoryValue::String("https".to_string()),
+                    ),
+                ]),
             },
         );
         let inventory = ShellInventory {

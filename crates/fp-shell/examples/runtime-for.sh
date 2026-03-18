@@ -1,7 +1,5 @@
-#!/usr/bin/env bash
-set -xeuo pipefail
-
-__fp_last_changed=0
+generated: crates/fp-shell/examples/runtime-for.sh
+hanged=0
 
 declare -A FP_HOST_TRANSPORT=()
 declare -A FP_SSH_ADDRESS=()
@@ -21,10 +19,16 @@ declare -A FP_WINRM_SCHEME=()
 
 FP_HOST_TRANSPORT['web-2']='ssh'
 FP_SSH_ADDRESS['web-2']='10.0.0.12'
+FP_WINRM_ADDRESS['web-2']='10.0.0.12'
 FP_SSH_USER['web-2']='deploy'
+FP_DOCKER_USER['web-2']='deploy'
+FP_WINRM_USER['web-2']='deploy'
 FP_HOST_TRANSPORT['web-1']='ssh'
 FP_SSH_ADDRESS['web-1']='10.0.0.11'
+FP_WINRM_ADDRESS['web-1']='10.0.0.11'
 FP_SSH_USER['web-1']='deploy'
+FP_DOCKER_USER['web-1']='deploy'
+FP_WINRM_USER['web-1']='deploy'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 

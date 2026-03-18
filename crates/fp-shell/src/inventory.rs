@@ -6,8 +6,7 @@ use fp_core::utils::to_json::ToJson;
 use fp_interpret::engine::{AstInterpreter, EvalStepOutcome, InterpreterMode, InterpreterOptions};
 use fp_lang::FerroFrontend;
 use fp_shell_core::{
-    DockerInventory, InventoryHost, KubectlInventory, ShellInventory, SshInventory, TransportKind,
-    WinRmInventory,
+    InventoryHost, InventoryValue, ShellInventory, TransportKind,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -62,69 +61,7 @@ pub fn load_inventory(path: &Path) -> Result<ShellInventory, ShellError> {
     let mut hosts = HashMap::new();
     for (name, host) in parsed.hosts {
         let transport = host.transport.unwrap_or(TransportKind::Ssh);
-        let entry = match transport {
-            TransportKind::Local => InventoryHost {
-                transport,
-                ssh: None,
-                docker: None,
-                kubectl: None,
-                winrm: None,
-            },
-            TransportKind::Ssh => InventoryHost {
-                transport,
-                ssh: Some(SshInventory {
-                    address: host.address,
-                    user: host.user,
-                    port: host.port,
-                }),
-                docker: None,
-                kubectl: None,
-                winrm: None,
-            },
-            TransportKind::Docker => InventoryHost {
-                transport,
-                ssh: None,
-                docker: Some(DockerInventory {
-                    container: host.container.ok_or_else(|| {
-                        ShellError::Inventory(format!("docker host '{}' requires container", name))
-                    })?,
-                    user: host.user,
-                }),
-                kubectl: None,
-                winrm: None,
-            },
-            TransportKind::Kubectl => InventoryHost {
-                transport,
-                ssh: None,
-                docker: None,
-                kubectl: Some(KubectlInventory {
-                    pod: host.pod.ok_or_else(|| {
-                        ShellError::Inventory(format!("kubectl host '{}' requires pod", name))
-                    })?,
-                    namespace: host.namespace,
-                    container: host.container,
-                    context: host.context,
-                }),
-                winrm: None,
-            },
-            TransportKind::Winrm => InventoryHost {
-                transport,
-                ssh: None,
-                docker: None,
-                kubectl: None,
-                winrm: Some(WinRmInventory {
-                    address: host.address.ok_or_else(|| {
-                        ShellError::Inventory(format!("winrm host '{}' requires address", name))
-                    })?,
-                    user: host.user.ok_or_else(|| {
-                        ShellError::Inventory(format!("winrm host '{}' requires user", name))
-                    })?,
-                    password: host.password,
-                    port: host.port,
-                    scheme: host.scheme,
-                }),
-            },
-        };
+        let entry = inventory_host_from_document(&name, transport, host)?;
         hosts.insert(name, entry);
     }
 
@@ -299,69 +236,7 @@ fn inventory_document_to_inventory(
     for (name, host) in parsed.hosts {
         let host = normalize_host_document(host);
         let transport = host.transport.unwrap_or(TransportKind::Ssh);
-        let entry = match transport {
-            TransportKind::Local => InventoryHost {
-                transport,
-                ssh: None,
-                docker: None,
-                kubectl: None,
-                winrm: None,
-            },
-            TransportKind::Ssh => InventoryHost {
-                transport,
-                ssh: Some(SshInventory {
-                    address: host.address,
-                    user: host.user,
-                    port: host.port,
-                }),
-                docker: None,
-                kubectl: None,
-                winrm: None,
-            },
-            TransportKind::Docker => InventoryHost {
-                transport,
-                ssh: None,
-                docker: Some(DockerInventory {
-                    container: host.container.ok_or_else(|| {
-                        ShellError::Inventory(format!("docker host '{}' requires container", name))
-                    })?,
-                    user: host.user,
-                }),
-                kubectl: None,
-                winrm: None,
-            },
-            TransportKind::Kubectl => InventoryHost {
-                transport,
-                ssh: None,
-                docker: None,
-                kubectl: Some(KubectlInventory {
-                    pod: host.pod.ok_or_else(|| {
-                        ShellError::Inventory(format!("kubectl host '{}' requires pod", name))
-                    })?,
-                    namespace: host.namespace,
-                    container: host.container,
-                    context: host.context,
-                }),
-                winrm: None,
-            },
-            TransportKind::Winrm => InventoryHost {
-                transport,
-                ssh: None,
-                docker: None,
-                kubectl: None,
-                winrm: Some(WinRmInventory {
-                    address: host.address.ok_or_else(|| {
-                        ShellError::Inventory(format!("winrm host '{}' requires address", name))
-                    })?,
-                    user: host.user.ok_or_else(|| {
-                        ShellError::Inventory(format!("winrm host '{}' requires user", name))
-                    })?,
-                    password: host.password,
-                    port: host.port,
-                    scheme: host.scheme,
-                }),
-            },
-        };
+        let entry = inventory_host_from_document(&name, transport, host)?;
         hosts.insert(name, entry);
     }
 
@@ -388,4 +263,89 @@ fn normalize_host_document(mut host: InventoryHostDocument) -> InventoryHostDocu
         .port
         .and_then(|port| if port == 0 { None } else { Some(port) });
     host
+}
+
+fn inventory_host_from_document(
+    name: &str,
+    transport: TransportKind,
+    host: InventoryHostDocument,
+) -> Result<InventoryHost, ShellError> {
+    let mut fields = HashMap::new();
+    match transport {
+        TransportKind::Local => {}
+        TransportKind::Ssh => {
+            insert_optional_string(&mut fields, "address", host.address);
+            insert_optional_string(&mut fields, "user", host.user);
+            insert_optional_u16(&mut fields, "port", host.port);
+        }
+        TransportKind::Docker => {
+            insert_required_string(
+                &mut fields,
+                "container",
+                host.container,
+                format!("docker host '{}' requires container", name),
+            )?;
+            insert_optional_string(&mut fields, "user", host.user);
+        }
+        TransportKind::Kubectl => {
+            insert_required_string(
+                &mut fields,
+                "pod",
+                host.pod,
+                format!("kubectl host '{}' requires pod", name),
+            )?;
+            insert_optional_string(&mut fields, "namespace", host.namespace);
+            insert_optional_string(&mut fields, "container", host.container);
+            insert_optional_string(&mut fields, "context", host.context);
+        }
+        TransportKind::Winrm => {
+            insert_required_string(
+                &mut fields,
+                "address",
+                host.address,
+                format!("winrm host '{}' requires address", name),
+            )?;
+            insert_required_string(
+                &mut fields,
+                "user",
+                host.user,
+                format!("winrm host '{}' requires user", name),
+            )?;
+            insert_optional_string(&mut fields, "password", host.password);
+            insert_optional_u16(&mut fields, "port", host.port);
+            insert_optional_string(&mut fields, "scheme", host.scheme);
+        }
+    }
+    Ok(InventoryHost { transport, fields })
+}
+
+fn insert_optional_string(
+    fields: &mut HashMap<String, InventoryValue>,
+    key: &str,
+    value: Option<String>,
+) {
+    if let Some(value) = value {
+        fields.insert(key.to_string(), InventoryValue::String(value));
+    }
+}
+
+fn insert_optional_u16(
+    fields: &mut HashMap<String, InventoryValue>,
+    key: &str,
+    value: Option<u16>,
+) {
+    if let Some(value) = value {
+        fields.insert(key.to_string(), InventoryValue::U16(value));
+    }
+}
+
+fn insert_required_string(
+    fields: &mut HashMap<String, InventoryValue>,
+    key: &str,
+    value: Option<String>,
+    error: String,
+) -> Result<(), ShellError> {
+    let value = value.ok_or_else(|| ShellError::Inventory(error))?;
+    fields.insert(key.to_string(), InventoryValue::String(value));
+    Ok(())
 }
