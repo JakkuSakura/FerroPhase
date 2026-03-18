@@ -57,12 +57,17 @@ pub fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
 
 #[cfg(test)]
 mod tests {
-    use super::{aarch64, x86_64};
-    use super::{RipSymbol, RipSymbolKind};
     use super::TextRelocation;
-    use fp_core::asmir::{AsmConstant, AsmInstructionKind};
+    use super::{RipSymbol, RipSymbolKind};
+    use super::{aarch64, x86_64};
     use fp_core::asmir::AsmSyscallConvention;
-    use object::{RelocationEncoding, RelocationFlags, RelocationKind};
+    use fp_core::asmir::{AsmConstant, AsmInstructionKind};
+    use fp_core::container::{ContainerKind, ContainerSymbolScope};
+    use object::write::{Object, Symbol, SymbolSection};
+    use object::{
+        Architecture, BinaryFormat, Endianness, RelocationEncoding, RelocationFlags,
+        RelocationKind, SectionKind, SymbolFlags, SymbolKind, SymbolScope,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -130,7 +135,8 @@ mod tests {
         let mut saw_memmove_call = false;
         for inst in &block.instructions {
             if let AsmInstructionKind::Call { function, .. } = &inst.kind {
-                if matches!(function, fp_core::asmir::AsmValue::Function(name) if name == "memmove") {
+                if matches!(function, fp_core::asmir::AsmValue::Function(name) if name == "memmove")
+                {
                     saw_memmove_call = true;
                 }
             }
@@ -180,23 +186,20 @@ mod tests {
             },
         ];
 
-        let lifted = x86_64::lift_function_bytes(
-            &bytes,
-            &relocs,
-            Some(AsmSyscallConvention::LinuxX86_64),
-        )
-        .unwrap();
+        let lifted =
+            x86_64::lift_function_bytes(&bytes, &relocs, Some(AsmSyscallConvention::LinuxX86_64))
+                .unwrap();
         let instructions = &lifted.basic_blocks[0].instructions;
 
-        let inst_by_id: HashMap<u32, &AsmInstructionKind> =
-            instructions.iter().map(|inst| (inst.id, &inst.kind)).collect();
-
-        let mut calls = instructions
+        let inst_by_id: HashMap<u32, &AsmInstructionKind> = instructions
             .iter()
-            .filter_map(|inst| match &inst.kind {
-                AsmInstructionKind::Call { args, .. } => Some((inst.id, args.clone())),
-                _ => None,
-            });
+            .map(|inst| (inst.id, &inst.kind))
+            .collect();
+
+        let mut calls = instructions.iter().filter_map(|inst| match &inst.kind {
+            AsmInstructionKind::Call { args, .. } => Some((inst.id, args.clone())),
+            _ => None,
+        });
         let (strchr_call_id, _) = calls.next().expect("missing strchr call");
         let (_, fprintf_args) = calls.next().expect("missing fprintf call");
 
@@ -251,23 +254,20 @@ mod tests {
             },
         ];
 
-        let lifted = x86_64::lift_function_bytes(
-            &bytes,
-            &relocs,
-            Some(AsmSyscallConvention::LinuxX86_64),
-        )
-        .unwrap();
+        let lifted =
+            x86_64::lift_function_bytes(&bytes, &relocs, Some(AsmSyscallConvention::LinuxX86_64))
+                .unwrap();
         let instructions = &lifted.basic_blocks[0].instructions;
 
-        let inst_by_id: HashMap<u32, &AsmInstructionKind> =
-            instructions.iter().map(|inst| (inst.id, &inst.kind)).collect();
-
-        let mut calls = instructions
+        let inst_by_id: HashMap<u32, &AsmInstructionKind> = instructions
             .iter()
-            .filter_map(|inst| match &inst.kind {
-                AsmInstructionKind::Call { args, .. } => Some((inst.id, args.clone())),
-                _ => None,
-            });
+            .map(|inst| (inst.id, &inst.kind))
+            .collect();
+
+        let mut calls = instructions.iter().filter_map(|inst| match &inst.kind {
+            AsmInstructionKind::Call { args, .. } => Some((inst.id, args.clone())),
+            _ => None,
+        });
         let (dcgettext_call_id, _) = calls.next().expect("missing dcgettext call");
         let (_, fprintf_args) = calls.next().expect("missing fprintf call");
 
@@ -322,7 +322,10 @@ mod tests {
                 _ => None,
             })
             .expect("missing call");
-        assert!(call_args.is_empty(), "expected lifted internal call to carry no args");
+        assert!(
+            call_args.is_empty(),
+            "expected lifted internal call to carry no args"
+        );
 
         let string_value = lifted.basic_blocks[0]
             .instructions
@@ -481,8 +484,8 @@ mod tests {
         // movq qword ptr [rip + 0x11223344], xmm7
         // ret
         let bytes = [
-            0xF3, 0x0F, 0x7E, 0x3D, 0x44, 0x33, 0x22, 0x11, 0x66, 0x0F, 0xD6, 0x3D, 0x44,
-            0x33, 0x22, 0x11, 0xC3,
+            0xF3, 0x0F, 0x7E, 0x3D, 0x44, 0x33, 0x22, 0x11, 0x66, 0x0F, 0xD6, 0x3D, 0x44, 0x33,
+            0x22, 0x11, 0xC3,
         ];
         let lifted =
             x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
@@ -682,7 +685,9 @@ mod tests {
             for instruction in &block.instructions {
                 match &instruction.kind {
                     AsmInstructionKind::Mul(_, _) => has_mul = true,
-                    AsmInstructionKind::Shr(_, _) | AsmInstructionKind::Shl(_, _) => has_shift = true,
+                    AsmInstructionKind::Shr(_, _) | AsmInstructionKind::Shl(_, _) => {
+                        has_shift = true
+                    }
                     _ => {}
                 }
             }
@@ -690,5 +695,61 @@ mod tests {
 
         assert!(has_mul);
         assert!(has_shift);
+    }
+
+    #[test]
+    fn lift_object_preserves_global_and_local_symbol_scopes() {
+        let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+        let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+        obj.append_section_data(text, &[0xC3], 1);
+        obj.add_symbol(Symbol {
+            name: b"exported".to_vec(),
+            value: 0,
+            size: 1,
+            kind: SymbolKind::Text,
+            scope: SymbolScope::Linkage,
+            weak: false,
+            section: SymbolSection::Section(text),
+            flags: SymbolFlags::None,
+        });
+        obj.add_symbol(Symbol {
+            name: b"hidden_local".to_vec(),
+            value: 0,
+            size: 1,
+            kind: SymbolKind::Text,
+            scope: SymbolScope::Compilation,
+            weak: false,
+            section: SymbolSection::Section(text),
+            flags: SymbolFlags::None,
+        });
+
+        let program = super::lift_object_to_asmir(&obj.write().unwrap()).unwrap();
+        let container = program
+            .container
+            .as_ref()
+            .expect("lift should preserve container");
+        assert_eq!(container.kind, ContainerKind::Object);
+
+        let exported = container
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "exported")
+            .expect("missing exported symbol");
+        assert_eq!(exported.scope, ContainerSymbolScope::Global);
+
+        let hidden_local = container
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "hidden_local")
+            .expect("missing local symbol");
+        assert_eq!(hidden_local.scope, ContainerSymbolScope::Local);
+    }
+
+    #[test]
+    fn dynamic_inputs_map_to_executable_container_kind() {
+        assert_eq!(
+            crate::container::container_kind_for_object_kind(object::ObjectKind::Dynamic),
+            ContainerKind::Executable
+        );
     }
 }

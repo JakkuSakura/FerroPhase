@@ -1,15 +1,24 @@
 use fp_core::asmir::AsmObjectFormat;
 use fp_core::container::{
     ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerKind, ContainerReader,
-    ContainerRelocation, ContainerRelocationEncoding, ContainerRelocationKind, ContainerRelocationSpec,
-    ContainerRelocationTarget, ContainerSection, ContainerSectionKind, ContainerSymbol,
-    ContainerSymbolKind, ContainerSymbolScope,
+    ContainerRelocation, ContainerRelocationEncoding, ContainerRelocationKind,
+    ContainerRelocationSpec, ContainerRelocationTarget, ContainerSection, ContainerSectionKind,
+    ContainerSymbol, ContainerSymbolKind, ContainerSymbolScope,
 };
 use fp_core::error::{Error, Result};
 use object::read::FileKind;
 use object::{Object as _, ObjectSection as _, ObjectSymbol as _};
 
 pub struct ObjectContainerReader;
+
+pub(crate) fn container_kind_for_object_kind(kind: object::ObjectKind) -> ContainerKind {
+    match kind {
+        object::ObjectKind::Relocatable => ContainerKind::Object,
+        object::ObjectKind::Executable | object::ObjectKind::Dynamic => ContainerKind::Executable,
+        object::ObjectKind::Core => ContainerKind::Other,
+        _ => ContainerKind::Other,
+    }
+}
 
 impl ObjectContainerReader {
     pub fn new() -> Self {
@@ -61,13 +70,7 @@ impl ContainerReader for ObjectContainerReader {
             object::Endianness::Little => ContainerEndianness::Little,
             object::Endianness::Big => ContainerEndianness::Big,
         };
-        let kind = match file.kind() {
-            object::ObjectKind::Relocatable => ContainerKind::Object,
-            object::ObjectKind::Executable => ContainerKind::Executable,
-            object::ObjectKind::Dynamic => ContainerKind::Other,
-            object::ObjectKind::Core => ContainerKind::Other,
-            _ => ContainerKind::Other,
-        };
+        let kind = container_kind_for_object_kind(file.kind());
 
         let mut container = ContainerFile::new(kind, format, architecture, endianness);
 

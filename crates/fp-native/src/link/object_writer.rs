@@ -1,10 +1,10 @@
 use crate::emit::{EmitPlan, RelocKind, RelocSection, TargetArch, TargetFormat};
 use fp_core::asmir::AsmObjectFormat;
 use fp_core::container::{
-    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerKind,
-    ContainerRelocation, ContainerRelocationEncoding, ContainerRelocationKind,
-    ContainerRelocationSpec, ContainerRelocationTarget, ContainerSection, ContainerSectionKind,
-    ContainerSymbol, ContainerSymbolKind, ContainerSymbolScope,
+    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerKind, ContainerRelocation,
+    ContainerRelocationEncoding, ContainerRelocationKind, ContainerRelocationSpec,
+    ContainerRelocationTarget, ContainerSection, ContainerSectionKind, ContainerSymbol,
+    ContainerSymbolKind, ContainerSymbolScope,
 };
 use fp_core::error::{Error, Result};
 use object::write::{Mangling, Object, Relocation, StandardSection, Symbol, SymbolSection};
@@ -97,6 +97,15 @@ fn relocation_flags_for_container(spec: ContainerRelocationSpec) -> Result<Reloc
         },
         size: spec.size,
     })
+}
+
+fn symbol_kind_for_emit_reloc(kind: RelocKind) -> ContainerSymbolKind {
+    match kind {
+        RelocKind::CallRel32 | RelocKind::Aarch64AdrpAdd | RelocKind::Aarch64GotLoad => {
+            ContainerSymbolKind::Text
+        }
+        RelocKind::Abs64 => ContainerSymbolKind::Data,
+    }
 }
 
 fn intern_symbol_with_flags(
@@ -276,48 +285,47 @@ fn write_macho_aarch64_object(plan: &EmitPlan) -> Result<Vec<u8>> {
         }
     }
 
-    let ensure_undefined =
-        |obj: &mut Object,
-         symbol_ids: &mut HashMap<String, object::write::SymbolId>,
-         unmangled: &str|
-         -> object::write::SymbolId {
-            if unmangled.is_empty() {
-                return intern_symbol(
-                    obj,
-                    symbol_ids,
-                    unmangled,
-                    SymbolKind::Unknown,
-                    SymbolSection::Undefined,
-                    0,
-                );
-            }
-
-            let base = unmangled
-                .split_once('@')
-                .map(|(head, _)| head)
-                .unwrap_or(unmangled);
-            let is_weak = weak_undefined.contains(base);
-            let flags = if is_weak {
-                SymbolFlags::MachO {
-                    n_desc: macho::N_WEAK_REF,
-                }
-            } else {
-                SymbolFlags::None
-            };
-
-            let mangled = mangle_undefined(unmangled);
-            let id = intern_symbol_with_flags(
+    let ensure_undefined = |obj: &mut Object,
+                            symbol_ids: &mut HashMap<String, object::write::SymbolId>,
+                            unmangled: &str|
+     -> object::write::SymbolId {
+        if unmangled.is_empty() {
+            return intern_symbol(
                 obj,
                 symbol_ids,
-                mangled.as_str(),
+                unmangled,
                 SymbolKind::Unknown,
                 SymbolSection::Undefined,
                 0,
-                false,
-                flags,
             );
-            symbol_ids.insert(unmangled.to_string(), id);
-            id
+        }
+
+        let base = unmangled
+            .split_once('@')
+            .map(|(head, _)| head)
+            .unwrap_or(unmangled);
+        let is_weak = weak_undefined.contains(base);
+        let flags = if is_weak {
+            SymbolFlags::MachO {
+                n_desc: macho::N_WEAK_REF,
+            }
+        } else {
+            SymbolFlags::None
+        };
+
+        let mangled = mangle_undefined(unmangled);
+        let id = intern_symbol_with_flags(
+            obj,
+            symbol_ids,
+            mangled.as_str(),
+            SymbolKind::Unknown,
+            SymbolSection::Undefined,
+            0,
+            false,
+            flags,
+        );
+        symbol_ids.insert(unmangled.to_string(), id);
+        id
     };
 
     for reloc in &plan.relocs {
@@ -380,7 +388,9 @@ fn write_macho_aarch64_object(plan: &EmitPlan) -> Result<Vec<u8>> {
             }
             RelocKind::CallRel32 => {
                 if reloc.addend != 0 {
-                    return Err(Error::from("Mach-O call relocations do not support addends"));
+                    return Err(Error::from(
+                        "Mach-O call relocations do not support addends",
+                    ));
                 }
                 obj.add_relocation(
                     section_id,
@@ -437,9 +447,7 @@ fn write_macho_aarch64_object(plan: &EmitPlan) -> Result<Vec<u8>> {
             }
             RelocKind::Aarch64GotLoad => {
                 if reloc.addend != 0 {
-                    return Err(Error::from(
-                        "Mach-O GOT relocations do not support addends",
-                    ));
+                    return Err(Error::from("Mach-O GOT relocations do not support addends"));
                 }
                 obj.add_relocation(
                     section_id,
@@ -494,6 +502,20 @@ pub fn container_from_emit_plan(
         TargetArch::Aarch64 => ContainerArchitecture::Aarch64,
     };
 
+    let preserved = plan.asmir.container.as_ref().filter(|container| {
+        container.format == format
+            && container.architecture == architecture
+            && container.endianness == ContainerEndianness::Little
+    });
+    let preserved_symbols = preserved
+        .map(|container| {
+            container
+                .symbols
+                .iter()
+                .map(|symbol| (symbol.name.clone(), symbol))
+                .collect::<HashMap<_, _>>()
+        })
+        .unwrap_or_default();
     let mut container = ContainerFile::new(
         ContainerKind::Object,
         format,
@@ -529,39 +551,63 @@ pub fn container_from_emit_plan(
     };
 
     for (name, offset) in &plan.symbols {
+        let preserved = preserved_symbols.get(name);
         container.add_symbol(ContainerSymbol {
             name: name.clone(),
-            kind: ContainerSymbolKind::Text,
-            scope: ContainerSymbolScope::Global,
+            kind: preserved.map_or(ContainerSymbolKind::Text, |symbol| symbol.kind),
+            scope: preserved.map_or(ContainerSymbolScope::Global, |symbol| symbol.scope),
             section: Some(text_section),
             value: *offset,
-            size: 0,
+            size: preserved.map_or(0, |symbol| symbol.size),
         });
     }
     if let Some(rodata_section) = rodata_section {
         for (name, offset) in &plan.rodata_symbols {
+            let preserved = preserved_symbols.get(name);
             container.add_symbol(ContainerSymbol {
                 name: name.clone(),
-                kind: ContainerSymbolKind::Data,
-                scope: ContainerSymbolScope::Global,
+                kind: preserved.map_or(ContainerSymbolKind::Data, |symbol| symbol.kind),
+                scope: preserved.map_or(ContainerSymbolScope::Global, |symbol| symbol.scope),
                 section: Some(rodata_section),
                 value: *offset,
-                size: 0,
+                size: preserved.map_or(0, |symbol| symbol.size),
             });
         }
     }
 
     if let Some(data_section) = data_section {
         for (name, offset) in &plan.data_symbols {
+            let preserved = preserved_symbols.get(name);
             container.add_symbol(ContainerSymbol {
                 name: name.clone(),
-                kind: ContainerSymbolKind::Data,
-                scope: ContainerSymbolScope::Global,
+                kind: preserved.map_or(ContainerSymbolKind::Data, |symbol| symbol.kind),
+                scope: preserved.map_or(ContainerSymbolScope::Global, |symbol| symbol.scope),
                 section: Some(data_section),
                 value: *offset,
-                size: 0,
+                size: preserved.map_or(0, |symbol| symbol.size),
             });
         }
+    }
+
+    for reloc in &plan.relocs {
+        if reloc.symbol.is_empty()
+            || container
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == reloc.symbol)
+            || reloc.symbol == ".rodata"
+        {
+            continue;
+        }
+        let preserved = preserved_symbols.get(&reloc.symbol);
+        container.add_symbol(ContainerSymbol {
+            name: reloc.symbol.clone(),
+            kind: preserved.map_or(symbol_kind_for_emit_reloc(reloc.kind), |symbol| symbol.kind),
+            scope: preserved.map_or(ContainerSymbolScope::Global, |symbol| symbol.scope),
+            section: None,
+            value: 0,
+            size: preserved.map_or(0, |symbol| symbol.size),
+        });
     }
 
     for reloc in &plan.relocs {
@@ -752,8 +798,12 @@ pub fn write_object_container(container: &ContainerFile) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     use fp_core::asmir::{AsmArchitecture, AsmEndianness, AsmObjectFormat, AsmTarget};
+    use fp_core::container::{
+        ContainerEndianness, ContainerFile, ContainerKind, ContainerSymbol, ContainerSymbolKind,
+        ContainerSymbolScope,
+    };
     use fp_core::lir::CallingConvention;
-    use object::Object as _;
+    use object::{Object as _, ObjectSymbol as _};
 
     #[test]
     fn container_writer_emits_parseable_elf_object() {
@@ -789,5 +839,90 @@ mod tests {
         assert_eq!(parsed.format(), object::BinaryFormat::Elf);
         assert_eq!(parsed.architecture(), object::Architecture::X86_64);
         assert!(parsed.section_by_name(".text").is_some());
+    }
+
+    #[test]
+    fn container_from_emit_plan_preserves_symbol_scopes_from_asmir_container() {
+        let mut asmir = fp_core::asmir::AsmProgram::new(AsmTarget {
+            architecture: AsmArchitecture::X86_64,
+            object_format: AsmObjectFormat::Elf,
+            endianness: AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: Some(CallingConvention::X86_64SysV),
+        });
+        let mut preserved = ContainerFile::new(
+            ContainerKind::Object,
+            AsmObjectFormat::Elf,
+            ContainerArchitecture::X86_64,
+            ContainerEndianness::Little,
+        );
+        preserved.add_symbol(ContainerSymbol {
+            name: "main".to_string(),
+            kind: ContainerSymbolKind::Text,
+            scope: ContainerSymbolScope::Local,
+            section: Some(0),
+            value: 0,
+            size: 1,
+        });
+        preserved.add_symbol(ContainerSymbol {
+            name: "puts".to_string(),
+            kind: ContainerSymbolKind::Text,
+            scope: ContainerSymbolScope::Weak,
+            section: None,
+            value: 0,
+            size: 0,
+        });
+        asmir.container = Some(preserved);
+
+        let mut symbols = HashMap::new();
+        symbols.insert("main".to_string(), 0);
+        let plan = EmitPlan {
+            format: TargetFormat::Elf,
+            arch: TargetArch::X86_64,
+            asmir,
+            text: vec![0xE8, 0, 0, 0, 0, 0xC3],
+            rodata: Vec::new(),
+            data: Vec::new(),
+            relocs: vec![crate::emit::Relocation {
+                offset: 1,
+                kind: RelocKind::CallRel32,
+                section: RelocSection::Text,
+                symbol: "puts".to_string(),
+                addend: 0,
+            }],
+            symbols,
+            rodata_symbols: HashMap::new(),
+            data_symbols: HashMap::new(),
+            entry_offset: 0,
+        };
+
+        let container = container_from_emit_plan(TargetFormat::Elf, TargetArch::X86_64, &plan)
+            .expect("container conversion should succeed");
+        let main = container
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "main")
+            .expect("main symbol should exist");
+        assert_eq!(main.scope, ContainerSymbolScope::Local);
+        let puts = container
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "puts")
+            .expect("puts symbol should exist");
+        assert_eq!(puts.scope, ContainerSymbolScope::Weak);
+
+        let bytes = write_object_container(&container).expect("object write should succeed");
+        let parsed = object::File::parse(bytes.as_slice()).expect("object parse should succeed");
+        let parsed_main = parsed
+            .symbols()
+            .find(|symbol| symbol.name().ok() == Some("main"))
+            .expect("main should be present");
+        assert!(!parsed_main.is_global());
+
+        let parsed_puts = parsed
+            .symbols()
+            .find(|symbol| symbol.name().ok() == Some("puts"))
+            .expect("puts should be present");
+        assert!(parsed_puts.is_weak());
     }
 }

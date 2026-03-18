@@ -1,4 +1,5 @@
 use crate::binary::{DataRegion, RipSymbol, RipSymbolKind, TextRelocation, aarch64, x86_64};
+use crate::container::container_kind_for_object_kind;
 use fp_core::asmir::{
     AsmArchitecture, AsmConstant, AsmEndianness, AsmFunction, AsmFunctionSignature, AsmGlobal,
     AsmGlobalRelocation, AsmLocal, AsmObjectFormat, AsmProgram, AsmRelocationKind, AsmSection,
@@ -6,10 +7,10 @@ use fp_core::asmir::{
     AsmType,
 };
 use fp_core::container::{
-    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerKind,
-    ContainerRelocation, ContainerRelocationEncoding, ContainerRelocationKind,
-    ContainerRelocationSpec, ContainerRelocationTarget, ContainerSection, ContainerSectionKind,
-    ContainerSymbol, ContainerSymbolKind, ContainerSymbolScope,
+    ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerRelocation,
+    ContainerRelocationEncoding, ContainerRelocationKind, ContainerRelocationSpec,
+    ContainerRelocationTarget, ContainerSection, ContainerSectionKind, ContainerSymbol,
+    ContainerSymbolKind, ContainerSymbolScope,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
@@ -29,6 +30,16 @@ fn normalize_symbol_name<'a>(object_format: &AsmObjectFormat, raw: &'a str) -> &
             }
         }
         _ => raw,
+    }
+}
+
+fn container_symbol_scope(symbol: &object::Symbol<'_, '_>) -> ContainerSymbolScope {
+    if symbol.is_weak() {
+        ContainerSymbolScope::Weak
+    } else if symbol.is_global() {
+        ContainerSymbolScope::Global
+    } else {
+        ContainerSymbolScope::Local
     }
 }
 
@@ -56,10 +67,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         _ => AsmObjectFormat::Raw,
     };
 
-    let container_kind = match file.kind() {
-        object::ObjectKind::Executable => ContainerKind::Executable,
-        _ => ContainerKind::Object,
-    };
+    let container_kind = container_kind_for_object_kind(file.kind());
     let container_format = match file.format() {
         object::BinaryFormat::Elf => AsmObjectFormat::Elf,
         object::BinaryFormat::MachO => AsmObjectFormat::MachO,
@@ -118,14 +126,10 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
             object::SymbolKind::Section => ContainerSymbolKind::Section,
             _ => ContainerSymbolKind::Other,
         };
-        let scope = match symbol.scope() {
-            object::SymbolScope::Compilation | object::SymbolScope::Linkage => {
-                ContainerSymbolScope::Local
-            }
-            object::SymbolScope::Dynamic => ContainerSymbolScope::Global,
-            object::SymbolScope::Unknown => ContainerSymbolScope::Local,
-        };
-        let section = symbol.section_index().and_then(|idx| section_ids.get(&idx).copied());
+        let scope = container_symbol_scope(&symbol);
+        let section = symbol
+            .section_index()
+            .and_then(|idx| section_ids.get(&idx).copied());
         let value = if let Some(idx) = symbol.section_index() {
             file.section_by_index(idx)
                 .ok()
@@ -189,9 +193,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
             let encoding = match relocation.encoding() {
                 object::RelocationEncoding::Generic => ContainerRelocationEncoding::Generic,
                 object::RelocationEncoding::X86Branch => ContainerRelocationEncoding::X86Branch,
-                object::RelocationEncoding::AArch64Call => {
-                    ContainerRelocationEncoding::Aarch64Call
-                }
+                object::RelocationEncoding::AArch64Call => ContainerRelocationEncoding::Aarch64Call,
                 _ => ContainerRelocationEncoding::Other,
             };
             container.add_relocation(ContainerRelocation {
@@ -505,9 +507,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                 section: Some(".rodata".to_string()),
                 linkage: Linkage::Internal,
                 visibility: Visibility::Default,
-                alignment: Some(
-                    (section.align().max(1)).min(u64::from(u32::MAX)) as u32,
-                ),
+                alignment: Some((section.align().max(1)).min(u64::from(u32::MAX)) as u32),
                 is_constant: true,
             });
             saw_rodata = true;
@@ -533,15 +533,14 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
             }
             let bytes = &section_bytes[symbol_offset..symbol_offset + symbol_size];
 
-            if let Some(text) = bytes
-                .strip_suffix(&[0])
-                .and_then(|payload| {
-                    if payload.iter().any(|byte| *byte == 0) {
-                        return None;
-                    }
-                    std::str::from_utf8(payload).ok().map(|value| value.to_string())
-                })
-            {
+            if let Some(text) = bytes.strip_suffix(&[0]).and_then(|payload| {
+                if payload.iter().any(|byte| *byte == 0) {
+                    return None;
+                }
+                std::str::from_utf8(payload)
+                    .ok()
+                    .map(|value| value.to_string())
+            }) {
                 rodata_cstrings.insert(name.to_string(), text);
             }
 
@@ -606,10 +605,9 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         }
 
         let bytes: Vec<u8> = match section.kind() {
-            object::SectionKind::Data => section
-                .data()
-                .map(|data| data.to_vec())
-                .unwrap_or_default(),
+            object::SectionKind::Data => {
+                section.data().map(|data| data.to_vec()).unwrap_or_default()
+            }
             object::SectionKind::UninitializedData => vec![0u8; section.size() as usize],
             _ => Vec::new(),
         };
@@ -668,7 +666,11 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         saw_data = true;
     }
     if saw_data {
-        if !program.sections.iter().any(|section| section.name == ".data") {
+        if !program
+            .sections
+            .iter()
+            .any(|section| section.name == ".data")
+        {
             program.sections.push(AsmSection {
                 name: ".data".to_string(),
                 kind: AsmSectionKind::Data,
@@ -727,8 +729,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                 text_section.address(),
                 file.entry(),
                 &elf_rip_symbols,
-            )
-            {
+            ) {
                 text_symbols.push((Name::new("main"), 0, text_bytes.len()));
                 canonicalize_sysv_main_args = true;
                 sysv_main_entry_offset = Some(main_offset as u64);
@@ -920,22 +921,20 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
             AsmArchitecture::Aarch64 => {
                 aarch64::lift_function_bytes(code, symbol_relocs.as_slice(), syscall_convention)?
             }
-            AsmArchitecture::X86_64 => {
-                x86_64::lift_function_bytes_with_symbols(
-                    code,
-                    symbol_relocs.as_slice(),
-                    syscall_convention,
-                    text_section.address() + symbol_offset as u64,
-                    Some(&elf_rip_symbols),
-                    Some(&elf_plt_targets),
-                    Some(&rodata_cstrings),
-                    Some(&rodata_cstrings_by_addr),
-                    Some(&data_regions),
-                    entry_offset,
-                    false,
-                    false,
-                )?
-            }
+            AsmArchitecture::X86_64 => x86_64::lift_function_bytes_with_symbols(
+                code,
+                symbol_relocs.as_slice(),
+                syscall_convention,
+                text_section.address() + symbol_offset as u64,
+                Some(&elf_rip_symbols),
+                Some(&elf_plt_targets),
+                Some(&rodata_cstrings),
+                Some(&rodata_cstrings_by_addr),
+                Some(&data_regions),
+                entry_offset,
+                false,
+                false,
+            )?,
             _ => {
                 return Err(Error::from(
                     "object lift internal error: unsupported architecture",
@@ -1080,7 +1079,8 @@ fn build_elf_dynamic_symbol_map(
 
         if let Some(plt_base) = plt_base {
             if let Some(index) = plt_index_by_got_slot.get(&reloc.r_offset).copied() {
-                let entry = plt_base.saturating_add(plt_entry_size.saturating_mul(index as u64 + 1));
+                let entry =
+                    plt_base.saturating_add(plt_entry_size.saturating_mul(index as u64 + 1));
                 plt_targets.insert(entry, import.clone());
             }
         }
@@ -1090,10 +1090,7 @@ fn build_elf_dynamic_symbol_map(
 }
 
 fn normalize_elf_import_symbol(name: &str) -> String {
-    let base = name
-        .split_once('@')
-        .map(|(head, _)| head)
-        .unwrap_or(name);
+    let base = name.split_once('@').map(|(head, _)| head).unwrap_or(name);
 
     // Keep glibc-style names (for example `__printf_chk`) intact so that
     // platform shims can preserve the original call ABI.
@@ -1175,10 +1172,9 @@ fn apply_elf_relr_relocations(
     }
 
     for reloc_addr in relocs {
-        let source_region_idx = match rodata_regions
-            .iter()
-            .position(|region| reloc_addr >= region.start && reloc_addr.saturating_add(8) <= region.end)
-        {
+        let source_region_idx = match rodata_regions.iter().position(|region| {
+            reloc_addr >= region.start && reloc_addr.saturating_add(8) <= region.end
+        }) {
             Some(idx) => idx,
             None => continue,
         };
@@ -1208,7 +1204,8 @@ fn apply_elf_relr_relocations(
 
         rodata_regions[source_region_idx].bytes[source_offset..source_offset + 8].fill(0);
 
-        let Some(&global_idx) = global_by_name.get(&rodata_regions[source_region_idx].symbol) else {
+        let Some(&global_idx) = global_by_name.get(&rodata_regions[source_region_idx].symbol)
+        else {
             continue;
         };
         let global = &mut program.globals[global_idx];
