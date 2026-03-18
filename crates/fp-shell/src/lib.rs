@@ -13,11 +13,6 @@ use std::path::{Path, PathBuf};
 
 const BACKEND_HELPERS_SOURCE: &str = include_str!("std/shell/backend.fp");
 const BACKEND_HELPERS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/std/shell/backend.fp");
-const RUNTIME_HELPERS_SOURCE: &str = include_str!("std/shell/runtime_helpers.fp");
-const RUNTIME_HELPERS_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/src/std/shell/runtime_helpers.fp"
-);
 
 pub use fp_shell_core::{InventoryHost, ScriptTarget as ShellTarget, TransportKind};
 pub use inventory::load_inventory;
@@ -86,9 +81,13 @@ pub fn compile_source_with_options(
 
     let inventory = options.inventory.clone().unwrap_or_default();
     let mut program = lower_runtime_helpers(&inventory, &target_env)?;
-    let user_program = lower::lower_node(&ast, &inventory).map_err(ShellError::Lower)?;
+    let user_program =
+        lower::lower_node(&ast, &inventory, target_env.lang.as_deref()).map_err(ShellError::Lower)?;
     program.externs.extend(user_program.externs);
     program.items.extend(user_program.items);
+    program
+        .validate_externs(target)
+        .map_err(ShellError::Lower)?;
 
     let code = match target {
         ScriptTarget::Bash => fp_bash::BashTarget::new()
@@ -120,36 +119,7 @@ fn lower_runtime_helpers(
         })?;
     let mut backend_ast = backend.ast;
     filter_items_in_node(&mut backend_ast, target_env);
-    let runtime = frontend
-        .parse(
-            RUNTIME_HELPERS_SOURCE,
-            Some(Path::new(RUNTIME_HELPERS_PATH)),
-        )
-        .map_err(|err| {
-            ShellError::Lower(format!("failed to parse shell runtime helpers: {}", err))
-        })?;
-    let mut runtime_ast = runtime.ast;
-    filter_items_in_node(&mut runtime_ast, target_env);
-    merge_helper_ast(&mut backend_ast, runtime_ast)?;
-    lower::lower_node(&backend_ast, inventory).map_err(ShellError::Lower)
-}
-
-fn merge_helper_ast(
-    backend_ast: &mut fp_core::ast::Node,
-    runtime_ast: fp_core::ast::Node,
-) -> Result<(), ShellError> {
-    let fp_core::ast::NodeKind::File(backend_file) = backend_ast.kind_mut() else {
-        return Err(ShellError::Lower(
-            "shell backend helpers must be a file document".to_string(),
-        ));
-    };
-    let fp_core::ast::NodeKind::File(runtime_file) = runtime_ast.kind else {
-        return Err(ShellError::Lower(
-            "shell runtime helpers must be a file document".to_string(),
-        ));
-    };
-    backend_file.items.extend(runtime_file.items);
-    Ok(())
+    lower::lower_node(&backend_ast, inventory, target_env.lang.as_deref()).map_err(ShellError::Lower)
 }
 
 fn shell_target_env(target: ScriptTarget) -> TargetEnv {

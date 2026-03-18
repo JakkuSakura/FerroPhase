@@ -1,5 +1,5 @@
 use crate::ShellError;
-use fp_core::ast::{Ident, Item, ItemImportPath, ItemImportTree, ItemKind, NodeKind};
+use fp_core::ast::{Item, ItemImportPath, ItemImportTree, ItemKind, NodeKind};
 use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::utils::to_json::ToJson;
@@ -13,11 +13,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-const INVENTORY_SHELL_STD_SOURCE: &str = include_str!("std/shell/inventory_shell_std.fp");
-const INVENTORY_SHELL_STD_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/src/std/shell/inventory_shell_std.fp"
-);
+const INVENTORY_SHELL_STD_SOURCE: &str = include_str!("std/shell/inventory.fp");
+const INVENTORY_SHELL_STD_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/src/std/shell/inventory.fp");
 
 #[derive(Debug, serde::Deserialize, Default)]
 struct InventoryDocument {
@@ -258,9 +256,13 @@ fn rewrite_inventory_shell_import_tree(tree: &mut ItemImportTree) {
                 rewrite_inventory_shell_import_tree(segment);
             }
             if starts_with_std_shell(&segments) {
-                segments.splice(0..2, [ItemImportTree::Ident(Ident::new("fp_shell_std"))]);
+                segments.drain(0..2);
             }
-            *tree = ItemImportTree::Path(ItemImportPath { segments });
+            *tree = match segments.len() {
+                0 => ItemImportTree::Path(ItemImportPath { segments }),
+                1 => segments.into_iter().next().expect("single segment"),
+                _ => ItemImportTree::Path(ItemImportPath { segments }),
+            };
         }
         ItemImportTree::Group(group) => {
             for item in &mut group.items {
