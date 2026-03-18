@@ -19,8 +19,8 @@ use fp_core::asmir::{
 use fp_core::error::Result;
 use fp_core::lir::layout::size_of;
 use fp_core::lir::{
-    Linkage, LirConstant, LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirValue,
-    Name, Visibility,
+    Linkage, LirConstant, LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator,
+    LirValue, Name, Visibility,
 };
 use std::collections::HashMap;
 
@@ -436,10 +436,7 @@ fn canonicalize_instruction_kind_registers(
                 canonicalize_value(fd, map, next_virtual_id);
             }
             fp_core::asmir::AsmSysOp::Open {
-                path,
-                flags,
-                mode,
-                ..
+                path, flags, mode, ..
             } => {
                 canonicalize_value(path, map, next_virtual_id);
                 canonicalize_value(flags, map, next_virtual_id);
@@ -916,11 +913,8 @@ fn intern_string_constants(program: &mut AsmProgram) {
         match constant {
             AsmConstant::String(text) => {
                 let symbol = ctx.intern_cstring(text);
-                *constant = AsmConstant::GlobalRef(
-                    symbol,
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                    Vec::new(),
-                );
+                *constant =
+                    AsmConstant::GlobalRef(symbol, AsmType::Ptr(Box::new(AsmType::I8)), Vec::new());
             }
             AsmConstant::Array(values, _) | AsmConstant::Struct(values, _) => {
                 for value in values {
@@ -968,11 +962,7 @@ fn intern_string_constants(program: &mut AsmProgram) {
             AsmInstructionKind::Load { address, .. } => {
                 rewrite_value(address, ctx);
             }
-            AsmInstructionKind::Store {
-                value,
-                address,
-                ..
-            } => {
+            AsmInstructionKind::Store { value, address, .. } => {
                 rewrite_value(value, ctx);
                 rewrite_value(address, ctx);
             }
@@ -1055,7 +1045,9 @@ fn intern_string_constants(program: &mut AsmProgram) {
                 }
             }
             AsmInstructionKind::LandingPad {
-                personality, clauses, ..
+                personality,
+                clauses,
+                ..
             } => {
                 if let Some(personality) = personality {
                     rewrite_value(personality, ctx);
@@ -1111,10 +1103,7 @@ fn intern_string_constants(program: &mut AsmProgram) {
                 }
                 fp_core::asmir::AsmSysOp::Close { fd } => rewrite_value(fd, ctx),
                 fp_core::asmir::AsmSysOp::Open {
-                    path,
-                    flags,
-                    mode,
-                    ..
+                    path, flags, mode, ..
                 } => {
                     rewrite_value(path, ctx);
                     rewrite_value(flags, ctx);
@@ -1182,7 +1171,9 @@ fn intern_string_constants(program: &mut AsmProgram) {
             | AsmTerminator::CleanupRet {
                 cleanup_pad: value, ..
             }
-            | AsmTerminator::CatchRet { catch_pad: value, .. } => rewrite_value(value, ctx),
+            | AsmTerminator::CatchRet {
+                catch_pad: value, ..
+            } => rewrite_value(value, ctx),
             AsmTerminator::CatchSwitch { parent_pad, .. } => {
                 if let Some(value) = parent_pad {
                     rewrite_value(value, ctx);
@@ -1221,8 +1212,7 @@ fn normalize_syscall_conventions_for_target(program: &mut AsmProgram) {
         for block in &mut function.basic_blocks {
             let mut last_constants: HashMap<u32, AsmConstant> = HashMap::new();
             for instruction in &mut block.instructions {
-                if let AsmInstructionKind::Freeze(AsmValue::Constant(constant)) =
-                    &instruction.kind
+                if let AsmInstructionKind::Freeze(AsmValue::Constant(constant)) = &instruction.kind
                 {
                     last_constants.insert(instruction.id, constant.clone());
                 }
@@ -1241,11 +1231,10 @@ fn normalize_syscall_conventions_for_target(program: &mut AsmProgram) {
                         (
                             AsmSyscallConvention::DarwinX86_64,
                             AsmSyscallConvention::DarwinAarch64
+                        ) | (
+                            AsmSyscallConvention::DarwinAarch64,
+                            AsmSyscallConvention::DarwinX86_64
                         )
-                            | (
-                                AsmSyscallConvention::DarwinAarch64,
-                                AsmSyscallConvention::DarwinX86_64
-                            )
                     ) {
                         let constant_number = match number {
                             AsmValue::Constant(AsmConstant::UInt(value, ty)) => {
@@ -1254,15 +1243,15 @@ fn normalize_syscall_conventions_for_target(program: &mut AsmProgram) {
                             AsmValue::Constant(AsmConstant::Int(value, ty)) => {
                                 Some((*value, ty.clone()))
                             }
-                            AsmValue::Register(id) => last_constants
-                                .get(id)
-                                .and_then(|constant| match constant {
+                            AsmValue::Register(id) => {
+                                last_constants.get(id).and_then(|constant| match constant {
                                     AsmConstant::UInt(value, ty) => {
                                         Some((*value as i64, ty.clone()))
                                     }
                                     AsmConstant::Int(value, ty) => Some((*value, ty.clone())),
                                     _ => None,
-                                }),
+                                })
+                            }
                             _ => None,
                         };
 
@@ -1298,7 +1287,9 @@ fn syscall_convention_for_target(target: &AsmTarget) -> Option<AsmSyscallConvent
         (AsmArchitecture::X86_64, AsmObjectFormat::MachO) => {
             Some(AsmSyscallConvention::DarwinX86_64)
         }
-        (AsmArchitecture::Aarch64, AsmObjectFormat::Elf) => Some(AsmSyscallConvention::LinuxAarch64),
+        (AsmArchitecture::Aarch64, AsmObjectFormat::Elf) => {
+            Some(AsmSyscallConvention::LinuxAarch64)
+        }
         (AsmArchitecture::Aarch64, AsmObjectFormat::MachO) => {
             Some(AsmSyscallConvention::DarwinAarch64)
         }
@@ -1888,7 +1879,11 @@ fn x86_typed_operands(
             operands.push(x86_operand(vector, ctx));
             operands.push(X86Operand::Immediate((*lane).into()));
         }
-        AsmInstructionKind::InsertLane { vector, value, lane } => {
+        AsmInstructionKind::InsertLane {
+            vector,
+            value,
+            lane,
+        } => {
             operands.push(x86_operand(vector, ctx));
             operands.push(x86_operand(value, ctx));
             operands.push(X86Operand::Immediate((*lane).into()));
@@ -2309,7 +2304,11 @@ fn aarch64_typed_operands(
             operands.push(aarch64_operand(vector, ctx));
             operands.push(Aarch64Operand::Immediate((*lane).into()));
         }
-        AsmInstructionKind::InsertLane { vector, value, lane } => {
+        AsmInstructionKind::InsertLane {
+            vector,
+            value,
+            lane,
+        } => {
             operands.push(aarch64_operand(vector, ctx));
             operands.push(aarch64_operand(value, ctx));
             operands.push(Aarch64Operand::Immediate((*lane).into()));
@@ -2531,9 +2530,7 @@ fn x86_opcode(kind: &AsmInstructionKind, ty: Option<&AsmType>) -> X86Opcode {
         AsmInstructionKind::BuildVector { .. }
         | AsmInstructionKind::ExtractLane { .. }
         | AsmInstructionKind::InsertLane { .. }
-        | AsmInstructionKind::ZipLow { .. } => {
-            X86Opcode::Mov
-        }
+        | AsmInstructionKind::ZipLow { .. } => X86Opcode::Mov,
         AsmInstructionKind::SymbolAddress { .. } => X86Opcode::Mov,
         AsmInstructionKind::Unreachable => X86Opcode::Ud2,
     }
@@ -2684,7 +2681,11 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
             operands.push(value_operand(vector));
             operands.push(AsmOperand::Immediate((*lane).into()));
         }
-        AsmInstructionKind::InsertLane { vector, lane, value } => {
+        AsmInstructionKind::InsertLane {
+            vector,
+            lane,
+            value,
+        } => {
             operands.push(value_operand(vector));
             operands.push(value_operand(value));
             operands.push(AsmOperand::Immediate((*lane).into()));
