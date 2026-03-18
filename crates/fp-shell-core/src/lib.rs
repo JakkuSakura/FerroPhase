@@ -84,13 +84,23 @@ impl ScriptTarget {
 
 #[derive(Debug, Clone)]
 pub struct ScriptProgram {
+    pub externs: HashMap<String, ExternalFunction>,
     pub items: Vec<ScriptItem>,
 }
 
 impl Default for ScriptProgram {
     fn default() -> Self {
-        Self { items: Vec::new() }
+        Self {
+            externs: HashMap::new(),
+            items: Vec::new(),
+        }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalFunction {
+    pub name: String,
+    pub abi: String,
 }
 
 #[derive(Debug, Clone)]
@@ -117,7 +127,6 @@ pub enum Statement {
     Copy(OperationCopy),
     Template(OperationTemplate),
     Rsync(OperationRsync),
-    Primitive(PrimitiveStmt),
     If(IfStmt),
     While(WhileStmt),
     ForEach(ForEachStmt),
@@ -220,78 +229,6 @@ pub struct InvokeStmt {
 }
 
 #[derive(Debug, Clone)]
-pub enum PrimitiveStmt {
-    RunLocal {
-        command: StringExpr,
-    },
-    RunSsh {
-        host: StringExpr,
-        command: StringExpr,
-    },
-    RunDocker {
-        host: StringExpr,
-        command: StringExpr,
-    },
-    RunKubectl {
-        host: StringExpr,
-        command: StringExpr,
-    },
-    RunWinrm {
-        host: StringExpr,
-        command: StringExpr,
-    },
-    CopyLocal {
-        source: StringExpr,
-        destination: StringExpr,
-    },
-    CopySsh {
-        host: StringExpr,
-        source: StringExpr,
-        destination: StringExpr,
-    },
-    CopyDocker {
-        host: StringExpr,
-        source: StringExpr,
-        destination: StringExpr,
-    },
-    CopyKubectl {
-        host: StringExpr,
-        source: StringExpr,
-        destination: StringExpr,
-    },
-    CopyWinrm {
-        host: StringExpr,
-        source: StringExpr,
-        destination: StringExpr,
-    },
-    RenderTemplate {
-        source: StringExpr,
-        destination: StringExpr,
-        vars: StringExpr,
-    },
-    RemoveFile {
-        path: StringExpr,
-    },
-    RsyncSsh {
-        host: StringExpr,
-        flags: StringExpr,
-        source: StringExpr,
-        destination: StringExpr,
-    },
-    UnsupportedTransport {
-        operation: UnsupportedTransportOperation,
-        transport: StringExpr,
-    },
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum UnsupportedTransportOperation {
-    Run,
-    Copy,
-    Rsync,
-}
-
-#[derive(Debug, Clone)]
 pub enum ValueExpr {
     String(StringExpr),
     Int(IntExpr),
@@ -369,8 +306,7 @@ pub enum ArithmeticOp {
 pub enum StringExpr {
     Literal(String),
     Variable(String),
-    HostTransport(Box<StringExpr>),
-    TempPath,
+    Call { name: String, args: Vec<ValueExpr> },
     Interpolated(Vec<StringPart>),
 }
 
@@ -378,6 +314,7 @@ pub enum StringExpr {
 pub enum StringPart {
     Literal(String),
     Variable(String),
+    Call { name: String, args: Vec<ValueExpr> },
 }
 
 pub trait ScriptRenderer {

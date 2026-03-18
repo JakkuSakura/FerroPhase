@@ -46,7 +46,7 @@ fn parses_extern_c_fn_decl() {
     match item.kind() {
         ItemKind::DeclFunction(decl) => {
             assert_eq!(decl.name.as_str(), "strlen");
-            assert_eq!(decl.sig.abi, Abi::C);
+            assert_eq!(decl.sig.abi, Abi::Named("C".to_string()));
         }
         other => panic!("expected extern fn decl, got {:?}", other),
     }
@@ -58,7 +58,7 @@ fn parses_extern_c_fn_def() {
     match item.kind() {
         ItemKind::DefFunction(def) => {
             assert_eq!(def.name.as_str(), "add");
-            assert_eq!(def.sig.abi, Abi::C);
+            assert_eq!(def.sig.abi, Abi::Named("C".to_string()));
         }
         other => panic!("expected extern fn def, got {:?}", other),
     }
@@ -74,7 +74,7 @@ fn parses_extern_c_block() {
     for item in items {
         match item.kind() {
             ItemKind::DeclFunction(decl) => {
-                assert_eq!(decl.sig.abi, Abi::C);
+                assert_eq!(decl.sig.abi, Abi::Named("C".to_string()));
             }
             other => panic!("expected decl function, got {:?}", other),
         }

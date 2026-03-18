@@ -1,16 +1,15 @@
 use fp_core::ast::{
-    BlockStmt, Expr, ExprBlock, ExprFor, ExprIf, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
-    ExprMatch, ExprMatchCase, Item, ItemDefFunction, ItemKind, Name, Node, NodeKind, PatternKind,
-    Value,
+    Abi, BlockStmt, Expr, ExprBlock, ExprFor, ExprIf, ExprIntrinsicCall, ExprInvoke,
+    ExprInvokeTarget, ExprMatch, ExprMatchCase, Item, ItemDefFunction, ItemKind, Name, Node,
+    NodeKind, PatternKind, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_shell_core::{
-    ArithmeticOp, Block, BoolExpr, ComparisonOp, ConditionExpr, ForEachStmt, FunctionDef, HostExpr,
-    IfStmt, IntExpr, InvokeStmt, LetStmt, OperationCopy, OperationGuards, OperationRsync,
-    OperationRun, OperationTemplate, PrimitiveStmt, RsyncOptions, ScriptItem, ScriptProgram,
-    ShellInventory, Statement, StringComparisonOp, StringExpr, StringPart,
-    UnsupportedTransportOperation, ValueExpr, WhileStmt,
+    ArithmeticOp, Block, BoolExpr, ComparisonOp, ConditionExpr, ExternalFunction, ForEachStmt,
+    FunctionDef, HostExpr, IfStmt, IntExpr, InvokeStmt, LetStmt, OperationCopy, OperationGuards,
+    OperationRsync, OperationRun, OperationTemplate, RsyncOptions, ScriptItem, ScriptProgram,
+    ShellInventory, Statement, StringComparisonOp, StringExpr, StringPart, ValueExpr, WhileStmt,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -79,6 +78,19 @@ impl<'a> Lowerer<'a> {
                 self.known_functions
                     .insert(function.name.as_str().to_string());
             }
+            ItemKind::DeclFunction(function) => {
+                let abi = match &function.sig.abi {
+                    Abi::Rust => return,
+                    Abi::Named(name) => name.clone(),
+                };
+                self.program.externs.insert(
+                    function.name.as_str().to_string(),
+                    ExternalFunction {
+                        name: function.name.as_str().to_string(),
+                        abi,
+                    },
+                );
+            }
             ItemKind::Module(module) => {
                 for child in &module.items {
                     self.discover_functions(child);
@@ -127,6 +139,7 @@ impl<'a> Lowerer<'a> {
                     self.lower_item(child, context, target.as_deref_mut())?;
                 }
             }
+            ItemKind::DeclFunction(_) => {}
             ItemKind::Expr(expr) => {
                 if let Some(target) = target {
                     self.lower_expr_into(expr, context, target)?;
@@ -180,16 +193,6 @@ impl<'a> Lowerer<'a> {
                 if let Some(statement) = self.lower_shell_invoke(invoke, context)? {
                     out.extend(statement);
                     Ok(())
-                } else if let Some(path) = invoke_target_segments(&invoke.target) {
-                    if let Some(statement) = self.lower_primitive_statement(&path, invoke) {
-                        out.push(statement);
-                        Ok(())
-                    } else if let Some(statement) = self.lower_function_invoke(invoke)? {
-                        out.push(statement);
-                        Ok(())
-                    } else {
-                        Ok(())
-                    }
                 } else if let Some(statement) = self.lower_function_invoke(invoke)? {
                     out.push(statement);
                     Ok(())
@@ -485,6 +488,9 @@ impl<'a> Lowerer<'a> {
             return Ok(None);
         }
         let name = &path[0];
+        if !self.is_known_callable(name) {
+            return Ok(None);
+        }
         let mut args = Vec::new();
         for arg in &invoke.args {
             args.push(self.lower_value_expr(arg)?);
@@ -684,6 +690,16 @@ impl<'a> Lowerer<'a> {
     }
 
     fn lower_value_expr(&self, expr: &Expr) -> Result<ValueExpr, String> {
+        if let fp_core::ast::ExprKind::Name(Name::Ident(ident)) = expr.kind() {
+            if let Some(value) = self.lookup_var(ident.as_str()) {
+                return Ok(match value {
+                    VarValue::String(value) => ValueExpr::String(value.clone()),
+                    VarValue::Int(value) => ValueExpr::Int(IntExpr::Literal(*value)),
+                    VarValue::Bool(value) => ValueExpr::Bool(BoolExpr::Literal(*value)),
+                    VarValue::StringList(values) => ValueExpr::StringList(values.clone()),
+                });
+            }
+        }
         if let Some(values) = self.resolve_string_list_expr(expr) {
             if values.len() > 1 {
                 return Ok(ValueExpr::StringList(values));
@@ -711,7 +727,21 @@ impl<'a> Lowerer<'a> {
         match expr.kind() {
             fp_core::ast::ExprKind::Invoke(invoke) => {
                 let path = invoke_target_segments(&invoke.target)?;
-                self.lower_primitive_string_expr(&path, invoke)
+                if path.len() != 1 {
+                    return None;
+                }
+                let name = &path[0];
+                if !self.is_known_callable(name) {
+                    return None;
+                }
+                let mut args = Vec::new();
+                for arg in &invoke.args {
+                    args.push(self.lower_value_expr(arg).ok()?);
+                }
+                Some(StringExpr::Call {
+                    name: name.clone(),
+                    args,
+                })
             }
             fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
                 Value::String(text) => Some(StringExpr::Literal(text.value.clone())),
@@ -789,200 +819,6 @@ impl<'a> Lowerer<'a> {
             return Some(StringExpr::Interpolated(parts));
         }
         None
-    }
-
-    fn lower_primitive_string_expr(
-        &self,
-        path: &[String],
-        invoke: &ExprInvoke,
-    ) -> Option<StringExpr> {
-        match path {
-            [std, shell, name] if std == "std" && shell == "shell" && name == "host_transport" => {
-                let host = invoke.args.first()?;
-                let host = self.lower_string_expr(host)?;
-                Some(StringExpr::HostTransport(Box::new(host)))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_temp_path" =>
-            {
-                if !invoke.args.is_empty() || !invoke.kwargs.is_empty() {
-                    return None;
-                }
-                Some(StringExpr::TempPath)
-            }
-            _ => None,
-        }
-    }
-
-    fn lower_primitive_statement(&self, path: &[String], invoke: &ExprInvoke) -> Option<Statement> {
-        match path {
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_run_local" =>
-            {
-                let command = self.lower_string_expr(invoke.args.first()?)?;
-                Some(Statement::Primitive(PrimitiveStmt::RunLocal { command }))
-            }
-            [std, shell, name] if std == "std" && shell == "shell" && name == "backend_run_ssh" => {
-                let host = self.lower_string_expr(invoke.args.first()?)?;
-                let command = self.lower_string_expr(invoke.args.get(1)?)?;
-                Some(Statement::Primitive(PrimitiveStmt::RunSsh {
-                    host,
-                    command,
-                }))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_run_docker" =>
-            {
-                let host = self.lower_string_expr(invoke.args.first()?)?;
-                let command = self.lower_string_expr(invoke.args.get(1)?)?;
-                Some(Statement::Primitive(PrimitiveStmt::RunDocker {
-                    host,
-                    command,
-                }))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_run_kubectl" =>
-            {
-                let host = self.lower_string_expr(invoke.args.first()?)?;
-                let command = self.lower_string_expr(invoke.args.get(1)?)?;
-                Some(Statement::Primitive(PrimitiveStmt::RunKubectl {
-                    host,
-                    command,
-                }))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_run_winrm" =>
-            {
-                let host = self.lower_string_expr(invoke.args.first()?)?;
-                let command = self.lower_string_expr(invoke.args.get(1)?)?;
-                Some(Statement::Primitive(PrimitiveStmt::RunWinrm {
-                    host,
-                    command,
-                }))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_copy_local" =>
-            {
-                let source = self.lower_string_expr(invoke.args.first()?)?;
-                let destination = self.lower_string_expr(invoke.args.get(1)?)?;
-                Some(Statement::Primitive(PrimitiveStmt::CopyLocal {
-                    source,
-                    destination,
-                }))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_copy_ssh" =>
-            {
-                let host = self.lower_string_expr(invoke.args.first()?)?;
-                let source = self.lower_string_expr(invoke.args.get(1)?)?;
-                let destination = self.lower_string_expr(invoke.args.get(2)?)?;
-                Some(Statement::Primitive(PrimitiveStmt::CopySsh {
-                    host,
-                    source,
-                    destination,
-                }))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_copy_docker" =>
-            {
-                let host = self.lower_string_expr(invoke.args.first()?)?;
-                let source = self.lower_string_expr(invoke.args.get(1)?)?;
-                let destination = self.lower_string_expr(invoke.args.get(2)?)?;
-                Some(Statement::Primitive(PrimitiveStmt::CopyDocker {
-                    host,
-                    source,
-                    destination,
-                }))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_copy_kubectl" =>
-            {
-                let host = self.lower_string_expr(invoke.args.first()?)?;
-                let source = self.lower_string_expr(invoke.args.get(1)?)?;
-                let destination = self.lower_string_expr(invoke.args.get(2)?)?;
-                Some(Statement::Primitive(PrimitiveStmt::CopyKubectl {
-                    host,
-                    source,
-                    destination,
-                }))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_copy_winrm" =>
-            {
-                let host = self.lower_string_expr(invoke.args.first()?)?;
-                let source = self.lower_string_expr(invoke.args.get(1)?)?;
-                let destination = self.lower_string_expr(invoke.args.get(2)?)?;
-                Some(Statement::Primitive(PrimitiveStmt::CopyWinrm {
-                    host,
-                    source,
-                    destination,
-                }))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_render_template" =>
-            {
-                let source = self.lower_string_expr(invoke.args.first()?)?;
-                let destination = self.lower_string_expr(invoke.args.get(1)?)?;
-                let vars = self.lower_string_expr(invoke.args.get(2)?)?;
-                Some(Statement::Primitive(PrimitiveStmt::RenderTemplate {
-                    source,
-                    destination,
-                    vars,
-                }))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_remove_file" =>
-            {
-                let path = self.lower_string_expr(invoke.args.first()?)?;
-                Some(Statement::Primitive(PrimitiveStmt::RemoveFile { path }))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_rsync_ssh" =>
-            {
-                let host = self.lower_string_expr(invoke.args.first()?)?;
-                let flags = self.lower_string_expr(invoke.args.get(1)?)?;
-                let source = self.lower_string_expr(invoke.args.get(2)?)?;
-                let destination = self.lower_string_expr(invoke.args.get(3)?)?;
-                Some(Statement::Primitive(PrimitiveStmt::RsyncSsh {
-                    host,
-                    flags,
-                    source,
-                    destination,
-                }))
-            }
-            [std, shell, name]
-                if std == "std" && shell == "shell" && name == "backend_unsupported_transport" =>
-            {
-                let transport = self.lower_string_expr(invoke.args.first()?)?;
-                Some(Statement::Primitive(PrimitiveStmt::UnsupportedTransport {
-                    operation: UnsupportedTransportOperation::Run,
-                    transport,
-                }))
-            }
-            [std, shell, name]
-                if std == "std"
-                    && shell == "shell"
-                    && name == "backend_unsupported_copy_transport" =>
-            {
-                let transport = self.lower_string_expr(invoke.args.first()?)?;
-                Some(Statement::Primitive(PrimitiveStmt::UnsupportedTransport {
-                    operation: UnsupportedTransportOperation::Copy,
-                    transport,
-                }))
-            }
-            [std, shell, name]
-                if std == "std"
-                    && shell == "shell"
-                    && name == "backend_unsupported_rsync_transport" =>
-            {
-                let transport = self.lower_string_expr(invoke.args.first()?)?;
-                Some(Statement::Primitive(PrimitiveStmt::UnsupportedTransport {
-                    operation: UnsupportedTransportOperation::Rsync,
-                    transport,
-                }))
-            }
-            _ => None,
-        }
     }
 
     fn lower_bool_expr(&self, expr: &Expr) -> Option<BoolExpr> {
@@ -1217,6 +1053,10 @@ impl<'a> Lowerer<'a> {
         None
     }
 
+    fn is_known_callable(&self, name: &str) -> bool {
+        self.known_functions.contains(name) || self.program.externs.contains_key(name)
+    }
+
     fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
@@ -1270,8 +1110,9 @@ fn apply_command_options(command: StringExpr, cwd: Option<StringExpr>, sudo: boo
             parts.push(StringPart::Variable(name));
             StringExpr::Interpolated(parts)
         }
-        StringExpr::HostTransport(_) | StringExpr::TempPath => {
-            unreachable!("shell command options cannot wrap primitive string expressions")
+        StringExpr::Call { name, args } => {
+            parts.push(StringPart::Call { name, args });
+            StringExpr::Interpolated(parts)
         }
         StringExpr::Interpolated(mut more) => {
             parts.append(&mut more);
@@ -1284,9 +1125,7 @@ fn part_from_string_expr(expr: StringExpr) -> StringPart {
     match expr {
         StringExpr::Literal(text) => StringPart::Literal(text),
         StringExpr::Variable(name) => StringPart::Variable(name),
-        StringExpr::HostTransport(_) | StringExpr::TempPath => {
-            unreachable!("primitive string expressions cannot be interpolated directly")
-        }
+        StringExpr::Call { name, args } => StringPart::Call { name, args },
         StringExpr::Interpolated(parts) => {
             let mut flattened = String::new();
             for part in parts {
@@ -1297,6 +1136,12 @@ fn part_from_string_expr(expr: StringExpr) -> StringPart {
                             return StringPart::Literal(flattened);
                         }
                         return StringPart::Variable(name);
+                    }
+                    StringPart::Call { name, args } => {
+                        if !flattened.is_empty() {
+                            return StringPart::Literal(flattened);
+                        }
+                        return StringPart::Call { name, args };
                     }
                 }
             }

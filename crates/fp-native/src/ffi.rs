@@ -1,5 +1,5 @@
 use fp_core::ast::{
-    Abi, DecimalType, ExprKind, FunctionSignature, Name, Ty, TypeArray, TypeInt, TypePrimitive,
+    DecimalType, ExprKind, FunctionSignature, Name, Ty, TypeArray, TypeInt, TypePrimitive,
     TypeReference, TypeStruct, TypeStructural, TypeTuple, Value, ValueChar, ValueEscaped,
     ValueList, ValuePointer, ValueStruct, ValueStructural, ValueTuple,
 };
@@ -107,7 +107,7 @@ impl FfiRuntime {
         sig: &FunctionSignature,
         args: &[Value],
     ) -> Result<Value> {
-        if !matches!(sig.abi, Abi::C) {
+        if !sig.abi.is_c() {
             return Err(Error::from(format!(
                 "unsupported ABI for extern call: {:?}",
                 sig.abi

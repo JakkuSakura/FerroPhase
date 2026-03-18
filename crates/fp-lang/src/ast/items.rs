@@ -20,8 +20,6 @@ pub enum LowerItemsError {
     UnexpectedNode(SyntaxKind),
     #[error("missing required token: {0}")]
     MissingToken(&'static str),
-    #[error("unsupported extern ABI: {0}")]
-    UnsupportedAbi(String),
 }
 
 pub fn lower_items_from_cst(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
@@ -119,6 +117,7 @@ fn lower_extern_fn_decl(
         .clone()
         .ok_or(LowerItemsError::MissingToken("fn name"))?;
     Ok(ItemDeclFunction {
+        attrs: lower_outer_attrs(node),
         ty_annotation: None,
         name,
         sig,
@@ -144,10 +143,7 @@ fn lower_extern_abi(node: &SyntaxNode) -> Result<Abi, LowerItemsError> {
     } else {
         raw.clone()
     };
-    match cleaned.as_str() {
-        "C" | "c" => Ok(Abi::C),
-        other => Err(LowerItemsError::UnsupportedAbi(other.to_string())),
-    }
+    Ok(Abi::Named(cleaned))
 }
 
 fn lower_visibility(node: Option<&SyntaxNode>) -> Result<Visibility, LowerItemsError> {
@@ -904,6 +900,7 @@ fn lower_trait_member(node: &SyntaxNode) -> Result<Item, LowerItemsError> {
                 })));
             }
             Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
+                attrs: Vec::new(),
                 ty_annotation: None,
                 name,
                 sig,
@@ -938,6 +935,7 @@ fn lower_trait_member(node: &SyntaxNode) -> Result<Item, LowerItemsError> {
                 })));
             }
             Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
+                attrs: Vec::new(),
                 ty_annotation: None,
                 name,
                 sig,

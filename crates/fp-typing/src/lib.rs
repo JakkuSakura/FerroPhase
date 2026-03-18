@@ -1328,7 +1328,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let in_impl = self.impl_stack.last().is_some();
                 if !in_impl {
                     self.record_function_signature(&decl.name, &decl.sig);
-                    if decl.sig.abi == Abi::C {
+                    if decl.sig.abi.is_c() {
                         self.record_extern_function_signature(&decl.name, &decl.sig);
                     }
                     self.register_symbol(&decl.name);
@@ -2991,7 +2991,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn validate_extern_c_signature(&mut self, sig: &FunctionSignature) {
-        if !matches!(sig.abi, Abi::C) {
+        if !sig.abi.is_c() {
             return;
         }
         for param in &sig.params {

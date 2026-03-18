@@ -148,6 +148,7 @@ fn build_function_decl_item(
     };
 
     ItemDeclFunction {
+        attrs: Vec::new(),
         ty_annotation: Some(ty_annotation),
         name: name_ident,
         sig,

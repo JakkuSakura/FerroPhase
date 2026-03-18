@@ -417,7 +417,8 @@ impl HirGenerator {
     fn map_abi(&self, abi: &ast::Abi) -> hir::Abi {
         match abi {
             ast::Abi::Rust => hir::Abi::Rust,
-            ast::Abi::C => hir::Abi::C { unwind: false },
+            ast::Abi::Named(name) if name == "C" => hir::Abi::C { unwind: false },
+            ast::Abi::Named(name) => panic!("unsupported ABI in AST lowering: {name}"),
         }
     }
 

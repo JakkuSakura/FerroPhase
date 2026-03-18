@@ -1,10 +1,10 @@
 use fp_shell_core::{
     ArithmeticOp, Block, BoolExpr, ComparisonOp, ConditionExpr, FunctionDef, HostExpr,
-    OperationCopy, OperationGuards, OperationRsync, OperationRun, OperationTemplate, PrimitiveStmt,
-    RsyncOptions, ScriptItem, ScriptProgram, ScriptRenderer, ShellInventory, Statement,
-    StringComparisonOp, StringExpr, StringPart, TransportKind, UnsupportedTransportOperation,
-    ValueExpr,
+    OperationCopy, OperationGuards, OperationRsync, OperationRun, OperationTemplate, RsyncOptions,
+    ScriptItem, ScriptProgram, ScriptRenderer, ShellInventory, Statement, StringComparisonOp,
+    StringExpr, StringPart, TransportKind, ValueExpr,
 };
+use std::collections::HashMap;
 
 pub struct BashTarget;
 
@@ -36,6 +36,7 @@ impl ScriptRenderer for BashTarget {
 
 struct BashRenderer<'a> {
     inventory: &'a ShellInventory,
+    externs: HashMap<String, String>,
     lines: Vec<String>,
 }
 
@@ -43,6 +44,7 @@ impl<'a> BashRenderer<'a> {
     fn new(inventory: &'a ShellInventory) -> Self {
         Self {
             inventory,
+            externs: HashMap::new(),
             lines: Vec::new(),
         }
     }
@@ -188,6 +190,11 @@ impl<'a> BashRenderer<'a> {
     }
 
     fn render_program(&mut self, program: &ScriptProgram) -> Result<(), String> {
+        self.externs = program
+            .externs
+            .iter()
+            .map(|(name, decl)| (name.clone(), decl.abi.clone()))
+            .collect();
         for item in &program.items {
             match item {
                 ScriptItem::Function(def) => self.render_function(def)?,
@@ -221,7 +228,6 @@ impl<'a> BashRenderer<'a> {
             Statement::Copy(op) => self.render_copy(op, indent),
             Statement::Template(op) => self.render_template(op, indent),
             Statement::Rsync(op) => self.render_rsync(op, indent),
-            Statement::Primitive(stmt) => self.render_primitive(stmt, indent),
             Statement::If(stmt) => {
                 self.push_line(
                     indent,
@@ -261,16 +267,7 @@ impl<'a> BashRenderer<'a> {
                 self.push_line(indent, &format!("local {}={}", stmt.name, value));
                 Ok(())
             }
-            Statement::Invoke(stmt) => {
-                let args = stmt
-                    .args
-                    .iter()
-                    .map(|arg| self.render_value(arg))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .join(" ");
-                self.push_line(indent, &format!("{} {}", stmt.name, args));
-                Ok(())
-            }
+            Statement::Invoke(stmt) => self.render_invoke_statement(&stmt.name, &stmt.args, indent),
         }
     }
 
@@ -393,269 +390,23 @@ impl<'a> BashRenderer<'a> {
         Ok(())
     }
 
-    fn render_primitive(&mut self, stmt: &PrimitiveStmt, indent: usize) -> Result<(), String> {
-        match stmt {
-            PrimitiveStmt::RunLocal { command } => {
-                self.push_line(indent, &format!("bash -lc {}", self.render_word(command)));
-            }
-            PrimitiveStmt::RunSsh { host, command } => {
-                self.emit_ssh_target_setup(indent, host);
-                self.push_line(indent, "if [[ -n \"$__fp_port\" ]]; then");
-                self.push_line(
-                    indent + 1,
-                    &format!(
-                        "ssh_cmd -p \"$__fp_port\" \"$__fp_target\" {}",
-                        self.render_word(command)
-                    ),
-                );
-                self.push_line(indent, "else");
-                self.push_line(
-                    indent + 1,
-                    &format!("ssh_cmd \"$__fp_target\" {}", self.render_word(command)),
-                );
-                self.push_line(indent, "fi");
-            }
-            PrimitiveStmt::RunDocker { host, command } => {
-                self.push_line(indent, &format!("__fp_host={}", self.render_word(host)));
-                self.push_line(
-                    indent,
-                    "__fp_container=\"${FP_DOCKER_CONTAINER[$__fp_host]}\"",
-                );
-                self.push_line(indent, "__fp_user=\"${FP_DOCKER_USER[$__fp_host]:-}\"");
-                self.push_line(indent, "if [[ -n \"$__fp_user\" ]]; then");
-                self.push_line(
-                    indent + 1,
-                    &format!(
-                        "docker exec --user \"$__fp_user\" \"$__fp_container\" sh -lc {}",
-                        self.render_word(command)
-                    ),
-                );
-                self.push_line(indent, "else");
-                self.push_line(
-                    indent + 1,
-                    &format!(
-                        "docker exec \"$__fp_container\" sh -lc {}",
-                        self.render_word(command)
-                    ),
-                );
-                self.push_line(indent, "fi");
-            }
-            PrimitiveStmt::RunKubectl { host, command } => {
-                self.push_line(indent, &format!("__fp_host={}", self.render_word(host)));
-                self.push_line(indent, "__fp_kubectl_args=()");
-                self.push_line(indent, "__fp_context=\"${FP_K8S_CONTEXT[$__fp_host]:-}\"");
-                self.push_line(
-                    indent,
-                    "__fp_namespace=\"${FP_K8S_NAMESPACE[$__fp_host]:-}\"",
-                );
-                self.push_line(
-                    indent,
-                    "__fp_container=\"${FP_K8S_CONTAINER[$__fp_host]:-}\"",
-                );
-                self.push_line(indent, "__fp_pod=\"${FP_K8S_POD[$__fp_host]}\"");
-                self.push_line(
-                    indent,
-                    "[[ -n \"$__fp_context\" ]] && __fp_kubectl_args+=(--context \"$__fp_context\")",
-                );
-                self.push_line(
-                    indent,
-                    "[[ -n \"$__fp_namespace\" ]] && __fp_kubectl_args+=(-n \"$__fp_namespace\")",
-                );
-                self.push_line(indent, "__fp_kubectl_args+=(exec)");
-                self.push_line(
-                    indent,
-                    "[[ -n \"$__fp_container\" ]] && __fp_kubectl_args+=(-c \"$__fp_container\")",
-                );
-                self.push_line(
-                    indent,
-                    &format!(
-                        "__fp_kubectl_args+=(\"$__fp_pod\" -- sh -lc {})",
-                        self.render_word(command)
-                    ),
-                );
-                self.push_line(indent, "kubectl \"${__fp_kubectl_args[@]}\"");
-            }
-            PrimitiveStmt::RunWinrm { host, command } => {
-                self.push_line(
-                    indent,
-                    &format!(
-                        "winrm_pwsh {} run {}",
-                        self.render_word(host),
-                        self.render_word(command)
-                    ),
-                );
-            }
-            PrimitiveStmt::CopyLocal {
-                source,
-                destination,
-            } => {
-                self.push_line(
-                    indent,
-                    &format!(
-                        "cp -- {} {}",
-                        self.render_word(source),
-                        self.render_word(destination)
-                    ),
-                );
-            }
-            PrimitiveStmt::CopySsh {
-                host,
-                source,
-                destination,
-            } => {
-                self.emit_ssh_target_setup(indent, host);
-                self.push_line(
-                    indent,
-                    &format!("__fp_remote_path={}", self.render_word(destination)),
-                );
-                self.push_line(indent, "if [[ -n \"$__fp_port\" ]]; then");
-                self.push_line(
-                    indent + 1,
-                    &format!(
-                        "scp_cmd -P \"$__fp_port\" {} \"$__fp_target:$__fp_remote_path\"",
-                        self.render_word(source),
-                    ),
-                );
-                self.push_line(indent, "else");
-                self.push_line(
-                    indent + 1,
-                    &format!(
-                        "scp_cmd {} \"$__fp_target:$__fp_remote_path\"",
-                        self.render_word(source)
-                    ),
-                );
-                self.push_line(indent, "fi");
-            }
-            PrimitiveStmt::CopyDocker {
-                host,
-                source,
-                destination,
-            } => {
-                self.push_line(indent, &format!("__fp_host={}", self.render_word(host)));
-                self.push_line(
-                    indent,
-                    "__fp_container=\"${FP_DOCKER_CONTAINER[$__fp_host]}\"",
-                );
-                self.push_line(
-                    indent,
-                    &format!("__fp_remote_path={}", self.render_word(destination)),
-                );
-                self.push_line(
-                    indent,
-                    &format!(
-                        "docker cp {} \"$__fp_container:$__fp_remote_path\"",
-                        self.render_word(source),
-                    ),
-                );
-            }
-            PrimitiveStmt::CopyKubectl {
-                host,
-                source,
-                destination,
-            } => {
-                self.push_line(indent, &format!("__fp_host={}", self.render_word(host)));
-                self.push_line(indent, "__fp_kubectl_args=()");
-                self.push_line(indent, "__fp_context=\"${FP_K8S_CONTEXT[$__fp_host]:-}\"");
-                self.push_line(
-                    indent,
-                    "__fp_namespace=\"${FP_K8S_NAMESPACE[$__fp_host]:-}\"",
-                );
-                self.push_line(indent, "__fp_pod=\"${FP_K8S_POD[$__fp_host]}\"");
-                self.push_line(
-                    indent,
-                    &format!("__fp_remote_path={}", self.render_word(destination)),
-                );
-                self.push_line(
-                    indent,
-                    "[[ -n \"$__fp_context\" ]] && __fp_kubectl_args+=(--context \"$__fp_context\")",
-                );
-                self.push_line(
-                    indent,
-                    "[[ -n \"$__fp_namespace\" ]] && __fp_kubectl_args+=(-n \"$__fp_namespace\")",
-                );
-                self.push_line(
-                    indent,
-                    &format!("kubectl cp \"${{__fp_kubectl_args[@]}}\" {} \"$__fp_pod:$__fp_remote_path\"", self.render_word(source)),
-                );
-            }
-            PrimitiveStmt::CopyWinrm {
-                host,
-                source,
-                destination,
-            } => {
-                self.push_line(
-                    indent,
-                    &format!(
-                        "winrm_pwsh {} copy {} {}",
-                        self.render_word(host),
-                        self.render_word(source),
-                        self.render_word(destination)
-                    ),
-                );
-            }
-            PrimitiveStmt::RenderTemplate {
-                source,
-                destination,
-                vars,
-            } => {
-                self.push_line(
-                    indent,
-                    &format!(
-                        "eval {}",
-                        shell_arg_quote(&format!(
-                            "{} envsubst < {} > {}",
-                            self.render_command_fragment(vars),
-                            self.render_command_fragment(source),
-                            self.render_command_fragment(destination)
-                        ))
-                    ),
-                );
-            }
-            PrimitiveStmt::RemoveFile { path } => {
-                self.push_line(indent, &format!("rm -f {}", self.render_word(path)));
-            }
-            PrimitiveStmt::RsyncSsh {
-                host,
-                flags,
-                source,
-                destination,
-            } => {
-                self.emit_ssh_target_setup(indent, host);
-                self.push_line(
-                    indent,
-                    &format!("__fp_remote_path={}", self.render_word(destination)),
-                );
-                self.push_line(
-                    indent,
-                    &format!(
-                        "rsync_cmd {} -- {} \"$__fp_target:$__fp_remote_path\"",
-                        self.render_command_fragment(flags),
-                        self.render_word(source),
-                    ),
-                );
-            }
-            PrimitiveStmt::UnsupportedTransport {
-                operation,
-                transport,
-            } => {
-                let message = match operation {
-                    UnsupportedTransportOperation::Run => "unsupported transport: ",
-                    UnsupportedTransportOperation::Copy => "unsupported transport for copy: ",
-                    UnsupportedTransportOperation::Rsync => {
-                        "rsync is only supported for ssh in bash target, got: "
-                    }
-                };
-                self.push_line(
-                    indent,
-                    &format!(
-                        "echo \"{}{}\" >&2",
-                        escape_double_quotes(message),
-                        self.render_double_quoted_fragment(transport)
-                    ),
-                );
-                self.push_line(indent, "return 1");
-            }
+    fn render_invoke_statement(
+        &mut self,
+        name: &str,
+        args: &[ValueExpr],
+        indent: usize,
+    ) -> Result<(), String> {
+        if self.externs.get(name).map(String::as_str) == Some("bash") {
+            let text = self.render_bash_extern_statement(name, args)?;
+            self.push_line(indent, &text);
+            return Ok(());
         }
+        let args = args
+            .iter()
+            .map(|arg| self.render_value(arg))
+            .collect::<Result<Vec<_>, _>>()?
+            .join(" ");
+        self.push_line(indent, &format!("{} {}", name, args));
         Ok(())
     }
 
@@ -774,19 +525,16 @@ impl<'a> BashRenderer<'a> {
         match expr {
             StringExpr::Literal(text) => shell_arg_quote(text),
             StringExpr::Variable(name) => format!("\"${{{}}}\"", name),
-            StringExpr::HostTransport(host) => {
-                format!(
-                    "\"${{FP_HOST_TRANSPORT[{}]:-ssh}}\"",
-                    self.render_array_key(host)
-                )
-            }
-            StringExpr::TempPath => "\"$(mktemp)\"".to_string(),
+            StringExpr::Call { name, args } => format!("\"$({})\"", self.render_call(name, args)),
             StringExpr::Interpolated(parts) => {
                 let mut out = String::from("\"");
                 for part in parts {
                     match part {
                         StringPart::Literal(text) => out.push_str(&escape_double_quotes(text)),
                         StringPart::Variable(name) => out.push_str(&format!("${{{}}}", name)),
+                        StringPart::Call { name, args } => {
+                            out.push_str(&format!("$({})", self.render_call(name, args)))
+                        }
                     }
                 }
                 out.push('"');
@@ -799,19 +547,16 @@ impl<'a> BashRenderer<'a> {
         match expr {
             StringExpr::Literal(text) => text.clone(),
             StringExpr::Variable(name) => format!("${{{}}}", name),
-            StringExpr::HostTransport(host) => {
-                format!(
-                    "${{FP_HOST_TRANSPORT[{}]:-ssh}}",
-                    self.render_array_key(host)
-                )
-            }
-            StringExpr::TempPath => "$(mktemp)".to_string(),
+            StringExpr::Call { name, args } => format!("$({})", self.render_call(name, args)),
             StringExpr::Interpolated(parts) => {
                 let mut out = String::new();
                 for part in parts {
                     match part {
                         StringPart::Literal(text) => out.push_str(text),
                         StringPart::Variable(name) => out.push_str(&format!("${{{}}}", name)),
+                        StringPart::Call { name, args } => {
+                            out.push_str(&format!("$({})", self.render_call(name, args)))
+                        }
                     }
                 }
                 out
@@ -824,89 +569,168 @@ impl<'a> BashRenderer<'a> {
             .push(format!("{}{}", "    ".repeat(indent), text));
     }
 
-    fn render_array_key(&self, expr: &StringExpr) -> String {
-        match expr {
-            StringExpr::Literal(text) => format!("\"{}\"", escape_double_quotes(text)),
-            StringExpr::Variable(name) => format!("\"${{{}}}\"", name),
-            StringExpr::HostTransport(host) => format!(
-                "\"${{FP_HOST_TRANSPORT[{}]:-ssh}}\"",
-                self.render_array_key(host)
+    fn render_call(&self, name: &str, args: &[ValueExpr]) -> String {
+        if self.externs.get(name).map(String::as_str) == Some("bash") {
+            return self.render_bash_extern_call(name, args);
+        }
+        let args = args
+            .iter()
+            .map(|arg| self.render_value(arg))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("call arguments should render");
+        if args.is_empty() {
+            name.to_string()
+        } else {
+            format!("{} {}", name, args.join(" "))
+        }
+    }
+
+    fn render_bash_extern_call(&self, name: &str, args: &[ValueExpr]) -> String {
+        match name {
+            "shell_host_transport" => {
+                let host = self.expect_string_arg(args, 0);
+                format!(
+                    "printf '%s\\n' \"${{FP_HOST_TRANSPORT[{}]:-ssh}}\"",
+                    self.render_word(host)
+                )
+            }
+            "shell_temp_path" => "mktemp".to_string(),
+            other => {
+                let rendered = args
+                    .iter()
+                    .map(|arg| self.render_value(arg))
+                    .collect::<Result<Vec<_>, _>>()
+                    .expect("extern arguments should render");
+                if rendered.is_empty() {
+                    other.to_string()
+                } else {
+                    format!("{} {}", other, rendered.join(" "))
+                }
+            }
+        }
+    }
+
+    fn render_bash_extern_statement(
+        &mut self,
+        name: &str,
+        args: &[ValueExpr],
+    ) -> Result<String, String> {
+        Ok(match name {
+            "shell_run_local" => format!("bash -lc {}", self.render_value(&args[0])?),
+            "shell_run_ssh" => {
+                let setup = self.emit_ssh_target_setup_inline(self.expect_value_string(args, 0));
+                format!(
+                    "{setup}; if [[ -n \"$__fp_port\" ]]; then ssh_cmd -p \"$__fp_port\" \"$__fp_target\" {}; else ssh_cmd \"$__fp_target\" {}; fi",
+                    self.render_value(&args[1])?,
+                    self.render_value(&args[1])?
+                )
+            }
+            "shell_run_docker" => {
+                let host = self.expect_value_string(args, 0);
+                format!(
+                    "__fp_host={}; __fp_container=\"${{FP_DOCKER_CONTAINER[$__fp_host]}}\"; __fp_user=\"${{FP_DOCKER_USER[$__fp_host]:-}}\"; if [[ -n \"$__fp_user\" ]]; then docker exec --user \"$__fp_user\" \"$__fp_container\" sh -lc {}; else docker exec \"$__fp_container\" sh -lc {}; fi",
+                    self.render_word(host),
+                    self.render_value(&args[1])?,
+                    self.render_value(&args[1])?
+                )
+            }
+            "shell_run_kubectl" => {
+                let host = self.expect_value_string(args, 0);
+                format!(
+                    "__fp_host={}; __fp_kubectl_args=(); __fp_context=\"${{FP_K8S_CONTEXT[$__fp_host]:-}}\"; __fp_namespace=\"${{FP_K8S_NAMESPACE[$__fp_host]:-}}\"; __fp_container=\"${{FP_K8S_CONTAINER[$__fp_host]:-}}\"; __fp_pod=\"${{FP_K8S_POD[$__fp_host]}}\"; [[ -n \"$__fp_context\" ]] && __fp_kubectl_args+=(--context \"$__fp_context\"); [[ -n \"$__fp_namespace\" ]] && __fp_kubectl_args+=(-n \"$__fp_namespace\"); __fp_kubectl_args+=(exec); [[ -n \"$__fp_container\" ]] && __fp_kubectl_args+=(-c \"$__fp_container\"); __fp_kubectl_args+=(\"$__fp_pod\" -- sh -lc {}); kubectl \"${{__fp_kubectl_args[@]}}\"",
+                    self.render_word(host),
+                    self.render_value(&args[1])?
+                )
+            }
+            "shell_run_winrm" => format!(
+                "winrm_pwsh {} run {}",
+                self.render_value(&args[0])?,
+                self.render_value(&args[1])?
             ),
-            StringExpr::TempPath => "\"$(mktemp)\"".to_string(),
-            StringExpr::Interpolated(parts) => {
-                let mut out = String::from("\"");
-                for part in parts {
-                    match part {
-                        StringPart::Literal(text) => out.push_str(&escape_double_quotes(text)),
-                        StringPart::Variable(name) => out.push_str(&format!("${{{}}}", name)),
-                    }
-                }
-                out.push('"');
-                out
-            }
-        }
-    }
-
-    fn render_double_quoted_fragment(&self, expr: &StringExpr) -> String {
-        match expr {
-            StringExpr::Literal(text) => escape_double_quotes(text),
-            StringExpr::Variable(name) => format!("${{{}}}", name),
-            StringExpr::HostTransport(host) => {
+            "shell_copy_local" => format!(
+                "cp -- {} {}",
+                self.render_value(&args[0])?,
+                self.render_value(&args[1])?
+            ),
+            "shell_copy_ssh" => {
+                let setup = self.emit_ssh_target_setup_inline(self.expect_value_string(args, 0));
+                let src = self.render_value(&args[1])?;
+                let dest = self.render_value(&args[2])?;
                 format!(
-                    "${{FP_HOST_TRANSPORT[{}]:-ssh}}",
-                    self.render_array_key(host)
+                    "{setup}; __fp_remote_path={dest}; if [[ -n \"$__fp_port\" ]]; then scp_cmd -P \"$__fp_port\" {src} \"$__fp_target:$__fp_remote_path\"; else scp_cmd {src} \"$__fp_target:$__fp_remote_path\"; fi"
                 )
             }
-            StringExpr::TempPath => "$(mktemp)".to_string(),
-            StringExpr::Interpolated(parts) => {
-                let mut out = String::new();
-                for part in parts {
-                    match part {
-                        StringPart::Literal(text) => out.push_str(&escape_double_quotes(text)),
-                        StringPart::Variable(name) => out.push_str(&format!("${{{}}}", name)),
-                    }
-                }
-                out
-            }
-        }
-    }
-
-    fn render_command_fragment(&self, expr: &StringExpr) -> String {
-        match expr {
-            StringExpr::Literal(text) => text.clone(),
-            StringExpr::Variable(name) => format!("${{{}}}", name),
-            StringExpr::HostTransport(host) => {
+            "shell_copy_docker" => {
+                let host = self.expect_value_string(args, 0);
                 format!(
-                    "${{FP_HOST_TRANSPORT[{}]:-ssh}}",
-                    self.render_array_key(host)
+                    "__fp_host={}; __fp_container=\"${{FP_DOCKER_CONTAINER[$__fp_host]}}\"; __fp_remote_path={}; docker cp {} \"$__fp_container:$__fp_remote_path\"",
+                    self.render_word(host),
+                    self.render_value(&args[2])?,
+                    self.render_value(&args[1])?
                 )
             }
-            StringExpr::TempPath => "$(mktemp)".to_string(),
-            StringExpr::Interpolated(parts) => {
-                let mut out = String::new();
-                for part in parts {
-                    match part {
-                        StringPart::Literal(text) => out.push_str(text),
-                        StringPart::Variable(name) => out.push_str(&format!("${{{}}}", name)),
-                    }
-                }
-                out
+            "shell_copy_kubectl" => {
+                let host = self.expect_value_string(args, 0);
+                format!(
+                    "__fp_host={}; __fp_kubectl_args=(); __fp_context=\"${{FP_K8S_CONTEXT[$__fp_host]:-}}\"; __fp_namespace=\"${{FP_K8S_NAMESPACE[$__fp_host]:-}}\"; __fp_pod=\"${{FP_K8S_POD[$__fp_host]}}\"; __fp_remote_path={}; [[ -n \"$__fp_context\" ]] && __fp_kubectl_args+=(--context \"$__fp_context\"); [[ -n \"$__fp_namespace\" ]] && __fp_kubectl_args+=(-n \"$__fp_namespace\"); kubectl cp \"${{__fp_kubectl_args[@]}}\" {} \"$__fp_pod:$__fp_remote_path\"",
+                    self.render_word(host),
+                    self.render_value(&args[2])?,
+                    self.render_value(&args[1])?
+                )
             }
+            "shell_copy_winrm" => format!(
+                "winrm_pwsh {} copy {} {}",
+                self.render_value(&args[0])?,
+                self.render_value(&args[1])?,
+                self.render_value(&args[2])?
+            ),
+            "shell_render_template" => format!(
+                "eval {}",
+                shell_arg_quote(&format!(
+                    "{} envsubst < {} > {}",
+                    self.render_command_expr(self.expect_string_arg(args, 2)),
+                    self.render_command_expr(self.expect_string_arg(args, 0)),
+                    self.render_command_expr(self.expect_string_arg(args, 1))
+                ))
+            ),
+            "shell_remove_file" => format!("rm -f {}", self.render_value(&args[0])?),
+            "shell_rsync_ssh" => {
+                let setup = self.emit_ssh_target_setup_inline(self.expect_value_string(args, 0));
+                format!(
+                    "{setup}; __fp_remote_path={}; rsync_cmd {} -- {} \"$__fp_target:$__fp_remote_path\"",
+                    self.render_value(&args[3])?,
+                    self.render_command_expr(self.expect_string_arg(args, 1)),
+                    self.render_value(&args[2])?
+                )
+            }
+            "shell_fail" => format!("echo {} >&2; return 1", self.render_value(&args[0])?),
+            other => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.render_value(arg))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(" ");
+                format!("{} {}", other, args)
+            }
+        })
+    }
+
+    fn emit_ssh_target_setup_inline(&self, host: &StringExpr) -> String {
+        format!(
+            "__fp_host={}; __fp_address=\"${{FP_SSH_ADDRESS[$__fp_host]:-$__fp_host}}\"; __fp_user=\"${{FP_SSH_USER[$__fp_host]:-}}\"; __fp_port=\"${{FP_SSH_PORT[$__fp_host]:-}}\"; __fp_target=\"$__fp_address\"; if [[ -n \"$__fp_user\" ]]; then __fp_target=\"$__fp_user@$__fp_target\"; fi",
+            self.render_word(host)
+        )
+    }
+
+    fn expect_value_string<'b>(&self, args: &'b [ValueExpr], index: usize) -> &'b StringExpr {
+        match &args[index] {
+            ValueExpr::String(expr) => expr,
+            _ => panic!("expected string argument"),
         }
     }
 
-    fn emit_ssh_target_setup(&mut self, indent: usize, host: &StringExpr) {
-        self.push_line(indent, &format!("__fp_host={}", self.render_word(host)));
-        self.push_line(
-            indent,
-            "__fp_address=\"${FP_SSH_ADDRESS[$__fp_host]:-$__fp_host}\"",
-        );
-        self.push_line(indent, "__fp_user=\"${FP_SSH_USER[$__fp_host]:-}\"");
-        self.push_line(indent, "__fp_port=\"${FP_SSH_PORT[$__fp_host]:-}\"");
-        self.push_line(indent, "__fp_target=\"$__fp_address\"");
-        self.push_line(indent, "if [[ -n \"$__fp_user\" ]]; then");
-        self.push_line(indent + 1, "__fp_target=\"$__fp_user@$__fp_target\"");
-        self.push_line(indent, "fi");
+    fn expect_string_arg<'b>(&self, args: &'b [ValueExpr], index: usize) -> &'b StringExpr {
+        self.expect_value_string(args, index)
     }
 }
 
@@ -1068,14 +892,15 @@ finally {
 mod tests {
     use super::*;
     use fp_shell_core::{
-        InventoryHost, PrimitiveStmt, ScriptProgram, SshInventory, Statement, StringExpr,
-        TransportKind, WinRmInventory,
+        ExternalFunction, InventoryHost, InvokeStmt, ScriptProgram, SshInventory, Statement,
+        StringExpr, TransportKind, WinRmInventory,
     };
     use std::collections::HashMap;
 
     #[test]
     fn renders_ssh_dispatch() {
         let program = ScriptProgram {
+            externs: HashMap::new(),
             items: vec![ScriptItem::Statement(Statement::Run(OperationRun {
                 hosts: vec![HostExpr::Selector(StringExpr::Literal("web-1".to_string()))],
                 command: StringExpr::Literal("uptime".to_string()),
@@ -1112,14 +937,24 @@ mod tests {
 
     #[test]
     fn renders_winrm_dispatch_via_pwsh() {
+        let mut externs = HashMap::new();
+        externs.insert(
+            "shell_copy_winrm".to_string(),
+            ExternalFunction {
+                name: "shell_copy_winrm".to_string(),
+                abi: "bash".to_string(),
+            },
+        );
         let program = ScriptProgram {
-            items: vec![ScriptItem::Statement(Statement::Primitive(
-                PrimitiveStmt::CopyWinrm {
-                    host: StringExpr::Literal("win-1".to_string()),
-                    source: StringExpr::Literal("artifact.zip".to_string()),
-                    destination: StringExpr::Literal(r"C:\Temp\artifact.zip".to_string()),
-                },
-            ))],
+            externs,
+            items: vec![ScriptItem::Statement(Statement::Invoke(InvokeStmt {
+                name: "shell_copy_winrm".to_string(),
+                args: vec![
+                    ValueExpr::String(StringExpr::Literal("win-1".to_string())),
+                    ValueExpr::String(StringExpr::Literal("artifact.zip".to_string())),
+                    ValueExpr::String(StringExpr::Literal(r"C:\Temp\artifact.zip".to_string())),
+                ],
+            }))],
         };
         let mut hosts = HashMap::new();
         hosts.insert(

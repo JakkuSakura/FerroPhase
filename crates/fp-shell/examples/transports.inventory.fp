@@ -1,22 +1,5 @@
 use std::collections::HashMap;
-
-struct Inventory {
-    groups: HashMap<&'static str, [&'static str; 5]>,
-    hosts: HashMap<&'static str, Host>,
-}
-
-struct Host {
-    transport: &'static str,
-    address: &'static str,
-    user: &'static str,
-    password: &'static str,
-    port: u16,
-    container: &'static str,
-    pod: &'static str,
-    namespace: &'static str,
-    context: &'static str,
-    scheme: &'static str,
-}
+use std::shell::{Host, Inventory};
 
 const fn inventory() -> Inventory {
     Inventory {

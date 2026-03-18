@@ -1,10 +1,10 @@
 use fp_shell_core::{
     ArithmeticOp, Block, BoolExpr, ComparisonOp, ConditionExpr, FunctionDef, HostExpr,
-    OperationCopy, OperationGuards, OperationRsync, OperationRun, OperationTemplate, PrimitiveStmt,
-    RsyncOptions, ScriptItem, ScriptProgram, ScriptRenderer, ShellInventory, Statement,
-    StringComparisonOp, StringExpr, StringPart, TransportKind, UnsupportedTransportOperation,
-    ValueExpr,
+    OperationCopy, OperationGuards, OperationRsync, OperationRun, OperationTemplate, RsyncOptions,
+    ScriptItem, ScriptProgram, ScriptRenderer, ShellInventory, Statement, StringComparisonOp,
+    StringExpr, StringPart, TransportKind, ValueExpr,
 };
+use std::collections::HashMap;
 
 pub struct PowerShellTarget;
 
@@ -36,6 +36,7 @@ impl ScriptRenderer for PowerShellTarget {
 
 struct PowerShellRenderer<'a> {
     inventory: &'a ShellInventory,
+    externs: HashMap<String, String>,
     lines: Vec<String>,
 }
 
@@ -43,6 +44,7 @@ impl<'a> PowerShellRenderer<'a> {
     fn new(inventory: &'a ShellInventory) -> Self {
         Self {
             inventory,
+            externs: HashMap::new(),
             lines: Vec::new(),
         }
     }
@@ -117,6 +119,11 @@ impl<'a> PowerShellRenderer<'a> {
     }
 
     fn render_program(&mut self, program: &ScriptProgram) -> Result<(), String> {
+        self.externs = program
+            .externs
+            .iter()
+            .map(|(name, decl)| (name.clone(), decl.abi.clone()))
+            .collect();
         for item in &program.items {
             match item {
                 ScriptItem::Function(def) => self.render_function(def)?,
@@ -156,7 +163,6 @@ impl<'a> PowerShellRenderer<'a> {
             Statement::Copy(op) => self.render_copy(op, indent),
             Statement::Template(op) => self.render_template(op, indent),
             Statement::Rsync(op) => self.render_rsync(op, indent),
-            Statement::Primitive(stmt) => self.render_primitive(stmt, indent),
             Statement::If(stmt) => {
                 self.push_line(
                     indent,
@@ -201,16 +207,7 @@ impl<'a> PowerShellRenderer<'a> {
                 );
                 Ok(())
             }
-            Statement::Invoke(stmt) => {
-                let args = stmt
-                    .args
-                    .iter()
-                    .map(|arg| self.render_value(arg))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                self.push_line(indent, &format!("{} {}", stmt.name, args));
-                Ok(())
-            }
+            Statement::Invoke(stmt) => self.render_invoke_statement(&stmt.name, &stmt.args, indent),
         }
     }
 
@@ -354,42 +351,72 @@ impl<'a> PowerShellRenderer<'a> {
         Ok(())
     }
 
-    fn render_primitive(&mut self, stmt: &PrimitiveStmt, indent: usize) -> Result<(), String> {
-        match stmt {
-            PrimitiveStmt::RunLocal { command } => {
-                self.push_line(indent, &self.render_command_expr(command));
+    fn render_invoke_statement(
+        &mut self,
+        name: &str,
+        args: &[ValueExpr],
+        indent: usize,
+    ) -> Result<(), String> {
+        if self.externs.get(name).map(String::as_str) == Some("pwsh") {
+            if self.render_pwsh_extern_statement(name, args, indent)? {
+                return Ok(());
             }
-            PrimitiveStmt::RunSsh { host, command } => {
-                self.emit_ssh_entry(indent, host);
+        }
+        let args = args
+            .iter()
+            .map(|arg| self.render_value(arg))
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.push_line(indent, &format!("{} {}", name, args));
+        Ok(())
+    }
+
+    fn render_pwsh_extern_statement(
+        &mut self,
+        name: &str,
+        args: &[ValueExpr],
+        indent: usize,
+    ) -> Result<bool, String> {
+        match name {
+            "shell_run_local" => {
                 self.push_line(
                     indent,
-                    &format!(
-                        "$__fpTarget = if ($__fpEntry.user) {{ \"$($__fpEntry.user)@$($__fpAddress)\" }} else {{ $__fpAddress }}"
-                    ),
+                    &self.render_command_expr(self.expect_string_arg(args, 0)),
+                );
+            }
+            "shell_run_ssh" => {
+                let host = self.expect_string_arg(args, 0).clone();
+                let command = self.expect_string_arg(args, 1).clone();
+                self.emit_ssh_entry(indent, &host);
+                self.push_line(
+                    indent,
+                    "$__fpTarget = if ($__fpEntry.user) { \"$($__fpEntry.user)@$($__fpAddress)\" } else { $__fpAddress }",
                 );
                 self.push_line(indent, "if ($__fpEntry.port) {");
                 self.push_line(
                     indent + 1,
                     &format!(
                         "& ssh -p $__fpEntry.port $__fpTarget {}",
-                        self.render_word(command)
+                        self.render_word(&command)
                     ),
                 );
                 self.push_line(indent, "} else {");
                 self.push_line(
                     indent + 1,
-                    &format!("& ssh $__fpTarget {}", self.render_word(command)),
+                    &format!("& ssh $__fpTarget {}", self.render_word(&command)),
                 );
                 self.push_line(indent, "}");
             }
-            PrimitiveStmt::RunDocker { host, command } => {
-                self.emit_host_entry(indent, host);
+            "shell_run_docker" => {
+                let host = self.expect_string_arg(args, 0).clone();
+                let command = self.expect_string_arg(args, 1).clone();
+                self.emit_host_entry(indent, &host);
                 self.push_line(indent, "if ($__fpEntry.user) {");
                 self.push_line(
                     indent + 1,
                     &format!(
                         "& docker exec --user $__fpEntry.user $__fpEntry.container sh -lc {}",
-                        self.render_word(command)
+                        self.render_word(&command)
                     ),
                 );
                 self.push_line(indent, "} else {");
@@ -397,13 +424,15 @@ impl<'a> PowerShellRenderer<'a> {
                     indent + 1,
                     &format!(
                         "& docker exec $__fpEntry.container sh -lc {}",
-                        self.render_word(command)
+                        self.render_word(&command)
                     ),
                 );
                 self.push_line(indent, "}");
             }
-            PrimitiveStmt::RunKubectl { host, command } => {
-                self.emit_host_entry(indent, host);
+            "shell_run_kubectl" => {
+                let host = self.expect_string_arg(args, 0).clone();
+                let command = self.expect_string_arg(args, 1).clone();
+                self.emit_host_entry(indent, &host);
                 self.push_line(indent, "$__fpArgs = @()");
                 self.push_line(
                     indent,
@@ -422,13 +451,15 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "$__fpArgs += @($__fpEntry.pod, '--', 'sh', '-lc', {})",
-                        self.render_word(command)
+                        self.render_word(&command)
                     ),
                 );
                 self.push_line(indent, "& kubectl @__fpArgs");
             }
-            PrimitiveStmt::RunWinrm { host, command } => {
-                self.emit_host_entry(indent, host);
+            "shell_run_winrm" => {
+                let host = self.expect_string_arg(args, 0).clone();
+                let command = self.expect_string_arg(args, 1).clone();
+                self.emit_host_entry(indent, &host);
                 self.push_line(
                     indent,
                     "$__fpSession = New-FpWinRmSession -Entry $__fpEntry -Host $__fpHost",
@@ -438,76 +469,70 @@ impl<'a> PowerShellRenderer<'a> {
                     indent + 1,
                     &format!(
                         "Invoke-Command -Session $__fpSession -ScriptBlock ([scriptblock]::Create({}))",
-                        self.render_word(command)
+                        self.render_word(&command)
                     ),
                 );
                 self.push_line(indent, "} finally {");
                 self.push_line(indent + 1, "Remove-PSSession -Session $__fpSession");
                 self.push_line(indent, "}");
             }
-            PrimitiveStmt::CopyLocal {
-                source,
-                destination,
-            } => {
+            "shell_copy_local" => {
                 self.push_line(
                     indent,
                     &format!(
                         "Copy-Item -Force {} {}",
-                        self.render_word(source),
-                        self.render_word(destination)
+                        self.render_word(self.expect_string_arg(args, 0)),
+                        self.render_word(self.expect_string_arg(args, 1))
                     ),
                 );
             }
-            PrimitiveStmt::CopySsh {
-                host,
-                source,
-                destination,
-            } => {
-                self.emit_ssh_entry(indent, host);
+            "shell_copy_ssh" => {
+                let host = self.expect_string_arg(args, 0).clone();
+                let source = self.expect_string_arg(args, 1).clone();
+                let destination = self.expect_string_arg(args, 2).clone();
+                self.emit_ssh_entry(indent, &host);
                 self.push_line(
                     indent,
-                    "$__fpTarget = if ($__fpEntry.user) { \"$($__fpEntry.user)@$($__fpAddress):$__fpDestination\" } else { \"$($__fpAddress):$__fpDestination\" }",
+                    &format!("$__fpDestination = {}", self.render_word(&destination)),
                 );
                 self.push_line(
                     indent,
-                    &format!("$__fpDestination = {}", self.render_word(destination)),
+                    "$__fpTarget = if ($__fpEntry.user) { \"$($__fpEntry.user)@$($__fpAddress):$__fpDestination\" } else { \"$($__fpAddress):$__fpDestination\" }",
                 );
                 self.push_line(indent, "if ($__fpEntry.port) {");
                 self.push_line(
                     indent + 1,
                     &format!(
                         "& scp -P $__fpEntry.port {} $__fpTarget",
-                        self.render_word(source)
+                        self.render_word(&source)
                     ),
                 );
                 self.push_line(indent, "} else {");
                 self.push_line(
                     indent + 1,
-                    &format!("& scp {} $__fpTarget", self.render_word(source)),
+                    &format!("& scp {} $__fpTarget", self.render_word(&source)),
                 );
                 self.push_line(indent, "}");
             }
-            PrimitiveStmt::CopyDocker {
-                host,
-                source,
-                destination,
-            } => {
-                self.emit_host_entry(indent, host);
+            "shell_copy_docker" => {
+                let host = self.expect_string_arg(args, 0).clone();
+                let source = self.expect_string_arg(args, 1).clone();
+                let destination = self.expect_string_arg(args, 2).clone();
+                self.emit_host_entry(indent, &host);
                 self.push_line(
                     indent,
                     &format!(
                         "& docker cp {} \"$($__fpEntry.container):{}\"",
-                        self.render_word(source),
-                        self.render_command_expr(destination)
+                        self.render_word(&source),
+                        self.render_command_expr(&destination)
                     ),
                 );
             }
-            PrimitiveStmt::CopyKubectl {
-                host,
-                source,
-                destination,
-            } => {
-                self.emit_host_entry(indent, host);
+            "shell_copy_kubectl" => {
+                let host = self.expect_string_arg(args, 0).clone();
+                let source = self.expect_string_arg(args, 1).clone();
+                let destination = self.expect_string_arg(args, 2).clone();
+                self.emit_host_entry(indent, &host);
                 self.push_line(indent, "$__fpArgs = @()");
                 self.push_line(
                     indent,
@@ -521,24 +546,23 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "& kubectl cp @__fpArgs {} \"$($__fpEntry.pod):{}\"",
-                        self.render_word(source),
-                        self.render_command_expr(destination)
+                        self.render_word(&source),
+                        self.render_command_expr(&destination)
                     ),
                 );
             }
-            PrimitiveStmt::CopyWinrm {
-                host,
-                source,
-                destination,
-            } => {
-                self.emit_host_entry(indent, host);
+            "shell_copy_winrm" => {
+                let host = self.expect_string_arg(args, 0).clone();
+                let source = self.expect_string_arg(args, 1).clone();
+                let destination = self.expect_string_arg(args, 2).clone();
+                self.emit_host_entry(indent, &host);
                 self.push_line(
                     indent,
                     "$__fpSession = New-FpWinRmSession -Entry $__fpEntry -Host $__fpHost",
                 );
                 self.push_line(
                     indent,
-                    &format!("$__fpDestination = {}", self.render_word(destination)),
+                    &format!("$__fpDestination = {}", self.render_word(&destination)),
                 );
                 self.push_line(
                     indent,
@@ -550,29 +574,28 @@ impl<'a> PowerShellRenderer<'a> {
                 self.push_line(indent + 1, "}");
                 self.push_line(
                     indent + 1,
-                    &format!("Copy-Item -ToSession $__fpSession -Path {} -Destination $__fpDestination -Force", self.render_word(source)),
+                    &format!("Copy-Item -ToSession $__fpSession -Path {} -Destination $__fpDestination -Force", self.render_word(&source)),
                 );
                 self.push_line(indent, "} finally {");
                 self.push_line(indent + 1, "Remove-PSSession -Session $__fpSession");
                 self.push_line(indent, "}");
             }
-            PrimitiveStmt::RenderTemplate {
-                source,
-                destination,
-                vars,
-            } => {
+            "shell_render_template" => {
+                let source = self.expect_string_arg(args, 0).clone();
+                let destination = self.expect_string_arg(args, 1).clone();
+                let vars = self.expect_string_arg(args, 2).clone();
                 self.push_line(
                     indent,
                     &format!(
                         "$__fpContent = Get-Content -Raw {}",
-                        self.render_word(source)
+                        self.render_word(&source)
                     ),
                 );
                 self.push_line(
                     indent,
                     &format!(
                         "foreach ($pair in ({} -split ';')) {{",
-                        self.render_word(vars)
+                        self.render_word(&vars)
                     ),
                 );
                 self.push_line(indent + 1, "if ($pair) {");
@@ -587,29 +610,28 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "Set-Content -Path {} -Value $__fpContent",
-                        self.render_word(destination)
+                        self.render_word(&destination)
                     ),
                 );
             }
-            PrimitiveStmt::RemoveFile { path } => {
+            "shell_remove_file" => {
                 self.push_line(
                     indent,
                     &format!(
                         "Remove-Item -Force {} -ErrorAction SilentlyContinue",
-                        self.render_word(path)
+                        self.render_word(self.expect_string_arg(args, 0))
                     ),
                 );
             }
-            PrimitiveStmt::RsyncSsh {
-                host,
-                flags,
-                source,
-                destination,
-            } => {
-                self.emit_ssh_entry(indent, host);
+            "shell_rsync_ssh" => {
+                let host = self.expect_string_arg(args, 0).clone();
+                let flags = self.expect_string_arg(args, 1).clone();
+                let source = self.expect_string_arg(args, 2).clone();
+                let destination = self.expect_string_arg(args, 3).clone();
+                self.emit_ssh_entry(indent, &host);
                 self.push_line(
                     indent,
-                    &format!("$__fpDestination = {}", self.render_word(destination)),
+                    &format!("$__fpDestination = {}", self.render_word(&destination)),
                 );
                 self.push_line(
                     indent,
@@ -619,33 +641,23 @@ impl<'a> PowerShellRenderer<'a> {
                     indent,
                     &format!(
                         "& rsync {} -- {} $__fpTarget",
-                        self.render_word(flags),
-                        self.render_word(source)
+                        self.render_word(&flags),
+                        self.render_word(&source)
                     ),
                 );
             }
-            PrimitiveStmt::UnsupportedTransport {
-                operation,
-                transport,
-            } => {
-                let prefix = match operation {
-                    UnsupportedTransportOperation::Run => "unsupported transport: ",
-                    UnsupportedTransportOperation::Copy => "unsupported transport for copy: ",
-                    UnsupportedTransportOperation::Rsync => {
-                        "rsync is only supported for ssh in powershell target, got: "
-                    }
-                };
+            "shell_fail" => {
                 self.push_line(
                     indent,
                     &format!(
-                        "throw \"{}{}\"",
-                        prefix.replace('"', "`\""),
-                        self.render_interpolated_fragment(transport)
+                        "throw {}",
+                        self.render_word(self.expect_string_arg(args, 0))
                     ),
                 );
             }
+            _ => return Ok(false),
         }
-        Ok(())
+        Ok(true)
     }
 
     fn render_guarded<F>(
@@ -767,16 +779,16 @@ impl<'a> PowerShellRenderer<'a> {
         match expr {
             StringExpr::Literal(text) => ps_string(text),
             StringExpr::Variable(name) => format!("${}", name),
-            StringExpr::HostTransport(host) => {
-                format!("$script:FpHosts[{}].transport", self.render_word(host))
-            }
-            StringExpr::TempPath => "[System.IO.Path]::GetTempFileName()".to_string(),
+            StringExpr::Call { name, args } => format!("$({})", self.render_call(name, args)),
             StringExpr::Interpolated(parts) => {
                 let mut out = String::from("\"");
                 for part in parts {
                     match part {
                         StringPart::Literal(text) => out.push_str(&text.replace('"', "`\"")),
                         StringPart::Variable(name) => out.push_str(&format!("${}", name)),
+                        StringPart::Call { name, args } => {
+                            out.push_str(&format!("$({})", self.render_call(name, args)))
+                        }
                     }
                 }
                 out.push('"');
@@ -789,16 +801,16 @@ impl<'a> PowerShellRenderer<'a> {
         match expr {
             StringExpr::Literal(text) => text.clone(),
             StringExpr::Variable(name) => format!("${}", name),
-            StringExpr::HostTransport(host) => {
-                format!("$script:FpHosts[{}].transport", self.render_word(host))
-            }
-            StringExpr::TempPath => "[System.IO.Path]::GetTempFileName()".to_string(),
+            StringExpr::Call { name, args } => format!("$({})", self.render_call(name, args)),
             StringExpr::Interpolated(parts) => {
                 let mut out = String::new();
                 for part in parts {
                     match part {
                         StringPart::Literal(text) => out.push_str(text),
                         StringPart::Variable(name) => out.push_str(&format!("${}", name)),
+                        StringPart::Call { name, args } => {
+                            out.push_str(&format!("$({})", self.render_call(name, args)))
+                        }
                     }
                 }
                 out
@@ -809,6 +821,42 @@ impl<'a> PowerShellRenderer<'a> {
     fn push_line(&mut self, indent: usize, text: &str) {
         self.lines
             .push(format!("{}{}", "    ".repeat(indent), text));
+    }
+
+    fn render_call(&self, name: &str, args: &[ValueExpr]) -> String {
+        if self.externs.get(name).map(String::as_str) == Some("pwsh") {
+            return self.render_pwsh_extern_call(name, args);
+        }
+        let args = args
+            .iter()
+            .map(|arg| self.render_value(arg))
+            .collect::<Vec<_>>();
+        if args.is_empty() {
+            name.to_string()
+        } else {
+            format!("{} {}", name, args.join(" "))
+        }
+    }
+
+    fn render_pwsh_extern_call(&self, name: &str, args: &[ValueExpr]) -> String {
+        match name {
+            "shell_host_transport" => {
+                let host = self.expect_string_arg(args, 0);
+                format!("$script:FpHosts[{}].transport", self.render_word(host))
+            }
+            "shell_temp_path" => "[System.IO.Path]::GetTempFileName()".to_string(),
+            other => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.render_value(arg))
+                    .collect::<Vec<_>>();
+                if args.is_empty() {
+                    other.to_string()
+                } else {
+                    format!("{} {}", other, args.join(" "))
+                }
+            }
+        }
     }
 
     fn emit_host_entry(&mut self, indent: usize, host: &StringExpr) {
@@ -824,25 +872,15 @@ impl<'a> PowerShellRenderer<'a> {
         );
     }
 
-    fn render_interpolated_fragment(&self, expr: &StringExpr) -> String {
-        match expr {
-            StringExpr::Literal(text) => text.replace('"', "`\""),
-            StringExpr::Variable(name) => format!("${}", name),
-            StringExpr::HostTransport(host) => {
-                format!("$script:FpHosts[{}].transport", self.render_word(host))
-            }
-            StringExpr::TempPath => "$([System.IO.Path]::GetTempFileName())".to_string(),
-            StringExpr::Interpolated(parts) => {
-                let mut out = String::new();
-                for part in parts {
-                    match part {
-                        StringPart::Literal(text) => out.push_str(&text.replace('"', "`\"")),
-                        StringPart::Variable(name) => out.push_str(&format!("${}", name)),
-                    }
-                }
-                out
-            }
+    fn expect_value_string<'b>(&self, args: &'b [ValueExpr], index: usize) -> &'b StringExpr {
+        match &args[index] {
+            ValueExpr::String(expr) => expr,
+            _ => panic!("expected string argument"),
         }
+    }
+
+    fn expect_string_arg<'b>(&self, args: &'b [ValueExpr], index: usize) -> &'b StringExpr {
+        self.expect_value_string(args, index)
     }
 }
 
@@ -939,6 +977,7 @@ mod tests {
     #[test]
     fn renders_noninteractive_winrm_support() {
         let program = ScriptProgram {
+            externs: HashMap::new(),
             items: vec![ScriptItem::Statement(Statement::Run(OperationRun {
                 hosts: vec![HostExpr::Selector(StringExpr::Literal("win-1".to_string()))],
                 command: StringExpr::Literal("hostname".to_string()),
@@ -980,6 +1019,7 @@ mod tests {
     #[test]
     fn renders_https_winrm_support() {
         let program = ScriptProgram {
+            externs: HashMap::new(),
             items: vec![ScriptItem::Statement(Statement::Run(OperationRun {
                 hosts: vec![HostExpr::Selector(StringExpr::Literal("win-1".to_string()))],
                 command: StringExpr::Literal("hostname".to_string()),

@@ -1358,7 +1358,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 return Ok(ret_var);
             }
             if let Some(sig) = self.lookup_function_signature(locator) {
-                if sig.abi == Abi::C && sig.generics_params.is_empty() && sig.receiver.is_none() {
+                if sig.abi.is_c() && sig.generics_params.is_empty() && sig.receiver.is_none() {
                     if invoke.args.len() != sig.params.len() {
                         self.emit_error("extern \"C\" call arity mismatch");
                         return Ok(self.error_type_var());

@@ -3,18 +3,21 @@ use crate::ast::{self, ItemKind, Node, NodeKind};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetEnv {
     pub os: String,
+    pub lang: Option<String>,
 }
 
 impl TargetEnv {
     pub fn host() -> Self {
         Self {
             os: host_target_os(),
+            lang: None,
         }
     }
 
     pub fn from_triple(triple: Option<&str>) -> Self {
         Self {
             os: target_os_from_triple(triple),
+            lang: None,
         }
     }
 }
@@ -62,6 +65,7 @@ fn item_attrs(item: &ast::Item) -> Option<&[ast::Attribute]> {
         ItemKind::DefStatic(def) => Some(&def.attrs),
         ItemKind::DefFunction(def) => Some(&def.attrs),
         ItemKind::DefTrait(def) => Some(&def.attrs),
+        ItemKind::DeclFunction(decl) => Some(&decl.attrs),
         ItemKind::Import(import) => Some(&import.attrs),
         ItemKind::Impl(impl_block) => Some(&impl_block.attrs),
         _ => None,
@@ -98,13 +102,14 @@ fn cfg_meta_enabled(meta: &ast::AttrMeta, env: &TargetEnv) -> bool {
             _ => false,
         },
         ast::AttrMeta::NameValue(nv) => {
-            if nv.name.last().as_str() != "target_os" {
-                return false;
-            }
             let Some(value) = string_literal_value(&nv.value) else {
                 return false;
             };
-            value == env.os
+            match nv.name.last().as_str() {
+                "target_os" => value == env.os,
+                "target_lang" => env.lang.as_deref() == Some(value.as_str()),
+                _ => false,
+            }
         }
         ast::AttrMeta::List(list) => match list.name.last().as_str() {
             "any" => list.items.iter().any(|item| cfg_meta_enabled(item, env)),

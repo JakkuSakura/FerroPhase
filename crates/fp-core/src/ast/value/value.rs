@@ -842,13 +842,23 @@ impl GenericParam {
 common_enum! {
     pub enum Abi {
         Rust,
-        C,
+        Named(String),
     }
 }
 
 impl Default for Abi {
     fn default() -> Self {
         Abi::Rust
+    }
+}
+
+impl Abi {
+    pub fn is_named(&self, name: &str) -> bool {
+        matches!(self, Self::Named(actual) if actual == name)
+    }
+
+    pub fn is_c(&self) -> bool {
+        self.is_named("C")
     }
 }
 

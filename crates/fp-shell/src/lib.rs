@@ -2,6 +2,7 @@ mod inventory;
 mod lower;
 
 use fp_core::ast::AstTargetOutput;
+use fp_core::cfg::{TargetEnv, filter_items_in_node};
 use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
 use fp_interpret::const_eval::ConstEvaluationOrchestrator;
@@ -10,6 +11,8 @@ use fp_shell_core::{ScriptRenderer, ScriptTarget, ShellInventory};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const BACKEND_HELPERS_SOURCE: &str = include_str!("std/shell/backend.fp");
+const BACKEND_HELPERS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/std/shell/backend.fp");
 const RUNTIME_HELPERS_SOURCE: &str = include_str!("std/shell/runtime_helpers.fp");
 const RUNTIME_HELPERS_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -68,6 +71,8 @@ pub fn compile_source_with_options(
         .map_err(|err| ShellError::Parse(err.to_string()))?;
 
     let mut ast = parsed.ast;
+    let target_env = shell_target_env(target);
+    filter_items_in_node(&mut ast, &target_env);
     let mut const_eval = ConstEvaluationOrchestrator::new(parsed.serializer.clone());
     const_eval.set_execute_main(false);
     const_eval
@@ -80,8 +85,9 @@ pub fn compile_source_with_options(
         .map_err(|err| ShellError::Parse(err.to_string()))?;
 
     let inventory = options.inventory.clone().unwrap_or_default();
-    let mut program = lower_runtime_helpers(&inventory)?;
+    let mut program = lower_runtime_helpers(&inventory, &target_env)?;
     let user_program = lower::lower_node(&ast, &inventory).map_err(ShellError::Lower)?;
+    program.externs.extend(user_program.externs);
     program.items.extend(user_program.items);
 
     let code = match target {
@@ -101,9 +107,20 @@ pub fn compile_source_with_options(
 
 fn lower_runtime_helpers(
     inventory: &ShellInventory,
+    target_env: &TargetEnv,
 ) -> Result<fp_shell_core::ScriptProgram, ShellError> {
     let frontend = FerroFrontend::new();
-    let parsed = frontend
+    let backend = frontend
+        .parse(
+            BACKEND_HELPERS_SOURCE,
+            Some(Path::new(BACKEND_HELPERS_PATH)),
+        )
+        .map_err(|err| {
+            ShellError::Lower(format!("failed to parse shell backend helpers: {}", err))
+        })?;
+    let mut backend_ast = backend.ast;
+    filter_items_in_node(&mut backend_ast, target_env);
+    let runtime = frontend
         .parse(
             RUNTIME_HELPERS_SOURCE,
             Some(Path::new(RUNTIME_HELPERS_PATH)),
@@ -111,7 +128,40 @@ fn lower_runtime_helpers(
         .map_err(|err| {
             ShellError::Lower(format!("failed to parse shell runtime helpers: {}", err))
         })?;
-    lower::lower_node(&parsed.ast, inventory).map_err(ShellError::Lower)
+    let mut runtime_ast = runtime.ast;
+    filter_items_in_node(&mut runtime_ast, target_env);
+    merge_helper_ast(&mut backend_ast, runtime_ast)?;
+    lower::lower_node(&backend_ast, inventory).map_err(ShellError::Lower)
+}
+
+fn merge_helper_ast(
+    backend_ast: &mut fp_core::ast::Node,
+    runtime_ast: fp_core::ast::Node,
+) -> Result<(), ShellError> {
+    let fp_core::ast::NodeKind::File(backend_file) = backend_ast.kind_mut() else {
+        return Err(ShellError::Lower(
+            "shell backend helpers must be a file document".to_string(),
+        ));
+    };
+    let fp_core::ast::NodeKind::File(runtime_file) = runtime_ast.kind else {
+        return Err(ShellError::Lower(
+            "shell runtime helpers must be a file document".to_string(),
+        ));
+    };
+    backend_file.items.extend(runtime_file.items);
+    Ok(())
+}
+
+fn shell_target_env(target: ScriptTarget) -> TargetEnv {
+    let mut env = TargetEnv::host();
+    env.lang = Some(
+        match target {
+            ScriptTarget::Bash => "bash",
+            ScriptTarget::PowerShell => "pwsh",
+        }
+        .to_string(),
+    );
+    env
 }
 
 pub fn compile_file(
@@ -223,17 +273,7 @@ password = "secret"
             &path,
             r#"
 use std::collections::HashMap;
-
-struct Inventory {
-    groups: HashMap<&'static str, [&'static str; 2]>,
-    hosts: HashMap<&'static str, Host>,
-}
-
-struct Host {
-    transport: &'static str,
-    address: &'static str,
-    user: &'static str,
-}
+use std::shell::{Host, Inventory};
 
 const fn inventory() -> Inventory {
     Inventory {
@@ -272,24 +312,7 @@ const fn inventory() -> Inventory {
             &path,
             r#"
 use std::collections::HashMap;
-
-struct Inventory {
-    groups: HashMap<&'static str, [&'static str; 4]>,
-    hosts: HashMap<&'static str, Host>,
-}
-
-struct Host {
-    transport: &'static str,
-    address: &'static str,
-    user: &'static str,
-    password: &'static str,
-    port: u16,
-    container: &'static str,
-    pod: &'static str,
-    namespace: &'static str,
-    context: &'static str,
-    scheme: &'static str,
-}
+use std::shell::{Host, Inventory};
 
 const fn inventory() -> Inventory {
     Inventory {

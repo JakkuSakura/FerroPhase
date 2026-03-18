@@ -1,4 +1,4 @@
-use crate::ast::{FunctionSignature, Ident, Ty, TySlot, TypeBounds};
+use crate::ast::{Attribute, FunctionSignature, Ident, Ty, TySlot, TypeBounds};
 use crate::common_struct;
 use crate::span::Span;
 
@@ -65,6 +65,8 @@ impl ItemDeclType {
 }
 common_struct! {
     pub struct ItemDeclFunction {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ty_annotation: TySlot,
         pub name: Ident,

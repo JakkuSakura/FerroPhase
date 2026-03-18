@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ffi::{c_void, CString};
 
 use fp_core::ast::{
-    Abi, DecimalType, ExprKind, FunctionSignature, Name, Ty, TypeInt, TypePrimitive, TypeReference,
+    DecimalType, ExprKind, FunctionSignature, Name, Ty, TypeInt, TypePrimitive, TypeReference,
     Value, ValueChar, ValuePointer,
 };
 use fp_core::error::{Error, Result};
@@ -40,7 +40,7 @@ impl FfiRuntime {
     }
 
     pub fn call(&mut self, name: &str, sig: &FunctionSignature, args: &[Value]) -> Result<Value> {
-        if !matches!(sig.abi, Abi::C) {
+        if !sig.abi.is_c() {
             return Err(Error::from(format!(
                 "unsupported ABI for extern call: {:?}",
                 sig.abi

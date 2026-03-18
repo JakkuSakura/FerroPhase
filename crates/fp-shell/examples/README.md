@@ -34,17 +34,7 @@ Minimal sketch:
 
 ```fp
 use std::collections::HashMap;
-
-struct Inventory {
-    groups: HashMap<&'static str, [&'static str; 2]>,
-    hosts: HashMap<&'static str, Host>,
-}
-
-struct Host {
-    transport: &'static str,
-    address: &'static str,
-    user: &'static str,
-}
+use std::shell::{Host, Inventory};
 
 const fn inventory() -> Inventory {
     Inventory {
@@ -64,10 +54,9 @@ fields during loading.
 - `ssh` uses `ssh` and `scp` in Bash, and `ssh` and `scp` in PowerShell.
 - `docker` uses `docker exec` and `docker cp`.
 - `kubectl` uses `kubectl exec` and `kubectl cp`.
-- `winrm` uses `evil-winrm` in Bash and `New-PSSession` in PowerShell.
+- `winrm` uses local `pwsh` remoting in Bash and `New-PSSession` in PowerShell.
 
 Current limits:
 
 - `rsync` is only supported for SSH endpoints.
-- Bash `winrm` only supports command execution.
-- PowerShell `winrm` requires `password` in inventory for non-interactive execution.
+- WinRM requires local `pwsh` plus `password` in inventory for non-interactive execution.

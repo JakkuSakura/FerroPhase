@@ -11,8 +11,8 @@ use crate::intrinsics::IntrinsicFunction;
 use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::DecimalType;
 use fp_core::ast::{
-    Abi, AttrMeta, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure,
-    ExprField, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange,
+    AttrMeta, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField,
+    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange,
     ExprRangeLimit, ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam,
     FunctionSignature, Item, ItemDeclFunction, ItemDefFunction, ItemImport, ItemImportTree,
     ItemKind, MacroDelimiter, MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Node,
@@ -3316,7 +3316,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn register_extern_function(&mut self, decl: &ItemDeclFunction) {
-        if !matches!(decl.sig.abi, Abi::C) {
+        if !decl.sig.abi.is_c() {
             return;
         }
         let base_name = decl.name.as_str().to_string();
