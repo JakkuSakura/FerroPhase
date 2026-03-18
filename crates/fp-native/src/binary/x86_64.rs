@@ -2,8 +2,8 @@ use crate::binary::cfg::wire_block_edges;
 use crate::binary::{DataRegion, LiftedFunction, RipSymbol, RipSymbolKind, TextRelocation};
 use fp_core::asmir::AsmLocal;
 use fp_core::asmir::{
-    AsmAnnotation, AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmSyscallConvention,
-    AsmType, AsmValue,
+    AsmAnnotation, AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode,
+    AsmSyscallConvention, AsmType, AsmValue,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Name};
@@ -121,7 +121,11 @@ fn discover_jump_tables(
             for pos in (search_start..cur_limit).rev() {
                 let inst = &decoded[pos];
                 match &inst.kind {
-                    Decoded::Lea { dst, src, width_bits } if *dst == cur_reg && *width_bits == 64 => {
+                    Decoded::Lea {
+                        dst,
+                        src,
+                        width_bits,
+                    } if *dst == cur_reg && *width_bits == 64 => {
                         if src.base == Some(16) && src.index.is_none() {
                             let pc = (code_base_address as i64)
                                 .saturating_add(inst.offset as i64)
@@ -216,7 +220,11 @@ fn discover_jump_tables(
                 for idx in window_start..=i {
                     let di = &decoded[idx];
                     match &di.kind {
-                        Decoded::Lea { dst, src, width_bits } => {
+                        Decoded::Lea {
+                            dst,
+                            src,
+                            width_bits,
+                        } => {
                             eprintln!(
                                 "[fp-native]   0x{:x}: lea r{} <= [base={:?} idx={:?} scale={} disp={}] w{}",
                                 di.offset,
@@ -234,19 +242,24 @@ fn discover_jump_tables(
                                 di.offset, dst, src
                             );
                         }
-                        Decoded::MovRmToReg { dst, src, width_bits } => {
+                        Decoded::MovRmToReg {
+                            dst,
+                            src,
+                            width_bits,
+                        } => {
                             eprintln!(
                                 "[fp-native]   0x{:x}: mov r{} <= {:?} w{}",
                                 di.offset, dst, src, width_bits
                             );
                         }
                         Decoded::AddRegRm { dst, src } => {
-                            eprintln!(
-                                "[fp-native]   0x{:x}: add r{} += {:?}",
-                                di.offset, dst, src
-                            );
+                            eprintln!("[fp-native]   0x{:x}: add r{} += {:?}", di.offset, dst, src);
                         }
-                        Decoded::AddRmReg { dst, src, width_bits } => {
+                        Decoded::AddRmReg {
+                            dst,
+                            src,
+                            width_bits,
+                        } => {
                             eprintln!(
                                 "[fp-native]   0x{:x}: add {:?} += r{} w{}",
                                 di.offset, dst, src, width_bits
@@ -350,8 +363,8 @@ fn discover_jump_tables(
                         src,
                         width_bits,
                     } if *width_bits == 64
-                        && (((*dst == off_reg && *src == base_reg && jmp_reg == off_reg)
-                            || (*dst == base_reg && *src == off_reg && jmp_reg == base_reg))) =>
+                        && ((*dst == off_reg && *src == base_reg && jmp_reg == off_reg)
+                            || (*dst == base_reg && *src == off_reg && jmp_reg == base_reg)) =>
                     {
                         add_ok = true;
                         break;
@@ -365,7 +378,12 @@ fn discover_jump_tables(
 
             // Find the `lea` that defines the base register.
             for lea_pos in (search_window_start..mov_pos).rev() {
-                let Decoded::Lea { dst, src, width_bits } = &decoded[lea_pos].kind else {
+                let Decoded::Lea {
+                    dst,
+                    src,
+                    width_bits,
+                } = &decoded[lea_pos].kind
+                else {
                     continue;
                 };
                 if *dst != base_reg || *width_bits != 64 {
@@ -714,12 +732,8 @@ pub(super) fn lift_function_bytes_with_symbols(
         bytes.len() as u64,
         None,
     );
-    let sorted_starts = determine_block_starts(
-        &decoded,
-        bytes.len() as u64,
-        entry_offset,
-        &jump_tables,
-    )?;
+    let sorted_starts =
+        determine_block_starts(&decoded, bytes.len() as u64, entry_offset, &jump_tables)?;
     let offset_to_sorted_index = sorted_starts
         .iter()
         .enumerate()
@@ -839,8 +853,7 @@ pub(super) fn lift_function_bytes_with_symbols(
         }
 
         if !terminated {
-            let terminator = if let Some(&fallthrough_offset) =
-                sorted_starts.get(sorted_index + 1)
+            let terminator = if let Some(&fallthrough_offset) = sorted_starts.get(sorted_index + 1)
             {
                 let fallthrough = *offset_to_block
                     .get(&fallthrough_offset)
@@ -915,7 +928,10 @@ fn packed_add_i32x2(
     let low_sum_id = *next_id;
     instructions.push(build_binop(
         low_sum_id,
-        AsmInstructionKind::Add(AsmValue::Register(lhs_low_id), AsmValue::Register(rhs_low_id)),
+        AsmInstructionKind::Add(
+            AsmValue::Register(lhs_low_id),
+            AsmValue::Register(rhs_low_id),
+        ),
         AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
     ));
     *next_id += 1;
@@ -1009,7 +1025,10 @@ fn packed_umax_i32x2(
     let cmp_low_id = *next_id;
     instructions.push(compare_instruction(
         cmp_low_id,
-        AsmInstructionKind::Ugt(AsmValue::Register(lhs_low_id), AsmValue::Register(rhs_low_id)),
+        AsmInstructionKind::Ugt(
+            AsmValue::Register(lhs_low_id),
+            AsmValue::Register(rhs_low_id),
+        ),
         fp_core::asmir::AsmGenericOpcode::Ugt,
     ));
     *next_id += 1;
@@ -1099,7 +1118,10 @@ fn packed_umax_i32x2(
     let out_id = *next_id;
     instructions.push(build_binop(
         out_id,
-        AsmInstructionKind::Or(AsmValue::Register(hi_shifted_id), AsmValue::Register(sel_low_id)),
+        AsmInstructionKind::Or(
+            AsmValue::Register(hi_shifted_id),
+            AsmValue::Register(sel_low_id),
+        ),
         AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
     ));
     *next_id += 1;
@@ -1342,15 +1364,9 @@ fn value_from_operand_with_width(
                 AsmType::I64,
             )))
         }
-        Operand::Rm(rm) => value_from_rm_with_width(
-            ctx,
-            rm,
-            width_bits,
-            inst,
-            relocs,
-            instructions,
-            next_id,
-        ),
+        Operand::Rm(rm) => {
+            value_from_rm_with_width(ctx, rm, width_bits, inst, relocs, instructions, next_id)
+        }
     }
 }
 
@@ -1944,7 +1960,10 @@ fn write_gpr_with_width(
             let result_id = *next_id;
             instructions.push(build_binop(
                 result_id,
-                AsmInstructionKind::Or(AsmValue::Register(preserved_id), AsmValue::Register(low_id)),
+                AsmInstructionKind::Or(
+                    AsmValue::Register(preserved_id),
+                    AsmValue::Register(low_id),
+                ),
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
             ));
             *next_id += 1;
@@ -2057,9 +2076,7 @@ fn patch_compare_kind(
     }
     let (lhs, rhs) = compare_operands(&inst.kind)
         .ok_or_else(|| Error::from("comparison instruction has unexpected kind"))?;
-    if let Ok((kind, opcode)) =
-        compare_kind_from_condition(condition, lhs, rhs, compare.is_float)
-    {
+    if let Ok((kind, opcode)) = compare_kind_from_condition(condition, lhs, rhs, compare.is_float) {
         inst.kind = kind;
         inst.opcode = AsmOpcode::Generic(opcode);
         inst.type_hint = None;
@@ -2229,7 +2246,10 @@ fn capstone_operand_width_bits(token: &str) -> Option<u16> {
     ) {
         return Some(8);
     }
-    if matches!(lower.as_str(), "ax" | "cx" | "dx" | "bx" | "sp" | "bp" | "si" | "di") {
+    if matches!(
+        lower.as_str(),
+        "ax" | "cx" | "dx" | "bx" | "sp" | "bp" | "si" | "di"
+    ) {
         return Some(16);
     }
     if matches!(
@@ -2238,7 +2258,10 @@ fn capstone_operand_width_bits(token: &str) -> Option<u16> {
     ) {
         return Some(32);
     }
-    if matches!(lower.as_str(), "rax" | "rcx" | "rdx" | "rbx" | "rsp" | "rbp" | "rsi" | "rdi") {
+    if matches!(
+        lower.as_str(),
+        "rax" | "rcx" | "rdx" | "rbx" | "rsp" | "rbp" | "rsi" | "rdi"
+    ) {
         return Some(64);
     }
     if let Some(rest) = lower.strip_prefix('r') {
@@ -2296,8 +2319,8 @@ fn parse_gpr_register(token: &str) -> Result<u8> {
 }
 
 fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
-    use capstone::prelude::*;
     use capstone::Syntax;
+    use capstone::prelude::*;
 
     let mut capstone = Capstone::new()
         .x86()
@@ -2341,1416 +2364,1491 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
         };
 
         let (kind, consumed) = {
-                let mnemonic = inst.mnemonic().unwrap_or("<unknown>");
-                let op_str = inst.op_str().unwrap_or("");
-                if (op_str.contains("zmm") || op_str.contains("ymm")) && mnemonic.starts_with('v') {
-                    // Many real-world x86_64 binaries ship multiple SIMD-optimized variants
-                    // of helper routines (often behind CPUID dispatch). We currently lift a
-                    // scalar subset, so treat unsupported wide-vector instructions as NOP to
-                    // keep exploring the executable.
-                    (Decoded::Nop, len)
-                } else if mnemonic.starts_with('k') {
-                    // AVX-512 mask register operations. Treat as NOP for now.
-                    (Decoded::Nop, len)
-                } else if op_str
-                    .split(|c: char| !c.is_ascii_alphanumeric())
-                    .any(|token| matches!(token, "ah" | "bh" | "ch" | "dh"))
-                {
-                    // High 8-bit registers require subregister modeling; skip for now.
-                    (Decoded::Nop, len)
-                } else if mnemonic == "movbe" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 2 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 movbe operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
+            let mnemonic = inst.mnemonic().unwrap_or("<unknown>");
+            let op_str = inst.op_str().unwrap_or("");
+            if (op_str.contains("zmm") || op_str.contains("ymm")) && mnemonic.starts_with('v') {
+                // Many real-world x86_64 binaries ship multiple SIMD-optimized variants
+                // of helper routines (often behind CPUID dispatch). We currently lift a
+                // scalar subset, so treat unsupported wide-vector instructions as NOP to
+                // keep exploring the executable.
+                (Decoded::Nop, len)
+            } else if mnemonic.starts_with('k') {
+                // AVX-512 mask register operations. Treat as NOP for now.
+                (Decoded::Nop, len)
+            } else if op_str
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|token| matches!(token, "ah" | "bh" | "ch" | "dh"))
+            {
+                // High 8-bit registers require subregister modeling; skip for now.
+                (Decoded::Nop, len)
+            } else if mnemonic == "movbe" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 2 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 movbe operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
 
-                    let (kind, width_bits) = if parts[0].contains('[') {
-                        let memory = parse_capstone_memory_operand(parts[0])?;
-                        let src = parts[1];
-                        let width_bits = capstone_operand_width_bits(src).ok_or_else(|| {
-                            Error::from(format!(
-                                "unsupported movbe register width at 0x{offset:x}: {src}"
-                            ))
-                        })?;
-                        let src = parse_gpr_register(src)?;
+                let (kind, width_bits) = if parts[0].contains('[') {
+                    let memory = parse_capstone_memory_operand(parts[0])?;
+                    let src = parts[1];
+                    let width_bits = capstone_operand_width_bits(src).ok_or_else(|| {
+                        Error::from(format!(
+                            "unsupported movbe register width at 0x{offset:x}: {src}"
+                        ))
+                    })?;
+                    let src = parse_gpr_register(src)?;
+                    (
+                        Decoded::MovbeMemFromReg {
+                            dst: memory,
+                            src,
+                            width_bits,
+                        },
+                        width_bits,
+                    )
+                } else if parts[1].contains('[') {
+                    let dst = parts[0];
+                    let memory = parse_capstone_memory_operand(parts[1])?;
+                    let width_bits = capstone_operand_width_bits(dst).ok_or_else(|| {
+                        Error::from(format!(
+                            "unsupported movbe register width at 0x{offset:x}: {dst}"
+                        ))
+                    })?;
+                    let dst = parse_gpr_register(dst)?;
+                    (
+                        Decoded::MovbeRegFromMem {
+                            dst,
+                            src: memory,
+                            width_bits,
+                        },
+                        width_bits,
+                    )
+                } else {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 movbe form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                };
+
+                if !matches!(width_bits, 16 | 32 | 64) {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 movbe width at 0x{offset:x}: {width_bits}"
+                    )));
+                }
+
+                (kind, len)
+            } else if mnemonic == "bswap" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 1 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 bswap operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst_token = parts[0];
+                let width_bits = capstone_operand_width_bits(dst_token).unwrap_or(64);
+                if !matches!(width_bits, 32 | 64) {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 bswap width at 0x{offset:x}: {width_bits}"
+                    )));
+                }
+                let dst = parse_gpr_register(dst_token)?;
+                (Decoded::Bswap { dst, width_bits }, len)
+            } else if mnemonic == "vpbroadcastq" {
+                let (dst, src) = parse_capstone_two_operands(op_str)?;
+                let dst = parse_xmm_register(dst)?;
+                let src = parse_gpr_register(src)?;
+                (Decoded::Vpbroadcastq { dst, src }, len)
+            } else if mnemonic == "vpxorq" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpxorq operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                if parts[2].contains('[') {
+                    let rhs = parse_capstone_memory_operand(parts[2])?;
+                    (Decoded::VpxorqXmmMem { dst, lhs, rhs }, len)
+                } else {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpxorq form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+            } else if mnemonic == "vptest" {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                let lhs = parse_xmm_register(lhs)?;
+                if rhs.contains('[') {
+                    let rhs = parse_capstone_memory_operand(rhs)?;
+                    (Decoded::VptestMem { lhs, rhs }, len)
+                } else {
+                    let rhs = parse_xmm_register(rhs)?;
+                    (Decoded::Vptest { lhs, rhs }, len)
+                }
+            } else if matches!(mnemonic, "vpcmpeqd" | "pcmpeqd") {
+                let parts = parse_capstone_operands(op_str);
+                let (dst, lhs, rhs) = if parts.len() == 3 {
+                    (
+                        parse_xmm_register(parts[0])?,
+                        parse_xmm_register(parts[1])?,
+                        parse_xmm_register(parts[2])?,
+                    )
+                } else if parts.len() == 2 {
+                    let dst = parse_xmm_register(parts[0])?;
+                    (dst, dst, parse_xmm_register(parts[1])?)
+                } else {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 pcmpeqd operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                };
+
+                if lhs == rhs {
+                    (Decoded::OnesXmm { dst }, len)
+                } else {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 pcmpeqd form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+            } else if mnemonic == "vpalignr" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 4 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpalignr operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                let rhs = if parts[2].contains('[') {
+                    VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    VecOperand::Reg(parse_xmm_register(parts[2])?)
+                };
+                let imm = parts[3]
+                    .parse::<u8>()
+                    .map_err(|_| Error::from("invalid vpalignr immediate"))?;
+                (Decoded::Vpalignr { dst, lhs, rhs, imm }, len)
+            } else if matches!(mnemonic, "vpmaxsq" | "vpmaxuq") {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpmaxsq operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                let rhs = if parts[2].contains('[') {
+                    VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    VecOperand::Reg(parse_xmm_register(parts[2])?)
+                };
+                if mnemonic == "vpmaxsq" {
+                    (Decoded::Vpmaxsq { dst, lhs, rhs }, len)
+                } else {
+                    (Decoded::Vpmaxuq { dst, lhs, rhs }, len)
+                }
+            } else if mnemonic == "vpmaxud" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpmaxud operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                let rhs = if parts[2].contains('[') {
+                    VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    VecOperand::Reg(parse_xmm_register(parts[2])?)
+                };
+                (Decoded::Vpmaxud { dst, lhs, rhs }, len)
+            } else if mnemonic == "vpminuq" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpminuq operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                let rhs = if parts[2].contains('[') {
+                    VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    VecOperand::Reg(parse_xmm_register(parts[2])?)
+                };
+                (Decoded::Vpminuq { dst, lhs, rhs }, len)
+            } else if mnemonic == "vpsubq" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpsubq operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                let rhs = if parts[2].contains('[') {
+                    VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    VecOperand::Reg(parse_xmm_register(parts[2])?)
+                };
+                (Decoded::Vpsubq { dst, lhs, rhs }, len)
+            } else if mnemonic == "vpaddd" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpaddd operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                let rhs = if parts[2].contains('[') {
+                    VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    VecOperand::Reg(parse_xmm_register(parts[2])?)
+                };
+                (Decoded::Vpaddd { dst, lhs, rhs }, len)
+            } else if mnemonic == "vpaddq" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpaddq operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                let rhs = if parts[2].contains('[') {
+                    VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    VecOperand::Reg(parse_xmm_register(parts[2])?)
+                };
+                (Decoded::Vpaddq { dst, lhs, rhs }, len)
+            } else if mnemonic == "vpsrldq" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpsrldq operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let src = parse_xmm_register(parts[1])?;
+                let imm = parts[2]
+                    .parse::<u8>()
+                    .map_err(|_| Error::from("invalid vpsrldq immediate"))?;
+                (Decoded::Vpsrldq { dst, src, imm }, len)
+            } else if matches!(mnemonic, "vpandq" | "vporq") {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 {mnemonic} operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                let rhs = if parts[2].contains('[') {
+                    VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    VecOperand::Reg(parse_xmm_register(parts[2])?)
+                };
+                if mnemonic == "vpandq" {
+                    (Decoded::Vpandq { dst, lhs, rhs }, len)
+                } else {
+                    (Decoded::Vporq { dst, lhs, rhs }, len)
+                }
+            } else if matches!(mnemonic, "vpunpcklwd" | "vpunpckldq" | "vpunpcklqdq") {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpunpcklwd operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                let rhs = if parts[2].contains('[') {
+                    VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    VecOperand::Reg(parse_xmm_register(parts[2])?)
+                };
+                if mnemonic == "vpunpcklwd" {
+                    (Decoded::Vpunpcklwd { dst, lhs, rhs }, len)
+                } else if mnemonic == "vpunpckldq" {
+                    (Decoded::Vpunpckldq { dst, lhs, rhs }, len)
+                } else {
+                    (Decoded::Vpunpcklqdq { dst, lhs, rhs }, len)
+                }
+            } else if mnemonic == "vpinsrd" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 4 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpinsrd operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let vector = parse_xmm_register(parts[1])?;
+                let value = if parts[2].contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(parts[2])?)
+                };
+                let lane = parts[3]
+                    .parse::<u8>()
+                    .map_err(|_| Error::from("invalid vpinsrd lane immediate"))?;
+                (
+                    Decoded::Pinsrd {
+                        dst,
+                        vector,
+                        value,
+                        lane,
+                    },
+                    len,
+                )
+            } else if mnemonic == "vpinsrb" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 4 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vpinsrb operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let vector = parse_xmm_register(parts[1])?;
+                let value = if parts[2].contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(parts[2])?)
+                };
+                let lane = parts[3]
+                    .parse::<u8>()
+                    .map_err(|_| Error::from("invalid vpinsrb lane immediate"))?;
+                (
+                    Decoded::Pinsrb {
+                        dst,
+                        vector,
+                        value,
+                        lane,
+                    },
+                    len,
+                )
+            } else if matches!(mnemonic, "vmovd" | "movd") {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                if lhs.starts_with("xmm") {
+                    let dst = parse_xmm_register(lhs)?;
+                    if rhs.contains('[') {
+                        let src = parse_capstone_memory_operand(rhs)?;
+                        (Decoded::MovdXmmFromMem32 { dst, src }, len)
+                    } else {
+                        let src = parse_gpr_register(rhs)?;
+                        (Decoded::MovdXmmFromGpr32 { dst, src }, len)
+                    }
+                } else if rhs.starts_with("xmm") {
+                    let src = parse_xmm_register(rhs)?;
+                    if lhs.contains('[') {
+                        let dst = parse_capstone_memory_operand(lhs)?;
+                        (Decoded::MovdMem32FromXmm { dst, src }, len)
+                    } else {
+                        let dst = parse_gpr_register(lhs)?;
+                        let width_bits = capstone_operand_width_bits(lhs).unwrap_or(32);
                         (
-                            Decoded::MovbeMemFromReg {
-                                dst: memory,
+                            Decoded::MovdGpr32FromXmm {
+                                dst,
                                 src,
                                 width_bits,
                             },
-                            width_bits,
+                            len,
                         )
-                    } else if parts[1].contains('[') {
-                        let dst = parts[0];
-                        let memory = parse_capstone_memory_operand(parts[1])?;
-                        let width_bits = capstone_operand_width_bits(dst).ok_or_else(|| {
-                            Error::from(format!(
-                                "unsupported movbe register width at 0x{offset:x}: {dst}"
-                            ))
-                        })?;
-                        let dst = parse_gpr_register(dst)?;
-                        (
-                            Decoded::MovbeRegFromMem {
-                                dst,
-                                src: memory,
-                                width_bits,
-                            },
-                            width_bits,
-                        )
-                    } else {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 movbe form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    };
-
-                    if !matches!(width_bits, 16 | 32 | 64) {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 movbe width at 0x{offset:x}: {width_bits}"
-                        )));
                     }
-
-                    (kind, len)
-                } else if mnemonic == "bswap" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 1 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 bswap operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst_token = parts[0];
-                    let width_bits = capstone_operand_width_bits(dst_token).unwrap_or(64);
-                    if !matches!(width_bits, 32 | 64) {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 bswap width at 0x{offset:x}: {width_bits}"
-                        )));
-                    }
-                    let dst = parse_gpr_register(dst_token)?;
-                    (Decoded::Bswap { dst, width_bits }, len)
-                } else if mnemonic == "vpbroadcastq" {
-                    let (dst, src) = parse_capstone_two_operands(op_str)?;
-                    let dst = parse_xmm_register(dst)?;
-                    let src = parse_gpr_register(src)?;
-                    (Decoded::Vpbroadcastq { dst, src }, len)
-                } else if mnemonic == "vpxorq" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpxorq operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    if parts[2].contains('[') {
-                        let rhs = parse_capstone_memory_operand(parts[2])?;
-                        (Decoded::VpxorqXmmMem { dst, lhs, rhs }, len)
-                    } else {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpxorq form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                } else if mnemonic == "vptest" {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    let lhs = parse_xmm_register(lhs)?;
-                    if rhs.contains('[') {
-                        let rhs = parse_capstone_memory_operand(rhs)?;
-                        (Decoded::VptestMem { lhs, rhs }, len)
-                    } else {
-                        let rhs = parse_xmm_register(rhs)?;
-                        (Decoded::Vptest { lhs, rhs }, len)
-                    }
-                } else if matches!(mnemonic, "vpcmpeqd" | "pcmpeqd") {
-                    let parts = parse_capstone_operands(op_str);
-                    let (dst, lhs, rhs) = if parts.len() == 3 {
-                        (
-                            parse_xmm_register(parts[0])?,
-                            parse_xmm_register(parts[1])?,
-                            parse_xmm_register(parts[2])?,
-                        )
-                    } else if parts.len() == 2 {
-                        let dst = parse_xmm_register(parts[0])?;
-                        (dst, dst, parse_xmm_register(parts[1])?)
-                    } else {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 pcmpeqd operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    };
-
-                    if lhs == rhs {
-                        (Decoded::OnesXmm { dst }, len)
-                    } else {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 pcmpeqd form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                } else if mnemonic == "vpalignr" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 4 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpalignr operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    let rhs = if parts[2].contains('[') {
-                        VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        VecOperand::Reg(parse_xmm_register(parts[2])?)
-                    };
-                    let imm = parts[3]
-                        .parse::<u8>()
-                        .map_err(|_| Error::from("invalid vpalignr immediate"))?;
-                    (Decoded::Vpalignr { dst, lhs, rhs, imm }, len)
-                } else if matches!(mnemonic, "vpmaxsq" | "vpmaxuq") {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpmaxsq operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    let rhs = if parts[2].contains('[') {
-                        VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        VecOperand::Reg(parse_xmm_register(parts[2])?)
-                    };
-                    if mnemonic == "vpmaxsq" {
-                        (Decoded::Vpmaxsq { dst, lhs, rhs }, len)
-                    } else {
-                        (Decoded::Vpmaxuq { dst, lhs, rhs }, len)
-                    }
-                } else if mnemonic == "vpmaxud" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpmaxud operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    let rhs = if parts[2].contains('[') {
-                        VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        VecOperand::Reg(parse_xmm_register(parts[2])?)
-                    };
-                    (Decoded::Vpmaxud { dst, lhs, rhs }, len)
-                } else if mnemonic == "vpminuq" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpminuq operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    let rhs = if parts[2].contains('[') {
-                        VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        VecOperand::Reg(parse_xmm_register(parts[2])?)
-                    };
-                    (Decoded::Vpminuq { dst, lhs, rhs }, len)
-                } else if mnemonic == "vpsubq" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpsubq operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    let rhs = if parts[2].contains('[') {
-                        VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        VecOperand::Reg(parse_xmm_register(parts[2])?)
-                    };
-                    (Decoded::Vpsubq { dst, lhs, rhs }, len)
-                } else if mnemonic == "vpaddd" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpaddd operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    let rhs = if parts[2].contains('[') {
-                        VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        VecOperand::Reg(parse_xmm_register(parts[2])?)
-                    };
-                    (Decoded::Vpaddd { dst, lhs, rhs }, len)
-                } else if mnemonic == "vpaddq" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpaddq operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    let rhs = if parts[2].contains('[') {
-                        VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        VecOperand::Reg(parse_xmm_register(parts[2])?)
-                    };
-                    (Decoded::Vpaddq { dst, lhs, rhs }, len)
-                } else if mnemonic == "vpsrldq" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpsrldq operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let src = parse_xmm_register(parts[1])?;
-                    let imm = parts[2]
-                        .parse::<u8>()
-                        .map_err(|_| Error::from("invalid vpsrldq immediate"))?;
-                    (Decoded::Vpsrldq { dst, src, imm }, len)
-                } else if matches!(mnemonic, "vpandq" | "vporq") {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 {mnemonic} operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    let rhs = if parts[2].contains('[') {
-                        VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        VecOperand::Reg(parse_xmm_register(parts[2])?)
-                    };
-                    if mnemonic == "vpandq" {
-                        (Decoded::Vpandq { dst, lhs, rhs }, len)
-                    } else {
-                        (Decoded::Vporq { dst, lhs, rhs }, len)
-                    }
-                } else if matches!(mnemonic, "vpunpcklwd" | "vpunpckldq" | "vpunpcklqdq") {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpunpcklwd operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    let rhs = if parts[2].contains('[') {
-                        VecOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        VecOperand::Reg(parse_xmm_register(parts[2])?)
-                    };
-                    if mnemonic == "vpunpcklwd" {
-                        (Decoded::Vpunpcklwd { dst, lhs, rhs }, len)
-                    } else if mnemonic == "vpunpckldq" {
-                        (Decoded::Vpunpckldq { dst, lhs, rhs }, len)
-                    } else {
-                        (Decoded::Vpunpcklqdq { dst, lhs, rhs }, len)
-                    }
-                } else if mnemonic == "vpinsrd" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 4 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpinsrd operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let vector = parse_xmm_register(parts[1])?;
-                    let value = if parts[2].contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(parts[2])?)
-                    };
-                    let lane = parts[3]
-                        .parse::<u8>()
-                        .map_err(|_| Error::from("invalid vpinsrd lane immediate"))?;
-                    (Decoded::Pinsrd {
-                        dst,
-                        vector,
-                        value,
-                        lane,
-                    }, len)
-                } else if mnemonic == "vpinsrb" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 4 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vpinsrb operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let vector = parse_xmm_register(parts[1])?;
-                    let value = if parts[2].contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(parts[2])?)
-                    };
-                    let lane = parts[3]
-                        .parse::<u8>()
-                        .map_err(|_| Error::from("invalid vpinsrb lane immediate"))?;
-                    (Decoded::Pinsrb {
-                        dst,
-                        vector,
-                        value,
-                        lane,
-                    }, len)
-                } else if matches!(mnemonic, "vmovd" | "movd") {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    if lhs.starts_with("xmm") {
-                        let dst = parse_xmm_register(lhs)?;
-                        if rhs.contains('[') {
-                            let src = parse_capstone_memory_operand(rhs)?;
-                            (Decoded::MovdXmmFromMem32 { dst, src }, len)
-                        } else {
-                            let src = parse_gpr_register(rhs)?;
-                            (Decoded::MovdXmmFromGpr32 { dst, src }, len)
-                        }
-                    } else if rhs.starts_with("xmm") {
-                        let src = parse_xmm_register(rhs)?;
-                        if lhs.contains('[') {
-                            let dst = parse_capstone_memory_operand(lhs)?;
-                            (Decoded::MovdMem32FromXmm { dst, src }, len)
-                        } else {
-                            let dst = parse_gpr_register(lhs)?;
-                            let width_bits = capstone_operand_width_bits(lhs).unwrap_or(32);
-                            (Decoded::MovdGpr32FromXmm { dst, src, width_bits }, len)
-                        }
-                    } else {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vmovd form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                } else if matches!(mnemonic, "vpxor" | "vxorps" | "vxorpd") {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vxor operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    let rhs = parse_xmm_register(parts[2])?;
-                    if lhs == rhs {
-                        (Decoded::ZeroXmm { dst }, len)
-                    } else {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vxor form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                } else if mnemonic == "vcvtusi2sd" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vcvtusi2sd operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let src_vec = parse_xmm_register(parts[1])?;
-                    let src_gpr = if parts[2].contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(parts[2])?)
-                    };
-                    let width_bits = capstone_operand_width_bits(parts[2]).unwrap_or(64);
-                    (Decoded::Vcvtusi2sd {
+                } else {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vmovd form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+            } else if matches!(mnemonic, "vpxor" | "vxorps" | "vxorpd") {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vxor operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                let rhs = parse_xmm_register(parts[2])?;
+                if lhs == rhs {
+                    (Decoded::ZeroXmm { dst }, len)
+                } else {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vxor form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+            } else if mnemonic == "vcvtusi2sd" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vcvtusi2sd operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let src_vec = parse_xmm_register(parts[1])?;
+                let src_gpr = if parts[2].contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(parts[2])?)
+                };
+                let width_bits = capstone_operand_width_bits(parts[2]).unwrap_or(64);
+                (
+                    Decoded::Vcvtusi2sd {
                         dst,
                         src_vec,
                         src_gpr,
                         width_bits,
-                    }, len)
-                } else if mnemonic == "vcvtusi2ss" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vcvtusi2ss operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let src_vec = parse_xmm_register(parts[1])?;
-                    let src_gpr = if parts[2].contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(parts[2])?)
-                    };
-                    let width_bits = capstone_operand_width_bits(parts[2]).unwrap_or(64);
-                    (Decoded::Vcvtusi2ss {
+                    },
+                    len,
+                )
+            } else if mnemonic == "vcvtusi2ss" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vcvtusi2ss operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let src_vec = parse_xmm_register(parts[1])?;
+                let src_gpr = if parts[2].contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(parts[2])?)
+                };
+                let width_bits = capstone_operand_width_bits(parts[2]).unwrap_or(64);
+                (
+                    Decoded::Vcvtusi2ss {
                         dst,
                         src_vec,
                         src_gpr,
                         width_bits,
-                    }, len)
-                } else if mnemonic == "vmulsd" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vmulsd operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    if parts[2].contains('[') {
-                        let rhs = parse_capstone_memory_operand(parts[2])?;
-                        (Decoded::VmulsdMem { dst, lhs, rhs }, len)
-                    } else {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vmulsd form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                } else if mnemonic == "vdivsd" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vdivsd operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    if parts[2].contains('[') {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vdivsd memory form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let rhs = parse_xmm_register(parts[2])?;
-                    (Decoded::Vdivsd { dst, lhs, rhs }, len)
-                } else if mnemonic == "vmovups" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 2 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vmovups operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    if parts[0].contains('[') {
-                        let dst = parse_capstone_memory_operand(parts[0])?;
-                        let src = parse_xmm_register(parts[1])?;
-                        (Decoded::VmovupsStore { dst, src }, len)
-                    } else if parts[1].contains('[') {
-                        let dst = parse_xmm_register(parts[0])?;
-                        let src = parse_capstone_memory_operand(parts[1])?;
-                        (Decoded::VmovupsLoad { dst, src }, len)
-                    } else {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vmovups form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                } else if mnemonic == "vmovss" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 2 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vmovss operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    if parts[0].contains('[') {
-                        let dst = parse_capstone_memory_operand(parts[0])?;
-                        let src = parse_xmm_register(parts[1])?;
-                        (Decoded::VmovssStore { dst, src }, len)
-                    } else if parts[1].contains('[') {
-                        let dst = parse_xmm_register(parts[0])?;
-                        let src = parse_capstone_memory_operand(parts[1])?;
-                        (Decoded::VmovssLoad { dst, src }, len)
-                    } else {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vmovss form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                } else if mnemonic == "vcomiss" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 2 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vcomiss operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let lhs = parse_xmm_register(parts[0])?;
-                    if parts[1].contains('[') {
-                        let rhs = parse_capstone_memory_operand(parts[1])?;
-                        (Decoded::VcomissMem { lhs, rhs }, len)
-                    } else {
-                        let rhs = parse_xmm_register(parts[1])?;
-                        (Decoded::VcomissReg { lhs, rhs }, len)
-                    }
-                } else if mnemonic == "vaddss" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vaddss operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    if parts[2].contains('[') {
-                        let rhs = parse_capstone_memory_operand(parts[2])?;
-                        (Decoded::VaddssMem { dst, lhs, rhs }, len)
-                    } else {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vaddss form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                } else if mnemonic == "vdivss" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vdivss operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    if parts[2].contains('[') {
-                        let rhs = parse_capstone_memory_operand(parts[2])?;
-                        (Decoded::VdivssMem { dst, lhs, rhs }, len)
-                    }
-                    else {
-                        let rhs = parse_xmm_register(parts[2])?;
-                        (Decoded::Vdivss { dst, lhs, rhs }, len)
-                    }
-                } else if mnemonic == "vcvttss2usi" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 2 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vcvttss2usi operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_gpr_register(parts[0])?;
+                    },
+                    len,
+                )
+            } else if mnemonic == "vmulsd" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vmulsd operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                if parts[2].contains('[') {
+                    let rhs = parse_capstone_memory_operand(parts[2])?;
+                    (Decoded::VmulsdMem { dst, lhs, rhs }, len)
+                } else {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vmulsd form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+            } else if mnemonic == "vdivsd" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vdivsd operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                if parts[2].contains('[') {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vdivsd memory form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let rhs = parse_xmm_register(parts[2])?;
+                (Decoded::Vdivsd { dst, lhs, rhs }, len)
+            } else if mnemonic == "vmovups" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 2 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vmovups operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                if parts[0].contains('[') {
+                    let dst = parse_capstone_memory_operand(parts[0])?;
                     let src = parse_xmm_register(parts[1])?;
-                    let width_bits = capstone_operand_width_bits(parts[0]).unwrap_or(64);
-                    (Decoded::Vcvttss2usi { dst, src, width_bits }, len)
-                } else if mnemonic == "vmulss" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 vmulss operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
+                    (Decoded::VmovupsStore { dst, src }, len)
+                } else if parts[1].contains('[') {
                     let dst = parse_xmm_register(parts[0])?;
-                    let lhs = parse_xmm_register(parts[1])?;
-                    if parts[2].contains('[') {
-                        let rhs = parse_capstone_memory_operand(parts[2])?;
-                        (Decoded::VmulssMem { dst, lhs, rhs }, len)
-                    }
-                    else {
-                        let rhs = parse_xmm_register(parts[2])?;
-                        (Decoded::Vmulss { dst, lhs, rhs }, len)
-                    }
-                } else if matches!(mnemonic, "vpinsrq" | "pinsrq") {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 4 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 pinsrq operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
+                    let src = parse_capstone_memory_operand(parts[1])?;
+                    (Decoded::VmovupsLoad { dst, src }, len)
+                } else {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vmovups form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+            } else if mnemonic == "vmovss" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 2 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vmovss operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                if parts[0].contains('[') {
+                    let dst = parse_capstone_memory_operand(parts[0])?;
+                    let src = parse_xmm_register(parts[1])?;
+                    (Decoded::VmovssStore { dst, src }, len)
+                } else if parts[1].contains('[') {
                     let dst = parse_xmm_register(parts[0])?;
-                    let vector = parse_xmm_register(parts[1])?;
-                    let value = if parts[2].contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(parts[2])?)
-                    };
-                    let lane = parts[3]
-                        .parse::<u8>()
-                        .map_err(|_| Error::from("invalid pinsrq lane immediate"))?;
-                    (Decoded::Pinsrq {
+                    let src = parse_capstone_memory_operand(parts[1])?;
+                    (Decoded::VmovssLoad { dst, src }, len)
+                } else {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vmovss form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+            } else if mnemonic == "vcomiss" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 2 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vcomiss operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let lhs = parse_xmm_register(parts[0])?;
+                if parts[1].contains('[') {
+                    let rhs = parse_capstone_memory_operand(parts[1])?;
+                    (Decoded::VcomissMem { lhs, rhs }, len)
+                } else {
+                    let rhs = parse_xmm_register(parts[1])?;
+                    (Decoded::VcomissReg { lhs, rhs }, len)
+                }
+            } else if mnemonic == "vaddss" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vaddss operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                if parts[2].contains('[') {
+                    let rhs = parse_capstone_memory_operand(parts[2])?;
+                    (Decoded::VaddssMem { dst, lhs, rhs }, len)
+                } else {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vaddss form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+            } else if mnemonic == "vdivss" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vdivss operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                if parts[2].contains('[') {
+                    let rhs = parse_capstone_memory_operand(parts[2])?;
+                    (Decoded::VdivssMem { dst, lhs, rhs }, len)
+                } else {
+                    let rhs = parse_xmm_register(parts[2])?;
+                    (Decoded::Vdivss { dst, lhs, rhs }, len)
+                }
+            } else if mnemonic == "vcvttss2usi" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 2 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vcvttss2usi operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_gpr_register(parts[0])?;
+                let src = parse_xmm_register(parts[1])?;
+                let width_bits = capstone_operand_width_bits(parts[0]).unwrap_or(64);
+                (
+                    Decoded::Vcvttss2usi {
+                        dst,
+                        src,
+                        width_bits,
+                    },
+                    len,
+                )
+            } else if mnemonic == "vmulss" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 vmulss operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let lhs = parse_xmm_register(parts[1])?;
+                if parts[2].contains('[') {
+                    let rhs = parse_capstone_memory_operand(parts[2])?;
+                    (Decoded::VmulssMem { dst, lhs, rhs }, len)
+                } else {
+                    let rhs = parse_xmm_register(parts[2])?;
+                    (Decoded::Vmulss { dst, lhs, rhs }, len)
+                }
+            } else if matches!(mnemonic, "vpinsrq" | "pinsrq") {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 4 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 pinsrq operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_xmm_register(parts[0])?;
+                let vector = parse_xmm_register(parts[1])?;
+                let value = if parts[2].contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(parts[2])?)
+                };
+                let lane = parts[3]
+                    .parse::<u8>()
+                    .map_err(|_| Error::from("invalid pinsrq lane immediate"))?;
+                (
+                    Decoded::Pinsrq {
                         dst,
                         vector,
                         value,
                         lane,
-                    }, len)
-                } else if matches!(mnemonic, "vpextrq" | "pextrq") {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 pextrq operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_gpr_register(parts[0])?;
-                    let src = parse_xmm_register(parts[1])?;
-                    let lane = parse_capstone_immediate(parts[2])?;
-                    if !(0..=1).contains(&lane) {
-                        return Err(Error::from("invalid pextrq lane immediate"));
-                    }
-                    (Decoded::Pextrq {
+                    },
+                    len,
+                )
+            } else if matches!(mnemonic, "vpextrq" | "pextrq") {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 pextrq operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_gpr_register(parts[0])?;
+                let src = parse_xmm_register(parts[1])?;
+                let lane = parse_capstone_immediate(parts[2])?;
+                if !(0..=1).contains(&lane) {
+                    return Err(Error::from("invalid pextrq lane immediate"));
+                }
+                (
+                    Decoded::Pextrq {
                         dst,
                         src,
                         lane: lane as u8,
-                    }, len)
-                } else if matches!(mnemonic, "movq" | "vmovq") {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    if lhs.starts_with("xmm") {
-                        let dst = parse_xmm_register(lhs)?;
-                        if rhs.contains('[') {
-                            let src = parse_capstone_memory_operand(rhs)?;
-                            (Decoded::MovqXmmFromMem { dst, src }, len)
-                        } else {
-                            let src = parse_gpr_register(rhs)?;
-                            (Decoded::MovqXmmFromGpr { dst, src }, len)
-                        }
-                    } else if rhs.starts_with("xmm") {
-                        let src = parse_xmm_register(rhs)?;
-                        if lhs.contains('[') {
-                            let dst = parse_capstone_memory_operand(lhs)?;
-                            (Decoded::MovqMemFromXmm { dst, src }, len)
-                        } else {
-                            let dst = parse_gpr_register(lhs)?;
-                            (Decoded::MovqGprFromXmm { dst, src }, len)
-                        }
+                    },
+                    len,
+                )
+            } else if matches!(mnemonic, "movq" | "vmovq") {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                if lhs.starts_with("xmm") {
+                    let dst = parse_xmm_register(lhs)?;
+                    if rhs.contains('[') {
+                        let src = parse_capstone_memory_operand(rhs)?;
+                        (Decoded::MovqXmmFromMem { dst, src }, len)
                     } else {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 movq form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
+                        let src = parse_gpr_register(rhs)?;
+                        (Decoded::MovqXmmFromGpr { dst, src }, len)
                     }
-                } else if mnemonic == "vzeroupper"
-                    || mnemonic.starts_with("vmovaps")
-                    || mnemonic.starts_with("vmovdqa")
-                    || mnemonic.starts_with("vmovdqu")
+                } else if rhs.starts_with("xmm") {
+                    let src = parse_xmm_register(rhs)?;
+                    if lhs.contains('[') {
+                        let dst = parse_capstone_memory_operand(lhs)?;
+                        (Decoded::MovqMemFromXmm { dst, src }, len)
+                    } else {
+                        let dst = parse_gpr_register(lhs)?;
+                        (Decoded::MovqGprFromXmm { dst, src }, len)
+                    }
+                } else {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 movq form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+            } else if mnemonic == "vzeroupper"
+                || mnemonic.starts_with("vmovaps")
+                || mnemonic.starts_with("vmovdqa")
+                || mnemonic.starts_with("vmovdqu")
+            {
+                // TODO: Lift SIMD moves/spills properly.
+                (Decoded::Nop, len)
+            } else if mnemonic == "cmp" {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                let width_bits = capstone_operand_width_bits(lhs)
+                    .or_else(|| capstone_operand_width_bits(rhs))
+                    .unwrap_or(64);
+
+                let lhs_operand = if lhs.contains('[') {
+                    Operand::Rm(RmOperand::Mem(parse_capstone_memory_operand(lhs)?))
+                } else {
+                    Operand::Rm(RmOperand::Reg(parse_gpr_register(lhs)?))
+                };
+
+                let rhs_operand = if rhs.contains('[') {
+                    Operand::Rm(RmOperand::Mem(parse_capstone_memory_operand(rhs)?))
+                } else if rhs.starts_with("0x")
+                    || rhs.starts_with('-')
+                    || rhs.chars().next().is_some_and(|c| c.is_ascii_digit())
                 {
-                    // TODO: Lift SIMD moves/spills properly.
-                    (Decoded::Nop, len)
-                } else if mnemonic == "cmp" {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    let width_bits = capstone_operand_width_bits(lhs)
-                        .or_else(|| capstone_operand_width_bits(rhs))
-                        .unwrap_or(64);
+                    Operand::Imm(parse_capstone_immediate(rhs)?)
+                } else {
+                    Operand::Rm(RmOperand::Reg(parse_gpr_register(rhs)?))
+                };
 
-                    let lhs_operand = if lhs.contains('[') {
-                        Operand::Rm(RmOperand::Mem(parse_capstone_memory_operand(lhs)?))
-                    } else {
-                        Operand::Rm(RmOperand::Reg(parse_gpr_register(lhs)?))
-                    };
+                (
+                    Decoded::Cmp {
+                        lhs: lhs_operand,
+                        rhs: rhs_operand,
+                        width_bits,
+                    },
+                    len,
+                )
+            } else if mnemonic == "test" {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                let width_bits = capstone_operand_width_bits(lhs)
+                    .or_else(|| capstone_operand_width_bits(rhs))
+                    .unwrap_or(64);
 
-                    let rhs_operand = if rhs.contains('[') {
-                        Operand::Rm(RmOperand::Mem(parse_capstone_memory_operand(rhs)?))
-                    } else if rhs.starts_with("0x")
-                        || rhs.starts_with('-')
-                        || rhs.chars().next().is_some_and(|c| c.is_ascii_digit())
-                    {
-                        Operand::Imm(parse_capstone_immediate(rhs)?)
-                    } else {
-                        Operand::Rm(RmOperand::Reg(parse_gpr_register(rhs)?))
-                    };
+                let lhs_operand = if lhs.contains('[') {
+                    Operand::Rm(RmOperand::Mem(parse_capstone_memory_operand(lhs)?))
+                } else {
+                    Operand::Rm(RmOperand::Reg(parse_gpr_register(lhs)?))
+                };
 
-                    (
-                        Decoded::Cmp {
-                            lhs: lhs_operand,
-                            rhs: rhs_operand,
-                            width_bits,
-                        },
-                        len,
-                    )
-                } else if mnemonic == "test" {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    let width_bits = capstone_operand_width_bits(lhs)
-                        .or_else(|| capstone_operand_width_bits(rhs))
-                        .unwrap_or(64);
+                let rhs_operand = if rhs.contains('[') {
+                    Operand::Rm(RmOperand::Mem(parse_capstone_memory_operand(rhs)?))
+                } else if rhs.starts_with("0x")
+                    || rhs.starts_with('-')
+                    || rhs.chars().next().is_some_and(|c| c.is_ascii_digit())
+                {
+                    Operand::Imm(parse_capstone_immediate(rhs)?)
+                } else {
+                    Operand::Rm(RmOperand::Reg(parse_gpr_register(rhs)?))
+                };
 
-                    let lhs_operand = if lhs.contains('[') {
-                        Operand::Rm(RmOperand::Mem(parse_capstone_memory_operand(lhs)?))
-                    } else {
-                        Operand::Rm(RmOperand::Reg(parse_gpr_register(lhs)?))
-                    };
-
-                    let rhs_operand = if rhs.contains('[') {
-                        Operand::Rm(RmOperand::Mem(parse_capstone_memory_operand(rhs)?))
-                    } else if rhs.starts_with("0x")
-                        || rhs.starts_with('-')
-                        || rhs.chars().next().is_some_and(|c| c.is_ascii_digit())
-                    {
-                        Operand::Imm(parse_capstone_immediate(rhs)?)
-                    } else {
-                        Operand::Rm(RmOperand::Reg(parse_gpr_register(rhs)?))
-                    };
-
-                    (
-                        Decoded::Test {
-                            lhs: lhs_operand,
-                            rhs: rhs_operand,
-                            width_bits,
-                        },
-                        len,
-                    )
-                } else if mnemonic == "bt" {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    if lhs.contains('[') || rhs.contains('[') {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 bt memory form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let value = parse_gpr_register(lhs)?;
-                    if rhs.starts_with("0x") || rhs.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
-                        let imm = parse_capstone_immediate(rhs)?;
-                        let imm = u8::try_from(imm)
-                            .map_err(|_| Error::from("unsupported bt immediate"))?;
-                        (Decoded::BtImm { value, imm }, len)
-                    } else {
-                        let bit = parse_gpr_register(rhs)?;
-                        (Decoded::BtReg { value, bit }, len)
-                    }
-                } else if mnemonic == "btc" {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    let width_bits = capstone_operand_width_bits(lhs).unwrap_or(64);
-                    let dst = if lhs.contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(lhs)?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(lhs)?)
-                    };
+                (
+                    Decoded::Test {
+                        lhs: lhs_operand,
+                        rhs: rhs_operand,
+                        width_bits,
+                    },
+                    len,
+                )
+            } else if mnemonic == "bt" {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                if lhs.contains('[') || rhs.contains('[') {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 bt memory form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let value = parse_gpr_register(lhs)?;
+                if rhs.starts_with("0x")
+                    || rhs
+                        .chars()
+                        .next()
+                        .map(|c| c.is_ascii_digit())
+                        .unwrap_or(false)
+                {
                     let imm = parse_capstone_immediate(rhs)?;
-                    let imm = u8::try_from(imm).map_err(|_| Error::from("unsupported btc immediate"))?;
-                    (Decoded::BtcImm { dst, imm, width_bits }, len)
-                } else if mnemonic == "cqo" {
-                    (Decoded::Cqo, len)
-                } else if mnemonic == "cdq" {
-                    (Decoded::Cdq, len)
-                } else if mnemonic == "cdqe" {
-                    (Decoded::Cdqe, len)
-                } else if matches!(mnemonic, "shl" | "sal" | "shr" | "sar") {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    let width_bits = capstone_operand_width_bits(lhs)
-                        .or_else(|| capstone_operand_width_bits(rhs))
-                        .unwrap_or(64);
-                    let dst = if lhs.contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(lhs)?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(lhs)?)
-                    };
-                    let imm = parse_capstone_immediate(rhs)?;
-                    let imm = u8::try_from(imm)
-                        .map_err(|_| Error::from("unsupported x86_64 shift immediate"))?;
-                    if matches!(mnemonic, "shl" | "sal") {
-                        (
-                            Decoded::ShlImm {
-                                dst,
-                                imm,
-                                width_bits,
-                            },
-                            len,
-                        )
-                    } else if mnemonic == "sar" {
-                        (
-                            Decoded::SarImm {
-                                dst,
-                                imm,
-                                width_bits,
-                            },
-                            len,
-                        )
-                    } else {
-                        (
-                            Decoded::ShrImm {
-                                dst,
-                                imm,
-                                width_bits,
-                            },
-                            len,
-                        )
-                    }
-                } else if mnemonic == "shrx" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 shrx form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let width_bits = capstone_operand_width_bits(parts[0])
-                        .or_else(|| capstone_operand_width_bits(parts[1]))
-                        .unwrap_or(64);
-                    let dst = parse_gpr_register(parts[0])?;
-                    let src = if parts[1].contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(parts[1])?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(parts[1])?)
-                    };
-                    let shift = if parts[2].contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(parts[2])?)
-                    };
+                    let imm =
+                        u8::try_from(imm).map_err(|_| Error::from("unsupported bt immediate"))?;
+                    (Decoded::BtImm { value, imm }, len)
+                } else {
+                    let bit = parse_gpr_register(rhs)?;
+                    (Decoded::BtReg { value, bit }, len)
+                }
+            } else if mnemonic == "btc" {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                let width_bits = capstone_operand_width_bits(lhs).unwrap_or(64);
+                let dst = if lhs.contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(lhs)?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(lhs)?)
+                };
+                let imm = parse_capstone_immediate(rhs)?;
+                let imm =
+                    u8::try_from(imm).map_err(|_| Error::from("unsupported btc immediate"))?;
+                (
+                    Decoded::BtcImm {
+                        dst,
+                        imm,
+                        width_bits,
+                    },
+                    len,
+                )
+            } else if mnemonic == "cqo" {
+                (Decoded::Cqo, len)
+            } else if mnemonic == "cdq" {
+                (Decoded::Cdq, len)
+            } else if mnemonic == "cdqe" {
+                (Decoded::Cdqe, len)
+            } else if matches!(mnemonic, "shl" | "sal" | "shr" | "sar") {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                let width_bits = capstone_operand_width_bits(lhs)
+                    .or_else(|| capstone_operand_width_bits(rhs))
+                    .unwrap_or(64);
+                let dst = if lhs.contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(lhs)?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(lhs)?)
+                };
+                let imm = parse_capstone_immediate(rhs)?;
+                let imm = u8::try_from(imm)
+                    .map_err(|_| Error::from("unsupported x86_64 shift immediate"))?;
+                if matches!(mnemonic, "shl" | "sal") {
                     (
-                        Decoded::Shrx {
+                        Decoded::ShlImm {
                             dst,
-                            src,
-                            shift,
-                            width_bits,
-                        },
-                        len,
-                    )
-                } else if mnemonic == "shlx" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 shlx form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let width_bits = capstone_operand_width_bits(parts[0])
-                        .or_else(|| capstone_operand_width_bits(parts[1]))
-                        .unwrap_or(64);
-                    let dst = parse_gpr_register(parts[0])?;
-                    let src = if parts[1].contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(parts[1])?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(parts[1])?)
-                    };
-                    let shift = if parts[2].contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(parts[2])?)
-                    };
-                    (
-                        Decoded::Shlx {
-                            dst,
-                            src,
-                            shift,
-                            width_bits,
-                        },
-                        len,
-                    )
-                } else if mnemonic == "rorx" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 3 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 rorx form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let width_bits = capstone_operand_width_bits(parts[0])
-                        .or_else(|| capstone_operand_width_bits(parts[1]))
-                        .unwrap_or(64);
-                    if !matches!(width_bits, 32 | 64) {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 rorx width at 0x{offset:x}: {width_bits}"
-                        )));
-                    }
-                    let dst = parse_gpr_register(parts[0])?;
-                    let src = if parts[1].contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(parts[1])?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(parts[1])?)
-                    };
-                    let imm = parse_capstone_immediate(parts[2])?;
-                    let imm = u16::try_from(imm)
-                        .map_err(|_| Error::from("unsupported rorx immediate"))?;
-                    (
-                        Decoded::Rorx {
-                            dst,
-                            src,
                             imm,
                             width_bits,
                         },
                         len,
                     )
-                } else if mnemonic == "blsr" {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    let width_bits = capstone_operand_width_bits(lhs)
-                        .or_else(|| capstone_operand_width_bits(rhs))
-                        .unwrap_or(64);
-                    if lhs.contains('[') {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 blsr destination at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_gpr_register(lhs)?;
-                    let src = if rhs.contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(rhs)?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(rhs)?)
-                    };
+                } else if mnemonic == "sar" {
                     (
-                        Decoded::Blsr {
+                        Decoded::SarImm {
                             dst,
-                            src,
+                            imm,
                             width_bits,
                         },
                         len,
                     )
-                } else if mnemonic == "not" {
-                    let operand = op_str.trim();
-                    if operand.is_empty() {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 not form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let width_bits = capstone_operand_width_bits(operand).unwrap_or(64);
-                    let dst = if operand.contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(operand)?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(operand)?)
-                    };
-                    (
-                        Decoded::NotRm {
-                            dst,
-                            width_bits,
-                        },
-                        len,
-                    )
-                } else if mnemonic == "neg" {
-                    let operand = op_str.trim();
-                    if operand.is_empty() {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 neg form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let width_bits = capstone_operand_width_bits(operand).unwrap_or(64);
-                    let dst = if operand.contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(operand)?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(operand)?)
-                    };
-                    (
-                        Decoded::NegRm {
-                            dst,
-                            width_bits,
-                        },
-                        len,
-                    )
-                } else if mnemonic == "sbb" {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    if lhs.contains('[') || rhs.contains('[') {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 sbb memory form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_gpr_register(lhs)?;
-                    let src = parse_gpr_register(rhs)?;
-                    if dst != src {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 sbb form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let width_bits = capstone_operand_width_bits(lhs)
-                        .or_else(|| capstone_operand_width_bits(rhs))
-                        .unwrap_or(64);
-                    (Decoded::SbbSelf { reg: dst, width_bits }, len)
-                } else if mnemonic == "sub" {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    if lhs.contains('[') {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 sub memory-destination form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_gpr_register(lhs)?;
-                    let width_bits = capstone_operand_width_bits(lhs)
-                        .or_else(|| capstone_operand_width_bits(rhs))
-                        .unwrap_or(64);
-                    let src = if rhs.contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(rhs)?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(rhs)?)
-                    };
-                    (Decoded::SubRegRmWidth { dst, src, width_bits }, len)
-                } else if matches!(mnemonic, "or" | "and" | "xor") {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    let width_bits = capstone_operand_width_bits(lhs)
-                        .or_else(|| capstone_operand_width_bits(rhs))
-                        .unwrap_or(64);
-                    let dst = if lhs.contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(lhs)?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(lhs)?)
-                    };
-                    if rhs.starts_with("0x")
-                        || rhs.starts_with('-')
-                        || rhs.chars().next().is_some_and(|c| c.is_ascii_digit())
-                    {
-                        let imm = parse_capstone_immediate(rhs)?;
-                        if mnemonic == "or" {
-                            (
-                                Decoded::OrImmRm {
-                                    dst,
-                                    imm,
-                                    width_bits,
-                                },
-                                len,
-                            )
-                        } else if mnemonic == "and" {
-                            (
-                                Decoded::AndImmRm {
-                                    dst,
-                                    imm,
-                                    width_bits,
-                                },
-                                len,
-                            )
-                        } else {
-                            (
-                                Decoded::XorImm {
-                                    dst,
-                                    imm,
-                                    width_bits,
-                                },
-                                len,
-                            )
-                        }
-                    } else if rhs.contains('[') {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 {mnemonic} memory-source form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    } else {
-                        let src = parse_gpr_register(rhs)?;
-                        match (mnemonic, dst) {
-                            ("or", RmOperand::Reg(dst)) => {
-                                (Decoded::OrReg { dst, src, width_bits }, len)
-                            }
-                            ("and", RmOperand::Reg(dst)) => {
-                                (Decoded::AndReg { dst, src, width_bits }, len)
-                            }
-                            ("xor", RmOperand::Reg(dst)) => {
-                                (Decoded::XorReg { dst, src, width_bits }, len)
-                            }
-                            ("or", dst) => (Decoded::OrRmReg { dst, src, width_bits }, len),
-                            ("and", dst) => (Decoded::AndRmReg { dst, src, width_bits }, len),
-                            _ => {
-                                return Err(Error::from(format!(
-                                    "unsupported x86_64 xor destination at 0x{offset:x}: {mnemonic} {op_str}"
-                                )));
-                            }
-                        }
-                    }
-                } else if mnemonic == "imul" {
-                    let parts = parse_capstone_operands(op_str);
-                    match parts.len() {
-                        1 => {
-                            let src_text = parts[0];
-                            let width_bits = capstone_operand_width_bits(src_text).unwrap_or(64);
-                            let src = if src_text.contains('[') {
-                                RmOperand::Mem(parse_capstone_memory_operand(src_text)?)
-                            } else {
-                                RmOperand::Reg(parse_gpr_register(src_text)?)
-                            };
-                            (Decoded::ImulRmWide { src, width_bits }, len)
-                        }
-                        2 => {
-                            let lhs = parts[0];
-                            let rhs = parts[1];
-                            if lhs.contains('[') || rhs.contains('[') {
-                                return Err(Error::from(format!(
-                                    "unsupported x86_64 imul memory form at 0x{offset:x}: {mnemonic} {op_str}"
-                                )));
-                            }
-                            let dst = parse_gpr_register(lhs)?;
-                            let src = parse_gpr_register(rhs)?;
-                            let width_bits = capstone_operand_width_bits(lhs)
-                                .or_else(|| capstone_operand_width_bits(rhs))
-                                .unwrap_or(64);
-                            (Decoded::ImulReg { dst, src, width_bits }, len)
-                        }
-                        3 => {
-                            let dst_text = parts[0];
-                            let src_text = parts[1];
-                            let imm_text = parts[2];
-                            if dst_text.contains('[') {
-                                return Err(Error::from(format!(
-                                    "unsupported x86_64 imul memory form at 0x{offset:x}: {mnemonic} {op_str}"
-                                )));
-                            }
-                            let dst = parse_gpr_register(dst_text)?;
-                            let src = if src_text.contains('[') {
-                                RmOperand::Mem(parse_capstone_memory_operand(src_text)?)
-                            } else {
-                                RmOperand::Reg(parse_gpr_register(src_text)?)
-                            };
-                            let imm = parse_capstone_immediate(imm_text)?;
-                            let width_bits = capstone_operand_width_bits(dst_text)
-                                .or_else(|| capstone_operand_width_bits(src_text))
-                                .unwrap_or(64);
-                            (
-                                Decoded::ImulRegImm {
-                                    dst,
-                                    src,
-                                    imm,
-                                    width_bits,
-                                },
-                                len,
-                            )
-                        }
-                        _ => {
-                            return Err(Error::from(format!(
-                                "unsupported x86_64 imul operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                            )));
-                        }
-                    }
-                } else if mnemonic == "mul" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 1 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 mul operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let src_text = parts[0];
-                    let width_bits = capstone_operand_width_bits(src_text).unwrap_or(64);
-                    let src = if src_text.contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(src_text)?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(src_text)?)
-                    };
-                    (Decoded::MulRm { src, width_bits }, len)
-                } else if mnemonic == "fild" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 1 || !parts[0].contains('[') {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 fild form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let src = parse_capstone_memory_operand(parts[0])?;
-                    let width_bits = capstone_operand_width_bits(parts[0]).unwrap_or(64);
-                    (Decoded::Fild { src, width_bits }, len)
-                } else if mnemonic == "fld" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 1 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 fld operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    if parts[0].contains('[') {
-                        let src = parse_capstone_memory_operand(parts[0])?;
-                        let width_bits = capstone_operand_width_bits(parts[0]).unwrap_or(80);
-                        (Decoded::FldMem { src, width_bits }, len)
-                    } else {
-                        let index = parse_st_register(parts[0])?;
-                        (Decoded::FldSt { index }, len)
-                    }
-                } else if mnemonic == "fxch" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 1 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 fxch operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let index = parse_st_register(parts[0])?;
-                    (Decoded::Fxch { index }, len)
-                } else if mnemonic == "fdivrp" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 2 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 fdivrp operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let a = parse_st_register(parts[0])?;
-                    let b = parse_st_register(parts[1])?;
-                    let index = if a != 0 { a } else { b };
-                    (Decoded::Fdivrp { index }, len)
-                } else if mnemonic == "fdivp" {
-                    let parts = parse_capstone_operands(op_str);
-                    let index = match parts.as_slice() {
-                        [single] => parse_st_register(single)?,
-                        [a, b] => {
-                            let a = parse_st_register(a)?;
-                            let b = parse_st_register(b)?;
-                            if a != 0 { a } else { b }
-                        }
-                        _ => {
-                            return Err(Error::from(format!(
-                                "unsupported x86_64 fdivp operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                            )));
-                        }
-                    };
-                    (Decoded::Fdivp { index }, len)
-                } else if mnemonic == "fmulp" {
-                    let parts = parse_capstone_operands(op_str);
-                    let index = match parts.as_slice() {
-                        [single] => parse_st_register(single)?,
-                        [a, b] => {
-                            let a = parse_st_register(a)?;
-                            let b = parse_st_register(b)?;
-                            if a != 0 { a } else { b }
-                        }
-                        _ => {
-                            return Err(Error::from(format!(
-                                "unsupported x86_64 fmulp operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                            )));
-                        }
-                    };
-                    (Decoded::Fmulp { index }, len)
-                } else if mnemonic == "fmul" {
-                    let parts = parse_capstone_operands(op_str);
-                    let index = match parts.as_slice() {
-                        [single] => parse_st_register(single)?,
-                        [a, b] => {
-                            let a = parse_st_register(a)?;
-                            let b = parse_st_register(b)?;
-                            if a != 0 { a } else { b }
-                        }
-                        _ => {
-                            return Err(Error::from(format!(
-                                "unsupported x86_64 fmul operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                            )));
-                        }
-                    };
-                    (Decoded::FmulSt0St { index }, len)
-                } else if mnemonic == "fcomi" {
-                    let parts = parse_capstone_operands(op_str);
-                    let index = match parts.as_slice() {
-                        [single] => parse_st_register(single)?,
-                        [a, b] => {
-                            let a = parse_st_register(a)?;
-                            let b = parse_st_register(b)?;
-                            if a != 0 { a } else { b }
-                        }
-                        _ => {
-                            return Err(Error::from(format!(
-                                "unsupported x86_64 fcomi operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                            )));
-                        }
-                    };
-                    (Decoded::Fcomi { index }, len)
-                } else if mnemonic == "fcomip"
-                    || mnemonic == "fcompi"
-                    || mnemonic == "fucomip"
-                    || mnemonic == "fucompi"
-                {
-                    let parts = parse_capstone_operands(op_str);
-                    let index = match parts.as_slice() {
-                        [single] => parse_st_register(single)?,
-                        [a, b] => {
-                            let a = parse_st_register(a)?;
-                            let b = parse_st_register(b)?;
-                            if a != 0 { a } else { b }
-                        }
-                        _ => {
-                            return Err(Error::from(format!(
-                                "unsupported x86_64 fcomip operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                            )));
-                        }
-                    };
-                    (Decoded::Fcomip { index }, len)
-                } else if mnemonic == "fstp" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 1 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 fstp operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    if parts[0].contains('[') {
-                        let dst = parse_capstone_memory_operand(parts[0])?;
-                        let width_bits = capstone_operand_width_bits(parts[0]).unwrap_or(64);
-                        (Decoded::FstpMem { dst, width_bits }, len)
-                    } else {
-                        let index = parse_st_register(parts[0])?;
-                        (Decoded::FstpSt { index }, len)
-                    }
-                } else if mnemonic == "fisttp" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 1 || !parts[0].contains('[') {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 fisttp form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_capstone_memory_operand(parts[0])?;
-                    let width_bits = capstone_operand_width_bits(parts[0]).unwrap_or(64);
-                    (Decoded::Fisttp { dst, width_bits }, len)
-                } else if let Some(condition) = mnemonic.strip_prefix("fcmov").and_then(|suffix| {
-                    Some(match suffix {
-                        "b" | "c" | "nae" => 0x2,
-                        "ae" | "nb" | "nc" => 0x3,
-                        "be" | "na" => 0x6,
-                        "a" | "nbe" => 0x7,
-                        "e" | "z" => 0x4,
-                        "ne" | "nz" => 0x5,
-                        _ => return None,
-                    })
-                }) {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 2 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 fcmov operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let dst = parse_st_register(parts[0])?;
-                    if dst != 0 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 fcmov dst at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let src = parse_st_register(parts[1])?;
-                    (
-                        Decoded::Fcmovcc {
-                            condition,
-                            src,
-                        },
-                        len,
-                    )
-                } else if mnemonic == "fadd" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 1 || !parts[0].contains('[') {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 fadd form at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let src = parse_capstone_memory_operand(parts[0])?;
-                    let width_bits = capstone_operand_width_bits(parts[0]).unwrap_or(64);
-                    (Decoded::FaddMem { src, width_bits }, len)
-                } else if mnemonic == "ffreep" {
-                    let parts = parse_capstone_operands(op_str);
-                    if parts.len() != 1 {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 ffreep operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                        )));
-                    }
-                    let index = parse_st_register(parts[0])?;
-                    (Decoded::Ffreep { index }, len)
-                } else if mnemonic == "fsubr" {
-                    let parts = parse_capstone_operands(op_str);
-                    let index = match parts.as_slice() {
-                        [single] => parse_st_register(single)?,
-                        [a, b] => {
-                            let a = parse_st_register(a)?;
-                            let b = parse_st_register(b)?;
-                            if a != 0 { a } else { b }
-                        }
-                        _ => {
-                            return Err(Error::from(format!(
-                                "unsupported x86_64 fsubr operand count at 0x{offset:x}: {mnemonic} {op_str}"
-                            )));
-                        }
-                    };
-                    (Decoded::FsubrSt0St { index }, len)
-                } else if let Some(condition) = mnemonic.strip_prefix("cmov").and_then(|suffix| {
-                    Some(match suffix {
-                        "e" | "z" => 0x4,
-                        "ne" | "nz" => 0x5,
-                        "b" | "c" | "nae" => 0x2,
-                        "ae" | "nb" | "nc" => 0x3,
-                        "be" | "na" => 0x6,
-                        "a" | "nbe" => 0x7,
-                        // `s/ns` are based on the sign flag. We approximate them as
-                        // `lt/ge` (valid for common patterns where OF=0, e.g. `test`).
-                        "s" => 0xC,
-                        "ns" => 0xD,
-                        "l" => 0xC,
-                        "ge" => 0xD,
-                        "le" => 0xE,
-                        "g" => 0xF,
-                        _ => return None,
-                    })
-                }) {
-                    let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
-                    let dst = parse_gpr_register(lhs)?;
-                    let src = if rhs.contains('[') {
-                        RmOperand::Mem(parse_capstone_memory_operand(rhs)?)
-                    } else {
-                        RmOperand::Reg(parse_gpr_register(rhs)?)
-                    };
-                    let width_bits = capstone_operand_width_bits(lhs)
-                        .or_else(|| capstone_operand_width_bits(rhs))
-                        .unwrap_or(64);
-                    (
-                        Decoded::Cmovcc {
-                            dst,
-                            src,
-                            condition,
-                            width_bits,
-                        },
-                        len,
-                    )
-                } else if mnemonic == "hlt" {
-                    (Decoded::Hlt, len)
-                } else if mnemonic == "leave" {
-                    (Decoded::Leave, len)
                 } else {
-                    if let Some(err) = decode_error {
-                        return Err(Error::from(format!(
-                            "unsupported x86_64 instruction at 0x{offset:x}: {mnemonic} {op_str} (custom decode failed: {err})"
-                        )));
-                    }
+                    (
+                        Decoded::ShrImm {
+                            dst,
+                            imm,
+                            width_bits,
+                        },
+                        len,
+                    )
+                }
+            } else if mnemonic == "shrx" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
                     return Err(Error::from(format!(
-                        "unsupported x86_64 instruction at 0x{offset:x}: {mnemonic} {op_str}"
+                        "unsupported x86_64 shrx form at 0x{offset:x}: {mnemonic} {op_str}"
                     )));
                 }
+                let width_bits = capstone_operand_width_bits(parts[0])
+                    .or_else(|| capstone_operand_width_bits(parts[1]))
+                    .unwrap_or(64);
+                let dst = parse_gpr_register(parts[0])?;
+                let src = if parts[1].contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(parts[1])?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(parts[1])?)
+                };
+                let shift = if parts[2].contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(parts[2])?)
+                };
+                (
+                    Decoded::Shrx {
+                        dst,
+                        src,
+                        shift,
+                        width_bits,
+                    },
+                    len,
+                )
+            } else if mnemonic == "shlx" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 shlx form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let width_bits = capstone_operand_width_bits(parts[0])
+                    .or_else(|| capstone_operand_width_bits(parts[1]))
+                    .unwrap_or(64);
+                let dst = parse_gpr_register(parts[0])?;
+                let src = if parts[1].contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(parts[1])?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(parts[1])?)
+                };
+                let shift = if parts[2].contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(parts[2])?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(parts[2])?)
+                };
+                (
+                    Decoded::Shlx {
+                        dst,
+                        src,
+                        shift,
+                        width_bits,
+                    },
+                    len,
+                )
+            } else if mnemonic == "rorx" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 3 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 rorx form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let width_bits = capstone_operand_width_bits(parts[0])
+                    .or_else(|| capstone_operand_width_bits(parts[1]))
+                    .unwrap_or(64);
+                if !matches!(width_bits, 32 | 64) {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 rorx width at 0x{offset:x}: {width_bits}"
+                    )));
+                }
+                let dst = parse_gpr_register(parts[0])?;
+                let src = if parts[1].contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(parts[1])?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(parts[1])?)
+                };
+                let imm = parse_capstone_immediate(parts[2])?;
+                let imm =
+                    u16::try_from(imm).map_err(|_| Error::from("unsupported rorx immediate"))?;
+                (
+                    Decoded::Rorx {
+                        dst,
+                        src,
+                        imm,
+                        width_bits,
+                    },
+                    len,
+                )
+            } else if mnemonic == "blsr" {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                let width_bits = capstone_operand_width_bits(lhs)
+                    .or_else(|| capstone_operand_width_bits(rhs))
+                    .unwrap_or(64);
+                if lhs.contains('[') {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 blsr destination at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_gpr_register(lhs)?;
+                let src = if rhs.contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(rhs)?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(rhs)?)
+                };
+                (
+                    Decoded::Blsr {
+                        dst,
+                        src,
+                        width_bits,
+                    },
+                    len,
+                )
+            } else if mnemonic == "not" {
+                let operand = op_str.trim();
+                if operand.is_empty() {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 not form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let width_bits = capstone_operand_width_bits(operand).unwrap_or(64);
+                let dst = if operand.contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(operand)?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(operand)?)
+                };
+                (Decoded::NotRm { dst, width_bits }, len)
+            } else if mnemonic == "neg" {
+                let operand = op_str.trim();
+                if operand.is_empty() {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 neg form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let width_bits = capstone_operand_width_bits(operand).unwrap_or(64);
+                let dst = if operand.contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(operand)?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(operand)?)
+                };
+                (Decoded::NegRm { dst, width_bits }, len)
+            } else if mnemonic == "sbb" {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                if lhs.contains('[') || rhs.contains('[') {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 sbb memory form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_gpr_register(lhs)?;
+                let src = parse_gpr_register(rhs)?;
+                if dst != src {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 sbb form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let width_bits = capstone_operand_width_bits(lhs)
+                    .or_else(|| capstone_operand_width_bits(rhs))
+                    .unwrap_or(64);
+                (
+                    Decoded::SbbSelf {
+                        reg: dst,
+                        width_bits,
+                    },
+                    len,
+                )
+            } else if mnemonic == "sub" {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                if lhs.contains('[') {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 sub memory-destination form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_gpr_register(lhs)?;
+                let width_bits = capstone_operand_width_bits(lhs)
+                    .or_else(|| capstone_operand_width_bits(rhs))
+                    .unwrap_or(64);
+                let src = if rhs.contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(rhs)?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(rhs)?)
+                };
+                (
+                    Decoded::SubRegRmWidth {
+                        dst,
+                        src,
+                        width_bits,
+                    },
+                    len,
+                )
+            } else if matches!(mnemonic, "or" | "and" | "xor") {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                let width_bits = capstone_operand_width_bits(lhs)
+                    .or_else(|| capstone_operand_width_bits(rhs))
+                    .unwrap_or(64);
+                let dst = if lhs.contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(lhs)?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(lhs)?)
+                };
+                if rhs.starts_with("0x")
+                    || rhs.starts_with('-')
+                    || rhs.chars().next().is_some_and(|c| c.is_ascii_digit())
+                {
+                    let imm = parse_capstone_immediate(rhs)?;
+                    if mnemonic == "or" {
+                        (
+                            Decoded::OrImmRm {
+                                dst,
+                                imm,
+                                width_bits,
+                            },
+                            len,
+                        )
+                    } else if mnemonic == "and" {
+                        (
+                            Decoded::AndImmRm {
+                                dst,
+                                imm,
+                                width_bits,
+                            },
+                            len,
+                        )
+                    } else {
+                        (
+                            Decoded::XorImm {
+                                dst,
+                                imm,
+                                width_bits,
+                            },
+                            len,
+                        )
+                    }
+                } else if rhs.contains('[') {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 {mnemonic} memory-source form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                } else {
+                    let src = parse_gpr_register(rhs)?;
+                    match (mnemonic, dst) {
+                        ("or", RmOperand::Reg(dst)) => (
+                            Decoded::OrReg {
+                                dst,
+                                src,
+                                width_bits,
+                            },
+                            len,
+                        ),
+                        ("and", RmOperand::Reg(dst)) => (
+                            Decoded::AndReg {
+                                dst,
+                                src,
+                                width_bits,
+                            },
+                            len,
+                        ),
+                        ("xor", RmOperand::Reg(dst)) => (
+                            Decoded::XorReg {
+                                dst,
+                                src,
+                                width_bits,
+                            },
+                            len,
+                        ),
+                        ("or", dst) => (
+                            Decoded::OrRmReg {
+                                dst,
+                                src,
+                                width_bits,
+                            },
+                            len,
+                        ),
+                        ("and", dst) => (
+                            Decoded::AndRmReg {
+                                dst,
+                                src,
+                                width_bits,
+                            },
+                            len,
+                        ),
+                        _ => {
+                            return Err(Error::from(format!(
+                                "unsupported x86_64 xor destination at 0x{offset:x}: {mnemonic} {op_str}"
+                            )));
+                        }
+                    }
+                }
+            } else if mnemonic == "imul" {
+                let parts = parse_capstone_operands(op_str);
+                match parts.len() {
+                    1 => {
+                        let src_text = parts[0];
+                        let width_bits = capstone_operand_width_bits(src_text).unwrap_or(64);
+                        let src = if src_text.contains('[') {
+                            RmOperand::Mem(parse_capstone_memory_operand(src_text)?)
+                        } else {
+                            RmOperand::Reg(parse_gpr_register(src_text)?)
+                        };
+                        (Decoded::ImulRmWide { src, width_bits }, len)
+                    }
+                    2 => {
+                        let lhs = parts[0];
+                        let rhs = parts[1];
+                        if lhs.contains('[') || rhs.contains('[') {
+                            return Err(Error::from(format!(
+                                "unsupported x86_64 imul memory form at 0x{offset:x}: {mnemonic} {op_str}"
+                            )));
+                        }
+                        let dst = parse_gpr_register(lhs)?;
+                        let src = parse_gpr_register(rhs)?;
+                        let width_bits = capstone_operand_width_bits(lhs)
+                            .or_else(|| capstone_operand_width_bits(rhs))
+                            .unwrap_or(64);
+                        (
+                            Decoded::ImulReg {
+                                dst,
+                                src,
+                                width_bits,
+                            },
+                            len,
+                        )
+                    }
+                    3 => {
+                        let dst_text = parts[0];
+                        let src_text = parts[1];
+                        let imm_text = parts[2];
+                        if dst_text.contains('[') {
+                            return Err(Error::from(format!(
+                                "unsupported x86_64 imul memory form at 0x{offset:x}: {mnemonic} {op_str}"
+                            )));
+                        }
+                        let dst = parse_gpr_register(dst_text)?;
+                        let src = if src_text.contains('[') {
+                            RmOperand::Mem(parse_capstone_memory_operand(src_text)?)
+                        } else {
+                            RmOperand::Reg(parse_gpr_register(src_text)?)
+                        };
+                        let imm = parse_capstone_immediate(imm_text)?;
+                        let width_bits = capstone_operand_width_bits(dst_text)
+                            .or_else(|| capstone_operand_width_bits(src_text))
+                            .unwrap_or(64);
+                        (
+                            Decoded::ImulRegImm {
+                                dst,
+                                src,
+                                imm,
+                                width_bits,
+                            },
+                            len,
+                        )
+                    }
+                    _ => {
+                        return Err(Error::from(format!(
+                            "unsupported x86_64 imul operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                        )));
+                    }
+                }
+            } else if mnemonic == "mul" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 1 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 mul operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let src_text = parts[0];
+                let width_bits = capstone_operand_width_bits(src_text).unwrap_or(64);
+                let src = if src_text.contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(src_text)?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(src_text)?)
+                };
+                (Decoded::MulRm { src, width_bits }, len)
+            } else if mnemonic == "fild" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 1 || !parts[0].contains('[') {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 fild form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let src = parse_capstone_memory_operand(parts[0])?;
+                let width_bits = capstone_operand_width_bits(parts[0]).unwrap_or(64);
+                (Decoded::Fild { src, width_bits }, len)
+            } else if mnemonic == "fld" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 1 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 fld operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                if parts[0].contains('[') {
+                    let src = parse_capstone_memory_operand(parts[0])?;
+                    let width_bits = capstone_operand_width_bits(parts[0]).unwrap_or(80);
+                    (Decoded::FldMem { src, width_bits }, len)
+                } else {
+                    let index = parse_st_register(parts[0])?;
+                    (Decoded::FldSt { index }, len)
+                }
+            } else if mnemonic == "fxch" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 1 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 fxch operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let index = parse_st_register(parts[0])?;
+                (Decoded::Fxch { index }, len)
+            } else if mnemonic == "fdivrp" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 2 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 fdivrp operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let a = parse_st_register(parts[0])?;
+                let b = parse_st_register(parts[1])?;
+                let index = if a != 0 { a } else { b };
+                (Decoded::Fdivrp { index }, len)
+            } else if mnemonic == "fdivp" {
+                let parts = parse_capstone_operands(op_str);
+                let index = match parts.as_slice() {
+                    [single] => parse_st_register(single)?,
+                    [a, b] => {
+                        let a = parse_st_register(a)?;
+                        let b = parse_st_register(b)?;
+                        if a != 0 { a } else { b }
+                    }
+                    _ => {
+                        return Err(Error::from(format!(
+                            "unsupported x86_64 fdivp operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                        )));
+                    }
+                };
+                (Decoded::Fdivp { index }, len)
+            } else if mnemonic == "fmulp" {
+                let parts = parse_capstone_operands(op_str);
+                let index = match parts.as_slice() {
+                    [single] => parse_st_register(single)?,
+                    [a, b] => {
+                        let a = parse_st_register(a)?;
+                        let b = parse_st_register(b)?;
+                        if a != 0 { a } else { b }
+                    }
+                    _ => {
+                        return Err(Error::from(format!(
+                            "unsupported x86_64 fmulp operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                        )));
+                    }
+                };
+                (Decoded::Fmulp { index }, len)
+            } else if mnemonic == "fmul" {
+                let parts = parse_capstone_operands(op_str);
+                let index = match parts.as_slice() {
+                    [single] => parse_st_register(single)?,
+                    [a, b] => {
+                        let a = parse_st_register(a)?;
+                        let b = parse_st_register(b)?;
+                        if a != 0 { a } else { b }
+                    }
+                    _ => {
+                        return Err(Error::from(format!(
+                            "unsupported x86_64 fmul operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                        )));
+                    }
+                };
+                (Decoded::FmulSt0St { index }, len)
+            } else if mnemonic == "fcomi" {
+                let parts = parse_capstone_operands(op_str);
+                let index = match parts.as_slice() {
+                    [single] => parse_st_register(single)?,
+                    [a, b] => {
+                        let a = parse_st_register(a)?;
+                        let b = parse_st_register(b)?;
+                        if a != 0 { a } else { b }
+                    }
+                    _ => {
+                        return Err(Error::from(format!(
+                            "unsupported x86_64 fcomi operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                        )));
+                    }
+                };
+                (Decoded::Fcomi { index }, len)
+            } else if mnemonic == "fcomip"
+                || mnemonic == "fcompi"
+                || mnemonic == "fucomip"
+                || mnemonic == "fucompi"
+            {
+                let parts = parse_capstone_operands(op_str);
+                let index = match parts.as_slice() {
+                    [single] => parse_st_register(single)?,
+                    [a, b] => {
+                        let a = parse_st_register(a)?;
+                        let b = parse_st_register(b)?;
+                        if a != 0 { a } else { b }
+                    }
+                    _ => {
+                        return Err(Error::from(format!(
+                            "unsupported x86_64 fcomip operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                        )));
+                    }
+                };
+                (Decoded::Fcomip { index }, len)
+            } else if mnemonic == "fstp" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 1 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 fstp operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                if parts[0].contains('[') {
+                    let dst = parse_capstone_memory_operand(parts[0])?;
+                    let width_bits = capstone_operand_width_bits(parts[0]).unwrap_or(64);
+                    (Decoded::FstpMem { dst, width_bits }, len)
+                } else {
+                    let index = parse_st_register(parts[0])?;
+                    (Decoded::FstpSt { index }, len)
+                }
+            } else if mnemonic == "fisttp" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 1 || !parts[0].contains('[') {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 fisttp form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_capstone_memory_operand(parts[0])?;
+                let width_bits = capstone_operand_width_bits(parts[0]).unwrap_or(64);
+                (Decoded::Fisttp { dst, width_bits }, len)
+            } else if let Some(condition) = mnemonic.strip_prefix("fcmov").and_then(|suffix| {
+                Some(match suffix {
+                    "b" | "c" | "nae" => 0x2,
+                    "ae" | "nb" | "nc" => 0x3,
+                    "be" | "na" => 0x6,
+                    "a" | "nbe" => 0x7,
+                    "e" | "z" => 0x4,
+                    "ne" | "nz" => 0x5,
+                    _ => return None,
+                })
+            }) {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 2 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 fcmov operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let dst = parse_st_register(parts[0])?;
+                if dst != 0 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 fcmov dst at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let src = parse_st_register(parts[1])?;
+                (Decoded::Fcmovcc { condition, src }, len)
+            } else if mnemonic == "fadd" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 1 || !parts[0].contains('[') {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 fadd form at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let src = parse_capstone_memory_operand(parts[0])?;
+                let width_bits = capstone_operand_width_bits(parts[0]).unwrap_or(64);
+                (Decoded::FaddMem { src, width_bits }, len)
+            } else if mnemonic == "ffreep" {
+                let parts = parse_capstone_operands(op_str);
+                if parts.len() != 1 {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 ffreep operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                    )));
+                }
+                let index = parse_st_register(parts[0])?;
+                (Decoded::Ffreep { index }, len)
+            } else if mnemonic == "fsubr" {
+                let parts = parse_capstone_operands(op_str);
+                let index = match parts.as_slice() {
+                    [single] => parse_st_register(single)?,
+                    [a, b] => {
+                        let a = parse_st_register(a)?;
+                        let b = parse_st_register(b)?;
+                        if a != 0 { a } else { b }
+                    }
+                    _ => {
+                        return Err(Error::from(format!(
+                            "unsupported x86_64 fsubr operand count at 0x{offset:x}: {mnemonic} {op_str}"
+                        )));
+                    }
+                };
+                (Decoded::FsubrSt0St { index }, len)
+            } else if let Some(condition) = mnemonic.strip_prefix("cmov").and_then(|suffix| {
+                Some(match suffix {
+                    "e" | "z" => 0x4,
+                    "ne" | "nz" => 0x5,
+                    "b" | "c" | "nae" => 0x2,
+                    "ae" | "nb" | "nc" => 0x3,
+                    "be" | "na" => 0x6,
+                    "a" | "nbe" => 0x7,
+                    // `s/ns` are based on the sign flag. We approximate them as
+                    // `lt/ge` (valid for common patterns where OF=0, e.g. `test`).
+                    "s" => 0xC,
+                    "ns" => 0xD,
+                    "l" => 0xC,
+                    "ge" => 0xD,
+                    "le" => 0xE,
+                    "g" => 0xF,
+                    _ => return None,
+                })
+            }) {
+                let (lhs, rhs) = parse_capstone_two_operands(op_str)?;
+                let dst = parse_gpr_register(lhs)?;
+                let src = if rhs.contains('[') {
+                    RmOperand::Mem(parse_capstone_memory_operand(rhs)?)
+                } else {
+                    RmOperand::Reg(parse_gpr_register(rhs)?)
+                };
+                let width_bits = capstone_operand_width_bits(lhs)
+                    .or_else(|| capstone_operand_width_bits(rhs))
+                    .unwrap_or(64);
+                (
+                    Decoded::Cmovcc {
+                        dst,
+                        src,
+                        condition,
+                        width_bits,
+                    },
+                    len,
+                )
+            } else if mnemonic == "hlt" {
+                (Decoded::Hlt, len)
+            } else if mnemonic == "leave" {
+                (Decoded::Leave, len)
+            } else {
+                if let Some(err) = decode_error {
+                    return Err(Error::from(format!(
+                        "unsupported x86_64 instruction at 0x{offset:x}: {mnemonic} {op_str} (custom decode failed: {err})"
+                    )));
+                }
+                return Err(Error::from(format!(
+                    "unsupported x86_64 instruction at 0x{offset:x}: {mnemonic} {op_str}"
+                )));
+            }
         };
         if consumed != len {
             return Err(Error::from(format!(
@@ -3770,8 +3868,8 @@ pub(super) fn find_elf_sysv_main_offset(
     entry_address: u64,
     rip_symbols: &HashMap<u64, crate::binary::RipSymbol>,
 ) -> Option<usize> {
-    use capstone::prelude::*;
     use capstone::Syntax;
+    use capstone::prelude::*;
 
     let entry_offset = entry_address.checked_sub(text_address)?;
     let entry_offset = usize::try_from(entry_offset).ok()?;
@@ -3846,8 +3944,7 @@ pub(super) fn find_elf_sysv_main_offset(
                 if trace {
                     eprintln!(
                         "[fp-native] ELF start call GOT 0x{got_target:x} -> {} ({:?})",
-                        symbol.name,
-                        symbol.kind
+                        symbol.name, symbol.kind
                     );
                 }
 
@@ -4206,7 +4303,9 @@ fn lift_non_terminator(
             *next_id += 1;
             Ok(())
         }
-        Decoded::Hlt => Err(Error::from("internal error: unexpected hlt in non-terminator")),
+        Decoded::Hlt => Err(Error::from(
+            "internal error: unexpected hlt in non-terminator",
+        )),
         Decoded::Leave => {
             let rbp = ctx.read_gpr(5)?;
             ctx.write_gpr(4, rbp.clone());
@@ -4233,10 +4332,7 @@ fn lift_non_terminator(
             let rsp_id = *next_id;
             instructions.push(build_binop(
                 rsp_id,
-                AsmInstructionKind::Add(
-                    rbp,
-                    AsmValue::Constant(AsmConstant::Int(8, AsmType::I64)),
-                ),
+                AsmInstructionKind::Add(rbp, AsmValue::Constant(AsmConstant::Int(8, AsmType::I64))),
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
             ));
             *next_id += 1;
@@ -4334,8 +4430,7 @@ fn lift_non_terminator(
                                 if let Some(import) = symbol.import.as_ref() {
                                     call_is_external = true;
                                     AsmValue::Function(import.clone())
-                                } else
-                                if symbol.kind == RipSymbolKind::Function {
+                                } else if symbol.kind == RipSymbolKind::Function {
                                     AsmValue::Function(symbol.name.clone())
                                 } else {
                                     let addr = compute_address(
@@ -4350,7 +4445,9 @@ fn lift_non_terminator(
                                     let load_id = *next_id;
                                     instructions.push(AsmInstruction {
                                         id: load_id,
-                                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
+                                        opcode: AsmOpcode::Generic(
+                                            fp_core::asmir::AsmGenericOpcode::Load,
+                                        ),
                                         kind: AsmInstructionKind::Load {
                                             address: addr,
                                             alignment: None,
@@ -4373,8 +4470,7 @@ fn lift_non_terminator(
                                 if let Some(import) = symbol.import.as_ref() {
                                     call_is_external = true;
                                     AsmValue::Function(import.clone())
-                                } else
-                                if symbol.kind == RipSymbolKind::Function {
+                                } else if symbol.kind == RipSymbolKind::Function {
                                     AsmValue::Function(symbol.name.clone())
                                 } else {
                                     let addr = compute_address(
@@ -4389,7 +4485,9 @@ fn lift_non_terminator(
                                     let load_id = *next_id;
                                     instructions.push(AsmInstruction {
                                         id: load_id,
-                                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
+                                        opcode: AsmOpcode::Generic(
+                                            fp_core::asmir::AsmGenericOpcode::Load,
+                                        ),
                                         kind: AsmInstructionKind::Load {
                                             address: addr,
                                             alignment: None,
@@ -4407,34 +4505,36 @@ fn lift_non_terminator(
                                     AsmValue::Register(load_id)
                                 }
                             } else {
-                            let addr = compute_address(
-                                ctx,
-                                memory,
-                                inst.offset,
-                                inst.len,
-                                relocs,
-                                instructions,
-                                next_id,
-                            )?;
-                            let load_id = *next_id;
-                            instructions.push(AsmInstruction {
-                                id: load_id,
-                                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                                kind: AsmInstructionKind::Load {
-                                    address: addr,
-                                    alignment: None,
-                                    volatile: false,
-                                },
-                                type_hint: Some(AsmType::I64),
-                                operands: Vec::new(),
-                                implicit_uses: Vec::new(),
-                                implicit_defs: Vec::new(),
-                                encoding: None,
-                                debug_info: None,
-                                annotations: Vec::new(),
-                            });
-                            *next_id += 1;
-                            AsmValue::Register(load_id)
+                                let addr = compute_address(
+                                    ctx,
+                                    memory,
+                                    inst.offset,
+                                    inst.len,
+                                    relocs,
+                                    instructions,
+                                    next_id,
+                                )?;
+                                let load_id = *next_id;
+                                instructions.push(AsmInstruction {
+                                    id: load_id,
+                                    opcode: AsmOpcode::Generic(
+                                        fp_core::asmir::AsmGenericOpcode::Load,
+                                    ),
+                                    kind: AsmInstructionKind::Load {
+                                        address: addr,
+                                        alignment: None,
+                                        volatile: false,
+                                    },
+                                    type_hint: Some(AsmType::I64),
+                                    operands: Vec::new(),
+                                    implicit_uses: Vec::new(),
+                                    implicit_defs: Vec::new(),
+                                    encoding: None,
+                                    debug_info: None,
+                                    annotations: Vec::new(),
+                                });
+                                *next_id += 1;
+                                AsmValue::Register(load_id)
                             }
                         }
                     } else {
@@ -4777,7 +4877,14 @@ fn lift_non_terminator(
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
             ));
             *next_id += 1;
-            write_gpr_with_width(ctx, dst, AsmValue::Register(id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::AndRmToReg {
             dst,
@@ -4801,7 +4908,14 @@ fn lift_non_terminator(
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
             ));
             *next_id += 1;
-            write_gpr_with_width(ctx, dst, AsmValue::Register(id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::OrReg {
             dst,
@@ -4817,7 +4931,14 @@ fn lift_non_terminator(
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
             ));
             *next_id += 1;
-            write_gpr_with_width(ctx, dst, AsmValue::Register(id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::OrRmToReg {
             dst,
@@ -4841,7 +4962,14 @@ fn lift_non_terminator(
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
             ));
             *next_id += 1;
-            write_gpr_with_width(ctx, dst, AsmValue::Register(id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::OrRmReg {
             dst,
@@ -4946,26 +5074,31 @@ fn lift_non_terminator(
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Xor),
             ));
             *next_id += 1;
-            write_gpr_with_width(ctx, dst, AsmValue::Register(id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::AndImm {
             dst,
             imm,
             width_bits,
-        } => {
-            lift_rm_imm_binop(
-                ctx,
-                dst,
-                imm,
-                width_bits,
-                *inst,
-                bytes,
-                relocs,
-                instructions,
-                next_id,
-                fp_core::asmir::AsmGenericOpcode::And,
-            )
-        }
+        } => lift_rm_imm_binop(
+            ctx,
+            dst,
+            imm,
+            width_bits,
+            *inst,
+            bytes,
+            relocs,
+            instructions,
+            next_id,
+            fp_core::asmir::AsmGenericOpcode::And,
+        ),
         Decoded::AdcImm {
             dst,
             imm,
@@ -5063,11 +5196,7 @@ fn lift_non_terminator(
             } else {
                 AsmInstructionKind::Add(AsmValue::Register(id1), carry)
             };
-            instructions.push(build_binop(
-                id2,
-                second_kind,
-                AsmOpcode::Generic(first_op),
-            ));
+            instructions.push(build_binop(id2, second_kind, AsmOpcode::Generic(first_op)));
             *next_id += 1;
 
             let mut value = AsmValue::Register(id2);
@@ -5222,64 +5351,62 @@ fn lift_non_terminator(
             *next_id += 1;
             Ok(())
         }
-        Decoded::MovImm8ToRm { dst, imm } => {
-            match dst {
-                RmOperand::Reg(dst) => {
-                    let value = AsmValue::Constant(AsmConstant::UInt(imm as u8 as u64, AsmType::I64));
-                    let id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                        kind: AsmInstructionKind::Freeze(value),
-                        type_hint: Some(AsmType::I64),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
-                    ctx.write_gpr(dst, AsmValue::Register(id));
-                    Ok(())
-                }
-                RmOperand::Mem(memory) => {
-                    if memory.segment.is_some() {
-                        return Ok(());
-                    }
-                    let value = AsmValue::Constant(AsmConstant::Int(imm as i64, AsmType::I8));
-                    let addr = compute_address(
-                        ctx,
-                        memory,
-                        inst.offset,
-                        inst.len,
-                        relocs,
-                        instructions,
-                        next_id,
-                    )?;
-                    let id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        type_hint: Some(AsmType::Void),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
-                    Ok(())
-                }
+        Decoded::MovImm8ToRm { dst, imm } => match dst {
+            RmOperand::Reg(dst) => {
+                let value = AsmValue::Constant(AsmConstant::UInt(imm as u8 as u64, AsmType::I64));
+                let id = *next_id;
+                instructions.push(AsmInstruction {
+                    id,
+                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
+                    kind: AsmInstructionKind::Freeze(value),
+                    type_hint: Some(AsmType::I64),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                });
+                *next_id += 1;
+                ctx.write_gpr(dst, AsmValue::Register(id));
+                Ok(())
             }
-        }
+            RmOperand::Mem(memory) => {
+                if memory.segment.is_some() {
+                    return Ok(());
+                }
+                let value = AsmValue::Constant(AsmConstant::Int(imm as i64, AsmType::I8));
+                let addr = compute_address(
+                    ctx,
+                    memory,
+                    inst.offset,
+                    inst.len,
+                    relocs,
+                    instructions,
+                    next_id,
+                )?;
+                let id = *next_id;
+                instructions.push(AsmInstruction {
+                    id,
+                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
+                    kind: AsmInstructionKind::Store {
+                        value,
+                        address: addr,
+                        alignment: None,
+                        volatile: false,
+                    },
+                    type_hint: Some(AsmType::Void),
+                    operands: Vec::new(),
+                    implicit_uses: Vec::new(),
+                    implicit_defs: Vec::new(),
+                    encoding: None,
+                    debug_info: None,
+                    annotations: Vec::new(),
+                });
+                *next_id += 1;
+                Ok(())
+            }
+        },
         Decoded::MovImm16ToRm {
             dst,
             imm_offset: _,
@@ -5287,10 +5414,8 @@ fn lift_non_terminator(
         } => match dst {
             RmOperand::Reg(dst) => {
                 let current = ctx.read_gpr(dst)?;
-                let mask = AsmValue::Constant(AsmConstant::UInt(
-                    0xFFFF_FFFF_FFFF_0000,
-                    AsmType::I64,
-                ));
+                let mask =
+                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF_FFFF_0000, AsmType::I64));
                 let masked_id = *next_id;
                 instructions.push(build_binop(
                     masked_id,
@@ -5385,8 +5510,7 @@ fn lift_non_terminator(
                     *next_id += 1;
                     let mut value = AsmValue::Register(id);
                     if width_bits == 32 {
-                        let mask =
-                            AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                        let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
                         let and_id = *next_id;
                         instructions.push(build_binop(
                             and_id,
@@ -5439,8 +5563,7 @@ fn lift_non_terminator(
                     *next_id += 1;
                     let mut value = AsmValue::Register(id);
                     if width_bits == 32 {
-                        let mask =
-                            AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                        let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
                         let and_id = *next_id;
                         instructions.push(build_binop(
                             and_id,
@@ -5516,7 +5639,14 @@ fn lift_non_terminator(
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
             ));
             *next_id += 1;
-            write_gpr_with_width(ctx, dst, AsmValue::Register(id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::SubRmReg {
             dst,
@@ -5536,8 +5666,7 @@ fn lift_non_terminator(
                     *next_id += 1;
                     let mut value = AsmValue::Register(id);
                     if width_bits == 32 {
-                        let mask =
-                            AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                        let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
                         let and_id = *next_id;
                         instructions.push(build_binop(
                             and_id,
@@ -5590,8 +5719,7 @@ fn lift_non_terminator(
                     *next_id += 1;
                     let mut value = AsmValue::Register(id);
                     if width_bits == 32 {
-                        let mask =
-                            AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                        let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
                         let and_id = *next_id;
                         instructions.push(build_binop(
                             and_id,
@@ -5994,20 +6122,14 @@ fn lift_non_terminator(
             let and0_id = *next_id;
             instructions.push(build_binop(
                 and0_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(lhs0_id),
-                    AsmValue::Register(rhs0_id),
-                ),
+                AsmInstructionKind::And(AsmValue::Register(lhs0_id), AsmValue::Register(rhs0_id)),
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
             ));
             *next_id += 1;
             let and1_id = *next_id;
             instructions.push(build_binop(
                 and1_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(lhs1_id),
-                    AsmValue::Register(rhs1_id),
-                ),
+                AsmInstructionKind::And(AsmValue::Register(lhs1_id), AsmValue::Register(rhs1_id)),
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
             ));
             *next_id += 1;
@@ -6170,8 +6292,12 @@ fn lift_non_terminator(
                     if memory.segment.is_some() {
                         return Ok(());
                     }
-                    let stored =
-                        value_for_store(width_bits, AsmValue::Register(xor_id), instructions, next_id)?;
+                    let stored = value_for_store(
+                        width_bits,
+                        AsmValue::Register(xor_id),
+                        instructions,
+                        next_id,
+                    )?;
                     let addr = compute_address(
                         ctx,
                         memory,
@@ -6209,10 +6335,7 @@ fn lift_non_terminator(
             let cmp_id = *next_id;
             instructions.push(compare_instruction(
                 cmp_id,
-                AsmInstructionKind::Lt(
-                    rax,
-                    AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                ),
+                AsmInstructionKind::Lt(rax, AsmValue::Constant(AsmConstant::Int(0, AsmType::I64))),
                 fp_core::asmir::AsmGenericOpcode::Lt,
             ));
             *next_id += 1;
@@ -6353,8 +6476,15 @@ fn lift_non_terminator(
             imm,
             width_bits,
         } => {
-            let lhs =
-                value_from_rm_with_width(ctx, dst, width_bits, *inst, relocs, instructions, next_id)?;
+            let lhs = value_from_rm_with_width(
+                ctx,
+                dst,
+                width_bits,
+                *inst,
+                relocs,
+                instructions,
+                next_id,
+            )?;
 
             let id = if matches!(inst.kind, Decoded::SarImm { .. }) {
                 let sign_shift = match width_bits {
@@ -6366,7 +6496,10 @@ fn lift_non_terminator(
                     let id = *next_id;
                     instructions.push(build_binop(
                         id,
-                        AsmInstructionKind::Add(lhs, AsmValue::Constant(AsmConstant::Int(0, AsmType::I64))),
+                        AsmInstructionKind::Add(
+                            lhs,
+                            AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        ),
                         AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
                     ));
                     *next_id += 1;
@@ -6386,7 +6519,10 @@ fn lift_non_terminator(
                         sign_id,
                         AsmInstructionKind::Shr(
                             lhs,
-                            AsmValue::Constant(AsmConstant::Int(i64::from(sign_shift), AsmType::I64)),
+                            AsmValue::Constant(AsmConstant::Int(
+                                i64::from(sign_shift),
+                                AsmType::I64,
+                            )),
                         ),
                         AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
                     ));
@@ -6413,7 +6549,10 @@ fn lift_non_terminator(
                         fill_id,
                         AsmInstructionKind::Shl(
                             AsmValue::Register(neg_id),
-                            AsmValue::Constant(AsmConstant::Int(i64::from(fill_shift), AsmType::I64)),
+                            AsmValue::Constant(AsmConstant::Int(
+                                i64::from(fill_shift),
+                                AsmType::I64,
+                            )),
                         ),
                         AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
                     ));
@@ -6543,7 +6682,14 @@ fn lift_non_terminator(
             ));
             *next_id += 1;
 
-            write_gpr_with_width(ctx, dst, AsmValue::Register(id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::Shlx {
             dst,
@@ -6591,7 +6737,14 @@ fn lift_non_terminator(
             ));
             *next_id += 1;
 
-            write_gpr_with_width(ctx, dst, AsmValue::Register(id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::Rorx {
             dst,
@@ -6650,7 +6803,14 @@ fn lift_non_terminator(
             ));
             *next_id += 1;
 
-            write_gpr_with_width(ctx, dst, AsmValue::Register(or_id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(or_id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::Blsr {
             dst,
@@ -6685,10 +6845,25 @@ fn lift_non_terminator(
             ));
             *next_id += 1;
 
-            write_gpr_with_width(ctx, dst, AsmValue::Register(and_id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(and_id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::NotRm { dst, width_bits } => {
-            let value = value_from_rm_with_width(ctx, dst, width_bits, *inst, relocs, instructions, next_id)?;
+            let value = value_from_rm_with_width(
+                ctx,
+                dst,
+                width_bits,
+                *inst,
+                relocs,
+                instructions,
+                next_id,
+            )?;
             let id = *next_id;
             instructions.push(AsmInstruction {
                 id,
@@ -6704,14 +6879,20 @@ fn lift_non_terminator(
             });
             *next_id += 1;
             match dst {
-                RmOperand::Reg(reg) => {
-                    write_gpr_with_width(ctx, reg, AsmValue::Register(id), width_bits, instructions, next_id)
-                }
+                RmOperand::Reg(reg) => write_gpr_with_width(
+                    ctx,
+                    reg,
+                    AsmValue::Register(id),
+                    width_bits,
+                    instructions,
+                    next_id,
+                ),
                 RmOperand::Mem(memory) => {
                     if memory.segment.is_some() {
                         return Ok(());
                     }
-                    let stored = value_for_store(width_bits, AsmValue::Register(id), instructions, next_id)?;
+                    let stored =
+                        value_for_store(width_bits, AsmValue::Register(id), instructions, next_id)?;
                     let addr = compute_address(
                         ctx,
                         memory,
@@ -6745,7 +6926,15 @@ fn lift_non_terminator(
             }
         }
         Decoded::NegRm { dst, width_bits } => {
-            let value = value_from_rm_with_width(ctx, dst, width_bits, *inst, relocs, instructions, next_id)?;
+            let value = value_from_rm_with_width(
+                ctx,
+                dst,
+                width_bits,
+                *inst,
+                relocs,
+                instructions,
+                next_id,
+            )?;
             let id = *next_id;
             instructions.push(build_binop(
                 id,
@@ -6757,14 +6946,20 @@ fn lift_non_terminator(
             ));
             *next_id += 1;
             match dst {
-                RmOperand::Reg(reg) => {
-                    write_gpr_with_width(ctx, reg, AsmValue::Register(id), width_bits, instructions, next_id)
-                }
+                RmOperand::Reg(reg) => write_gpr_with_width(
+                    ctx,
+                    reg,
+                    AsmValue::Register(id),
+                    width_bits,
+                    instructions,
+                    next_id,
+                ),
                 RmOperand::Mem(memory) => {
                     if memory.segment.is_some() {
                         return Ok(());
                     }
-                    let stored = value_for_store(width_bits, AsmValue::Register(id), instructions, next_id)?;
+                    let stored =
+                        value_for_store(width_bits, AsmValue::Register(id), instructions, next_id)?;
                     let addr = compute_address(
                         ctx,
                         memory,
@@ -6879,7 +7074,11 @@ fn lift_non_terminator(
             next_id,
             fp_core::asmir::AsmGenericOpcode::And,
         ),
-        Decoded::ImulReg { dst, src, width_bits } => {
+        Decoded::ImulReg {
+            dst,
+            src,
+            width_bits,
+        } => {
             let lhs = ctx.read_gpr(dst)?;
             let rhs = ctx.read_gpr(src)?;
             let id = *next_id;
@@ -6889,7 +7088,14 @@ fn lift_non_terminator(
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
             ));
             *next_id += 1;
-            write_gpr_with_width(ctx, dst, AsmValue::Register(id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::ImulRegImm {
             dst,
@@ -6914,7 +7120,14 @@ fn lift_non_terminator(
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
             ));
             *next_id += 1;
-            write_gpr_with_width(ctx, dst, AsmValue::Register(id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::ImulRmWide { src, width_bits } => {
             let lhs = ctx.read_gpr(0)?;
@@ -6938,8 +7151,7 @@ fn lift_non_terminator(
 
             match width_bits {
                 32 => {
-                    let low_mask =
-                        AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                    let low_mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
                     let low_id = *next_id;
                     instructions.push(build_binop(
                         low_id,
@@ -6999,8 +7211,7 @@ fn lift_non_terminator(
 
             match width_bits {
                 32 => {
-                    let mask =
-                        AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                    let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
 
                     let lhs32_id = *next_id;
                     instructions.push(build_binop(
@@ -7051,12 +7262,25 @@ fn lift_non_terminator(
                     ));
                     *next_id += 1;
 
-                    write_gpr_with_width(ctx, 0, AsmValue::Register(low_id), 32, instructions, next_id)?;
-                    write_gpr_with_width(ctx, 2, AsmValue::Register(high_id), 32, instructions, next_id)
+                    write_gpr_with_width(
+                        ctx,
+                        0,
+                        AsmValue::Register(low_id),
+                        32,
+                        instructions,
+                        next_id,
+                    )?;
+                    write_gpr_with_width(
+                        ctx,
+                        2,
+                        AsmValue::Register(high_id),
+                        32,
+                        instructions,
+                        next_id,
+                    )
                 }
                 64 => {
-                    let low_mask =
-                        AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                    let low_mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
                     let high_shift = AsmValue::Constant(AsmConstant::UInt(32, AsmType::I64));
 
                     let a0_id = *next_id;
@@ -7289,7 +7513,10 @@ fn lift_non_terminator(
                 instructions.push(AsmInstruction {
                     id,
                     opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::Float(0.0, AsmType::F64))),
+                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::Float(
+                        0.0,
+                        AsmType::F64,
+                    ))),
                     type_hint: Some(AsmType::F64),
                     operands: Vec::new(),
                     implicit_uses: Vec::new(),
@@ -7364,7 +7591,10 @@ fn lift_non_terminator(
                 instructions.push(AsmInstruction {
                     id,
                     opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::Float(0.0, AsmType::F64))),
+                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::Float(
+                        0.0,
+                        AsmType::F64,
+                    ))),
                     type_hint: Some(AsmType::F64),
                     operands: Vec::new(),
                     implicit_uses: Vec::new(),
@@ -7586,7 +7816,7 @@ fn lift_non_terminator(
                 _ => {
                     return Err(Error::from(format!(
                         "unsupported x86_64 fstp width_bits={width_bits}"
-                    )))
+                    )));
                 }
             };
 
@@ -7763,7 +7993,10 @@ fn lift_non_terminator(
                 instructions.push(AsmInstruction {
                     id: zero_id,
                     opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::Float(0.0, AsmType::F64))),
+                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::Float(
+                        0.0,
+                        AsmType::F64,
+                    ))),
                     type_hint: Some(AsmType::F64),
                     operands: Vec::new(),
                     implicit_uses: Vec::new(),
@@ -7866,9 +8099,20 @@ fn lift_non_terminator(
                 annotations: Vec::new(),
             });
             *next_id += 1;
-            write_gpr_with_width(ctx, dst, AsmValue::Register(id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
-        Decoded::MovRmToReg { dst, src, width_bits } => match src {
+        Decoded::MovRmToReg {
+            dst,
+            src,
+            width_bits,
+        } => match src {
             RmOperand::Reg(src) => {
                 let value = ctx.read_gpr(src)?;
                 write_gpr_with_width(ctx, dst, value, width_bits, instructions, next_id)
@@ -7960,7 +8204,11 @@ fn lift_non_terminator(
                 write_gpr_with_width(ctx, dst, value, width_bits, instructions, next_id)
             }
         },
-        Decoded::MovRegToRm { dst, src, width_bits } => {
+        Decoded::MovRegToRm {
+            dst,
+            src,
+            width_bits,
+        } => {
             let value = ctx.read_gpr(src)?;
             match dst {
                 RmOperand::Reg(dst) => {
@@ -8000,7 +8248,11 @@ fn lift_non_terminator(
                 }
             }
         }
-        Decoded::MovbeRegFromMem { dst, src, width_bits } => {
+        Decoded::MovbeRegFromMem {
+            dst,
+            src,
+            width_bits,
+        } => {
             let value = value_from_rm_with_width(
                 ctx,
                 RmOperand::Mem(src),
@@ -8013,7 +8265,11 @@ fn lift_non_terminator(
             let swapped = byte_swap_value(width_bits, value, instructions, next_id)?;
             write_gpr_with_width(ctx, dst, swapped, width_bits, instructions, next_id)
         }
-        Decoded::MovbeMemFromReg { dst, src, width_bits } => {
+        Decoded::MovbeMemFromReg {
+            dst,
+            src,
+            width_bits,
+        } => {
             let value = ctx.read_gpr(src)?;
             let swapped = byte_swap_value(width_bits, value, instructions, next_id)?;
             let value = value_for_store(width_bits, swapped, instructions, next_id)?;
@@ -8123,8 +8379,7 @@ fn lift_non_terminator(
             width_bits,
         } => {
             if src.segment.is_none() && src.index.is_none() {
-                if src.base == Some(16)
-                    || (src.base.is_none() && src.displacement_offset.is_some())
+                if src.base == Some(16) || (src.base.is_none() && src.displacement_offset.is_some())
                 {
                     let next_ip = (ctx.code_base_address as i64)
                         .saturating_add(inst.offset as i64)
@@ -8283,8 +8538,7 @@ fn lift_non_terminator(
                     *next_id += 1;
                     let mut value = AsmValue::Register(id);
                     if width_bits == 32 {
-                        let mask =
-                            AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                        let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
                         let and_id = *next_id;
                         instructions.push(build_binop(
                             and_id,
@@ -8338,8 +8592,7 @@ fn lift_non_terminator(
                     *next_id += 1;
                     let mut value = AsmValue::Register(add_id);
                     if width_bits == 32 {
-                        let mask =
-                            AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                        let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
                         let and_id = *next_id;
                         instructions.push(build_binop(
                             and_id,
@@ -9017,7 +9270,10 @@ fn lift_non_terminator(
             instructions.push(AsmInstruction {
                 id: mul_id,
                 opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                kind: AsmInstructionKind::Mul(AsmValue::Register(lhs_fp_id), AsmValue::Register(rhs_id)),
+                kind: AsmInstructionKind::Mul(
+                    AsmValue::Register(lhs_fp_id),
+                    AsmValue::Register(rhs_id),
+                ),
                 type_hint: Some(AsmType::F64),
                 operands: Vec::new(),
                 implicit_uses: Vec::new(),
@@ -9139,7 +9395,10 @@ fn lift_non_terminator(
             instructions.push(AsmInstruction {
                 id: div_id,
                 opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div),
-                kind: AsmInstructionKind::Div(AsmValue::Register(lhs_fp_id), AsmValue::Register(rhs_fp_id)),
+                kind: AsmInstructionKind::Div(
+                    AsmValue::Register(lhs_fp_id),
+                    AsmValue::Register(rhs_fp_id),
+                ),
                 type_hint: Some(AsmType::F64),
                 operands: Vec::new(),
                 implicit_uses: Vec::new(),
@@ -9497,8 +9756,7 @@ fn lift_non_terminator(
             });
             *next_id += 1;
 
-            let stored =
-                value_for_store(32, AsmValue::Register(lane0_id), instructions, next_id)?;
+            let stored = value_for_store(32, AsmValue::Register(lane0_id), instructions, next_id)?;
             let addr = compute_address(
                 ctx,
                 dst,
@@ -9757,7 +10015,10 @@ fn lift_non_terminator(
             let cmp_id = *next_id;
             instructions.push(compare_instruction(
                 cmp_id,
-                AsmInstructionKind::Eq(AsmValue::Register(lhs_fp_id), AsmValue::Register(rhs_fp_id)),
+                AsmInstructionKind::Eq(
+                    AsmValue::Register(lhs_fp_id),
+                    AsmValue::Register(rhs_fp_id),
+                ),
                 fp_core::asmir::AsmGenericOpcode::Eq,
             ));
             *next_id += 1;
@@ -9873,7 +10134,10 @@ fn lift_non_terminator(
             instructions.push(AsmInstruction {
                 id: add_id,
                 opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                kind: AsmInstructionKind::Add(AsmValue::Register(lhs_fp_id), AsmValue::Register(rhs_fp_id)),
+                kind: AsmInstructionKind::Add(
+                    AsmValue::Register(lhs_fp_id),
+                    AsmValue::Register(rhs_fp_id),
+                ),
                 type_hint: Some(AsmType::F32),
                 operands: Vec::new(),
                 implicit_uses: Vec::new(),
@@ -9917,7 +10181,10 @@ fn lift_non_terminator(
             let merged_id = *next_id;
             instructions.push(build_binop(
                 merged_id,
-                AsmInstructionKind::Or(AsmValue::Register(preserved_id), AsmValue::Register(bits_i64_id)),
+                AsmInstructionKind::Or(
+                    AsmValue::Register(preserved_id),
+                    AsmValue::Register(bits_i64_id),
+                ),
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
             ));
             *next_id += 1;
@@ -10081,7 +10348,10 @@ fn lift_non_terminator(
             instructions.push(AsmInstruction {
                 id: div_id,
                 opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div),
-                kind: AsmInstructionKind::Div(AsmValue::Register(lhs_fp_id), AsmValue::Register(rhs_fp_id)),
+                kind: AsmInstructionKind::Div(
+                    AsmValue::Register(lhs_fp_id),
+                    AsmValue::Register(rhs_fp_id),
+                ),
                 type_hint: Some(AsmType::F32),
                 operands: Vec::new(),
                 implicit_uses: Vec::new(),
@@ -10125,7 +10395,10 @@ fn lift_non_terminator(
             let merged_id = *next_id;
             instructions.push(build_binop(
                 merged_id,
-                AsmInstructionKind::Or(AsmValue::Register(preserved_id), AsmValue::Register(bits_i64_id)),
+                AsmInstructionKind::Or(
+                    AsmValue::Register(preserved_id),
+                    AsmValue::Register(bits_i64_id),
+                ),
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
             ));
             *next_id += 1;
@@ -10256,7 +10529,10 @@ fn lift_non_terminator(
             instructions.push(AsmInstruction {
                 id: div_id,
                 opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div),
-                kind: AsmInstructionKind::Div(AsmValue::Register(lhs_fp_id), AsmValue::Register(rhs_fp_id)),
+                kind: AsmInstructionKind::Div(
+                    AsmValue::Register(lhs_fp_id),
+                    AsmValue::Register(rhs_fp_id),
+                ),
                 type_hint: Some(AsmType::F32),
                 operands: Vec::new(),
                 implicit_uses: Vec::new(),
@@ -10300,7 +10576,10 @@ fn lift_non_terminator(
             let merged_id = *next_id;
             instructions.push(build_binop(
                 merged_id,
-                AsmInstructionKind::Or(AsmValue::Register(preserved_id), AsmValue::Register(bits_i64_id)),
+                AsmInstructionKind::Or(
+                    AsmValue::Register(preserved_id),
+                    AsmValue::Register(bits_i64_id),
+                ),
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
             ));
             *next_id += 1;
@@ -10406,7 +10685,14 @@ fn lift_non_terminator(
             });
             *next_id += 1;
 
-            write_gpr_with_width(ctx, dst, AsmValue::Register(int_id), width_bits, instructions, next_id)
+            write_gpr_with_width(
+                ctx,
+                dst,
+                AsmValue::Register(int_id),
+                width_bits,
+                instructions,
+                next_id,
+            )
         }
         Decoded::Vmulss { dst, lhs, rhs } => {
             let base_vec = ctx.read_vec(lhs)?;
@@ -10545,7 +10831,10 @@ fn lift_non_terminator(
             instructions.push(AsmInstruction {
                 id: mul_id,
                 opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                kind: AsmInstructionKind::Mul(AsmValue::Register(lhs_fp_id), AsmValue::Register(rhs_fp_id)),
+                kind: AsmInstructionKind::Mul(
+                    AsmValue::Register(lhs_fp_id),
+                    AsmValue::Register(rhs_fp_id),
+                ),
                 type_hint: Some(AsmType::F32),
                 operands: Vec::new(),
                 implicit_uses: Vec::new(),
@@ -10589,7 +10878,10 @@ fn lift_non_terminator(
             let merged_id = *next_id;
             instructions.push(build_binop(
                 merged_id,
-                AsmInstructionKind::Or(AsmValue::Register(preserved_id), AsmValue::Register(bits_i64_id)),
+                AsmInstructionKind::Or(
+                    AsmValue::Register(preserved_id),
+                    AsmValue::Register(bits_i64_id),
+                ),
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
             ));
             *next_id += 1;
@@ -10720,7 +11012,10 @@ fn lift_non_terminator(
             instructions.push(AsmInstruction {
                 id: mul_id,
                 opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                kind: AsmInstructionKind::Mul(AsmValue::Register(lhs_fp_id), AsmValue::Register(rhs_fp_id)),
+                kind: AsmInstructionKind::Mul(
+                    AsmValue::Register(lhs_fp_id),
+                    AsmValue::Register(rhs_fp_id),
+                ),
                 type_hint: Some(AsmType::F32),
                 operands: Vec::new(),
                 implicit_uses: Vec::new(),
@@ -10764,7 +11059,10 @@ fn lift_non_terminator(
             let merged_id = *next_id;
             instructions.push(build_binop(
                 merged_id,
-                AsmInstructionKind::Or(AsmValue::Register(preserved_id), AsmValue::Register(bits_i64_id)),
+                AsmInstructionKind::Or(
+                    AsmValue::Register(preserved_id),
+                    AsmValue::Register(bits_i64_id),
+                ),
                 AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
             ));
             *next_id += 1;
@@ -11017,10 +11315,7 @@ fn lift_non_terminator(
                 let cmp_id = *next_id;
                 instructions.push(compare_instruction(
                     cmp_id,
-                    AsmInstructionKind::Ugt(
-                        AsmValue::Register(lhs_id),
-                        AsmValue::Register(rhs_id),
-                    ),
+                    AsmInstructionKind::Ugt(AsmValue::Register(lhs_id), AsmValue::Register(rhs_id)),
                     fp_core::asmir::AsmGenericOpcode::Ugt,
                 ));
                 *next_id += 1;
@@ -11280,10 +11575,7 @@ fn lift_non_terminator(
                 let cmp_id = *next_id;
                 instructions.push(compare_instruction(
                     cmp_id,
-                    AsmInstructionKind::Ugt(
-                        AsmValue::Register(lhs_id),
-                        AsmValue::Register(rhs_id),
-                    ),
+                    AsmInstructionKind::Ugt(AsmValue::Register(lhs_id), AsmValue::Register(rhs_id)),
                     fp_core::asmir::AsmGenericOpcode::Ugt,
                 ));
                 *next_id += 1;
@@ -11958,10 +12250,7 @@ fn lift_non_terminator(
                 let out_id = *next_id;
                 instructions.push(build_binop(
                     out_id,
-                    AsmInstructionKind::And(
-                        AsmValue::Register(lhs_id),
-                        AsmValue::Register(rhs_id),
-                    ),
+                    AsmInstructionKind::And(AsmValue::Register(lhs_id), AsmValue::Register(rhs_id)),
                     AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
                 ));
                 *next_id += 1;
@@ -12082,10 +12371,7 @@ fn lift_non_terminator(
                 let out_id = *next_id;
                 instructions.push(build_binop(
                     out_id,
-                    AsmInstructionKind::Or(
-                        AsmValue::Register(lhs_id),
-                        AsmValue::Register(rhs_id),
-                    ),
+                    AsmInstructionKind::Or(AsmValue::Register(lhs_id), AsmValue::Register(rhs_id)),
                     AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
                 ));
                 *next_id += 1;
@@ -12655,7 +12941,8 @@ fn lift_non_terminator(
             });
             *next_id += 1;
 
-            let stored = value_for_store(32, AsmValue::Register(extract_id), instructions, next_id)?;
+            let stored =
+                value_for_store(32, AsmValue::Register(extract_id), instructions, next_id)?;
             let addr = compute_address(
                 ctx,
                 dst,
@@ -12726,15 +13013,8 @@ fn lift_non_terminator(
                 return Err(Error::from("unsupported vpinsrd lane"));
             }
             let base_vec = ctx.read_vec(vector)?;
-            let scalar = value_from_rm_with_width(
-                ctx,
-                value,
-                32,
-                *inst,
-                relocs,
-                instructions,
-                next_id,
-            )?;
+            let scalar =
+                value_from_rm_with_width(ctx, value, 32, *inst, relocs, instructions, next_id)?;
 
             let half = u16::from(lane / 2);
             let part = lane % 2;
@@ -12861,15 +13141,8 @@ fn lift_non_terminator(
             });
             *next_id += 1;
 
-            let raw = value_from_rm_with_width(
-                ctx,
-                value,
-                8,
-                *inst,
-                relocs,
-                instructions,
-                next_id,
-            )?;
+            let raw =
+                value_from_rm_with_width(ctx, value, 8, *inst, relocs, instructions, next_id)?;
 
             let masked_byte_id = *next_id;
             instructions.push(build_binop(
@@ -12998,10 +13271,7 @@ fn lift_non_terminator(
                 id: vec_id,
                 opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
                 kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        value,
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
+                    elements: vec![value, AsmValue::Constant(AsmConstant::Int(0, AsmType::I64))],
                 },
                 type_hint: Some(AsmType::Vector(Box::new(AsmType::I64), 2)),
                 operands: Vec::new(),
@@ -13091,15 +13361,8 @@ fn lift_non_terminator(
             lane,
         } => {
             let base = ctx.read_vec(vector)?;
-            let scalar = value_from_rm_with_width(
-                ctx,
-                value,
-                64,
-                *inst,
-                relocs,
-                instructions,
-                next_id,
-            )?;
+            let scalar =
+                value_from_rm_with_width(ctx, value, 64, *inst, relocs, instructions, next_id)?;
             let id = *next_id;
             instructions.push(AsmInstruction {
                 id,
@@ -13175,8 +13438,15 @@ fn lift_non_terminator(
                     if memory.segment.is_some() {
                         return Ok(());
                     }
-                    let addr =
-                        compute_address(ctx, memory, inst.offset, inst.len, relocs, instructions, next_id)?;
+                    let addr = compute_address(
+                        ctx,
+                        memory,
+                        inst.offset,
+                        inst.len,
+                        relocs,
+                        instructions,
+                        next_id,
+                    )?;
                     let id = *next_id;
                     instructions.push(AsmInstruction {
                         id,
@@ -13275,10 +13545,9 @@ fn lift_non_terminator(
             ctx.write_gpr(dst, result);
             Ok(())
         }
-        Decoded::Ret
-        | Decoded::JmpRel { .. }
-        | Decoded::JmpRm { .. }
-        | Decoded::JccRel { .. } => Ok(()),
+        Decoded::Ret | Decoded::JmpRel { .. } | Decoded::JmpRm { .. } | Decoded::JccRel { .. } => {
+            Ok(())
+        }
     }
 }
 
@@ -13308,9 +13577,7 @@ fn external_call_return_model(name: &str) -> Option<ExternalCallReturnModel> {
         "getopt" | "getopt_long" | "getopt_long_only" => ExternalCallReturnModel::I32,
 
         // Common libc helpers that return pointers.
-        "strchr" | "strrchr" | "memchr" | "strstr" | "strpbrk" => {
-            ExternalCallReturnModel::I64
-        }
+        "strchr" | "strrchr" | "memchr" | "strstr" | "strpbrk" => ExternalCallReturnModel::I64,
         _ => return None,
     })
 }
@@ -14270,7 +14537,10 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
                 // INC r/m.
                 let width_bits = if rex_w { 64 } else { 32 };
                 return Ok(Some((
-                    Decoded::IncRm { target: rm, width_bits },
+                    Decoded::IncRm {
+                        target: rm,
+                        width_bits,
+                    },
                     opcode_index + 1 + consumed,
                 )));
             }
@@ -14278,7 +14548,10 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
                 // DEC r/m.
                 let width_bits = if rex_w { 64 } else { 32 };
                 return Ok(Some((
-                    Decoded::DecRm { target: rm, width_bits },
+                    Decoded::DecRm {
+                        target: rm,
+                        width_bits,
+                    },
                     opcode_index + 1 + consumed,
                 )));
             }
@@ -14758,16 +15031,44 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
         let width_bits = if rex_w { 64 } else { 32 };
         match (ext, rm) {
             (0, RmOperand::Reg(dst)) => {
-                return Ok(Some((Decoded::AddImm { dst, imm, width_bits }, len)));
+                return Ok(Some((
+                    Decoded::AddImm {
+                        dst,
+                        imm,
+                        width_bits,
+                    },
+                    len,
+                )));
             }
             (0, rm) => {
-                return Ok(Some((Decoded::AddImmRm { dst: rm, imm, width_bits }, len)));
+                return Ok(Some((
+                    Decoded::AddImmRm {
+                        dst: rm,
+                        imm,
+                        width_bits,
+                    },
+                    len,
+                )));
             }
             (5, RmOperand::Reg(dst)) => {
-                return Ok(Some((Decoded::SubImm { dst, imm, width_bits }, len)));
+                return Ok(Some((
+                    Decoded::SubImm {
+                        dst,
+                        imm,
+                        width_bits,
+                    },
+                    len,
+                )));
             }
             (5, rm) => {
-                return Ok(Some((Decoded::SubImmRm { dst: rm, imm, width_bits }, len)));
+                return Ok(Some((
+                    Decoded::SubImmRm {
+                        dst: rm,
+                        imm,
+                        width_bits,
+                    },
+                    len,
+                )));
             }
             (2, rm) => {
                 return Ok(Some((
@@ -14790,13 +15091,34 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
                 )));
             }
             (1, rm) => {
-                return Ok(Some((Decoded::OrImm { dst: rm, imm, width_bits }, len)));
+                return Ok(Some((
+                    Decoded::OrImm {
+                        dst: rm,
+                        imm,
+                        width_bits,
+                    },
+                    len,
+                )));
             }
             (4, rm) => {
-                return Ok(Some((Decoded::AndImm { dst: rm, imm, width_bits }, len)));
+                return Ok(Some((
+                    Decoded::AndImm {
+                        dst: rm,
+                        imm,
+                        width_bits,
+                    },
+                    len,
+                )));
             }
             (6, rm) => {
-                return Ok(Some((Decoded::XorImm { dst: rm, imm, width_bits }, len)));
+                return Ok(Some((
+                    Decoded::XorImm {
+                        dst: rm,
+                        imm,
+                        width_bits,
+                    },
+                    len,
+                )));
             }
             (7, rm) => {
                 return Ok(Some((
@@ -14822,11 +15144,56 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
             .ok_or_else(|| Error::from("truncated imm8"))? as i8;
         let len = imm_offset + 1;
         match ext {
-            0 => return Ok(Some((Decoded::AddImmRm { dst: rm, imm: imm as i64, width_bits: 8 }, len))),
-            1 => return Ok(Some((Decoded::OrImm { dst: rm, imm: imm as i64, width_bits: 8 }, len))),
-            4 => return Ok(Some((Decoded::AndImm { dst: rm, imm: imm as i64, width_bits: 8 }, len))),
-            5 => return Ok(Some((Decoded::SubImmRm { dst: rm, imm: imm as i64, width_bits: 8 }, len))),
-            6 => return Ok(Some((Decoded::XorImm { dst: rm, imm: imm as i64, width_bits: 8 }, len))),
+            0 => {
+                return Ok(Some((
+                    Decoded::AddImmRm {
+                        dst: rm,
+                        imm: imm as i64,
+                        width_bits: 8,
+                    },
+                    len,
+                )));
+            }
+            1 => {
+                return Ok(Some((
+                    Decoded::OrImm {
+                        dst: rm,
+                        imm: imm as i64,
+                        width_bits: 8,
+                    },
+                    len,
+                )));
+            }
+            4 => {
+                return Ok(Some((
+                    Decoded::AndImm {
+                        dst: rm,
+                        imm: imm as i64,
+                        width_bits: 8,
+                    },
+                    len,
+                )));
+            }
+            5 => {
+                return Ok(Some((
+                    Decoded::SubImmRm {
+                        dst: rm,
+                        imm: imm as i64,
+                        width_bits: 8,
+                    },
+                    len,
+                )));
+            }
+            6 => {
+                return Ok(Some((
+                    Decoded::XorImm {
+                        dst: rm,
+                        imm: imm as i64,
+                        width_bits: 8,
+                    },
+                    len,
+                )));
+            }
             7 => {
                 return Ok(Some((
                     Decoded::Cmp {
@@ -14835,7 +15202,7 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
                         width_bits: 8,
                     },
                     len,
-                )))
+                )));
             }
             _ => {}
         }
@@ -14933,15 +15300,7 @@ fn lift_rm_imm_binop(
         RmOperand::Reg(reg) => Some(reg),
         _ => None,
     };
-    let lhs = value_from_rm_with_width(
-        ctx,
-        dst,
-        width_bits,
-        inst,
-        relocs,
-        instructions,
-        next_id,
-    )?;
+    let lhs = value_from_rm_with_width(ctx, dst, width_bits, inst, relocs, instructions, next_id)?;
     let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
 
     let id = *next_id;
@@ -14955,8 +15314,10 @@ fn lift_rm_imm_binop(
     };
     let opcode_copy = opcode.clone();
     let mut binop_inst = build_binop(id, kind, AsmOpcode::Generic(opcode_copy));
-    if let (Some(dst_reg), fp_core::asmir::AsmGenericOpcode::Add | fp_core::asmir::AsmGenericOpcode::Sub) =
-        (preserve_dst_reg, opcode)
+    if let (
+        Some(dst_reg),
+        fp_core::asmir::AsmGenericOpcode::Add | fp_core::asmir::AsmGenericOpcode::Sub,
+    ) = (preserve_dst_reg, opcode)
     {
         let raw_opcode = x86_opcode_after_prefixes(bytes, &inst)?;
         let imm_width_bits = match raw_opcode {
@@ -14991,7 +15352,8 @@ fn lift_rm_imm_binop(
             if memory.segment.is_some() {
                 return Ok(());
             }
-            let stored = value_for_store(width_bits, AsmValue::Register(id), instructions, next_id)?;
+            let stored =
+                value_for_store(width_bits, AsmValue::Register(id), instructions, next_id)?;
             let addr = compute_address(
                 ctx,
                 memory,
@@ -15618,7 +15980,9 @@ impl RegisterLiftContext {
             plt_targets: plt_targets.cloned().unwrap_or_default(),
             rodata_cstrings: rodata_cstrings.cloned().unwrap_or_default(),
             rodata_cstrings_by_addr: rodata_cstrings_by_addr.cloned().unwrap_or_default(),
-            data_regions: data_regions.map(|regions| regions.to_vec()).unwrap_or_default(),
+            data_regions: data_regions
+                .map(|regions| regions.to_vec())
+                .unwrap_or_default(),
             direct_call_targets: Vec::new(),
             gpr_slot_by_reg: std::collections::HashMap::new(),
             pending_jump_table_index: std::collections::HashMap::new(),
