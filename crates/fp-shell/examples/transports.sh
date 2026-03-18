@@ -19,12 +19,25 @@ declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
 
-FP_HOST_TRANSPORT['web-2']='ssh'
-FP_SSH_ADDRESS['web-2']='10.0.0.12'
-FP_SSH_USER['web-2']='deploy'
-FP_HOST_TRANSPORT['web-1']='ssh'
-FP_SSH_ADDRESS['web-1']='10.0.0.11'
-FP_SSH_USER['web-1']='deploy'
+FP_HOST_TRANSPORT['k8s-api']='kubectl'
+FP_K8S_POD['k8s-api']='api-7f9f6'
+FP_K8S_NAMESPACE['k8s-api']='prod'
+FP_K8S_CONTAINER['k8s-api']='api'
+FP_K8S_CONTEXT['k8s-api']='prod-cluster'
+FP_HOST_TRANSPORT['ssh-web']='ssh'
+FP_SSH_ADDRESS['ssh-web']='10.0.0.11'
+FP_SSH_USER['ssh-web']='deploy'
+FP_SSH_PORT['ssh-web']='22'
+FP_HOST_TRANSPORT['windows-admin']='winrm'
+FP_WINRM_ADDRESS['windows-admin']='10.0.0.21'
+FP_WINRM_USER['windows-admin']='Administrator'
+FP_WINRM_PASSWORD['windows-admin']='change-me'
+FP_WINRM_PORT['windows-admin']='5985'
+FP_WINRM_SCHEME['windows-admin']='http'
+FP_HOST_TRANSPORT['localhost']='local'
+FP_HOST_TRANSPORT['docker-app']='docker'
+FP_DOCKER_CONTAINER['docker-app']='app'
+FP_DOCKER_USER['docker-app']='root'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
@@ -261,21 +274,23 @@ rsync_host() {
     fi
 }
 
-for step in 'pre' 'post'; do
-    __fp_changed=0
-    run_host 'web-1' 'echo rollout step'
-    __fp_changed=1
-    __fp_last_changed="$__fp_changed"
-    __fp_changed=0
-    run_host 'web-2' 'echo rollout step'
-    __fp_changed=1
-    __fp_last_changed="$__fp_changed"
-    __fp_changed=0
-    run_host 'web-1' 'sudo systemctl status fp-service'
-    __fp_changed=1
-    __fp_last_changed="$__fp_changed"
-    __fp_changed=0
-    run_host 'web-2' 'sudo systemctl status fp-service'
-    __fp_changed=1
-    __fp_last_changed="$__fp_changed"
-done
+__fp_changed=0
+echo local hello
+__fp_changed=1
+__fp_last_changed="$__fp_changed"
+__fp_changed=0
+run_host 'ssh-web' 'echo ssh hello'
+__fp_changed=1
+__fp_last_changed="$__fp_changed"
+__fp_changed=0
+run_host 'docker-app' 'echo docker hello'
+__fp_changed=1
+__fp_last_changed="$__fp_changed"
+__fp_changed=0
+run_host 'k8s-api' 'echo kubectl hello'
+__fp_changed=1
+__fp_last_changed="$__fp_changed"
+__fp_changed=0
+run_host 'windows-admin' 'Write-Host winrm hello'
+__fp_changed=1
+__fp_last_changed="$__fp_changed"

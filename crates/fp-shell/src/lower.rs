@@ -1,14 +1,16 @@
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprFor, ExprIf, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
-    Item, ItemDefFunction, ItemKind, Name, Node, NodeKind, PatternKind, Value,
+    ExprMatch, ExprMatchCase, Item, ItemDefFunction, ItemKind, Name, Node, NodeKind, PatternKind,
+    Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_shell_core::{
-    ArithmeticOp, Block, BoolExpr, ComparisonOp, ConditionExpr, ForEachStmt, FunctionDef,
-    HostExpr, IfStmt, IntExpr, InvokeStmt, LetStmt, OperationCopy, OperationGuards,
-    OperationRsync, OperationRun, OperationTemplate, RsyncOptions, ScriptItem, ScriptProgram,
-    ShellInventory, Statement, StringExpr, StringPart, ValueExpr, WhileStmt,
+    ArithmeticOp, Block, BoolExpr, ComparisonOp, ConditionExpr, ForEachStmt, FunctionDef, HostExpr,
+    IfStmt, IntExpr, InvokeStmt, LetStmt, OperationCopy, OperationGuards, OperationRsync,
+    OperationRun, OperationTemplate, PrimitiveStmt, RsyncOptions, ScriptItem, ScriptProgram,
+    ShellInventory, Statement, StringComparisonOp, StringExpr, StringPart,
+    UnsupportedTransportOperation, ValueExpr, WhileStmt,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -74,7 +76,8 @@ impl<'a> Lowerer<'a> {
     fn discover_functions(&mut self, item: &Item) {
         match item.kind() {
             ItemKind::DefFunction(function) => {
-                self.known_functions.insert(function.name.as_str().to_string());
+                self.known_functions
+                    .insert(function.name.as_str().to_string());
             }
             ItemKind::Module(module) => {
                 for child in &module.items {
@@ -148,7 +151,10 @@ impl<'a> Lowerer<'a> {
             .iter()
             .map(|param| {
                 let name = param.name.as_str().to_string();
-                self.bind_var(name.clone(), VarValue::String(StringExpr::Variable(name.clone())));
+                self.bind_var(
+                    name.clone(),
+                    VarValue::String(StringExpr::Variable(name.clone())),
+                );
                 name
             })
             .collect::<Vec<_>>();
@@ -174,6 +180,16 @@ impl<'a> Lowerer<'a> {
                 if let Some(statement) = self.lower_shell_invoke(invoke, context)? {
                     out.extend(statement);
                     Ok(())
+                } else if let Some(path) = invoke_target_segments(&invoke.target) {
+                    if let Some(statement) = self.lower_primitive_statement(&path, invoke) {
+                        out.push(statement);
+                        Ok(())
+                    } else if let Some(statement) = self.lower_function_invoke(invoke)? {
+                        out.push(statement);
+                        Ok(())
+                    } else {
+                        Ok(())
+                    }
                 } else if let Some(statement) = self.lower_function_invoke(invoke)? {
                     out.push(statement);
                     Ok(())
@@ -183,6 +199,11 @@ impl<'a> Lowerer<'a> {
             }
             fp_core::ast::ExprKind::If(expr_if) => {
                 out.push(Statement::If(self.lower_if(expr_if, context)?));
+                Ok(())
+            }
+            fp_core::ast::ExprKind::Match(expr_match) => {
+                let block = self.lower_match(expr_match, context)?;
+                out.extend(block.statements);
                 Ok(())
             }
             fp_core::ast::ExprKind::While(expr_while) => {
@@ -288,13 +309,24 @@ impl<'a> Lowerer<'a> {
         }
 
         if path == ["std", "files", "copy"] || path == ["std", "shell", "copy"] {
-            let source_expr = invoke.args.first().or_else(|| kwarg_value(invoke, &["src", "source"]));
-            let destination_expr = invoke.args.get(1).or_else(|| kwarg_value(invoke, &["dest", "destination"]));
-            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr) else {
+            let source_expr = invoke
+                .args
+                .first()
+                .or_else(|| kwarg_value(invoke, &["src", "source"]));
+            let destination_expr = invoke
+                .args
+                .get(1)
+                .or_else(|| kwarg_value(invoke, &["dest", "destination"]));
+            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr)
+            else {
                 return Ok(None);
             };
-            let source = self.lower_string_expr(source_expr).ok_or_else(|| "copy source must resolve to string".to_string())?;
-            let destination = self.lower_string_expr(destination_expr).ok_or_else(|| "copy destination must resolve to string".to_string())?;
+            let source = self
+                .lower_string_expr(source_expr)
+                .ok_or_else(|| "copy source must resolve to string".to_string())?;
+            let destination = self
+                .lower_string_expr(destination_expr)
+                .ok_or_else(|| "copy destination must resolve to string".to_string())?;
             let hosts = self.resolve_hosts(invoke, context);
             return Ok(Some(vec![Statement::Copy(OperationCopy {
                 hosts,
@@ -305,14 +337,25 @@ impl<'a> Lowerer<'a> {
         }
 
         if path == ["std", "files", "template"] {
-            let source_expr = invoke.args.first().or_else(|| kwarg_value(invoke, &["src", "source"]));
-            let destination_expr = invoke.args.get(1).or_else(|| kwarg_value(invoke, &["dest", "destination"]));
-            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr) else {
+            let source_expr = invoke
+                .args
+                .first()
+                .or_else(|| kwarg_value(invoke, &["src", "source"]));
+            let destination_expr = invoke
+                .args
+                .get(1)
+                .or_else(|| kwarg_value(invoke, &["dest", "destination"]));
+            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr)
+            else {
                 return Ok(None);
             };
-            let source = self.lower_string_expr(source_expr).ok_or_else(|| "template source must resolve to string".to_string())?;
-            let destination = self.lower_string_expr(destination_expr).ok_or_else(|| "template destination must resolve to string".to_string())?;
-            let vars = kwarg_value(invoke, &["vars"]) 
+            let source = self
+                .lower_string_expr(source_expr)
+                .ok_or_else(|| "template source must resolve to string".to_string())?;
+            let destination = self
+                .lower_string_expr(destination_expr)
+                .ok_or_else(|| "template destination must resolve to string".to_string())?;
+            let vars = kwarg_value(invoke, &["vars"])
                 .and_then(|expr| self.resolve_vars_map(expr))
                 .unwrap_or_default();
             let hosts = self.resolve_hosts(invoke, context);
@@ -326,18 +369,37 @@ impl<'a> Lowerer<'a> {
         }
 
         if path == ["std", "files", "rsync"] || path == ["std", "shell", "rsync"] {
-            let source_expr = invoke.args.first().or_else(|| kwarg_value(invoke, &["src", "source"]));
-            let destination_expr = invoke.args.get(1).or_else(|| kwarg_value(invoke, &["dest", "destination"]));
-            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr) else {
+            let source_expr = invoke
+                .args
+                .first()
+                .or_else(|| kwarg_value(invoke, &["src", "source"]));
+            let destination_expr = invoke
+                .args
+                .get(1)
+                .or_else(|| kwarg_value(invoke, &["dest", "destination"]));
+            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr)
+            else {
                 return Ok(None);
             };
-            let source = self.lower_string_expr(source_expr).ok_or_else(|| "rsync source must resolve to string".to_string())?;
-            let destination = self.lower_string_expr(destination_expr).ok_or_else(|| "rsync destination must resolve to string".to_string())?;
+            let source = self
+                .lower_string_expr(source_expr)
+                .ok_or_else(|| "rsync source must resolve to string".to_string())?;
+            let destination = self
+                .lower_string_expr(destination_expr)
+                .ok_or_else(|| "rsync destination must resolve to string".to_string())?;
             let options = RsyncOptions {
-                archive: kwarg_value(invoke, &["archive"]).and_then(|expr| self.resolve_bool_expr(expr)).unwrap_or(true),
-                compress: kwarg_value(invoke, &["compress"]).and_then(|expr| self.resolve_bool_expr(expr)).unwrap_or(true),
-                delete: kwarg_value(invoke, &["delete"]).and_then(|expr| self.resolve_bool_expr(expr)).unwrap_or(false),
-                checksum: kwarg_value(invoke, &["checksum"]).and_then(|expr| self.resolve_bool_expr(expr)).unwrap_or(false),
+                archive: kwarg_value(invoke, &["archive"])
+                    .and_then(|expr| self.resolve_bool_expr(expr))
+                    .unwrap_or(true),
+                compress: kwarg_value(invoke, &["compress"])
+                    .and_then(|expr| self.resolve_bool_expr(expr))
+                    .unwrap_or(true),
+                delete: kwarg_value(invoke, &["delete"])
+                    .and_then(|expr| self.resolve_bool_expr(expr))
+                    .unwrap_or(false),
+                checksum: kwarg_value(invoke, &["checksum"])
+                    .and_then(|expr| self.resolve_bool_expr(expr))
+                    .unwrap_or(false),
             };
             let hosts = self.resolve_hosts(invoke, context);
             return Ok(Some(vec![Statement::Rsync(OperationRsync {
@@ -350,11 +412,16 @@ impl<'a> Lowerer<'a> {
         }
 
         if path == ["std", "service", "restart"] {
-            let service_expr = invoke.args.first().or_else(|| kwarg_value(invoke, &["name", "service"]));
+            let service_expr = invoke
+                .args
+                .first()
+                .or_else(|| kwarg_value(invoke, &["name", "service"]));
             let Some(service_expr) = service_expr else {
                 return Ok(None);
             };
-            let service_name = self.lower_string_expr(service_expr).ok_or_else(|| "service name must resolve to string".to_string())?;
+            let service_name = self
+                .lower_string_expr(service_expr)
+                .ok_or_else(|| "service name must resolve to string".to_string())?;
             let hosts = self.resolve_hosts(invoke, context);
             return Ok(Some(vec![Statement::Run(OperationRun {
                 hosts,
@@ -364,7 +431,9 @@ impl<'a> Lowerer<'a> {
                         part_from_string_expr(service_name.clone()),
                     ]),
                     None,
-                    kwarg_value(invoke, &["sudo"]).and_then(|expr| self.resolve_bool_expr(expr)).unwrap_or(true),
+                    kwarg_value(invoke, &["sudo"])
+                        .and_then(|expr| self.resolve_bool_expr(expr))
+                        .unwrap_or(true),
                 ),
                 cwd: None,
                 sudo: true,
@@ -380,19 +449,28 @@ impl<'a> Lowerer<'a> {
             return Err("std::host::on expects host selector and closure body".to_string());
         }
         let Some(hosts) = self.parse_host_selector(&invoke.args[0]) else {
-            return Err("std::host::on host selector must be a string or list/tuple/array of strings".to_string());
+            return Err(
+                "std::host::on host selector must be a string or list/tuple/array of strings"
+                    .to_string(),
+            );
         };
         let scoped = EmitContext { hosts: Some(hosts) };
         let mut out = Vec::new();
         for action in invoke.args.iter().skip(1) {
             let fp_core::ast::ExprKind::Closure(closure) = action.kind() else {
-                return Err("std::host::on requires closure body syntax: std::host::on(hosts, || { ... })".to_string());
+                return Err(
+                    "std::host::on requires closure body syntax: std::host::on(hosts, || { ... })"
+                        .to_string(),
+                );
             };
             self.lower_expr_into(&closure.body, &scoped, &mut out)?;
         }
         for kwarg in &invoke.kwargs {
             let fp_core::ast::ExprKind::Closure(closure) = kwarg.value.kind() else {
-                return Err("std::host::on requires closure body syntax: std::host::on(hosts, || { ... })".to_string());
+                return Err(
+                    "std::host::on requires closure body syntax: std::host::on(hosts, || { ... })"
+                        .to_string(),
+                );
             };
             self.lower_expr_into(&closure.body, &scoped, &mut out)?;
         }
@@ -407,14 +485,14 @@ impl<'a> Lowerer<'a> {
             return Ok(None);
         }
         let name = &path[0];
-        if !self.known_functions.contains(name) {
-            return Ok(None);
-        }
         let mut args = Vec::new();
         for arg in &invoke.args {
             args.push(self.lower_value_expr(arg)?);
         }
-        Ok(Some(Statement::Invoke(InvokeStmt { name: name.clone(), args })))
+        Ok(Some(Statement::Invoke(InvokeStmt {
+            name: name.clone(),
+            args,
+        })))
     }
 
     fn lower_if(&mut self, expr_if: &ExprIf, context: &EmitContext) -> Result<IfStmt, String> {
@@ -439,7 +517,113 @@ impl<'a> Lowerer<'a> {
         })
     }
 
-    fn lower_for(&mut self, expr_for: &ExprFor, context: &EmitContext) -> Result<ForEachStmt, String> {
+    fn lower_match(
+        &mut self,
+        expr_match: &ExprMatch,
+        context: &EmitContext,
+    ) -> Result<Block, String> {
+        let Some(scrutinee) = expr_match.scrutinee.as_deref() else {
+            return Err("match expression requires a scrutinee".to_string());
+        };
+        let scrutinee = self
+            .lower_string_expr(scrutinee)
+            .ok_or_else(|| "match scrutinee must resolve to string".to_string())?;
+        self.lower_match_cases(&scrutinee, &expr_match.cases, context)
+    }
+
+    fn lower_match_cases(
+        &mut self,
+        scrutinee: &StringExpr,
+        cases: &[ExprMatchCase],
+        context: &EmitContext,
+    ) -> Result<Block, String> {
+        let Some((first, rest)) = cases.split_first() else {
+            return Ok(Block::default());
+        };
+        let fallback = self.lower_match_cases(scrutinee, rest, context)?;
+        self.lower_match_case(scrutinee, first, context, fallback)
+    }
+
+    fn lower_match_case(
+        &mut self,
+        scrutinee: &StringExpr,
+        case: &ExprMatchCase,
+        context: &EmitContext,
+        fallback: Block,
+    ) -> Result<Block, String> {
+        let mut body_statements = Vec::new();
+        self.lower_expr_into(&case.body, context, &mut body_statements)?;
+        let body_block = Block {
+            statements: body_statements,
+        };
+
+        let fallback_opt = if fallback.statements.is_empty() {
+            None
+        } else {
+            Some(fallback.clone())
+        };
+
+        let pattern_condition = self.lower_match_case_pattern(scrutinee, case)?;
+        let guarded_body = if let Some(guard) = &case.guard {
+            Block {
+                statements: vec![Statement::If(IfStmt {
+                    condition: self.lower_condition(guard),
+                    then_block: body_block,
+                    else_block: fallback_opt.clone(),
+                })],
+            }
+        } else {
+            body_block
+        };
+
+        if let Some(condition) = pattern_condition {
+            Ok(Block {
+                statements: vec![Statement::If(IfStmt {
+                    condition,
+                    then_block: guarded_body,
+                    else_block: fallback_opt,
+                })],
+            })
+        } else if case.guard.is_some() {
+            Ok(guarded_body)
+        } else {
+            Ok(guarded_body)
+        }
+    }
+
+    fn lower_match_case_pattern(
+        &self,
+        scrutinee: &StringExpr,
+        case: &ExprMatchCase,
+    ) -> Result<Option<ConditionExpr>, String> {
+        let Some(pattern) = &case.pat else {
+            return Ok(None);
+        };
+        match pattern.kind() {
+            PatternKind::Wildcard(_) => Ok(None),
+            PatternKind::Variant(variant) if variant.pattern.is_none() => {
+                let rhs = self.lower_string_expr(&variant.name).ok_or_else(|| {
+                    "match pattern must resolve to a string literal or string expression"
+                        .to_string()
+                })?;
+                Ok(Some(ConditionExpr::Bool(BoolExpr::StringComparison {
+                    lhs: scrutinee.clone(),
+                    op: StringComparisonOp::Eq,
+                    rhs,
+                })))
+            }
+            _ => Err(
+                "match patterns in fp-shell currently support string literals and `_` only"
+                    .to_string(),
+            ),
+        }
+    }
+
+    fn lower_for(
+        &mut self,
+        expr_for: &ExprFor,
+        context: &EmitContext,
+    ) -> Result<ForEachStmt, String> {
         let PatternKind::Ident(pattern) = expr_for.pat.kind() else {
             return Err("for-loop pattern must be an identifier".to_string());
         };
@@ -448,7 +632,10 @@ impl<'a> Lowerer<'a> {
             .resolve_string_list_expr(&expr_for.iter)
             .ok_or_else(|| "for-loop iterable must resolve to a string list".to_string())?;
         self.push_scope();
-        self.bind_var(binding.clone(), VarValue::String(StringExpr::Variable(binding.clone())));
+        self.bind_var(
+            binding.clone(),
+            VarValue::String(StringExpr::Variable(binding.clone())),
+        );
         let mut body = Vec::new();
         self.lower_expr_into(&expr_for.body, context, &mut body)?;
         self.pop_scope();
@@ -466,7 +653,11 @@ impl<'a> Lowerer<'a> {
         if let fp_core::ast::ExprKind::Invoke(invoke) = expr.kind() {
             if let Some(path) = invoke_target_segments(&invoke.target) {
                 if path == ["std", "server", "shell"] || path == ["std", "shell", "run"] {
-                    if let Some(command_expr) = invoke.args.first().or_else(|| kwarg_value(invoke, &["command", "cmd"])) {
+                    if let Some(command_expr) = invoke
+                        .args
+                        .first()
+                        .or_else(|| kwarg_value(invoke, &["command", "cmd"]))
+                    {
                         if let Some(command) = self.lower_string_expr(command_expr) {
                             return ConditionExpr::Command(command);
                         }
@@ -482,10 +673,13 @@ impl<'a> Lowerer<'a> {
 
     fn lower_guards(&self, invoke: &ExprInvoke) -> OperationGuards {
         OperationGuards {
-            only_if: kwarg_value(invoke, &["only_if"]).and_then(|expr| self.lower_string_expr(expr)),
+            only_if: kwarg_value(invoke, &["only_if"])
+                .and_then(|expr| self.lower_string_expr(expr)),
             unless: kwarg_value(invoke, &["unless"]).and_then(|expr| self.lower_string_expr(expr)),
-            creates: kwarg_value(invoke, &["creates"]).and_then(|expr| self.lower_string_expr(expr)),
-            removes: kwarg_value(invoke, &["removes"]).and_then(|expr| self.lower_string_expr(expr)),
+            creates: kwarg_value(invoke, &["creates"])
+                .and_then(|expr| self.lower_string_expr(expr)),
+            removes: kwarg_value(invoke, &["removes"])
+                .and_then(|expr| self.lower_string_expr(expr)),
         }
     }
 
@@ -515,21 +709,27 @@ impl<'a> Lowerer<'a> {
             });
         }
         match expr.kind() {
+            fp_core::ast::ExprKind::Invoke(invoke) => {
+                let path = invoke_target_segments(&invoke.target)?;
+                self.lower_primitive_string_expr(&path, invoke)
+            }
             fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
                 Value::String(text) => Some(StringExpr::Literal(text.value.clone())),
                 Value::Int(int_value) => Some(StringExpr::Literal(int_value.value.to_string())),
                 Value::Bool(bool_value) => Some(StringExpr::Literal(bool_value.value.to_string())),
                 _ => None,
             },
-            fp_core::ast::ExprKind::Name(Name::Ident(ident)) => {
-                self.lookup_var(ident.as_str()).and_then(|var| match var {
+            fp_core::ast::ExprKind::Name(Name::Ident(ident)) => self
+                .lookup_var(ident.as_str())
+                .and_then(|var| match var {
                     VarValue::String(value) => Some(value.clone()),
                     VarValue::Int(value) => Some(StringExpr::Literal(value.to_string())),
                     VarValue::Bool(value) => Some(StringExpr::Literal(value.to_string())),
-                    VarValue::StringList(_) => Some(StringExpr::Variable(ident.as_str().to_string())),
+                    VarValue::StringList(_) => {
+                        Some(StringExpr::Variable(ident.as_str().to_string()))
+                    }
                 })
-                .or_else(|| Some(StringExpr::Variable(ident.as_str().to_string())))
-            }
+                .or_else(|| Some(StringExpr::Variable(ident.as_str().to_string()))),
             fp_core::ast::ExprKind::FormatString(template) => {
                 let mut parts = Vec::new();
                 for part in &template.parts {
@@ -565,10 +765,14 @@ impl<'a> Lowerer<'a> {
             let mut implicit_index = 0usize;
             for part in &template.parts {
                 match part {
-                    fp_core::ast::FormatTemplatePart::Literal(text) => parts.push(StringPart::Literal(text.clone())),
+                    fp_core::ast::FormatTemplatePart::Literal(text) => {
+                        parts.push(StringPart::Literal(text.clone()))
+                    }
                     fp_core::ast::FormatTemplatePart::Placeholder(placeholder) => {
                         let string = match &placeholder.arg_ref {
-                            fp_core::ast::FormatArgRef::Named(name) => StringExpr::Variable(name.clone()),
+                            fp_core::ast::FormatArgRef::Named(name) => {
+                                StringExpr::Variable(name.clone())
+                            }
                             fp_core::ast::FormatArgRef::Implicit => {
                                 let arg = call.args.get(implicit_index + 1)?;
                                 implicit_index += 1;
@@ -587,27 +791,238 @@ impl<'a> Lowerer<'a> {
         None
     }
 
+    fn lower_primitive_string_expr(
+        &self,
+        path: &[String],
+        invoke: &ExprInvoke,
+    ) -> Option<StringExpr> {
+        match path {
+            [std, shell, name] if std == "std" && shell == "shell" && name == "host_transport" => {
+                let host = invoke.args.first()?;
+                let host = self.lower_string_expr(host)?;
+                Some(StringExpr::HostTransport(Box::new(host)))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_temp_path" =>
+            {
+                if !invoke.args.is_empty() || !invoke.kwargs.is_empty() {
+                    return None;
+                }
+                Some(StringExpr::TempPath)
+            }
+            _ => None,
+        }
+    }
+
+    fn lower_primitive_statement(&self, path: &[String], invoke: &ExprInvoke) -> Option<Statement> {
+        match path {
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_run_local" =>
+            {
+                let command = self.lower_string_expr(invoke.args.first()?)?;
+                Some(Statement::Primitive(PrimitiveStmt::RunLocal { command }))
+            }
+            [std, shell, name] if std == "std" && shell == "shell" && name == "backend_run_ssh" => {
+                let host = self.lower_string_expr(invoke.args.first()?)?;
+                let command = self.lower_string_expr(invoke.args.get(1)?)?;
+                Some(Statement::Primitive(PrimitiveStmt::RunSsh {
+                    host,
+                    command,
+                }))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_run_docker" =>
+            {
+                let host = self.lower_string_expr(invoke.args.first()?)?;
+                let command = self.lower_string_expr(invoke.args.get(1)?)?;
+                Some(Statement::Primitive(PrimitiveStmt::RunDocker {
+                    host,
+                    command,
+                }))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_run_kubectl" =>
+            {
+                let host = self.lower_string_expr(invoke.args.first()?)?;
+                let command = self.lower_string_expr(invoke.args.get(1)?)?;
+                Some(Statement::Primitive(PrimitiveStmt::RunKubectl {
+                    host,
+                    command,
+                }))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_run_winrm" =>
+            {
+                let host = self.lower_string_expr(invoke.args.first()?)?;
+                let command = self.lower_string_expr(invoke.args.get(1)?)?;
+                Some(Statement::Primitive(PrimitiveStmt::RunWinrm {
+                    host,
+                    command,
+                }))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_copy_local" =>
+            {
+                let source = self.lower_string_expr(invoke.args.first()?)?;
+                let destination = self.lower_string_expr(invoke.args.get(1)?)?;
+                Some(Statement::Primitive(PrimitiveStmt::CopyLocal {
+                    source,
+                    destination,
+                }))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_copy_ssh" =>
+            {
+                let host = self.lower_string_expr(invoke.args.first()?)?;
+                let source = self.lower_string_expr(invoke.args.get(1)?)?;
+                let destination = self.lower_string_expr(invoke.args.get(2)?)?;
+                Some(Statement::Primitive(PrimitiveStmt::CopySsh {
+                    host,
+                    source,
+                    destination,
+                }))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_copy_docker" =>
+            {
+                let host = self.lower_string_expr(invoke.args.first()?)?;
+                let source = self.lower_string_expr(invoke.args.get(1)?)?;
+                let destination = self.lower_string_expr(invoke.args.get(2)?)?;
+                Some(Statement::Primitive(PrimitiveStmt::CopyDocker {
+                    host,
+                    source,
+                    destination,
+                }))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_copy_kubectl" =>
+            {
+                let host = self.lower_string_expr(invoke.args.first()?)?;
+                let source = self.lower_string_expr(invoke.args.get(1)?)?;
+                let destination = self.lower_string_expr(invoke.args.get(2)?)?;
+                Some(Statement::Primitive(PrimitiveStmt::CopyKubectl {
+                    host,
+                    source,
+                    destination,
+                }))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_copy_winrm" =>
+            {
+                let host = self.lower_string_expr(invoke.args.first()?)?;
+                let source = self.lower_string_expr(invoke.args.get(1)?)?;
+                let destination = self.lower_string_expr(invoke.args.get(2)?)?;
+                Some(Statement::Primitive(PrimitiveStmt::CopyWinrm {
+                    host,
+                    source,
+                    destination,
+                }))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_render_template" =>
+            {
+                let source = self.lower_string_expr(invoke.args.first()?)?;
+                let destination = self.lower_string_expr(invoke.args.get(1)?)?;
+                let vars = self.lower_string_expr(invoke.args.get(2)?)?;
+                Some(Statement::Primitive(PrimitiveStmt::RenderTemplate {
+                    source,
+                    destination,
+                    vars,
+                }))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_remove_file" =>
+            {
+                let path = self.lower_string_expr(invoke.args.first()?)?;
+                Some(Statement::Primitive(PrimitiveStmt::RemoveFile { path }))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_rsync_ssh" =>
+            {
+                let host = self.lower_string_expr(invoke.args.first()?)?;
+                let flags = self.lower_string_expr(invoke.args.get(1)?)?;
+                let source = self.lower_string_expr(invoke.args.get(2)?)?;
+                let destination = self.lower_string_expr(invoke.args.get(3)?)?;
+                Some(Statement::Primitive(PrimitiveStmt::RsyncSsh {
+                    host,
+                    flags,
+                    source,
+                    destination,
+                }))
+            }
+            [std, shell, name]
+                if std == "std" && shell == "shell" && name == "backend_unsupported_transport" =>
+            {
+                let transport = self.lower_string_expr(invoke.args.first()?)?;
+                Some(Statement::Primitive(PrimitiveStmt::UnsupportedTransport {
+                    operation: UnsupportedTransportOperation::Run,
+                    transport,
+                }))
+            }
+            [std, shell, name]
+                if std == "std"
+                    && shell == "shell"
+                    && name == "backend_unsupported_copy_transport" =>
+            {
+                let transport = self.lower_string_expr(invoke.args.first()?)?;
+                Some(Statement::Primitive(PrimitiveStmt::UnsupportedTransport {
+                    operation: UnsupportedTransportOperation::Copy,
+                    transport,
+                }))
+            }
+            [std, shell, name]
+                if std == "std"
+                    && shell == "shell"
+                    && name == "backend_unsupported_rsync_transport" =>
+            {
+                let transport = self.lower_string_expr(invoke.args.first()?)?;
+                Some(Statement::Primitive(PrimitiveStmt::UnsupportedTransport {
+                    operation: UnsupportedTransportOperation::Rsync,
+                    transport,
+                }))
+            }
+            _ => None,
+        }
+    }
+
     fn lower_bool_expr(&self, expr: &Expr) -> Option<BoolExpr> {
         if let fp_core::ast::ExprKind::BinOp(bin_op) = expr.kind() {
-            let lhs = self.lower_int_expr(&bin_op.lhs)?;
-            let rhs = self.lower_int_expr(&bin_op.rhs)?;
-            let op = match bin_op.kind {
-                BinOpKind::Gt => ComparisonOp::Gt,
-                BinOpKind::Lt => ComparisonOp::Lt,
-                BinOpKind::Ge => ComparisonOp::Ge,
-                BinOpKind::Le => ComparisonOp::Le,
-                BinOpKind::Eq => ComparisonOp::Eq,
-                BinOpKind::Ne => ComparisonOp::Ne,
-                _ => return None,
+            let comparison = match bin_op.kind {
+                BinOpKind::Gt => Some(ComparisonOp::Gt),
+                BinOpKind::Lt => Some(ComparisonOp::Lt),
+                BinOpKind::Ge => Some(ComparisonOp::Ge),
+                BinOpKind::Le => Some(ComparisonOp::Le),
+                BinOpKind::Eq => Some(ComparisonOp::Eq),
+                BinOpKind::Ne => Some(ComparisonOp::Ne),
+                _ => None,
             };
-            return Some(BoolExpr::IntComparison { lhs, op, rhs });
+            if let Some(op) = comparison {
+                if let (Some(lhs), Some(rhs)) = (
+                    self.lower_int_expr(&bin_op.lhs),
+                    self.lower_int_expr(&bin_op.rhs),
+                ) {
+                    return Some(BoolExpr::IntComparison { lhs, op, rhs });
+                }
+            }
+            let string_comparison = match bin_op.kind {
+                BinOpKind::Eq => Some(StringComparisonOp::Eq),
+                BinOpKind::Ne => Some(StringComparisonOp::Ne),
+                _ => None,
+            };
+            if let Some(op) = string_comparison {
+                let lhs = self.lower_string_expr(&bin_op.lhs)?;
+                let rhs = self.lower_string_expr(&bin_op.rhs)?;
+                return Some(BoolExpr::StringComparison { lhs, op, rhs });
+            }
         }
         match expr.kind() {
             fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
                 Value::Bool(flag) => Some(BoolExpr::Literal(flag.value)),
                 _ => None,
             },
-            fp_core::ast::ExprKind::Name(Name::Ident(ident)) => Some(BoolExpr::Variable(ident.as_str().to_string())),
+            fp_core::ast::ExprKind::Name(Name::Ident(ident)) => {
+                Some(BoolExpr::Variable(ident.as_str().to_string()))
+            }
             fp_core::ast::ExprKind::Paren(paren) => self.lower_bool_expr(&paren.expr),
             _ => None,
         }
@@ -626,7 +1041,9 @@ impl<'a> Lowerer<'a> {
                 Value::Int(int_value) => Some(IntExpr::Literal(int_value.value)),
                 _ => None,
             },
-            fp_core::ast::ExprKind::Name(Name::Ident(ident)) => Some(IntExpr::Variable(ident.as_str().to_string())),
+            fp_core::ast::ExprKind::Name(Name::Ident(ident)) => {
+                Some(IntExpr::Variable(ident.as_str().to_string()))
+            }
             fp_core::ast::ExprKind::Paren(paren) => self.lower_int_expr(&paren.expr),
             fp_core::ast::ExprKind::UnOp(un_op) => {
                 let value = self.lower_int_expr(&un_op.val)?;
@@ -671,13 +1088,19 @@ impl<'a> Lowerer<'a> {
             }
             fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
                 Value::String(text) => Some(vec![StringExpr::Literal(text.value.clone())]),
-                Value::Int(int_value) => Some(vec![StringExpr::Literal(int_value.value.to_string())]),
+                Value::Int(int_value) => {
+                    Some(vec![StringExpr::Literal(int_value.value.to_string())])
+                }
                 Value::List(list) => {
                     let mut values = Vec::new();
                     for value in &list.values {
                         match value {
-                            Value::String(text) => values.push(StringExpr::Literal(text.value.clone())),
-                            Value::Int(int_value) => values.push(StringExpr::Literal(int_value.value.to_string())),
+                            Value::String(text) => {
+                                values.push(StringExpr::Literal(text.value.clone()))
+                            }
+                            Value::Int(int_value) => {
+                                values.push(StringExpr::Literal(int_value.value.to_string()))
+                            }
                             _ => return None,
                         }
                     }
@@ -716,8 +1139,12 @@ impl<'a> Lowerer<'a> {
                         };
                         let value = match &entry.value {
                             Value::String(text) => StringExpr::Literal(text.value.clone()),
-                            Value::Int(int_value) => StringExpr::Literal(int_value.value.to_string()),
-                            Value::Bool(bool_value) => StringExpr::Literal(bool_value.value.to_string()),
+                            Value::Int(int_value) => {
+                                StringExpr::Literal(int_value.value.to_string())
+                            }
+                            Value::Bool(bool_value) => {
+                                StringExpr::Literal(bool_value.value.to_string())
+                            }
                             _ => return None,
                         };
                         vars.insert(key, value);
@@ -735,10 +1162,17 @@ impl<'a> Lowerer<'a> {
             let mut selectors = Vec::new();
             for host in hosts {
                 match host {
-                    StringExpr::Literal(name) if name == "localhost" => selectors.push(HostExpr::Localhost),
+                    StringExpr::Literal(name) if name == "localhost" => {
+                        selectors.push(HostExpr::Localhost)
+                    }
                     StringExpr::Literal(name) => {
                         if let Some(group_hosts) = self.inventory.groups.get(&name) {
-                            selectors.extend(group_hosts.iter().cloned().map(|host| HostExpr::Selector(StringExpr::Literal(host))));
+                            selectors.extend(
+                                group_hosts
+                                    .iter()
+                                    .cloned()
+                                    .map(|host| HostExpr::Selector(StringExpr::Literal(host))),
+                            );
                         } else {
                             selectors.push(HostExpr::Selector(StringExpr::Literal(name)));
                         }
@@ -836,6 +1270,9 @@ fn apply_command_options(command: StringExpr, cwd: Option<StringExpr>, sudo: boo
             parts.push(StringPart::Variable(name));
             StringExpr::Interpolated(parts)
         }
+        StringExpr::HostTransport(_) | StringExpr::TempPath => {
+            unreachable!("shell command options cannot wrap primitive string expressions")
+        }
         StringExpr::Interpolated(mut more) => {
             parts.append(&mut more);
             StringExpr::Interpolated(parts)
@@ -847,6 +1284,9 @@ fn part_from_string_expr(expr: StringExpr) -> StringPart {
     match expr {
         StringExpr::Literal(text) => StringPart::Literal(text),
         StringExpr::Variable(name) => StringPart::Variable(name),
+        StringExpr::HostTransport(_) | StringExpr::TempPath => {
+            unreachable!("primitive string expressions cannot be interpolated directly")
+        }
         StringExpr::Interpolated(parts) => {
             let mut flattened = String::new();
             for part in parts {

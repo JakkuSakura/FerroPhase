@@ -117,6 +117,7 @@ pub enum Statement {
     Copy(OperationCopy),
     Template(OperationTemplate),
     Rsync(OperationRsync),
+    Primitive(PrimitiveStmt),
     If(IfStmt),
     While(WhileStmt),
     ForEach(ForEachStmt),
@@ -219,6 +220,78 @@ pub struct InvokeStmt {
 }
 
 #[derive(Debug, Clone)]
+pub enum PrimitiveStmt {
+    RunLocal {
+        command: StringExpr,
+    },
+    RunSsh {
+        host: StringExpr,
+        command: StringExpr,
+    },
+    RunDocker {
+        host: StringExpr,
+        command: StringExpr,
+    },
+    RunKubectl {
+        host: StringExpr,
+        command: StringExpr,
+    },
+    RunWinrm {
+        host: StringExpr,
+        command: StringExpr,
+    },
+    CopyLocal {
+        source: StringExpr,
+        destination: StringExpr,
+    },
+    CopySsh {
+        host: StringExpr,
+        source: StringExpr,
+        destination: StringExpr,
+    },
+    CopyDocker {
+        host: StringExpr,
+        source: StringExpr,
+        destination: StringExpr,
+    },
+    CopyKubectl {
+        host: StringExpr,
+        source: StringExpr,
+        destination: StringExpr,
+    },
+    CopyWinrm {
+        host: StringExpr,
+        source: StringExpr,
+        destination: StringExpr,
+    },
+    RenderTemplate {
+        source: StringExpr,
+        destination: StringExpr,
+        vars: StringExpr,
+    },
+    RemoveFile {
+        path: StringExpr,
+    },
+    RsyncSsh {
+        host: StringExpr,
+        flags: StringExpr,
+        source: StringExpr,
+        destination: StringExpr,
+    },
+    UnsupportedTransport {
+        operation: UnsupportedTransportOperation,
+        transport: StringExpr,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum UnsupportedTransportOperation {
+    Run,
+    Copy,
+    Rsync,
+}
+
+#[derive(Debug, Clone)]
 pub enum ValueExpr {
     String(StringExpr),
     Int(IntExpr),
@@ -248,6 +321,11 @@ pub enum BoolExpr {
         op: ComparisonOp,
         rhs: IntExpr,
     },
+    StringComparison {
+        lhs: StringExpr,
+        op: StringComparisonOp,
+        rhs: StringExpr,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -256,6 +334,12 @@ pub enum ComparisonOp {
     Lt,
     Ge,
     Le,
+    Eq,
+    Ne,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum StringComparisonOp {
     Eq,
     Ne,
 }
@@ -285,6 +369,8 @@ pub enum ArithmeticOp {
 pub enum StringExpr {
     Literal(String),
     Variable(String),
+    HostTransport(Box<StringExpr>),
+    TempPath,
     Interpolated(Vec<StringPart>),
 }
 
@@ -297,5 +383,9 @@ pub enum StringPart {
 pub trait ScriptRenderer {
     type Error;
 
-    fn render(&self, program: &ScriptProgram, inventory: &ShellInventory) -> Result<String, Self::Error>;
+    fn render(
+        &self,
+        program: &ScriptProgram,
+        inventory: &ShellInventory,
+    ) -> Result<String, Self::Error>;
 }

@@ -1,5 +1,5 @@
 use crate::ShellError;
-use fp_core::ast::{ItemKind, NodeKind};
+use fp_core::ast::{Ident, Item, ItemImportPath, ItemImportTree, ItemKind, NodeKind};
 use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::utils::to_json::ToJson;
@@ -12,6 +12,12 @@ use fp_shell_core::{
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+
+const INVENTORY_SHELL_STD_SOURCE: &str = include_str!("std/shell/inventory_shell_std.fp");
+const INVENTORY_SHELL_STD_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/std/shell/inventory_shell_std.fp"
+);
 
 #[derive(Debug, serde::Deserialize, Default)]
 struct InventoryDocument {
@@ -137,6 +143,7 @@ fn load_inventory_from_fp(source: &str, path: &Path) -> Result<ShellInventory, S
         .map_err(|err| ShellError::Inventory(format!("invalid inventory fp: {}", err)))?;
 
     let mut ast = parsed.ast;
+    inject_inventory_shell_std(&frontend, &mut ast)?;
     let options = InterpreterOptions {
         mode: InterpreterMode::CompileTime,
         ..InterpreterOptions::default()
@@ -155,7 +162,9 @@ fn load_inventory_from_fp(source: &str, path: &Path) -> Result<ShellInventory, S
         .items
         .iter_mut()
         .find_map(|item| match item.kind_mut() {
-            ItemKind::DefFunction(function) if function.name.as_str() == "inventory" => Some(function),
+            ItemKind::DefFunction(function) if function.name.as_str() == "inventory" => {
+                Some(function)
+            }
             _ => None,
         })
         .ok_or_else(|| {
@@ -171,14 +180,13 @@ fn load_inventory_from_fp(source: &str, path: &Path) -> Result<ShellInventory, S
     }
 
     let mut body = (*function.body).clone();
-    interpreter
-        .begin_const_eval(&mut body)
-        .map_err(|err| ShellError::Inventory(format!("failed to start inventory() eval: {}", err)))?;
+    interpreter.begin_const_eval(&mut body).map_err(|err| {
+        ShellError::Inventory(format!("failed to start inventory() eval: {}", err))
+    })?;
     let value = loop {
-        match interpreter
-            .step_const_eval(10_000)
-            .map_err(|err| ShellError::Inventory(format!("failed to evaluate inventory(): {}", err)))?
-        {
+        match interpreter.step_const_eval(10_000).map_err(|err| {
+            ShellError::Inventory(format!("failed to evaluate inventory(): {}", err))
+        })? {
             EvalStepOutcome::Yielded => continue,
             EvalStepOutcome::Complete(value) => break value,
         }
@@ -190,7 +198,101 @@ fn load_inventory_from_fp(source: &str, path: &Path) -> Result<ShellInventory, S
     inventory_document_to_inventory(parsed)
 }
 
-fn inventory_document_to_inventory(parsed: InventoryDocument) -> Result<ShellInventory, ShellError> {
+fn inject_inventory_shell_std(
+    frontend: &FerroFrontend,
+    ast: &mut fp_core::ast::Node,
+) -> Result<(), ShellError> {
+    rewrite_inventory_shell_imports(ast);
+    let std_items = parse_inventory_shell_std(frontend)?;
+    let NodeKind::File(file) = ast.kind_mut() else {
+        return Err(ShellError::Inventory(
+            "inventory fp must be a file document".to_string(),
+        ));
+    };
+    file.items.splice(0..0, std_items);
+    Ok(())
+}
+
+fn parse_inventory_shell_std(frontend: &FerroFrontend) -> Result<Vec<Item>, ShellError> {
+    let parsed = frontend
+        .parse(
+            INVENTORY_SHELL_STD_SOURCE,
+            Some(Path::new(INVENTORY_SHELL_STD_PATH)),
+        )
+        .map_err(|err| ShellError::Inventory(format!("invalid inventory shell std: {}", err)))?;
+
+    let NodeKind::File(file) = parsed.ast.kind() else {
+        return Err(ShellError::Inventory(
+            "inventory shell std must be a file document".to_string(),
+        ));
+    };
+    Ok(file.items.clone())
+}
+
+fn rewrite_inventory_shell_imports(ast: &mut fp_core::ast::Node) {
+    let NodeKind::File(file) = ast.kind_mut() else {
+        return;
+    };
+    for item in &mut file.items {
+        rewrite_inventory_shell_imports_in_item(item);
+    }
+}
+
+fn rewrite_inventory_shell_imports_in_item(item: &mut Item) {
+    match item.kind_mut() {
+        ItemKind::Import(import) => rewrite_inventory_shell_import_tree(&mut import.tree),
+        ItemKind::Module(module) => {
+            for child in &mut module.items {
+                rewrite_inventory_shell_imports_in_item(child);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_inventory_shell_import_tree(tree: &mut ItemImportTree) {
+    match tree {
+        ItemImportTree::Path(path) => {
+            let mut segments = flatten_import_segments(path.segments.clone());
+            for segment in &mut segments {
+                rewrite_inventory_shell_import_tree(segment);
+            }
+            if starts_with_std_shell(&segments) {
+                segments.splice(0..2, [ItemImportTree::Ident(Ident::new("fp_shell_std"))]);
+            }
+            *tree = ItemImportTree::Path(ItemImportPath { segments });
+        }
+        ItemImportTree::Group(group) => {
+            for item in &mut group.items {
+                rewrite_inventory_shell_import_tree(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn flatten_import_segments(segments: Vec<ItemImportTree>) -> Vec<ItemImportTree> {
+    let mut flattened = Vec::new();
+    for segment in segments {
+        match segment {
+            ItemImportTree::Path(path) => flattened.extend(flatten_import_segments(path.segments)),
+            other => flattened.push(other),
+        }
+    }
+    flattened
+}
+
+fn starts_with_std_shell(segments: &[ItemImportTree]) -> bool {
+    matches!(
+        segments,
+        [ItemImportTree::Ident(std), ItemImportTree::Ident(shell), ..]
+            if std.as_str() == "std" && shell.as_str() == "shell"
+    )
+}
+
+fn inventory_document_to_inventory(
+    parsed: InventoryDocument,
+) -> Result<ShellInventory, ShellError> {
     let mut hosts = HashMap::new();
     for (name, host) in parsed.hosts {
         let host = normalize_host_document(host);
@@ -280,6 +382,8 @@ fn normalize_host_document(mut host: InventoryHostDocument) -> InventoryHostDocu
     host.namespace = normalize_string(host.namespace);
     host.context = normalize_string(host.context);
     host.scheme = normalize_string(host.scheme);
-    host.port = host.port.and_then(|port| if port == 0 { None } else { Some(port) });
+    host.port = host
+        .port
+        .and_then(|port| if port == 0 { None } else { Some(port) });
     host
 }

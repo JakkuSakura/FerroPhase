@@ -10,6 +10,12 @@ use fp_shell_core::{ScriptRenderer, ScriptTarget, ShellInventory};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const RUNTIME_HELPERS_SOURCE: &str = include_str!("std/shell/runtime_helpers.fp");
+const RUNTIME_HELPERS_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/std/shell/runtime_helpers.fp"
+);
+
 pub use fp_shell_core::{InventoryHost, ScriptTarget as ShellTarget, TransportKind};
 pub use inventory::load_inventory;
 
@@ -74,7 +80,9 @@ pub fn compile_source_with_options(
         .map_err(|err| ShellError::Parse(err.to_string()))?;
 
     let inventory = options.inventory.clone().unwrap_or_default();
-    let program = lower::lower_node(&ast, &inventory).map_err(ShellError::Lower)?;
+    let mut program = lower_runtime_helpers(&inventory)?;
+    let user_program = lower::lower_node(&ast, &inventory).map_err(ShellError::Lower)?;
+    program.items.extend(user_program.items);
 
     let code = match target {
         ScriptTarget::Bash => fp_bash::BashTarget::new()
@@ -89,6 +97,21 @@ pub fn compile_source_with_options(
         code,
         side_files: Vec::new(),
     })
+}
+
+fn lower_runtime_helpers(
+    inventory: &ShellInventory,
+) -> Result<fp_shell_core::ScriptProgram, ShellError> {
+    let frontend = FerroFrontend::new();
+    let parsed = frontend
+        .parse(
+            RUNTIME_HELPERS_SOURCE,
+            Some(Path::new(RUNTIME_HELPERS_PATH)),
+        )
+        .map_err(|err| {
+            ShellError::Lower(format!("failed to parse shell runtime helpers: {}", err))
+        })?;
+    lower::lower_node(&parsed.ast, inventory).map_err(ShellError::Lower)
 }
 
 pub fn compile_file(
@@ -183,7 +206,13 @@ password = "secret"
         assert_eq!(inventory.hosts["app"].transport, TransportKind::Docker);
         assert_eq!(inventory.hosts["api"].transport, TransportKind::Kubectl);
         assert_eq!(inventory.hosts["win"].transport, TransportKind::Winrm);
-        assert_eq!(inventory.hosts["win"].winrm.as_ref().and_then(|entry| entry.password.as_deref()), Some("secret"));
+        assert_eq!(
+            inventory.hosts["win"]
+                .winrm
+                .as_ref()
+                .and_then(|entry| entry.password.as_deref()),
+            Some("secret")
+        );
     }
 
     #[test]
@@ -328,15 +357,24 @@ const fn inventory() -> Inventory {
         assert_eq!(inventory.hosts["k8s-1"].transport, TransportKind::Kubectl);
         assert_eq!(inventory.hosts["win-1"].transport, TransportKind::Winrm);
         assert_eq!(
-            inventory.hosts["docker-1"].docker.as_ref().map(|entry| entry.container.as_str()),
+            inventory.hosts["docker-1"]
+                .docker
+                .as_ref()
+                .map(|entry| entry.container.as_str()),
             Some("app")
         );
         assert_eq!(
-            inventory.hosts["k8s-1"].kubectl.as_ref().map(|entry| entry.pod.as_str()),
+            inventory.hosts["k8s-1"]
+                .kubectl
+                .as_ref()
+                .map(|entry| entry.pod.as_str()),
             Some("api-123")
         );
         assert_eq!(
-            inventory.hosts["win-1"].winrm.as_ref().and_then(|entry| entry.password.as_deref()),
+            inventory.hosts["win-1"]
+                .winrm
+                .as_ref()
+                .and_then(|entry| entry.password.as_deref()),
             Some("secret")
         );
     }

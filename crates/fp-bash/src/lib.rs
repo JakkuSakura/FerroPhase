@@ -1,8 +1,9 @@
 use fp_shell_core::{
     ArithmeticOp, Block, BoolExpr, ComparisonOp, ConditionExpr, FunctionDef, HostExpr,
-    OperationCopy, OperationGuards, OperationRsync, OperationRun, OperationTemplate,
+    OperationCopy, OperationGuards, OperationRsync, OperationRun, OperationTemplate, PrimitiveStmt,
     RsyncOptions, ScriptItem, ScriptProgram, ScriptRenderer, ShellInventory, Statement,
-    StringExpr, StringPart, TransportKind, ValueExpr,
+    StringComparisonOp, StringExpr, StringPart, TransportKind, UnsupportedTransportOperation,
+    ValueExpr,
 };
 
 pub struct BashTarget;
@@ -67,58 +68,118 @@ impl<'a> BashRenderer<'a> {
         script.push_str("declare -A FP_WINRM_PORT=()\n");
         script.push_str("declare -A FP_WINRM_SCHEME=()\n\n");
         for (name, host) in &self.inventory.hosts {
-            script.push_str(&format!("FP_HOST_TRANSPORT[{}]={}\n", shell_arg_quote(name), shell_arg_quote(match host.transport {
-                TransportKind::Local => "local",
-                TransportKind::Ssh => "ssh",
-                TransportKind::Docker => "docker",
-                TransportKind::Kubectl => "kubectl",
-                TransportKind::Winrm => "winrm",
-            })));
+            script.push_str(&format!(
+                "FP_HOST_TRANSPORT[{}]={}\n",
+                shell_arg_quote(name),
+                shell_arg_quote(match host.transport {
+                    TransportKind::Local => "local",
+                    TransportKind::Ssh => "ssh",
+                    TransportKind::Docker => "docker",
+                    TransportKind::Kubectl => "kubectl",
+                    TransportKind::Winrm => "winrm",
+                })
+            ));
             if let Some(ssh) = &host.ssh {
                 if let Some(address) = &ssh.address {
-                    script.push_str(&format!("FP_SSH_ADDRESS[{}]={}\n", shell_arg_quote(name), shell_arg_quote(address)));
+                    script.push_str(&format!(
+                        "FP_SSH_ADDRESS[{}]={}\n",
+                        shell_arg_quote(name),
+                        shell_arg_quote(address)
+                    ));
                 }
                 if let Some(user) = &ssh.user {
-                    script.push_str(&format!("FP_SSH_USER[{}]={}\n", shell_arg_quote(name), shell_arg_quote(user)));
+                    script.push_str(&format!(
+                        "FP_SSH_USER[{}]={}\n",
+                        shell_arg_quote(name),
+                        shell_arg_quote(user)
+                    ));
                 }
                 if let Some(port) = ssh.port {
-                    script.push_str(&format!("FP_SSH_PORT[{}]={}\n", shell_arg_quote(name), shell_arg_quote(&port.to_string())));
+                    script.push_str(&format!(
+                        "FP_SSH_PORT[{}]={}\n",
+                        shell_arg_quote(name),
+                        shell_arg_quote(&port.to_string())
+                    ));
                 }
             }
             if let Some(docker) = &host.docker {
-                script.push_str(&format!("FP_DOCKER_CONTAINER[{}]={}\n", shell_arg_quote(name), shell_arg_quote(&docker.container)));
+                script.push_str(&format!(
+                    "FP_DOCKER_CONTAINER[{}]={}\n",
+                    shell_arg_quote(name),
+                    shell_arg_quote(&docker.container)
+                ));
                 if let Some(user) = &docker.user {
-                    script.push_str(&format!("FP_DOCKER_USER[{}]={}\n", shell_arg_quote(name), shell_arg_quote(user)));
+                    script.push_str(&format!(
+                        "FP_DOCKER_USER[{}]={}\n",
+                        shell_arg_quote(name),
+                        shell_arg_quote(user)
+                    ));
                 }
             }
             if let Some(kubectl) = &host.kubectl {
-                script.push_str(&format!("FP_K8S_POD[{}]={}\n", shell_arg_quote(name), shell_arg_quote(&kubectl.pod)));
+                script.push_str(&format!(
+                    "FP_K8S_POD[{}]={}\n",
+                    shell_arg_quote(name),
+                    shell_arg_quote(&kubectl.pod)
+                ));
                 if let Some(namespace) = &kubectl.namespace {
-                    script.push_str(&format!("FP_K8S_NAMESPACE[{}]={}\n", shell_arg_quote(name), shell_arg_quote(namespace)));
+                    script.push_str(&format!(
+                        "FP_K8S_NAMESPACE[{}]={}\n",
+                        shell_arg_quote(name),
+                        shell_arg_quote(namespace)
+                    ));
                 }
                 if let Some(container) = &kubectl.container {
-                    script.push_str(&format!("FP_K8S_CONTAINER[{}]={}\n", shell_arg_quote(name), shell_arg_quote(container)));
+                    script.push_str(&format!(
+                        "FP_K8S_CONTAINER[{}]={}\n",
+                        shell_arg_quote(name),
+                        shell_arg_quote(container)
+                    ));
                 }
                 if let Some(context) = &kubectl.context {
-                    script.push_str(&format!("FP_K8S_CONTEXT[{}]={}\n", shell_arg_quote(name), shell_arg_quote(context)));
+                    script.push_str(&format!(
+                        "FP_K8S_CONTEXT[{}]={}\n",
+                        shell_arg_quote(name),
+                        shell_arg_quote(context)
+                    ));
                 }
             }
             if let Some(winrm) = &host.winrm {
-                script.push_str(&format!("FP_WINRM_ADDRESS[{}]={}\n", shell_arg_quote(name), shell_arg_quote(&winrm.address)));
-                script.push_str(&format!("FP_WINRM_USER[{}]={}\n", shell_arg_quote(name), shell_arg_quote(&winrm.user)));
+                script.push_str(&format!(
+                    "FP_WINRM_ADDRESS[{}]={}\n",
+                    shell_arg_quote(name),
+                    shell_arg_quote(&winrm.address)
+                ));
+                script.push_str(&format!(
+                    "FP_WINRM_USER[{}]={}\n",
+                    shell_arg_quote(name),
+                    shell_arg_quote(&winrm.user)
+                ));
                 if let Some(password) = &winrm.password {
-                    script.push_str(&format!("FP_WINRM_PASSWORD[{}]={}\n", shell_arg_quote(name), shell_arg_quote(password)));
+                    script.push_str(&format!(
+                        "FP_WINRM_PASSWORD[{}]={}\n",
+                        shell_arg_quote(name),
+                        shell_arg_quote(password)
+                    ));
                 }
                 if let Some(port) = winrm.port {
-                    script.push_str(&format!("FP_WINRM_PORT[{}]={}\n", shell_arg_quote(name), shell_arg_quote(&port.to_string())));
+                    script.push_str(&format!(
+                        "FP_WINRM_PORT[{}]={}\n",
+                        shell_arg_quote(name),
+                        shell_arg_quote(&port.to_string())
+                    ));
                 }
                 if let Some(scheme) = &winrm.scheme {
-                    script.push_str(&format!("FP_WINRM_SCHEME[{}]={}\n", shell_arg_quote(name), shell_arg_quote(scheme)));
+                    script.push_str(&format!(
+                        "FP_WINRM_SCHEME[{}]={}\n",
+                        shell_arg_quote(name),
+                        shell_arg_quote(scheme)
+                    ));
                 }
             }
         }
         script.push_str("\nSSH_CONTROL_PATH=\"${TMPDIR:-/tmp}/fp-shell-%r@%h:%p\"\n\n");
-        script.push_str(BASH_HELPERS);
+        script.push_str(BASH_RUNTIME_UTILITIES);
         for line in self.lines {
             script.push_str(&line);
             script.push('\n');
@@ -160,8 +221,12 @@ impl<'a> BashRenderer<'a> {
             Statement::Copy(op) => self.render_copy(op, indent),
             Statement::Template(op) => self.render_template(op, indent),
             Statement::Rsync(op) => self.render_rsync(op, indent),
+            Statement::Primitive(stmt) => self.render_primitive(stmt, indent),
             Statement::If(stmt) => {
-                self.push_line(indent, &format!("if {}; then", self.render_condition(&stmt.condition)?));
+                self.push_line(
+                    indent,
+                    &format!("if {}; then", self.render_condition(&stmt.condition)?),
+                );
                 self.render_block(&stmt.then_block, indent + 1)?;
                 if let Some(else_block) = &stmt.else_block {
                     self.push_line(indent, "else");
@@ -171,13 +236,21 @@ impl<'a> BashRenderer<'a> {
                 Ok(())
             }
             Statement::While(stmt) => {
-                self.push_line(indent, &format!("while {}; do", self.render_condition(&stmt.condition)?));
+                self.push_line(
+                    indent,
+                    &format!("while {}; do", self.render_condition(&stmt.condition)?),
+                );
                 self.render_block(&stmt.body, indent + 1)?;
                 self.push_line(indent, "done");
                 Ok(())
             }
             Statement::ForEach(stmt) => {
-                let values = stmt.values.iter().map(|value| self.render_word(value)).collect::<Vec<_>>().join(" ");
+                let values = stmt
+                    .values
+                    .iter()
+                    .map(|value| self.render_word(value))
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 self.push_line(indent, &format!("for {} in {}; do", stmt.binding, values));
                 self.render_block(&stmt.body, indent + 1)?;
                 self.push_line(indent, "done");
@@ -189,7 +262,12 @@ impl<'a> BashRenderer<'a> {
                 Ok(())
             }
             Statement::Invoke(stmt) => {
-                let args = stmt.args.iter().map(|arg| self.render_value(arg)).collect::<Result<Vec<_>, _>>()?.join(" ");
+                let args = stmt
+                    .args
+                    .iter()
+                    .map(|arg| self.render_value(arg))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(" ");
                 self.push_line(indent, &format!("{} {}", stmt.name, args));
                 Ok(())
             }
@@ -200,10 +278,16 @@ impl<'a> BashRenderer<'a> {
         for host in &op.hosts {
             self.render_guarded(indent, &op.guards, |renderer, guard_indent| {
                 match host {
-                    HostExpr::Localhost => renderer.push_line(guard_indent, &renderer.render_command_expr(&op.command)),
+                    HostExpr::Localhost => {
+                        renderer.push_line(guard_indent, &renderer.render_command_expr(&op.command))
+                    }
                     HostExpr::Selector(selector) => renderer.push_line(
                         guard_indent,
-                        &format!("run_host {} {}", renderer.render_word(selector), shell_arg_quote(&renderer.render_command_expr(&op.command))),
+                        &format!(
+                            "run_host {} {}",
+                            renderer.render_word(selector),
+                            shell_arg_quote(&renderer.render_command_expr(&op.command))
+                        ),
                     ),
                 }
                 renderer.push_line(guard_indent, "__fp_changed=1");
@@ -219,11 +303,20 @@ impl<'a> BashRenderer<'a> {
                 match host {
                     HostExpr::Localhost => renderer.push_line(
                         guard_indent,
-                        &format!("cp -- {} {}", renderer.render_word(&op.source), renderer.render_word(&op.destination)),
+                        &format!(
+                            "cp -- {} {}",
+                            renderer.render_word(&op.source),
+                            renderer.render_word(&op.destination)
+                        ),
                     ),
                     HostExpr::Selector(selector) => renderer.push_line(
                         guard_indent,
-                        &format!("copy_host {} {} {}", renderer.render_word(selector), renderer.render_word(&op.source), renderer.render_word(&op.destination)),
+                        &format!(
+                            "copy_host {} {} {}",
+                            renderer.render_word(selector),
+                            renderer.render_word(&op.source),
+                            renderer.render_word(&op.destination)
+                        ),
                     ),
                 }
                 renderer.push_line(guard_indent, "__fp_changed=1");
@@ -243,11 +336,22 @@ impl<'a> BashRenderer<'a> {
                 match host {
                     HostExpr::Localhost => renderer.push_line(
                         guard_indent,
-                        &format!("{}envsubst < {} > {}", vars, renderer.render_word(&op.source), renderer.render_word(&op.destination)),
+                        &format!(
+                            "{}envsubst < {} > {}",
+                            vars,
+                            renderer.render_word(&op.source),
+                            renderer.render_word(&op.destination)
+                        ),
                     ),
                     HostExpr::Selector(selector) => renderer.push_line(
                         guard_indent,
-                        &format!("template_host {} {} {} {}", renderer.render_word(selector), renderer.render_word(&op.source), renderer.render_word(&op.destination), shell_arg_quote(vars.trim())),
+                        &format!(
+                            "template_host {} {} {} {}",
+                            renderer.render_word(selector),
+                            renderer.render_word(&op.source),
+                            renderer.render_word(&op.destination),
+                            shell_arg_quote(vars.trim())
+                        ),
                     ),
                 }
                 renderer.push_line(guard_indent, "__fp_changed=1");
@@ -264,11 +368,22 @@ impl<'a> BashRenderer<'a> {
                 match host {
                     HostExpr::Localhost => renderer.push_line(
                         guard_indent,
-                        &format!("rsync {} -- {} {}", flags, renderer.render_word(&op.source), renderer.render_word(&op.destination)),
+                        &format!(
+                            "rsync {} -- {} {}",
+                            flags,
+                            renderer.render_word(&op.source),
+                            renderer.render_word(&op.destination)
+                        ),
                     ),
                     HostExpr::Selector(selector) => renderer.push_line(
                         guard_indent,
-                        &format!("rsync_host {} {} {} {}", renderer.render_word(selector), shell_arg_quote(&flags), renderer.render_word(&op.source), renderer.render_word(&op.destination)),
+                        &format!(
+                            "rsync_host {} {} {} {}",
+                            renderer.render_word(selector),
+                            shell_arg_quote(&flags),
+                            renderer.render_word(&op.source),
+                            renderer.render_word(&op.destination)
+                        ),
                     ),
                 }
                 renderer.push_line(guard_indent, "__fp_changed=1");
@@ -278,7 +393,278 @@ impl<'a> BashRenderer<'a> {
         Ok(())
     }
 
-    fn render_guarded<F>(&mut self, indent: usize, guards: &OperationGuards, emit: F) -> Result<(), String>
+    fn render_primitive(&mut self, stmt: &PrimitiveStmt, indent: usize) -> Result<(), String> {
+        match stmt {
+            PrimitiveStmt::RunLocal { command } => {
+                self.push_line(indent, &format!("bash -lc {}", self.render_word(command)));
+            }
+            PrimitiveStmt::RunSsh { host, command } => {
+                self.emit_ssh_target_setup(indent, host);
+                self.push_line(indent, "if [[ -n \"$__fp_port\" ]]; then");
+                self.push_line(
+                    indent + 1,
+                    &format!(
+                        "ssh_cmd -p \"$__fp_port\" \"$__fp_target\" {}",
+                        self.render_word(command)
+                    ),
+                );
+                self.push_line(indent, "else");
+                self.push_line(
+                    indent + 1,
+                    &format!("ssh_cmd \"$__fp_target\" {}", self.render_word(command)),
+                );
+                self.push_line(indent, "fi");
+            }
+            PrimitiveStmt::RunDocker { host, command } => {
+                self.push_line(indent, &format!("__fp_host={}", self.render_word(host)));
+                self.push_line(
+                    indent,
+                    "__fp_container=\"${FP_DOCKER_CONTAINER[$__fp_host]}\"",
+                );
+                self.push_line(indent, "__fp_user=\"${FP_DOCKER_USER[$__fp_host]:-}\"");
+                self.push_line(indent, "if [[ -n \"$__fp_user\" ]]; then");
+                self.push_line(
+                    indent + 1,
+                    &format!(
+                        "docker exec --user \"$__fp_user\" \"$__fp_container\" sh -lc {}",
+                        self.render_word(command)
+                    ),
+                );
+                self.push_line(indent, "else");
+                self.push_line(
+                    indent + 1,
+                    &format!(
+                        "docker exec \"$__fp_container\" sh -lc {}",
+                        self.render_word(command)
+                    ),
+                );
+                self.push_line(indent, "fi");
+            }
+            PrimitiveStmt::RunKubectl { host, command } => {
+                self.push_line(indent, &format!("__fp_host={}", self.render_word(host)));
+                self.push_line(indent, "__fp_kubectl_args=()");
+                self.push_line(indent, "__fp_context=\"${FP_K8S_CONTEXT[$__fp_host]:-}\"");
+                self.push_line(
+                    indent,
+                    "__fp_namespace=\"${FP_K8S_NAMESPACE[$__fp_host]:-}\"",
+                );
+                self.push_line(
+                    indent,
+                    "__fp_container=\"${FP_K8S_CONTAINER[$__fp_host]:-}\"",
+                );
+                self.push_line(indent, "__fp_pod=\"${FP_K8S_POD[$__fp_host]}\"");
+                self.push_line(
+                    indent,
+                    "[[ -n \"$__fp_context\" ]] && __fp_kubectl_args+=(--context \"$__fp_context\")",
+                );
+                self.push_line(
+                    indent,
+                    "[[ -n \"$__fp_namespace\" ]] && __fp_kubectl_args+=(-n \"$__fp_namespace\")",
+                );
+                self.push_line(indent, "__fp_kubectl_args+=(exec)");
+                self.push_line(
+                    indent,
+                    "[[ -n \"$__fp_container\" ]] && __fp_kubectl_args+=(-c \"$__fp_container\")",
+                );
+                self.push_line(
+                    indent,
+                    &format!(
+                        "__fp_kubectl_args+=(\"$__fp_pod\" -- sh -lc {})",
+                        self.render_word(command)
+                    ),
+                );
+                self.push_line(indent, "kubectl \"${__fp_kubectl_args[@]}\"");
+            }
+            PrimitiveStmt::RunWinrm { host, command } => {
+                self.push_line(
+                    indent,
+                    &format!(
+                        "winrm_pwsh {} run {}",
+                        self.render_word(host),
+                        self.render_word(command)
+                    ),
+                );
+            }
+            PrimitiveStmt::CopyLocal {
+                source,
+                destination,
+            } => {
+                self.push_line(
+                    indent,
+                    &format!(
+                        "cp -- {} {}",
+                        self.render_word(source),
+                        self.render_word(destination)
+                    ),
+                );
+            }
+            PrimitiveStmt::CopySsh {
+                host,
+                source,
+                destination,
+            } => {
+                self.emit_ssh_target_setup(indent, host);
+                self.push_line(
+                    indent,
+                    &format!("__fp_remote_path={}", self.render_word(destination)),
+                );
+                self.push_line(indent, "if [[ -n \"$__fp_port\" ]]; then");
+                self.push_line(
+                    indent + 1,
+                    &format!(
+                        "scp_cmd -P \"$__fp_port\" {} \"$__fp_target:$__fp_remote_path\"",
+                        self.render_word(source),
+                    ),
+                );
+                self.push_line(indent, "else");
+                self.push_line(
+                    indent + 1,
+                    &format!(
+                        "scp_cmd {} \"$__fp_target:$__fp_remote_path\"",
+                        self.render_word(source)
+                    ),
+                );
+                self.push_line(indent, "fi");
+            }
+            PrimitiveStmt::CopyDocker {
+                host,
+                source,
+                destination,
+            } => {
+                self.push_line(indent, &format!("__fp_host={}", self.render_word(host)));
+                self.push_line(
+                    indent,
+                    "__fp_container=\"${FP_DOCKER_CONTAINER[$__fp_host]}\"",
+                );
+                self.push_line(
+                    indent,
+                    &format!("__fp_remote_path={}", self.render_word(destination)),
+                );
+                self.push_line(
+                    indent,
+                    &format!(
+                        "docker cp {} \"$__fp_container:$__fp_remote_path\"",
+                        self.render_word(source),
+                    ),
+                );
+            }
+            PrimitiveStmt::CopyKubectl {
+                host,
+                source,
+                destination,
+            } => {
+                self.push_line(indent, &format!("__fp_host={}", self.render_word(host)));
+                self.push_line(indent, "__fp_kubectl_args=()");
+                self.push_line(indent, "__fp_context=\"${FP_K8S_CONTEXT[$__fp_host]:-}\"");
+                self.push_line(
+                    indent,
+                    "__fp_namespace=\"${FP_K8S_NAMESPACE[$__fp_host]:-}\"",
+                );
+                self.push_line(indent, "__fp_pod=\"${FP_K8S_POD[$__fp_host]}\"");
+                self.push_line(
+                    indent,
+                    &format!("__fp_remote_path={}", self.render_word(destination)),
+                );
+                self.push_line(
+                    indent,
+                    "[[ -n \"$__fp_context\" ]] && __fp_kubectl_args+=(--context \"$__fp_context\")",
+                );
+                self.push_line(
+                    indent,
+                    "[[ -n \"$__fp_namespace\" ]] && __fp_kubectl_args+=(-n \"$__fp_namespace\")",
+                );
+                self.push_line(
+                    indent,
+                    &format!("kubectl cp \"${{__fp_kubectl_args[@]}}\" {} \"$__fp_pod:$__fp_remote_path\"", self.render_word(source)),
+                );
+            }
+            PrimitiveStmt::CopyWinrm {
+                host,
+                source,
+                destination,
+            } => {
+                self.push_line(
+                    indent,
+                    &format!(
+                        "winrm_pwsh {} copy {} {}",
+                        self.render_word(host),
+                        self.render_word(source),
+                        self.render_word(destination)
+                    ),
+                );
+            }
+            PrimitiveStmt::RenderTemplate {
+                source,
+                destination,
+                vars,
+            } => {
+                self.push_line(
+                    indent,
+                    &format!(
+                        "eval {}",
+                        shell_arg_quote(&format!(
+                            "{} envsubst < {} > {}",
+                            self.render_command_fragment(vars),
+                            self.render_command_fragment(source),
+                            self.render_command_fragment(destination)
+                        ))
+                    ),
+                );
+            }
+            PrimitiveStmt::RemoveFile { path } => {
+                self.push_line(indent, &format!("rm -f {}", self.render_word(path)));
+            }
+            PrimitiveStmt::RsyncSsh {
+                host,
+                flags,
+                source,
+                destination,
+            } => {
+                self.emit_ssh_target_setup(indent, host);
+                self.push_line(
+                    indent,
+                    &format!("__fp_remote_path={}", self.render_word(destination)),
+                );
+                self.push_line(
+                    indent,
+                    &format!(
+                        "rsync_cmd {} -- {} \"$__fp_target:$__fp_remote_path\"",
+                        self.render_command_fragment(flags),
+                        self.render_word(source),
+                    ),
+                );
+            }
+            PrimitiveStmt::UnsupportedTransport {
+                operation,
+                transport,
+            } => {
+                let message = match operation {
+                    UnsupportedTransportOperation::Run => "unsupported transport: ",
+                    UnsupportedTransportOperation::Copy => "unsupported transport for copy: ",
+                    UnsupportedTransportOperation::Rsync => {
+                        "rsync is only supported for ssh in bash target, got: "
+                    }
+                };
+                self.push_line(
+                    indent,
+                    &format!(
+                        "echo \"{}{}\" >&2",
+                        escape_double_quotes(message),
+                        self.render_double_quoted_fragment(transport)
+                    ),
+                );
+                self.push_line(indent, "return 1");
+            }
+        }
+        Ok(())
+    }
+
+    fn render_guarded<F>(
+        &mut self,
+        indent: usize,
+        guards: &OperationGuards,
+        emit: F,
+    ) -> Result<(), String>
     where
         F: FnOnce(&mut Self, usize) -> Result<(), String>,
     {
@@ -299,7 +685,10 @@ impl<'a> BashRenderer<'a> {
         if condition_parts.is_empty() {
             emit(self, indent)?;
         } else {
-            self.push_line(indent, &format!("if {}; then", condition_parts.join(" && ")));
+            self.push_line(
+                indent,
+                &format!("if {}; then", condition_parts.join(" && ")),
+            );
             emit(self, indent + 1)?;
             self.push_line(indent, "fi");
         }
@@ -311,12 +700,29 @@ impl<'a> BashRenderer<'a> {
         Ok(match condition {
             ConditionExpr::Bool(BoolExpr::Literal(true)) => "true".to_string(),
             ConditionExpr::Bool(BoolExpr::Literal(false)) => "false".to_string(),
-            ConditionExpr::Bool(BoolExpr::Variable(name)) => format!("[[ \"${{{}}}\" == 'true' ]]", name),
+            ConditionExpr::Bool(BoolExpr::Variable(name)) => {
+                format!("[[ \"${{{}}}\" == 'true' ]]", name)
+            }
             ConditionExpr::Bool(BoolExpr::IntComparison { lhs, op, rhs }) => {
-                format!("[[ {} {} {} ]]", self.render_int(lhs), render_comparison(*op), self.render_int(rhs))
+                format!(
+                    "[[ {} {} {} ]]",
+                    self.render_int(lhs),
+                    render_comparison(*op),
+                    self.render_int(rhs)
+                )
+            }
+            ConditionExpr::Bool(BoolExpr::StringComparison { lhs, op, rhs }) => {
+                format!(
+                    "[[ {} {} {} ]]",
+                    self.render_word(lhs),
+                    render_string_comparison(*op),
+                    self.render_word(rhs)
+                )
             }
             ConditionExpr::Command(command) => self.render_command_expr(command),
-            ConditionExpr::StringTruthy(expr) => format!("[[ {} == 'true' ]]", self.render_word(expr)),
+            ConditionExpr::StringTruthy(expr) => {
+                format!("[[ {} == 'true' ]]", self.render_word(expr))
+            }
         })
     }
 
@@ -326,10 +732,25 @@ impl<'a> BashRenderer<'a> {
             ValueExpr::Int(expr) => self.render_int(expr),
             ValueExpr::Bool(BoolExpr::Literal(value)) => shell_arg_quote(&value.to_string()),
             ValueExpr::Bool(BoolExpr::Variable(name)) => format!("\"${{{}}}\"", name),
-            ValueExpr::Bool(BoolExpr::IntComparison { lhs, op, rhs }) => {
-                shell_arg_quote(&format!("{} {} {}", self.render_int(lhs), render_comparison(*op), self.render_int(rhs)))
+            ValueExpr::Bool(BoolExpr::IntComparison { lhs, op, rhs }) => shell_arg_quote(&format!(
+                "{} {} {}",
+                self.render_int(lhs),
+                render_comparison(*op),
+                self.render_int(rhs)
+            )),
+            ValueExpr::Bool(BoolExpr::StringComparison { lhs, op, rhs }) => {
+                shell_arg_quote(&format!(
+                    "{} {} {}",
+                    self.render_word(lhs),
+                    render_string_comparison(*op),
+                    self.render_word(rhs)
+                ))
             }
-            ValueExpr::StringList(values) => values.iter().map(|value| self.render_word(value)).collect::<Vec<_>>().join(" "),
+            ValueExpr::StringList(values) => values
+                .iter()
+                .map(|value| self.render_word(value))
+                .collect::<Vec<_>>()
+                .join(" "),
         })
     }
 
@@ -339,7 +760,12 @@ impl<'a> BashRenderer<'a> {
             fp_shell_core::IntExpr::Variable(name) => format!("${{{}}}", name),
             fp_shell_core::IntExpr::UnaryNeg(value) => format!("-{}", self.render_int(value)),
             fp_shell_core::IntExpr::Binary { lhs, op, rhs } => {
-                format!("$(({} {} {}))", self.render_int(lhs), render_arithmetic(*op), self.render_int(rhs))
+                format!(
+                    "$(({} {} {}))",
+                    self.render_int(lhs),
+                    render_arithmetic(*op),
+                    self.render_int(rhs)
+                )
             }
         }
     }
@@ -348,6 +774,13 @@ impl<'a> BashRenderer<'a> {
         match expr {
             StringExpr::Literal(text) => shell_arg_quote(text),
             StringExpr::Variable(name) => format!("\"${{{}}}\"", name),
+            StringExpr::HostTransport(host) => {
+                format!(
+                    "\"${{FP_HOST_TRANSPORT[{}]:-ssh}}\"",
+                    self.render_array_key(host)
+                )
+            }
+            StringExpr::TempPath => "\"$(mktemp)\"".to_string(),
             StringExpr::Interpolated(parts) => {
                 let mut out = String::from("\"");
                 for part in parts {
@@ -366,6 +799,13 @@ impl<'a> BashRenderer<'a> {
         match expr {
             StringExpr::Literal(text) => text.clone(),
             StringExpr::Variable(name) => format!("${{{}}}", name),
+            StringExpr::HostTransport(host) => {
+                format!(
+                    "${{FP_HOST_TRANSPORT[{}]:-ssh}}",
+                    self.render_array_key(host)
+                )
+            }
+            StringExpr::TempPath => "$(mktemp)".to_string(),
             StringExpr::Interpolated(parts) => {
                 let mut out = String::new();
                 for part in parts {
@@ -380,7 +820,93 @@ impl<'a> BashRenderer<'a> {
     }
 
     fn push_line(&mut self, indent: usize, text: &str) {
-        self.lines.push(format!("{}{}", "    ".repeat(indent), text));
+        self.lines
+            .push(format!("{}{}", "    ".repeat(indent), text));
+    }
+
+    fn render_array_key(&self, expr: &StringExpr) -> String {
+        match expr {
+            StringExpr::Literal(text) => format!("\"{}\"", escape_double_quotes(text)),
+            StringExpr::Variable(name) => format!("\"${{{}}}\"", name),
+            StringExpr::HostTransport(host) => format!(
+                "\"${{FP_HOST_TRANSPORT[{}]:-ssh}}\"",
+                self.render_array_key(host)
+            ),
+            StringExpr::TempPath => "\"$(mktemp)\"".to_string(),
+            StringExpr::Interpolated(parts) => {
+                let mut out = String::from("\"");
+                for part in parts {
+                    match part {
+                        StringPart::Literal(text) => out.push_str(&escape_double_quotes(text)),
+                        StringPart::Variable(name) => out.push_str(&format!("${{{}}}", name)),
+                    }
+                }
+                out.push('"');
+                out
+            }
+        }
+    }
+
+    fn render_double_quoted_fragment(&self, expr: &StringExpr) -> String {
+        match expr {
+            StringExpr::Literal(text) => escape_double_quotes(text),
+            StringExpr::Variable(name) => format!("${{{}}}", name),
+            StringExpr::HostTransport(host) => {
+                format!(
+                    "${{FP_HOST_TRANSPORT[{}]:-ssh}}",
+                    self.render_array_key(host)
+                )
+            }
+            StringExpr::TempPath => "$(mktemp)".to_string(),
+            StringExpr::Interpolated(parts) => {
+                let mut out = String::new();
+                for part in parts {
+                    match part {
+                        StringPart::Literal(text) => out.push_str(&escape_double_quotes(text)),
+                        StringPart::Variable(name) => out.push_str(&format!("${{{}}}", name)),
+                    }
+                }
+                out
+            }
+        }
+    }
+
+    fn render_command_fragment(&self, expr: &StringExpr) -> String {
+        match expr {
+            StringExpr::Literal(text) => text.clone(),
+            StringExpr::Variable(name) => format!("${{{}}}", name),
+            StringExpr::HostTransport(host) => {
+                format!(
+                    "${{FP_HOST_TRANSPORT[{}]:-ssh}}",
+                    self.render_array_key(host)
+                )
+            }
+            StringExpr::TempPath => "$(mktemp)".to_string(),
+            StringExpr::Interpolated(parts) => {
+                let mut out = String::new();
+                for part in parts {
+                    match part {
+                        StringPart::Literal(text) => out.push_str(text),
+                        StringPart::Variable(name) => out.push_str(&format!("${{{}}}", name)),
+                    }
+                }
+                out
+            }
+        }
+    }
+
+    fn emit_ssh_target_setup(&mut self, indent: usize, host: &StringExpr) {
+        self.push_line(indent, &format!("__fp_host={}", self.render_word(host)));
+        self.push_line(
+            indent,
+            "__fp_address=\"${FP_SSH_ADDRESS[$__fp_host]:-$__fp_host}\"",
+        );
+        self.push_line(indent, "__fp_user=\"${FP_SSH_USER[$__fp_host]:-}\"");
+        self.push_line(indent, "__fp_port=\"${FP_SSH_PORT[$__fp_host]:-}\"");
+        self.push_line(indent, "__fp_target=\"$__fp_address\"");
+        self.push_line(indent, "if [[ -n \"$__fp_user\" ]]; then");
+        self.push_line(indent + 1, "__fp_target=\"$__fp_user@$__fp_target\"");
+        self.push_line(indent, "fi");
     }
 }
 
@@ -405,6 +931,13 @@ fn render_comparison(op: ComparisonOp) -> &'static str {
     }
 }
 
+fn render_string_comparison(op: StringComparisonOp) -> &'static str {
+    match op {
+        StringComparisonOp::Eq => "==",
+        StringComparisonOp::Ne => "!=",
+    }
+}
+
 fn shell_arg_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -421,19 +954,27 @@ fn rsync_flags(options: RsyncOptions) -> String {
     if options.compress {
         short.push('z');
     }
-    let mut flags = if short.is_empty() { String::new() } else { format!("-{}", short) };
+    let mut flags = if short.is_empty() {
+        String::new()
+    } else {
+        format!("-{}", short)
+    };
     if options.delete {
-        if !flags.is_empty() { flags.push(' '); }
+        if !flags.is_empty() {
+            flags.push(' ');
+        }
         flags.push_str("--delete");
     }
     if options.checksum {
-        if !flags.is_empty() { flags.push(' '); }
+        if !flags.is_empty() {
+            flags.push(' ');
+        }
         flags.push_str("--checksum");
     }
     flags
 }
 
-const BASH_HELPERS: &str = r#"
+const BASH_RUNTIME_UTILITIES: &str = r#"
 ssh_cmd() {
   ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath="$SSH_CONTROL_PATH" -- "$@"
 }
@@ -446,148 +987,89 @@ rsync_cmd() {
   rsync -e "ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=$SSH_CONTROL_PATH" "$@"
 }
 
-run_host() {
+winrm_pwsh() {
   local host="$1"
-  local cmd="$2"
-  local transport="${FP_HOST_TRANSPORT[$host]:-ssh}"
-  case "$transport" in
-    local)
-      bash -lc "$cmd"
-      ;;
-    ssh)
-      local address="${FP_SSH_ADDRESS[$host]:-$host}"
-      local user="${FP_SSH_USER[$host]:-}"
-      local port="${FP_SSH_PORT[$host]:-}"
-      local target="$address"
-      if [[ -n "$user" ]]; then
-        target="$user@$target"
-      fi
-      if [[ -n "$port" ]]; then
-        ssh_cmd -p "$port" "$target" "$cmd"
-      else
-        ssh_cmd "$target" "$cmd"
-      fi
-      ;;
-    docker)
-      local container="${FP_DOCKER_CONTAINER[$host]}"
-      local user="${FP_DOCKER_USER[$host]:-}"
-      if [[ -n "$user" ]]; then
-        docker exec --user "$user" "$container" sh -lc "$cmd"
-      else
-        docker exec "$container" sh -lc "$cmd"
-      fi
-      ;;
-    kubectl)
-      local pod="${FP_K8S_POD[$host]}"
-      local namespace="${FP_K8S_NAMESPACE[$host]:-}"
-      local container="${FP_K8S_CONTAINER[$host]:-}"
-      local context="${FP_K8S_CONTEXT[$host]:-}"
-      local args=()
-      [[ -n "$context" ]] && args+=(--context "$context")
-      [[ -n "$namespace" ]] && args+=(-n "$namespace")
-      args+=(exec)
-      [[ -n "$container" ]] && args+=(-c "$container")
-      args+=("$pod" -- sh -lc "$cmd")
-      kubectl "${args[@]}"
-      ;;
-    winrm)
-      local address="${FP_WINRM_ADDRESS[$host]}"
-      local user="${FP_WINRM_USER[$host]}"
-      local password="${FP_WINRM_PASSWORD[$host]:-}"
-      local scheme="${FP_WINRM_SCHEME[$host]:-http}"
-      local port="${FP_WINRM_PORT[$host]:-}"
-      local args=(-i "$address" -u "$user" -s "$scheme")
-      [[ -n "$password" ]] && args+=(-p "$password")
-      [[ -n "$port" ]] && args+=(-P "$port")
-      evil-winrm "${args[@]}" -c "$cmd"
-      ;;
-    *)
-      echo "unsupported transport: $transport" >&2
-      return 1
-      ;;
-  esac
-}
+  local mode="$2"
+  local command="${3:-}"
+  local source="${4:-}"
+  local destination="${5:-}"
+  local address="${FP_WINRM_ADDRESS[$host]}"
+  local user="${FP_WINRM_USER[$host]}"
+  local password="${FP_WINRM_PASSWORD[$host]:-}"
+  local scheme="${FP_WINRM_SCHEME[$host]:-http}"
+  local port="${FP_WINRM_PORT[$host]:-}"
 
-copy_host() {
-  local host="$1"
-  local src="$2"
-  local dest="$3"
-  local transport="${FP_HOST_TRANSPORT[$host]:-ssh}"
-  case "$transport" in
-    ssh)
-      local address="${FP_SSH_ADDRESS[$host]:-$host}"
-      local user="${FP_SSH_USER[$host]:-}"
-      local port="${FP_SSH_PORT[$host]:-}"
-      local target="$address"
-      if [[ -n "$user" ]]; then
-        target="$user@$target"
-      fi
-      if [[ -n "$port" ]]; then
-        scp_cmd -P "$port" "$src" "$target:$dest"
-      else
-        scp_cmd "$src" "$target:$dest"
-      fi
-      ;;
-    docker)
-      docker cp "$src" "${FP_DOCKER_CONTAINER[$host]}:$dest"
-      ;;
-    kubectl)
-      local pod="${FP_K8S_POD[$host]}"
-      local namespace="${FP_K8S_NAMESPACE[$host]:-}"
-      local context="${FP_K8S_CONTEXT[$host]:-}"
-      local args=()
-      [[ -n "$context" ]] && args+=(--context "$context")
-      [[ -n "$namespace" ]] && args+=(-n "$namespace")
-      kubectl cp "${args[@]}" "$src" "$pod:$dest"
-      ;;
-    winrm)
-      echo "copy is not supported for winrm in bash target" >&2
-      return 1
-      ;;
-    local)
-      cp -- "$src" "$dest"
-      ;;
-  esac
-}
-
-template_host() {
-  local host="$1"
-  local src="$2"
-  local dest="$3"
-  local vars="$4"
-  local tmp
-  tmp=$(mktemp)
-  eval "$vars envsubst < \"$src\" > \"$tmp\""
-  copy_host "$host" "$tmp" "$dest"
-  rm -f "$tmp"
-}
-
-rsync_host() {
-  local host="$1"
-  local flags="$2"
-  local src="$3"
-  local dest="$4"
-  local transport="${FP_HOST_TRANSPORT[$host]:-ssh}"
-  if [[ "$transport" != "ssh" ]]; then
-    echo "rsync is only supported for ssh in bash target" >&2
+  if [[ -z "$password" ]]; then
+    echo "winrm password is required for non-interactive bash target: $host" >&2
     return 1
   fi
-  local address="${FP_SSH_ADDRESS[$host]:-$host}"
-  local user="${FP_SSH_USER[$host]:-}"
-  local target="$address"
-  if [[ -n "$user" ]]; then
-    target="$user@$target"
-  fi
-  rsync_cmd $flags -- "$src" "$target:$dest"
-}
 
+  FP_WINRM_ADDRESS="$address" \
+  FP_WINRM_USER="$user" \
+  FP_WINRM_PASSWORD="$password" \
+  FP_WINRM_SCHEME="$scheme" \
+  FP_WINRM_PORT="$port" \
+  FP_WINRM_MODE="$mode" \
+  FP_WINRM_COMMAND="$command" \
+  FP_WINRM_SOURCE="$source" \
+  FP_WINRM_DESTINATION="$destination" \
+  pwsh -NoProfile -NonInteractive -Command '
+$ErrorActionPreference = "Stop"
+$sessionArgs = @{
+    ComputerName = $env:FP_WINRM_ADDRESS
+}
+if ($env:FP_WINRM_PORT) {
+    $sessionArgs.Port = [int]$env:FP_WINRM_PORT
+}
+$scheme = if ([string]::IsNullOrWhiteSpace($env:FP_WINRM_SCHEME)) {
+    "http"
+} else {
+    $env:FP_WINRM_SCHEME.ToLowerInvariant()
+}
+switch ($scheme) {
+    "http" {}
+    "https" { $sessionArgs.UseSSL = $true }
+    default { throw "unsupported winrm scheme: $($env:FP_WINRM_SCHEME)" }
+}
+$securePassword = ConvertTo-SecureString $env:FP_WINRM_PASSWORD -AsPlainText -Force
+$credential = New-Object System.Management.Automation.PSCredential($env:FP_WINRM_USER, $securePassword)
+$session = New-PSSession -Credential $credential @sessionArgs
+try {
+    switch ($env:FP_WINRM_MODE) {
+        "run" {
+            Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create($env:FP_WINRM_COMMAND))
+        }
+        "copy" {
+            $remoteDestination = $env:FP_WINRM_DESTINATION
+            $remoteDirectory = [System.IO.Path]::GetDirectoryName($remoteDestination)
+            if ($remoteDirectory) {
+                Invoke-Command -Session $session -ScriptBlock {
+                    param([string]$Directory)
+                    [System.IO.Directory]::CreateDirectory($Directory) | Out-Null
+                } -ArgumentList $remoteDirectory
+            }
+            Copy-Item -ToSession $session -Path $env:FP_WINRM_SOURCE -Destination $remoteDestination -Force
+        }
+        default {
+            throw "unsupported winrm mode: $($env:FP_WINRM_MODE)"
+        }
+    }
+}
+finally {
+    if ($null -ne $session) {
+        Remove-PSSession -Session $session
+    }
+}
+'
+}
 "#;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use fp_shell_core::{
-        InventoryHost, ScriptProgram, SshInventory, Statement, StringExpr, TransportKind,
+        InventoryHost, PrimitiveStmt, ScriptProgram, SshInventory, Statement, StringExpr,
+        TransportKind, WinRmInventory,
     };
     use std::collections::HashMap;
 
@@ -621,8 +1103,52 @@ mod tests {
             groups: HashMap::new(),
             hosts,
         };
-        let script = BashTarget::new().render(&program, &inventory).expect("render should succeed");
+        let script = BashTarget::new()
+            .render(&program, &inventory)
+            .expect("render should succeed");
         assert!(script.contains("FP_HOST_TRANSPORT['web-1']='ssh'"));
         assert!(script.contains("run_host 'web-1' 'uptime'"));
+    }
+
+    #[test]
+    fn renders_winrm_dispatch_via_pwsh() {
+        let program = ScriptProgram {
+            items: vec![ScriptItem::Statement(Statement::Primitive(
+                PrimitiveStmt::CopyWinrm {
+                    host: StringExpr::Literal("win-1".to_string()),
+                    source: StringExpr::Literal("artifact.zip".to_string()),
+                    destination: StringExpr::Literal(r"C:\Temp\artifact.zip".to_string()),
+                },
+            ))],
+        };
+        let mut hosts = HashMap::new();
+        hosts.insert(
+            "win-1".to_string(),
+            InventoryHost {
+                transport: TransportKind::Winrm,
+                ssh: None,
+                docker: None,
+                kubectl: None,
+                winrm: Some(WinRmInventory {
+                    address: "10.0.0.21".to_string(),
+                    user: "Administrator".to_string(),
+                    password: Some("secret".to_string()),
+                    port: Some(5986),
+                    scheme: Some("https".to_string()),
+                }),
+            },
+        );
+        let inventory = ShellInventory {
+            groups: HashMap::new(),
+            hosts,
+        };
+        let script = BashTarget::new()
+            .render(&program, &inventory)
+            .expect("render should succeed");
+        assert!(script.contains("pwsh -NoProfile -NonInteractive -Command"));
+        assert!(script.contains("FP_WINRM_SCHEME['win-1']='https'"));
+        assert!(script.contains("winrm_pwsh 'win-1' copy 'artifact.zip' 'C:\\Temp\\artifact.zip'"));
+        assert!(!script.contains("backend_copy_winrm"));
+        assert!(!script.contains("evil-winrm"));
     }
 }
