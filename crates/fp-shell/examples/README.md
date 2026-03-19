@@ -58,5 +58,8 @@ fields during loading.
 
 Current limits:
 
-- `rsync` is only supported for SSH endpoints.
+- `rsync` uses native local `rsync` CLI. For remote hosts it resolves the endpoint from host
+  credentials like `user`, `address`, and `port`, even if command transport is `winrm`.
+- Hosts without an rsync-reachable endpoint, such as plain `docker` or `kubectl` entries without
+  address/user data, cannot use `rsync`.
 - WinRM requires local `pwsh` plus `password` in inventory for non-interactive execution.

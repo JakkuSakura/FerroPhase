@@ -1,14 +1,14 @@
-Set-StrictMode -Version Latest
-Set-PSDebug -Trace 1
+generated: crates/fp-shell/examples/transports.ps1
+
 $ErrorActionPreference = 'Stop'
 $script:fpLastChanged = $false
 
 $script:FpHosts = @{}
-$script:FpHosts['ssh-web'] = @{ transport = 'ssh'; address = '10.0.0.11'; user = 'deploy'; port = 22 }
-$script:FpHosts['k8s-api'] = @{ transport = 'kubectl'; container = 'api'; pod = 'api-7f9f6'; namespace = 'prod'; context = 'prod-cluster' }
 $script:FpHosts['windows-admin'] = @{ transport = 'winrm'; address = '10.0.0.21'; user = 'Administrator'; port = 5985; password = 'change-me'; scheme = 'http' }
-$script:FpHosts['localhost'] = @{ transport = 'local' }
+$script:FpHosts['k8s-api'] = @{ transport = 'kubectl'; container = 'api'; pod = 'api-7f9f6'; namespace = 'prod'; context = 'prod-cluster' }
 $script:FpHosts['docker-app'] = @{ transport = 'docker'; user = 'root'; container = 'app' }
+$script:FpHosts['localhost'] = @{ transport = 'local' }
+$script:FpHosts['ssh-web'] = @{ transport = 'ssh'; address = '10.0.0.11'; user = 'deploy'; port = 22 }
 function Invoke-FpRuntimeValidation {
     if (-not (Get-Command -Name 'Copy-Item' -ErrorAction SilentlyContinue)) { throw 'missing required command: Copy-Item' }
     if (-not (Get-Command -Name 'Get-Content' -ErrorAction SilentlyContinue)) { throw 'missing required command: Get-Content' }
@@ -26,12 +26,47 @@ Invoke-FpRuntimeValidation
 
 function host_transport {
     param([string]$host)
-    runtime_host_transport $host
+    Write-Output $($script:FpHosts[$host].transport)
+}
+
+function host_address {
+    param([string]$host)
+    Write-Output $($script:FpHosts[$host].address)
+}
+
+function host_user {
+    param([string]$host)
+    Write-Output $($script:FpHosts[$host].user)
+}
+
+function host_port {
+    param([string]$host)
+    Write-Output $($script:FpHosts[$host].port)
+}
+
+function host_container {
+    param([string]$host)
+    Write-Output $($script:FpHosts[$host].container)
+}
+
+function host_pod {
+    param([string]$host)
+    Write-Output $($script:FpHosts[$host].pod)
+}
+
+function host_namespace {
+    param([string]$host)
+    Write-Output $($script:FpHosts[$host].namespace)
+}
+
+function host_context {
+    param([string]$host)
+    Write-Output $($script:FpHosts[$host].context)
 }
 
 function run_local_host {
     param([string]$cmd)
-    $cmd
+    Invoke-Expression $cmd
 }
 
 function copy_local_host {
@@ -47,35 +82,13 @@ function run_host {
             run_local_host $cmd
         }
         'ssh' {
-            $__fpHost = $host
-            $__fpEntry = $script:FpHosts[$__fpHost]
-            $__fpAddress = if ($__fpEntry.address) { $__fpEntry.address } else { $__fpHost }
-            $__fpTarget = if ($__fpEntry.user) { "$($__fpEntry.user)@$($__fpAddress)" } else { $__fpAddress }
-            if ($__fpEntry.port) {
-                & ssh -p $__fpEntry.port $__fpTarget $cmd
-            } else {
-                & ssh $__fpTarget $cmd
-            }
+            run_ssh_host $host $cmd
         }
         'docker' {
-            $__fpHost = $host
-            $__fpEntry = $script:FpHosts[$__fpHost]
-            if ($__fpEntry.user) {
-                & docker exec --user $__fpEntry.user $__fpEntry.container sh -lc $cmd
-            } else {
-                & docker exec $__fpEntry.container sh -lc $cmd
-            }
+            run_docker_host $host $cmd
         }
         'kubectl' {
-            $__fpHost = $host
-            $__fpEntry = $script:FpHosts[$__fpHost]
-            $__fpArgs = @()
-            if ($__fpEntry.context) { $__fpArgs += @('--context', $__fpEntry.context) }
-            if ($__fpEntry.namespace) { $__fpArgs += @('-n', $__fpEntry.namespace) }
-            $__fpArgs += 'exec'
-            if ($__fpEntry.container) { $__fpArgs += @('-c', $__fpEntry.container) }
-            $__fpArgs += @($__fpEntry.pod, '--', 'sh', '-lc', $cmd)
-            & kubectl @__fpArgs
+            run_kubectl_host $host $cmd
         }
         'winrm' {
             $__fpHost = $host
@@ -112,29 +125,13 @@ function copy_host {
             copy_local_host $src $dest
         }
         'ssh' {
-            $__fpHost = $host
-            $__fpEntry = $script:FpHosts[$__fpHost]
-            $__fpAddress = if ($__fpEntry.address) { $__fpEntry.address } else { $__fpHost }
-            $__fpDestination = $dest
-            $__fpTarget = if ($__fpEntry.user) { "$($__fpEntry.user)@$($__fpAddress):$__fpDestination" } else { "$($__fpAddress):$__fpDestination" }
-            if ($__fpEntry.port) {
-                & scp -P $__fpEntry.port $src $__fpTarget
-            } else {
-                & scp $src $__fpTarget
-            }
+            copy_ssh_host $host $src $dest
         }
         'docker' {
-            $__fpHost = $host
-            $__fpEntry = $script:FpHosts[$__fpHost]
-            & docker cp $src "$($__fpEntry.container):$dest"
+            copy_docker_host $host $src $dest
         }
         'kubectl' {
-            $__fpHost = $host
-            $__fpEntry = $script:FpHosts[$__fpHost]
-            $__fpArgs = @()
-            if ($__fpEntry.context) { $__fpArgs += @('--context', $__fpEntry.context) }
-            if ($__fpEntry.namespace) { $__fpArgs += @('-n', $__fpEntry.namespace) }
-            & kubectl cp @__fpArgs $src "$($__fpEntry.pod):$dest"
+            copy_kubectl_host $host $src $dest
         }
         'winrm' {
             $__fpHost = $host
@@ -180,24 +177,184 @@ function template_host {
     }
     Set-Content -Path $tmp -Value $__fpContent
     copy_host $host $tmp $dest
-    Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+    Remove-Item -Force -ErrorAction SilentlyContinue $tmp
 }
 
 function rsync_host {
     param([string]$host, [string]$flags, [string]$src, [string]$dest)
     $transport = $(host_transport $host)
     switch -Exact ($transport) {
-        'ssh' {
-            $__fpHost = $host
-            $__fpEntry = $script:FpHosts[$__fpHost]
-            $__fpAddress = if ($__fpEntry.address) { $__fpEntry.address } else { $__fpHost }
-            $__fpDestination = $dest
-            $__fpTarget = if ($__fpEntry.user) { "$($__fpEntry.user)@$($__fpAddress):$__fpDestination" } else { "$($__fpAddress):$__fpDestination" }
-            & rsync $flags -- $src $__fpTarget
+        'local' {
+            rsync $flags $src $dest
         }
         default {
-            throw "rsync is only supported for ssh in shell target, got: $transport"
+            rsync_remote_host $host $flags $src $dest
         }
+    }
+}
+
+function ssh_target {
+    param([string]$host)
+    $user = $(host_user $host)
+    $address = $(host_address $host)
+    if ($user -ne '') {
+        Write-Output "$user@$address"
+    } else {
+        Write-Output $address
+    }
+}
+
+function run_ssh_host {
+    param([string]$host, [string]$cmd)
+    $target = $(ssh_target $host)
+    $port = $(host_port $host)
+    if ($port -ne '') {
+        ssh -p $port $target $cmd
+    } else {
+        ssh $target $cmd
+    }
+}
+
+function copy_ssh_host {
+    param([string]$host, [string]$src, [string]$dest)
+    $target = $(ssh_target $host)
+    $remote = "$target:$dest"
+    $port = $(host_port $host)
+    if ($port -ne '') {
+        scp -P $port $src $remote
+    } else {
+        scp $src $remote
+    }
+}
+
+function run_docker_host {
+    param([string]$host, [string]$cmd)
+    $container = $(host_container $host)
+    $user = $(host_user $host)
+    if ($user -ne '') {
+        docker exec --user $user $container 'sh' '-lc' $cmd
+    } else {
+        docker exec $container 'sh' '-lc' $cmd
+    }
+}
+
+function run_kubectl_host {
+    param([string]$host, [string]$cmd)
+    $context = $(host_context $host)
+    $namespace = $(host_namespace $host)
+    $container = $(host_container $host)
+    $pod = $(host_pod $host)
+    switch -Exact ($context) {
+        '' {
+            switch -Exact ($namespace) {
+                '' {
+                    switch -Exact ($container) {
+                        '' {
+                            kubectl exec $pod '--' 'sh' '-lc' $cmd
+                        }
+                        default {
+                            kubectl exec -c $container $pod '--' 'sh' '-lc' $cmd
+                        }
+                    }
+                }
+                default {
+                    switch -Exact ($container) {
+                        '' {
+                            kubectl -n $namespace 'exec' $pod '--' 'sh' '-lc' $cmd
+                        }
+                        default {
+                            kubectl -n $namespace 'exec' '-c' $container $pod '--' 'sh' '-lc' $cmd
+                        }
+                    }
+                }
+            }
+        }
+        default {
+            switch -Exact ($namespace) {
+                '' {
+                    switch -Exact ($container) {
+                        '' {
+                            kubectl --context $context 'exec' $pod '--' 'sh' '-lc' $cmd
+                        }
+                        default {
+                            kubectl --context $context 'exec' '-c' $container $pod '--' 'sh' '-lc' $cmd
+                        }
+                    }
+                }
+                default {
+                    switch -Exact ($container) {
+                        '' {
+                            kubectl --context $context '-n' $namespace 'exec' $pod '--' 'sh' '-lc' $cmd
+                        }
+                        default {
+                            kubectl --context $context '-n' $namespace 'exec' '-c' $container $pod '--' 'sh' '-lc' $cmd
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+function copy_docker_host {
+    param([string]$host, [string]$src, [string]$dest)
+    $container = $(host_container $host)
+    docker cp $src "$container:$dest"
+}
+
+function copy_kubectl_host {
+    param([string]$host, [string]$src, [string]$dest)
+    $context = $(host_context $host)
+    $namespace = $(host_namespace $host)
+    $remote = "$(host_pod $host):$dest"
+    switch -Exact ($context) {
+        '' {
+            switch -Exact ($namespace) {
+                '' {
+                    kubectl cp $src $remote
+                }
+                default {
+                    kubectl -n $namespace 'cp' $src $remote
+                }
+            }
+        }
+        default {
+            switch -Exact ($namespace) {
+                '' {
+                    kubectl --context $context 'cp' $src $remote
+                }
+                default {
+                    kubectl --context $context '-n' $namespace 'cp' $src $remote
+                }
+            }
+        }
+    }
+}
+
+function rsync_remote_target {
+    param([string]$host)
+    $address = $(host_address $host)
+    if ($address -eq '') {
+        throw "host is not rsync-reachable: missing address for $host"
+        Write-Output ''
+    } else {
+        $user = $(host_user $host)
+        if ($user -ne '') {
+            Write-Output "$user@$address"
+        } else {
+            Write-Output $address
+        }
+    }
+}
+
+function rsync_remote_host {
+    param([string]$host, [string]$flags, [string]$src, [string]$dest)
+    $remote = "$(rsync_remote_target $host):$dest"
+    $port = $(host_port $host)
+    if ($port -ne '') {
+        rsync -e "ssh -p $port" $flags $src $remote
+    } else {
+        rsync $flags $src $remote
     }
 }
 

@@ -1,7 +1,5 @@
-#!/usr/bin/env bash
-set -xeuo pipefail
-
-__fp_last_changed=0
+generated: crates/fp-shell/examples/mixed-hosts.sh
+hanged=0
 
 declare -A FP_HOST_TRANSPORT=()
 declare -A FP_SSH_ADDRESS=()
@@ -19,6 +17,18 @@ declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
 
+FP_HOST_TRANSPORT['web-1']='ssh'
+FP_SSH_ADDRESS['web-1']='10.0.0.11'
+FP_WINRM_ADDRESS['web-1']='10.0.0.11'
+FP_SSH_USER['web-1']='deploy'
+FP_DOCKER_USER['web-1']='deploy'
+FP_WINRM_USER['web-1']='deploy'
+FP_HOST_TRANSPORT['web-2']='ssh'
+FP_SSH_ADDRESS['web-2']='10.0.0.12'
+FP_WINRM_ADDRESS['web-2']='10.0.0.12'
+FP_SSH_USER['web-2']='deploy'
+FP_DOCKER_USER['web-2']='deploy'
+FP_WINRM_USER['web-2']='deploy'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
@@ -115,6 +125,41 @@ host_transport() {
     runtime_host_transport "${host}"
 }
 
+host_address() {
+    local host="$1"
+    runtime_host_address "${host}"
+}
+
+host_user() {
+    local host="$1"
+    runtime_host_user "${host}"
+}
+
+host_port() {
+    local host="$1"
+    runtime_host_port "${host}"
+}
+
+host_container() {
+    local host="$1"
+    runtime_host_container "${host}"
+}
+
+host_pod() {
+    local host="$1"
+    runtime_host_pod "${host}"
+}
+
+host_namespace() {
+    local host="$1"
+    runtime_host_namespace "${host}"
+}
+
+host_context() {
+    local host="$1"
+    runtime_host_context "${host}"
+}
+
 run_local_host() {
     local cmd="$1"
     invoke_expression "${cmd}"
@@ -135,13 +180,13 @@ run_host() {
             run_local_host "${cmd}"
             ;;
         ssh)
-            ssh "${host}" "${cmd}"
+            run_ssh_host "${host}" "${cmd}"
             ;;
         docker)
-            docker_exec "${host}" "${cmd}"
+            run_docker_host "${host}" "${cmd}"
             ;;
         kubectl)
-            kubectl_exec "${host}" "${cmd}"
+            run_kubectl_host "${host}" "${cmd}"
             ;;
         winrm)
             winrm_run "${host}" "${cmd}"
@@ -162,13 +207,13 @@ copy_host() {
             copy_local_host "${src}" "${dest}"
             ;;
         ssh)
-            scp "${host}" "${src}" "${dest}"
+            copy_ssh_host "${host}" "${src}" "${dest}"
             ;;
         docker)
-            docker_cp "${host}" "${src}" "${dest}"
+            copy_docker_host "${host}" "${src}" "${dest}"
             ;;
         kubectl)
-            kubectl_cp "${host}" "${src}" "${dest}"
+            copy_kubectl_host "${host}" "${src}" "${dest}"
             ;;
         winrm)
             winrm_copy "${host}" "${src}" "${dest}"
@@ -197,13 +242,190 @@ rsync_host() {
     local dest="$4"
     local transport="$(host_transport "${host}")"
     case "${transport}" in
-        ssh)
-            rsync_ssh "${host}" "${flags}" "${src}" "${dest}"
+        local)
+            rsync "${flags}" "${src}" "${dest}"
             ;;
         *)
-            runtime_fail "rsync is only supported for ssh in shell target, got: ${transport}"
+            rsync_remote_host "${host}" "${flags}" "${src}" "${dest}"
             ;;
     esac
+}
+
+ssh_target() {
+    local host="$1"
+    local user="$(host_user "${host}")"
+    local address="$(host_address "${host}")"
+    if [[ "${user}" != '' ]]; then
+        printf '%s\n' "${user}@${address}"
+    else
+        printf '%s\n' "${address}"
+    fi
+}
+
+run_ssh_host() {
+    local host="$1"
+    local cmd="$2"
+    local target="$(ssh_target "${host}")"
+    local port="$(host_port "${host}")"
+    if [[ "${port}" != '' ]]; then
+        ssh_port "${port}" "${target}" "${cmd}"
+    else
+        ssh "${target}" "${cmd}"
+    fi
+}
+
+copy_ssh_host() {
+    local host="$1"
+    local src="$2"
+    local dest="$3"
+    local target="$(ssh_target "${host}")"
+    local remote="${target}:${dest}"
+    local port="$(host_port "${host}")"
+    if [[ "${port}" != '' ]]; then
+        scp_port "${port}" "${src}" "${remote}"
+    else
+        scp "${src}" "${remote}"
+    fi
+}
+
+run_docker_host() {
+    local host="$1"
+    local cmd="$2"
+    local container="$(host_container "${host}")"
+    local user="$(host_user "${host}")"
+    if [[ "${user}" != '' ]]; then
+        docker_exec_user "${user}" "${container}" 'sh' '-lc' "${cmd}"
+    else
+        docker_exec "${container}" 'sh' '-lc' "${cmd}"
+    fi
+}
+
+run_kubectl_host() {
+    local host="$1"
+    local cmd="$2"
+    local context="$(host_context "${host}")"
+    local namespace="$(host_namespace "${host}")"
+    local container="$(host_container "${host}")"
+    local pod="$(host_pod "${host}")"
+    case "${context}" in
+        )
+            case "${namespace}" in
+                )
+                    case "${container}" in
+                        )
+                            kubectl_exec "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            ;;
+                        *)
+                            kubectl_exec_container "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            ;;
+                    esac
+                    ;;
+                *)
+                    case "${container}" in
+                        )
+                            kubectl_namespace_exec "${namespace}" 'exec' "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            ;;
+                        *)
+                            kubectl_namespace_exec_container "${namespace}" 'exec' '-c' "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            ;;
+                    esac
+                    ;;
+            esac
+            ;;
+        *)
+            case "${namespace}" in
+                )
+                    case "${container}" in
+                        )
+                            kubectl_context_exec "${context}" 'exec' "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            ;;
+                        *)
+                            kubectl_context_exec_container "${context}" 'exec' '-c' "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            ;;
+                    esac
+                    ;;
+                *)
+                    case "${container}" in
+                        )
+                            kubectl_context_namespace_exec "${context}" '-n' "${namespace}" 'exec' "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            ;;
+                        *)
+                            kubectl_context_namespace_exec_container "${context}" '-n' "${namespace}" 'exec' '-c' "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            ;;
+                    esac
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+copy_docker_host() {
+    local host="$1"
+    local src="$2"
+    local dest="$3"
+    local container="$(host_container "${host}")"
+    docker_cp "${src}" "${container}:${dest}"
+}
+
+copy_kubectl_host() {
+    local host="$1"
+    local src="$2"
+    local dest="$3"
+    local context="$(host_context "${host}")"
+    local namespace="$(host_namespace "${host}")"
+    local remote="$(host_pod "${host}"):${dest}"
+    case "${context}" in
+        )
+            case "${namespace}" in
+                )
+                    kubectl_cp "${src}" "${remote}"
+                    ;;
+                *)
+                    kubectl_namespace_cp "${namespace}" 'cp' "${src}" "${remote}"
+                    ;;
+            esac
+            ;;
+        *)
+            case "${namespace}" in
+                )
+                    kubectl_context_cp "${context}" 'cp' "${src}" "${remote}"
+                    ;;
+                *)
+                    kubectl_context_namespace_cp "${context}" '-n' "${namespace}" 'cp' "${src}" "${remote}"
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+rsync_remote_target() {
+    local host="$1"
+    local address="$(host_address "${host}")"
+    if [[ "${address}" == '' ]]; then
+        runtime_fail "host is not rsync-reachable: missing address for ${host}"
+        printf '%s\n' ''
+    else
+        local user="$(host_user "${host}")"
+        if [[ "${user}" != '' ]]; then
+            printf '%s\n' "${user}@${address}"
+        else
+            printf '%s\n' "${address}"
+        fi
+    fi
+}
+
+rsync_remote_host() {
+    local host="$1"
+    local flags="$2"
+    local src="$3"
+    local dest="$4"
+    local remote="$(rsync_remote_target "${host}"):${dest}"
+    local port="$(host_port "${host}")"
+    if [[ "${port}" != '' ]]; then
+        rsync_shell "ssh -p ${port}" "${flags}" "${src}" "${remote}"
+    else
+        rsync "${flags}" "${src}" "${remote}"
+    fi
 }
 
 shell_run() {
