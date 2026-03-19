@@ -228,9 +228,7 @@ impl CstKind {
             CstKind::BlockStmtItem
             | CstKind::BlockStmtLet
             | CstKind::BlockStmtDefer
-            | CstKind::BlockStmtExpr => {
-                CstCategory::Stmt
-            }
+            | CstKind::BlockStmtExpr => CstCategory::Stmt,
 
             // Non-expression nodes that still participate in CST.
             CstKind::AttrOuter

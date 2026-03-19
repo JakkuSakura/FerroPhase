@@ -5222,7 +5222,9 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
             if !self.control_flow_emitted
-                && self.blocks[self.current_block as usize].terminator.is_none()
+                && self.blocks[self.current_block as usize]
+                    .terminator
+                    .is_none()
             {
                 self.set_current_terminator(mir::Terminator {
                     source_info: expr.span,
@@ -5276,7 +5278,9 @@ impl<'a> BodyBuilder<'a> {
                 _ => this.lower_expr_as_statement(&catch.body),
             })?;
             if !self.control_flow_emitted
-                && self.blocks[self.current_block as usize].terminator.is_none()
+                && self.blocks[self.current_block as usize]
+                    .terminator
+                    .is_none()
             {
                 self.set_current_terminator(mir::Terminator {
                     source_info: catch.body.span,
@@ -5291,7 +5295,9 @@ impl<'a> BodyBuilder<'a> {
 
         self.current_block = next_catch_block;
         if expr_try.catches.is_empty()
-            || self.blocks[self.current_block as usize].terminator.is_none()
+            || self.blocks[self.current_block as usize]
+                .terminator
+                .is_none()
         {
             self.with_unwind_target(outer_unwind, |this| this.lower_panic(expr.span, &[]))?;
         }
@@ -5547,14 +5553,15 @@ impl<'a> BodyBuilder<'a> {
             }
         };
         let break_value = if let Some(value_expr) = value {
-            let expected = context
-                .break_destination
-                .as_ref()
-                .and_then(|dest| match &dest.ty.kind {
-                    TyKind::Tuple(elements) if elements.is_empty() => None,
-                    TyKind::Error(_) => None,
-                    _ => Some(&dest.ty),
-                });
+            let expected =
+                context
+                    .break_destination
+                    .as_ref()
+                    .and_then(|dest| match &dest.ty.kind {
+                        TyKind::Tuple(elements) if elements.is_empty() => None,
+                        TyKind::Error(_) => None,
+                        _ => Some(&dest.ty),
+                    });
             let (temp_place, temp_ty) = if let Some(expected_ty) = expected {
                 let temp_local = self.allocate_temp(expected_ty.clone(), value_expr.span);
                 let temp_place = mir::Place::from_local(temp_local);

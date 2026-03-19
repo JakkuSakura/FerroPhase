@@ -2418,9 +2418,9 @@ impl ClosureLowering {
         };
         let wrapped = ast::Expr::new(ast::ExprKind::Try(ast::ExprTry {
             span: stmt_defer.span(),
-            expr: Box::new(ast::Expr::new(ast::ExprKind::Block(ast::ExprBlock::new_stmts(
-                suffix,
-            )))),
+            expr: Box::new(ast::Expr::new(ast::ExprKind::Block(
+                ast::ExprBlock::new_stmts(suffix),
+            ))),
             catches: Vec::new(),
             elze: None,
             finally: Some(stmt_defer.expr),

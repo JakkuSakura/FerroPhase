@@ -433,17 +433,8 @@ impl Parser {
     fn is_item_stmt_start(&self) -> bool {
         match self.peek_non_trivia_normalized() {
             Some(
-                "fn"
-                | "struct"
-                | "enum"
-                | "type"
-                | "trait"
-                | "impl"
-                | "use"
-                | "extern"
-                | "mod"
-                | "static"
-                | "opaque",
+                "fn" | "struct" | "enum" | "type" | "trait" | "impl" | "use" | "extern" | "mod"
+                | "static" | "opaque",
             ) => true,
             Some("const") => {
                 // Disambiguate `const { ... }` (expression) vs `const NAME: Ty = ...;` (item).

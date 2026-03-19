@@ -151,12 +151,18 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
                 let flow = self.invoke_runtime_callable(value, Vec::new());
                 match flow {
-                    RuntimeFlow::Value(value) => RuntimeFlow::Value(Value::Tuple(ValueTuple::new(
-                        vec![Value::bool(true), value],
-                    ))),
-                    RuntimeFlow::Panic(_) => RuntimeFlow::Value(Value::Tuple(ValueTuple::new(
-                        vec![Value::bool(false), Value::undefined()],
-                    ))),
+                    RuntimeFlow::Value(value) => {
+                        RuntimeFlow::Value(Value::Tuple(ValueTuple::new(vec![
+                            Value::bool(true),
+                            value,
+                        ])))
+                    }
+                    RuntimeFlow::Panic(_) => {
+                        RuntimeFlow::Value(Value::Tuple(ValueTuple::new(vec![
+                            Value::bool(false),
+                            Value::undefined(),
+                        ])))
+                    }
                     other => other,
                 }
             }

@@ -1,8 +1,7 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprAsync, ExprBlock, ExprIntrinsicCall, ExprKind,
-    ExprStringTemplate, ExprTry, ExprTryCatch, FormatArgRef, FormatPlaceholder,
-    FormatTemplatePart, Pattern, PatternIdent, PatternKind, StmtDefer, Ty, TypeInt,
-    TypePrimitive, Value,
+    ExprStringTemplate, ExprTry, ExprTryCatch, FormatArgRef, FormatPlaceholder, FormatTemplatePart,
+    Pattern, PatternIdent, PatternKind, StmtDefer, Ty, TypeInt, TypePrimitive, Value,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::intrinsics::IntrinsicCallKind;
@@ -294,9 +293,9 @@ fn runtime_try_catch_binds_panic_and_runs_finally() {
         expr: Box::new(panic_expr("boom")),
         catches: vec![ExprTryCatch {
             span: Span::null(),
-            pat: Some(Box::new(Pattern::new(PatternKind::Ident(PatternIdent::new(
-                "err".into(),
-            ))))),
+            pat: Some(Box::new(Pattern::new(PatternKind::Ident(
+                PatternIdent::new("err".into()),
+            )))),
             body: Box::new(Expr::new(ExprKind::Block(catch_body))),
         }],
         elze: None,

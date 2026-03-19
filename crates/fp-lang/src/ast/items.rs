@@ -7,8 +7,8 @@ use fp_core::ast::{
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
     ItemImportTree, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter, MacroInvocation, Module,
-    Name, Path, QuoteFragmentKind, StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind,
-    TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value, ValueNone, Visibility,
+    Name, Path, QuoteFragmentKind, StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind, TypeBounds,
+    TypeEnum, TypeQuote, TypeStruct, Value, ValueNone, Visibility,
 };
 use fp_core::cst::CstCategory;
 use fp_core::module::path::PathPrefix;
@@ -61,7 +61,9 @@ pub(crate) fn lower_item_from_cst(node: &SyntaxNode) -> Result<Item, LowerItemsE
         SyntaxKind::ItemTrait => Ok(Item::from(ItemKind::DefTrait(lower_trait(node)?))),
         SyntaxKind::ItemImpl => Ok(Item::from(ItemKind::Impl(lower_impl(node)?))),
         SyntaxKind::ItemTypeAlias => Ok(Item::from(ItemKind::DefType(lower_type_alias(node)?))),
-        SyntaxKind::ItemOpaqueType => Ok(Item::from(ItemKind::OpaqueType(lower_opaque_type(node)?))),
+        SyntaxKind::ItemOpaqueType => {
+            Ok(Item::from(ItemKind::OpaqueType(lower_opaque_type(node)?)))
+        }
         SyntaxKind::ItemConst => Ok(Item::from(ItemKind::DefConst(lower_const(node)?))),
         SyntaxKind::ItemStatic => Ok(Item::from(ItemKind::DefStatic(lower_static(node)?))),
         SyntaxKind::ItemFn => Ok(Item::from(ItemKind::DefFunction(lower_fn(node)?))),

@@ -503,7 +503,10 @@ fn return_value_is_materialized_before_finally_runs() {
                 StatementKind::Assign(place, Rvalue::Use(Operand::Constant(constant)))
                     if place.local == 1 && matches!(constant.literal, ConstantKind::Int(2)) =>
                 {
-                    assert!(saw_copy_from_x, "finally ran before return value was captured");
+                    assert!(
+                        saw_copy_from_x,
+                        "finally ran before return value was captured"
+                    );
                     saw_finally_assign = true;
                 }
                 StatementKind::Assign(place, Rvalue::Use(Operand::Copy(src)))
@@ -621,13 +624,19 @@ fn break_value_is_materialized_before_finally_runs() {
                 StatementKind::Assign(place, Rvalue::Use(Operand::Constant(constant)))
                     if place.local == 1 && matches!(constant.literal, ConstantKind::Int(2)) =>
                 {
-                    assert!(saw_break_copy, "finally ran before break value was captured");
+                    assert!(
+                        saw_break_copy,
+                        "finally ran before break value was captured"
+                    );
                     saw_finally_assign = true;
                 }
                 StatementKind::Assign(place, Rvalue::Use(Operand::Copy(src)))
                     if place.local == 0 && src.local != 1 =>
                 {
-                    assert!(saw_finally_assign, "loop result should be assigned after finally");
+                    assert!(
+                        saw_finally_assign,
+                        "loop result should be assigned after finally"
+                    );
                     saw_return_copy = true;
                 }
                 _ => {}
@@ -636,6 +645,12 @@ fn break_value_is_materialized_before_finally_runs() {
     }
 
     assert!(saw_break_copy, "expected temp copy of break value");
-    assert!(saw_finally_assign, "expected finally assignment before loop exit");
-    assert!(saw_return_copy, "expected loop result propagated to return local");
+    assert!(
+        saw_finally_assign,
+        "expected finally assignment before loop exit"
+    );
+    assert!(
+        saw_return_copy,
+        "expected loop result propagated to return local"
+    );
 }

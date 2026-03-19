@@ -958,7 +958,9 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                     crate::syntax::SyntaxElement::Node(n) if n.kind == SyntaxKind::ExprTryCatch => {
                         catches.push(lower_try_catch_from_cst(n)?);
                     }
-                    crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Expr =>
+                    {
                         let lowered = Box::new(lower_expr_from_cst(n)?);
                         match (expr.is_none(), pending_clause) {
                             (true, _) => expr = Some(lowered),

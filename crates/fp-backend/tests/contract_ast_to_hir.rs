@@ -121,7 +121,12 @@ fn lowers_defer_statement_before_hir_conversion() -> OptimizeResult<()> {
     let file = fp_core::ast::File {
         path: "<memory>".into(),
         items: vec![
-            make_fn("cleanup", Vec::new(), fp_core::ast::Ty::unit(), Expr::unit()),
+            make_fn(
+                "cleanup",
+                Vec::new(),
+                fp_core::ast::Ty::unit(),
+                Expr::unit(),
+            ),
             fp_core::ast::Item::from(fp_core::ast::ItemKind::Expr(expr)),
         ],
     };
