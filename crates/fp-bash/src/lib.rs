@@ -296,6 +296,13 @@ impl<'a> BashRenderer<'a> {
                 self.push_line(indent, &format!("local {}={}", name, value));
                 Ok(())
             }
+            BlockStmt::Defer(_) => {
+                self.push_line(
+                    indent,
+                    "# defer statements are not supported in Bash output",
+                );
+                Ok(())
+            }
             BlockStmt::Any(_) | BlockStmt::Item(_) | BlockStmt::Noop => Ok(()),
         }
     }

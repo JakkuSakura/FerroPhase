@@ -1,3 +1,4 @@
+mod embedded_std;
 mod inventory;
 mod lower;
 
@@ -10,9 +11,6 @@ use fp_lang::FerroFrontend;
 use fp_shell_core::{ScriptTarget, ShellInventory, validate_extern_decl};
 use std::fs;
 use std::path::{Path, PathBuf};
-
-const BACKEND_HELPERS_SOURCE: &str = include_str!("std/shell/backend.fp");
-const BACKEND_HELPERS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/std/shell/backend.fp");
 
 pub use fp_shell_core::{InventoryHost, ScriptTarget as ShellTarget, TransportKind};
 pub use inventory::load_inventory;
@@ -100,11 +98,13 @@ pub fn compile_source_with_options(
 }
 
 fn merge_runtime_helpers(ast: Node, target_env: &TargetEnv) -> Result<Node, ShellError> {
+    let backend_helpers = embedded_std::read("shell/backend.fp")
+        .ok_or_else(|| ShellError::Lower("missing embedded shell backend helpers".to_string()))?;
     let frontend = FerroFrontend::new();
     let backend = frontend
         .parse(
-            BACKEND_HELPERS_SOURCE,
-            Some(Path::new(BACKEND_HELPERS_PATH)),
+            backend_helpers,
+            Some(Path::new("<fp-shell-std>/shell/backend.fp")),
         )
         .map_err(|err| {
             ShellError::Lower(format!("failed to parse shell backend helpers: {}", err))

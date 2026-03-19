@@ -240,6 +240,9 @@ impl<'a> Lowerer<'a> {
                         expr: value.into(),
                     })));
                 }
+                BlockStmt::Defer(_) => {
+                    return Err("defer statements are not supported in shell lowering".to_string());
+                }
                 BlockStmt::Noop | BlockStmt::Any(_) => {}
             }
         }
@@ -1154,7 +1157,11 @@ fn block_to_statements(block: ExprBlock) -> Vec<Expr> {
         .into_iter()
         .filter_map(|stmt| match stmt {
             BlockStmt::Expr(expr) => Some(*expr.expr),
-            BlockStmt::Any(_) | BlockStmt::Let(_) | BlockStmt::Item(_) | BlockStmt::Noop => None,
+            BlockStmt::Defer(_)
+            | BlockStmt::Any(_)
+            | BlockStmt::Let(_)
+            | BlockStmt::Item(_)
+            | BlockStmt::Noop => None,
         })
         .collect()
 }

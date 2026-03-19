@@ -10,10 +10,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-const INVENTORY_SHELL_STD_SOURCE: &str = include_str!("std/shell/inventory.fp");
-const INVENTORY_SHELL_STD_PATH: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/src/std/shell/inventory.fp");
-
 #[derive(Debug, serde::Deserialize, Default)]
 struct InventoryDocument {
     #[serde(default)]
@@ -147,10 +143,12 @@ fn inject_inventory_shell_std(
 }
 
 fn parse_inventory_shell_std(frontend: &FerroFrontend) -> Result<Vec<Item>, ShellError> {
+    let inventory_shell_std = crate::embedded_std::read("shell/inventory.fp")
+        .ok_or_else(|| ShellError::Inventory("missing embedded inventory shell std".to_string()))?;
     let parsed = frontend
         .parse(
-            INVENTORY_SHELL_STD_SOURCE,
-            Some(Path::new(INVENTORY_SHELL_STD_PATH)),
+            inventory_shell_std,
+            Some(Path::new("<fp-shell-std>/shell/inventory.fp")),
         )
         .map_err(|err| ShellError::Inventory(format!("invalid inventory shell std: {}", err)))?;
 

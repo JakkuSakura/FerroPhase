@@ -358,6 +358,13 @@ impl<'a> PowerShellRenderer<'a> {
                 self.push_line(indent, &format!("${} = {}", name, value));
                 Ok(())
             }
+            BlockStmt::Defer(_) => {
+                self.push_line(
+                    indent,
+                    "# defer statements are not supported in PowerShell output",
+                );
+                Ok(())
+            }
             BlockStmt::Any(_) | BlockStmt::Item(_) | BlockStmt::Noop => Ok(()),
         }
     }
