@@ -775,6 +775,8 @@ common_struct! {
         pub ty: Ty,
         #[serde(default)]
         pub is_const: bool,
+        #[serde(default)]
+        pub is_context: bool,
         pub default: Option<Value>,
         /// in Python, *args
         pub as_tuple: bool,
@@ -793,6 +795,7 @@ impl FunctionParam {
             name,
             ty,
             is_const: false,
+            is_context: false,
             default: None,
             as_tuple: false,
             as_dict: false,

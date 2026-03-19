@@ -815,6 +815,13 @@ fn parse_fn_sig_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
 
 fn parse_param_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     let mut children: Vec<SyntaxElement> = Vec::new();
+    if match_context_marker(input) {
+        children.push(SyntaxElement::Token(SyntaxToken {
+            kind: SyntaxTokenKind::Token,
+            text: "context".to_string(),
+            span: fp_core::span::Span::null(),
+        }));
+    }
     if match_keyword(input, Keyword::Const) {
         children.push(SyntaxElement::Token(SyntaxToken {
             kind: SyntaxTokenKind::Token,
@@ -1516,6 +1523,21 @@ fn current_items_file() -> FileId {
 
 fn match_keyword(input: &mut &[Token], keyword: Keyword) -> bool {
     matches!(input.first(), Some(Token { kind: TokenKind::Keyword(k), .. }) if *k == keyword) && {
+        *input = &input[1..];
+        true
+    }
+}
+
+fn match_context_marker(input: &mut &[Token]) -> bool {
+    matches!(
+        input,
+        [
+            Token { lexeme, .. },
+            Token { kind: TokenKind::Ident | TokenKind::Keyword(_), .. },
+            Token { lexeme: colon, .. },
+            ..
+        ] if lexeme == "context" && colon == ":"
+    ) && {
         *input = &input[1..];
         true
     }

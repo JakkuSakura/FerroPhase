@@ -257,6 +257,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.materialize_quote_expr(while_expr.cond.as_mut());
                 self.materialize_quote_expr(while_expr.body.as_mut());
             }
+            ExprKind::With(expr_with) => {
+                self.materialize_quote_expr(expr_with.context.as_mut());
+                self.materialize_quote_expr(expr_with.body.as_mut());
+            }
             ExprKind::For(for_expr) => {
                 self.materialize_quote_expr(for_expr.iter.as_mut());
                 self.materialize_quote_expr(for_expr.body.as_mut());

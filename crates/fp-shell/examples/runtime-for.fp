@@ -1,6 +1,8 @@
 const fn main() {
     for step in ["pre", "post"] {
-        std::server::shell("echo rollout step", hosts=["web-1", "web-2"]);
-        std::server::shell("sudo systemctl status fp-service", hosts=["web-1", "web-2"]);
+        with ["web-1", "web-2"] {
+            std::server::shell(f"echo rollout step={step}");
+            std::server::shell("sudo systemctl status fp-service");
+        }
     }
 }

@@ -174,6 +174,12 @@ impl LoopContext {
     }
 }
 
+#[derive(Clone)]
+struct ContextBinding {
+    ty: Ty,
+    expr: Expr,
+}
+
 pub struct AstTypeInferencer<'ctx> {
     ctx: Option<&'ctx SharedScopedContext>,
     type_vars: Vec<TypeVar>,
@@ -204,6 +210,7 @@ pub struct AstTypeInferencer<'ctx> {
     loop_stack: Vec<LoopContext>,
     lossy_mode: bool,
     hashmap_args: HashMap<TypeVarId, (TypeVarId, TypeVarId)>,
+    context_env: Vec<Vec<ContextBinding>>,
     current_span: Option<Span>,
     resolution_hook: Option<Box<dyn TypeResolutionHook + 'ctx>>,
 }
@@ -279,6 +286,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             loop_stack: Vec::new(),
             lossy_mode: detect_lossy_mode(),
             hashmap_args: HashMap::new(),
+            context_env: vec![Vec::new()],
             current_span: None,
             resolution_hook: None,
             unimplemented_symbols: HashSet::new(),
@@ -2529,6 +2537,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.generic_scopes.push(HashSet::new());
         self.module_aliases.push(HashMap::new());
         self.symbol_aliases.push(HashMap::new());
+        self.context_env.push(Vec::new());
     }
 
     fn exit_scope(&mut self) {
@@ -2536,6 +2545,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.generic_scopes.pop();
         self.module_aliases.pop();
         self.symbol_aliases.pop();
+        self.context_env.pop();
         if self.current_level > 0 {
             self.current_level -= 1;
         }
@@ -3149,12 +3159,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub fn push_scope(&mut self) {
         self.env.push(HashMap::new());
         self.generic_scopes.push(HashSet::new());
+        self.context_env.push(Vec::new());
         self.current_level += 1;
     }
 
     pub fn pop_scope(&mut self) {
         self.env.pop();
         self.generic_scopes.pop();
+        self.context_env.pop();
         if self.current_level > 0 {
             self.current_level -= 1;
         }
@@ -3168,6 +3180,25 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if let Some(current_env) = self.env.last_mut() {
             current_env.insert(name.to_string(), EnvEntry::Mono(type_var));
         }
+    }
+
+    fn push_context_binding(&mut self, ty: Ty, expr: Expr) {
+        if let Some(scope) = self.context_env.last_mut() {
+            scope.push(ContextBinding { ty, expr });
+        }
+    }
+
+    fn resolve_context_argument(&self, param: &FunctionParam) -> Option<Expr> {
+        if !param.is_context {
+            return None;
+        }
+
+        self.context_env
+            .iter()
+            .rev()
+            .flat_map(|scope| scope.iter().rev())
+            .find(|binding| binding.ty == param.ty)
+            .map(|binding| binding.expr.clone())
     }
 }
 

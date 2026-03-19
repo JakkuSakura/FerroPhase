@@ -794,6 +794,26 @@ impl<'ctx> AstInterpreter<'ctx> {
                 RuntimeFlow::Value(Value::unit())
             }
             ExprKind::Block(block) => self.eval_block_runtime(block),
+            ExprKind::With(expr_with) => {
+                let context_value = match self.eval_value_runtime(expr_with.context.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                let Some(context_ty) = expr_with.context.ty().cloned() else {
+                    self.emit_error("with context requires a resolved type");
+                    return RuntimeFlow::Value(Value::undefined());
+                };
+                self.push_scope();
+                if let Some(scope) = self.context_env.last_mut() {
+                    scope.push(RuntimeContextBinding {
+                        ty: context_ty,
+                        value: context_value,
+                    });
+                }
+                let flow = self.eval_expr_runtime(expr_with.body.as_mut());
+                self.pop_scope();
+                flow
+            }
             ExprKind::Tuple(tuple) => {
                 let mut values = Vec::with_capacity(tuple.values.len());
                 for expr in tuple.values.iter_mut() {
@@ -1711,6 +1731,23 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::unit()
             }
             ExprKind::Block(block) => self.eval_block(block),
+            ExprKind::With(expr_with) => {
+                let context_value = self.eval_expr(expr_with.context.as_mut());
+                let Some(context_ty) = expr_with.context.ty().cloned() else {
+                    self.emit_error("with context requires a resolved type");
+                    return Value::undefined();
+                };
+                self.push_scope();
+                if let Some(scope) = self.context_env.last_mut() {
+                    scope.push(RuntimeContextBinding {
+                        ty: context_ty,
+                        value: context_value,
+                    });
+                }
+                let result = self.eval_expr(expr_with.body.as_mut());
+                self.pop_scope();
+                result
+            }
             ExprKind::Tuple(tuple) => {
                 let values = tuple
                     .values
@@ -3807,10 +3844,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         invoke: &mut ExprInvoke,
         params: &[FunctionParam],
     ) -> bool {
-        if invoke.kwargs.is_empty() {
-            return true;
-        }
-
         let mut slots: Vec<Option<Expr>> = vec![None; params.len()];
         for (idx, arg) in invoke.args.drain(..).enumerate() {
             if idx >= params.len() {
@@ -3843,6 +3876,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             if slot.is_some() {
                 continue;
             }
+            if let Some(context_arg) = self.resolve_context_argument(&params[idx]) {
+                *slot = Some(context_arg);
+                continue;
+            }
             if let Some(default) = params[idx].default.as_ref() {
                 *slot = Some(Expr::value(default.clone()));
                 continue;
@@ -3857,6 +3894,23 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         invoke.args = slots.into_iter().map(|slot| slot.unwrap()).collect();
         true
+    }
+
+    fn resolve_context_argument(&self, param: &FunctionParam) -> Option<Expr> {
+        if !param.is_context {
+            return None;
+        }
+
+        self.context_env
+            .iter()
+            .rev()
+            .flat_map(|scope| scope.iter().rev())
+            .find(|binding| binding.ty == param.ty)
+            .map(|binding| {
+                let mut expr = Expr::value(binding.value.clone());
+                expr.set_ty(binding.ty.clone());
+                expr
+            })
     }
 
     fn locator_is_qualified(locator: &Name) -> bool {

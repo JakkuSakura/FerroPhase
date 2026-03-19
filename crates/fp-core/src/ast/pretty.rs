@@ -85,6 +85,15 @@ impl PrettyPrintable for ast::Expr {
                     ctx.with_indent(|ctx| expr_while.body.fmt_pretty(f, ctx))
                 })
             }
+            ast::ExprKind::With(expr_with) => {
+                ctx.writeln(f, format!("with{}", suffix))?;
+                ctx.with_indent(|ctx| {
+                    ctx.writeln(f, "context:")?;
+                    ctx.with_indent(|ctx| expr_with.context.fmt_pretty(f, ctx))?;
+                    ctx.writeln(f, "body:")?;
+                    ctx.with_indent(|ctx| expr_with.body.fmt_pretty(f, ctx))
+                })
+            }
             ast::ExprKind::Invoke(invoke) => {
                 ctx.writeln(f, format!("invoke{}", suffix))?;
                 ctx.with_indent(|ctx| {
@@ -1381,6 +1390,7 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
         | ast::ExprKind::If(_)
         | ast::ExprKind::Loop(_)
         | ast::ExprKind::While(_)
+        | ast::ExprKind::With(_)
         | ast::ExprKind::Try(_)
         | ast::ExprKind::Let(_)
         | ast::ExprKind::Quote(_)

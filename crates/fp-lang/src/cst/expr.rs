@@ -267,6 +267,7 @@ impl Parser {
             Some("try") => return self.parse_try_expr(),
             Some("loop") => return self.parse_loop_expr(),
             Some("while") => return self.parse_while_expr(),
+            Some("with") => return self.parse_with_expr(),
             Some("for") => return self.parse_for_expr(),
             Some("match") => return self.parse_match_expr(),
             Some("struct") => {
@@ -807,6 +808,23 @@ impl Parser {
         children.push(SyntaxElement::Node(Box::new(block)));
         let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprWhile, children, span))
+    }
+
+    fn parse_with_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = Vec::new();
+        let _start = self
+            .peek_any_span()
+            .unwrap_or_else(|| Span::new(self.file, 0, 0));
+        self.bump_trivia_into(&mut children);
+        self.bump_token_into(&mut children); // `with`
+        self.bump_trivia_into(&mut children);
+        let context = self.parse_expr_before_block()?;
+        children.push(SyntaxElement::Node(Box::new(context)));
+        self.bump_trivia_into(&mut children);
+        let body = self.parse_block_expr()?;
+        children.push(SyntaxElement::Node(Box::new(body)));
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(SyntaxKind::ExprWith, children, span))
     }
 
     fn parse_pattern(&mut self) -> Result<SyntaxNode, ExprCstParseError> {

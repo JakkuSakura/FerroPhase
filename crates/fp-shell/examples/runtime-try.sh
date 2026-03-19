@@ -19,18 +19,6 @@ declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
 
-FP_HOST_TRANSPORT['web-1']='ssh'
-FP_SSH_ADDRESS['web-1']='10.0.0.11'
-FP_WINRM_ADDRESS['web-1']='10.0.0.11'
-FP_SSH_USER['web-1']='deploy'
-FP_DOCKER_USER['web-1']='deploy'
-FP_WINRM_USER['web-1']='deploy'
-FP_HOST_TRANSPORT['web-2']='ssh'
-FP_SSH_ADDRESS['web-2']='10.0.0.12'
-FP_WINRM_ADDRESS['web-2']='10.0.0.12'
-FP_SSH_USER['web-2']='deploy'
-FP_DOCKER_USER['web-2']='deploy'
-FP_WINRM_USER['web-2']='deploy'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
@@ -961,5 +949,33 @@ ok() {
     shell_status "${command}"
 }
 
-shell 'uptime' 'web-1' '' '' '' '' '' ''
-shell 'uptime' 'web-2' '' '' '' '' '' ''
+__fp_try_status_1=0
+__fp_try_handled_2=0
+if {
+    __fp_try_status_3=0
+    __fp_try_handled_4=0
+    if {
+        shell 'echo deploy body' '' '' '' '' '' '' ''
+    }; then
+    else
+        __fp_try_status_3=$?
+        __fp_try_handled_4=0
+    fi
+    shell 'echo cleanup' '' '' '' '' '' '' ''
+    if [[ $__fp_try_status_3 -ne 0 && $__fp_try_handled_4 -eq 0 ]]; then
+        return $__fp_try_status_3 2>/dev/null || exit $__fp_try_status_3
+    fi
+}; then
+    shell 'echo deploy success' '' '' '' '' '' '' ''
+else
+    __fp_try_status_1=$?
+    if [[ $__fp_try_handled_2 -eq 0 ]]; then
+        err=$__fp_try_status_1
+        shell "echo deploy failed=${err}" '' '' '' '' '' '' ''
+        __fp_try_handled_2=1
+    fi
+fi
+shell 'echo deploy finally' '' '' '' '' '' '' ''
+if [[ $__fp_try_status_1 -ne 0 && $__fp_try_handled_2 -eq 0 ]]; then
+    return $__fp_try_status_1 2>/dev/null || exit $__fp_try_status_1
+fi

@@ -12,15 +12,15 @@ use fp_core::ast::{
     ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprKwArg,
     ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn,
     ExprSelect, ExprSelectType, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural,
-    ExprTry, ExprTryCatch, ExprTuple, ExprWhile, FormatArgRef, FormatPlaceholder, FormatSpec,
-    FormatTemplatePart, Ident, ImplTraits, MacroDelimiter, MacroInvocation, MacroTokenTree, Name,
-    ParameterPath, ParameterPathSegment, Path, Pattern, PatternBind, PatternIdent, PatternKind,
-    PatternQuote, PatternQuotePlural, PatternStruct, PatternStructField, PatternStructural,
-    PatternTuple, PatternTupleStruct, PatternType, PatternVariant, PatternWildcard,
-    QuoteFragmentKind, QuoteItemKind, StmtDefer, StmtLet, StructuralField, Ty, TypeArray,
-    TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeInt, TypePrimitive, TypeQuote,
-    TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeType, TypeVec, Value, ValueNone,
-    ValueString,
+    ExprTry, ExprTryCatch, ExprTuple, ExprWhile, ExprWith, FormatArgRef, FormatPlaceholder,
+    FormatSpec, FormatTemplatePart, Ident, ImplTraits, MacroDelimiter, MacroInvocation,
+    MacroTokenTree, Name, ParameterPath, ParameterPathSegment, Path, Pattern, PatternBind,
+    PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternStruct, PatternStructField,
+    PatternStructural, PatternTuple, PatternTupleStruct, PatternType, PatternVariant,
+    PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtDefer, StmtLet, StructuralField, Ty,
+    TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeInt, TypePrimitive,
+    TypeQuote, TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeType, TypeVec, Value,
+    ValueNone, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::IntrinsicCallKind;
@@ -681,6 +681,23 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 span: node.span,
                 cond: Box::new(cond),
                 body: Box::new(ExprKind::Block(body_block).into()),
+            })
+            .into())
+        }
+        SyntaxKind::ExprWith => {
+            let mut expr_nodes = node_children_exprs(node);
+            let context = expr_nodes
+                .next()
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprWith))?;
+            let body = expr_nodes
+                .next()
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprWith))?;
+            let context = lower_expr_from_cst(context)?;
+            let body = lower_block_from_cst(body)?;
+            Ok(ExprKind::With(ExprWith {
+                span: node.span,
+                context: Box::new(context),
+                body: Box::new(ExprKind::Block(body).into()),
             })
             .into())
         }

@@ -1,5 +1,7 @@
-generated: crates/fp-shell/examples/transports.sh
-changed=0
+#!/usr/bin/env bash
+set -xeuo pipefail
+
+__fp_last_changed=0
 
 declare -A FP_HOST_TRANSPORT=()
 declare -A FP_SSH_ADDRESS=()
@@ -17,21 +19,18 @@ declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
 
-FP_HOST_TRANSPORT['ssh-web']='ssh'
-FP_SSH_ADDRESS['ssh-web']='10.0.0.11'
-FP_WINRM_ADDRESS['ssh-web']='10.0.0.11'
-FP_SSH_USER['ssh-web']='deploy'
-FP_DOCKER_USER['ssh-web']='deploy'
-FP_WINRM_USER['ssh-web']='deploy'
-FP_SSH_PORT['ssh-web']='22'
-FP_WINRM_PORT['ssh-web']='22'
-FP_HOST_TRANSPORT['localhost']='local'
 FP_HOST_TRANSPORT['k8s-api']='kubectl'
 FP_DOCKER_CONTAINER['k8s-api']='api'
 FP_K8S_CONTAINER['k8s-api']='api'
 FP_K8S_POD['k8s-api']='api-7f9f6'
 FP_K8S_NAMESPACE['k8s-api']='prod'
 FP_K8S_CONTEXT['k8s-api']='prod-cluster'
+FP_HOST_TRANSPORT['docker-app']='docker'
+FP_SSH_USER['docker-app']='root'
+FP_DOCKER_USER['docker-app']='root'
+FP_WINRM_USER['docker-app']='root'
+FP_DOCKER_CONTAINER['docker-app']='app'
+FP_K8S_CONTAINER['docker-app']='app'
 FP_HOST_TRANSPORT['windows-admin']='winrm'
 FP_SSH_ADDRESS['windows-admin']='10.0.0.21'
 FP_WINRM_ADDRESS['windows-admin']='10.0.0.21'
@@ -42,12 +41,15 @@ FP_SSH_PORT['windows-admin']='5985'
 FP_WINRM_PORT['windows-admin']='5985'
 FP_WINRM_PASSWORD['windows-admin']='change-me'
 FP_WINRM_SCHEME['windows-admin']='http'
-FP_HOST_TRANSPORT['docker-app']='docker'
-FP_SSH_USER['docker-app']='root'
-FP_DOCKER_USER['docker-app']='root'
-FP_WINRM_USER['docker-app']='root'
-FP_DOCKER_CONTAINER['docker-app']='app'
-FP_K8S_CONTAINER['docker-app']='app'
+FP_HOST_TRANSPORT['localhost']='local'
+FP_HOST_TRANSPORT['ssh-web']='ssh'
+FP_SSH_ADDRESS['ssh-web']='10.0.0.11'
+FP_WINRM_ADDRESS['ssh-web']='10.0.0.11'
+FP_SSH_USER['ssh-web']='deploy'
+FP_DOCKER_USER['ssh-web']='deploy'
+FP_WINRM_USER['ssh-web']='deploy'
+FP_SSH_PORT['ssh-web']='22'
+FP_WINRM_PORT['ssh-web']='22'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
@@ -262,7 +264,7 @@ rsync_host() {
     local transport="$(host_transport "${host}")"
     case "${transport}" in
         local)
-            rsync "${flags}" "${src}" "${dest}"
+            rsync "${flags}" "${src}" "${dest}" '' '' '' '' '' '' '' ''
             ;;
         *)
             rsync_remote_host "${host}" "${flags}" "${src}" "${dest}"
@@ -443,7 +445,82 @@ rsync_remote_host() {
     if [[ "${port}" != '' ]]; then
         rsync_shell "ssh -p ${port}" "${flags}" "${src}" "${remote}"
     else
-        rsync "${flags}" "${src}" "${remote}"
+        rsync "${flags}" "${src}" "${remote}" '' '' '' '' '' '' '' ''
+    fi
+}
+
+command_with_options() {
+    local command="$1"
+    local cwd="$2"
+    local sudo="$3"
+    if [[ "${cwd}" != '' ]]; then
+        if [[ "${sudo}" == 'true' ]]; then
+            printf '%s\n' "sudo cd ${cwd} && ${command}"
+        else
+            printf '%s\n' "cd ${cwd} && ${command}"
+        fi
+    else
+        if [[ "${sudo}" == 'true' ]]; then
+            printf '%s\n' "sudo ${command}"
+        else
+            printf '%s\n' "${command}"
+        fi
+    fi
+}
+
+process_ok() {
+    local command="$1"
+    ok "${command}"
+}
+
+rsync_flag_string() {
+    local archive="$1"
+    local compress="$2"
+    local delete="$3"
+    local checksum="$4"
+    if [[ "${archive}" == 'true' ]]; then
+        if [[ "${compress}" == 'true' ]]; then
+            rsync_flag_string_suffix '-az' "${delete}" "${checksum}"
+        else
+            rsync_flag_string_suffix '-a' "${delete}" "${checksum}"
+        fi
+    else
+        if [[ "${compress}" == 'true' ]]; then
+            rsync_flag_string_suffix '-z' "${delete}" "${checksum}"
+        else
+            rsync_flag_string_suffix '' "${delete}" "${checksum}"
+        fi
+    fi
+}
+
+rsync_flag_string_suffix() {
+    local base="$1"
+    local delete="$2"
+    local checksum="$3"
+    if [[ "${delete}" == 'true' ]]; then
+        if [[ "${checksum}" == 'true' ]]; then
+            if [[ "${base}" != '' ]]; then
+                printf '%s\n' "${base} --delete --checksum"
+            else
+                printf '%s\n' '--delete --checksum'
+            fi
+        else
+            if [[ "${base}" != '' ]]; then
+                printf '%s\n' "${base} --delete"
+            else
+                printf '%s\n' '--delete'
+            fi
+        fi
+    else
+        if [[ "${checksum}" == 'true' ]]; then
+            if [[ "${base}" != '' ]]; then
+                printf '%s\n' "${base} --checksum"
+            else
+                printf '%s\n' '--checksum'
+            fi
+        else
+            printf '%s\n' "${base}"
+        fi
     fi
 }
 
@@ -456,7 +533,7 @@ shell_run() {
     local removes="$6"
     runtime_set_changed 'false'
     if [[ "${only_if}" != '' ]]; then
-        if ${only_if}; then
+        if process_ok "${only_if}"; then
             shell_run_after_only_if "${host}" "${command}" "${unless}" "${creates}" "${removes}"
         fi
     else
@@ -485,7 +562,7 @@ shell_run_after_unless() {
     local creates="$3"
     local removes="$4"
     if [[ "${creates}" != '' ]]; then
-        if test ! -e ${creates}; then
+        if process_ok "test ! -e ${creates}"; then
             shell_run_after_creates "${host}" "${command}" "${removes}"
         fi
     else
@@ -498,7 +575,7 @@ shell_run_after_creates() {
     local command="$2"
     local removes="$3"
     if [[ "${removes}" != '' ]]; then
-        if test -e ${removes}; then
+        if process_ok "test -e ${removes}"; then
             run_host "${host}" "${command}"
             runtime_set_changed 'true'
         fi
@@ -518,7 +595,7 @@ shell_copy() {
     local removes="$7"
     runtime_set_changed 'false'
     if [[ "${only_if}" != '' ]]; then
-        if ${only_if}; then
+        if process_ok "${only_if}"; then
             shell_copy_after_only_if "${host}" "${src}" "${dest}" "${unless}" "${creates}" "${removes}"
         fi
     else
@@ -549,7 +626,7 @@ shell_copy_after_unless() {
     local creates="$4"
     local removes="$5"
     if [[ "${creates}" != '' ]]; then
-        if test ! -e ${creates}; then
+        if process_ok "test ! -e ${creates}"; then
             shell_copy_after_creates "${host}" "${src}" "${dest}" "${removes}"
         fi
     else
@@ -563,7 +640,7 @@ shell_copy_after_creates() {
     local dest="$3"
     local removes="$4"
     if [[ "${removes}" != '' ]]; then
-        if test -e ${removes}; then
+        if process_ok "test -e ${removes}"; then
             copy_host "${host}" "${src}" "${dest}"
             runtime_set_changed 'true'
         fi
@@ -584,7 +661,7 @@ shell_template() {
     local removes="$8"
     runtime_set_changed 'false'
     if [[ "${only_if}" != '' ]]; then
-        if ${only_if}; then
+        if process_ok "${only_if}"; then
             shell_template_after_only_if "${host}" "${src}" "${dest}" "${vars}" "${unless}" "${creates}" "${removes}"
         fi
     else
@@ -617,7 +694,7 @@ shell_template_after_unless() {
     local creates="$5"
     local removes="$6"
     if [[ "${creates}" != '' ]]; then
-        if test ! -e ${creates}; then
+        if process_ok "test ! -e ${creates}"; then
             shell_template_after_creates "${host}" "${src}" "${dest}" "${vars}" "${removes}"
         fi
     else
@@ -632,7 +709,7 @@ shell_template_after_creates() {
     local vars="$4"
     local removes="$5"
     if [[ "${removes}" != '' ]]; then
-        if test -e ${removes}; then
+        if process_ok "test -e ${removes}"; then
             template_host "${host}" "${src}" "${dest}" "${vars}"
             runtime_set_changed 'true'
         fi
@@ -653,7 +730,7 @@ shell_rsync() {
     local removes="$8"
     runtime_set_changed 'false'
     if [[ "${only_if}" != '' ]]; then
-        if ${only_if}; then
+        if process_ok "${only_if}"; then
             shell_rsync_after_only_if "${host}" "${flags}" "${src}" "${dest}" "${unless}" "${creates}" "${removes}"
         fi
     else
@@ -686,7 +763,7 @@ shell_rsync_after_unless() {
     local creates="$5"
     local removes="$6"
     if [[ "${creates}" != '' ]]; then
-        if test ! -e ${creates}; then
+        if process_ok "test ! -e ${creates}"; then
             shell_rsync_after_creates "${host}" "${flags}" "${src}" "${dest}" "${removes}"
         fi
     else
@@ -701,7 +778,7 @@ shell_rsync_after_creates() {
     local dest="$4"
     local removes="$5"
     if [[ "${removes}" != '' ]]; then
-        if test -e ${removes}; then
+        if process_ok "test -e ${removes}"; then
             rsync_host "${host}" "${flags}" "${src}" "${dest}"
             runtime_set_changed 'true'
         fi
@@ -711,8 +788,200 @@ shell_rsync_after_creates() {
     fi
 }
 
-shell_run 'localhost' "echo local hello" '' '' '' ''
-shell_run 'ssh-web' "echo ssh hello" '' '' '' ''
-shell_run 'docker-app' "echo docker hello" '' '' '' ''
-shell_run 'k8s-api' "echo kubectl hello" '' '' '' ''
-shell_run 'windows-admin' "Write-Host winrm hello" '' '' '' ''
+shell() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
+    shell_run "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+copy() {
+    local src="$1"
+    local dest="$2"
+    local hosts="$3"
+    local only_if="$4"
+    local unless="$5"
+    local creates="$6"
+    local removes="$7"
+    shell_copy "${hosts}" "${src}" "${dest}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+template() {
+    local src="$1"
+    local dest="$2"
+    local hosts="$3"
+    local vars="$4"
+    local only_if="$5"
+    local unless="$6"
+    local creates="$7"
+    local removes="$8"
+    shell_template "${hosts}" "${src}" "${dest}" "${vars}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+rsync() {
+    local src="$1"
+    local dest="$2"
+    local hosts="$3"
+    local archive="$4"
+    local compress="$5"
+    local delete="$6"
+    local checksum="$7"
+    local only_if="$8"
+    local unless="$9"
+    local creates="$10"
+    local removes="$11"
+    local flags="$(rsync_flag_string "${archive}" "${compress}" "${delete}" "${checksum}")"
+    shell_rsync "${hosts}" "${flags}" "${src}" "${dest}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+restart() {
+    local name="$1"
+    local hosts="$2"
+    local sudo="$3"
+    local only_if="$4"
+    local unless="$5"
+    local creates="$6"
+    local removes="$7"
+    shell "systemctl restart ${name}" "${hosts}" "${only_if}" "${unless}" "${creates}" "${removes}" "${sudo}" ''
+}
+
+has_command() {
+    local command="$1"
+    command_available "${command}"
+}
+
+file_exists() {
+    local path="$1"
+    file_exists_native "${path}"
+}
+
+dir_exists() {
+    local path="$1"
+    dir_exists_native "${path}"
+}
+
+path_exists() {
+    local path="$1"
+    path_exists_native "${path}"
+}
+
+transport() {
+    local host="$1"
+    runtime_host_transport "${host}"
+}
+
+address() {
+    local host="$1"
+    runtime_host_address "${host}"
+}
+
+user() {
+    local host="$1"
+    runtime_host_user "${host}"
+}
+
+port() {
+    local host="$1"
+    runtime_host_port "${host}"
+}
+
+has_rsync() {
+    has_command 'rsync'
+}
+
+has_ssh() {
+    has_command 'ssh'
+}
+
+has_docker() {
+    has_command 'docker'
+}
+
+has_kubectl() {
+    has_command 'kubectl'
+}
+
+has_pwsh() {
+    has_command 'pwsh'
+}
+
+host_supports_rsync() {
+    local host="$1"
+    case "$(transport "${host}")" in
+        ssh)
+            ;;
+        docker)
+            ;;
+        kubectl)
+            ;;
+        winrm)
+            ;;
+        local)
+            has_rsync 
+            ;;
+        *)
+            printf '%s\n' 'false'
+            ;;
+    esac
+}
+
+raw() {
+    local text="$1"
+    printf '%s\n' "${text}"
+}
+
+pipe() {
+    local lhs="$1"
+    local rhs="$2"
+    printf '%s\n' "${lhs} | ${rhs}"
+}
+
+stdout_to() {
+    local command="$1"
+    local path="$2"
+    printf '%s\n' "${command} > ${path}"
+}
+
+stdout_append() {
+    local command="$1"
+    local path="$2"
+    printf '%s\n' "${command} >> ${path}"
+}
+
+stderr_to() {
+    local command="$1"
+    local path="$2"
+    printf '%s\n' "${command} 2> ${path}"
+}
+
+stderr_append() {
+    local command="$1"
+    local path="$2"
+    printf '%s\n' "${command} 2>> ${path}"
+}
+
+run() {
+    local command="$1"
+    shell "${command}" '' '' '' '' '' '' ''
+}
+
+ok() {
+    local command="$1"
+    shell_status "${command}"
+}
+
+shell 'echo local hello' '' '' '' '' '' '' ''
+shell 'echo ssh hello' 'ssh-web' '' '' '' '' '' ''
+shell 'echo docker hello' 'docker-app' '' '' '' '' '' ''
+shell 'echo kubectl hello' 'k8s-api' '' '' '' '' '' ''
+shell 'Write-Host winrm hello' 'windows-admin' '' '' '' '' '' ''

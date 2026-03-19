@@ -663,6 +663,15 @@ impl ExprClosure {
     }
 }
 
+impl ExprWith {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            union_spans([self.context.span(), self.body.span()]),
+        )
+    }
+}
+
 impl ExprArray {
     pub fn span(&self) -> Span {
         span_or(self.span, Span::union(self.values.iter().map(Expr::span)))
@@ -1308,6 +1317,14 @@ common_struct! {
         #[serde(default)]
         pub span: Span,
         pub cond: BExpr,
+        pub body: BExpr,
+    }
+}
+common_struct! {
+    pub struct ExprWith {
+        #[serde(default)]
+        pub span: Span,
+        pub context: BExpr,
         pub body: BExpr,
     }
 }

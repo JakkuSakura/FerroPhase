@@ -252,6 +252,11 @@ extern "bash" fn runtime_set_changed(changed: bool);
 #[cfg(target_lang = "pwsh")]
 extern "pwsh" fn runtime_set_changed(changed: bool);
 
+#[cfg(target_lang = "bash")]
+extern "bash" fn runtime_last_changed() -> bool;
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_last_changed() -> bool;
+
 const fn host_transport(host: str) -> str {
     runtime_host_transport(host)
 }
@@ -459,10 +464,74 @@ const fn rsync_remote_host(host: str, flags: str, src: str, dest: str) {
     }
 }
 
+const fn command_with_options(command: str, cwd: str, sudo: bool) -> str {
+    if cwd != "" {
+        if sudo {
+            f"sudo cd {cwd} && {command}"
+        } else {
+            f"cd {cwd} && {command}"
+        }
+    } else {
+        if sudo {
+            f"sudo {command}"
+        } else {
+            command
+        }
+    }
+}
+
+const fn process_ok(command: str) -> bool {
+    std::shell::process::ok(command)
+}
+
+const fn rsync_flag_string(archive: bool, compress: bool, delete: bool, checksum: bool) -> str {
+    if archive {
+        if compress {
+            rsync_flag_string_suffix("-az", delete, checksum)
+        } else {
+            rsync_flag_string_suffix("-a", delete, checksum)
+        }
+    } else {
+        if compress {
+            rsync_flag_string_suffix("-z", delete, checksum)
+        } else {
+            rsync_flag_string_suffix("", delete, checksum)
+        }
+    }
+}
+
+const fn rsync_flag_string_suffix(base: str, delete: bool, checksum: bool) -> str {
+    if delete {
+        if checksum {
+            if base != "" {
+                f"{base} --delete --checksum"
+            } else {
+                "--delete --checksum"
+            }
+        } else {
+            if base != "" {
+                f"{base} --delete"
+            } else {
+                "--delete"
+            }
+        }
+    } else {
+        if checksum {
+            if base != "" {
+                f"{base} --checksum"
+            } else {
+                "--checksum"
+            }
+        } else {
+            base
+        }
+    }
+}
+
 const fn shell_run(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if only_if != "" {
-        if std::server::shell(only_if) {
+        if process_ok(only_if) {
             shell_run_after_only_if(host, command, unless, creates, removes);
         }
     } else {
@@ -472,7 +541,7 @@ const fn shell_run(host: str, command: str, only_if: str, unless: str, creates: 
 
 const fn shell_run_after_only_if(host: str, command: str, unless: str, creates: str, removes: str) {
     if unless != "" {
-        if !std::server::shell(unless) {
+        if !process_ok(unless) {
             shell_run_after_unless(host, command, creates, removes);
         }
     } else {
@@ -482,7 +551,7 @@ const fn shell_run_after_only_if(host: str, command: str, unless: str, creates: 
 
 const fn shell_run_after_unless(host: str, command: str, creates: str, removes: str) {
     if creates != "" {
-        if std::server::shell(f"test ! -e {creates}") {
+        if process_ok(f"test ! -e {creates}") {
             shell_run_after_creates(host, command, removes);
         }
     } else {
@@ -492,7 +561,7 @@ const fn shell_run_after_unless(host: str, command: str, creates: str, removes: 
 
 const fn shell_run_after_creates(host: str, command: str, removes: str) {
     if removes != "" {
-        if std::server::shell(f"test -e {removes}") {
+        if process_ok(f"test -e {removes}") {
             run_host(host, command);
             runtime_set_changed(true);
         }
@@ -505,7 +574,7 @@ const fn shell_run_after_creates(host: str, command: str, removes: str) {
 const fn shell_copy(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if only_if != "" {
-        if std::server::shell(only_if) {
+        if process_ok(only_if) {
             shell_copy_after_only_if(host, src, dest, unless, creates, removes);
         }
     } else {
@@ -515,7 +584,7 @@ const fn shell_copy(host: str, src: str, dest: str, only_if: str, unless: str, c
 
 const fn shell_copy_after_only_if(host: str, src: str, dest: str, unless: str, creates: str, removes: str) {
     if unless != "" {
-        if !std::server::shell(unless) {
+        if !process_ok(unless) {
             shell_copy_after_unless(host, src, dest, creates, removes);
         }
     } else {
@@ -525,7 +594,7 @@ const fn shell_copy_after_only_if(host: str, src: str, dest: str, unless: str, c
 
 const fn shell_copy_after_unless(host: str, src: str, dest: str, creates: str, removes: str) {
     if creates != "" {
-        if std::server::shell(f"test ! -e {creates}") {
+        if process_ok(f"test ! -e {creates}") {
             shell_copy_after_creates(host, src, dest, removes);
         }
     } else {
@@ -535,7 +604,7 @@ const fn shell_copy_after_unless(host: str, src: str, dest: str, creates: str, r
 
 const fn shell_copy_after_creates(host: str, src: str, dest: str, removes: str) {
     if removes != "" {
-        if std::server::shell(f"test -e {removes}") {
+        if process_ok(f"test -e {removes}") {
             copy_host(host, src, dest);
             runtime_set_changed(true);
         }
@@ -548,7 +617,7 @@ const fn shell_copy_after_creates(host: str, src: str, dest: str, removes: str) 
 const fn shell_template(host: str, src: str, dest: str, vars: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if only_if != "" {
-        if std::server::shell(only_if) {
+        if process_ok(only_if) {
             shell_template_after_only_if(host, src, dest, vars, unless, creates, removes);
         }
     } else {
@@ -558,7 +627,7 @@ const fn shell_template(host: str, src: str, dest: str, vars: str, only_if: str,
 
 const fn shell_template_after_only_if(host: str, src: str, dest: str, vars: str, unless: str, creates: str, removes: str) {
     if unless != "" {
-        if !std::server::shell(unless) {
+        if !process_ok(unless) {
             shell_template_after_unless(host, src, dest, vars, creates, removes);
         }
     } else {
@@ -568,7 +637,7 @@ const fn shell_template_after_only_if(host: str, src: str, dest: str, vars: str,
 
 const fn shell_template_after_unless(host: str, src: str, dest: str, vars: str, creates: str, removes: str) {
     if creates != "" {
-        if std::server::shell(f"test ! -e {creates}") {
+        if process_ok(f"test ! -e {creates}") {
             shell_template_after_creates(host, src, dest, vars, removes);
         }
     } else {
@@ -578,7 +647,7 @@ const fn shell_template_after_unless(host: str, src: str, dest: str, vars: str, 
 
 const fn shell_template_after_creates(host: str, src: str, dest: str, vars: str, removes: str) {
     if removes != "" {
-        if std::server::shell(f"test -e {removes}") {
+        if process_ok(f"test -e {removes}") {
             template_host(host, src, dest, vars);
             runtime_set_changed(true);
         }
@@ -591,7 +660,7 @@ const fn shell_template_after_creates(host: str, src: str, dest: str, vars: str,
 const fn shell_rsync(host: str, flags: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if only_if != "" {
-        if std::server::shell(only_if) {
+        if process_ok(only_if) {
             shell_rsync_after_only_if(host, flags, src, dest, unless, creates, removes);
         }
     } else {
@@ -601,7 +670,7 @@ const fn shell_rsync(host: str, flags: str, src: str, dest: str, only_if: str, u
 
 const fn shell_rsync_after_only_if(host: str, flags: str, src: str, dest: str, unless: str, creates: str, removes: str) {
     if unless != "" {
-        if !std::server::shell(unless) {
+        if !process_ok(unless) {
             shell_rsync_after_unless(host, flags, src, dest, creates, removes);
         }
     } else {
@@ -611,7 +680,7 @@ const fn shell_rsync_after_only_if(host: str, flags: str, src: str, dest: str, u
 
 const fn shell_rsync_after_unless(host: str, flags: str, src: str, dest: str, creates: str, removes: str) {
     if creates != "" {
-        if std::server::shell(f"test ! -e {creates}") {
+        if process_ok(f"test ! -e {creates}") {
             shell_rsync_after_creates(host, flags, src, dest, removes);
         }
     } else {
@@ -621,7 +690,7 @@ const fn shell_rsync_after_unless(host: str, flags: str, src: str, dest: str, cr
 
 const fn shell_rsync_after_creates(host: str, flags: str, src: str, dest: str, removes: str) {
     if removes != "" {
-        if std::server::shell(f"test -e {removes}") {
+        if process_ok(f"test -e {removes}") {
             rsync_host(host, flags, src, dest);
             runtime_set_changed(true);
         }

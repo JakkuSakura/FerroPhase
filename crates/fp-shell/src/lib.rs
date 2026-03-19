@@ -2,7 +2,7 @@ mod embedded_std;
 mod inventory;
 mod lower;
 
-use fp_core::ast::{AstTargetOutput, Item, ItemKind, Node, NodeKind};
+use fp_core::ast::{AstTargetOutput, Ident, Item, ItemKind, Module, Node, NodeKind, Visibility};
 use fp_core::cfg::{TargetEnv, filter_items_in_node};
 use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
@@ -66,6 +66,7 @@ pub fn compile_source_with_options(
     let mut ast = parsed.ast;
     let target_env = shell_target_env(target);
     filter_items_in_node(&mut ast, &target_env);
+    let mut ast = merge_runtime_helpers(ast, &target_env)?;
     let mut const_eval = ConstEvaluationOrchestrator::new(parsed.serializer.clone());
     const_eval.set_execute_main(false);
     const_eval
@@ -78,8 +79,7 @@ pub fn compile_source_with_options(
         .map_err(|err| ShellError::Parse(err.to_string()))?;
 
     let inventory = options.inventory.clone().unwrap_or_default();
-    let merged = merge_runtime_helpers(ast, &target_env)?;
-    let lowered = lower::lower_node(&merged, &inventory).map_err(ShellError::Lower)?;
+    let lowered = lower::lower_node(&ast, &inventory).map_err(ShellError::Lower)?;
     validate_extern_decls(&lowered, target).map_err(ShellError::Lower)?;
 
     let code = match target {
@@ -98,30 +98,64 @@ pub fn compile_source_with_options(
 }
 
 fn merge_runtime_helpers(ast: Node, target_env: &TargetEnv) -> Result<Node, ShellError> {
-    let backend_helpers = embedded_std::read("shell/backend.fp")
-        .ok_or_else(|| ShellError::Lower("missing embedded shell backend helpers".to_string()))?;
     let frontend = FerroFrontend::new();
-    let backend = frontend
-        .parse(
-            backend_helpers,
-            Some(Path::new("<fp-shell-std>/shell/backend.fp")),
-        )
-        .map_err(|err| {
-            ShellError::Lower(format!("failed to parse shell backend helpers: {}", err))
-        })?;
-    let mut backend_ast = backend.ast;
-    filter_items_in_node(&mut backend_ast, target_env);
-    let (mut user_file, backend_file) = match (ast.kind, backend_ast.kind) {
-        (NodeKind::File(user_file), NodeKind::File(backend_file)) => (user_file, backend_file),
-        _ => {
-            return Err(ShellError::Lower(
-                "shell compilation requires file AST nodes".to_string(),
-            ));
-        }
+    let NodeKind::File(mut user_file) = ast.kind else {
+        return Err(ShellError::Lower(
+            "shell compilation requires file AST nodes".to_string(),
+        ));
     };
-    let mut items = backend_file.items;
-    items.extend(user_file.items);
-    user_file.items = items;
+
+    let mut shell_std_items = Vec::new();
+    for path in [
+        "shell/backend.fp",
+        "shell/server.fp",
+        "shell/files.fp",
+        "shell/service.fp",
+        "shell/facts.fp",
+        "shell/capabilities.fp",
+        "shell/process.fp",
+    ] {
+        let source = embedded_std::read(path)
+            .ok_or_else(|| ShellError::Lower(format!("missing embedded shell std: {path}")))?;
+        let parsed = frontend
+            .parse(source, Some(Path::new(&format!("<fp-shell-std>/{path}"))))
+            .map_err(|err| {
+                ShellError::Lower(format!(
+                    "failed to parse embedded shell std {path}: {}",
+                    err
+                ))
+            })?;
+        let mut shell_std_ast = parsed.ast;
+        filter_items_in_node(&mut shell_std_ast, target_env);
+        let NodeKind::File(shell_std_file) = shell_std_ast.kind else {
+            return Err(ShellError::Lower(format!(
+                "embedded shell std must be a file document: {path}"
+            )));
+        };
+        shell_std_items.extend(shell_std_file.items);
+    }
+
+    if let Some(existing_std) = user_file
+        .items
+        .iter_mut()
+        .find_map(|item| match item.kind_mut() {
+            ItemKind::Module(module) if module.name.as_str() == "std" => Some(module),
+            _ => None,
+        })
+    {
+        existing_std.items.splice(0..0, shell_std_items);
+    } else {
+        user_file.items.insert(
+            0,
+            Item::from(ItemKind::Module(Module {
+                attrs: Vec::new(),
+                name: Ident::new("std"),
+                items: shell_std_items,
+                visibility: Visibility::Public,
+                is_external: false,
+            })),
+        );
+    }
     Ok(Node::file(user_file))
 }
 
@@ -286,6 +320,96 @@ const fn main() {
         assert!(rendered.code.contains("Administrator"));
         assert!(rendered.code.contains("10.0.0.21"));
         assert!(rendered.code.contains("rsync -e"));
+    }
+
+    #[test]
+    fn compile_source_supports_try_else_finally_and_defer_in_bash() {
+        let source = r#"
+const fn main() {
+    try {
+        defer std::server::shell("echo cleanup");
+        std::server::shell("echo body");
+    } catch err {
+        std::server::shell(f"echo failed={err}");
+    } else {
+        std::server::shell("echo success");
+    } finally {
+        std::server::shell("echo finally");
+    }
+}
+"#;
+
+        let rendered = compile_source(source, Path::new("try.fp"), ScriptTarget::Bash)
+            .expect("source should compile");
+
+        assert!(rendered.code.contains("if {"));
+        assert!(rendered.code.contains("echo body"));
+        assert!(rendered.code.contains("echo success"));
+        assert!(rendered.code.contains("echo finally"));
+        assert!(rendered.code.contains("echo cleanup"));
+        assert!(rendered.code.contains("failed=${"));
+    }
+
+    #[test]
+    fn compile_source_supports_shell_facts_and_process_helpers() {
+        let source = r#"
+const fn main() {
+    if std::shell::capabilities::has_rsync() {
+        let cmd = std::shell::process::pipe(
+            std::shell::process::raw("printf build"),
+            std::shell::process::stdout_to(std::shell::process::raw("cat"), "/tmp/build.log"),
+        );
+        std::shell::process::run(cmd);
+    }
+}
+"#;
+
+        let rendered = compile_source(source, Path::new("process.fp"), ScriptTarget::Bash)
+            .expect("source should compile");
+
+        assert!(rendered.code.contains("has_command 'rsync'"));
+        assert!(rendered.code.contains("local cmd=\"$(pipe"));
+        assert!(rendered.code.contains("/tmp/build.log"));
+    }
+
+    #[test]
+    fn compile_source_supports_with_host_context() {
+        let source = r#"
+const fn main() {
+    with "web-1" {
+        std::server::shell("echo hello");
+        std::service::restart("nginx");
+    }
+}
+"#;
+
+        let rendered = compile_source(source, Path::new("with.fp"), ScriptTarget::Bash)
+            .expect("source should compile");
+
+        assert!(rendered.code.contains("echo hello"));
+        assert!(rendered.code.contains("restart 'nginx'"));
+        assert!(rendered.code.contains("web-1"));
+    }
+
+    #[test]
+    fn compile_source_supports_context_params_without_host_name_convention() {
+        let source = r#"
+const fn deploy(command: str, context target: str) {
+    std::server::shell(command, hosts=target);
+}
+
+const fn main() {
+    with "web-1" {
+        deploy("echo hello");
+    }
+}
+"#;
+
+        let rendered = compile_source(source, Path::new("context-param.fp"), ScriptTarget::Bash)
+            .expect("source should compile");
+
+        assert!(rendered.code.contains("deploy 'echo hello' 'web-1'"));
+        assert!(rendered.code.contains("shell \"${command}\" \"${target}\""));
     }
 
     #[test]

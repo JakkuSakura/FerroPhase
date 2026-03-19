@@ -80,6 +80,7 @@ pub enum CstKind {
     ExprIf,
     ExprLoop,
     ExprWhile,
+    ExprWith,
     ExprFor,
     ExprMatch,
     ExprClosure,
@@ -177,6 +178,7 @@ impl CstKind {
             | CstKind::ExprIf
             | CstKind::ExprLoop
             | CstKind::ExprWhile
+            | CstKind::ExprWith
             | CstKind::ExprFor
             | CstKind::ExprMatch
             | CstKind::ExprClosure

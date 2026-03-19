@@ -392,6 +392,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ExprKind::Block(block) => self.infer_block(block)?,
                 ExprKind::If(if_expr) => self.infer_if(if_expr)?,
+                ExprKind::With(expr_with) => self.infer_with(expr_with)?,
                 ExprKind::BinOp(binop) => self.infer_binop(binop)?,
                 ExprKind::UnOp(unop) => self.infer_unop(unop)?,
                 ExprKind::Assign(assign) => {
@@ -1307,29 +1308,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(closure_var)
     }
 
+    pub(crate) fn infer_with(&mut self, expr_with: &mut ExprWith) -> Result<TypeVarId> {
+        let context_var = self.infer_expr(expr_with.context.as_mut())?;
+        let context_ty = self.resolve_to_ty(context_var)?;
+        self.enter_scope();
+        self.push_context_binding(context_ty, expr_with.context.as_ref().clone());
+        let result = self.infer_expr(expr_with.body.as_mut());
+        self.exit_scope();
+        result
+    }
+
     pub(crate) fn infer_invoke(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if let Some(result) = self.try_infer_collection_call(invoke)? {
             return Ok(result);
         }
 
-        if !invoke.kwargs.is_empty() {
-            match &invoke.target {
-                ExprInvokeTarget::Function(locator) => {
-                    let Some(sig) = self.lookup_function_signature(locator) else {
-                        self.emit_error(
-                            "keyword arguments require a known function signature".to_string(),
-                        );
-                        return Ok(self.error_type_var());
-                    };
-                    if !self.apply_kwargs_to_invoke(invoke, &sig) {
-                        return Ok(self.error_type_var());
-                    }
-                }
-                _ => {
-                    self.emit_error("keyword arguments are only supported on function calls");
-                    return Ok(self.error_type_var());
-                }
-            }
+        if !invoke.kwargs.is_empty() && !matches!(invoke.target, ExprInvokeTarget::Function(_)) {
+            self.emit_error("keyword arguments are only supported on function calls");
+            return Ok(self.error_type_var());
         }
 
         if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
@@ -1355,6 +1351,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         if let ExprInvokeTarget::Function(locator) = &invoke.target {
             if let Some(sig) = self.lookup_extern_function_signature(locator) {
+                if !self.apply_kwargs_to_invoke(invoke, &sig) {
+                    return Ok(self.error_type_var());
+                }
                 if invoke.args.len() != sig.params.len() {
                     self.emit_error("extern \"C\" call arity mismatch");
                     return Ok(self.error_type_var());
@@ -1405,6 +1404,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 return Ok(ret_var);
             }
             if let Some(sig) = self.lookup_function_signature(locator) {
+                if !self.apply_kwargs_to_invoke(invoke, &sig) {
+                    return Ok(self.error_type_var());
+                }
                 if sig.abi.is_c() && sig.generics_params.is_empty() && sig.receiver.is_none() {
                     if invoke.args.len() != sig.params.len() {
                         self.emit_error("extern \"C\" call arity mismatch");
@@ -1728,10 +1730,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn apply_kwargs_to_invoke(&mut self, invoke: &mut ExprInvoke, sig: &FunctionSignature) -> bool {
-        if invoke.kwargs.is_empty() {
-            return true;
-        }
-
         let mut slots: Vec<Option<Expr>> = vec![None; sig.params.len()];
         for (idx, arg) in invoke.args.drain(..).enumerate() {
             if idx >= sig.params.len() {
@@ -1763,6 +1761,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         for (idx, slot) in slots.iter_mut().enumerate() {
             if slot.is_some() {
+                continue;
+            }
+            if let Some(context_arg) = self.resolve_context_argument(&sig.params[idx]) {
+                *slot = Some(context_arg);
                 continue;
             }
             if let Some(default) = sig.params[idx].default.as_ref() {

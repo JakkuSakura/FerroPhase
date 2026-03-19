@@ -59,6 +59,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.evaluate_function_body(while_expr.cond.as_mut());
                 self.evaluate_function_body(while_expr.body.as_mut());
             }
+            ExprKind::With(expr_with) => {
+                self.evaluate_function_body(expr_with.context.as_mut());
+                self.evaluate_function_body(expr_with.body.as_mut());
+            }
             ExprKind::For(for_expr) => {
                 // Syntax-only traversal: visit the iterator expression first, then the loop body,
                 // so const/quote/splice constructs are not missed.

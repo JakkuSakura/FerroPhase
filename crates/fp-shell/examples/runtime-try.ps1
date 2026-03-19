@@ -4,11 +4,6 @@ $ErrorActionPreference = 'Stop'
 $script:fpLastChanged = $false
 
 $script:FpHosts = @{}
-$script:FpHosts['k8s-api'] = @{ transport = 'kubectl'; container = 'api'; pod = 'api-7f9f6'; namespace = 'prod'; context = 'prod-cluster' }
-$script:FpHosts['windows-admin'] = @{ transport = 'winrm'; address = '10.0.0.21'; user = 'Administrator'; port = 5985; password = 'change-me'; scheme = 'http' }
-$script:FpHosts['localhost'] = @{ transport = 'local' }
-$script:FpHosts['docker-app'] = @{ transport = 'docker'; user = 'root'; container = 'app' }
-$script:FpHosts['ssh-web'] = @{ transport = 'ssh'; address = '10.0.0.11'; user = 'deploy'; port = 22 }
 function Invoke-FpRuntimeValidation {
     if (-not (Get-Command -Name 'Copy-Item' -ErrorAction SilentlyContinue)) { throw 'missing required command: Copy-Item' }
     if (-not (Get-Command -Name 'Get-Command' -ErrorAction SilentlyContinue)) { throw 'missing required command: Get-Command' }
@@ -768,8 +763,34 @@ function ok {
     Write-Output $((& { pwsh -Command $command; $LASTEXITCODE -eq 0 }))
 }
 
-shell 'echo local hello' '' '' '' '' '' '' ''
-shell 'echo ssh hello' 'ssh-web' '' '' '' '' '' ''
-shell 'echo docker hello' 'docker-app' '' '' '' '' '' ''
-shell 'echo kubectl hello' 'k8s-api' '' '' '' '' '' ''
-shell 'Write-Host winrm hello' 'windows-admin' '' '' '' '' '' ''
+$__fpTrySuccess1 = $false
+$__fpTryHandled2 = $false
+try {
+    $__fpTrySuccess3 = $false
+    $__fpTryHandled4 = $false
+    try {
+        shell 'echo deploy body' '' '' '' '' '' '' ''
+        $__fpTrySuccess3 = $true
+    } catch {
+        if (-not $__fpTryHandled4) {
+            throw
+        }
+    } finally {
+        shell 'echo cleanup' '' '' '' '' '' '' ''
+    }
+    $__fpTrySuccess1 = $true
+} catch {
+    if (-not $__fpTryHandled2) {
+        $err = $_
+        shell "echo deploy failed=$err" '' '' '' '' '' '' ''
+        $__fpTryHandled2 = $true
+    }
+    if (-not $__fpTryHandled2) {
+        throw
+    }
+} finally {
+    shell 'echo deploy finally' '' '' '' '' '' '' ''
+}
+if ($__fpTrySuccess1) {
+    shell 'echo deploy success' '' '' '' '' '' '' ''
+}

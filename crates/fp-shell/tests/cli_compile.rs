@@ -82,6 +82,6 @@ web = ["web-1", "web-2"]
     );
 
     let script = fs::read_to_string(output).expect("output script should be readable");
-    assert!(script.contains("shell_run 'web-1' \"uptime\" '' '' '' ''"));
-    assert!(script.contains("shell_run 'web-2' \"uptime\" '' '' '' ''"));
+    assert!(script.contains("shell 'uptime' 'web-1'"));
+    assert!(script.contains("shell 'uptime' 'web-2'"));
 }

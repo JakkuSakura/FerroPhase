@@ -1123,15 +1123,32 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
                 });
             }
             SyntaxKind::FnParam => {
-                let is_const = n.children.iter().any(
-                    |c| matches!(c, SyntaxElement::Token(t) if !t.is_trivia() && t.text == "const"),
-                );
-                let skip_tokens = if is_const {
-                    &["const", "mut"][..]
-                } else {
-                    &["mut"][..]
-                };
-                let pname_text = first_ident_token_text_skipping(n, skip_tokens)
+                let tokens = n
+                    .children
+                    .iter()
+                    .filter_map(|child| match child {
+                        SyntaxElement::Token(token) if !token.is_trivia() => {
+                            Some(token.text.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                let is_const = tokens.iter().any(|token| *token == "const");
+                let is_context = tokens.first() == Some(&"context") && tokens.len() >= 2;
+                let pname_text = tokens
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .find(|(index, token)| {
+                        if *token == "const" || *token == "mut" {
+                            return false;
+                        }
+                        if *token == "context" && (*index == 0 && is_context) {
+                            return false;
+                        }
+                        true
+                    })
+                    .map(|(_, token)| token.to_string())
                     .ok_or(LowerItemsError::MissingToken("param"))?;
                 let pname = Ident::new(pname_text);
                 let ty_node = first_child_by_category(n, CstCategory::Type)
@@ -1140,6 +1157,7 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
                     .map_err(|_| LowerItemsError::UnexpectedNode(n.kind))?;
                 let mut param = FunctionParam::new(pname, ty);
                 param.is_const = is_const;
+                param.is_context = is_context;
                 params.push(param);
             }
             _ => {}

@@ -101,6 +101,33 @@ fn parse_expr_ast_builds_quote_ast() {
 }
 
 #[test]
+fn parse_expr_ast_supports_with_context() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("with \"web-1\" { std::server::shell(\"uptime\"); }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::With(_)));
+}
+
+#[test]
+fn parse_items_ast_supports_context_params() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("fn run(context hosts: str) { hosts }")
+        .unwrap();
+    let function = items
+        .into_iter()
+        .find_map(|item| match item.kind() {
+            ItemKind::DefFunction(function) => Some(function.clone()),
+            _ => None,
+        })
+        .expect("function should exist");
+    assert!(function.sig.params[0].is_context);
+}
+
+#[test]
 fn parse_expr_ast_supports_typed_quote_fragments() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

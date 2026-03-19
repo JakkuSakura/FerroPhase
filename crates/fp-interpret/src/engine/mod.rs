@@ -665,6 +665,7 @@ pub struct AstInterpreter<'ctx> {
     local_imports: HashMap<String, String>,
     loop_depth: usize,
     function_depth: usize,
+    context_env: Vec<Vec<RuntimeContextBinding>>,
     current_span: Option<Span>,
     lazy_evaluated: HashSet<String>,
     item_scopes: Vec<*mut Vec<Item>>,
@@ -685,6 +686,12 @@ pub struct AstInterpreter<'ctx> {
     current_task: Option<u64>,
     task_should_yield: bool,
     current_task_sleep_until: Option<Instant>,
+}
+
+#[derive(Clone)]
+struct RuntimeContextBinding {
+    ty: Ty,
+    value: Value,
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -743,6 +750,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             local_imports: HashMap::new(),
             loop_depth: 0,
             function_depth: 0,
+            context_env: vec![Vec::new()],
             current_span: None,
             lazy_evaluated: HashSet::new(),
             item_scopes: Vec::new(),
@@ -1810,6 +1818,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             ExprKind::While(expr_while) => {
                 self.clear_expr_types(expr_while.cond.as_mut());
                 self.clear_expr_types(expr_while.body.as_mut());
+            }
+            ExprKind::With(expr_with) => {
+                self.clear_expr_types(expr_with.context.as_mut());
+                self.clear_expr_types(expr_with.body.as_mut());
             }
             ExprKind::Return(expr_return) => {
                 if let Some(value) = expr_return.value.as_mut() {
@@ -6950,6 +6962,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.type_env.push(HashMap::new());
         self.macro_env.push(HashMap::new());
         self.proc_macro_env.push(HashMap::new());
+        self.context_env.push(Vec::new());
         if let Some(typer) = self.typer.as_mut() {
             typer.push_scope();
         }
@@ -6960,6 +6973,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.type_env.pop();
         self.macro_env.pop();
         self.proc_macro_env.pop();
+        self.context_env.pop();
         if let Some(typer) = self.typer.as_mut() {
             typer.pop_scope();
         }

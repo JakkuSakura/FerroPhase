@@ -1,9 +1,9 @@
 use fp_core::ast::{
-    Abi, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprBinOp, ExprBlock, ExprFor, ExprIf,
-    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprMatch, ExprMatchCase,
-    ExprStringTemplate, ExprWhile, File, FormatArgRef, FormatPlaceholder, FormatTemplatePart,
-    Ident, Item, ItemDeclFunction, ItemDefFunction, ItemKind, Name, Node, NodeKind, Pattern,
-    PatternKind, Value,
+    Abi, AttrMeta, Attribute, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprBinOp, ExprBlock,
+    ExprFor, ExprIf, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprMatch,
+    ExprMatchCase, ExprTry, ExprTryCatch, ExprWhile, File, FormatArgRef, FormatPlaceholder,
+    FormatTemplatePart, FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefFunction,
+    ItemKind, Name, Node, NodeKind, Pattern, PatternKind, Ty, TypePrimitive, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
@@ -11,14 +11,9 @@ use fp_shell_core::ShellInventory;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Default)]
-struct EmitContext {
-    hosts: Option<Vec<Expr>>,
-}
-
 pub fn lower_node(node: &Node, inventory: &ShellInventory) -> Result<Node, String> {
     let mut lowerer = Lowerer::new(inventory);
-    lowerer.lower_node(node, &EmitContext::default())?;
+    lowerer.lower_node(node)?;
     Ok(Node::file(File {
         path: lowerer.path,
         items: lowerer.items,
@@ -29,7 +24,15 @@ struct Lowerer<'a> {
     path: PathBuf,
     items: Vec<Item>,
     known_functions: HashSet<String>,
+    functions: HashMap<String, FunctionInfo>,
     inventory: &'a ShellInventory,
+    host_context: Vec<Expr>,
+}
+
+#[derive(Clone)]
+struct FunctionInfo {
+    signature: FunctionSignature,
+    defaults: HashMap<String, Expr>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -38,11 +41,13 @@ impl<'a> Lowerer<'a> {
             path: PathBuf::new(),
             items: Vec::new(),
             known_functions: HashSet::new(),
+            functions: HashMap::new(),
             inventory,
+            host_context: Vec::new(),
         }
     }
 
-    fn lower_node(&mut self, node: &Node, context: &EmitContext) -> Result<(), String> {
+    fn lower_node(&mut self, node: &Node) -> Result<(), String> {
         match node.kind() {
             NodeKind::File(file) => {
                 self.path = file.path.clone();
@@ -50,13 +55,13 @@ impl<'a> Lowerer<'a> {
                     self.discover_functions(item);
                 }
                 for item in &file.items {
-                    self.lower_item(item, context, None)?;
+                    self.lower_item(item, None)?;
                 }
             }
-            NodeKind::Item(item) => self.lower_item(item, context, None)?,
+            NodeKind::Item(item) => self.lower_item(item, None)?,
             NodeKind::Expr(expr) => {
                 let mut out = Vec::new();
-                self.lower_expr_into(expr, context, &mut out)?;
+                self.lower_expr_into(expr, &mut out)?;
                 self.items
                     .extend(out.into_iter().map(|expr| Item::from(ItemKind::Expr(expr))));
             }
@@ -68,13 +73,27 @@ impl<'a> Lowerer<'a> {
     fn discover_functions(&mut self, item: &Item) {
         match item.kind() {
             ItemKind::DefFunction(function) => {
-                self.known_functions
-                    .insert(function.name.as_str().to_string());
+                let name = function.name.as_str().to_string();
+                self.known_functions.insert(name.clone());
+                self.functions.insert(
+                    name,
+                    FunctionInfo {
+                        signature: function.sig.clone(),
+                        defaults: attribute_defaults(&function.attrs),
+                    },
+                );
             }
             ItemKind::DeclFunction(function) => {
                 if !matches!(function.sig.abi, Abi::Rust) {
-                    self.known_functions
-                        .insert(function.name.as_str().to_string());
+                    let name = function.name.as_str().to_string();
+                    self.known_functions.insert(name.clone());
+                    self.functions.insert(
+                        name,
+                        FunctionInfo {
+                            signature: function.sig.clone(),
+                            defaults: attribute_defaults(&function.attrs),
+                        },
+                    );
                 }
             }
             ItemKind::Module(module) => {
@@ -89,7 +108,6 @@ impl<'a> Lowerer<'a> {
     fn lower_item(
         &mut self,
         item: &Item,
-        context: &EmitContext,
         mut target: Option<&mut Vec<Expr>>,
     ) -> Result<(), String> {
         match item.kind() {
@@ -97,10 +115,10 @@ impl<'a> Lowerer<'a> {
                 let name = function.name.as_str().to_string();
                 if name == "main" {
                     if let Some(target) = target {
-                        self.lower_expr_into(&function.body, context, target)?;
+                        self.lower_expr_into(&function.body, target)?;
                     } else {
                         let mut temp = Vec::new();
-                        self.lower_expr_into(&function.body, context, &mut temp)?;
+                        self.lower_expr_into(&function.body, &mut temp)?;
                         self.items.extend(
                             temp.into_iter()
                                 .map(|expr| Item::from(ItemKind::Expr(expr))),
@@ -113,17 +131,17 @@ impl<'a> Lowerer<'a> {
             }
             ItemKind::DefConst(def) => {
                 if let Some(target) = target {
-                    self.lower_expr_into(&def.value, context, target)?;
+                    self.lower_expr_into(&def.value, target)?;
                 }
             }
             ItemKind::DefStatic(def) => {
                 if let Some(target) = target {
-                    self.lower_expr_into(&def.value, context, target)?;
+                    self.lower_expr_into(&def.value, target)?;
                 }
             }
             ItemKind::Module(module) => {
                 for child in &module.items {
-                    self.lower_item(child, context, target.as_deref_mut())?;
+                    self.lower_item(child, target.as_deref_mut())?;
                 }
             }
             ItemKind::DeclFunction(function) => {
@@ -134,10 +152,10 @@ impl<'a> Lowerer<'a> {
             }
             ItemKind::Expr(expr) => {
                 if let Some(target) = target {
-                    self.lower_expr_into(expr, context, target)?;
+                    self.lower_expr_into(expr, target)?;
                 } else {
                     let mut temp = Vec::new();
-                    self.lower_expr_into(expr, context, &mut temp)?;
+                    self.lower_expr_into(expr, &mut temp)?;
                     self.items.extend(
                         temp.into_iter()
                             .map(|expr| Item::from(ItemKind::Expr(expr))),
@@ -151,23 +169,31 @@ impl<'a> Lowerer<'a> {
 
     fn lower_function(&mut self, function: &ItemDefFunction) -> Result<ItemDefFunction, String> {
         let mut body = Vec::new();
-        self.lower_expr_into(&function.body, &EmitContext::default(), &mut body)?;
+        self.lower_expr_into(&function.body, &mut body)?;
         let mut lowered = function.clone();
         lowered.body = statements_to_block_expr(body).into_expr().into();
         Ok(lowered)
     }
 
-    fn lower_expr_into(
-        &mut self,
-        expr: &Expr,
-        context: &EmitContext,
-        out: &mut Vec<Expr>,
-    ) -> Result<(), String> {
+    fn lower_expr_into(&mut self, expr: &Expr, out: &mut Vec<Expr>) -> Result<(), String> {
         match expr.kind() {
-            fp_core::ast::ExprKind::Block(block) => self.lower_block(block, context, out),
+            fp_core::ast::ExprKind::Block(block) => self.lower_block(block, out),
             fp_core::ast::ExprKind::Invoke(invoke) => {
-                if let Some(exprs) = self.lower_shell_invoke(invoke, context)? {
-                    out.extend(exprs);
+                if let Some(hosts) = self.expand_invoke_hosts(invoke)? {
+                    for host in hosts {
+                        if let Some(invocation) =
+                            self.lower_function_invoke_with_host(invoke, Some(host))?
+                        {
+                            out.push(invocation);
+                        }
+                    }
+                    Ok(())
+                } else if let Some(host) = self.current_host_override().cloned() {
+                    if let Some(invocation) =
+                        self.lower_function_invoke_with_host(invoke, Some(host))?
+                    {
+                        out.push(invocation);
+                    }
                     Ok(())
                 } else if let Some(invocation) = self.lower_function_invoke(invoke)? {
                     out.push(invocation);
@@ -176,17 +202,33 @@ impl<'a> Lowerer<'a> {
                     Ok(())
                 }
             }
+            fp_core::ast::ExprKind::With(expr_with) => {
+                if let Some(hosts) = self.parse_host_selector(&expr_with.context) {
+                    for host in hosts {
+                        self.host_context.push(host);
+                        self.lower_expr_into(&expr_with.body, out)?;
+                        self.host_context.pop();
+                    }
+                    Ok(())
+                } else {
+                    self.lower_expr_into(&expr_with.body, out)
+                }
+            }
             fp_core::ast::ExprKind::If(expr_if) => {
-                out.push(self.lower_if_expr(expr_if, context)?);
+                out.push(self.lower_if_expr(expr_if)?);
+                Ok(())
+            }
+            fp_core::ast::ExprKind::Try(expr_try) => {
+                out.push(self.lower_try_expr(expr_try)?);
                 Ok(())
             }
             fp_core::ast::ExprKind::Match(expr_match) => {
-                out.extend(self.lower_match(expr_match, context)?);
+                out.extend(self.lower_match(expr_match)?);
                 Ok(())
             }
             fp_core::ast::ExprKind::While(expr_while) => {
                 let mut body = Vec::new();
-                self.lower_expr_into(&expr_while.body, context, &mut body)?;
+                self.lower_expr_into(&expr_while.body, &mut body)?;
                 out.push(Expr::new(ExprKind::While(ExprWhile {
                     span: expr_while.span,
                     cond: self.lower_condition(&expr_while.cond).into(),
@@ -195,7 +237,7 @@ impl<'a> Lowerer<'a> {
                 Ok(())
             }
             fp_core::ast::ExprKind::For(expr_for) => {
-                out.push(self.lower_for_expr(expr_for, context)?);
+                out.push(self.lower_for_expr(expr_for)?);
                 Ok(())
             }
             fp_core::ast::ExprKind::Let(expr_let) => {
@@ -216,16 +258,19 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn lower_block(
-        &mut self,
-        block: &ExprBlock,
-        context: &EmitContext,
-        out: &mut Vec<Expr>,
-    ) -> Result<(), String> {
+    fn lower_block(&mut self, block: &ExprBlock, out: &mut Vec<Expr>) -> Result<(), String> {
+        if block
+            .stmts
+            .iter()
+            .any(|statement| matches!(statement, BlockStmt::Defer(_)))
+        {
+            out.push(self.lower_block_with_defer(block)?);
+            return Ok(());
+        }
         for statement in &block.stmts {
             match statement {
-                BlockStmt::Item(item) => self.lower_item(item, context, Some(out))?,
-                BlockStmt::Expr(expr) => self.lower_expr_into(&expr.expr, context, out)?,
+                BlockStmt::Item(item) => self.lower_item(item, Some(out))?,
+                BlockStmt::Expr(expr) => self.lower_expr_into(&expr.expr, out)?,
                 BlockStmt::Let(stmt) => {
                     let Some(_name) = stmt.pat.as_ident() else {
                         continue;
@@ -240,289 +285,69 @@ impl<'a> Lowerer<'a> {
                         expr: value.into(),
                     })));
                 }
-                BlockStmt::Defer(_) => {
-                    return Err("defer statements are not supported in shell lowering".to_string());
-                }
+                BlockStmt::Defer(_) => {}
                 BlockStmt::Noop | BlockStmt::Any(_) => {}
             }
         }
         Ok(())
     }
 
-    fn lower_shell_invoke(
-        &mut self,
-        invoke: &ExprInvoke,
-        context: &EmitContext,
-    ) -> Result<Option<Vec<Expr>>, String> {
-        let Some(path) = invoke_target_segments(&invoke.target) else {
-            return Ok(None);
-        };
-
-        if path == ["std", "host", "on"] || path == ["std", "shell", "on"] {
-            return self.lower_host_scope(invoke);
+    fn lower_block_with_defer(&mut self, block: &ExprBlock) -> Result<Expr, String> {
+        let mut body = Vec::new();
+        let mut deferred = Vec::new();
+        for statement in &block.stmts {
+            match statement {
+                BlockStmt::Defer(stmt_defer) => {
+                    self.lower_expr_into(&stmt_defer.expr, &mut deferred)?;
+                }
+                BlockStmt::Item(item) => self.lower_item(item, Some(&mut body))?,
+                BlockStmt::Expr(expr) => self.lower_expr_into(&expr.expr, &mut body)?,
+                BlockStmt::Let(stmt) => {
+                    let Some(_name) = stmt.pat.as_ident() else {
+                        continue;
+                    };
+                    let Some(init) = &stmt.init else {
+                        continue;
+                    };
+                    let value = self.lower_value_expr(init)?;
+                    body.push(Expr::new(ExprKind::Let(ExprLet {
+                        span: init.span(),
+                        pat: stmt.pat.clone().into(),
+                        expr: value.into(),
+                    })));
+                }
+                BlockStmt::Noop | BlockStmt::Any(_) => {}
+            }
         }
-
-        if path == ["std", "server", "shell"] || path == ["std", "shell", "run"] {
-            let command_expr = invoke
-                .args
-                .first()
-                .or_else(|| kwarg_value(invoke, &["command", "cmd"]));
-            let Some(command_expr) = command_expr else {
-                return Ok(None);
-            };
-            let command = self.lower_string_expr(command_expr).ok_or_else(|| {
-                "std::server::shell command must resolve to string/int/bool (including f\"...\"/format!(...))".to_string()
-            })?;
-            let sudo = kwarg_value(invoke, &["sudo"])
-                .and_then(|expr| self.resolve_bool_expr(expr))
-                .unwrap_or(false);
-            let cwd = kwarg_value(invoke, &["cwd"]).and_then(|expr| self.lower_string_expr(expr));
-            let command = apply_command_options(command, cwd.clone(), sudo);
-            let hosts = self.resolve_hosts(invoke, context);
-            return Ok(Some(
-                hosts
-                    .into_iter()
-                    .map(|host| {
-                        self.make_call(
-                            "shell_run",
-                            vec![
-                                host,
-                                command.clone(),
-                                self.lower_guard_expr(invoke, "only_if"),
-                                self.lower_guard_expr(invoke, "unless"),
-                                self.lower_guard_expr(invoke, "creates"),
-                                self.lower_guard_expr(invoke, "removes"),
-                            ],
-                        )
-                    })
-                    .collect(),
-            ));
-        }
-
-        if path == ["std", "files", "copy"] || path == ["std", "shell", "copy"] {
-            let source_expr = invoke
-                .args
-                .first()
-                .or_else(|| kwarg_value(invoke, &["src", "source"]));
-            let destination_expr = invoke
-                .args
-                .get(1)
-                .or_else(|| kwarg_value(invoke, &["dest", "destination"]));
-            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr)
-            else {
-                return Ok(None);
-            };
-            let source = self
-                .lower_string_expr(source_expr)
-                .ok_or_else(|| "copy source must resolve to string".to_string())?;
-            let destination = self
-                .lower_string_expr(destination_expr)
-                .ok_or_else(|| "copy destination must resolve to string".to_string())?;
-            let hosts = self.resolve_hosts(invoke, context);
-            return Ok(Some(
-                hosts
-                    .into_iter()
-                    .map(|host| {
-                        self.make_call(
-                            "shell_copy",
-                            vec![
-                                host,
-                                source.clone(),
-                                destination.clone(),
-                                self.lower_guard_expr(invoke, "only_if"),
-                                self.lower_guard_expr(invoke, "unless"),
-                                self.lower_guard_expr(invoke, "creates"),
-                                self.lower_guard_expr(invoke, "removes"),
-                            ],
-                        )
-                    })
-                    .collect(),
-            ));
-        }
-
-        if path == ["std", "files", "template"] {
-            let source_expr = invoke
-                .args
-                .first()
-                .or_else(|| kwarg_value(invoke, &["src", "source"]));
-            let destination_expr = invoke
-                .args
-                .get(1)
-                .or_else(|| kwarg_value(invoke, &["dest", "destination"]));
-            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr)
-            else {
-                return Ok(None);
-            };
-            let source = self
-                .lower_string_expr(source_expr)
-                .ok_or_else(|| "template source must resolve to string".to_string())?;
-            let destination = self
-                .lower_string_expr(destination_expr)
-                .ok_or_else(|| "template destination must resolve to string".to_string())?;
-            let vars = kwarg_value(invoke, &["vars"])
-                .and_then(|expr| self.resolve_vars_map(expr))
-                .map(|vars| self.serialize_vars_map(vars))
-                .unwrap_or_else(empty_string_expr);
-            let hosts = self.resolve_hosts(invoke, context);
-            return Ok(Some(
-                hosts
-                    .into_iter()
-                    .map(|host| {
-                        self.make_call(
-                            "shell_template",
-                            vec![
-                                host,
-                                source.clone(),
-                                destination.clone(),
-                                vars.clone(),
-                                self.lower_guard_expr(invoke, "only_if"),
-                                self.lower_guard_expr(invoke, "unless"),
-                                self.lower_guard_expr(invoke, "creates"),
-                                self.lower_guard_expr(invoke, "removes"),
-                            ],
-                        )
-                    })
-                    .collect(),
-            ));
-        }
-
-        if path == ["std", "files", "rsync"] || path == ["std", "shell", "rsync"] {
-            let source_expr = invoke
-                .args
-                .first()
-                .or_else(|| kwarg_value(invoke, &["src", "source"]));
-            let destination_expr = invoke
-                .args
-                .get(1)
-                .or_else(|| kwarg_value(invoke, &["dest", "destination"]));
-            let (Some(source_expr), Some(destination_expr)) = (source_expr, destination_expr)
-            else {
-                return Ok(None);
-            };
-            let source = self
-                .lower_string_expr(source_expr)
-                .ok_or_else(|| "rsync source must resolve to string".to_string())?;
-            let destination = self
-                .lower_string_expr(destination_expr)
-                .ok_or_else(|| "rsync destination must resolve to string".to_string())?;
-            let flags = string_literal_expr(self.rsync_flags(invoke));
-            let hosts = self.resolve_hosts(invoke, context);
-            return Ok(Some(
-                hosts
-                    .into_iter()
-                    .map(|host| {
-                        self.make_call(
-                            "shell_rsync",
-                            vec![
-                                host,
-                                flags.clone(),
-                                source.clone(),
-                                destination.clone(),
-                                self.lower_guard_expr(invoke, "only_if"),
-                                self.lower_guard_expr(invoke, "unless"),
-                                self.lower_guard_expr(invoke, "creates"),
-                                self.lower_guard_expr(invoke, "removes"),
-                            ],
-                        )
-                    })
-                    .collect(),
-            ));
-        }
-
-        if path == ["std", "service", "restart"] {
-            let service_expr = invoke
-                .args
-                .first()
-                .or_else(|| kwarg_value(invoke, &["name", "service"]));
-            let Some(service_expr) = service_expr else {
-                return Ok(None);
-            };
-            let service_name = self
-                .lower_string_expr(service_expr)
-                .ok_or_else(|| "service name must resolve to string".to_string())?;
-            let hosts = self.resolve_hosts(invoke, context);
-            let sudo = kwarg_value(invoke, &["sudo"])
-                .and_then(|expr| self.resolve_bool_expr(expr))
-                .unwrap_or(true);
-            let command = apply_command_options(
-                concat_string_exprs(vec![
-                    string_literal_expr("systemctl restart ".to_string()),
-                    service_name.clone(),
-                ]),
-                None,
-                sudo,
-            );
-            return Ok(Some(
-                hosts
-                    .into_iter()
-                    .map(|host| {
-                        self.make_call(
-                            "shell_run",
-                            vec![
-                                host,
-                                command.clone(),
-                                self.lower_guard_expr(invoke, "only_if"),
-                                self.lower_guard_expr(invoke, "unless"),
-                                self.lower_guard_expr(invoke, "creates"),
-                                self.lower_guard_expr(invoke, "removes"),
-                            ],
-                        )
-                    })
-                    .collect(),
-            ));
-        }
-
-        Ok(None)
-    }
-
-    fn lower_host_scope(&mut self, invoke: &ExprInvoke) -> Result<Option<Vec<Expr>>, String> {
-        if invoke.args.len() < 2 {
-            return Err("std::host::on expects host selector and closure body".to_string());
-        }
-        let Some(hosts) = self.parse_host_selector(&invoke.args[0]) else {
-            return Err(
-                "std::host::on host selector must be a string or list/tuple/array of strings"
-                    .to_string(),
-            );
-        };
-        let scoped = EmitContext { hosts: Some(hosts) };
-        let mut out = Vec::new();
-        for action in invoke.args.iter().skip(1) {
-            let fp_core::ast::ExprKind::Closure(closure) = action.kind() else {
-                return Err(
-                    "std::host::on requires closure body syntax: std::host::on(hosts, || { ... })"
-                        .to_string(),
-                );
-            };
-            self.lower_expr_into(&closure.body, &scoped, &mut out)?;
-        }
-        for kwarg in &invoke.kwargs {
-            let fp_core::ast::ExprKind::Closure(closure) = kwarg.value.kind() else {
-                return Err(
-                    "std::host::on requires closure body syntax: std::host::on(hosts, || { ... })"
-                        .to_string(),
-                );
-            };
-            self.lower_expr_into(&closure.body, &scoped, &mut out)?;
-        }
-        Ok(Some(out))
+        deferred.reverse();
+        Ok(Expr::new(ExprKind::Try(ExprTry {
+            span: block.span,
+            expr: statements_to_block_expr(body).into_expr().into(),
+            catches: Vec::new(),
+            elze: None,
+            finally: Some(statements_to_block_expr(deferred).into_expr().into()),
+        })))
     }
 
     fn lower_function_invoke(&mut self, invoke: &ExprInvoke) -> Result<Option<Expr>, String> {
+        self.lower_function_invoke_with_host(invoke, None)
+    }
+
+    fn lower_function_invoke_with_host(
+        &mut self,
+        invoke: &ExprInvoke,
+        host_override: Option<Expr>,
+    ) -> Result<Option<Expr>, String> {
         let Some(path) = invoke_target_segments(&invoke.target) else {
             return Ok(None);
         };
-        if path.len() != 1 {
+        let Some(name) = self.call_target_name(&path) else {
             return Ok(None);
-        }
-        let name = &path[0];
-        if !self.is_known_callable(name) {
+        };
+        let Some(info) = self.functions.get(name) else {
             return Ok(None);
-        }
-        let mut args = Vec::new();
-        for arg in &invoke.args {
-            args.push(self.lower_value_expr(arg)?);
-        }
+        };
+        let args = self.lower_call_arguments(invoke, info, host_override.as_ref())?;
         Ok(Some(Expr::new(ExprKind::Invoke(ExprInvoke {
             span: invoke.span,
             target: ExprInvokeTarget::Function(Name::ident(name)),
@@ -531,12 +356,117 @@ impl<'a> Lowerer<'a> {
         }))))
     }
 
-    fn lower_if_expr(&mut self, expr_if: &ExprIf, context: &EmitContext) -> Result<Expr, String> {
+    fn lower_call_arguments(
+        &self,
+        invoke: &ExprInvoke,
+        info: &FunctionInfo,
+        host_override: Option<&Expr>,
+    ) -> Result<Vec<Expr>, String> {
+        let signature = &info.signature;
+        let mut args = Vec::with_capacity(signature.params.len());
+        for (index, param) in signature.params.iter().enumerate() {
+            let value = if let Some(arg) = invoke.args.get(index) {
+                self.lower_typed_expr(arg, &param.ty)?
+            } else if param.is_context && host_override.is_some() {
+                self.lower_typed_expr(host_override.expect("host override"), &param.ty)?
+            } else if let Some(kwarg) = invoke
+                .kwargs
+                .iter()
+                .find(|kwarg| kwarg.name == param.name.as_str())
+            {
+                self.lower_typed_expr(&kwarg.value, &param.ty)?
+            } else if let Some(default) = &param.default {
+                Expr::value(default.clone())
+            } else if let Some(default) = info.defaults.get(param.name.as_str()) {
+                self.lower_typed_expr(default, &param.ty)?
+            } else {
+                self.default_value_for_type(&param.ty)?
+            };
+            args.push(value);
+        }
+        Ok(args)
+    }
+
+    fn expand_invoke_hosts(&self, invoke: &ExprInvoke) -> Result<Option<Vec<Expr>>, String> {
+        let Some(path) = invoke_target_segments(&invoke.target) else {
+            return Ok(None);
+        };
+        let Some(name) = self.call_target_name(&path) else {
+            return Ok(None);
+        };
+        let Some(info) = self.functions.get(name) else {
+            return Ok(None);
+        };
+        let accepts_host = info.signature.params.iter().any(|param| param.is_context);
+        if !accepts_host {
+            return Ok(None);
+        }
+        let selector = info
+            .signature
+            .params
+            .iter()
+            .enumerate()
+            .find(|(_, param)| param.is_context)
+            .and_then(|(index, _)| invoke.args.get(index))
+            .or_else(|| {
+                invoke
+                    .kwargs
+                    .iter()
+                    .find(|kwarg| {
+                        info.signature
+                            .params
+                            .iter()
+                            .any(|param| param.is_context && kwarg.name == param.name.as_str())
+                    })
+                    .map(|kwarg| &kwarg.value)
+            });
+        let hosts = if let Some(selector) = selector {
+            let Some(hosts) = self.parse_host_selector(selector) else {
+                return Err(
+                    "host selector must be a string or list/tuple/array of strings".to_string(),
+                );
+            };
+            hosts
+        } else {
+            return Ok(None);
+        };
+        Ok(Some(hosts))
+    }
+
+    fn lower_typed_expr(&self, expr: &Expr, ty: &Ty) -> Result<Expr, String> {
+        match ty {
+            Ty::Primitive(TypePrimitive::Bool) => self
+                .lower_bool_expr(expr)
+                .ok_or_else(|| "expression could not be lowered to bool".to_string()),
+            Ty::Primitive(TypePrimitive::Int(_)) => self
+                .lower_int_expr(expr)
+                .ok_or_else(|| "expression could not be lowered to int".to_string()),
+            _ => self.lower_value_expr(expr),
+        }
+    }
+
+    fn default_value_for_type(&self, ty: &Ty) -> Result<Expr, String> {
+        match ty {
+            Ty::Primitive(TypePrimitive::Bool) => Ok(Expr::value(Value::bool(false))),
+            Ty::Primitive(TypePrimitive::Int(_)) => Ok(Expr::value(Value::int(0))),
+            _ => Ok(empty_string_expr()),
+        }
+    }
+
+    fn call_target_name<'b>(&self, path: &'b [String]) -> Option<&'b str> {
+        match path {
+            [name] if self.is_known_callable(name) => Some(name),
+            [.., name] if self.is_known_callable(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    fn lower_if_expr(&mut self, expr_if: &ExprIf) -> Result<Expr, String> {
         let mut then_block = Vec::new();
-        self.lower_expr_into(&expr_if.then, context, &mut then_block)?;
+        self.lower_expr_into(&expr_if.then, &mut then_block)?;
         let else_block = if let Some(else_expr) = &expr_if.elze {
             let mut else_statements = Vec::new();
-            self.lower_expr_into(else_expr, context, &mut else_statements)?;
+            self.lower_expr_into(else_expr, &mut else_statements)?;
             Some(statements_to_block_expr(else_statements).into_expr().into())
         } else {
             None
@@ -549,11 +479,50 @@ impl<'a> Lowerer<'a> {
         })))
     }
 
-    fn lower_match(
-        &mut self,
-        expr_match: &ExprMatch,
-        context: &EmitContext,
-    ) -> Result<Vec<Expr>, String> {
+    fn lower_try_expr(&mut self, expr_try: &ExprTry) -> Result<Expr, String> {
+        let mut body = Vec::new();
+        self.lower_expr_into(&expr_try.expr, &mut body)?;
+
+        let catches = expr_try
+            .catches
+            .iter()
+            .map(|catch| -> Result<ExprTryCatch, String> {
+                let mut catch_body = Vec::new();
+                self.lower_expr_into(&catch.body, &mut catch_body)?;
+                Ok(ExprTryCatch {
+                    span: catch.span,
+                    pat: catch.pat.clone(),
+                    body: statements_to_block_expr(catch_body).into_expr().into(),
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let elze = if let Some(elze) = &expr_try.elze {
+            let mut else_body = Vec::new();
+            self.lower_expr_into(elze, &mut else_body)?;
+            Some(statements_to_block_expr(else_body).into_expr().into())
+        } else {
+            None
+        };
+
+        let finally = if let Some(finally) = &expr_try.finally {
+            let mut finally_body = Vec::new();
+            self.lower_expr_into(finally, &mut finally_body)?;
+            Some(statements_to_block_expr(finally_body).into_expr().into())
+        } else {
+            None
+        };
+
+        Ok(Expr::new(ExprKind::Try(ExprTry {
+            span: expr_try.span,
+            expr: statements_to_block_expr(body).into_expr().into(),
+            catches,
+            elze,
+            finally,
+        })))
+    }
+
+    fn lower_match(&mut self, expr_match: &ExprMatch) -> Result<Vec<Expr>, String> {
         let Some(scrutinee) = expr_match.scrutinee.as_deref() else {
             return Err("match expression requires a scrutinee".to_string());
         };
@@ -561,22 +530,21 @@ impl<'a> Lowerer<'a> {
             .lower_string_expr(scrutinee)
             .ok_or_else(|| "match scrutinee must resolve to string".to_string())?;
         if expr_match.cases.iter().all(|case| case.guard.is_none()) {
-            return self.lower_match_native(&scrutinee, &expr_match.cases, context);
+            return self.lower_match_native(&scrutinee, &expr_match.cases);
         }
-        self.lower_match_cases(&scrutinee, &expr_match.cases, context)
+        self.lower_match_cases(&scrutinee, &expr_match.cases)
     }
 
     fn lower_match_native(
         &mut self,
         scrutinee: &Expr,
         cases: &[ExprMatchCase],
-        context: &EmitContext,
     ) -> Result<Vec<Expr>, String> {
         let lowered_cases = cases
             .iter()
             .map(|case| -> Result<ExprMatchCase, String> {
                 let mut body = Vec::new();
-                self.lower_expr_into(&case.body, context, &mut body)?;
+                self.lower_expr_into(&case.body, &mut body)?;
                 Ok(ExprMatchCase {
                     span: case.span,
                     pat: lower_string_pattern(self.lower_match_case_value(case)?).map(Box::new),
@@ -597,24 +565,22 @@ impl<'a> Lowerer<'a> {
         &mut self,
         scrutinee: &Expr,
         cases: &[ExprMatchCase],
-        context: &EmitContext,
     ) -> Result<Vec<Expr>, String> {
         let Some((first, rest)) = cases.split_first() else {
             return Ok(Vec::new());
         };
-        let fallback = self.lower_match_cases(scrutinee, rest, context)?;
-        self.lower_match_case(scrutinee, first, context, fallback)
+        let fallback = self.lower_match_cases(scrutinee, rest)?;
+        self.lower_match_case(scrutinee, first, fallback)
     }
 
     fn lower_match_case(
         &mut self,
         scrutinee: &Expr,
         case: &ExprMatchCase,
-        context: &EmitContext,
         fallback: Vec<Expr>,
     ) -> Result<Vec<Expr>, String> {
         let mut body_statements = Vec::new();
-        self.lower_expr_into(&case.body, context, &mut body_statements)?;
+        self.lower_expr_into(&case.body, &mut body_statements)?;
         let body_block = statements_to_block_expr(body_statements);
 
         let fallback_opt = if fallback.is_empty() {
@@ -687,11 +653,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn lower_for_expr(
-        &mut self,
-        expr_for: &ExprFor,
-        context: &EmitContext,
-    ) -> Result<Expr, String> {
+    fn lower_for_expr(&mut self, expr_for: &ExprFor) -> Result<Expr, String> {
         let PatternKind::Ident(_pattern) = expr_for.pat.kind() else {
             return Err("for-loop pattern must be an identifier".to_string());
         };
@@ -699,7 +661,7 @@ impl<'a> Lowerer<'a> {
             .resolve_string_list_expr(&expr_for.iter)
             .ok_or_else(|| "for-loop iterable must resolve to a string list".to_string())?;
         let mut body = Vec::new();
-        self.lower_expr_into(&expr_for.body, context, &mut body)?;
+        self.lower_expr_into(&expr_for.body, &mut body)?;
         Ok(Expr::new(ExprKind::For(ExprFor {
             span: expr_for.span,
             pat: expr_for.pat.clone(),
@@ -715,21 +677,6 @@ impl<'a> Lowerer<'a> {
     fn lower_condition(&self, expr: &Expr) -> Expr {
         if let Some(flag) = self.lower_bool_expr(expr) {
             return flag;
-        }
-        if let fp_core::ast::ExprKind::Invoke(invoke) = expr.kind() {
-            if let Some(path) = invoke_target_segments(&invoke.target) {
-                if path == ["std", "server", "shell"] || path == ["std", "shell", "run"] {
-                    if let Some(command_expr) = invoke
-                        .args
-                        .first()
-                        .or_else(|| kwarg_value(invoke, &["command", "cmd"]))
-                    {
-                        if let Some(command) = self.lower_string_expr(command_expr) {
-                            return condition_command_expr(command);
-                        }
-                    }
-                }
-            }
         }
         if let Some(text) = self.lower_string_expr(expr) {
             return text;
@@ -794,17 +741,10 @@ impl<'a> Lowerer<'a> {
             ExprKind::Name(_) => Some(expr.clone()),
             fp_core::ast::ExprKind::Invoke(invoke) => {
                 let path = invoke_target_segments(&invoke.target)?;
-                if path.len() != 1 {
-                    return None;
-                }
-                let name = &path[0];
-                if !self.is_known_callable(name) {
-                    return None;
-                }
+                let name = self.call_target_name(&path)?;
+                let info = self.functions.get(name)?;
                 let mut args = Vec::new();
-                for arg in &invoke.args {
-                    args.push(self.lower_value_expr(arg).ok()?);
-                }
+                args.extend(self.lower_call_arguments(invoke, info, None).ok()?);
                 Some(Expr::new(ExprKind::Invoke(ExprInvoke {
                     span: invoke.span,
                     target: ExprInvokeTarget::Function(Name::ident(name)),
@@ -912,17 +852,20 @@ impl<'a> Lowerer<'a> {
                 _ => None,
             },
             fp_core::ast::ExprKind::Name(_) => Some(expr.clone()),
+            fp_core::ast::ExprKind::Invoke(invoke) => {
+                let path = invoke_target_segments(&invoke.target)?;
+                let name = self.call_target_name(&path)?;
+                let info = self.functions.get(name)?;
+                let mut args = Vec::new();
+                args.extend(self.lower_call_arguments(invoke, info, None).ok()?);
+                Some(Expr::new(ExprKind::Invoke(ExprInvoke {
+                    span: invoke.span,
+                    target: ExprInvokeTarget::Function(Name::ident(name)),
+                    args,
+                    kwargs: Vec::new(),
+                })))
+            }
             fp_core::ast::ExprKind::Paren(paren) => self.lower_bool_expr(&paren.expr),
-            _ => None,
-        }
-    }
-
-    fn resolve_bool_expr(&self, expr: &Expr) -> Option<bool> {
-        match self.lower_bool_expr(expr)?.kind() {
-            ExprKind::Value(value) => match &**value {
-                Value::Bool(flag) => Some(flag.value),
-                _ => None,
-            },
             _ => None,
         }
     }
@@ -982,36 +925,6 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn resolve_vars_map(&self, expr: &Expr) -> Option<HashMap<String, Expr>> {
-        match expr.kind() {
-            fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
-                Value::Map(map) => {
-                    let mut vars = HashMap::new();
-                    for entry in &map.entries {
-                        let key = match &entry.key {
-                            Value::String(text) => text.value.clone(),
-                            _ => return None,
-                        };
-                        let value = match &entry.value {
-                            Value::String(text) => string_literal_expr(text.value.clone()),
-                            Value::Int(int_value) => {
-                                string_literal_expr(int_value.value.to_string())
-                            }
-                            Value::Bool(bool_value) => {
-                                string_literal_expr(bool_value.value.to_string())
-                            }
-                            _ => return None,
-                        };
-                        vars.insert(key, value);
-                    }
-                    Some(vars)
-                }
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
     fn parse_host_selector(&self, expr: &Expr) -> Option<Vec<Expr>> {
         self.resolve_string_list_expr(expr).map(|hosts| {
             let mut selectors = Vec::new();
@@ -1030,13 +943,6 @@ impl<'a> Lowerer<'a> {
             }
             selectors
         })
-    }
-
-    fn resolve_hosts(&self, invoke: &ExprInvoke, context: &EmitContext) -> Vec<Expr> {
-        kwarg_value(invoke, &["hosts", "host"])
-            .and_then(|expr| self.parse_host_selector(expr))
-            .or_else(|| context.hosts.clone())
-            .unwrap_or_else(|| vec![string_literal_expr("localhost".to_string())])
     }
 
     fn insert_function(&mut self, def: ItemDefFunction) {
@@ -1059,86 +965,12 @@ impl<'a> Lowerer<'a> {
         self.items[index] = Item::from(ItemKind::DeclFunction(decl));
     }
 
-    fn lower_guard_expr(&self, invoke: &ExprInvoke, name: &str) -> Expr {
-        kwarg_value(invoke, &[name])
-            .and_then(|expr| self.lower_string_expr(expr))
-            .unwrap_or_else(empty_string_expr)
-    }
-
-    fn make_call(&self, name: &str, args: Vec<Expr>) -> Expr {
-        Expr::new(ExprKind::Invoke(ExprInvoke {
-            span: Default::default(),
-            target: ExprInvokeTarget::Function(Name::ident(name)),
-            args,
-            kwargs: Vec::new(),
-        }))
-    }
-
-    fn serialize_vars_map(&self, vars: HashMap<String, Expr>) -> Expr {
-        let mut entries = vars.into_iter().collect::<Vec<_>>();
-        entries.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
-        let mut parts = Vec::new();
-        let mut args = Vec::new();
-        for (index, (key, value)) in entries.into_iter().enumerate() {
-            if index > 0 {
-                parts.push(FormatTemplatePart::Literal(";".to_string()));
-            }
-            parts.push(FormatTemplatePart::Literal(format!("{}=", key)));
-            parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
-                arg_ref: FormatArgRef::Implicit,
-                format_spec: None,
-            }));
-            args.push(value);
-        }
-        if parts.is_empty() {
-            empty_string_expr()
-        } else {
-            format_call_expr(parts, args)
-        }
-    }
-
-    fn rsync_flags(&self, invoke: &ExprInvoke) -> String {
-        let archive = kwarg_value(invoke, &["archive"])
-            .and_then(|expr| self.resolve_bool_expr(expr))
-            .unwrap_or(true);
-        let compress = kwarg_value(invoke, &["compress"])
-            .and_then(|expr| self.resolve_bool_expr(expr))
-            .unwrap_or(true);
-        let delete = kwarg_value(invoke, &["delete"])
-            .and_then(|expr| self.resolve_bool_expr(expr))
-            .unwrap_or(false);
-        let checksum = kwarg_value(invoke, &["checksum"])
-            .and_then(|expr| self.resolve_bool_expr(expr))
-            .unwrap_or(false);
-        let mut short = String::new();
-        if archive {
-            short.push('a');
-        }
-        if compress {
-            short.push('z');
-        }
-        let mut flags = if short.is_empty() {
-            String::new()
-        } else {
-            format!("-{}", short)
-        };
-        if delete {
-            if !flags.is_empty() {
-                flags.push(' ');
-            }
-            flags.push_str("--delete");
-        }
-        if checksum {
-            if !flags.is_empty() {
-                flags.push(' ');
-            }
-            flags.push_str("--checksum");
-        }
-        flags
-    }
-
     fn is_known_callable(&self, name: &str) -> bool {
         self.known_functions.contains(name)
+    }
+
+    fn current_host_override(&self) -> Option<&Expr> {
+        self.host_context.last()
     }
 }
 
@@ -1221,44 +1053,6 @@ fn string_literal_value(expr: &Expr) -> Option<String> {
     }
 }
 
-fn format_call_expr(parts: Vec<FormatTemplatePart>, mut args: Vec<Expr>) -> Expr {
-    let mut call_args = Vec::with_capacity(args.len() + 1);
-    call_args.push(Expr::new(ExprKind::FormatString(ExprStringTemplate {
-        parts,
-    })));
-    call_args.append(&mut args);
-    Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall {
-        span: Default::default(),
-        kind: IntrinsicCallKind::Format,
-        args: call_args,
-        kwargs: Vec::new(),
-    }))
-}
-
-fn concat_string_exprs(values: Vec<Expr>) -> Expr {
-    format_call_expr(
-        values
-            .iter()
-            .map(|_| {
-                FormatTemplatePart::Placeholder(FormatPlaceholder {
-                    arg_ref: FormatArgRef::Implicit,
-                    format_spec: None,
-                })
-            })
-            .collect(),
-        values,
-    )
-}
-
-fn condition_command_expr(command: Expr) -> Expr {
-    Expr::new(ExprKind::Invoke(ExprInvoke {
-        span: Default::default(),
-        target: ExprInvokeTarget::Function(Name::ident("__fp_condition_command")),
-        args: vec![command],
-        kwargs: Vec::new(),
-    }))
-}
-
 fn invoke_target_segments(target: &ExprInvokeTarget) -> Option<Vec<String>> {
     match target {
         ExprInvokeTarget::Function(name) => Some(name_to_segments(name)),
@@ -1274,33 +1068,21 @@ fn name_to_segments(name: &Name) -> Vec<String> {
         .collect()
 }
 
-fn kwarg_value<'a>(invoke: &'a ExprInvoke, names: &[&str]) -> Option<&'a Expr> {
-    invoke
-        .kwargs
-        .iter()
-        .find(|kwarg| names.iter().any(|name| *name == kwarg.name))
-        .map(|kwarg| &kwarg.value)
-}
-
-fn apply_command_options(command: Expr, cwd: Option<Expr>, sudo: bool) -> Expr {
-    let mut parts = Vec::new();
-    let mut args = Vec::new();
-    if sudo {
-        parts.push(FormatTemplatePart::Literal("sudo ".to_string()));
+fn attribute_defaults(attrs: &[Attribute]) -> HashMap<String, Expr> {
+    let mut defaults = HashMap::new();
+    for attr in attrs {
+        let AttrMeta::List(list) = &attr.meta else {
+            continue;
+        };
+        if list.name.last().as_str() != "defaults" {
+            continue;
+        }
+        for item in &list.items {
+            let AttrMeta::NameValue(meta) = item else {
+                continue;
+            };
+            defaults.insert(meta.name.last().as_str().to_string(), (*meta.value).clone());
+        }
     }
-    if let Some(cwd) = cwd {
-        parts.push(FormatTemplatePart::Literal("cd ".to_string()));
-        parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
-            arg_ref: FormatArgRef::Implicit,
-            format_spec: None,
-        }));
-        args.push(cwd);
-        parts.push(FormatTemplatePart::Literal(" && ".to_string()));
-    }
-    args.push(command);
-    parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
-        arg_ref: FormatArgRef::Implicit,
-        format_spec: None,
-    }));
-    format_call_expr(parts, args)
+    defaults
 }
