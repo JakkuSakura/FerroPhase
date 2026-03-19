@@ -364,6 +364,28 @@ fn write_expr(expr: &Expr, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
             })?;
             ctx.writeln(f, "}")
         }
+        ExprKind::Try(expr_try) => {
+            ctx.writeln(f, "try")?;
+            ctx.with_indent(|ctx| write_expr(&expr_try.expr, f, ctx))?;
+            for catch in &expr_try.catches {
+                let pat = catch
+                    .pat
+                    .as_ref()
+                    .map(|pat| format!(" {}", format_pat(pat, ctx)))
+                    .unwrap_or_default();
+                ctx.writeln(f, format!("catch{}", pat))?;
+                ctx.with_indent(|ctx| write_expr(&catch.body, f, ctx))?;
+            }
+            if let Some(elze) = &expr_try.elze {
+                ctx.writeln(f, "else")?;
+                ctx.with_indent(|ctx| write_expr(elze, f, ctx))?;
+            }
+            if let Some(finally) = &expr_try.finally {
+                ctx.writeln(f, "finally")?;
+                ctx.with_indent(|ctx| write_expr(finally, f, ctx))?;
+            }
+            Ok(())
+        }
         ExprKind::FormatString(template) => {
             let format_text = summarize_format_parts(&template.parts);
             ctx.writeln(
@@ -489,6 +511,24 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 arms
             )
         }
+        ExprKind::Try(expr_try) => {
+            let mut parts = vec![format!("try {}", format_expr_inline(&expr_try.expr, ctx))];
+            parts.extend(expr_try.catches.iter().map(|catch| {
+                let pat = catch
+                    .pat
+                    .as_ref()
+                    .map(|pat| format!(" {}", format_pat(pat, ctx)))
+                    .unwrap_or_default();
+                format!("catch{} {}", pat, format_expr_inline(&catch.body, ctx))
+            }));
+            if let Some(elze) = &expr_try.elze {
+                parts.push(format!("else {}", format_expr_inline(elze, ctx)));
+            }
+            if let Some(finally) = &expr_try.finally {
+                parts.push(format!("finally {}", format_expr_inline(finally, ctx)));
+            }
+            parts.join(" ")
+        }
         ExprKind::IntrinsicCall(call) => {
             let args = call
                 .callargs
@@ -586,6 +626,7 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
         IntrinsicCallKind::Input => "input",
         IntrinsicCallKind::Panic => "panic",
         IntrinsicCallKind::CatchUnwind => "catch_unwind",
+        IntrinsicCallKind::CatchUnwindResult => "catch_unwind_result",
         IntrinsicCallKind::TimeNow => "time_now",
         IntrinsicCallKind::Sleep => "sleep",
         IntrinsicCallKind::Spawn => "spawn",

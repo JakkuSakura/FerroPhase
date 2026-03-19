@@ -558,6 +558,18 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                     collect_paths(&arm.body, out);
                 }
             }
+            hir::ExprKind::Try(expr_try) => {
+                collect_paths(&expr_try.expr, out);
+                for catch in &expr_try.catches {
+                    collect_paths(&catch.body, out);
+                }
+                if let Some(elze) = &expr_try.elze {
+                    collect_paths(elze, out);
+                }
+                if let Some(finally) = &expr_try.finally {
+                    collect_paths(finally, out);
+                }
+            }
             hir::ExprKind::Block(block) => collect_paths_from_block(block, out),
             hir::ExprKind::Let(_, _, Some(init)) => collect_paths(init, out),
             hir::ExprKind::Let(_, _, None) => {}

@@ -153,6 +153,7 @@ pub enum ExprKind {
     Struct(Path, Vec<StructExprField>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Match(Box<Expr>, Vec<MatchArm>),
+    Try(TryExpr),
     Block(Block),
     IntrinsicCall(IntrinsicCallExpr),
     FormatString(FormatString),
@@ -172,6 +173,21 @@ pub struct MatchArm {
     pub hir_id: HirId,
     pub pat: Pat,
     pub guard: Option<Expr>,
+    pub body: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TryExpr {
+    pub expr: Box<Expr>,
+    pub catches: Vec<TryCatch>,
+    pub elze: Option<Box<Expr>>,
+    pub finally: Option<Box<Expr>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TryCatch {
+    pub hir_id: HirId,
+    pub pat: Option<Pat>,
     pub body: Expr,
 }
 
@@ -678,6 +694,7 @@ impl ExprKind {
                     .into_iter()
                     .chain(arms.iter().map(MatchArm::span)),
             ),
+            ExprKind::Try(expr_try) => expr_try.span(),
             ExprKind::Block(block) => block.span(),
             ExprKind::IntrinsicCall(call) => call.span(),
             ExprKind::FormatString(format) => format.span(),
@@ -718,6 +735,30 @@ impl MatchArm {
             ]
             .into_iter()
             .flatten(),
+        )
+    }
+}
+
+impl TryExpr {
+    pub fn span(&self) -> Span {
+        Span::union(
+            Some(self.expr.span())
+                .into_iter()
+                .chain(self.catches.iter().map(TryCatch::span))
+                .chain(self.elze.as_ref().map(|expr| expr.span()))
+                .chain(self.finally.as_ref().map(|expr| expr.span())),
+        )
+    }
+}
+
+impl TryCatch {
+    pub fn span(&self) -> Span {
+        Span::union(
+            self.pat
+                .as_ref()
+                .map(Pat::span)
+                .into_iter()
+                .chain([self.body.span()]),
         )
     }
 }

@@ -54,6 +54,42 @@ fn mir_lowering() -> MirLowering {
     MirLowering::new()
 }
 
+fn binding_pat(hir_id: u32, name: &str, mutable: bool) -> Pat {
+    Pat {
+        hir_id,
+        kind: PatKind::Binding {
+            name: Symbol::new(name),
+            mutable,
+        },
+    }
+}
+
+fn local_path(hir_id: u32, name: &str, local_id: u32) -> Expr {
+    Expr::new(
+        hir_id,
+        ExprKind::Path(Path {
+            segments: vec![PathSegment {
+                name: Symbol::new(name),
+                args: None,
+            }],
+            res: Some(Res::Local(local_id)),
+        }),
+        span(),
+    )
+}
+
+fn local_stmt(hir_id: u32, pat: Pat, ty: TypeExpr, init: Expr) -> hir::Stmt {
+    hir::Stmt {
+        hir_id,
+        kind: hir::StmtKind::Local(hir::Local {
+            hir_id,
+            pat,
+            ty: Some(ty),
+            init: Some(init),
+        }),
+    }
+}
+
 #[test]
 fn lowers_constant_return_function_into_mir_assign_and_return() {
     let body_expr = literal_expr(1, 5);
@@ -371,4 +407,235 @@ fn lowers_index_expression_into_place_projection() {
     });
 
     assert!(has_index_projection, "expected index projection in MIR");
+}
+
+#[test]
+fn return_value_is_materialized_before_finally_runs() {
+    let x_pat = binding_pat(100, "x", true);
+    let x_init = literal_expr(101, 1);
+    let x_stmt = local_stmt(
+        102,
+        x_pat.clone(),
+        primitive_type(TypePrimitive::Int(TypeInt::I32)),
+        x_init,
+    );
+
+    let return_expr = Expr::new(
+        103,
+        ExprKind::Return(Some(Box::new(local_path(104, "x", x_pat.hir_id)))),
+        span(),
+    );
+    let finally_expr = Expr::new(
+        105,
+        ExprKind::Assign(
+            Box::new(local_path(106, "x", x_pat.hir_id)),
+            Box::new(literal_expr(107, 2)),
+        ),
+        span(),
+    );
+    let try_expr = Expr::new(
+        108,
+        ExprKind::Try(hir::TryExpr {
+            expr: Box::new(return_expr),
+            catches: Vec::new(),
+            elze: None,
+            finally: Some(Box::new(finally_expr)),
+        }),
+        span(),
+    );
+
+    let body = hir::Body {
+        hir_id: 109,
+        params: Vec::new(),
+        value: Expr::new(
+            110,
+            ExprKind::Block(hir::Block {
+                hir_id: 111,
+                stmts: vec![x_stmt],
+                expr: Some(Box::new(try_expr)),
+            }),
+            span(),
+        ),
+    };
+
+    let sig = FunctionSig {
+        name: Symbol::new("main"),
+        inputs: Vec::new(),
+        output: primitive_type(TypePrimitive::Int(TypeInt::I32)),
+        generics: Generics::default(),
+        abi: hir::Abi::Rust,
+    };
+    let function = Function::new(sig, Some(body), false, false);
+    let item = Item {
+        hir_id: 112,
+        def_id: 113,
+        visibility: Visibility::Public,
+        kind: ItemKind::Function(function),
+        span: span(),
+    };
+
+    let mut lowering = mir_lowering();
+    let mir_program = lowering
+        .transform(program_with_items(vec![item]))
+        .expect("HIR→MIR lowering should succeed");
+
+    let mir_function = match &mir_program.items[0].kind {
+        MirItemKind::Function(func) => func,
+        other => panic!("expected MIR function item, found {other:?}"),
+    };
+    let body = mir_program
+        .bodies
+        .get(&mir_function.body_id)
+        .expect("function body present");
+
+    let mut saw_copy_from_x = false;
+    let mut saw_finally_assign = false;
+    let mut saw_return_copy_after_finally = false;
+
+    for block in &body.basic_blocks {
+        for stmt in &block.statements {
+            match &stmt.kind {
+                StatementKind::Assign(place, Rvalue::Use(Operand::Copy(src)))
+                    if src.local == 1 && place.local != 0 =>
+                {
+                    saw_copy_from_x = true;
+                }
+                StatementKind::Assign(place, Rvalue::Use(Operand::Constant(constant)))
+                    if place.local == 1 && matches!(constant.literal, ConstantKind::Int(2)) =>
+                {
+                    assert!(saw_copy_from_x, "finally ran before return value was captured");
+                    saw_finally_assign = true;
+                }
+                StatementKind::Assign(place, Rvalue::Use(Operand::Copy(src)))
+                    if place.local == 0 && src.local != 1 =>
+                {
+                    assert!(
+                        saw_finally_assign,
+                        "return local should be written after finally completes"
+                    );
+                    saw_return_copy_after_finally = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    assert!(saw_copy_from_x, "expected temp copy of return value");
+    assert!(saw_finally_assign, "expected finally assignment in MIR");
+    assert!(
+        saw_return_copy_after_finally,
+        "expected return local assignment after finally"
+    );
+}
+
+#[test]
+fn break_value_is_materialized_before_finally_runs() {
+    let x_pat = binding_pat(120, "x", true);
+    let x_stmt = local_stmt(
+        121,
+        x_pat.clone(),
+        primitive_type(TypePrimitive::Int(TypeInt::I32)),
+        literal_expr(122, 1),
+    );
+
+    let break_expr = Expr::new(
+        123,
+        ExprKind::Break(Some(Box::new(local_path(124, "x", x_pat.hir_id)))),
+        span(),
+    );
+    let finally_expr = Expr::new(
+        125,
+        ExprKind::Assign(
+            Box::new(local_path(126, "x", x_pat.hir_id)),
+            Box::new(literal_expr(127, 2)),
+        ),
+        span(),
+    );
+    let try_expr = Expr::new(
+        128,
+        ExprKind::Try(hir::TryExpr {
+            expr: Box::new(break_expr),
+            catches: Vec::new(),
+            elze: None,
+            finally: Some(Box::new(finally_expr)),
+        }),
+        span(),
+    );
+    let loop_expr = Expr::new(
+        129,
+        ExprKind::Loop(hir::Block {
+            hir_id: 130,
+            stmts: vec![x_stmt],
+            expr: Some(Box::new(try_expr)),
+        }),
+        span(),
+    );
+
+    let body = hir::Body {
+        hir_id: 131,
+        params: Vec::new(),
+        value: loop_expr,
+    };
+    let sig = FunctionSig {
+        name: Symbol::new("main"),
+        inputs: Vec::new(),
+        output: primitive_type(TypePrimitive::Int(TypeInt::I32)),
+        generics: Generics::default(),
+        abi: hir::Abi::Rust,
+    };
+    let function = Function::new(sig, Some(body), false, false);
+    let item = Item {
+        hir_id: 132,
+        def_id: 133,
+        visibility: Visibility::Public,
+        kind: ItemKind::Function(function),
+        span: span(),
+    };
+
+    let mut lowering = mir_lowering();
+    let mir_program = lowering
+        .transform(program_with_items(vec![item]))
+        .expect("HIR→MIR lowering should succeed");
+
+    let mir_function = match &mir_program.items[0].kind {
+        MirItemKind::Function(func) => func,
+        other => panic!("expected MIR function item, found {other:?}"),
+    };
+    let body = mir_program
+        .bodies
+        .get(&mir_function.body_id)
+        .expect("function body present");
+
+    let mut saw_break_copy = false;
+    let mut saw_finally_assign = false;
+    let mut saw_return_copy = false;
+
+    for block in &body.basic_blocks {
+        for stmt in &block.statements {
+            match &stmt.kind {
+                StatementKind::Assign(place, Rvalue::Use(Operand::Copy(src)))
+                    if src.local == 1 && place.local != 0 =>
+                {
+                    saw_break_copy = true;
+                }
+                StatementKind::Assign(place, Rvalue::Use(Operand::Constant(constant)))
+                    if place.local == 1 && matches!(constant.literal, ConstantKind::Int(2)) =>
+                {
+                    assert!(saw_break_copy, "finally ran before break value was captured");
+                    saw_finally_assign = true;
+                }
+                StatementKind::Assign(place, Rvalue::Use(Operand::Copy(src)))
+                    if place.local == 0 && src.local != 1 =>
+                {
+                    assert!(saw_finally_assign, "loop result should be assigned after finally");
+                    saw_return_copy = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    assert!(saw_break_copy, "expected temp copy of break value");
+    assert!(saw_finally_assign, "expected finally assignment before loop exit");
+    assert!(saw_return_copy, "expected loop result propagated to return local");
 }

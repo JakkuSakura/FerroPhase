@@ -719,10 +719,23 @@ impl HirGenerator {
 
     /// Transform an AST expression tree to HIR
     pub fn transform_expr(&mut self, ast_expr: &ast::Expr) -> Result<hir::Program> {
-        let mut hir_program = hir::Program::new();
+        let mut lowered_expr = ast_expr.clone();
+        let (generated_items, closure_diagnostics) = lower_closures_in_expr(&mut lowered_expr)?;
+        diagnostic_manager().add_diagnostics(closure_diagnostics);
 
-        // Transform the root expression into a main function
-        let main_body = self.transform_expr_to_hir(ast_expr)?;
+        self.reset_file_context("<expr>");
+        self.prepare_lowering_state();
+        self.predeclare_items(&generated_items)?;
+
+        let mut hir_program = hir::Program::new();
+        self.program_def_map = HashMap::new();
+
+        for item in &generated_items {
+            self.append_item(&mut hir_program, item)?;
+        }
+
+        // Transform the root expression into a main function.
+        let main_body = self.transform_expr_to_hir(&lowered_expr)?;
         let main_fn = self.create_main_function(main_body)?;
 
         // Add main function to program
@@ -2326,6 +2339,12 @@ fn lower_closures_in_file(file: &mut ast::File) -> Result<Vec<Diagnostic>> {
     Ok(pass.diagnostics)
 }
 
+fn lower_closures_in_expr(expr: &mut ast::Expr) -> Result<(Vec<ast::Item>, Vec<Diagnostic>)> {
+    let mut pass = ClosureLowering::new();
+    pass.rewrite_in_expr(expr)?;
+    Ok((pass.generated_items, pass.diagnostics))
+}
+
 const DUMMY_CAPTURE_NAME: &str = "__fp_no_capture";
 
 fn expand_intrinsic_collection(expr: &mut ast::Expr) -> bool {
@@ -2375,6 +2394,39 @@ impl ClosureLowering {
 
     fn add_error(&mut self, diag: Diagnostic) {
         self.diagnostics.push(diag);
+    }
+
+    fn block_stmt_expr(expr: ast::Expr, has_value: bool) -> ast::BlockStmt {
+        ast::BlockStmt::Expr(ast::BlockStmtExpr::new(expr).with_semicolon(!has_value))
+    }
+
+    fn desugar_block_defer(&mut self, block: &mut ast::ExprBlock) -> bool {
+        let defer_index = block
+            .stmts
+            .iter()
+            .position(|stmt| matches!(stmt, ast::BlockStmt::Defer(_)));
+        let Some(index) = defer_index else {
+            return false;
+        };
+        let ast::BlockStmt::Defer(stmt_defer) = block.stmts.remove(index) else {
+            return false;
+        };
+        let suffix = block.stmts.split_off(index);
+        let has_value = match suffix.last() {
+            Some(ast::BlockStmt::Expr(expr_stmt)) => expr_stmt.has_value(),
+            _ => false,
+        };
+        let wrapped = ast::Expr::new(ast::ExprKind::Try(ast::ExprTry {
+            span: stmt_defer.span(),
+            expr: Box::new(ast::Expr::new(ast::ExprKind::Block(ast::ExprBlock::new_stmts(
+                suffix,
+            )))),
+            catches: Vec::new(),
+            elze: None,
+            finally: Some(stmt_defer.expr),
+        }));
+        block.stmts.push(Self::block_stmt_expr(wrapped, has_value));
+        true
     }
 
     fn find_and_transform_functions(&mut self, items: &mut [ast::Item]) -> Result<()> {
@@ -2657,6 +2709,10 @@ impl ClosureLowering {
                 for stmt in &mut block.stmts {
                     self.rewrite_in_stmt(stmt)?;
                 }
+                while self.desugar_block_defer(block) {
+                    self.rewrite_in_expr(expr)?;
+                    return Ok(());
+                }
                 if let Some(last) = block.last_expr_mut() {
                     self.rewrite_in_expr(last)?;
                 }
@@ -2822,7 +2878,18 @@ impl ClosureLowering {
             ast::ExprKind::FormatString(format) => {
                 let _ = format;
             }
-            ast::ExprKind::Try(expr_try) => self.rewrite_in_expr(expr_try.expr.as_mut())?,
+            ast::ExprKind::Try(expr_try) => {
+                self.rewrite_in_expr(expr_try.expr.as_mut())?;
+                for catch in &mut expr_try.catches {
+                    self.rewrite_in_expr(catch.body.as_mut())?;
+                }
+                if let Some(elze) = expr_try.elze.as_mut() {
+                    self.rewrite_in_expr(elze.as_mut())?;
+                }
+                if let Some(finally) = expr_try.finally.as_mut() {
+                    self.rewrite_in_expr(finally.as_mut())?;
+                }
+            }
             ast::ExprKind::Value(value) => match value.as_mut() {
                 ast::Value::Expr(expr) => self.rewrite_in_expr(expr.as_mut())?,
                 ast::Value::Function(func) => self.rewrite_in_expr(func.body.as_mut())?,
@@ -2852,6 +2919,7 @@ impl ClosureLowering {
     fn rewrite_in_stmt(&mut self, stmt: &mut ast::BlockStmt) -> Result<()> {
         match stmt {
             ast::BlockStmt::Expr(expr_stmt) => self.rewrite_in_expr(expr_stmt.expr.as_mut())?,
+            ast::BlockStmt::Defer(stmt_defer) => self.rewrite_in_expr(stmt_defer.expr.as_mut())?,
             ast::BlockStmt::Let(stmt_let) => {
                 if let Some(init) = stmt_let.init.as_mut() {
                     self.rewrite_in_expr(init)?;
@@ -3111,7 +3179,18 @@ impl CaptureCollector {
                     self.visit(step.as_ref());
                 }
             }
-            ast::ExprKind::Try(expr_try) => self.visit(expr_try.expr.as_ref()),
+            ast::ExprKind::Try(expr_try) => {
+                self.visit(expr_try.expr.as_ref());
+                for catch in &expr_try.catches {
+                    self.visit(catch.body.as_ref());
+                }
+                if let Some(elze) = expr_try.elze.as_ref() {
+                    self.visit(elze.as_ref());
+                }
+                if let Some(finally) = expr_try.finally.as_ref() {
+                    self.visit(finally.as_ref());
+                }
+            }
             ast::ExprKind::Value(value) => match value.as_ref() {
                 ast::Value::Expr(expr) => self.visit(expr.as_ref()),
                 ast::Value::Function(func) => self.visit(func.body.as_ref()),
@@ -3149,6 +3228,7 @@ impl CaptureCollector {
     fn visit_stmt(&mut self, stmt: &ast::BlockStmt) {
         match stmt {
             ast::BlockStmt::Expr(expr_stmt) => self.visit(expr_stmt.expr.as_ref()),
+            ast::BlockStmt::Defer(stmt_defer) => self.visit(stmt_defer.expr.as_ref()),
             ast::BlockStmt::Let(stmt_let) => {
                 if let Some(init) = stmt_let.init.as_ref() {
                     self.visit(init);
@@ -3404,7 +3484,18 @@ impl CaptureReplacer {
             ast::ExprKind::FormatString(format) => {
                 let _ = format;
             }
-            ast::ExprKind::Try(expr_try) => self.visit(expr_try.expr.as_mut()),
+            ast::ExprKind::Try(expr_try) => {
+                self.visit(expr_try.expr.as_mut());
+                for catch in &mut expr_try.catches {
+                    self.visit(catch.body.as_mut());
+                }
+                if let Some(elze) = expr_try.elze.as_mut() {
+                    self.visit(elze.as_mut());
+                }
+                if let Some(finally) = expr_try.finally.as_mut() {
+                    self.visit(finally.as_mut());
+                }
+            }
             ast::ExprKind::Value(value) => match value.as_mut() {
                 ast::Value::Expr(expr) => self.visit(expr.as_mut()),
                 ast::Value::Function(func) => self.visit(func.body.as_mut()),
@@ -3448,6 +3539,7 @@ impl CaptureReplacer {
     fn visit_stmt(&mut self, stmt: &mut ast::BlockStmt) {
         match stmt {
             ast::BlockStmt::Expr(expr_stmt) => self.visit(expr_stmt.expr.as_mut()),
+            ast::BlockStmt::Defer(stmt_defer) => self.visit(stmt_defer.expr.as_mut()),
             ast::BlockStmt::Let(stmt_let) => {
                 if let Some(init) = stmt_let.init.as_mut() {
                     self.visit(init);

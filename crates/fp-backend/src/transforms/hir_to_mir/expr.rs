@@ -4767,8 +4767,11 @@ struct BodyBuilder<'a> {
     method_context: Option<MethodContext>,
     type_substs: HashMap<String, Ty>,
     loop_stack: Vec<LoopContext>,
+    defer_scopes: Vec<DeferScope>,
+    current_unwind_target: Option<mir::BasicBlockId>,
     null_locals: HashSet<mir::LocalId>,
     active_exprs: HashSet<hir::HirId>,
+    control_flow_emitted: bool,
 }
 
 struct PlaceInfo {
@@ -4812,6 +4815,11 @@ struct LoopContext {
     continue_block: mir::BasicBlockId,
     break_destination: Option<LoopDestination>,
     break_value_allowed: bool,
+    defer_scope_depth: usize,
+}
+
+struct DeferScope {
+    deferred: Vec<hir::Expr>,
 }
 
 struct ExprRecursionGuard {
@@ -4866,8 +4874,11 @@ impl<'a> BodyBuilder<'a> {
             method_context,
             type_substs,
             loop_stack: Vec::new(),
+            defer_scopes: Vec::new(),
+            current_unwind_target: None,
             null_locals: HashSet::new(),
             active_exprs: HashSet::new(),
+            control_flow_emitted: false,
         };
 
         let body_params = builder
@@ -5108,16 +5119,188 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn lower_block(&mut self, block: &hir::Block) -> Result<()> {
+        let scope_depth = self.defer_scopes.len();
+        self.defer_scopes.push(DeferScope {
+            deferred: Vec::new(),
+        });
+
         for stmt in &block.stmts {
             self.lower_stmt(stmt)?;
+            if self.control_flow_emitted {
+                break;
+            }
         }
 
-        if let Some(expr) = &block.expr {
-            if let hir::ExprKind::Block(inner) = &expr.kind {
-                self.lower_block(inner)?;
-            } else {
-                self.lower_tail_expr(expr)?;
+        if !self.control_flow_emitted {
+            if let Some(expr) = &block.expr {
+                if let hir::ExprKind::Block(inner) = &expr.kind {
+                    self.lower_block(inner)?;
+                } else {
+                    self.lower_tail_expr(expr)?;
+                }
             }
+        }
+
+        if self.defer_scopes.len() > scope_depth {
+            let scope = self.defer_scopes.pop().unwrap();
+            self.run_popped_deferred(scope)?;
+        }
+
+        Ok(())
+    }
+
+    fn run_popped_deferred(&mut self, scope: DeferScope) -> Result<()> {
+        for deferred in scope.deferred.into_iter().rev() {
+            self.control_flow_emitted = false;
+            self.lower_expr_as_statement(&deferred)?;
+            if self.control_flow_emitted {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn unwind_defer_scopes_to(&mut self, target_depth: usize) -> Result<()> {
+        while self.defer_scopes.len() > target_depth {
+            let scope = self.defer_scopes.pop().unwrap();
+            self.run_popped_deferred(scope)?;
+            if self.control_flow_emitted {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    fn with_unwind_target<T>(
+        &mut self,
+        unwind_target: Option<mir::BasicBlockId>,
+        f: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let saved = self.current_unwind_target;
+        self.current_unwind_target = unwind_target;
+        let result = f(self);
+        self.current_unwind_target = saved;
+        result
+    }
+
+    fn lower_try_expr(
+        &mut self,
+        expr: &hir::Expr,
+        expr_try: &hir::TryExpr,
+        destination: Option<(mir::Place, Ty)>,
+        as_statement: bool,
+    ) -> Result<()> {
+        let outer_scope_depth = self.defer_scopes.len();
+        if let Some(finally_expr) = expr_try.finally.as_ref() {
+            self.defer_scopes.push(DeferScope {
+                deferred: vec![finally_expr.as_ref().clone()],
+            });
+        }
+
+        let join_block = self.new_block();
+        let panic_block = self.new_block();
+        if let Some(block) = self.blocks.get_mut(panic_block as usize) {
+            block.is_cleanup = true;
+        }
+
+        self.control_flow_emitted = false;
+        self.with_unwind_target(Some(panic_block), |this| match &destination {
+            Some((place, ty)) if !as_statement && expr_try.elze.is_none() => {
+                this.lower_expr_into_place(&expr_try.expr, place.clone(), ty)
+            }
+            _ => this.lower_expr_as_statement(&expr_try.expr),
+        })?;
+
+        if !self.control_flow_emitted {
+            if let Some(elze) = expr_try.elze.as_ref() {
+                self.control_flow_emitted = false;
+                match &destination {
+                    Some((place, ty)) if !as_statement => {
+                        self.lower_expr_into_place(elze, place.clone(), ty)?;
+                    }
+                    _ => self.lower_expr_as_statement(elze)?,
+                }
+            }
+            if !self.control_flow_emitted
+                && self.blocks[self.current_block as usize].terminator.is_none()
+            {
+                self.set_current_terminator(mir::Terminator {
+                    source_info: expr.span,
+                    kind: mir::TerminatorKind::Goto { target: join_block },
+                });
+            }
+        }
+
+        let outer_unwind = self.current_unwind_target;
+        let mut next_catch_block = panic_block;
+        for (idx, catch) in expr_try.catches.iter().enumerate() {
+            self.current_block = next_catch_block;
+            let fallback_block = if idx + 1 < expr_try.catches.len() {
+                let block = self.new_block();
+                if let Some(data) = self.blocks.get_mut(block as usize) {
+                    data.is_cleanup = true;
+                }
+                Some(block)
+            } else {
+                None
+            };
+
+            if let Some(pat) = &catch.pat {
+                let panic_value_local =
+                    self.allocate_temp(self.lowering.raw_string_ptr_ty(), catch.body.span);
+                self.push_statement(mir::Statement {
+                    source_info: catch.body.span,
+                    kind: mir::StatementKind::Assign(
+                        mir::Place::from_local(panic_value_local),
+                        mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
+                            span: catch.body.span,
+                            user_ty: None,
+                            literal: mir::ConstantKind::Str(
+                                "<panic payload unavailable>".to_string(),
+                            ),
+                        })),
+                    ),
+                });
+                self.bind_pattern(
+                    pat,
+                    panic_value_local,
+                    Some(&self.lowering.raw_string_ptr_ty()),
+                );
+            }
+
+            self.control_flow_emitted = false;
+            self.with_unwind_target(fallback_block, |this| match &destination {
+                Some((place, ty)) if !as_statement => {
+                    this.lower_expr_into_place(&catch.body, place.clone(), ty)
+                }
+                _ => this.lower_expr_as_statement(&catch.body),
+            })?;
+            if !self.control_flow_emitted
+                && self.blocks[self.current_block as usize].terminator.is_none()
+            {
+                self.set_current_terminator(mir::Terminator {
+                    source_info: catch.body.span,
+                    kind: mir::TerminatorKind::Goto { target: join_block },
+                });
+            }
+
+            if let Some(block) = fallback_block {
+                next_catch_block = block;
+            }
+        }
+
+        self.current_block = next_catch_block;
+        if expr_try.catches.is_empty()
+            || self.blocks[self.current_block as usize].terminator.is_none()
+        {
+            self.with_unwind_target(outer_unwind, |this| this.lower_panic(expr.span, &[]))?;
+        }
+
+        self.current_block = join_block;
+        self.control_flow_emitted = false;
+        if self.defer_scopes.len() > outer_scope_depth {
+            let scope = self.defer_scopes.pop().unwrap();
+            self.run_popped_deferred(scope)?;
         }
 
         Ok(())
@@ -5251,6 +5434,7 @@ impl<'a> BodyBuilder<'a> {
             continue_block: header_block,
             break_destination: context_destination,
             break_value_allowed,
+            defer_scope_depth: self.defer_scopes.len(),
         });
 
         self.current_block = body_block;
@@ -5315,6 +5499,7 @@ impl<'a> BodyBuilder<'a> {
             continue_block: cond_block,
             break_destination: context_destination,
             break_value_allowed: false,
+            defer_scope_depth: self.defer_scopes.len(),
         });
 
         self.current_block = body_block;
@@ -5361,31 +5546,61 @@ impl<'a> BodyBuilder<'a> {
                 return Ok(());
             }
         };
+        let break_value = if let Some(value_expr) = value {
+            let expected = context
+                .break_destination
+                .as_ref()
+                .and_then(|dest| match &dest.ty.kind {
+                    TyKind::Tuple(elements) if elements.is_empty() => None,
+                    TyKind::Error(_) => None,
+                    _ => Some(&dest.ty),
+                });
+            let (temp_place, temp_ty) = if let Some(expected_ty) = expected {
+                let temp_local = self.allocate_temp(expected_ty.clone(), value_expr.span);
+                let temp_place = mir::Place::from_local(temp_local);
+                self.lower_expr_into_place(value_expr, temp_place.clone(), expected_ty)?;
+                (temp_place, expected_ty.clone())
+            } else {
+                let operand = self.lower_operand(value_expr, None)?;
+                let temp_local = self.allocate_temp(operand.ty.clone(), value_expr.span);
+                let temp_place = mir::Place::from_local(temp_local);
+                self.push_statement(mir::Statement {
+                    source_info: value_expr.span,
+                    kind: mir::StatementKind::Assign(
+                        temp_place.clone(),
+                        mir::Rvalue::Use(operand.operand),
+                    ),
+                });
+                (temp_place, operand.ty)
+            };
+            Some((temp_place, temp_ty))
+        } else {
+            None
+        };
+        self.control_flow_emitted = false;
+        self.unwind_defer_scopes_to(context.defer_scope_depth)?;
+        if self.control_flow_emitted {
+            return Ok(());
+        }
 
-        if let Some(value_expr) = value {
+        if let Some((value_place, value_ty)) = break_value {
             if !context.break_value_allowed {
                 self.lowering.emit_error(
                     span,
                     "`break` with a value is only supported inside `loop` expressions",
                 );
             } else if let Some(dest) = context.break_destination.as_ref() {
-                let expected = match &dest.ty.kind {
-                    TyKind::Tuple(elements) if elements.is_empty() => None,
-                    TyKind::Error(_) => None,
-                    _ => Some(&dest.ty),
-                };
-                let operand = self.lower_operand(value_expr, expected)?;
                 let statement = mir::Statement {
-                    source_info: value_expr.span,
+                    source_info: span,
                     kind: mir::StatementKind::Assign(
                         dest.place.clone(),
-                        mir::Rvalue::Use(operand.operand),
+                        mir::Rvalue::Use(mir::Operand::Copy(value_place)),
                     ),
                 };
                 self.push_statement(statement);
                 if dest.place.projection.is_empty() {
-                    self.locals[dest.place.local as usize].ty = operand.ty.clone();
-                    if let Some(struct_def) = self.struct_def_from_ty(&operand.ty) {
+                    self.locals[dest.place.local as usize].ty = value_ty.clone();
+                    if let Some(struct_def) = self.struct_def_from_ty(&value_ty) {
                         self.local_structs.insert(dest.place.local, struct_def);
                     }
                 }
@@ -5418,6 +5633,7 @@ impl<'a> BodyBuilder<'a> {
         };
         self.set_current_terminator(goto);
         self.current_block = self.new_block();
+        self.control_flow_emitted = true;
         Ok(())
     }
 
@@ -5430,6 +5646,11 @@ impl<'a> BodyBuilder<'a> {
                 return Ok(());
             }
         };
+        self.control_flow_emitted = false;
+        self.unwind_defer_scopes_to(context.defer_scope_depth)?;
+        if self.control_flow_emitted {
+            return Ok(());
+        }
 
         let goto = mir::Terminator {
             source_info: span,
@@ -5439,15 +5660,36 @@ impl<'a> BodyBuilder<'a> {
         };
         self.set_current_terminator(goto);
         self.current_block = self.new_block();
+        self.control_flow_emitted = true;
         Ok(())
     }
 
     fn lower_return(&mut self, span: Span, value: Option<&hir::Expr>) -> Result<()> {
         let return_ty = self.locals[0].ty.clone();
         let return_place = mir::Place::from_local(0);
+        let return_value = if let Some(value_expr) = value {
+            let temp_local = self.allocate_temp(return_ty.clone(), value_expr.span);
+            let temp_place = mir::Place::from_local(temp_local);
+            self.lower_expr_into_place(value_expr, temp_place.clone(), &return_ty)?;
+            Some(temp_place)
+        } else {
+            None
+        };
 
-        if let Some(value_expr) = value {
-            self.lower_expr_into_place(value_expr, return_place.clone(), &return_ty)?;
+        self.control_flow_emitted = false;
+        self.unwind_defer_scopes_to(0)?;
+        if self.control_flow_emitted {
+            return Ok(());
+        }
+
+        if let Some(value_place) = return_value {
+            self.push_statement(mir::Statement {
+                source_info: span,
+                kind: mir::StatementKind::Assign(
+                    return_place.clone(),
+                    mir::Rvalue::Use(mir::Operand::Copy(value_place)),
+                ),
+            });
         } else {
             if !matches!(return_ty.kind, TyKind::Tuple(ref elems) if elems.is_empty()) {
                 self.lowering
@@ -5461,6 +5703,7 @@ impl<'a> BodyBuilder<'a> {
         };
         self.set_current_terminator(terminator);
         self.current_block = self.new_block();
+        self.control_flow_emitted = true;
         Ok(())
     }
 
@@ -6469,6 +6712,9 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::While(cond, block) => {
                 self.lower_while_expr(expr.span, cond, block, None)?;
+            }
+            hir::ExprKind::Try(expr_try) => {
+                self.lower_try_expr(expr, expr_try, None, true)?;
             }
             hir::ExprKind::Break(value) => {
                 self.lower_break(expr.span, value.as_deref())?;
@@ -8518,7 +8764,7 @@ impl<'a> BodyBuilder<'a> {
                 func: func_operand,
                 args: lowered_args,
                 destination: mir_destination.clone(),
-                cleanup: None,
+                cleanup: self.current_unwind_target,
                 from_hir_call: true,
                 fn_span: expr.span,
             },
@@ -9753,6 +9999,9 @@ impl<'a> BodyBuilder<'a> {
                 if call.kind == IntrinsicCallKind::CatchUnwind {
                     return self.lower_catch_unwind(expr, call, None);
                 }
+                if call.kind == IntrinsicCallKind::CatchUnwindResult {
+                    return self.lower_catch_unwind_result(expr, call, None);
+                }
                 if call.kind == IntrinsicCallKind::TimeNow {
                     let args = &call.callargs;
                     if !args.is_empty() {
@@ -10736,7 +10985,7 @@ impl<'a> BodyBuilder<'a> {
                                         mir::Place::from_local(result_local),
                                         after_block,
                                     )),
-                                    cleanup: None,
+                                    cleanup: self.current_unwind_target,
                                     from_hir_call: true,
                                     fn_span: span,
                                 },
@@ -10800,7 +11049,7 @@ impl<'a> BodyBuilder<'a> {
                 func,
                 args,
                 destination: Some((mir::Place::from_local(result_local), after_block)),
-                cleanup: None,
+                cleanup: self.current_unwind_target,
                 from_hir_call: true,
                 fn_span: span,
             },
@@ -10813,6 +11062,62 @@ impl<'a> BodyBuilder<'a> {
             kind: mir::TerminatorKind::Unreachable,
         });
         self.current_block = self.new_block();
+        Ok(())
+    }
+
+    fn lower_panic(&mut self, span: Span, args: &[hir::CallArg]) -> Result<()> {
+        let message = if let Some(arg) = args.first() {
+            match &arg.value.kind {
+                hir::ExprKind::Literal(hir::Lit::Str(message)) => message.clone(),
+                _ => {
+                    self.lowering
+                        .emit_error(span, "panic expects a string literal in compiled backends");
+                    "<panic message unavailable>".to_string()
+                }
+            }
+        } else {
+            "panic".to_string()
+        };
+
+        let sig = mir::FunctionSig {
+            inputs: vec![self.lowering.raw_string_ptr_ty()],
+            output: MirLowering::unit_ty(),
+        };
+        self.lowering.ensure_runtime_stub("fp_panic", &sig);
+        let fn_ty = self.lowering.function_pointer_ty(&sig);
+        let func = mir::Operand::Constant(mir::Constant {
+            span,
+            user_ty: None,
+            literal: mir::ConstantKind::Fn(mir::Symbol::new("fp_panic".to_string()), fn_ty),
+        });
+        let args = vec![mir::Operand::Constant(mir::Constant {
+            span,
+            user_ty: None,
+            literal: mir::ConstantKind::Str(message),
+        })];
+
+        let result_local = self.allocate_temp(MirLowering::unit_ty(), span);
+        let after_block = self.new_block();
+        let terminator = mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Call {
+                func,
+                args,
+                destination: Some((mir::Place::from_local(result_local), after_block)),
+                cleanup: self.current_unwind_target,
+                from_hir_call: true,
+                fn_span: span,
+            },
+        };
+        self.blocks[self.current_block as usize].terminator = Some(terminator);
+
+        self.current_block = after_block;
+        self.set_current_terminator(mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Unreachable,
+        });
+        self.current_block = self.new_block();
+        self.control_flow_emitted = true;
         Ok(())
     }
 
@@ -10940,6 +11245,162 @@ impl<'a> BodyBuilder<'a> {
                     user_ty: None,
                     literal: mir::ConstantKind::Bool(false),
                 })),
+            ),
+        });
+        self.set_current_terminator(mir::Terminator {
+            source_info: expr.span,
+            kind: mir::TerminatorKind::Goto { target: join_block },
+        });
+
+        self.current_block = join_block;
+        Ok(OperandInfo {
+            operand: mir::Operand::copy(result_place),
+            ty: result_ty,
+        })
+    }
+
+    fn lower_catch_unwind_result(
+        &mut self,
+        expr: &hir::Expr,
+        call: &hir::IntrinsicCallExpr,
+        destination: Option<mir::Place>,
+    ) -> Result<OperandInfo> {
+        let args = &call.callargs;
+        let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
+
+        if args.len() != 1 {
+            self.lowering.emit_error(
+                expr.span,
+                "catch_unwind_result expects exactly one callable argument",
+            );
+            return Ok(self.constant_bool_operand(false, expr.span));
+        }
+
+        let callee = arg_values[0];
+        let mut call_args: Vec<mir::Operand> = Vec::new();
+        let (func, sig, _name) = if let hir::ExprKind::Struct(path, _) = &callee.kind {
+            let struct_name = path.segments.last().map(|seg| seg.name.as_str());
+            let closure_suffix = struct_name.and_then(|name| name.strip_prefix("__Closure"));
+            if let Some(suffix) = closure_suffix {
+                let env = self.lower_operand(callee, None)?;
+                let call_name = format!("__closure{}_call", suffix);
+                let path = hir::Path {
+                    segments: vec![hir::PathSegment {
+                        name: hir::Symbol::new(call_name),
+                        args: None,
+                    }],
+                    res: None,
+                };
+                let call_expr = hir::Expr {
+                    hir_id: expr.hir_id,
+                    kind: hir::ExprKind::Path(path),
+                    span: expr.span,
+                };
+                call_args.push(env.operand);
+                self.resolve_callee(&call_expr)?
+            } else {
+                self.resolve_callee(callee)?
+            }
+        } else {
+            self.resolve_callee(callee)?
+        };
+        match (call_args.is_empty(), sig.inputs.len(), call_args.len()) {
+            (true, 0, _) => {}
+            (true, _, _) => {
+                self.lowering.emit_error(
+                    expr.span,
+                    "catch_unwind_result only supports zero-argument callables",
+                );
+            }
+            (false, expected, actual) if expected != actual => {
+                self.lowering.emit_error(
+                    expr.span,
+                    "catch_unwind_result closure must not take user arguments",
+                );
+            }
+            (false, _, _) => {}
+        }
+
+        let result_ty = Ty {
+            kind: TyKind::Tuple(vec![
+                Box::new(Ty { kind: TyKind::Bool }),
+                Box::new(sig.output.clone()),
+            ]),
+        };
+        let result_place = destination.unwrap_or_else(|| {
+            let local_id = self.allocate_temp(result_ty.clone(), expr.span);
+            mir::Place::from_local(local_id)
+        });
+        if (result_place.local as usize) < self.locals.len() {
+            self.locals[result_place.local as usize].ty = result_ty.clone();
+        }
+
+        let call_result_local = self.allocate_temp(sig.output.clone(), expr.span);
+        let call_result_place = mir::Place::from_local(call_result_local);
+
+        let ok_block = self.new_block();
+        let unwind_block = self.new_block();
+        if let Some(block) = self.blocks.get_mut(unwind_block as usize) {
+            block.is_cleanup = true;
+        }
+        let join_block = self.new_block();
+
+        let terminator = mir::Terminator {
+            source_info: expr.span,
+            kind: mir::TerminatorKind::Call {
+                func,
+                args: call_args,
+                destination: Some((call_result_place.clone(), ok_block)),
+                cleanup: Some(unwind_block),
+                from_hir_call: true,
+                fn_span: expr.span,
+            },
+        };
+        self.blocks[self.current_block as usize].terminator = Some(terminator);
+
+        self.current_block = ok_block;
+        self.push_statement(mir::Statement {
+            source_info: expr.span,
+            kind: mir::StatementKind::Assign(
+                result_place.clone(),
+                mir::Rvalue::Aggregate(
+                    mir::AggregateKind::Tuple,
+                    vec![
+                        mir::Operand::Constant(mir::Constant {
+                            span: expr.span,
+                            user_ty: None,
+                            literal: mir::ConstantKind::Bool(true),
+                        }),
+                        mir::Operand::Copy(call_result_place),
+                    ],
+                ),
+            ),
+        });
+        self.set_current_terminator(mir::Terminator {
+            source_info: expr.span,
+            kind: mir::TerminatorKind::Goto { target: join_block },
+        });
+
+        self.current_block = unwind_block;
+        self.push_statement(mir::Statement {
+            source_info: expr.span,
+            kind: mir::StatementKind::Assign(
+                result_place.clone(),
+                mir::Rvalue::Aggregate(
+                    mir::AggregateKind::Tuple,
+                    vec![
+                        mir::Operand::Constant(mir::Constant {
+                            span: expr.span,
+                            user_ty: None,
+                            literal: mir::ConstantKind::Bool(false),
+                        }),
+                        mir::Operand::Constant(mir::Constant {
+                            span: expr.span,
+                            user_ty: None,
+                            literal: self.lowering.default_constant_for_ty(&sig.output),
+                        }),
+                    ],
+                ),
             ),
         });
         self.set_current_terminator(mir::Terminator {
@@ -11901,6 +12362,14 @@ impl<'a> BodyBuilder<'a> {
                 };
                 self.lower_while_expr(expr.span, cond, block, Some(destination))?;
             }
+            hir::ExprKind::Try(expr_try) => {
+                self.lower_try_expr(
+                    expr,
+                    expr_try,
+                    Some((place.clone(), expected_ty.clone())),
+                    false,
+                )?;
+            }
             hir::ExprKind::Break(value) => {
                 self.lower_break(expr.span, value.as_deref())?;
             }
@@ -12132,6 +12601,10 @@ impl<'a> BodyBuilder<'a> {
                 }
                 IntrinsicCallKind::CatchUnwind => {
                     self.lower_catch_unwind(expr, call, Some(place.clone()))?;
+                    return Ok(());
+                }
+                IntrinsicCallKind::CatchUnwindResult => {
+                    self.lower_catch_unwind_result(expr, call, Some(place.clone()))?;
                     return Ok(());
                 }
                 IntrinsicCallKind::TimeNow => {
@@ -12708,7 +13181,7 @@ impl<'a> BodyBuilder<'a> {
                             func: func_operand,
                             args: lowered_args,
                             destination: destination.clone(),
-                            cleanup: None,
+                            cleanup: self.current_unwind_target,
                             from_hir_call: true,
                             fn_span: expr.span,
                         },
@@ -12795,7 +13268,7 @@ impl<'a> BodyBuilder<'a> {
                                         func: func_operand,
                                         args: lowered_args,
                                         destination: destination.clone(),
-                                        cleanup: None,
+                                        cleanup: self.current_unwind_target,
                                         from_hir_call: true,
                                         fn_span: expr.span,
                                     },
@@ -12879,7 +13352,7 @@ impl<'a> BodyBuilder<'a> {
                                         func: func_operand,
                                         args: lowered_args,
                                         destination: destination.clone(),
-                                        cleanup: None,
+                                        cleanup: self.current_unwind_target,
                                         from_hir_call: true,
                                         fn_span: expr.span,
                                     },
@@ -13239,7 +13712,7 @@ impl<'a> BodyBuilder<'a> {
                         func: func_operand,
                         args: lowered_args,
                         destination: destination.clone(),
-                        cleanup: None,
+                        cleanup: self.current_unwind_target,
                         from_hir_call: true,
                         fn_span: expr.span,
                     },

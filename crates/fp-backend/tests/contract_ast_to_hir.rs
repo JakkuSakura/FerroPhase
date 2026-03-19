@@ -74,17 +74,67 @@ fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
 }
 
 #[test]
-fn propagates_unimplemented_expression_error() {
+fn preserves_try_expression_for_backend_lowering() -> OptimizeResult<()> {
     use fp_core::ast::{Expr, ExprKind, ExprTry};
 
     let mut generator = HirGenerator::new();
-    let unsupported: Expr = ExprKind::Try(ExprTry {
+    let try_expr: Expr = ExprKind::Try(ExprTry {
         span: fp_core::span::Span::null(),
         expr: Box::new(Expr::unit()),
+        catches: Vec::new(),
+        elze: None,
+        finally: None,
     })
     .into();
-    let result = generator.transform_expr(&unsupported);
-    assert!(result.is_err());
+
+    let program = generator.transform_expr(&try_expr)?;
+
+    let main_item = program
+        .items
+        .iter()
+        .find(|item| matches!(&item.kind, ItemKind::Function(func) if func.sig.name == "main"))
+        .expect("main function present");
+
+    let ItemKind::Function(main_fn) = &main_item.kind else {
+        panic!("main item should be a function");
+    };
+    let body = main_fn.body.as_ref().expect("main should have a body");
+    assert!(
+        matches!(body.value.kind, hir::ExprKind::Try(_)),
+        "try should remain a first-class HIR node for MIR lowering",
+    );
+
+    Ok(())
+}
+
+#[test]
+fn lowers_defer_statement_before_hir_conversion() -> OptimizeResult<()> {
+    use fp_core::ast::{BlockStmt, Expr, ExprBlock, ExprKind, StmtDefer};
+
+    let expr = Expr::new(ExprKind::Block(ExprBlock::new_stmts(vec![
+        BlockStmt::Defer(StmtDefer {
+            span: fp_core::span::Span::null(),
+            expr: Box::new(call_expr(&["cleanup"], Vec::new())),
+        }),
+        BlockStmt::Expr(fp_core::ast::BlockStmtExpr::new(Expr::unit()).with_semicolon(false)),
+    ])));
+    let file = fp_core::ast::File {
+        path: "<memory>".into(),
+        items: vec![
+            make_fn("cleanup", Vec::new(), fp_core::ast::Ty::unit(), Expr::unit()),
+            fp_core::ast::Item::from(fp_core::ast::ItemKind::Expr(expr)),
+        ],
+    };
+
+    let program = transform_file(file)?;
+    assert!(
+        program.items.iter().any(|item| {
+            matches!(&item.kind, ItemKind::Function(func) if func.sig.name == "cleanup")
+        }),
+        "cleanup function should still lower",
+    );
+
+    Ok(())
 }
 
 #[test]

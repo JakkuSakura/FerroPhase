@@ -180,15 +180,38 @@ impl HirGenerator {
                 hir::ExprKind::Block(block)
             }
             ExprKind::Try(expr_try) => {
-                self.transform_expr_to_hir(expr_try.expr.as_ref())?;
-                self.add_error_or_warning(
-                    Diagnostic::error("`?` operator lowering not implemented".to_string())
-                        .with_source_context(DIAGNOSTIC_CONTEXT)
-                        .with_span(expr_span),
-                );
-                return Err(fp_core::error::Error::from(
-                    "`?` operator lowering not implemented",
-                ));
+                let body = Box::new(self.transform_expr_to_hir(expr_try.expr.as_ref())?);
+                let mut catches = Vec::with_capacity(expr_try.catches.len());
+                for catch in &expr_try.catches {
+                    let pat = catch
+                        .pat
+                        .as_ref()
+                        .map(|pat| self.transform_pattern(pat.as_ref()))
+                        .transpose()?;
+                    catches.push(hir::TryCatch {
+                        hir_id: self.next_id(),
+                        pat,
+                        body: self.transform_expr_to_hir(catch.body.as_ref())?,
+                    });
+                }
+                let elze = expr_try
+                    .elze
+                    .as_ref()
+                    .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+                    .transpose()?
+                    .map(Box::new);
+                let finally = expr_try
+                    .finally
+                    .as_ref()
+                    .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+                    .transpose()?
+                    .map(Box::new);
+                hir::ExprKind::Try(hir::TryExpr {
+                    expr: body,
+                    catches,
+                    elze,
+                    finally,
+                })
             }
             ExprKind::Await(expr_await) => {
                 let inner_expr = self.transform_expr_to_hir(expr_await.base.as_ref())?;
