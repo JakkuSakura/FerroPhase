@@ -167,6 +167,7 @@ fn lower_function(function: &WitFunction) -> Item {
     signature.ret_ty = map_results(&function.results);
 
     Item::from(ItemDeclFunction {
+        attrs: Vec::new(),
         ty_annotation: None,
         name: function.name.clone(),
         sig: signature,
