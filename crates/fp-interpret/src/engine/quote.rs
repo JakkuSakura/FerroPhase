@@ -216,6 +216,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                     new_stmts.push(stmt.clone());
                 }
+                BlockStmt::Defer(stmt_defer) => {
+                    self.materialize_quote_expr(stmt_defer.expr.as_mut());
+                    new_stmts.push(stmt.clone());
+                }
                 BlockStmt::Item(_) | BlockStmt::Noop | BlockStmt::Any(_) => {
                     new_stmts.push(stmt.clone());
                 }
@@ -387,6 +391,15 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Try(expr_try) => {
                 self.materialize_quote_expr(expr_try.expr.as_mut());
+                for catch in &mut expr_try.catches {
+                    self.materialize_quote_expr(catch.body.as_mut());
+                }
+                if let Some(elze) = expr_try.elze.as_mut() {
+                    self.materialize_quote_expr(elze.as_mut());
+                }
+                if let Some(finally) = expr_try.finally.as_mut() {
+                    self.materialize_quote_expr(finally.as_mut());
+                }
             }
             ExprKind::Splat(splat) => {
                 self.materialize_quote_expr(splat.iter.as_mut());
@@ -442,6 +455,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 BlockStmt::Let(_) => {
                     self.emit_error("quote<item> does not support let statements");
+                    return None;
+                }
+                BlockStmt::Defer(_) => {
+                    self.emit_error("quote<item> does not support defer statements");
                     return None;
                 }
                 BlockStmt::Noop => {}

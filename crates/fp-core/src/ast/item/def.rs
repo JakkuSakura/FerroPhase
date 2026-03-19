@@ -77,6 +77,19 @@ impl ItemDefType {
     }
 }
 common_struct! {
+    pub struct ItemOpaqueType {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
+        pub visibility: Visibility,
+        pub name: Ident,
+    }
+}
+impl ItemOpaqueType {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+common_struct! {
     pub struct ItemDefConst {
         #[serde(default)]
         pub attrs: Vec<Attribute>,

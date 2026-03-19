@@ -264,6 +264,7 @@ impl Parser {
                 }
             }
             Some("if") => return self.parse_if_expr(),
+            Some("try") => return self.parse_try_expr(),
             Some("loop") => return self.parse_loop_expr(),
             Some("while") => return self.parse_while_expr(),
             Some("for") => return self.parse_for_expr(),
@@ -423,6 +424,7 @@ impl Parser {
     fn parse_block_stmt(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         match self.peek_non_trivia_normalized() {
             Some("let") => self.parse_let_stmt(),
+            Some("defer") => self.parse_defer_stmt(),
             _ if self.is_item_stmt_start() => self.parse_item_stmt(),
             _ => self.parse_expr_stmt(),
         }
@@ -431,8 +433,17 @@ impl Parser {
     fn is_item_stmt_start(&self) -> bool {
         match self.peek_non_trivia_normalized() {
             Some(
-                "fn" | "struct" | "enum" | "type" | "trait" | "impl" | "use" | "extern" | "mod"
-                | "static",
+                "fn"
+                | "struct"
+                | "enum"
+                | "type"
+                | "trait"
+                | "impl"
+                | "use"
+                | "extern"
+                | "mod"
+                | "static"
+                | "opaque",
             ) => true,
             Some("const") => {
                 // Disambiguate `const { ... }` (expression) vs `const NAME: Ty = ...;` (item).
@@ -545,6 +556,21 @@ impl Parser {
 
         let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::BlockStmtExpr, children, span))
+    }
+
+    fn parse_defer_stmt(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = Vec::new();
+        self.bump_trivia_into(&mut children);
+        self.bump_token_into(&mut children); // `defer`
+        self.bump_trivia_into(&mut children);
+        let expr = self.parse_expr_bp(0)?;
+        children.push(SyntaxElement::Node(Box::new(expr)));
+        self.bump_trivia_into(&mut children);
+        self.expect_token_raw(";")?;
+        self.bump_token_into(&mut children);
+
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(SyntaxKind::BlockStmtDefer, children, span))
     }
 
     fn parse_quote_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
@@ -691,6 +717,74 @@ impl Parser {
         }
         let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprIf, children, span))
+    }
+
+    fn parse_try_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = Vec::new();
+        self.bump_trivia_into(&mut children);
+        self.bump_token_into(&mut children); // `try`
+        self.bump_trivia_into(&mut children);
+
+        let body = self.parse_block_expr()?;
+        children.push(SyntaxElement::Node(Box::new(body)));
+        self.bump_trivia_into(&mut children);
+
+        let mut saw_clause = false;
+        loop {
+            match self.peek_non_trivia_normalized() {
+                Some("catch") => {
+                    saw_clause = true;
+                    let catch = self.parse_try_catch_clause()?;
+                    children.push(SyntaxElement::Node(Box::new(catch)));
+                    self.bump_trivia_into(&mut children);
+                }
+                Some("else") => {
+                    saw_clause = true;
+                    self.bump_token_into(&mut children);
+                    self.bump_trivia_into(&mut children);
+                    let elze = self.parse_block_expr()?;
+                    children.push(SyntaxElement::Node(Box::new(elze)));
+                    self.bump_trivia_into(&mut children);
+                }
+                Some("finally") => {
+                    saw_clause = true;
+                    self.bump_token_into(&mut children);
+                    self.bump_trivia_into(&mut children);
+                    let finally = self.parse_block_expr()?;
+                    children.push(SyntaxElement::Node(Box::new(finally)));
+                    self.bump_trivia_into(&mut children);
+                }
+                _ => break,
+            }
+        }
+
+        if !saw_clause {
+            return Err(self.error("expected catch, else, or finally after try block"));
+        }
+
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(SyntaxKind::ExprTry, children, span))
+    }
+
+    fn parse_try_catch_clause(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = Vec::new();
+        self.bump_token_into(&mut children); // `catch`
+        self.bump_trivia_into(&mut children);
+
+        match self.peek_non_trivia_raw() {
+            Some("{") => {}
+            Some(_) => {
+                let pat = self.parse_pattern()?;
+                children.push(SyntaxElement::Node(Box::new(pat)));
+                self.bump_trivia_into(&mut children);
+            }
+            None => return Err(self.error("unexpected end of input after catch")),
+        }
+
+        let body = self.parse_block_expr()?;
+        children.push(SyntaxElement::Node(Box::new(body)));
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(SyntaxKind::ExprTryCatch, children, span))
     }
 
     fn parse_loop_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {

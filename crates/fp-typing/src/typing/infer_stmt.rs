@@ -57,6 +57,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     last = self.fresh_type_var();
                     self.bind(last, TypeTerm::Unit);
                 }
+                BlockStmt::Defer(stmt_defer) => {
+                    self.infer_expr(stmt_defer.expr.as_mut())?;
+                    last = self.fresh_type_var();
+                    self.bind(last, TypeTerm::Unit);
+                }
                 BlockStmt::Expr(expr_stmt) => {
                     // If this is a splice in statement position, enforce stmt token
                     if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {

@@ -614,7 +614,31 @@ impl ExprTuple {
 
 impl ExprTry {
     pub fn span(&self) -> Span {
-        span_or(self.span, self.expr.span())
+        span_or(
+            self.span,
+            union_spans(
+                Some(self.expr.span())
+                    .into_iter()
+                    .chain(self.catches.iter().map(ExprTryCatch::span))
+                    .chain(self.elze.as_ref().map(|expr| expr.span()))
+                    .chain(self.finally.as_ref().map(|expr| expr.span())),
+            ),
+        )
+    }
+}
+
+impl ExprTryCatch {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            union_spans(
+                self.pat
+                    .as_ref()
+                    .map(|pat| pat.span())
+                    .into_iter()
+                    .chain([self.body.span()]),
+            ),
+        )
     }
 }
 
@@ -914,6 +938,11 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
             invoke.args.clone(),
             invoke.kwargs.clone(),
         )),
+        IntrinsicCallKind::CatchUnwindResult => Some(ExprIntrinsicCall::new(
+            kind,
+            invoke.args.clone(),
+            invoke.kwargs.clone(),
+        )),
         IntrinsicCallKind::ProcMacroTokenStreamFromStr => {
             if invoke.args.len() != 1 {
                 return None;
@@ -969,6 +998,7 @@ fn detect_intrinsic_call(locator: &Name) -> Option<IntrinsicCallKind> {
             "println" => Some(IntrinsicCallKind::Println),
             "len" => Some(IntrinsicCallKind::Len),
             "catch_unwind" => Some(IntrinsicCallKind::CatchUnwind),
+            "catch_unwind_result" => Some(IntrinsicCallKind::CatchUnwindResult),
             _ => None,
         },
         Name::Path(path) => {
@@ -1491,6 +1521,22 @@ common_struct! {
         #[serde(default)]
         pub span: Span,
         pub expr: BExpr,
+        #[serde(default)]
+        pub catches: Vec<ExprTryCatch>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub elze: Option<BExpr>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub finally: Option<BExpr>,
+    }
+}
+
+common_struct! {
+    pub struct ExprTryCatch {
+        #[serde(default)]
+        pub span: Span,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub pat: Option<BPattern>,
+        pub body: BExpr,
     }
 }
 

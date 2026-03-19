@@ -315,6 +315,43 @@ fn parse_expr_ast_lowers_const_block() {
 }
 
 #[test]
+fn parse_block_ast_handles_defer_stmt() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("{ defer close(handle); 1 }").unwrap();
+    let ExprKind::Block(block) = expr.kind() else {
+        panic!("expected block expr, got {:?}", expr.kind());
+    };
+    assert!(matches!(block.stmts.first(), Some(BlockStmt::Defer(_))));
+}
+
+#[test]
+fn parse_expr_ast_handles_structured_try() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("try { run() } catch err { recover(err) } else { ok() } finally { done() }")
+        .unwrap();
+    let ExprKind::Try(expr_try) = expr.kind() else {
+        panic!("expected try expr, got {:?}", expr.kind());
+    };
+    assert_eq!(expr_try.catches.len(), 1);
+    assert!(expr_try.elze.is_some());
+    assert!(expr_try.finally.is_some());
+}
+
+#[test]
+fn parse_items_ast_handles_opaque_type() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser.parse_items_ast("opaque type Session;").unwrap();
+    match items.first().map(|item| item.kind()) {
+        Some(ItemKind::OpaqueType(item)) => assert_eq!(item.name.as_str(), "Session"),
+        other => panic!("expected opaque type item, got {:?}", other),
+    }
+}
+
+#[test]
 fn parses_const_block_with_for_tuple_pattern() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

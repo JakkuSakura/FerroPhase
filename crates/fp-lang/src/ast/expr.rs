@@ -12,14 +12,15 @@ use fp_core::ast::{
     ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprKwArg,
     ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn,
     ExprSelect, ExprSelectType, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural,
-    ExprTry, ExprTuple, ExprWhile, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart,
-    Ident, ImplTraits, MacroDelimiter, MacroInvocation, MacroTokenTree, Name, ParameterPath,
-    ParameterPathSegment, Path, Pattern, PatternBind, PatternIdent, PatternKind, PatternQuote,
-    PatternQuotePlural, PatternStruct, PatternStructField, PatternStructural, PatternTuple,
-    PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind,
-    QuoteItemKind, StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind,
-    TypeBounds, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice,
-    TypeStructural, TypeTuple, TypeType, TypeVec, Value, ValueNone, ValueString,
+    ExprTry, ExprTryCatch, ExprTuple, ExprWhile, FormatArgRef, FormatPlaceholder, FormatSpec,
+    FormatTemplatePart, Ident, ImplTraits, MacroDelimiter, MacroInvocation, MacroTokenTree, Name,
+    ParameterPath, ParameterPathSegment, Path, Pattern, PatternBind, PatternIdent, PatternKind,
+    PatternQuote, PatternQuotePlural, PatternStruct, PatternStructField, PatternStructural,
+    PatternTuple, PatternTupleStruct, PatternType, PatternVariant, PatternWildcard,
+    QuoteFragmentKind, QuoteItemKind, StmtDefer, StmtLet, StructuralField, Ty, TypeArray,
+    TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeInt, TypePrimitive, TypeQuote,
+    TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeType, TypeVec, Value, ValueNone,
+    ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::IntrinsicCallKind;
@@ -946,11 +947,44 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             }
         }
         SyntaxKind::ExprTry => {
-            let base = first_child_expr(node)?;
-            let expr = lower_expr_from_cst(base)?;
+            let mut expr = None;
+            let mut catches = Vec::new();
+            let mut elze = None;
+            let mut finally = None;
+            let mut pending_clause = None::<&str>;
+
+            for child in &node.children {
+                match child {
+                    crate::syntax::SyntaxElement::Node(n) if n.kind == SyntaxKind::ExprTryCatch => {
+                        catches.push(lower_try_catch_from_cst(n)?);
+                    }
+                    crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
+                        let lowered = Box::new(lower_expr_from_cst(n)?);
+                        match (expr.is_none(), pending_clause) {
+                            (true, _) => expr = Some(lowered),
+                            (false, Some("else")) => elze = Some(lowered),
+                            (false, Some("finally")) => finally = Some(lowered),
+                            _ => return Err(LowerError::UnexpectedNode(SyntaxKind::ExprTry)),
+                        }
+                    }
+                    crate::syntax::SyntaxElement::Token(tok) if !tok.is_trivia() => {
+                        pending_clause = match tok.text.as_str() {
+                            "else" => Some("else"),
+                            "finally" => Some("finally"),
+                            _ => None,
+                        };
+                    }
+                    _ => {}
+                }
+            }
+
+            let expr = expr.ok_or(LowerError::UnexpectedNode(SyntaxKind::ExprTry))?;
             Ok(ExprKind::Try(ExprTry {
                 span: node.span,
-                expr: Box::new(expr),
+                expr,
+                catches,
+                elze,
+                finally,
             })
             .into())
         }
@@ -1310,6 +1344,7 @@ fn lower_block_from_cst(node: &SyntaxNode) -> Result<ExprBlock, LowerError> {
                 stmts.push(BlockStmt::item(item));
             }
             SyntaxKind::BlockStmtLet => stmts.push(lower_let_stmt(stmt)?),
+            SyntaxKind::BlockStmtDefer => stmts.push(lower_defer_stmt(stmt)?),
             SyntaxKind::BlockStmtExpr => {
                 let expr_node = stmt
                     .children
@@ -1391,6 +1426,38 @@ fn lower_let_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
         (None, init) => StmtLet::new(pat, init, None),
     };
     Ok(BlockStmt::Let(stmt))
+}
+
+fn lower_defer_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
+    let expr = first_child_expr(node)?;
+    Ok(BlockStmt::Defer(StmtDefer {
+        span: node.span,
+        expr: Box::new(lower_expr_from_cst(expr)?),
+    }))
+}
+
+fn lower_try_catch_from_cst(node: &SyntaxNode) -> Result<ExprTryCatch, LowerError> {
+    let mut pat = None;
+    let mut body = None;
+
+    for child in &node.children {
+        match child {
+            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Pattern => {
+                pat = Some(Box::new(lower_pattern_from_cst(n)?));
+            }
+            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
+                body = Some(Box::new(lower_expr_from_cst(n)?));
+            }
+            _ => {}
+        }
+    }
+
+    let body = body.ok_or(LowerError::UnexpectedNode(SyntaxKind::ExprTryCatch))?;
+    Ok(ExprTryCatch {
+        span: node.span,
+        pat,
+        body,
+    })
 }
 
 fn split_match_arm<'a>(

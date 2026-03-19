@@ -30,6 +30,7 @@ pub enum CstKind {
     ItemConst,
     ItemStatic,
     ItemTypeAlias,
+    ItemOpaqueType,
     ItemMacro,
     ItemExpr,
 
@@ -68,6 +69,7 @@ pub enum CstKind {
     ExprCast,
     ExprUnary,
     ExprTry,
+    ExprTryCatch,
     ExprAwait,
     ExprSelect,
     ExprIndex,
@@ -130,6 +132,7 @@ pub enum CstKind {
     StructField,
     BlockStmtItem,
     BlockStmtLet,
+    BlockStmtDefer,
     BlockStmtExpr,
 
     Error,
@@ -154,6 +157,7 @@ impl CstKind {
             | CstKind::ItemConst
             | CstKind::ItemStatic
             | CstKind::ItemTypeAlias
+            | CstKind::ItemOpaqueType
             | CstKind::ItemMacro
             | CstKind::ItemExpr => CstCategory::Item,
 
@@ -162,6 +166,7 @@ impl CstKind {
             | CstKind::ExprCast
             | CstKind::ExprUnary
             | CstKind::ExprTry
+            | CstKind::ExprTryCatch
             | CstKind::ExprAwait
             | CstKind::ExprSelect
             | CstKind::ExprIndex
@@ -220,7 +225,10 @@ impl CstKind {
             | CstKind::PatternTuple
             | CstKind::PatternType => CstCategory::Pattern,
 
-            CstKind::BlockStmtItem | CstKind::BlockStmtLet | CstKind::BlockStmtExpr => {
+            CstKind::BlockStmtItem
+            | CstKind::BlockStmtLet
+            | CstKind::BlockStmtDefer
+            | CstKind::BlockStmtExpr => {
                 CstCategory::Stmt
             }
 

@@ -348,7 +348,18 @@ impl<'ctx> AstInterpreter<'ctx> {
             },
             ExprKind::Closured(closured) => self.evaluate_function_body(closured.expr.as_mut()),
             ExprKind::Closure(closure) => self.evaluate_function_body(closure.body.as_mut()),
-            ExprKind::Try(expr_try) => self.evaluate_function_body(expr_try.expr.as_mut()),
+            ExprKind::Try(expr_try) => {
+                self.evaluate_function_body(expr_try.expr.as_mut());
+                for catch in &mut expr_try.catches {
+                    self.evaluate_function_body(catch.body.as_mut());
+                }
+                if let Some(elze) = expr_try.elze.as_mut() {
+                    self.evaluate_function_body(elze.as_mut());
+                }
+                if let Some(finally) = expr_try.finally.as_mut() {
+                    self.evaluate_function_body(finally.as_mut());
+                }
+            }
             ExprKind::FormatString(template) => {
                 let _ = template;
             }
@@ -511,6 +522,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 BlockStmt::Let(let_stmt) => {
                     self.evaluate_function_let_stmt(let_stmt);
+                    new_stmts.push(stmt);
+                }
+                BlockStmt::Defer(stmt_defer) => {
+                    self.evaluate_function_body(stmt_defer.expr.as_mut());
                     new_stmts.push(stmt);
                 }
                 BlockStmt::Noop | BlockStmt::Any(_) => new_stmts.push(stmt),

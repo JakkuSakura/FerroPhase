@@ -493,6 +493,14 @@ fn parse_item_cst(
             expect_symbol(input, ";")?;
             Ok(node(SyntaxKind::ItemTypeAlias, children))
         }
+        TokenKind::Keyword(Keyword::Opaque) => {
+            advance(input);
+            expect_keyword(input, Keyword::Type)?;
+            let name = expect_ident_token(input)?;
+            children.push(SyntaxElement::Token(name));
+            expect_symbol(input, ";")?;
+            Ok(node(SyntaxKind::ItemOpaqueType, children))
+        }
         TokenKind::Keyword(Keyword::Const) => {
             if matches!(
                 input.get(1),

@@ -22,6 +22,9 @@ pub enum Keyword {
     Fn,
     If,
     Else,
+    Try,
+    Catch,
+    Finally,
     Loop,
     While,
     For,
@@ -38,6 +41,7 @@ pub enum Keyword {
     Enum,
     Type,
     Static,
+    Opaque,
     Mod,
     Trait,
     Impl,
@@ -48,6 +52,7 @@ pub enum Keyword {
     Crate,
     As,
     Pub,
+    Defer,
 }
 
 impl Keyword {
@@ -61,6 +66,9 @@ impl Keyword {
             "fn" => Some(Self::Fn),
             "if" => Some(Self::If),
             "else" => Some(Self::Else),
+            "try" => Some(Self::Try),
+            "catch" => Some(Self::Catch),
+            "finally" => Some(Self::Finally),
             "loop" => Some(Self::Loop),
             "while" => Some(Self::While),
             "for" => Some(Self::For),
@@ -77,6 +85,7 @@ impl Keyword {
             "enum" => Some(Self::Enum),
             "type" => Some(Self::Type),
             "static" => Some(Self::Static),
+            "opaque" => Some(Self::Opaque),
             "mod" => Some(Self::Mod),
             "trait" => Some(Self::Trait),
             "impl" => Some(Self::Impl),
@@ -87,6 +96,7 @@ impl Keyword {
             "crate" => Some(Self::Crate),
             "as" => Some(Self::As),
             "pub" => Some(Self::Pub),
+            "defer" => Some(Self::Defer),
             _ => None,
         }
     }

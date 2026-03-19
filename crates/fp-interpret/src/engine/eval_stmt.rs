@@ -7,6 +7,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         let span = match stmt {
             BlockStmt::Expr(expr_stmt) => expr_stmt.expr.span,
             BlockStmt::Let(stmt_let) => stmt_let.init.as_ref().and_then(|expr| expr.span),
+            BlockStmt::Defer(stmt_defer) => stmt_defer.expr.span,
             BlockStmt::Item(item) => item.span,
             BlockStmt::Noop | BlockStmt::Any(_) => None,
         };
@@ -90,6 +91,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             BlockStmt::Item(item) => {
                 self.evaluate_item(item.as_mut());
+                None
+            }
+            BlockStmt::Defer(stmt_defer) => {
+                let _ = self.eval_expr(stmt_defer.expr.as_mut());
                 None
             }
             BlockStmt::Noop => None,

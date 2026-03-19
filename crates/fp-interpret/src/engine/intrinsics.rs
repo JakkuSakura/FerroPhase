@@ -122,6 +122,44 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
             }
+            IntrinsicCallKind::CatchUnwindResult => {
+                if !call.kwargs.is_empty() {
+                    self.emit_error("catch_unwind_result does not accept named arguments");
+                    return RuntimeFlow::Value(Value::Tuple(ValueTuple::new(vec![
+                        Value::bool(false),
+                        Value::undefined(),
+                    ])));
+                }
+                let args = &mut call.args;
+                if args.len() != 1 {
+                    self.emit_error("catch_unwind_result expects exactly one callable argument");
+                    return RuntimeFlow::Value(Value::Tuple(ValueTuple::new(vec![
+                        Value::bool(false),
+                        Value::undefined(),
+                    ])));
+                }
+                let callable = self.eval_expr_runtime(&mut args[0]);
+                let value = match callable {
+                    RuntimeFlow::Value(value) => value,
+                    RuntimeFlow::Panic(_) => {
+                        return RuntimeFlow::Value(Value::Tuple(ValueTuple::new(vec![
+                            Value::bool(false),
+                            Value::undefined(),
+                        ])));
+                    }
+                    other => return other,
+                };
+                let flow = self.invoke_runtime_callable(value, Vec::new());
+                match flow {
+                    RuntimeFlow::Value(value) => RuntimeFlow::Value(Value::Tuple(ValueTuple::new(
+                        vec![Value::bool(true), value],
+                    ))),
+                    RuntimeFlow::Panic(_) => RuntimeFlow::Value(Value::Tuple(ValueTuple::new(
+                        vec![Value::bool(false), Value::undefined()],
+                    ))),
+                    other => other,
+                }
+            }
             IntrinsicCallKind::TimeNow => {
                 if !call.kwargs.is_empty() {
                     self.emit_error("time::now intrinsic does not accept named arguments");
@@ -409,7 +447,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
                 Value::string(token_stream_to_string(&stream.tokens))
             }
-            IntrinsicCallKind::Panic | IntrinsicCallKind::CatchUnwind => {
+            IntrinsicCallKind::Panic
+            | IntrinsicCallKind::CatchUnwind
+            | IntrinsicCallKind::CatchUnwindResult => {
                 self.emit_error(format!(
                     "intrinsic {:?} is not supported during const evaluation",
                     call.kind
@@ -675,7 +715,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
         let flow = self.eval_expr_runtime(&mut call.args[0]);
         let value = self.finish_runtime_flow(flow);
-        format!("{}", value)
+        self.render_panic_value(&value)
     }
 
     fn invoke_runtime_callable(&mut self, value: Value, args: Vec<Value>) -> RuntimeFlow {

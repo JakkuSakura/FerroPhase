@@ -174,6 +174,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                             self.push_scope();
                             self.block_stack.push(BlockFrame {
                                 last_value: Value::unit(),
+                                deferred: Vec::new(),
                             });
                             self.runtime_tasks.push(RuntimeTask::EvalBlock {
                                 block: block as *mut ExprBlock,
@@ -283,10 +284,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                     if idx >= block.stmts.len() {
                         let frame = self.block_stack.pop().unwrap_or(BlockFrame {
                             last_value: Value::unit(),
+                            deferred: Vec::new(),
                         });
-                        self.pop_scope();
-                        self.runtime_value_stack
-                            .push(RuntimeFlow::Value(frame.last_value));
+                        let flow = self.finalize_runtime_block_frame(frame);
+                        self.runtime_value_stack.push(flow);
                         continue;
                     }
                     let stmt = &mut block.stmts[idx];
@@ -391,6 +392,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 idx: idx + 1,
                             });
                         }
+                        BlockStmt::Defer(stmt_defer) => {
+                            if let Some(frame) = self.block_stack.last_mut() {
+                                frame.deferred.push(stmt_defer.expr.as_ref().clone());
+                            }
+                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                block: block_ptr,
+                                idx: idx + 1,
+                            });
+                        }
                         BlockStmt::Noop | BlockStmt::Any(_) => {
                             self.runtime_tasks.push(RuntimeTask::EvalBlock {
                                 block: block_ptr,
@@ -405,7 +415,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         None => RuntimeFlow::Value(Value::undefined()),
                     };
                     let RuntimeFlow::Value(value) = flow else {
-                        self.unwind_block_scopes();
+                        let flow = self.unwind_block_scopes_with_flow(flow);
                         return RuntimeStepOutcome::Complete(flow);
                     };
                     if has_value {
@@ -420,7 +430,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         None => RuntimeFlow::Value(Value::undefined()),
                     };
                     let RuntimeFlow::Value(value) = flow else {
-                        self.unwind_block_scopes();
+                        let flow = self.unwind_block_scopes_with_flow(flow);
                         return RuntimeStepOutcome::Complete(flow);
                     };
                     self.bind_pattern(&pat, value);
@@ -1074,7 +1084,44 @@ impl<'ctx> AstInterpreter<'ctx> {
             ExprKind::Loop(loop_expr) => self.eval_loop_runtime(loop_expr),
             ExprKind::While(while_expr) => self.eval_while_runtime(while_expr),
             ExprKind::For(for_expr) => self.eval_for_runtime(for_expr),
-            ExprKind::Try(expr_try) => self.eval_expr_runtime(expr_try.expr.as_mut()),
+            ExprKind::Try(expr_try) => {
+                let body_flow = self.eval_expr_runtime(expr_try.expr.as_mut());
+                let mut flow = match body_flow {
+                    RuntimeFlow::Panic(panic) => {
+                        let mut handled = None;
+                        for catch in &mut expr_try.catches {
+                            self.push_scope();
+                            if let Some(pat) = catch.pat.as_ref() {
+                                self.bind_pattern(pat.as_ref(), panic.clone());
+                            }
+                            let catch_flow = self.eval_expr_runtime(catch.body.as_mut());
+                            self.pop_scope();
+                            handled = Some(catch_flow);
+                            if !matches!(handled, Some(RuntimeFlow::Panic(_))) {
+                                break;
+                            }
+                        }
+                        handled.unwrap_or(RuntimeFlow::Panic(panic))
+                    }
+                    RuntimeFlow::Value(value) => {
+                        if let Some(elze) = expr_try.elze.as_mut() {
+                            self.eval_expr_runtime(elze.as_mut())
+                        } else {
+                            RuntimeFlow::Value(value)
+                        }
+                    }
+                    other => other,
+                };
+
+                if let Some(finally) = expr_try.finally.as_mut() {
+                    let finally_flow = self.eval_expr_runtime(finally.as_mut());
+                    if !matches!(finally_flow, RuntimeFlow::Value(_)) {
+                        flow = finally_flow;
+                    }
+                }
+
+                flow
+            }
             ExprKind::FormatString(template) => {
                 let mut args = Vec::new();
                 let mut kwargs = Vec::new();

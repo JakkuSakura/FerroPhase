@@ -19,6 +19,8 @@ pub enum IntrinsicCallKind {
     Panic,
     /// Execute a callable and catch panic flows, returning success state.
     CatchUnwind,
+    /// Execute a callable and return `(ok, value)` where `value` is defaulted on unwind.
+    CatchUnwindResult,
     /// Get the current time as seconds since the Unix epoch.
     TimeNow,
     /// Sleep for the given number of seconds.

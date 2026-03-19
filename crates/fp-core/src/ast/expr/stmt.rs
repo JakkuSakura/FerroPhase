@@ -12,6 +12,7 @@ common_enum! {
     pub enum BlockStmt {
         Item(BItem),
         Let(StmtLet),
+        Defer(StmtDefer),
         Expr(BlockStmtExpr),
         /// really noop
         Noop,
@@ -33,6 +34,7 @@ impl BlockStmt {
                 .into_iter()
                 .flatten(),
             ),
+            Self::Defer(stmt) => stmt.span(),
             Self::Noop | Self::Any(_) => Span::null(),
         }
     }
@@ -50,6 +52,7 @@ impl BlockStmt {
         match self {
             Self::Expr(expr) => expr.expr.is_unit(),
             Self::Item(item) => item.is_unit(),
+            Self::Defer(_) => true,
             Self::Noop => true,
             _ => false,
         }
@@ -83,6 +86,24 @@ common_struct! {
         pub pat: Pattern,
         pub init: Option<Expr>,
         pub diverge: Option<Expr>,
+    }
+}
+
+common_struct! {
+    pub struct StmtDefer {
+        #[serde(default)]
+        pub span: Span,
+        pub expr: BExpr,
+    }
+}
+
+impl StmtDefer {
+    pub fn span(&self) -> Span {
+        if self.span.is_null() {
+            self.expr.span()
+        } else {
+            self.span
+        }
     }
 }
 impl StmtLet {

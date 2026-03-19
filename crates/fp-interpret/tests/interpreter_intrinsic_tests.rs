@@ -1,6 +1,7 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprAsync, ExprBlock, ExprIntrinsicCall, ExprKind,
-    ExprStringTemplate, FormatArgRef, FormatPlaceholder, FormatTemplatePart, Ty, TypeInt,
+    ExprStringTemplate, ExprTry, ExprTryCatch, FormatArgRef, FormatPlaceholder,
+    FormatTemplatePart, Pattern, PatternIdent, PatternKind, StmtDefer, Ty, TypeInt,
     TypePrimitive, Value,
 };
 use fp_core::context::SharedScopedContext;
@@ -58,6 +59,20 @@ fn spawn_expr(expr: Expr) -> Expr {
 fn join_expr(expr: Expr) -> Expr {
     let call = ExprIntrinsicCall::new(IntrinsicCallKind::Join, vec![expr], Vec::new());
     Expr::new(ExprKind::IntrinsicCall(call))
+}
+
+fn print_line_expr(text: &str) -> Expr {
+    intrinsic_args_expr(
+        IntrinsicCallKind::Println,
+        vec![Value::string(text.to_owned())],
+    )
+}
+
+fn panic_expr(text: &str) -> Expr {
+    intrinsic_args_expr(
+        IntrinsicCallKind::Panic,
+        vec![Value::string(text.to_owned())],
+    )
 }
 
 #[test]
@@ -229,6 +244,121 @@ fn println_args_payload_joins_values_with_space() {
 
     let outcome = interpreter.take_outcome();
     assert_eq!(outcome.stdout, vec!["1 2 3\n".to_owned()]);
+}
+
+#[test]
+fn runtime_try_runs_else_and_finally_on_success() {
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(
+        &ctx,
+        InterpreterOptions {
+            mode: InterpreterMode::RunTime,
+            ..InterpreterOptions::default()
+        },
+    );
+
+    let mut expr = Expr::new(ExprKind::Try(ExprTry {
+        span: Span::null(),
+        expr: Box::new(Expr::value(Value::int(1))),
+        catches: Vec::new(),
+        elze: Some(Box::new(Expr::value(Value::int(2)))),
+        finally: Some(Box::new(print_line_expr("finally"))),
+    }));
+
+    let value = interpreter.evaluate_expression(&mut expr);
+    assert_eq!(value, Value::int(2));
+
+    let outcome = interpreter.take_outcome();
+    assert_eq!(outcome.stdout, vec!["finally\n".to_owned()]);
+    assert!(!outcome.has_errors);
+}
+
+#[test]
+fn runtime_try_catch_binds_panic_and_runs_finally() {
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(
+        &ctx,
+        InterpreterOptions {
+            mode: InterpreterMode::RunTime,
+            ..InterpreterOptions::default()
+        },
+    );
+
+    let catch_body = ExprBlock::new_stmts(vec![
+        BlockStmt::Expr(BlockStmtExpr::new(print_line_expr("caught")).with_semicolon(true)),
+        BlockStmt::Expr(BlockStmtExpr::new(Expr::ident("err".into()))),
+    ]);
+
+    let mut expr = Expr::new(ExprKind::Try(ExprTry {
+        span: Span::null(),
+        expr: Box::new(panic_expr("boom")),
+        catches: vec![ExprTryCatch {
+            span: Span::null(),
+            pat: Some(Box::new(Pattern::new(PatternKind::Ident(PatternIdent::new(
+                "err".into(),
+            ))))),
+            body: Box::new(Expr::new(ExprKind::Block(catch_body))),
+        }],
+        elze: None,
+        finally: Some(Box::new(print_line_expr("finally"))),
+    }));
+
+    let value = interpreter.evaluate_expression(&mut expr);
+    assert_eq!(value, Value::string("boom".to_owned()));
+
+    let outcome = interpreter.take_outcome();
+    assert_eq!(
+        outcome.stdout,
+        vec![
+            "panic: boom\n".to_owned(),
+            "caught\n".to_owned(),
+            "finally\n".to_owned()
+        ]
+    );
+    assert!(!outcome.has_errors);
+}
+
+#[test]
+fn runtime_defer_runs_in_lifo_order_during_panic_unwind() {
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(
+        &ctx,
+        InterpreterOptions {
+            mode: InterpreterMode::RunTime,
+            ..InterpreterOptions::default()
+        },
+    );
+
+    let inner_block = ExprBlock::new_stmts(vec![
+        BlockStmt::Defer(StmtDefer {
+            span: Span::null(),
+            expr: Box::new(print_line_expr("inner")),
+        }),
+        BlockStmt::Expr(BlockStmtExpr::new(panic_expr("boom"))),
+    ]);
+
+    let outer_block = ExprBlock::new_stmts(vec![
+        BlockStmt::Defer(StmtDefer {
+            span: Span::null(),
+            expr: Box::new(print_line_expr("outer")),
+        }),
+        BlockStmt::Expr(BlockStmtExpr::new(Expr::new(ExprKind::Block(inner_block)))),
+    ]);
+
+    let mut expr = Expr::new(ExprKind::Block(outer_block));
+    let value = interpreter.evaluate_expression(&mut expr);
+    assert!(matches!(value, Value::Undefined(_)));
+
+    let outcome = interpreter.take_outcome();
+    assert_eq!(
+        outcome.stdout,
+        vec![
+            "panic: boom\n".to_owned(),
+            "inner\n".to_owned(),
+            "outer\n".to_owned()
+        ]
+    );
+    assert!(outcome.has_errors);
 }
 
 #[test]

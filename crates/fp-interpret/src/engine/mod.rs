@@ -565,6 +565,7 @@ enum RuntimeTask {
 #[derive(Debug, Clone)]
 struct BlockFrame {
     last_value: Value,
+    deferred: Vec<Expr>,
 }
 
 #[derive(Debug, Clone)]
@@ -1251,10 +1252,37 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.task_should_yield = true;
     }
 
-    fn unwind_block_scopes(&mut self) {
-        while !self.block_stack.is_empty() {
-            self.block_stack.pop();
+    fn run_deferred_exprs_runtime(&mut self, deferred: &mut Vec<Expr>) -> Option<RuntimeFlow> {
+        while let Some(mut expr) = deferred.pop() {
+            let flow = self.eval_expr_runtime(&mut expr);
+            if !matches!(flow, RuntimeFlow::Value(_)) {
+                return Some(flow);
+            }
+        }
+        None
+    }
+
+    fn finalize_runtime_block_frame(&mut self, mut frame: BlockFrame) -> RuntimeFlow {
+        let deferred_flow = self.run_deferred_exprs_runtime(&mut frame.deferred);
+        self.pop_scope();
+        deferred_flow.unwrap_or(RuntimeFlow::Value(frame.last_value))
+    }
+
+    fn unwind_block_scopes_with_flow(&mut self, mut flow: RuntimeFlow) -> RuntimeFlow {
+        while let Some(frame) = self.block_stack.pop() {
+            let mut frame = frame;
+            if let Some(deferred_flow) = self.run_deferred_exprs_runtime(&mut frame.deferred) {
+                flow = deferred_flow;
+            }
             self.pop_scope();
+        }
+        flow
+    }
+
+    fn render_panic_value(&self, value: &Value) -> String {
+        match value {
+            Value::String(text) => text.value.clone(),
+            other => format!("{:?}", other),
         }
     }
 
@@ -1713,6 +1741,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemKind::DefType(def) => {
                 self.clear_ty(&mut def.value);
             }
+            ItemKind::OpaqueType(_) => {}
             ItemKind::DefTrait(def) => {
                 for member in &mut def.items {
                     self.clear_item_types(member);
@@ -1865,6 +1894,18 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Try(expr_try) => {
                 self.clear_expr_types(expr_try.expr.as_mut());
+                for catch in &mut expr_try.catches {
+                    if let Some(pat) = catch.pat.as_mut() {
+                        self.clear_pattern_types(pat.as_mut());
+                    }
+                    self.clear_expr_types(catch.body.as_mut());
+                }
+                if let Some(elze) = expr_try.elze.as_mut() {
+                    self.clear_expr_types(elze.as_mut());
+                }
+                if let Some(finally) = expr_try.finally.as_mut() {
+                    self.clear_expr_types(finally.as_mut());
+                }
             }
             ExprKind::For(expr_for) => {
                 self.clear_pattern_types(expr_for.pat.as_mut());
@@ -1970,6 +2011,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.clear_expr_types(diverge);
                 }
             }
+            BlockStmt::Defer(stmt_defer) => self.clear_expr_types(stmt_defer.expr.as_mut()),
             BlockStmt::Expr(expr) => self.clear_expr_types(expr.expr.as_mut()),
             BlockStmt::Noop | BlockStmt::Any(_) => {}
         }
@@ -2935,6 +2977,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.evaluate_ty(&mut def.value);
                 self.insert_type(def.name.as_str(), def.value.clone());
             }
+            ItemKind::OpaqueType(_) => {}
             ItemKind::DefConst(def) => {
                 let is_mutable = def.mutable.unwrap_or(false);
                 if is_mutable && !matches!(self.mode, InterpreterMode::CompileTime) {
@@ -3305,6 +3348,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemKind::DefStructural(def) => Some(&mut def.attrs),
             ItemKind::DefEnum(def) => Some(&mut def.attrs),
             ItemKind::DefType(def) => Some(&mut def.attrs),
+            ItemKind::OpaqueType(def) => Some(&mut def.attrs),
             ItemKind::DefConst(def) => Some(&mut def.attrs),
             ItemKind::DefStatic(def) => Some(&mut def.attrs),
             ItemKind::DefFunction(def) => Some(&mut def.attrs),
@@ -4460,6 +4504,15 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Try(expr_try) => {
                 self.rewrite_expr_types(expr_try.expr.as_mut(), subst, local_types);
+                for catch in &mut expr_try.catches {
+                    self.rewrite_expr_types(catch.body.as_mut(), subst, local_types);
+                }
+                if let Some(elze) = expr_try.elze.as_mut() {
+                    self.rewrite_expr_types(elze.as_mut(), subst, local_types);
+                }
+                if let Some(finally) = expr_try.finally.as_mut() {
+                    self.rewrite_expr_types(finally.as_mut(), subst, local_types);
+                }
             }
             ExprKind::Closure(closure) => {
                 self.rewrite_expr_types(closure.body.as_mut(), subst, local_types);
@@ -4521,10 +4574,19 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn eval_block(&mut self, block: &mut ExprBlock) -> Value {
         self.push_scope();
         let mut last_value = Value::unit();
+        let mut deferred = Vec::new();
         for stmt in &mut block.stmts {
-            if let Some(value) = self.eval_stmt(stmt) {
-                last_value = value;
+            match stmt {
+                BlockStmt::Defer(stmt_defer) => deferred.push(stmt_defer.expr.as_ref().clone()),
+                _ => {
+                    if let Some(value) = self.eval_stmt(stmt) {
+                        last_value = value;
+                    }
+                }
             }
+        }
+        while let Some(mut expr) = deferred.pop() {
+            let _ = self.eval_expr(&mut expr);
         }
         self.pop_scope();
         last_value
@@ -4547,7 +4609,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 value.unwrap_or_else(Value::unit)
             }
             RuntimeFlow::Panic(message) => {
-                self.emit_error(format!("panic: {}", message));
+                self.emit_error(format!("panic: {}", self.render_panic_value(&message)));
                 Value::undefined()
             }
         }
@@ -4557,6 +4619,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn eval_block_runtime(&mut self, block: &mut ExprBlock) -> RuntimeFlow {
         self.push_scope();
         let mut last_value = Value::unit();
+        let mut deferred = Vec::new();
         for stmt in &mut block.stmts {
             match stmt {
                 BlockStmt::Expr(expr_stmt) => {
@@ -4613,8 +4676,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                             }
                         }
                         other => {
+                            let mut flow = other;
+                            while let Some(mut expr) = deferred.pop() {
+                                match self.eval_expr_runtime(&mut expr) {
+                                    RuntimeFlow::Value(_) => {}
+                                    other => flow = other,
+                                }
+                            }
                             self.pop_scope();
-                            return other;
+                            return flow;
                         }
                     }
                 }
@@ -4626,8 +4696,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 self.bind_pattern(&stmt_let.pat, value);
                             }
                             other => {
+                                let mut flow = other;
+                                while let Some(mut expr) = deferred.pop() {
+                                    match self.eval_expr_runtime(&mut expr) {
+                                        RuntimeFlow::Value(_) => {}
+                                        other => flow = other,
+                                    }
+                                }
                                 self.pop_scope();
-                                return other;
+                                return flow;
                             }
                         }
                     } else {
@@ -4639,7 +4716,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                 BlockStmt::Item(item) => {
                     self.evaluate_item(item.as_mut());
                 }
+                BlockStmt::Defer(stmt_defer) => deferred.push(stmt_defer.expr.as_ref().clone()),
                 BlockStmt::Noop | BlockStmt::Any(_) => {}
+            }
+        }
+        while let Some(mut expr) = deferred.pop() {
+            match self.eval_expr_runtime(&mut expr) {
+                RuntimeFlow::Value(_) => {}
+                other => {
+                    self.pop_scope();
+                    return other;
+                }
             }
         }
         self.pop_scope();

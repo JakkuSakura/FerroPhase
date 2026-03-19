@@ -61,6 +61,7 @@ fn item_attrs(item: &ast::Item) -> Option<&[ast::Attribute]> {
         ItemKind::DefStructural(def) => Some(&def.attrs),
         ItemKind::DefEnum(def) => Some(&def.attrs),
         ItemKind::DefType(def) => Some(&def.attrs),
+        ItemKind::OpaqueType(def) => Some(&def.attrs),
         ItemKind::DefConst(def) => Some(&def.attrs),
         ItemKind::DefStatic(def) => Some(&def.attrs),
         ItemKind::DefFunction(def) => Some(&def.attrs),

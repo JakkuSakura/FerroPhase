@@ -81,6 +81,7 @@ fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result
         | ItemKind::DeclStatic(_)
         | ItemKind::DeclFunction(_)
         | ItemKind::DeclType(_)
+        | ItemKind::OpaqueType(_)
         | ItemKind::Import(_)
         | ItemKind::Any(_) => {}
         ItemKind::DefTrait(def_trait) => {
@@ -106,6 +107,7 @@ fn normalize_block(block: &mut ExprBlock, strategy: &dyn IntrinsicNormalizer) ->
                     normalize_expr(diverge, strategy)?;
                 }
             }
+            BlockStmt::Defer(stmt_defer) => normalize_expr(stmt_defer.expr.as_mut(), strategy)?,
             BlockStmt::Item(item) => normalize_item(item.as_mut(), strategy)?,
             BlockStmt::Noop | BlockStmt::Any(_) => {}
         }
@@ -255,7 +257,18 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
             }
             ExprKind::Splat(splat) => normalize_expr(splat.iter.as_mut(), strategy)?,
             ExprKind::SplatDict(splat) => normalize_expr(splat.dict.as_mut(), strategy)?,
-            ExprKind::Try(expr_try) => normalize_expr(expr_try.expr.as_mut(), strategy)?,
+            ExprKind::Try(expr_try) => {
+                normalize_expr(expr_try.expr.as_mut(), strategy)?;
+                for catch in &mut expr_try.catches {
+                    normalize_expr(catch.body.as_mut(), strategy)?;
+                }
+                if let Some(elze) = expr_try.elze.as_mut() {
+                    normalize_expr(elze.as_mut(), strategy)?;
+                }
+                if let Some(finally) = expr_try.finally.as_mut() {
+                    normalize_expr(finally.as_mut(), strategy)?;
+                }
+            }
             ExprKind::Async(async_expr) => normalize_expr(async_expr.expr.as_mut(), strategy)?,
             ExprKind::Closure(closure) => normalize_expr(closure.body.as_mut(), strategy)?,
             ExprKind::Closured(closured) => normalize_expr(closured.expr.as_mut(), strategy)?,

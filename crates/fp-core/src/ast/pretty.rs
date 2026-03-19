@@ -225,7 +225,28 @@ impl PrettyPrintable for ast::Expr {
             }
             ast::ExprKind::Try(expr_try) => {
                 ctx.writeln(f, format!("try{}", suffix))?;
-                ctx.with_indent(|ctx| expr_try.expr.fmt_pretty(f, ctx))
+                ctx.with_indent(|ctx| {
+                    ctx.writeln(f, "body:")?;
+                    ctx.with_indent(|ctx| expr_try.expr.fmt_pretty(f, ctx))?;
+                    for catch in &expr_try.catches {
+                        match catch.pat.as_ref() {
+                            Some(pat) => {
+                                ctx.writeln(f, format!("catch {}", render_pattern(pat)))?;
+                            }
+                            None => ctx.writeln(f, "catch")?,
+                        }
+                        ctx.with_indent(|ctx| catch.body.fmt_pretty(f, ctx))?;
+                    }
+                    if let Some(elze) = &expr_try.elze {
+                        ctx.writeln(f, "else:")?;
+                        ctx.with_indent(|ctx| elze.fmt_pretty(f, ctx))?;
+                    }
+                    if let Some(finally) = &expr_try.finally {
+                        ctx.writeln(f, "finally:")?;
+                        ctx.with_indent(|ctx| finally.fmt_pretty(f, ctx))?;
+                    }
+                    Ok(())
+                })
             }
             ast::ExprKind::Let(expr_let) => {
                 ctx.writeln(
@@ -528,6 +549,15 @@ impl PrettyPrintable for ast::Item {
                     visibility_prefix(&def.visibility),
                     def.name,
                     render_ty_brief(&def.value),
+                    suffix
+                ),
+            ),
+            ast::ItemKind::OpaqueType(def) => ctx.writeln(
+                f,
+                format!(
+                    "{}opaque type {}{}",
+                    visibility_prefix(&def.visibility),
+                    def.name,
                     suffix
                 ),
             ),
@@ -1390,6 +1420,10 @@ fn fmt_block_stmt(
                 Ok(())
             })
         }
+        ast::BlockStmt::Defer(stmt_defer) => {
+            ctx.writeln(f, "defer")?;
+            ctx.with_indent(|ctx| stmt_defer.expr.fmt_pretty(f, ctx))
+        }
         ast::BlockStmt::Expr(expr_stmt) => {
             let semicolon = match expr_stmt.semicolon {
                 Some(true) => ";",
@@ -1594,6 +1628,7 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
         IntrinsicCallKind::Input => "input",
         IntrinsicCallKind::Panic => "panic",
         IntrinsicCallKind::CatchUnwind => "catch_unwind",
+        IntrinsicCallKind::CatchUnwindResult => "catch_unwind_result",
         IntrinsicCallKind::TimeNow => "time_now",
         IntrinsicCallKind::Sleep => "sleep",
         IntrinsicCallKind::Spawn => "spawn",

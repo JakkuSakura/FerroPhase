@@ -6,9 +6,9 @@ use fp_core::ast::{
     FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType,
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
-    ItemImportTree, ItemKind, ItemMacro, MacroDelimiter, MacroInvocation, Module, Name, Path,
-    QuoteFragmentKind, StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum,
-    TypeQuote, TypeStruct, Value, ValueNone, Visibility,
+    ItemImportTree, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter, MacroInvocation, Module,
+    Name, Path, QuoteFragmentKind, StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind,
+    TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value, ValueNone, Visibility,
 };
 use fp_core::cst::CstCategory;
 use fp_core::module::path::PathPrefix;
@@ -61,6 +61,7 @@ pub(crate) fn lower_item_from_cst(node: &SyntaxNode) -> Result<Item, LowerItemsE
         SyntaxKind::ItemTrait => Ok(Item::from(ItemKind::DefTrait(lower_trait(node)?))),
         SyntaxKind::ItemImpl => Ok(Item::from(ItemKind::Impl(lower_impl(node)?))),
         SyntaxKind::ItemTypeAlias => Ok(Item::from(ItemKind::DefType(lower_type_alias(node)?))),
+        SyntaxKind::ItemOpaqueType => Ok(Item::from(ItemKind::OpaqueType(lower_opaque_type(node)?))),
         SyntaxKind::ItemConst => Ok(Item::from(ItemKind::DefConst(lower_const(node)?))),
         SyntaxKind::ItemStatic => Ok(Item::from(ItemKind::DefStatic(lower_static(node)?))),
         SyntaxKind::ItemFn => Ok(Item::from(ItemKind::DefFunction(lower_fn(node)?))),
@@ -409,6 +410,19 @@ fn lower_type_alias(node: &SyntaxNode) -> Result<ItemDefType, LowerItemsError> {
         visibility,
         name,
         value,
+    })
+}
+
+fn lower_opaque_type(node: &SyntaxNode) -> Result<ItemOpaqueType, LowerItemsError> {
+    let attrs = lower_outer_attrs(node);
+    let visibility = lower_visibility(first_visibility(node)?)?;
+    let name = Ident::new(
+        first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("opaque type name"))?,
+    );
+    Ok(ItemOpaqueType {
+        attrs,
+        visibility,
+        name,
     })
 }
 

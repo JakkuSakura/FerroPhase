@@ -575,7 +575,30 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     unit_var
                 }
                 ExprKind::While(while_expr) => self.infer_while(while_expr)?,
-                ExprKind::Try(try_expr) => self.infer_expr(try_expr.expr.as_mut())?,
+                ExprKind::Try(try_expr) => {
+                    let result_var = self.infer_expr(try_expr.expr.as_mut())?;
+                    for catch in &mut try_expr.catches {
+                        self.enter_scope();
+                        if let Some(pat) = catch.pat.as_mut() {
+                            let panic_var = self.fresh_type_var();
+                            self.bind(panic_var, TypeTerm::Primitive(TypePrimitive::String));
+                            let pattern_info = self.infer_pattern(pat.as_mut())?;
+                            self.unify(pattern_info.var, panic_var)?;
+                            self.apply_pattern_generalization(&pattern_info)?;
+                        }
+                        let catch_var = self.infer_expr(catch.body.as_mut())?;
+                        self.unify(result_var, catch_var)?;
+                        self.exit_scope();
+                    }
+                    if let Some(elze) = try_expr.elze.as_mut() {
+                        let else_var = self.infer_expr(elze.as_mut())?;
+                        self.unify(result_var, else_var)?;
+                    }
+                    if let Some(finally) = try_expr.finally.as_mut() {
+                        let _ = self.infer_expr(finally.as_mut())?;
+                    }
+                    result_var
+                }
                 ExprKind::Reference(reference) => self.infer_reference(reference)?,
                 ExprKind::Dereference(dereference) => self.infer_dereference(dereference)?,
                 ExprKind::Index(index) => self.infer_index(index)?,
@@ -1112,6 +1135,30 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.unify(arg_var, fn_var)?;
                 }
                 self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
+            }
+            IntrinsicCallKind::CatchUnwindResult => {
+                if arg_vars.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind,
+                        arg_vars.len()
+                    ));
+                }
+                let value_var = self.fresh_type_var();
+                if let Some(&arg_var) = arg_vars.first() {
+                    let fn_var = self.fresh_type_var();
+                    self.bind(
+                        fn_var,
+                        TypeTerm::Function(FunctionTerm {
+                            params: Vec::new(),
+                            ret: value_var,
+                        }),
+                    );
+                    self.unify(arg_var, fn_var)?;
+                }
+                let ok_var = self.fresh_type_var();
+                self.bind(ok_var, TypeTerm::Primitive(TypePrimitive::Bool));
+                self.bind(result_var, TypeTerm::Tuple(vec![ok_var, value_var]));
             }
             IntrinsicCallKind::Input => {
                 if arg_vars.len() > 1 {
