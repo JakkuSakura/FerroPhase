@@ -27,6 +27,7 @@ use fp_interpret::engine::{
     AstInterpreter, InterpreterMode, InterpreterOptions, InterpreterOutcome,
 };
 use fp_jvm;
+use fp_lang::embedded_std;
 use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
 use fp_pipeline::{PipelineBuilder, PipelineDiagnostics, PipelineError, PipelineStage};
 use fp_typescript::frontend::TsParseMode;
@@ -493,12 +494,16 @@ impl Pipeline {
         frontend: &Arc<dyn LanguageFrontend>,
         path: &Path,
     ) -> Result<Node, CliError> {
-        let source = std::fs::read_to_string(path).map_err(|err| {
-            CliError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read file {}: {err}", path.display()),
-            ))
-        })?;
+        let source = if let Some(source) = embedded_std::read(path) {
+            source.to_owned()
+        } else {
+            std::fs::read_to_string(path).map_err(|err| {
+                CliError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to read file {}: {err}", path.display()),
+                ))
+            })?
+        };
         self.parse_with_frontend(frontend, &source, Some(path), options)
     }
 
@@ -1067,20 +1072,16 @@ impl Pipeline {
         let mut diagnostics = PipelineDiagnostics::default();
         diagnostics.set_display_options(diag::display_options(options));
         for std_path in runtime_std_paths() {
-            let source = match fs::read_to_string(&std_path) {
-                Ok(source) => source,
-                Err(err) => {
-                    diagnostics.push(
-                        Diagnostic::error(format!(
-                            "Failed to read runtime std module at {}: {}",
-                            std_path.display(),
-                            err
-                        ))
-                        .with_source_context(STAGE_RUNTIME_MATERIALIZE),
-                    );
-                    diagnostics.emit_stage(STAGE_RUNTIME_MATERIALIZE);
-                    return Err(Self::stage_failure(STAGE_RUNTIME_MATERIALIZE));
-                }
+            let Some(source) = embedded_std::read(&std_path) else {
+                diagnostics.push(
+                    Diagnostic::error(format!(
+                        "Failed to load embedded runtime std module at {}",
+                        std_path.display(),
+                    ))
+                    .with_source_context(STAGE_RUNTIME_MATERIALIZE),
+                );
+                diagnostics.emit_stage(STAGE_RUNTIME_MATERIALIZE);
+                return Err(Self::stage_failure(STAGE_RUNTIME_MATERIALIZE));
             };
             let std_node = self.parse_input_source(options, &source, Some(&std_path))?;
             let merged = merge_std_module(
@@ -1300,8 +1301,7 @@ impl Pipeline {
 }
 
 fn runtime_std_paths() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    vec![root.join("../../src/std/mod.fp")]
+    vec![embedded_std::root_module_path()]
 }
 
 fn merge_std_module(
@@ -1442,9 +1442,13 @@ impl<'a> FileModuleLoader<'a> {
         module_name: &Ident,
     ) -> Result<ItemChunk, CliError> {
         let module_path = resolve_module_file(base_dir, module_name.as_str())?;
-        let canonical = module_path
-            .canonicalize()
-            .unwrap_or_else(|_| module_path.clone());
+        let canonical = if embedded_std::is_embedded_path(&module_path) {
+            module_path.clone()
+        } else {
+            module_path
+                .canonicalize()
+                .unwrap_or_else(|_| module_path.clone())
+        };
         if let Some(items) = self.loaded_files.get(&canonical) {
             return Ok(items.clone());
         }
@@ -1468,8 +1472,8 @@ impl<'a> FileModuleLoader<'a> {
 fn resolve_module_file(base_dir: &Path, module_name: &str) -> Result<PathBuf, CliError> {
     let flat_path = base_dir.join(format!("{module_name}.fp"));
     let mod_path = base_dir.join(module_name).join("mod.fp");
-    let flat_exists = flat_path.is_file();
-    let mod_exists = mod_path.is_file();
+    let flat_exists = flat_path.is_file() || embedded_std::contains(&flat_path);
+    let mod_exists = mod_path.is_file() || embedded_std::contains(&mod_path);
 
     match (flat_exists, mod_exists) {
         (true, true) => Err(CliError::Compilation(format!(

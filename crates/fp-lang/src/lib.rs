@@ -212,6 +212,7 @@ mod tests {
 
 pub mod ast;
 pub mod cst;
+pub mod embedded_std;
 pub mod lexer;
 pub mod syntax;
 pub(crate) mod tokens;

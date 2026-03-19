@@ -118,6 +118,10 @@ impl ZigEmitter {
                 self.emit_item(item.as_ref())?;
                 Ok(true)
             }
+            BlockStmt::Defer(_) => {
+                self.push_comment("TODO: defer statements are not supported in Zig backend");
+                Ok(true)
+            }
             BlockStmt::Noop => Ok(false),
             BlockStmt::Any(_) => {
                 self.push_comment("TODO: placeholder statements are not supported in Zig backend");

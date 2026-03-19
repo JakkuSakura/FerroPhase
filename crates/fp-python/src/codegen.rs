@@ -104,6 +104,7 @@ impl PythonEmitter {
                 self.push_line(&rendered);
             }
             ItemKind::Import(_)
+            | ItemKind::OpaqueType(_)
             | ItemKind::DefType(_)
             | ItemKind::DefStatic(_)
             | ItemKind::DeclConst(_)
@@ -275,6 +276,9 @@ impl PythonEmitter {
                 }
             }
             BlockStmt::Item(item) => self.emit_item(item.as_ref())?,
+            BlockStmt::Defer(_) => {
+                self.push_line("# defer statements are not supported in Python output");
+            }
             BlockStmt::Noop => {}
             BlockStmt::Any(_) => {
                 return Err(eyre!(

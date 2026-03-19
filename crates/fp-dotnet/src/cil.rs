@@ -457,6 +457,9 @@ impl<'a> MethodEmitter<'a> {
                     }
                 }
                 BlockStmt::Item(_) | BlockStmt::Noop => {}
+                BlockStmt::Defer(_) => {
+                    bail!("defer statements are not supported in CIL output")
+                }
                 BlockStmt::Any(_) => {
                     bail!("opaque block statements are not supported in CIL output")
                 }
@@ -801,6 +804,9 @@ fn collect_locals_expr(expr: &Expr, locals: &mut Vec<(String, Ty)>) {
                     }
                     BlockStmt::Expr(stmt_expr) => {
                         collect_locals_expr(stmt_expr.expr.as_ref(), locals)
+                    }
+                    BlockStmt::Defer(stmt_defer) => {
+                        collect_locals_expr(stmt_defer.expr.as_ref(), locals)
                     }
                     BlockStmt::Item(item) => collect_locals_item(item, locals),
                     BlockStmt::Noop | BlockStmt::Any(_) => {}

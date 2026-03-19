@@ -279,6 +279,9 @@ impl GoEmitter {
                     self.push_line(&format!("{} := {}", name, value));
                 }
                 BlockStmt::Item(item) => self.emit_item(item)?,
+                BlockStmt::Defer(_) => {
+                    self.push_comment("defer statements are not supported in Go output");
+                }
                 BlockStmt::Noop => {}
                 BlockStmt::Any(_) => {
                     self.push_comment("unsupported statement in Go output");

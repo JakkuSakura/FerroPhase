@@ -282,6 +282,7 @@ impl WitEmitter {
             | ItemKind::DeclType(_)
             | ItemKind::DefConst(_)
             | ItemKind::DefStatic(_)
+            | ItemKind::OpaqueType(_)
             | ItemKind::DefStructural(_)
             | ItemKind::DefTrait(_) => Ok(()),
         }

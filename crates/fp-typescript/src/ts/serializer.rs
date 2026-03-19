@@ -626,6 +626,11 @@ impl ScriptEmitter {
                 }
             }
             BlockStmt::Item(item) => self.emit_item(item.as_ref())?,
+            BlockStmt::Defer(_) => {
+                return Err(
+                    eyre!("defer statements are not supported during TypeScript emission").into(),
+                );
+            }
             BlockStmt::Noop => {}
             BlockStmt::Any(_) => {
                 return Err(eyre!(

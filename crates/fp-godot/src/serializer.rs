@@ -278,6 +278,7 @@ impl GdscriptEmitter {
                 Ok(())
             }
             ItemKind::Import(_)
+            | ItemKind::OpaqueType(_)
             | ItemKind::DefType(_)
             | ItemKind::DefStatic(_)
             | ItemKind::DeclConst(_)
@@ -621,6 +622,10 @@ impl GdscriptEmitter {
                         Ok(())
                     }
                 }
+            }
+            BlockStmt::Defer(_) => {
+                self.push_comment("defer statements are not supported in gdscript output");
+                Ok(())
             }
             BlockStmt::Noop => Ok(()),
             BlockStmt::Any(_) => Err(eyre!(

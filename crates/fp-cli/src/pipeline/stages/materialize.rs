@@ -183,6 +183,7 @@ fn materialize_item(
         | ast::ItemKind::DefStructural(_)
         | ast::ItemKind::DefEnum(_)
         | ast::ItemKind::DefType(_)
+        | ast::ItemKind::OpaqueType(_)
         | ast::ItemKind::DeclConst(_)
         | ast::ItemKind::DeclStatic(_)
         | ast::ItemKind::DeclFunction(_)
@@ -230,6 +231,10 @@ fn materialize_stmt(
         ast::BlockStmt::Item(item) => Ok(ast::BlockStmt::Item(Box::new(materialize_item(
             *item, strategy,
         )?))),
+        ast::BlockStmt::Defer(mut stmt_defer) => {
+            stmt_defer.expr = Box::new(materialize_expr(*stmt_defer.expr, strategy)?);
+            Ok(ast::BlockStmt::Defer(stmt_defer))
+        }
         ast::BlockStmt::Noop => Ok(ast::BlockStmt::Noop),
         ast::BlockStmt::Any(stmt) => Ok(ast::BlockStmt::Any(stmt)),
     }
