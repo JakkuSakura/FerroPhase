@@ -36,11 +36,8 @@ pub fn format_program(program: &AsmProgram) -> String {
                         calling_convention,
                         tail_call,
                     } => {
-                        let rendered_args = args
-                            .iter()
-                            .map(format_value)
-                            .collect::<Vec<_>>()
-                            .join(", ");
+                        let rendered_args =
+                            args.iter().map(format_value).collect::<Vec<_>>().join(", ");
                         out.push_str(&format!(
                             "    call {}({}) cc={:?} tail={}\n",
                             format_value(function),

@@ -121,4 +121,3 @@ async fn compile_linux_elf_syscalls_to_darwin_macho_exec_and_run() {
     assert!(output.status.success(), "status={:?}", output.status);
     assert_eq!(output.stdout, b"hi\n");
 }
-

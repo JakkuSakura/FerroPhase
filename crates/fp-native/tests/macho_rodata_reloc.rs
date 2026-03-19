@@ -4,7 +4,7 @@ use fp_core::asmir::{
     AsmSection, AsmSectionFlag, AsmSectionKind, AsmTarget, AsmTerminator, AsmType, AsmValue,
 };
 use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
-use object::{macho, Object, ObjectSection, RelocationFlags, SectionKind};
+use object::{Object, ObjectSection, RelocationFlags, SectionKind, macho};
 
 #[test]
 fn macho_aarch64_rodata_addresses_use_adrp_add_relocations() {
@@ -110,4 +110,3 @@ fn macho_aarch64_rodata_addresses_use_adrp_add_relocations() {
     assert!(saw_page21, "expected an ADRP relocation (PAGE21)");
     assert!(saw_pageoff12, "expected an ADD relocation (PAGEOFF12)");
 }
-

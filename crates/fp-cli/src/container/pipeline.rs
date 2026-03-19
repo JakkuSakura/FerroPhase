@@ -154,10 +154,7 @@ int main(int argc, char **argv, char **envp) {
 }
 "#;
 
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "fp-link-{}",
-        std::process::id()
-    ));
+    let tmp_dir = std::env::temp_dir().join(format!("fp-link-{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).map_err(CliError::Io)?;
     let object_path = tmp_dir.join("input.o");
     let wrapper_c_path = tmp_dir.join("wrapper.c");
@@ -165,14 +162,16 @@ int main(int argc, char **argv, char **envp) {
 
     // Prefer reusing the emitted plan (it already includes relocations).
     fp_native::emit::write_object(&object_path, plan).map_err(|err| {
-        CliError::Compilation(format!("Failed to write temporary object for linking: {err}"))
+        CliError::Compilation(format!(
+            "Failed to write temporary object for linking: {err}"
+        ))
     })?;
 
     if matches!(format, emit::TargetFormat::MachO)
         && matches!(arch, emit::TargetArch::Aarch64 | emit::TargetArch::X86_64)
     {
-        let needs_main_wrapper = !plan.symbols.contains_key("main")
-            && plan.symbols.contains_key("fp_lifted_main");
+        let needs_main_wrapper =
+            !plan.symbols.contains_key("main") && plan.symbols.contains_key("fp_lifted_main");
         if needs_main_wrapper {
             std::fs::write(&wrapper_c_path, DARWIN_LINUX_MAIN_WRAPPER).map_err(CliError::Io)?;
 

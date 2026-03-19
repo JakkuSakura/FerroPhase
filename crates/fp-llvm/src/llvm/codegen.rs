@@ -2287,7 +2287,9 @@ impl<'a> LirCodegen<'a> {
             lir::CallingConvention::X86VectorCall => LLVMCallConv::LLVMX86VectorCallCallConv as u32,
             lir::CallingConvention::Win64 => LLVMCallConv::LLVMWin64CallConv as u32,
             lir::CallingConvention::X86_64SysV => LLVMCallConv::LLVMX8664SysVCallConv as u32,
-            lir::CallingConvention::FpLiftedX86_64RegFile => LLVMCallConv::LLVMX8664SysVCallConv as u32,
+            lir::CallingConvention::FpLiftedX86_64RegFile => {
+                LLVMCallConv::LLVMX8664SysVCallConv as u32
+            }
             lir::CallingConvention::AAPCS => LLVMCallConv::LLVMARMAAPCSCallConv as u32,
             lir::CallingConvention::AAPCSVfp => LLVMCallConv::LLVMARMAAPCSVFPCallConv as u32,
             lir::CallingConvention::WebKitJS => LLVMCallConv::LLVMCCallConv as u32,

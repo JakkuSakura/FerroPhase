@@ -1225,17 +1225,9 @@ fn determine_output_path(
                     } else if native_asm_text_target {
                         "s"
                     } else if native_object_target {
-                        if native_link_requested {
-                            "out"
-                        } else {
-                            "o"
-                        }
+                        if native_link_requested { "out" } else { "o" }
                     } else if native_archive_target {
-                        if native_link_requested {
-                            "out"
-                        } else {
-                            "a"
-                        }
+                        if native_link_requested { "out" } else { "a" }
                     } else if urcl_object_target {
                         "o"
                     } else if goasm_object_target {

@@ -1024,7 +1024,10 @@ fn instruction_encoding_matches_kind(inst: &fp_core::asmir::AsmInstruction) -> b
     }
 }
 
-fn collect_preserved_single_block_bytes(_program: &AsmProgram, func: &AsmFunction) -> Option<Vec<u8>> {
+fn collect_preserved_single_block_bytes(
+    _program: &AsmProgram,
+    func: &AsmFunction,
+) -> Option<Vec<u8>> {
     if func.basic_blocks.len() != 1 {
         return None;
     }
@@ -1053,7 +1056,10 @@ fn collect_preserved_single_block_bytes(_program: &AsmProgram, func: &AsmFunctio
             continue;
         }
 
-        if matches!(inst.kind, AsmInstructionKind::Add(_, _) | AsmInstructionKind::Sub(_, _)) {
+        if matches!(
+            inst.kind,
+            AsmInstructionKind::Add(_, _) | AsmInstructionKind::Sub(_, _)
+        ) {
             let dst = annotation_value(&inst.annotations, "fp.preserve.aarch64.dst_gpr")
                 .and_then(|value| value.parse::<u8>().ok());
             let src = annotation_value(&inst.annotations, "fp.preserve.aarch64.src_gpr")
@@ -1069,10 +1075,7 @@ fn collect_preserved_single_block_bytes(_program: &AsmProgram, func: &AsmFunctio
                     AsmInstructionKind::Sub(_, _) => 0xD100_0000u32,
                     _ => return None,
                 };
-                let word = opcode_base
-                    | ((imm as u32) << 10)
-                    | ((src as u32) << 5)
-                    | (dst as u32);
+                let word = opcode_base | ((imm as u32) << 10) | ((src as u32) << 5) | (dst as u32);
                 out.extend_from_slice(word.to_le_bytes().as_slice());
                 continue;
             }
@@ -1140,7 +1143,11 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
     for func in program.functions.iter().filter(|func| !func.is_declaration) {
         insert_symbol_variants(&mut defined_symbols, func.name.as_str());
     }
-    for global in program.globals.iter().filter(|global| global.initializer.is_some()) {
+    for global in program
+        .globals
+        .iter()
+        .filter(|global| global.initializer.is_some())
+    {
         insert_symbol_variants(&mut defined_symbols, global.name.as_str());
     }
     for name in rodata_symbols.keys() {
@@ -1150,7 +1157,11 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
         insert_symbol_variants(&mut defined_symbols, name);
     }
     for container in &program.container {
-        for symbol in container.symbols.iter().filter(|symbol| symbol.section.is_some()) {
+        for symbol in container
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.section.is_some())
+        {
             let name = symbol
                 .name
                 .split_once('@')
@@ -1967,8 +1978,12 @@ fn emit_binop(
                 }
             } else {
                 match op {
-                    BinOp::Add if imm <= 4095 => emit_add_imm12(asm, Reg::X16, Reg::X16, imm as u32),
-                    BinOp::Sub if imm <= 4095 => emit_sub_imm12(asm, Reg::X16, Reg::X16, imm as u32),
+                    BinOp::Add if imm <= 4095 => {
+                        emit_add_imm12(asm, Reg::X16, Reg::X16, imm as u32)
+                    }
+                    BinOp::Sub if imm <= 4095 => {
+                        emit_sub_imm12(asm, Reg::X16, Reg::X16, imm as u32)
+                    }
                     BinOp::Mul => {
                         emit_mov_imm16(asm, Reg::X17, imm as u16);
                         emit_mul_reg(asm, Reg::X16, Reg::X16, Reg::X17);
@@ -3099,7 +3114,11 @@ fn emit_store(
                 match value_ty {
                     AsmType::I1 | AsmType::I8 => {
                         if base != Reg::X31 {
-                            let mask = if matches!(value_ty, AsmType::I1) { 1 } else { 0xff };
+                            let mask = if matches!(value_ty, AsmType::I1) {
+                                1
+                            } else {
+                                0xff
+                            };
                             emit_mov_imm16(asm, Reg::X17, mask);
                             emit_and_reg(asm, Reg::X16, Reg::X16, Reg::X17);
                             emit_store_to_base(asm, Reg::X16, base, offset);
@@ -3338,8 +3357,8 @@ fn emit_call(
         // especially while stack semantics are still being incrementally filled
         // out.
         const PRESERVED: &[(u32, i32)] = &[
-            (3, 0),  // rbx
-            (5, 8),  // rbp
+            (3, 0),   // rbx
+            (5, 8),   // rbp
             (12, 16), // r12
             (13, 24), // r13
             (14, 32), // r14

@@ -166,4 +166,3 @@ async fn compile_elf_object_calling_system_to_macho_exec_and_lists_files() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
-

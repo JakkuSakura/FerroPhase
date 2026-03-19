@@ -86,7 +86,12 @@ fn encode_x86_nop_sequence(len: usize) -> Vec<u8> {
     out
 }
 
-fn encode_x86_addsub_imm(dst_gpr: u8, imm: i64, imm_width_bits: u16, subopcode: u8) -> Option<Vec<u8>> {
+fn encode_x86_addsub_imm(
+    dst_gpr: u8,
+    imm: i64,
+    imm_width_bits: u16,
+    subopcode: u8,
+) -> Option<Vec<u8>> {
     // Encodes: (REX.W) (81/83) /subopcode r/m64, imm{32|8}
     // This is sufficient for our current preserved subset.
     let rex = 0x48 | if dst_gpr >= 8 { 0x01 } else { 0x00 };
@@ -195,7 +200,10 @@ fn terminator_encoding_matches_kind(block: &AsmBlock) -> bool {
     }
 }
 
-fn collect_preserved_single_block_bytes(_program: &AsmProgram, func: &AsmFunction) -> Option<Vec<u8>> {
+fn collect_preserved_single_block_bytes(
+    _program: &AsmProgram,
+    func: &AsmFunction,
+) -> Option<Vec<u8>> {
     if func.basic_blocks.len() != 1 {
         return None;
     }
@@ -225,8 +233,9 @@ fn collect_preserved_single_block_bytes(_program: &AsmProgram, func: &AsmFunctio
             AsmInstructionKind::Add(_, _) | AsmInstructionKind::Sub(_, _) => {
                 let dst = annotation_value(&inst.annotations, "fp.preserve.x86_64.dst_gpr")
                     .and_then(|value| value.parse::<u8>().ok());
-                let imm_width_bits = annotation_value(&inst.annotations, "fp.preserve.x86_64.imm_width_bits")
-                    .and_then(|value| value.parse::<u16>().ok());
+                let imm_width_bits =
+                    annotation_value(&inst.annotations, "fp.preserve.x86_64.imm_width_bits")
+                        .and_then(|value| value.parse::<u16>().ok());
 
                 if let (Some(dst), Some(imm_width_bits)) = (dst, imm_width_bits) {
                     let (subopcode, imm) = match &inst.kind {
@@ -740,39 +749,38 @@ fn emit_const_globals(
     data_symbols: &mut HashMap<String, u64>,
     relocs_out: &mut Vec<crate::emit::Relocation>,
 ) -> Result<()> {
-    let mut emit_global =
-        |global: &fp_core::asmir::AsmGlobal,
-         initializer: &AsmConstant,
-         bytes_out: &mut Vec<u8>,
-         symbols_out: &mut HashMap<String, u64>,
-         reloc_section: crate::emit::RelocSection|
-         -> Result<()> {
-            let align = global
-                .alignment
-                .map(|value| value as i32)
-                .unwrap_or_else(|| align_of(&global.ty) as i32);
-            let offset = align_to(bytes_out.len() as i32, align) as usize;
-            if offset > bytes_out.len() {
-                bytes_out.resize(offset, 0);
-            }
-            let bytes = encode_const_bytes(initializer, &global.ty)?;
-            bytes_out.extend_from_slice(&bytes);
-            symbols_out.insert(global.name.to_string(), offset as u64);
+    let mut emit_global = |global: &fp_core::asmir::AsmGlobal,
+                           initializer: &AsmConstant,
+                           bytes_out: &mut Vec<u8>,
+                           symbols_out: &mut HashMap<String, u64>,
+                           reloc_section: crate::emit::RelocSection|
+     -> Result<()> {
+        let align = global
+            .alignment
+            .map(|value| value as i32)
+            .unwrap_or_else(|| align_of(&global.ty) as i32);
+        let offset = align_to(bytes_out.len() as i32, align) as usize;
+        if offset > bytes_out.len() {
+            bytes_out.resize(offset, 0);
+        }
+        let bytes = encode_const_bytes(initializer, &global.ty)?;
+        bytes_out.extend_from_slice(&bytes);
+        symbols_out.insert(global.name.to_string(), offset as u64);
 
-            for reloc in &global.relocations {
-                let kind = match reloc.kind {
-                    fp_core::asmir::AsmRelocationKind::Abs64 => crate::emit::RelocKind::Abs64,
-                };
-                relocs_out.push(crate::emit::Relocation {
-                    offset: offset as u64 + reloc.offset,
-                    kind,
-                    section: reloc_section,
-                    symbol: reloc.symbol.to_string(),
-                    addend: reloc.addend,
-                });
-            }
-            Ok(())
-        };
+        for reloc in &global.relocations {
+            let kind = match reloc.kind {
+                fp_core::asmir::AsmRelocationKind::Abs64 => crate::emit::RelocKind::Abs64,
+            };
+            relocs_out.push(crate::emit::Relocation {
+                offset: offset as u64 + reloc.offset,
+                kind,
+                section: reloc_section,
+                symbol: reloc.symbol.to_string(),
+                addend: reloc.addend,
+            });
+        }
+        Ok(())
+    };
 
     for global in &program.globals {
         let Some(initializer) = &global.initializer else {
@@ -2587,7 +2595,11 @@ fn emit_block(
                 }
                 store_vreg(asm, layout, inst.id, Reg::R10)?;
             }
-            AsmInstructionKind::InsertLane { vector, lane, value } => {
+            AsmInstructionKind::InsertLane {
+                vector,
+                lane,
+                value,
+            } => {
                 let result_ty = inst
                     .type_hint
                     .as_ref()
@@ -2613,7 +2625,11 @@ fn emit_block(
                 emit_pinsrq_xmm_r64_imm8(asm, FReg::Xmm0, Reg::R10, *lane as u8);
                 store_vreg_float(asm, layout, inst.id, FReg::Xmm0, result_ty)?;
             }
-            AsmInstructionKind::ZipLow { lhs, rhs, lane_bits } => {
+            AsmInstructionKind::ZipLow {
+                lhs,
+                rhs,
+                lane_bits,
+            } => {
                 let result_ty = inst
                     .type_hint
                     .as_ref()

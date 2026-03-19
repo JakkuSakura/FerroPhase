@@ -122,4 +122,3 @@ fn normalize_materializes_printf_format_strings_from_elf_rodata() {
     };
     assert!(matches!(args[0], AsmValue::Constant(AsmConstant::String(ref s)) if s == "hello %s"));
 }
-

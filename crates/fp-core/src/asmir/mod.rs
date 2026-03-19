@@ -1,8 +1,8 @@
 pub mod pretty;
 pub mod sysop;
 
+use crate::container::ContainerFile;
 use crate::lir::{CallingConvention, DebugInfo, Linkage, Name, StackSlot, Ty, Visibility};
-use crate::{container::ContainerFile};
 pub use sysop::{AsmSysOp, PosixDirentStyle, PosixFlagStyle};
 
 pub type AsmBlockId = u32;

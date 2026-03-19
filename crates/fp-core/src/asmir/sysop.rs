@@ -96,4 +96,3 @@ pub enum AsmSysOp {
         dir: AsmValue,
     },
 }
-

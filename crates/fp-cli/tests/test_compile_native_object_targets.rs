@@ -61,23 +61,19 @@ async fn compile_native_object_roundtrips_simple_x86_64_elf_add_ret_text() {
     let input_bytes = build_x86_64_elf_object_with_add_rax_imm8_ret();
     fs::write(&input_file, &input_bytes).unwrap();
 
-    let args = base_args(input_file.clone(), output_file.clone(), "x86_64-unknown-linux-gnu");
+    let args = base_args(
+        input_file.clone(),
+        output_file.clone(),
+        "x86_64-unknown-linux-gnu",
+    );
     compile_command(args, &CliConfig::default()).await.unwrap();
 
     let output_bytes = fs::read(&output_file).unwrap();
     let input_obj = object::File::parse(input_bytes.as_slice()).unwrap();
     let output_obj = object::File::parse(output_bytes.as_slice()).unwrap();
 
-    let input_text = input_obj
-        .section_by_name(".text")
-        .unwrap()
-        .data()
-        .unwrap();
-    let output_text = output_obj
-        .section_by_name(".text")
-        .unwrap()
-        .data()
-        .unwrap();
+    let input_text = input_obj.section_by_name(".text").unwrap().data().unwrap();
+    let output_text = output_obj.section_by_name(".text").unwrap().data().unwrap();
     assert_eq!(output_text, input_text);
 }
 
@@ -159,28 +155,28 @@ async fn compile_native_object_roundtrips_simple_x86_64_elf_text() {
     let input_bytes = build_x86_64_elf_object_with_ret_only();
     fs::write(&input_file, &input_bytes).unwrap();
 
-    let args = base_args(input_file.clone(), output_file.clone(), "x86_64-unknown-linux-gnu");
+    let args = base_args(
+        input_file.clone(),
+        output_file.clone(),
+        "x86_64-unknown-linux-gnu",
+    );
     compile_command(args, &CliConfig::default()).await.unwrap();
 
     let output_bytes = fs::read(&output_file).unwrap();
     let input_obj = object::File::parse(input_bytes.as_slice()).unwrap();
     let output_obj = object::File::parse(output_bytes.as_slice()).unwrap();
 
-    let input_text = input_obj
-        .section_by_name(".text")
-        .unwrap()
-        .data()
-        .unwrap();
-    let output_text = output_obj
-        .section_by_name(".text")
-        .unwrap()
-        .data()
-        .unwrap();
+    let input_text = input_obj.section_by_name(".text").unwrap().data().unwrap();
+    let output_text = output_obj.section_by_name(".text").unwrap().data().unwrap();
     assert_eq!(output_text, input_text);
 }
 
 fn build_aarch64_macho_object_with_ret_only() -> Vec<u8> {
-    let mut obj = Object::new(BinaryFormat::MachO, Architecture::Aarch64, Endianness::Little);
+    let mut obj = Object::new(
+        BinaryFormat::MachO,
+        Architecture::Aarch64,
+        Endianness::Little,
+    );
     let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
     obj.append_section_data(section_id, &0xD65F03C0u32.to_le_bytes(), 4);
     obj.add_symbol(Symbol {
@@ -197,7 +193,11 @@ fn build_aarch64_macho_object_with_ret_only() -> Vec<u8> {
 }
 
 fn build_aarch64_macho_object_with_add_ret() -> Vec<u8> {
-    let mut obj = Object::new(BinaryFormat::MachO, Architecture::Aarch64, Endianness::Little);
+    let mut obj = Object::new(
+        BinaryFormat::MachO,
+        Architecture::Aarch64,
+        Endianness::Little,
+    );
     let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
     // add x0, x0, #1; ret
     obj.append_section_data(section_id, &0x91000400u32.to_le_bytes(), 4);
@@ -224,7 +224,11 @@ async fn compile_native_object_roundtrips_simple_aarch64_macho_text() {
     let input_bytes = build_aarch64_macho_object_with_ret_only();
     fs::write(&input_file, &input_bytes).unwrap();
 
-    let args = base_args(input_file.clone(), output_file.clone(), "aarch64-apple-darwin");
+    let args = base_args(
+        input_file.clone(),
+        output_file.clone(),
+        "aarch64-apple-darwin",
+    );
     compile_command(args, &CliConfig::default()).await.unwrap();
 
     let output_bytes = fs::read(&output_file).unwrap();
@@ -255,7 +259,11 @@ async fn compile_native_object_roundtrips_simple_aarch64_macho_add_ret_text() {
     let input_bytes = build_aarch64_macho_object_with_add_ret();
     fs::write(&input_file, &input_bytes).unwrap();
 
-    let args = base_args(input_file.clone(), output_file.clone(), "aarch64-apple-darwin");
+    let args = base_args(
+        input_file.clone(),
+        output_file.clone(),
+        "aarch64-apple-darwin",
+    );
     compile_command(args, &CliConfig::default()).await.unwrap();
 
     let output_bytes = fs::read(&output_file).unwrap();

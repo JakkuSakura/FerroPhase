@@ -54,7 +54,10 @@ fn materialize_maps_stderr_to_darwin_global() {
                 id: 0,
                 opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
                 kind: AsmInstructionKind::Load {
-                    address: AsmValue::Global("stderr".to_string(), AsmType::Ptr(Box::new(AsmType::I8))),
+                    address: AsmValue::Global(
+                        "stderr".to_string(),
+                        AsmType::Ptr(Box::new(AsmType::I8)),
+                    ),
                     alignment: None,
                     volatile: false,
                 },
@@ -416,10 +419,12 @@ fn materialize_rewrites_indirect_cxa_atexit_calls_to_noop_stub() {
 
     fp_native::libc::materialize(&mut program);
 
-    assert!(program
-        .functions
-        .iter()
-        .any(|func| func.name.as_str() == "fp_noop_cxa_atexit"));
+    assert!(
+        program
+            .functions
+            .iter()
+            .any(|func| func.name.as_str() == "fp_noop_cxa_atexit")
+    );
 
     let block = &program
         .functions

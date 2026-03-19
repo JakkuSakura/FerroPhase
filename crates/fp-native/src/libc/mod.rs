@@ -84,8 +84,10 @@ pub fn normalize(program: &mut AsmProgram) {
         .clone()
         .unwrap_or(CallingConvention::C);
 
-    let mut defined_calling_conventions: std::collections::HashMap<String, Option<CallingConvention>> =
-        std::collections::HashMap::new();
+    let mut defined_calling_conventions: std::collections::HashMap<
+        String,
+        Option<CallingConvention>,
+    > = std::collections::HashMap::new();
     for func in &program.functions {
         if func.is_declaration {
             continue;
@@ -114,7 +116,8 @@ pub fn normalize(program: &mut AsmProgram) {
                 {
                     let mut apply_default_cc = false;
                     if let AsmValue::Function(name) = function {
-                        if let Some((normalized, rewrite)) = normalize_function_name(name.as_str()) {
+                        if let Some((normalized, rewrite)) = normalize_function_name(name.as_str())
+                        {
                             *name = normalized.to_string();
                             apply_arg_rewrite(args, rewrite);
                             apply_default_cc = true;
@@ -250,7 +253,9 @@ fn read_cstring_from_any_global(
     }
     let rest = &bytes[offset..];
     let nul = rest.iter().position(|byte| *byte == 0)?;
-    std::str::from_utf8(&rest[..nul]).ok().map(|s| s.to_string())
+    std::str::from_utf8(&rest[..nul])
+        .ok()
+        .map(|s| s.to_string())
 }
 
 fn materialize_format_string_from_elf_rodata(
@@ -357,7 +362,9 @@ fn read_cstring_from_global_bytes(
     }
     let rest = &bytes[offset..];
     let nul = rest.iter().position(|byte| *byte == 0)?;
-    std::str::from_utf8(&rest[..nul]).ok().map(|s| s.to_string())
+    std::str::from_utf8(&rest[..nul])
+        .ok()
+        .map(|s| s.to_string())
 }
 
 #[derive(Clone, Debug)]
@@ -387,14 +394,22 @@ fn build_reg_defs(func: &fp_core::asmir::AsmFunction) -> HashMap<u32, RegDef> {
                     defs.insert(inst.id, RegDef::Freeze(value.clone()));
                 }
                 AsmInstructionKind::Add(lhs, rhs) => {
-                    let AsmValue::Register(base) = lhs else { continue };
+                    let AsmValue::Register(base) = lhs else {
+                        continue;
+                    };
                     let AsmValue::Constant(constant) = rhs else {
                         continue;
                     };
                     let Some(offset) = constant_to_i64(constant) else {
                         continue;
                     };
-                    defs.insert(inst.id, RegDef::Add { base: *base, offset });
+                    defs.insert(
+                        inst.id,
+                        RegDef::Add {
+                            base: *base,
+                            offset,
+                        },
+                    );
                 }
                 _ => {}
             }
@@ -484,7 +499,9 @@ fn materialize_rewrite_darwin_exit(program: &mut AsmProgram) {
                         .is_some_and(|segment| refers_to_symbol(inst_by_id, segment, symbol))
             }
             AsmValue::Register(id) => match inst_by_id.get(id) {
-                Some(AsmInstructionKind::Freeze(inner)) => refers_to_symbol(inst_by_id, inner, symbol),
+                Some(AsmInstructionKind::Freeze(inner)) => {
+                    refers_to_symbol(inst_by_id, inner, symbol)
+                }
                 Some(AsmInstructionKind::SymbolAddress { symbol: target, .. }) => target == symbol,
                 _ => false,
             },
@@ -492,9 +509,14 @@ fn materialize_rewrite_darwin_exit(program: &mut AsmProgram) {
         }
     }
 
-    fn call_target_is_exit(inst_by_id: &HashMap<u32, AsmInstructionKind>, value: &AsmValue) -> bool {
+    fn call_target_is_exit(
+        inst_by_id: &HashMap<u32, AsmInstructionKind>,
+        value: &AsmValue,
+    ) -> bool {
         match value {
-            AsmValue::Function(name) => name.split_once('@').map(|(h, _)| h).unwrap_or(name) == "exit",
+            AsmValue::Function(name) => {
+                name.split_once('@').map(|(h, _)| h).unwrap_or(name) == "exit"
+            }
             AsmValue::Register(id) => match inst_by_id.get(id) {
                 Some(AsmInstructionKind::Freeze(inner)) => call_target_is_exit(inst_by_id, inner),
                 Some(AsmInstructionKind::SymbolAddress { symbol, .. }) => {
@@ -559,7 +581,9 @@ fn materialize_disable_darwin_cxa_atexit(program: &mut AsmProgram) {
                         .is_some_and(|segment| refers_to_symbol(inst_by_id, segment, symbol))
             }
             AsmValue::Register(id) => match inst_by_id.get(id) {
-                Some(AsmInstructionKind::Freeze(inner)) => refers_to_symbol(inst_by_id, inner, symbol),
+                Some(AsmInstructionKind::Freeze(inner)) => {
+                    refers_to_symbol(inst_by_id, inner, symbol)
+                }
                 Some(AsmInstructionKind::SymbolAddress { symbol: target, .. }) => target == symbol,
                 _ => false,
             },
@@ -567,11 +591,18 @@ fn materialize_disable_darwin_cxa_atexit(program: &mut AsmProgram) {
         }
     }
 
-    fn call_target_is_cxa_atexit(inst_by_id: &HashMap<u32, AsmInstructionKind>, value: &AsmValue) -> bool {
+    fn call_target_is_cxa_atexit(
+        inst_by_id: &HashMap<u32, AsmInstructionKind>,
+        value: &AsmValue,
+    ) -> bool {
         match value {
-            AsmValue::Function(name) => name.split_once('@').map(|(h, _)| h).unwrap_or(name) == "__cxa_atexit",
+            AsmValue::Function(name) => {
+                name.split_once('@').map(|(h, _)| h).unwrap_or(name) == "__cxa_atexit"
+            }
             AsmValue::Register(id) => match inst_by_id.get(id) {
-                Some(AsmInstructionKind::Freeze(inner)) => call_target_is_cxa_atexit(inst_by_id, inner),
+                Some(AsmInstructionKind::Freeze(inner)) => {
+                    call_target_is_cxa_atexit(inst_by_id, inner)
+                }
                 Some(AsmInstructionKind::SymbolAddress { symbol, .. }) => {
                     symbol.split_once('@').map(|(h, _)| h).unwrap_or(symbol) == "__cxa_atexit"
                 }
@@ -675,7 +706,9 @@ fn materialize_darwin_progname(program: &mut AsmProgram) {
         match init {
             AsmConstant::Bytes(bytes) => {
                 let nul = bytes.iter().position(|byte| *byte == 0)?;
-                std::str::from_utf8(&bytes[..nul]).ok().map(|s| s.to_string())
+                std::str::from_utf8(&bytes[..nul])
+                    .ok()
+                    .map(|s| s.to_string())
             }
             AsmConstant::Array(values, _) | AsmConstant::Struct(values, _) => {
                 let mut bytes = Vec::new();
@@ -683,7 +716,13 @@ fn materialize_darwin_progname(program: &mut AsmProgram) {
                     let byte = match elem {
                         AsmConstant::UInt(v, _) => *v as u8,
                         AsmConstant::Int(v, _) => *v as u8,
-                        AsmConstant::Bool(v) => if *v { 1 } else { 0 },
+                        AsmConstant::Bool(v) => {
+                            if *v {
+                                1
+                            } else {
+                                0
+                            }
+                        }
                         _ => return None,
                     };
                     if byte == 0 {
@@ -947,11 +986,7 @@ fn materialize_darwin_stdio(program: &mut AsmProgram) {
                 rewrite_value(a);
             }
             AsmInstructionKind::Load { address, .. } => rewrite_value(address),
-            AsmInstructionKind::Store {
-                value,
-                address,
-                ..
-            } => {
+            AsmInstructionKind::Store { value, address, .. } => {
                 rewrite_value(value);
                 rewrite_value(address);
             }
@@ -975,9 +1010,7 @@ fn materialize_darwin_stdio(program: &mut AsmProgram) {
             | AsmInstructionKind::SextOrTrunc(value, _) => rewrite_value(value),
             AsmInstructionKind::ExtractValue { aggregate, .. } => rewrite_value(aggregate),
             AsmInstructionKind::InsertValue {
-                aggregate,
-                element,
-                ..
+                aggregate, element, ..
             } => {
                 rewrite_value(aggregate);
                 rewrite_value(element);

@@ -3,12 +3,12 @@ pub mod archive;
 pub mod asm;
 pub mod asmir;
 pub mod binary;
-pub mod libc;
 pub mod config;
 pub mod container;
 pub mod emit;
 pub mod ffi;
 pub mod jit;
+pub mod libc;
 pub mod link;
 pub mod system_api;
 

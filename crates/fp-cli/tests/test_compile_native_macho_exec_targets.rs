@@ -2,7 +2,9 @@ use std::fs;
 
 use object::Object as _;
 use object::write::{Object, Symbol, SymbolSection};
-use object::{Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope};
+use object::{
+    Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope,
+};
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
@@ -43,7 +45,11 @@ fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileAr
 }
 
 fn build_x86_64_macho_object_with_darwin_syscalls() -> Vec<u8> {
-    let mut obj = Object::new(BinaryFormat::MachO, Architecture::X86_64, Endianness::Little);
+    let mut obj = Object::new(
+        BinaryFormat::MachO,
+        Architecture::X86_64,
+        Endianness::Little,
+    );
     let section_id = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
 
     // x86_64 Mach-O `_main` using raw Darwin syscalls:
@@ -98,7 +104,11 @@ async fn compile_macho_x86_64_object_to_aarch64_macho_exec_and_run() {
     let input_file = temp_dir.path().join("main.x86_64.o");
     let output_file = temp_dir.path().join("main.arm64.out");
 
-    fs::write(&input_file, build_x86_64_macho_object_with_darwin_syscalls()).unwrap();
+    fs::write(
+        &input_file,
+        build_x86_64_macho_object_with_darwin_syscalls(),
+    )
+    .unwrap();
     let args = base_args(input_file, output_file.clone());
     compile_command(args, &CliConfig::default()).await.unwrap();
 
@@ -115,4 +125,3 @@ async fn compile_macho_x86_64_object_to_aarch64_macho_exec_and_run() {
     assert!(output.status.success(), "status={:?}", output.status);
     assert_eq!(output.stdout, b"hi\n");
 }
-

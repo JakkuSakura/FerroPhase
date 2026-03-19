@@ -1,5 +1,5 @@
-use crate::error::{Error, Result};
 use crate::asmir::AsmObjectFormat;
+use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerKind {
