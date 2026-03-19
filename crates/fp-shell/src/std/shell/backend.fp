@@ -4,7 +4,52 @@ extern "bash" fn runtime_host_transport(host: str) -> str;
 extern "pwsh" fn runtime_host_transport(host: str) -> str;
 
 #[cfg(target_lang = "bash")]
-#[command = "bash"]
+extern "bash" fn runtime_host_address(host: str) -> str;
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_host_address(host: str) -> str;
+
+#[cfg(target_lang = "bash")]
+extern "bash" fn runtime_host_user(host: str) -> str;
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_host_user(host: str) -> str;
+
+#[cfg(target_lang = "bash")]
+extern "bash" fn runtime_host_port(host: str) -> str;
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_host_port(host: str) -> str;
+
+#[cfg(target_lang = "bash")]
+extern "bash" fn runtime_host_container(host: str) -> str;
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_host_container(host: str) -> str;
+
+#[cfg(target_lang = "bash")]
+extern "bash" fn runtime_host_pod(host: str) -> str;
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_host_pod(host: str) -> str;
+
+#[cfg(target_lang = "bash")]
+extern "bash" fn runtime_host_namespace(host: str) -> str;
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_host_namespace(host: str) -> str;
+
+#[cfg(target_lang = "bash")]
+extern "bash" fn runtime_host_context(host: str) -> str;
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_host_context(host: str) -> str;
+
+#[cfg(target_lang = "bash")]
+extern "bash" fn runtime_host_password(host: str) -> str;
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_host_password(host: str) -> str;
+
+#[cfg(target_lang = "bash")]
+extern "bash" fn runtime_host_scheme(host: str) -> str;
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_host_scheme(host: str) -> str;
+
+#[cfg(target_lang = "bash")]
+#[command = "bash -lc"]
 extern "bash" fn bash(cmd: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "Invoke-Expression"]
@@ -12,24 +57,87 @@ extern "pwsh" fn invoke_expression(cmd: str);
 
 #[cfg(target_lang = "bash")]
 #[command = "ssh"]
-extern "bash" fn ssh(host: str, cmd: str);
+extern "bash" fn ssh(target: str, cmd: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "ssh"]
-extern "pwsh" fn ssh(host: str, cmd: str);
+extern "pwsh" fn ssh(target: str, cmd: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "ssh -p"]
+extern "bash" fn ssh_port(port: str, target: str, cmd: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "ssh -p"]
+extern "pwsh" fn ssh_port(port: str, target: str, cmd: str);
 
 #[cfg(target_lang = "bash")]
 #[command = "docker exec"]
-extern "bash" fn docker_exec(host: str, cmd: str);
+extern "bash" fn docker_exec(container: str, shell: str, flag: str, cmd: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "docker exec"]
-extern "pwsh" fn docker_exec(host: str, cmd: str);
+extern "pwsh" fn docker_exec(container: str, shell: str, flag: str, cmd: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "docker exec --user"]
+extern "bash" fn docker_exec_user(user: str, container: str, shell: str, flag: str, cmd: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "docker exec --user"]
+extern "pwsh" fn docker_exec_user(user: str, container: str, shell: str, flag: str, cmd: str);
 
 #[cfg(target_lang = "bash")]
 #[command = "kubectl exec"]
-extern "bash" fn kubectl_exec(host: str, cmd: str);
+extern "bash" fn kubectl_exec(pod: str, separator: str, shell: str, flag: str, cmd: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "kubectl exec"]
-extern "pwsh" fn kubectl_exec(host: str, cmd: str);
+extern "pwsh" fn kubectl_exec(pod: str, separator: str, shell: str, flag: str, cmd: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "kubectl exec -c"]
+extern "bash" fn kubectl_exec_container(container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "kubectl exec -c"]
+extern "pwsh" fn kubectl_exec_container(container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "kubectl -n"]
+extern "bash" fn kubectl_namespace_exec(namespace: str, exec_word: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "kubectl -n"]
+extern "pwsh" fn kubectl_namespace_exec(namespace: str, exec_word: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "kubectl -n"]
+extern "bash" fn kubectl_namespace_exec_container(namespace: str, exec_word: str, container_flag: str, container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "kubectl -n"]
+extern "pwsh" fn kubectl_namespace_exec_container(namespace: str, exec_word: str, container_flag: str, container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "kubectl --context"]
+extern "bash" fn kubectl_context_exec(context: str, exec_word: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "kubectl --context"]
+extern "pwsh" fn kubectl_context_exec(context: str, exec_word: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "kubectl --context"]
+extern "bash" fn kubectl_context_exec_container(context: str, exec_word: str, container_flag: str, container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "kubectl --context"]
+extern "pwsh" fn kubectl_context_exec_container(context: str, exec_word: str, container_flag: str, container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "kubectl --context"]
+extern "bash" fn kubectl_context_namespace_exec(context: str, namespace_flag: str, namespace: str, exec_word: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "kubectl --context"]
+extern "pwsh" fn kubectl_context_namespace_exec(context: str, namespace_flag: str, namespace: str, exec_word: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "kubectl --context"]
+extern "bash" fn kubectl_context_namespace_exec_container(context: str, namespace_flag: str, namespace: str, exec_word: str, container_flag: str, container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "kubectl --context"]
+extern "pwsh" fn kubectl_context_namespace_exec_container(context: str, namespace_flag: str, namespace: str, exec_word: str, container_flag: str, container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
 
 #[cfg(target_lang = "bash")]
 #[command = "pwsh"]
@@ -39,32 +147,60 @@ extern "bash" fn winrm_run(host: str, cmd: str);
 extern "pwsh" fn winrm_run(host: str, cmd: str);
 
 #[cfg(target_lang = "bash")]
-#[command = "cp"]
+#[command = "cp --"]
 extern "bash" fn cp(src: str, dest: str);
 #[cfg(target_lang = "pwsh")]
-#[command = "Copy-Item"]
+#[command = "Copy-Item -Force"]
 extern "pwsh" fn copy_item(src: str, dest: str);
 
 #[cfg(target_lang = "bash")]
 #[command = "scp"]
-extern "bash" fn scp(host: str, src: str, dest: str);
+extern "bash" fn scp(src: str, dest: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "scp"]
-extern "pwsh" fn scp(host: str, src: str, dest: str);
+extern "pwsh" fn scp(src: str, dest: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "scp -P"]
+extern "bash" fn scp_port(port: str, src: str, dest: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "scp -P"]
+extern "pwsh" fn scp_port(port: str, src: str, dest: str);
 
 #[cfg(target_lang = "bash")]
 #[command = "docker cp"]
-extern "bash" fn docker_cp(host: str, src: str, dest: str);
+extern "bash" fn docker_cp(src: str, dest: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "docker cp"]
-extern "pwsh" fn docker_cp(host: str, src: str, dest: str);
+extern "pwsh" fn docker_cp(src: str, dest: str);
 
 #[cfg(target_lang = "bash")]
 #[command = "kubectl cp"]
-extern "bash" fn kubectl_cp(host: str, src: str, dest: str);
+extern "bash" fn kubectl_cp(src: str, dest: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "kubectl cp"]
-extern "pwsh" fn kubectl_cp(host: str, src: str, dest: str);
+extern "pwsh" fn kubectl_cp(src: str, dest: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "kubectl -n"]
+extern "bash" fn kubectl_namespace_cp(namespace: str, cp_word: str, src: str, dest: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "kubectl -n"]
+extern "pwsh" fn kubectl_namespace_cp(namespace: str, cp_word: str, src: str, dest: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "kubectl --context"]
+extern "bash" fn kubectl_context_cp(context: str, cp_word: str, src: str, dest: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "kubectl --context"]
+extern "pwsh" fn kubectl_context_cp(context: str, cp_word: str, src: str, dest: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "kubectl --context"]
+extern "bash" fn kubectl_context_namespace_cp(context: str, namespace_flag: str, namespace: str, cp_word: str, src: str, dest: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "kubectl --context"]
+extern "pwsh" fn kubectl_context_namespace_cp(context: str, namespace_flag: str, namespace: str, cp_word: str, src: str, dest: str);
 
 #[cfg(target_lang = "bash")]
 #[command = "pwsh"]
@@ -86,18 +222,25 @@ extern "bash" fn render_template(src: str, dest: str, vars: str);
 extern "pwsh" fn render_template(src: str, dest: str, vars: str);
 
 #[cfg(target_lang = "bash")]
-#[command = "rm"]
+#[command = "rm -f"]
 extern "bash" fn remove_file(path: str);
 #[cfg(target_lang = "pwsh")]
-#[command = "Remove-Item"]
+#[command = "Remove-Item -Force -ErrorAction SilentlyContinue"]
 extern "pwsh" fn remove_file(path: str);
 
 #[cfg(target_lang = "bash")]
-#[command = "rsync ssh"]
-extern "bash" fn rsync_ssh(host: str, flags: str, src: str, dest: str);
+#[command = "rsync"]
+extern "bash" fn rsync(flags: str, src: str, dest: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "rsync"]
-extern "pwsh" fn rsync_ssh(host: str, flags: str, src: str, dest: str);
+extern "pwsh" fn rsync(flags: str, src: str, dest: str);
+
+#[cfg(target_lang = "bash")]
+#[command = "rsync -e"]
+extern "bash" fn rsync_shell(shell: str, flags: str, src: str, dest: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "rsync -e"]
+extern "pwsh" fn rsync_shell(shell: str, flags: str, src: str, dest: str);
 
 #[cfg(target_lang = "bash")]
 extern "bash" fn runtime_fail(message: str);
@@ -111,6 +254,34 @@ extern "pwsh" fn runtime_set_changed(changed: bool);
 
 const fn host_transport(host: str) -> str {
     runtime_host_transport(host)
+}
+
+const fn host_address(host: str) -> str {
+    runtime_host_address(host)
+}
+
+const fn host_user(host: str) -> str {
+    runtime_host_user(host)
+}
+
+const fn host_port(host: str) -> str {
+    runtime_host_port(host)
+}
+
+const fn host_container(host: str) -> str {
+    runtime_host_container(host)
+}
+
+const fn host_pod(host: str) -> str {
+    runtime_host_pod(host)
+}
+
+const fn host_namespace(host: str) -> str {
+    runtime_host_namespace(host)
+}
+
+const fn host_context(host: str) -> str {
+    runtime_host_context(host)
 }
 
 #[cfg(target_lang = "bash")]
@@ -137,9 +308,9 @@ const fn run_host(host: str, cmd: str) {
     let transport = host_transport(host);
     match transport {
         "local" => run_local_host(cmd),
-        "ssh" => ssh(host, cmd),
-        "docker" => docker_exec(host, cmd),
-        "kubectl" => kubectl_exec(host, cmd),
+        "ssh" => run_ssh_host(host, cmd),
+        "docker" => run_docker_host(host, cmd),
+        "kubectl" => run_kubectl_host(host, cmd),
         "winrm" => winrm_run(host, cmd),
         _ => runtime_fail(f"unsupported transport: {transport}"),
     }
@@ -149,9 +320,9 @@ const fn copy_host(host: str, src: str, dest: str) {
     let transport = host_transport(host);
     match transport {
         "local" => copy_local_host(src, dest),
-        "ssh" => scp(host, src, dest),
-        "docker" => docker_cp(host, src, dest),
-        "kubectl" => kubectl_cp(host, src, dest),
+        "ssh" => copy_ssh_host(host, src, dest),
+        "docker" => copy_docker_host(host, src, dest),
+        "kubectl" => copy_kubectl_host(host, src, dest),
         "winrm" => winrm_copy(host, src, dest),
         _ => runtime_fail(f"unsupported transport for copy: {transport}"),
     }
@@ -167,8 +338,124 @@ const fn template_host(host: str, src: str, dest: str, vars: str) {
 const fn rsync_host(host: str, flags: str, src: str, dest: str) {
     let transport = host_transport(host);
     match transport {
-        "ssh" => rsync_ssh(host, flags, src, dest),
-        _ => runtime_fail(f"rsync is only supported for ssh in shell target, got: {transport}"),
+        "local" => rsync(flags, src, dest),
+        _ => rsync_remote_host(host, flags, src, dest),
+    }
+}
+
+const fn ssh_target(host: str) -> str {
+    let user = host_user(host);
+    let address = host_address(host);
+    if user != "" {
+        f"{user}@{address}"
+    } else {
+        address
+    }
+}
+
+const fn run_ssh_host(host: str, cmd: str) {
+    let target = ssh_target(host);
+    let port = host_port(host);
+    if port != "" {
+        ssh_port(port, target, cmd);
+    } else {
+        ssh(target, cmd);
+    }
+}
+
+const fn copy_ssh_host(host: str, src: str, dest: str) {
+    let target = ssh_target(host);
+    let remote = f"{target}:{dest}";
+    let port = host_port(host);
+    if port != "" {
+        scp_port(port, src, remote);
+    } else {
+        scp(src, remote);
+    }
+}
+
+const fn run_docker_host(host: str, cmd: str) {
+    let container = host_container(host);
+    let user = host_user(host);
+    if user != "" {
+        docker_exec_user(user, container, "sh", "-lc", cmd);
+    } else {
+        docker_exec(container, "sh", "-lc", cmd);
+    }
+}
+
+const fn run_kubectl_host(host: str, cmd: str) {
+    let context = host_context(host);
+    let namespace = host_namespace(host);
+    let container = host_container(host);
+    let pod = host_pod(host);
+    match context {
+        "" => match namespace {
+            "" => match container {
+                "" => kubectl_exec(pod, "--", "sh", "-lc", cmd),
+                _ => kubectl_exec_container(container, pod, "--", "sh", "-lc", cmd),
+            },
+            _ => match container {
+                "" => kubectl_namespace_exec(namespace, "exec", pod, "--", "sh", "-lc", cmd),
+                _ => kubectl_namespace_exec_container(namespace, "exec", "-c", container, pod, "--", "sh", "-lc", cmd),
+            },
+        },
+        _ => match namespace {
+            "" => match container {
+                "" => kubectl_context_exec(context, "exec", pod, "--", "sh", "-lc", cmd),
+                _ => kubectl_context_exec_container(context, "exec", "-c", container, pod, "--", "sh", "-lc", cmd),
+            },
+            _ => match container {
+                "" => kubectl_context_namespace_exec(context, "-n", namespace, "exec", pod, "--", "sh", "-lc", cmd),
+                _ => kubectl_context_namespace_exec_container(context, "-n", namespace, "exec", "-c", container, pod, "--", "sh", "-lc", cmd),
+            },
+        },
+    }
+}
+
+const fn copy_docker_host(host: str, src: str, dest: str) {
+    let container = host_container(host);
+    docker_cp(src, f"{container}:{dest}");
+}
+
+const fn copy_kubectl_host(host: str, src: str, dest: str) {
+    let context = host_context(host);
+    let namespace = host_namespace(host);
+    let remote = f"{host_pod(host)}:{dest}";
+    match context {
+        "" => match namespace {
+            "" => kubectl_cp(src, remote),
+            _ => kubectl_namespace_cp(namespace, "cp", src, remote),
+        },
+        _ => match namespace {
+            "" => kubectl_context_cp(context, "cp", src, remote),
+            _ => kubectl_context_namespace_cp(context, "-n", namespace, "cp", src, remote),
+        },
+    }
+}
+
+const fn rsync_remote_target(host: str) -> str {
+    let address = host_address(host);
+    if address == "" {
+        runtime_fail(f"host is not rsync-reachable: missing address for {host}");
+        ""
+    } else {
+        let user = host_user(host);
+        if user != "" {
+            f"{user}@{address}"
+        } else {
+            address
+        }
+    }
+}
+
+const fn rsync_remote_host(host: str, flags: str, src: str, dest: str) {
+    let remote = f"{rsync_remote_target(host)}:{dest}";
+    let port = host_port(host);
+    if port != "" {
+        rsync_shell(f"ssh -p {port}", flags, src, remote);
+    } else {
+        rsync(flags, src, remote);
     }
 }
 

@@ -5,9 +5,7 @@ use fp_core::frontend::LanguageFrontend;
 use fp_core::utils::to_json::ToJson;
 use fp_interpret::engine::{AstInterpreter, EvalStepOutcome, InterpreterMode, InterpreterOptions};
 use fp_lang::FerroFrontend;
-use fp_shell_core::{
-    InventoryHost, InventoryValue, ShellInventory, TransportKind,
-};
+use fp_shell_core::{InventoryHost, InventoryValue, ShellInventory, TransportKind};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;

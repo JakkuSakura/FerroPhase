@@ -72,11 +72,26 @@ impl ScriptTarget {
 fn is_runtime_primitive(name: &str) -> bool {
     matches!(
         name,
-        "runtime_host_transport" | "runtime_temp_path" | "runtime_fail" | "runtime_set_changed"
+        "runtime_host_transport"
+            | "runtime_host_address"
+            | "runtime_host_user"
+            | "runtime_host_port"
+            | "runtime_host_container"
+            | "runtime_host_pod"
+            | "runtime_host_namespace"
+            | "runtime_host_context"
+            | "runtime_host_password"
+            | "runtime_host_scheme"
+            | "runtime_temp_path"
+            | "runtime_fail"
+            | "runtime_set_changed"
     )
 }
 
-pub fn validate_extern_decl(function: &ItemDeclFunction, target: ScriptTarget) -> Result<(), String> {
+pub fn validate_extern_decl(
+    function: &ItemDeclFunction,
+    target: ScriptTarget,
+) -> Result<(), String> {
     let expected_abi = match target {
         ScriptTarget::Bash => "bash",
         ScriptTarget::PowerShell => "pwsh",
@@ -86,7 +101,7 @@ pub fn validate_extern_decl(function: &ItemDeclFunction, target: ScriptTarget) -
             return Err(format!(
                 "extern `{}` uses ABI `rust`, but shell target requires `{}`",
                 function.name, expected_abi
-            ))
+            ));
         }
         fp_core::ast::Abi::Named(name) => name.as_str(),
     };
@@ -103,7 +118,10 @@ pub fn validate_extern_decl(function: &ItemDeclFunction, target: ScriptTarget) -
             function.name, expected_abi
         ));
     }
-    if command.as_deref().is_some_and(|value| value.trim().is_empty()) {
+    if command
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
         return Err(format!(
             "extern `{}` has an empty #[command] annotation",
             function.name

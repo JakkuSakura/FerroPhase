@@ -1,12 +1,13 @@
 use fp_core::ast::{
     Abi, BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind, ExprMatch, ExprStringTemplate,
-    FormatArgRef, FormatTemplatePart, ItemDeclFunction, ItemDefFunction, ItemKind, Node,
-    NodeKind, PatternKind, Value,
+    FormatArgRef, FormatTemplatePart, ItemDeclFunction, ItemDefFunction, ItemKind, Node, NodeKind,
+    PatternKind, Ty, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
 use fp_shell_core::{
-    ScriptTarget, ShellInventory, TransportKind, runtime_requirements, validate_extern_decl,
+    ScriptTarget, ShellInventory, TransportKind, extern_command, runtime_requirements,
+    validate_extern_decl,
 };
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
@@ -201,9 +202,16 @@ impl<'a> BashRenderer<'a> {
         for (index, param) in def.sig.params.iter().enumerate() {
             self.push_line(1, &format!("local {}=\"${}\"", param.name, index + 1));
         }
-        match def.body.kind() {
-            ExprKind::Block(block) => self.render_block(block, 1)?,
-            _ => self.render_expr_statement(&def.body, 1)?,
+        if function_returns_value(def) {
+            match def.body.kind() {
+                ExprKind::Block(block) => self.render_function_block(block, 1)?,
+                _ => self.render_result_expr(&def.body, 1)?,
+            }
+        } else {
+            match def.body.kind() {
+                ExprKind::Block(block) => self.render_block(block, 1)?,
+                _ => self.render_expr_statement(&def.body, 1)?,
+            }
         }
         self.push_line(0, "}");
         self.push_line(0, "");
@@ -217,6 +225,19 @@ impl<'a> BashRenderer<'a> {
         Ok(())
     }
 
+    fn render_function_block(&mut self, block: &ExprBlock, indent: usize) -> Result<(), String> {
+        let Some((last, rest)) = block.stmts.split_last() else {
+            return Ok(());
+        };
+        for statement in rest {
+            self.render_block_stmt(statement, indent)?;
+        }
+        match last {
+            BlockStmt::Expr(expr) => self.render_result_expr(&expr.expr, indent),
+            _ => self.render_block_stmt(last, indent),
+        }
+    }
+
     fn render_match_expr(&mut self, expr_match: &ExprMatch, indent: usize) -> Result<(), String> {
         let scrutinee = expr_match
             .scrutinee
@@ -224,7 +245,11 @@ impl<'a> BashRenderer<'a> {
             .ok_or_else(|| "bash match requires scrutinee".to_string())?;
         self.push_line(indent, &format!("case {} in", self.render_word(scrutinee)?));
         for case in &expr_match.cases {
-            let pattern = match case.pat.as_ref().and_then(|pat| extract_match_case_string(pat)) {
+            let pattern = match case
+                .pat
+                .as_ref()
+                .and_then(|pat| extract_match_case_string(pat))
+            {
                 Some(pattern) => self.render_case_pattern(&pattern)?,
                 None => "*".to_string(),
             };
@@ -334,11 +359,74 @@ impl<'a> BashRenderer<'a> {
                     );
                 };
                 let Some(ident) = name.as_ident() else {
-                    return Err("bash renderer only supports identifier invocation targets".to_string());
+                    return Err(
+                        "bash renderer only supports identifier invocation targets".to_string()
+                    );
                 };
                 self.render_invoke_statement(ident.as_str(), &invoke.args, indent)
             }
             _ => Ok(()),
+        }
+    }
+
+    fn render_result_expr(&mut self, expr: &Expr, indent: usize) -> Result<(), String> {
+        match expr.kind() {
+            ExprKind::Block(block) => self.render_function_block(block, indent),
+            ExprKind::If(expr_if) => {
+                self.push_line(
+                    indent,
+                    &format!("if {}; then", self.render_expr_as_condition(&expr_if.cond)?),
+                );
+                self.render_result_expr(&expr_if.then, indent + 1)?;
+                if let Some(elze) = &expr_if.elze {
+                    self.push_line(indent, "else");
+                    self.render_result_expr(elze, indent + 1)?;
+                }
+                self.push_line(indent, "fi");
+                Ok(())
+            }
+            ExprKind::Match(expr_match) => {
+                let scrutinee = expr_match
+                    .scrutinee
+                    .as_deref()
+                    .ok_or_else(|| "bash match requires scrutinee".to_string())?;
+                self.push_line(indent, &format!("case {} in", self.render_word(scrutinee)?));
+                for case in &expr_match.cases {
+                    let pattern = match case
+                        .pat
+                        .as_ref()
+                        .and_then(|pat| extract_match_case_string(pat))
+                    {
+                        Some(pattern) => self.render_case_pattern(&pattern)?,
+                        None => "*".to_string(),
+                    };
+                    self.push_line(indent + 1, &format!("{})", pattern));
+                    self.render_result_expr(&case.body, indent + 2)?;
+                    self.push_line(indent + 2, ";;");
+                }
+                self.push_line(indent, "esac");
+                Ok(())
+            }
+            ExprKind::Invoke(invoke) => {
+                let ExprInvokeTarget::Function(name) = &invoke.target else {
+                    return Err(
+                        "bash renderer only supports function invocation targets".to_string()
+                    );
+                };
+                let Some(ident) = name.as_ident() else {
+                    return Err(
+                        "bash renderer only supports identifier invocation targets".to_string()
+                    );
+                };
+                self.render_invoke_statement(ident.as_str(), &invoke.args, indent)
+            }
+            _ => {
+                self.push_line(
+                    indent,
+                    &format!("printf '%s\\n' {}", self.render_value(expr)?),
+                );
+                Ok(())
+            }
         }
     }
 
@@ -363,8 +451,10 @@ impl<'a> BashRenderer<'a> {
                 Ok(format!("[[ \"${{{}}}\" == 'true' ]]", ident))
             }
             ExprKind::BinOp(bin_op) => {
-                if matches!(bin_op.kind, BinOpKind::Gt | BinOpKind::Lt | BinOpKind::Ge | BinOpKind::Le)
-                {
+                if matches!(
+                    bin_op.kind,
+                    BinOpKind::Gt | BinOpKind::Lt | BinOpKind::Ge | BinOpKind::Le
+                ) {
                     return Ok(format!(
                         "[[ {} {} {} ]]",
                         self.render_int(&bin_op.lhs)?,
@@ -415,15 +505,20 @@ impl<'a> BashRenderer<'a> {
                 _ => Err("expected int expression".to_string()),
             },
             ExprKind::Name(name) => {
-                let ident = name
-                    .as_ident()
-                    .ok_or_else(|| "bash int expression only supports identifier names".to_string())?;
+                let ident = name.as_ident().ok_or_else(|| {
+                    "bash int expression only supports identifier names".to_string()
+                })?;
                 Ok(format!("${{{}}}", ident))
             }
             ExprKind::BinOp(bin_op)
                 if matches!(
                     bin_op.kind,
-                    BinOpKind::Add | BinOpKind::AddTrait | BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div | BinOpKind::Mod
+                    BinOpKind::Add
+                        | BinOpKind::AddTrait
+                        | BinOpKind::Sub
+                        | BinOpKind::Mul
+                        | BinOpKind::Div
+                        | BinOpKind::Mod
                 ) =>
             {
                 Ok(format!(
@@ -440,73 +535,102 @@ impl<'a> BashRenderer<'a> {
 
     fn render_word(&self, expr: &Expr) -> Result<String, String> {
         match expr {
-            Expr { kind: ExprKind::Value(value), .. } => match &**value {
+            Expr {
+                kind: ExprKind::Value(value),
+                ..
+            } => match &**value {
                 Value::String(text) => Ok(shell_arg_quote(&text.value)),
                 Value::Int(value) => Ok(shell_arg_quote(&value.value.to_string())),
                 Value::Bool(value) => Ok(shell_arg_quote(&value.value.to_string())),
                 _ => Err("unsupported bash value expression".to_string()),
             },
-            Expr { kind: ExprKind::Name(name), .. } => {
-                let ident = name
-                    .as_ident()
-                    .ok_or_else(|| "bash string expression only supports identifier names".to_string())?;
+            Expr {
+                kind: ExprKind::Name(name),
+                ..
+            } => {
+                let ident = name.as_ident().ok_or_else(|| {
+                    "bash string expression only supports identifier names".to_string()
+                })?;
                 Ok(format!("\"${{{}}}\"", ident))
             }
-            Expr { kind: ExprKind::Invoke(invoke), .. } => {
+            Expr {
+                kind: ExprKind::Invoke(invoke),
+                ..
+            } => {
                 let name = invoke_function_name(invoke)?;
                 Ok(format!("\"$({})\"", self.render_call(name, &invoke.args)?))
             }
-            Expr { kind: ExprKind::FormatString(template), .. } => {
-                self.render_format_template_word(template)
-            }
-            Expr { kind: ExprKind::IntrinsicCall(call), .. } if call.kind == IntrinsicCallKind::Format => {
-                self.render_format_call_word(call)
-            }
-            Expr { kind: ExprKind::Paren(paren), .. } => self.render_word(&paren.expr),
+            Expr {
+                kind: ExprKind::FormatString(template),
+                ..
+            } => self.render_format_template_word(template),
+            Expr {
+                kind: ExprKind::IntrinsicCall(call),
+                ..
+            } if call.kind == IntrinsicCallKind::Format => self.render_format_call_word(call),
+            Expr {
+                kind: ExprKind::Paren(paren),
+                ..
+            } => self.render_word(&paren.expr),
             _ => Err("unsupported bash string expression".to_string()),
         }
     }
 
     fn render_command_expr(&self, expr: &Expr) -> Result<String, String> {
         match expr {
-            Expr { kind: ExprKind::Value(value), .. } => match &**value {
+            Expr {
+                kind: ExprKind::Value(value),
+                ..
+            } => match &**value {
                 Value::String(text) => Ok(text.value.clone()),
                 Value::Int(value) => Ok(value.value.to_string()),
                 Value::Bool(value) => Ok(value.value.to_string()),
                 _ => Err("unsupported bash command expression".to_string()),
             },
-            Expr { kind: ExprKind::Name(name), .. } => {
-                let ident = name
-                    .as_ident()
-                    .ok_or_else(|| "bash command expression only supports identifier names".to_string())?;
+            Expr {
+                kind: ExprKind::Name(name),
+                ..
+            } => {
+                let ident = name.as_ident().ok_or_else(|| {
+                    "bash command expression only supports identifier names".to_string()
+                })?;
                 Ok(format!("${{{}}}", ident))
             }
-            Expr { kind: ExprKind::Invoke(invoke), .. } => {
+            Expr {
+                kind: ExprKind::Invoke(invoke),
+                ..
+            } => {
                 let name = invoke_function_name(invoke)?;
                 Ok(format!("$({})", self.render_call(name, &invoke.args)?))
             }
-            Expr { kind: ExprKind::FormatString(template), .. } => {
-                self.render_format_template_command(template)
-            }
-            Expr { kind: ExprKind::IntrinsicCall(call), .. } if call.kind == IntrinsicCallKind::Format => {
-                self.render_format_call_command(call)
-            }
-            Expr { kind: ExprKind::Paren(paren), .. } => self.render_command_expr(&paren.expr),
+            Expr {
+                kind: ExprKind::FormatString(template),
+                ..
+            } => self.render_format_template_command(template),
+            Expr {
+                kind: ExprKind::IntrinsicCall(call),
+                ..
+            } if call.kind == IntrinsicCallKind::Format => self.render_format_call_command(call),
+            Expr {
+                kind: ExprKind::Paren(paren),
+                ..
+            } => self.render_command_expr(&paren.expr),
             _ => Err("unsupported bash command expression".to_string()),
         }
     }
 
-    fn render_format_template_word(
-        &self,
-        template: &ExprStringTemplate,
-    ) -> Result<String, String> {
+    fn render_format_template_word(&self, template: &ExprStringTemplate) -> Result<String, String> {
         let mut out = String::from("\"");
         for part in &template.parts {
             match part {
                 FormatTemplatePart::Literal(text) => out.push_str(&escape_double_quotes(text)),
                 FormatTemplatePart::Placeholder(placeholder) => match &placeholder.arg_ref {
                     FormatArgRef::Named(name) => out.push_str(&format!("${{{}}}", name)),
-                    _ => return Err("bash format strings only support named placeholders".to_string()),
+                    _ => {
+                        return Err(
+                            "bash format strings only support named placeholders".to_string()
+                        );
+                    }
                 },
             }
         }
@@ -524,14 +648,21 @@ impl<'a> BashRenderer<'a> {
                 FormatTemplatePart::Literal(text) => out.push_str(text),
                 FormatTemplatePart::Placeholder(placeholder) => match &placeholder.arg_ref {
                     FormatArgRef::Named(name) => out.push_str(&format!("${{{}}}", name)),
-                    _ => return Err("bash format strings only support named placeholders".to_string()),
+                    _ => {
+                        return Err(
+                            "bash format strings only support named placeholders".to_string()
+                        );
+                    }
                 },
             }
         }
         Ok(out)
     }
 
-    fn render_format_call_word(&self, call: &fp_core::ast::ExprIntrinsicCall) -> Result<String, String> {
+    fn render_format_call_word(
+        &self,
+        call: &fp_core::ast::ExprIntrinsicCall,
+    ) -> Result<String, String> {
         let Some(template) = call.args.first() else {
             return Err("bash format call missing template".to_string());
         };
@@ -571,7 +702,10 @@ impl<'a> BashRenderer<'a> {
         Ok(out)
     }
 
-    fn render_format_call_command(&self, call: &fp_core::ast::ExprIntrinsicCall) -> Result<String, String> {
+    fn render_format_call_command(
+        &self,
+        call: &fp_core::ast::ExprIntrinsicCall,
+    ) -> Result<String, String> {
         let Some(template) = call.args.first() else {
             return Err("bash format call missing template".to_string());
         };
@@ -619,9 +753,9 @@ impl<'a> BashRenderer<'a> {
                 _ => Err("unsupported bash string fragment".to_string()),
             },
             ExprKind::Name(name) => {
-                let ident = name
-                    .as_ident()
-                    .ok_or_else(|| "bash string fragment only supports identifier names".to_string())?;
+                let ident = name.as_ident().ok_or_else(|| {
+                    "bash string fragment only supports identifier names".to_string()
+                })?;
                 Ok(format!("${{{}}}", ident))
             }
             ExprKind::Invoke(invoke) => {
@@ -646,9 +780,9 @@ impl<'a> BashRenderer<'a> {
                 _ => Err("unsupported bash command fragment".to_string()),
             },
             ExprKind::Name(name) => {
-                let ident = name
-                    .as_ident()
-                    .ok_or_else(|| "bash command fragment only supports identifier names".to_string())?;
+                let ident = name.as_ident().ok_or_else(|| {
+                    "bash command fragment only supports identifier names".to_string()
+                })?;
                 Ok(format!("${{{}}}", ident))
             }
             ExprKind::Invoke(invoke) => {
@@ -687,8 +821,7 @@ impl<'a> BashRenderer<'a> {
         let args = args
             .iter()
             .map(|arg| self.render_value(arg))
-            .collect::<Result<Vec<_>, _>>()
-            ?;
+            .collect::<Result<Vec<_>, _>>()?;
         if args.is_empty() {
             Ok(name.to_string())
         } else {
@@ -705,19 +838,17 @@ impl<'a> BashRenderer<'a> {
                     self.render_word(host)?
                 )
             }
+            "runtime_host_address" => self.render_host_map_lookup("FP_SSH_ADDRESS", args)?,
+            "runtime_host_user" => self.render_host_map_lookup("FP_SSH_USER", args)?,
+            "runtime_host_port" => self.render_host_map_lookup("FP_SSH_PORT", args)?,
+            "runtime_host_container" => self.render_host_map_lookup("FP_DOCKER_CONTAINER", args)?,
+            "runtime_host_pod" => self.render_host_map_lookup("FP_K8S_POD", args)?,
+            "runtime_host_namespace" => self.render_host_map_lookup("FP_K8S_NAMESPACE", args)?,
+            "runtime_host_context" => self.render_host_map_lookup("FP_K8S_CONTEXT", args)?,
+            "runtime_host_password" => self.render_host_map_lookup("FP_WINRM_PASSWORD", args)?,
+            "runtime_host_scheme" => self.render_host_map_lookup("FP_WINRM_SCHEME", args)?,
             "runtime_temp_path" => "mktemp".to_string(),
-            other => {
-                let rendered = args
-                    .iter()
-                    .map(|arg| self.render_value(arg))
-                    .collect::<Result<Vec<_>, _>>()
-                    ?;
-                if rendered.is_empty() {
-                    other.to_string()
-                } else {
-                    format!("{} {}", other, rendered.join(" "))
-                }
-            }
+            other => self.render_generic_extern(other, args)?,
         })
     }
 
@@ -727,68 +858,11 @@ impl<'a> BashRenderer<'a> {
         args: &[Expr],
     ) -> Result<String, String> {
         Ok(match name {
-            "bash" => format!("bash -lc {}", self.render_value(&args[0])?),
-            "ssh" => {
-                let setup = self.emit_ssh_target_setup_inline(self.expect_string_arg(args, 0))?;
-                format!(
-                    "{setup}; if [[ -n \"$__fp_port\" ]]; then ssh_cmd -p \"$__fp_port\" \"$__fp_target\" {}; else ssh_cmd \"$__fp_target\" {}; fi",
-                    self.render_value(&args[1])?,
-                    self.render_value(&args[1])?
-                )
-            }
-            "docker_exec" => {
-                let host = self.expect_string_arg(args, 0);
-                format!(
-                    "__fp_host={}; __fp_container=\"${{FP_DOCKER_CONTAINER[$__fp_host]}}\"; __fp_user=\"${{FP_DOCKER_USER[$__fp_host]:-}}\"; if [[ -n \"$__fp_user\" ]]; then docker exec --user \"$__fp_user\" \"$__fp_container\" sh -lc {}; else docker exec \"$__fp_container\" sh -lc {}; fi",
-                    self.render_word(host)?,
-                    self.render_value(&args[1])?,
-                    self.render_value(&args[1])?
-                )
-            }
-            "kubectl_exec" => {
-                let host = self.expect_string_arg(args, 0);
-                format!(
-                    "__fp_host={}; __fp_kubectl_args=(); __fp_context=\"${{FP_K8S_CONTEXT[$__fp_host]:-}}\"; __fp_namespace=\"${{FP_K8S_NAMESPACE[$__fp_host]:-}}\"; __fp_container=\"${{FP_K8S_CONTAINER[$__fp_host]:-}}\"; __fp_pod=\"${{FP_K8S_POD[$__fp_host]}}\"; [[ -n \"$__fp_context\" ]] && __fp_kubectl_args+=(--context \"$__fp_context\"); [[ -n \"$__fp_namespace\" ]] && __fp_kubectl_args+=(-n \"$__fp_namespace\"); __fp_kubectl_args+=(exec); [[ -n \"$__fp_container\" ]] && __fp_kubectl_args+=(-c \"$__fp_container\"); __fp_kubectl_args+=(\"$__fp_pod\" -- sh -lc {}); kubectl \"${{__fp_kubectl_args[@]}}\"",
-                    self.render_word(host)?,
-                    self.render_value(&args[1])?
-                )
-            }
             "winrm_run" => format!(
                 "winrm_pwsh {} run {}",
                 self.render_value(&args[0])?,
                 self.render_value(&args[1])?
             ),
-            "cp" => format!(
-                "cp -- {} {}",
-                self.render_value(&args[0])?,
-                self.render_value(&args[1])?
-            ),
-            "scp" => {
-                let setup = self.emit_ssh_target_setup_inline(self.expect_string_arg(args, 0))?;
-                let src = self.render_value(&args[1])?;
-                let dest = self.render_value(&args[2])?;
-                format!(
-                    "{setup}; __fp_remote_path={dest}; if [[ -n \"$__fp_port\" ]]; then scp_cmd -P \"$__fp_port\" {src} \"$__fp_target:$__fp_remote_path\"; else scp_cmd {src} \"$__fp_target:$__fp_remote_path\"; fi"
-                )
-            }
-            "docker_cp" => {
-                let host = self.expect_string_arg(args, 0);
-                format!(
-                    "__fp_host={}; __fp_container=\"${{FP_DOCKER_CONTAINER[$__fp_host]}}\"; __fp_remote_path={}; docker cp {} \"$__fp_container:$__fp_remote_path\"",
-                    self.render_word(host)?,
-                    self.render_value(&args[2])?,
-                    self.render_value(&args[1])?
-                )
-            }
-            "kubectl_cp" => {
-                let host = self.expect_string_arg(args, 0);
-                format!(
-                    "__fp_host={}; __fp_kubectl_args=(); __fp_context=\"${{FP_K8S_CONTEXT[$__fp_host]:-}}\"; __fp_namespace=\"${{FP_K8S_NAMESPACE[$__fp_host]:-}}\"; __fp_pod=\"${{FP_K8S_POD[$__fp_host]}}\"; __fp_remote_path={}; [[ -n \"$__fp_context\" ]] && __fp_kubectl_args+=(--context \"$__fp_context\"); [[ -n \"$__fp_namespace\" ]] && __fp_kubectl_args+=(-n \"$__fp_namespace\"); kubectl cp \"${{__fp_kubectl_args[@]}}\" {} \"$__fp_pod:$__fp_remote_path\"",
-                    self.render_word(host)?,
-                    self.render_value(&args[2])?,
-                    self.render_value(&args[1])?
-                )
-            }
             "winrm_copy" => format!(
                 "winrm_pwsh {} copy {} {}",
                 self.render_value(&args[0])?,
@@ -804,34 +878,39 @@ impl<'a> BashRenderer<'a> {
                     self.render_command_expr(self.expect_string_arg(args, 1))?
                 ))
             ),
-            "remove_file" => format!("rm -f {}", self.render_value(&args[0])?),
-            "rsync_ssh" => {
-                let setup = self.emit_ssh_target_setup_inline(self.expect_string_arg(args, 0))?;
-                format!(
-                    "{setup}; __fp_remote_path={}; rsync_cmd {} -- {} \"$__fp_target:$__fp_remote_path\"",
-                    self.render_value(&args[3])?,
-                    self.render_command_expr(self.expect_string_arg(args, 1))?,
-                    self.render_value(&args[2])?
-                )
-            }
             "runtime_fail" => format!("echo {} >&2; return 1", self.render_value(&args[0])?),
             "runtime_set_changed" => format!(
                 "__fp_last_changed={}",
-                if is_true_expr(args.first()) {
-                    "1"
-                } else {
-                    "0"
-                }
+                if is_true_expr(args.first()) { "1" } else { "0" }
             ),
-            other => {
-                let args = args
-                    .iter()
-                    .map(|arg| self.render_value(arg))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .join(" ");
-                format!("{} {}", other, args)
-            }
+            other => self.render_generic_extern(other, args)?,
         })
+    }
+
+    fn render_generic_extern(&self, name: &str, args: &[Expr]) -> Result<String, String> {
+        let command = self
+            .externs
+            .get(name)
+            .and_then(extern_command)
+            .unwrap_or_else(|| name.to_string());
+        let rendered = args
+            .iter()
+            .map(|arg| self.render_value(arg))
+            .collect::<Result<Vec<_>, _>>()?;
+        if rendered.is_empty() {
+            Ok(command)
+        } else {
+            Ok(format!("{} {}", command, rendered.join(" ")))
+        }
+    }
+
+    fn render_host_map_lookup(&self, map_name: &str, args: &[Expr]) -> Result<String, String> {
+        let host = self.expect_string_arg(args, 0);
+        Ok(format!(
+            "printf '%s\\n' \"${{{}[{}]:-}}\"",
+            map_name,
+            self.render_word(host)?
+        ))
     }
 
     fn render_runtime_validator(&self) -> String {
@@ -860,13 +939,6 @@ impl<'a> BashRenderer<'a> {
         for command in runtime_requirements(function, ScriptTarget::Bash) {
             commands.insert(command);
         }
-    }
-
-    fn emit_ssh_target_setup_inline(&self, host: &Expr) -> Result<String, String> {
-        Ok(format!(
-            "__fp_host={}; __fp_address=\"${{FP_SSH_ADDRESS[$__fp_host]:-$__fp_host}}\"; __fp_user=\"${{FP_SSH_USER[$__fp_host]:-}}\"; __fp_port=\"${{FP_SSH_PORT[$__fp_host]:-}}\"; __fp_target=\"$__fp_address\"; if [[ -n \"$__fp_user\" ]]; then __fp_target=\"$__fp_user@$__fp_target\"; fi",
-            self.render_word(host)?
-        ))
     }
 
     fn expect_string_arg<'b>(&self, args: &'b [Expr], index: usize) -> &'b Expr {
@@ -976,6 +1048,10 @@ fn escape_double_quotes(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+fn function_returns_value(def: &ItemDefFunction) -> bool {
+    !matches!(def.sig.ret_ty.as_ref(), None | Some(Ty::Unit(_)))
+}
+
 fn extern_decl_map<'a>(
     items: impl Iterator<Item = &'a fp_core::ast::Item>,
     target: ScriptTarget,
@@ -998,7 +1074,6 @@ fn extern_decl_map<'a>(
     }
     Ok(externs)
 }
-
 
 const BASH_RUNTIME_UTILITIES: &str = r#"
 ssh_cmd() {
@@ -1094,9 +1169,9 @@ finally {
 mod tests {
     use super::*;
     use fp_core::ast::{
-        Abi, AttrMeta, AttrMetaNameValue, AttrStyle, Attribute, Expr, ExprInvoke,
-        ExprInvokeTarget, ExprKind, File, FunctionParam, FunctionSignature, Ident, Item,
-        ItemDeclFunction, ItemKind, Name, Node, Path, Ty,
+        Abi, AttrMeta, AttrMetaNameValue, AttrStyle, Attribute, Expr, ExprInvoke, ExprInvokeTarget,
+        ExprKind, File, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemKind,
+        Name, Node, Path, Ty,
     };
     use fp_shell_core::{InventoryHost, InventoryValue, TransportKind};
     use std::collections::HashMap;
@@ -1107,7 +1182,10 @@ mod tests {
         sig.abi = Abi::Named(abi.to_string());
         sig.params = (0..param_count)
             .map(|index| {
-                FunctionParam::new(Ident::new(format!("arg{}", index)), Ty::ident(Ident::new("str")))
+                FunctionParam::new(
+                    Ident::new(format!("arg{}", index)),
+                    Ty::ident(Ident::new("str")),
+                )
             })
             .collect();
         Item::from(ItemKind::DeclFunction(ItemDeclFunction {
@@ -1139,14 +1217,14 @@ mod tests {
     #[test]
     fn renders_ssh_dispatch() {
         let expr = Expr::new(ExprKind::Invoke(ExprInvoke {
-                span: Default::default(),
-                target: ExprInvokeTarget::Function(Name::ident("ssh")),
-                args: vec![
-                    Expr::value(Value::string("web-1".to_string())),
-                    Expr::value(Value::string("uptime".to_string())),
-                ],
-                kwargs: Vec::new(),
-            }));
+            span: Default::default(),
+            target: ExprInvokeTarget::Function(Name::ident("ssh")),
+            args: vec![
+                Expr::value(Value::string("web-1".to_string())),
+                Expr::value(Value::string("uptime".to_string())),
+            ],
+            kwargs: Vec::new(),
+        }));
         let mut hosts = HashMap::new();
         hosts.insert(
             "web-1".to_string(),
@@ -1170,21 +1248,21 @@ mod tests {
         };
         let script = render_node(vec![extern_decl("ssh", "bash", "ssh", 2)], expr, &inventory);
         assert!(script.contains("FP_HOST_TRANSPORT['web-1']='ssh'"));
-        assert!(script.contains("ssh_cmd \"$__fp_target\" 'uptime'"));
+        assert!(script.contains("ssh 'web-1' 'uptime'"));
     }
 
     #[test]
     fn renders_winrm_dispatch_via_pwsh() {
         let expr = Expr::new(ExprKind::Invoke(ExprInvoke {
-                span: Default::default(),
-                target: ExprInvokeTarget::Function(Name::ident("winrm_copy")),
-                args: vec![
-                    Expr::value(Value::string("win-1".to_string())),
-                    Expr::value(Value::string("artifact.zip".to_string())),
-                    Expr::value(Value::string(r"C:\Temp\artifact.zip".to_string())),
-                ],
-                kwargs: Vec::new(),
-            }));
+            span: Default::default(),
+            target: ExprInvokeTarget::Function(Name::ident("winrm_copy")),
+            args: vec![
+                Expr::value(Value::string("win-1".to_string())),
+                Expr::value(Value::string("artifact.zip".to_string())),
+                Expr::value(Value::string(r"C:\Temp\artifact.zip".to_string())),
+            ],
+            kwargs: Vec::new(),
+        }));
         let mut hosts = HashMap::new();
         hosts.insert(
             "win-1".to_string(),

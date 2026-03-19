@@ -1321,6 +1321,7 @@ dependencies = [
 name = "fp-bash"
 version = "0.1.0"
 dependencies = [
+ "fp-core",
  "fp-shell-core",
 ]
 
@@ -1640,6 +1641,7 @@ dependencies = [
 name = "fp-powershell"
 version = "0.1.0"
 dependencies = [
+ "fp-core",
  "fp-shell-core",
 ]
 
@@ -1685,6 +1687,7 @@ dependencies = [
 name = "fp-shell-core"
 version = "0.1.0"
 dependencies = [
+ "fp-core",
  "serde",
 ]
 

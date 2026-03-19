@@ -239,6 +239,56 @@ const fn main() {
     }
 
     #[test]
+    fn compile_source_allows_rsync_for_winrm_host_credentials() {
+        let source = r#"
+const fn main() {
+    std::files::rsync(
+        src="./dist/",
+        dest="C:/deploy/dist/",
+        hosts="win-1",
+        delete=true,
+    );
+}
+"#;
+
+        let inventory = ShellInventory {
+            groups: Default::default(),
+            hosts: std::collections::HashMap::from([(
+                "win-1".to_string(),
+                InventoryHost {
+                    transport: TransportKind::Winrm,
+                    fields: std::collections::HashMap::from([
+                        (
+                            "address".to_string(),
+                            fp_shell_core::InventoryValue::String("10.0.0.21".to_string()),
+                        ),
+                        (
+                            "user".to_string(),
+                            fp_shell_core::InventoryValue::String("Administrator".to_string()),
+                        ),
+                        ("port".to_string(), fp_shell_core::InventoryValue::U16(2222)),
+                    ]),
+                },
+            )]),
+        };
+
+        let rendered = compile_source_with_options(
+            source,
+            Path::new("sample.fp"),
+            ScriptTarget::PowerShell,
+            &CompileOptions {
+                inventory: Some(inventory),
+            },
+        )
+        .expect("source should compile");
+
+        assert!(rendered.code.contains("function rsync_remote_target"));
+        assert!(rendered.code.contains("Administrator"));
+        assert!(rendered.code.contains("10.0.0.21"));
+        assert!(rendered.code.contains("rsync -e"));
+    }
+
+    #[test]
     fn load_inventory_supports_multiple_transports() {
         let directory = tempfile::tempdir().expect("tempdir should be created");
         let path = directory.path().join("inventory.toml");
@@ -391,10 +441,7 @@ const fn inventory() -> Inventory {
             inventory.hosts["docker-1"].get_string("container"),
             Some("app")
         );
-        assert_eq!(
-            inventory.hosts["k8s-1"].get_string("pod"),
-            Some("api-123")
-        );
+        assert_eq!(inventory.hosts["k8s-1"].get_string("pod"), Some("api-123"));
         assert_eq!(
             inventory.hosts["win-1"].get_string("password"),
             Some("secret")

@@ -1,9 +1,9 @@
 use fp_core::ast::{
     Abi, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprBinOp, ExprBlock, ExprFor, ExprIf,
     ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprMatch, ExprMatchCase,
-    ExprStringTemplate, ExprWhile, FormatArgRef,
-    FormatPlaceholder, FormatTemplatePart, File, Ident, Item, ItemDeclFunction, ItemDefFunction,
-    ItemKind, Name, Node, NodeKind, Pattern, PatternKind, Value,
+    ExprStringTemplate, ExprWhile, File, FormatArgRef, FormatPlaceholder, FormatTemplatePart,
+    Ident, Item, ItemDeclFunction, ItemDefFunction, ItemKind, Name, Node, NodeKind, Pattern,
+    PatternKind, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
@@ -102,7 +102,8 @@ impl<'a> Lowerer<'a> {
                         let mut temp = Vec::new();
                         self.lower_expr_into(&function.body, context, &mut temp)?;
                         self.items.extend(
-                            temp.into_iter().map(|expr| Item::from(ItemKind::Expr(expr))),
+                            temp.into_iter()
+                                .map(|expr| Item::from(ItemKind::Expr(expr))),
                         );
                     }
                 } else {
@@ -138,7 +139,8 @@ impl<'a> Lowerer<'a> {
                     let mut temp = Vec::new();
                     self.lower_expr_into(expr, context, &mut temp)?;
                     self.items.extend(
-                        temp.into_iter().map(|expr| Item::from(ItemKind::Expr(expr))),
+                        temp.into_iter()
+                            .map(|expr| Item::from(ItemKind::Expr(expr))),
                     );
                 }
             }
@@ -205,7 +207,12 @@ impl<'a> Lowerer<'a> {
                 })));
                 Ok(())
             }
-            _ => Ok(()),
+            _ => {
+                if let Ok(value) = self.lower_value_expr(expr) {
+                    out.push(value);
+                }
+                Ok(())
+            }
         }
     }
 
@@ -270,7 +277,8 @@ impl<'a> Lowerer<'a> {
             let command = apply_command_options(command, cwd.clone(), sudo);
             let hosts = self.resolve_hosts(invoke, context);
             return Ok(Some(
-                hosts.into_iter()
+                hosts
+                    .into_iter()
                     .map(|host| {
                         self.make_call(
                             "shell_run",
@@ -309,7 +317,8 @@ impl<'a> Lowerer<'a> {
                 .ok_or_else(|| "copy destination must resolve to string".to_string())?;
             let hosts = self.resolve_hosts(invoke, context);
             return Ok(Some(
-                hosts.into_iter()
+                hosts
+                    .into_iter()
                     .map(|host| {
                         self.make_call(
                             "shell_copy",
@@ -353,7 +362,8 @@ impl<'a> Lowerer<'a> {
                 .unwrap_or_else(empty_string_expr);
             let hosts = self.resolve_hosts(invoke, context);
             return Ok(Some(
-                hosts.into_iter()
+                hosts
+                    .into_iter()
                     .map(|host| {
                         self.make_call(
                             "shell_template",
@@ -395,7 +405,8 @@ impl<'a> Lowerer<'a> {
             let flags = string_literal_expr(self.rsync_flags(invoke));
             let hosts = self.resolve_hosts(invoke, context);
             return Ok(Some(
-                hosts.into_iter()
+                hosts
+                    .into_iter()
                     .map(|host| {
                         self.make_call(
                             "shell_rsync",
@@ -439,7 +450,8 @@ impl<'a> Lowerer<'a> {
                 sudo,
             );
             return Ok(Some(
-                hosts.into_iter()
+                hosts
+                    .into_iter()
                     .map(|host| {
                         self.make_call(
                             "shell_run",
@@ -840,7 +852,9 @@ impl<'a> Lowerer<'a> {
                     implicit_index += 1;
                     self.lower_string_expr(arg)?
                 }
-                FormatArgRef::Positional(index) => self.lower_string_expr(call.args.get(index + 1)?)?,
+                FormatArgRef::Positional(index) => {
+                    self.lower_string_expr(call.args.get(index + 1)?)?
+                }
             };
             args.push(arg);
         }
@@ -918,22 +932,20 @@ impl<'a> Lowerer<'a> {
             },
             fp_core::ast::ExprKind::Name(_) => Some(expr.clone()),
             fp_core::ast::ExprKind::Paren(paren) => self.lower_int_expr(&paren.expr),
-            fp_core::ast::ExprKind::BinOp(bin_op) => {
-                match bin_op.kind {
-                    BinOpKind::Add
-                    | BinOpKind::AddTrait
-                    | BinOpKind::Sub
-                    | BinOpKind::Mul
-                    | BinOpKind::Div
-                    | BinOpKind::Mod => Some(Expr::new(ExprKind::BinOp(ExprBinOp {
-                        span: Default::default(),
-                        kind: bin_op.kind,
-                        lhs: self.lower_int_expr(&bin_op.lhs)?.into(),
-                        rhs: self.lower_int_expr(&bin_op.rhs)?.into(),
-                    }))),
-                    _ => return None,
-                }
-            }
+            fp_core::ast::ExprKind::BinOp(bin_op) => match bin_op.kind {
+                BinOpKind::Add
+                | BinOpKind::AddTrait
+                | BinOpKind::Sub
+                | BinOpKind::Mul
+                | BinOpKind::Div
+                | BinOpKind::Mod => Some(Expr::new(ExprKind::BinOp(ExprBinOp {
+                    span: Default::default(),
+                    kind: bin_op.kind,
+                    lhs: self.lower_int_expr(&bin_op.lhs)?.into(),
+                    rhs: self.lower_int_expr(&bin_op.rhs)?.into(),
+                }))),
+                _ => return None,
+            },
             _ => None,
         }
     }
@@ -945,9 +957,7 @@ impl<'a> Lowerer<'a> {
                 Value::String(_) | Value::Int(_) | Value::Bool(_) => {
                     Some(vec![value_to_string_expr(value)?])
                 }
-                Value::List(list) => {
-                    list.values.iter().map(value_to_string_expr).collect()
-                }
+                Value::List(list) => list.values.iter().map(value_to_string_expr).collect(),
                 _ => None,
             },
             fp_core::ast::ExprKind::Array(array) => {
@@ -981,7 +991,9 @@ impl<'a> Lowerer<'a> {
                         };
                         let value = match &entry.value {
                             Value::String(text) => string_literal_expr(text.value.clone()),
-                            Value::Int(int_value) => string_literal_expr(int_value.value.to_string()),
+                            Value::Int(int_value) => {
+                                string_literal_expr(int_value.value.to_string())
+                            }
                             Value::Bool(bool_value) => {
                                 string_literal_expr(bool_value.value.to_string())
                             }
@@ -1153,10 +1165,12 @@ fn lower_string_pattern(value: Option<Expr>) -> Option<Pattern> {
             kind: ExprKind::Value(value),
             ..
         } => match *value {
-            Value::String(text) => Pattern::from(PatternKind::Variant(fp_core::ast::PatternVariant {
-                name: Expr::value(Value::string(text.value)),
-                pattern: None,
-            })),
+            Value::String(text) => {
+                Pattern::from(PatternKind::Variant(fp_core::ast::PatternVariant {
+                    name: Expr::value(Value::string(text.value)),
+                    pattern: None,
+                }))
+            }
             other => Pattern::from(PatternKind::Variant(fp_core::ast::PatternVariant {
                 name: Expr::value(other),
                 pattern: None,
@@ -1202,7 +1216,9 @@ fn string_literal_value(expr: &Expr) -> Option<String> {
 
 fn format_call_expr(parts: Vec<FormatTemplatePart>, mut args: Vec<Expr>) -> Expr {
     let mut call_args = Vec::with_capacity(args.len() + 1);
-    call_args.push(Expr::new(ExprKind::FormatString(ExprStringTemplate { parts })));
+    call_args.push(Expr::new(ExprKind::FormatString(ExprStringTemplate {
+        parts,
+    })));
     call_args.append(&mut args);
     Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall {
         span: Default::default(),
@@ -1216,10 +1232,12 @@ fn concat_string_exprs(values: Vec<Expr>) -> Expr {
     format_call_expr(
         values
             .iter()
-            .map(|_| FormatTemplatePart::Placeholder(FormatPlaceholder {
-                arg_ref: FormatArgRef::Implicit,
-                format_spec: None,
-            }))
+            .map(|_| {
+                FormatTemplatePart::Placeholder(FormatPlaceholder {
+                    arg_ref: FormatArgRef::Implicit,
+                    format_spec: None,
+                })
+            })
             .collect(),
         values,
     )
@@ -1233,7 +1251,6 @@ fn condition_command_expr(command: Expr) -> Expr {
         kwargs: Vec::new(),
     }))
 }
-
 
 fn invoke_target_segments(target: &ExprInvokeTarget) -> Option<Vec<String>> {
     match target {
