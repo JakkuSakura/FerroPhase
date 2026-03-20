@@ -3,10 +3,7 @@ mod inventory;
 mod lower;
 
 use fp_core::ast::{AstTargetOutput, Ident, Item, ItemKind, Module, Node, NodeKind, Visibility};
-use fp_core::cfg::{TargetEnv, filter_items_in_node};
-use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
-use fp_interpret::const_eval::ConstEvaluationOrchestrator;
 use fp_lang::FerroFrontend;
 use fp_shell_core::{ScriptTarget, ShellInventory, validate_extern_decl};
 use std::fs;
@@ -63,20 +60,7 @@ pub fn compile_source_with_options(
         .parse(source, Some(source_path))
         .map_err(|err| ShellError::Parse(err.to_string()))?;
 
-    let mut ast = parsed.ast;
-    let target_env = shell_target_env(target);
-    filter_items_in_node(&mut ast, &target_env);
-    let mut ast = merge_runtime_helpers(ast, &target_env)?;
-    let mut const_eval = ConstEvaluationOrchestrator::new(parsed.serializer.clone());
-    const_eval.set_execute_main(false);
-    const_eval
-        .evaluate(
-            &mut ast,
-            &SharedScopedContext::new(),
-            parsed.macro_parser.clone(),
-            parsed.intrinsic_normalizer.clone(),
-        )
-        .map_err(|err| ShellError::Parse(err.to_string()))?;
+    let ast = merge_runtime_helpers(parsed.ast)?;
 
     let inventory = options.inventory.clone().unwrap_or_default();
     let lowered = lower::lower_node(&ast, &inventory).map_err(ShellError::Lower)?;
@@ -97,7 +81,7 @@ pub fn compile_source_with_options(
     })
 }
 
-fn merge_runtime_helpers(ast: Node, target_env: &TargetEnv) -> Result<Node, ShellError> {
+fn merge_runtime_helpers(ast: Node) -> Result<Node, ShellError> {
     let frontend = FerroFrontend::new();
     let NodeKind::File(mut user_file) = ast.kind else {
         return Err(ShellError::Lower(
@@ -125,9 +109,7 @@ fn merge_runtime_helpers(ast: Node, target_env: &TargetEnv) -> Result<Node, Shel
                     err
                 ))
             })?;
-        let mut shell_std_ast = parsed.ast;
-        filter_items_in_node(&mut shell_std_ast, target_env);
-        let NodeKind::File(shell_std_file) = shell_std_ast.kind else {
+        let NodeKind::File(shell_std_file) = parsed.ast.kind else {
             return Err(ShellError::Lower(format!(
                 "embedded shell std must be a file document: {path}"
             )));
@@ -195,18 +177,6 @@ fn extern_matches_target(function: &fp_core::ast::ItemDeclFunction, target: Scri
         (fp_core::ast::Abi::Named(abi), ScriptTarget::PowerShell) => abi == "pwsh",
         _ => false,
     }
-}
-
-fn shell_target_env(target: ScriptTarget) -> TargetEnv {
-    let mut env = TargetEnv::host();
-    env.lang = Some(
-        match target {
-            ScriptTarget::Bash => "bash",
-            ScriptTarget::PowerShell => "pwsh",
-        }
-        .to_string(),
-    );
-    env
 }
 
 pub fn compile_file(

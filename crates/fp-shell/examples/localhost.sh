@@ -22,6 +22,23 @@ declare -A FP_WINRM_SCHEME=()
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
+fp_validate_runtime() {
+  command -v 'bash' >/dev/null 2>&1 || { echo "missing required command: bash" >&2; exit 1; }
+  command -v 'command' >/dev/null 2>&1 || { echo "missing required command: command" >&2; exit 1; }
+  command -v 'docker' >/dev/null 2>&1 || { echo "missing required command: docker" >&2; exit 1; }
+  command -v 'envsubst' >/dev/null 2>&1 || { echo "missing required command: envsubst" >&2; exit 1; }
+  command -v 'kubectl' >/dev/null 2>&1 || { echo "missing required command: kubectl" >&2; exit 1; }
+  command -v 'mktemp' >/dev/null 2>&1 || { echo "missing required command: mktemp" >&2; exit 1; }
+  command -v 'pwsh' >/dev/null 2>&1 || { echo "missing required command: pwsh" >&2; exit 1; }
+  command -v 'rm' >/dev/null 2>&1 || { echo "missing required command: rm" >&2; exit 1; }
+  command -v 'rsync' >/dev/null 2>&1 || { echo "missing required command: rsync" >&2; exit 1; }
+  command -v 'scp' >/dev/null 2>&1 || { echo "missing required command: scp" >&2; exit 1; }
+  command -v 'ssh' >/dev/null 2>&1 || { echo "missing required command: ssh" >&2; exit 1; }
+  command -v 'test' >/dev/null 2>&1 || { echo "missing required command: test" >&2; exit 1; }
+}
+
+fp_validate_runtime
+
 
 ssh_cmd() {
   ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath="$SSH_CONTROL_PATH" -- "$@"
@@ -179,10 +196,10 @@ run_host() {
             run_kubectl_host "${host}" "${cmd}"
             ;;
         winrm)
-            winrm_run "${host}" "${cmd}"
+            winrm_pwsh "${host}" run "${cmd}"
             ;;
         *)
-            runtime_fail "unsupported transport: ${transport}"
+            echo "unsupported transport: ${transport}" >&2; return 1
             ;;
     esac
 }
@@ -206,10 +223,10 @@ copy_host() {
             copy_kubectl_host "${host}" "${src}" "${dest}"
             ;;
         winrm)
-            winrm_copy "${host}" "${src}" "${dest}"
+            winrm_pwsh "${host}" copy "${src}" "${dest}"
             ;;
         *)
-            runtime_fail "unsupported transport for copy: ${transport}"
+            echo "unsupported transport for copy: ${transport}" >&2; return 1
             ;;
     esac
 }
@@ -219,10 +236,10 @@ template_host() {
     local src="$2"
     local dest="$3"
     local vars="$4"
-    local tmp="$(runtime_temp_path)"
-    render_template "${src}" "${tmp}" "${vars}"
+    local tmp="$(mktemp)"
+    eval '${vars} envsubst < ${src} > ${tmp}'
     copy_host "${host}" "${tmp}" "${dest}"
-    remove_file "${tmp}"
+    rm -f "${tmp}"
 }
 
 rsync_host() {
@@ -258,7 +275,7 @@ run_ssh_host() {
     local target="$(ssh_target "${host}")"
     local port="$(host_port "${host}")"
     if [[ "${port}" != '' ]]; then
-        ssh_port "${port}" "${target}" "${cmd}"
+        ssh -p "${port}" "${target}" "${cmd}"
     else
         ssh "${target}" "${cmd}"
     fi
@@ -272,7 +289,7 @@ copy_ssh_host() {
     local remote="${target}:${dest}"
     local port="$(host_port "${host}")"
     if [[ "${port}" != '' ]]; then
-        scp_port "${port}" "${src}" "${remote}"
+        scp -P "${port}" "${src}" "${remote}"
     else
         scp "${src}" "${remote}"
     fi
@@ -284,9 +301,9 @@ run_docker_host() {
     local container="$(host_container "${host}")"
     local user="$(host_user "${host}")"
     if [[ "${user}" != '' ]]; then
-        docker_exec_user "${user}" "${container}" 'sh' '-lc' "${cmd}"
+        docker exec --user "${user}" "${container}" 'sh' '-lc' "${cmd}"
     else
-        docker_exec "${container}" 'sh' '-lc' "${cmd}"
+        docker exec "${container}" 'sh' '-lc' "${cmd}"
     fi
 }
 
@@ -303,20 +320,20 @@ run_kubectl_host() {
                 )
                     case "${container}" in
                         )
-                            kubectl_exec "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            kubectl exec "${pod}" '--' 'sh' '-lc' "${cmd}"
                             ;;
                         *)
-                            kubectl_exec_container "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            kubectl exec -c "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
                             ;;
                     esac
                     ;;
                 *)
                     case "${container}" in
                         )
-                            kubectl_namespace_exec "${namespace}" 'exec' "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            kubectl -n "${namespace}" 'exec' "${pod}" '--' 'sh' '-lc' "${cmd}"
                             ;;
                         *)
-                            kubectl_namespace_exec_container "${namespace}" 'exec' '-c' "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            kubectl -n "${namespace}" 'exec' '-c' "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
                             ;;
                     esac
                     ;;
@@ -327,20 +344,20 @@ run_kubectl_host() {
                 )
                     case "${container}" in
                         )
-                            kubectl_context_exec "${context}" 'exec' "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            kubectl --context "${context}" 'exec' "${pod}" '--' 'sh' '-lc' "${cmd}"
                             ;;
                         *)
-                            kubectl_context_exec_container "${context}" 'exec' '-c' "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            kubectl --context "${context}" 'exec' '-c' "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
                             ;;
                     esac
                     ;;
                 *)
                     case "${container}" in
                         )
-                            kubectl_context_namespace_exec "${context}" '-n' "${namespace}" 'exec' "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            kubectl --context "${context}" '-n' "${namespace}" 'exec' "${pod}" '--' 'sh' '-lc' "${cmd}"
                             ;;
                         *)
-                            kubectl_context_namespace_exec_container "${context}" '-n' "${namespace}" 'exec' '-c' "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
+                            kubectl --context "${context}" '-n' "${namespace}" 'exec' '-c' "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
                             ;;
                     esac
                     ;;
@@ -354,7 +371,7 @@ copy_docker_host() {
     local src="$2"
     local dest="$3"
     local container="$(host_container "${host}")"
-    docker_cp "${src}" "${container}:${dest}"
+    docker cp "${src}" "${container}:${dest}"
 }
 
 copy_kubectl_host() {
@@ -368,20 +385,20 @@ copy_kubectl_host() {
         )
             case "${namespace}" in
                 )
-                    kubectl_cp "${src}" "${remote}"
+                    kubectl cp "${src}" "${remote}"
                     ;;
                 *)
-                    kubectl_namespace_cp "${namespace}" 'cp' "${src}" "${remote}"
+                    kubectl -n "${namespace}" 'cp' "${src}" "${remote}"
                     ;;
             esac
             ;;
         *)
             case "${namespace}" in
                 )
-                    kubectl_context_cp "${context}" 'cp' "${src}" "${remote}"
+                    kubectl --context "${context}" 'cp' "${src}" "${remote}"
                     ;;
                 *)
-                    kubectl_context_namespace_cp "${context}" '-n' "${namespace}" 'cp' "${src}" "${remote}"
+                    kubectl --context "${context}" '-n' "${namespace}" 'cp' "${src}" "${remote}"
                     ;;
             esac
             ;;
@@ -392,7 +409,7 @@ rsync_remote_target() {
     local host="$1"
     local address="$(host_address "${host}")"
     if [[ "${address}" == '' ]]; then
-        runtime_fail "host is not rsync-reachable: missing address for ${host}"
+        echo "host is not rsync-reachable: missing address for ${host}" >&2; return 1
         printf '%s\n' ''
     else
         local user="$(host_user "${host}")"
@@ -412,7 +429,7 @@ rsync_remote_host() {
     local remote="$(rsync_remote_target "${host}"):${dest}"
     local port="$(host_port "${host}")"
     if [[ "${port}" != '' ]]; then
-        rsync_shell "ssh -p ${port}" "${flags}" "${src}" "${remote}"
+        rsync -e "ssh -p ${port}" "${flags}" "${src}" "${remote}"
     else
         rsync "${flags}" "${src}" "${remote}" '' '' '' '' '' '' '' ''
     fi
@@ -500,7 +517,7 @@ shell_run() {
     local unless="$4"
     local creates="$5"
     local removes="$6"
-    runtime_set_changed 'false'
+    __fp_last_changed=0
     if [[ "${only_if}" != '' ]]; then
         if process_ok "${only_if}"; then
             shell_run_after_only_if "${host}" "${command}" "${unless}" "${creates}" "${removes}"
@@ -546,11 +563,11 @@ shell_run_after_creates() {
     if [[ "${removes}" != '' ]]; then
         if process_ok "test -e ${removes}"; then
             run_host "${host}" "${command}"
-            runtime_set_changed 'true'
+            __fp_last_changed=1
         fi
     else
         run_host "${host}" "${command}"
-        runtime_set_changed 'true'
+        __fp_last_changed=1
     fi
 }
 
@@ -562,7 +579,7 @@ shell_copy() {
     local unless="$5"
     local creates="$6"
     local removes="$7"
-    runtime_set_changed 'false'
+    __fp_last_changed=0
     if [[ "${only_if}" != '' ]]; then
         if process_ok "${only_if}"; then
             shell_copy_after_only_if "${host}" "${src}" "${dest}" "${unless}" "${creates}" "${removes}"
@@ -611,11 +628,11 @@ shell_copy_after_creates() {
     if [[ "${removes}" != '' ]]; then
         if process_ok "test -e ${removes}"; then
             copy_host "${host}" "${src}" "${dest}"
-            runtime_set_changed 'true'
+            __fp_last_changed=1
         fi
     else
         copy_host "${host}" "${src}" "${dest}"
-        runtime_set_changed 'true'
+        __fp_last_changed=1
     fi
 }
 
@@ -628,7 +645,7 @@ shell_template() {
     local unless="$6"
     local creates="$7"
     local removes="$8"
-    runtime_set_changed 'false'
+    __fp_last_changed=0
     if [[ "${only_if}" != '' ]]; then
         if process_ok "${only_if}"; then
             shell_template_after_only_if "${host}" "${src}" "${dest}" "${vars}" "${unless}" "${creates}" "${removes}"
@@ -680,11 +697,11 @@ shell_template_after_creates() {
     if [[ "${removes}" != '' ]]; then
         if process_ok "test -e ${removes}"; then
             template_host "${host}" "${src}" "${dest}" "${vars}"
-            runtime_set_changed 'true'
+            __fp_last_changed=1
         fi
     else
         template_host "${host}" "${src}" "${dest}" "${vars}"
-        runtime_set_changed 'true'
+        __fp_last_changed=1
     fi
 }
 
@@ -697,7 +714,7 @@ shell_rsync() {
     local unless="$6"
     local creates="$7"
     local removes="$8"
-    runtime_set_changed 'false'
+    __fp_last_changed=0
     if [[ "${only_if}" != '' ]]; then
         if process_ok "${only_if}"; then
             shell_rsync_after_only_if "${host}" "${flags}" "${src}" "${dest}" "${unless}" "${creates}" "${removes}"
@@ -749,11 +766,11 @@ shell_rsync_after_creates() {
     if [[ "${removes}" != '' ]]; then
         if process_ok "test -e ${removes}"; then
             rsync_host "${host}" "${flags}" "${src}" "${dest}"
-            runtime_set_changed 'true'
+            __fp_last_changed=1
         fi
     else
         rsync_host "${host}" "${flags}" "${src}" "${dest}"
-        runtime_set_changed 'true'
+        __fp_last_changed=1
     fi
 }
 
@@ -768,7 +785,7 @@ shell() {
     local cwd="$8"
     local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
     shell_run "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
+    runtime_last_changed
 }
 
 copy() {
@@ -780,7 +797,7 @@ copy() {
     local creates="$6"
     local removes="$7"
     shell_copy "${hosts}" "${src}" "${dest}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
+    runtime_last_changed
 }
 
 template() {
@@ -793,7 +810,7 @@ template() {
     local creates="$7"
     local removes="$8"
     shell_template "${hosts}" "${src}" "${dest}" "${vars}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
+    runtime_last_changed
 }
 
 rsync() {
@@ -810,7 +827,7 @@ rsync() {
     local removes="$11"
     local flags="$(rsync_flag_string "${archive}" "${compress}" "${delete}" "${checksum}")"
     shell_rsync "${hosts}" "${flags}" "${src}" "${dest}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
+    runtime_last_changed
 }
 
 restart() {
@@ -826,22 +843,22 @@ restart() {
 
 has_command() {
     local command="$1"
-    command_available "${command}"
+    command -v "${command}"
 }
 
 file_exists() {
     local path="$1"
-    file_exists_native "${path}"
+    test -f "${path}"
 }
 
 dir_exists() {
     local path="$1"
-    dir_exists_native "${path}"
+    test -d "${path}"
 }
 
 path_exists() {
     local path="$1"
-    path_exists_native "${path}"
+    test -e "${path}"
 }
 
 transport() {
@@ -946,7 +963,7 @@ run() {
 
 ok() {
     local command="$1"
-    shell_status "${command}"
+    bash -lc "${command}"
 }
 
 shell 'echo localhost deployment' '' '' '' '' '' '' ''

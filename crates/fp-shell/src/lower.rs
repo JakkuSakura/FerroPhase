@@ -957,7 +957,11 @@ impl<'a> Lowerer<'a> {
 
     fn insert_decl(&mut self, decl: ItemDeclFunction) {
         let Some(index) = self.items.iter().position(|item| {
-            matches!(item.kind(), ItemKind::DeclFunction(existing) if existing.name == decl.name)
+            matches!(
+                item.kind(),
+                ItemKind::DeclFunction(existing)
+                    if existing.name == decl.name && existing.sig.abi == decl.sig.abi
+            )
         }) else {
             self.items.push(Item::from(ItemKind::DeclFunction(decl)));
             return;
