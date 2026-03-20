@@ -189,6 +189,7 @@ fn is_synthesized_instruction(inst: &fp_core::asmir::AsmInstruction) -> bool {
         .any(|annotation| annotation.key == "fp.synthesized")
 }
 
+#[allow(dead_code)]
 fn terminator_encoding_matches_kind(block: &AsmBlock) -> bool {
     let Some(encoding) = &block.terminator_encoding else {
         return false;
@@ -1963,6 +1964,7 @@ fn is_aggregate_type(ty: &AsmType) -> bool {
     matches!(ty, AsmType::Struct { .. } | AsmType::Array(_, _))
 }
 
+#[allow(dead_code)]
 fn is_vector_type(ty: &AsmType) -> bool {
     matches!(ty, AsmType::Vector(_, _))
 }

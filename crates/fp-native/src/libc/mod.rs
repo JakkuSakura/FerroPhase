@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use fp_core::asmir::{
     AsmConstant, AsmGenericOpcode, AsmInstruction, AsmInstructionKind, AsmObjectFormat, AsmOpcode,
     AsmProgram, AsmTerminator, AsmType, AsmValue,
@@ -12,7 +14,6 @@ use std::collections::HashMap;
 pub fn normalize(program: &mut AsmProgram) {
     #[derive(Debug, Clone, Copy)]
     enum ArgRewrite {
-        None,
         RemoveAt(usize),
         RemoveLast,
     }
@@ -45,7 +46,6 @@ pub fn normalize(program: &mut AsmProgram) {
 
     fn apply_arg_rewrite(args: &mut Vec<AsmValue>, rewrite: ArgRewrite) {
         match rewrite {
-            ArgRewrite::None => {}
             ArgRewrite::RemoveAt(idx) => {
                 if idx < args.len() {
                     args.remove(idx);

@@ -1156,7 +1156,7 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
     for name in data_symbols.keys() {
         insert_symbol_variants(&mut defined_symbols, name);
     }
-    for container in &program.container {
+    if let Some(container) = &program.container {
         for symbol in container
             .symbols
             .iter()
@@ -5203,6 +5203,7 @@ fn is_aggregate_type(ty: &AsmType) -> bool {
     matches!(ty, AsmType::Struct { .. } | AsmType::Array(_, _))
 }
 
+#[allow(dead_code)]
 fn is_vector_type(ty: &AsmType) -> bool {
     matches!(ty, AsmType::Vector(_, _))
 }

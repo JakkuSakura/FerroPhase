@@ -151,7 +151,6 @@ fn discover_jump_tables(
                         width_bits,
                     } if *dst == cur_reg && *width_bits == 64 => {
                         addend = addend.saturating_add(*imm as i64);
-                        cur_limit = pos;
                         found = Some((cur_reg, pos));
                         break;
                     }
@@ -161,7 +160,6 @@ fn discover_jump_tables(
                         width_bits,
                     } if *dst == cur_reg && *width_bits == 64 => {
                         addend = addend.saturating_sub(*imm as i64);
-                        cur_limit = pos;
                         found = Some((cur_reg, pos));
                         break;
                     }
@@ -290,10 +288,10 @@ fn discover_jump_tables(
 
         // Find the `movsxd` (or `mov` + `movsxd`) that loads the jump-table entry.
         'search: for mov_pos in (search_window_start..i).rev() {
-            let mut off_reg: u8;
-            let mut base_reg: u8;
-            let mut index_reg: u8;
-            let mut table_entry_disp: i64;
+            let off_reg: u8;
+            let base_reg: u8;
+            let index_reg: u8;
+            let table_entry_disp: i64;
 
             match &decoded[mov_pos].kind {
                 Decoded::MovSxd {
@@ -505,7 +503,7 @@ fn discover_jump_tables(
             table_entry_disp: i64,
             reachable_bounds: Option<(u64, u64)>,
         ) -> Option<(i64, Vec<u64>)> {
-            let mut scan_region = |start_va: u64, bytes: &[u8]| -> Option<(i64, Vec<u64>)> {
+            let scan_region = |start_va: u64, bytes: &[u8]| -> Option<(i64, Vec<u64>)> {
                 let disp = table_entry_disp;
                 if disp.abs() > (bytes.len() as i64) {
                     return None;

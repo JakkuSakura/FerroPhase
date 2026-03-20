@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use fp_core::asmir::{
     AsmBlock, AsmConstant, AsmFunction, AsmFunctionSignature, AsmGenericOpcode, AsmGlobal,
     AsmGlobalRelocation, AsmInstruction, AsmInstructionKind, AsmLocal, AsmObjectFormat, AsmOpcode,
@@ -3359,7 +3361,6 @@ fn inject_linux_readdir_shim(program: &mut AsmProgram, cc: CallingConvention) ->
             ],
             ptr_i8.clone(),
         ));
-        next_id += 1;
 
         let alloc_block = AsmBlock {
             id: 2,
