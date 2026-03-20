@@ -1,7 +1,7 @@
 use fp_core::ast::{
     Abi, BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind, ExprMatch, ExprStringTemplate,
-    FormatArgRef, FormatTemplatePart, ItemDeclFunction, ItemDefFunction, ItemKind, Node, NodeKind,
-    PatternKind, Ty, Value,
+    ExprTry, FormatArgRef, FormatTemplatePart, ItemDeclFunction, ItemDefFunction, ItemKind, Node,
+    NodeKind, Pattern, PatternKind, Ty, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
@@ -39,6 +39,7 @@ struct PowerShellRenderer<'a> {
     externs: HashMap<String, ItemDeclFunction>,
     required_commands: RefCell<BTreeSet<String>>,
     lines: Vec<String>,
+    temp_counter: usize,
 }
 
 impl<'a> PowerShellRenderer<'a> {
@@ -48,6 +49,7 @@ impl<'a> PowerShellRenderer<'a> {
             externs: HashMap::new(),
             required_commands: RefCell::new(BTreeSet::new()),
             lines: Vec::new(),
+            temp_counter: 0,
         }
     }
 
@@ -358,13 +360,7 @@ impl<'a> PowerShellRenderer<'a> {
                 self.push_line(indent, &format!("${} = {}", name, value));
                 Ok(())
             }
-            BlockStmt::Defer(_) => {
-                self.push_line(
-                    indent,
-                    "# defer statements are not supported in PowerShell output",
-                );
-                Ok(())
-            }
+            BlockStmt::Defer(_) => Ok(()),
             BlockStmt::Any(_) | BlockStmt::Item(_) | BlockStmt::Noop => Ok(()),
         }
     }
@@ -372,6 +368,7 @@ impl<'a> PowerShellRenderer<'a> {
     fn render_expr_statement(&mut self, expr: &Expr, indent: usize) -> Result<(), String> {
         match expr.kind() {
             ExprKind::Block(block) => self.render_block(block, indent),
+            ExprKind::Try(expr_try) => self.render_try_expr(expr_try, indent, false),
             ExprKind::Match(expr_match) => self.render_match_expr(expr_match, indent),
             ExprKind::If(expr_if) => {
                 self.push_line(
@@ -449,6 +446,7 @@ impl<'a> PowerShellRenderer<'a> {
     fn render_result_expr(&mut self, expr: &Expr, indent: usize) -> Result<(), String> {
         match expr.kind() {
             ExprKind::Block(block) => self.render_function_block(block, indent),
+            ExprKind::Try(expr_try) => self.render_try_expr(expr_try, indent, true),
             ExprKind::If(expr_if) => {
                 self.push_line(
                     indent,
@@ -548,8 +546,9 @@ impl<'a> PowerShellRenderer<'a> {
                 }
                 Err("unsupported powershell condition expression".to_string())
             }
-            ExprKind::Invoke(invoke) if invoke_is_name(invoke, "__fp_condition_command") => {
-                self.render_command_expr(&invoke.args[0])
+            ExprKind::Invoke(invoke) => {
+                let name = invoke_function_name(invoke)?;
+                self.render_call(name, &invoke.args)
             }
             ExprKind::Paren(paren) => self.render_condition(&paren.expr),
             _ => Ok(format!("({} -eq 'true')", self.render_word(expr)?)),
@@ -636,31 +635,60 @@ impl<'a> PowerShellRenderer<'a> {
         }
     }
 
-    fn render_command_expr(&self, expr: &Expr) -> Result<String, String> {
-        match expr.kind() {
-            ExprKind::Value(value) => match &**value {
-                Value::String(text) => Ok(text.value.clone()),
-                Value::Int(value) => Ok(value.value.to_string()),
-                Value::Bool(value) => Ok(value.value.to_string()),
-                _ => Err("unsupported powershell command expression".to_string()),
-            },
-            ExprKind::Name(name) => {
-                let ident = name.as_ident().ok_or_else(|| {
-                    "powershell command expression only supports identifier names".to_string()
-                })?;
-                Ok(format!("${}", ident))
-            }
-            ExprKind::Invoke(invoke) => {
-                let name = invoke_function_name(invoke)?;
-                Ok(format!("$({})", self.render_call(name, &invoke.args)?))
-            }
-            ExprKind::FormatString(template) => self.render_format_template_command(template),
-            ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Format => {
-                self.render_format_call_command(call)
-            }
-            ExprKind::Paren(paren) => self.render_command_expr(&paren.expr),
-            _ => Err("unsupported powershell command expression".to_string()),
+    fn next_temp_name(&mut self, prefix: &str) -> String {
+        self.temp_counter += 1;
+        format!("__fp{}{}", prefix, self.temp_counter)
+    }
+
+    fn render_try_expr(
+        &mut self,
+        expr_try: &ExprTry,
+        indent: usize,
+        result_mode: bool,
+    ) -> Result<(), String> {
+        let success_name = self.next_temp_name("TrySuccess");
+        let handled_name = self.next_temp_name("TryHandled");
+        self.push_line(indent, &format!("${} = $false", success_name));
+        self.push_line(indent, &format!("${} = $false", handled_name));
+        self.push_line(indent, "try {");
+        if result_mode && expr_try.elze.is_none() {
+            self.render_result_expr(&expr_try.expr, indent + 1)?;
+        } else {
+            self.render_expr_statement(&expr_try.expr, indent + 1)?;
         }
+        self.push_line(indent + 1, &format!("${} = $true", success_name));
+        self.push_line(indent, "} catch {");
+        for catch in &expr_try.catches {
+            self.push_line(indent + 1, &format!("if (-not ${}) {{", handled_name));
+            if let Some(name) = catch_binding_name(catch.pat.as_deref())? {
+                self.push_line(indent + 2, &format!("${} = $_", name));
+            }
+            if result_mode {
+                self.render_result_expr(&catch.body, indent + 2)?;
+            } else {
+                self.render_expr_statement(&catch.body, indent + 2)?;
+            }
+            self.push_line(indent + 2, &format!("${} = $true", handled_name));
+            self.push_line(indent + 1, "}");
+        }
+        self.push_line(indent + 1, &format!("if (-not ${}) {{", handled_name));
+        self.push_line(indent + 2, "throw");
+        self.push_line(indent + 1, "}");
+        self.push_line(indent, "} finally {");
+        if let Some(finally) = &expr_try.finally {
+            self.render_expr_statement(finally, indent + 1)?;
+        }
+        self.push_line(indent, "}");
+        if let Some(elze) = &expr_try.elze {
+            self.push_line(indent, &format!("if (${}) {{", success_name));
+            if result_mode {
+                self.render_result_expr(elze, indent + 1)?;
+            } else {
+                self.render_expr_statement(elze, indent + 1)?;
+            }
+            self.push_line(indent, "}");
+        }
+        Ok(())
     }
 
     fn push_line(&mut self, indent: usize, text: &str) {
@@ -690,6 +718,12 @@ impl<'a> PowerShellRenderer<'a> {
                 let host = self.expect_string_arg(args, 0);
                 format!("$script:FpHosts[{}].transport", self.render_word(host)?)
             }
+            "shell_status" => {
+                format!(
+                    "(& {{ pwsh -Command {}; $LASTEXITCODE -eq 0 }})",
+                    self.render_word(self.expect_string_arg(args, 0))?
+                )
+            }
             "runtime_host_address" => self.render_host_field_lookup("address", args)?,
             "runtime_host_user" => self.render_host_field_lookup("user", args)?,
             "runtime_host_port" => self.render_host_field_lookup("port", args)?,
@@ -700,6 +734,9 @@ impl<'a> PowerShellRenderer<'a> {
             "runtime_host_password" => self.render_host_field_lookup("password", args)?,
             "runtime_host_scheme" => self.render_host_field_lookup("scheme", args)?,
             "runtime_temp_path" => "[System.IO.Path]::GetTempFileName()".to_string(),
+            "runtime_last_changed" => {
+                "if ($script:fpLastChanged) { 'true' } else { 'false' }".to_string()
+            }
             other => self.render_generic_extern(other, args)?,
         })
     }
@@ -1038,6 +1075,19 @@ fn function_returns_value(def: &ItemDefFunction) -> bool {
     !matches!(def.sig.ret_ty.as_ref(), None | Some(Ty::Unit(_)))
 }
 
+fn catch_binding_name(pattern: Option<&Pattern>) -> Result<Option<String>, String> {
+    let Some(pattern) = pattern else {
+        return Ok(None);
+    };
+    if let Some(ident) = pattern.as_ident() {
+        return Ok(Some(ident.as_str().to_string()));
+    }
+    if matches!(pattern.kind(), PatternKind::Wildcard(_)) {
+        return Ok(None);
+    }
+    Err("powershell try/catch only supports identifier and `_` catch patterns".to_string())
+}
+
 fn invoke_function_name<'a>(invoke: &'a fp_core::ast::ExprInvoke) -> Result<&'a str, String> {
     let ExprInvokeTarget::Function(name) = &invoke.target else {
         return Err("powershell renderer only supports function invocation targets".to_string());
@@ -1046,13 +1096,6 @@ fn invoke_function_name<'a>(invoke: &'a fp_core::ast::ExprInvoke) -> Result<&'a 
         return Err("powershell renderer only supports identifier invocation targets".to_string());
     };
     Ok(ident.as_str())
-}
-
-fn invoke_is_name(invoke: &fp_core::ast::ExprInvoke, expected: &str) -> bool {
-    matches!(
-        &invoke.target,
-        ExprInvokeTarget::Function(name) if name.as_ident().is_some_and(|ident| ident.as_str() == expected)
-    )
 }
 
 fn is_true_expr(expr: Option<&Expr>) -> bool {

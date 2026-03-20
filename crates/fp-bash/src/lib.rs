@@ -1,7 +1,7 @@
 use fp_core::ast::{
     Abi, BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind, ExprMatch, ExprStringTemplate,
-    FormatArgRef, FormatTemplatePart, ItemDeclFunction, ItemDefFunction, ItemKind, Node, NodeKind,
-    PatternKind, Ty, Value,
+    ExprTry, FormatArgRef, FormatTemplatePart, ItemDeclFunction, ItemDefFunction, ItemKind, Node,
+    NodeKind, Pattern, PatternKind, Ty, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
@@ -39,6 +39,7 @@ struct BashRenderer<'a> {
     externs: HashMap<String, ItemDeclFunction>,
     required_commands: RefCell<BTreeSet<String>>,
     lines: Vec<String>,
+    temp_counter: usize,
 }
 
 impl<'a> BashRenderer<'a> {
@@ -48,6 +49,7 @@ impl<'a> BashRenderer<'a> {
             externs: HashMap::new(),
             required_commands: RefCell::new(BTreeSet::new()),
             lines: Vec::new(),
+            temp_counter: 0,
         }
     }
 
@@ -296,13 +298,7 @@ impl<'a> BashRenderer<'a> {
                 self.push_line(indent, &format!("local {}={}", name, value));
                 Ok(())
             }
-            BlockStmt::Defer(_) => {
-                self.push_line(
-                    indent,
-                    "# defer statements are not supported in Bash output",
-                );
-                Ok(())
-            }
+            BlockStmt::Defer(_) => Ok(()),
             BlockStmt::Any(_) | BlockStmt::Item(_) | BlockStmt::Noop => Ok(()),
         }
     }
@@ -310,6 +306,7 @@ impl<'a> BashRenderer<'a> {
     fn render_expr_statement(&mut self, expr: &Expr, indent: usize) -> Result<(), String> {
         match expr.kind() {
             ExprKind::Block(block) => self.render_block(block, indent),
+            ExprKind::Try(expr_try) => self.render_try_expr(expr_try, indent, false),
             ExprKind::Match(expr_match) => self.render_match_expr(expr_match, indent),
             ExprKind::If(expr_if) => {
                 self.push_line(
@@ -379,6 +376,7 @@ impl<'a> BashRenderer<'a> {
     fn render_result_expr(&mut self, expr: &Expr, indent: usize) -> Result<(), String> {
         match expr.kind() {
             ExprKind::Block(block) => self.render_function_block(block, indent),
+            ExprKind::Try(expr_try) => self.render_try_expr(expr_try, indent, true),
             ExprKind::If(expr_if) => {
                 self.push_line(
                     indent,
@@ -479,8 +477,16 @@ impl<'a> BashRenderer<'a> {
                 }
                 Err("unsupported bash condition expression".to_string())
             }
-            ExprKind::Invoke(invoke) if invoke_is_name(invoke, "__fp_condition_command") => {
-                Ok(self.render_command_expr(&invoke.args[0])?)
+            ExprKind::Invoke(invoke) => {
+                let ExprInvokeTarget::Function(name) = &invoke.target else {
+                    return Err(
+                        "bash condition only supports function invocation targets".to_string()
+                    );
+                };
+                let ident = name.as_ident().ok_or_else(|| {
+                    "bash condition only supports identifier invocation targets".to_string()
+                })?;
+                self.render_call(ident.as_str(), &invoke.args)
             }
             ExprKind::Paren(paren) => self.render_condition(&paren.expr),
             _ => Ok(format!("[[ {} == 'true' ]]", self.render_word(expr)?)),
@@ -815,6 +821,76 @@ impl<'a> BashRenderer<'a> {
         Ok(shell_case_quote(&text))
     }
 
+    fn next_temp_name(&mut self, prefix: &str) -> String {
+        self.temp_counter += 1;
+        format!("__fp_{}_{}", prefix, self.temp_counter)
+    }
+
+    fn render_try_expr(
+        &mut self,
+        expr_try: &ExprTry,
+        indent: usize,
+        result_mode: bool,
+    ) -> Result<(), String> {
+        let status_name = self.next_temp_name("try_status");
+        let handled_name = self.next_temp_name("try_handled");
+        self.push_line(indent, &format!("{}=0", status_name));
+        self.push_line(indent, &format!("{}=0", handled_name));
+        self.push_line(indent, "if {");
+        if result_mode && expr_try.elze.is_none() {
+            self.render_result_expr(&expr_try.expr, indent + 1)?;
+        } else {
+            self.render_expr_statement(&expr_try.expr, indent + 1)?;
+        }
+        self.push_line(indent, "}; then");
+        if let Some(elze) = &expr_try.elze {
+            if result_mode {
+                self.render_result_expr(elze, indent + 1)?;
+            } else {
+                self.render_expr_statement(elze, indent + 1)?;
+            }
+        }
+        self.push_line(indent, "else");
+        self.push_line(indent + 1, &format!("{}=$?", status_name));
+        if expr_try.catches.is_empty() {
+            self.push_line(indent + 1, &format!("{}=0", handled_name));
+        } else {
+            for catch in &expr_try.catches {
+                self.push_line(
+                    indent + 1,
+                    &format!("if [[ ${} -eq 0 ]]; then", handled_name),
+                );
+                if let Some(name) = catch_binding_name(catch.pat.as_deref())? {
+                    self.push_line(indent + 2, &format!("{}=${}", name, status_name));
+                }
+                if result_mode {
+                    self.render_result_expr(&catch.body, indent + 2)?;
+                } else {
+                    self.render_expr_statement(&catch.body, indent + 2)?;
+                }
+                self.push_line(indent + 2, &format!("{}=1", handled_name));
+                self.push_line(indent + 1, "fi");
+            }
+        }
+        self.push_line(indent, "fi");
+        if let Some(finally) = &expr_try.finally {
+            self.render_expr_statement(finally, indent)?;
+        }
+        self.push_line(
+            indent,
+            &format!(
+                "if [[ ${} -ne 0 && ${} -eq 0 ]]; then",
+                status_name, handled_name
+            ),
+        );
+        self.push_line(
+            indent + 1,
+            &format!("return ${0} 2>/dev/null || exit ${0}", status_name),
+        );
+        self.push_line(indent, "fi");
+        Ok(())
+    }
+
     fn push_line(&mut self, indent: usize, text: &str) {
         self.lines
             .push(format!("{}{}", "    ".repeat(indent), text));
@@ -855,6 +931,9 @@ impl<'a> BashRenderer<'a> {
             "runtime_host_password" => self.render_host_map_lookup("FP_WINRM_PASSWORD", args)?,
             "runtime_host_scheme" => self.render_host_map_lookup("FP_WINRM_SCHEME", args)?,
             "runtime_temp_path" => "mktemp".to_string(),
+            "runtime_last_changed" => {
+                "if [[ \"${__fp_last_changed:-0}\" == '1' ]]; then printf '%s\\n' 'true'; else printf '%s\\n' 'false'; fi".to_string()
+            }
             other => self.render_generic_extern(other, args)?,
         })
     }
@@ -1020,13 +1099,6 @@ fn invoke_function_name<'a>(invoke: &'a fp_core::ast::ExprInvoke) -> Result<&'a 
     Ok(ident.as_str())
 }
 
-fn invoke_is_name(invoke: &fp_core::ast::ExprInvoke, expected: &str) -> bool {
-    matches!(
-        &invoke.target,
-        ExprInvokeTarget::Function(name) if name.as_ident().is_some_and(|ident| ident.as_str() == expected)
-    )
-}
-
 fn is_true_expr(expr: Option<&Expr>) -> bool {
     matches!(
         expr.map(Expr::kind),
@@ -1057,6 +1129,19 @@ fn escape_double_quotes(value: &str) -> String {
 
 fn function_returns_value(def: &ItemDefFunction) -> bool {
     !matches!(def.sig.ret_ty.as_ref(), None | Some(Ty::Unit(_)))
+}
+
+fn catch_binding_name(pattern: Option<&Pattern>) -> Result<Option<String>, String> {
+    let Some(pattern) = pattern else {
+        return Ok(None);
+    };
+    if let Some(ident) = pattern.as_ident() {
+        return Ok(Some(ident.as_str().to_string()));
+    }
+    if matches!(pattern.kind(), PatternKind::Wildcard(_)) {
+        return Ok(None);
+    }
+    Err("bash try/catch only supports identifier and `_` catch patterns".to_string())
 }
 
 fn extern_decl_map<'a>(

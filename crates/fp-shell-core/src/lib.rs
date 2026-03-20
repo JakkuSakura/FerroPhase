@@ -85,6 +85,7 @@ fn is_runtime_primitive(name: &str) -> bool {
             | "runtime_temp_path"
             | "runtime_fail"
             | "runtime_set_changed"
+            | "runtime_last_changed"
     )
 }
 

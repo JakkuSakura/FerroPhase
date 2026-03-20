@@ -2729,6 +2729,10 @@ impl ClosureLowering {
                 self.rewrite_in_expr(expr_while.cond.as_mut())?;
                 self.rewrite_in_expr(expr_while.body.as_mut())?;
             }
+            ast::ExprKind::With(expr_with) => {
+                self.rewrite_in_expr(expr_with.context.as_mut())?;
+                self.rewrite_in_expr(expr_with.body.as_mut())?;
+            }
             ast::ExprKind::Return(expr_return) => {
                 if let Some(value) = expr_return.value.as_mut() {
                     self.rewrite_in_expr(value)?;
@@ -3141,6 +3145,10 @@ impl CaptureCollector {
                 self.visit(expr_while.cond.as_ref());
                 self.visit(expr_while.body.as_ref());
             }
+            ast::ExprKind::With(expr_with) => {
+                self.visit(expr_with.context.as_ref());
+                self.visit(expr_with.body.as_ref());
+            }
             ast::ExprKind::Return(expr_return) => {
                 if let Some(value) = expr_return.value.as_ref() {
                     self.visit(value.as_ref());
@@ -3362,6 +3370,10 @@ impl CaptureReplacer {
             ast::ExprKind::While(expr_while) => {
                 self.visit(expr_while.cond.as_mut());
                 self.visit(expr_while.body.as_mut());
+            }
+            ast::ExprKind::With(expr_with) => {
+                self.visit(expr_with.context.as_mut());
+                self.visit(expr_with.body.as_mut());
             }
             ast::ExprKind::Return(expr_return) => {
                 if let Some(value) = expr_return.value.as_mut() {
