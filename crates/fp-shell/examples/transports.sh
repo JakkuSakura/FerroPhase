@@ -19,19 +19,14 @@ declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
 
-FP_HOST_TRANSPORT['docker-app']='docker'
-FP_SSH_USER['docker-app']='root'
-FP_DOCKER_USER['docker-app']='root'
-FP_WINRM_USER['docker-app']='root'
-FP_DOCKER_CONTAINER['docker-app']='app'
-FP_K8S_CONTAINER['docker-app']='app'
-FP_HOST_TRANSPORT['localhost']='local'
-FP_HOST_TRANSPORT['k8s-api']='kubectl'
-FP_DOCKER_CONTAINER['k8s-api']='api'
-FP_K8S_CONTAINER['k8s-api']='api'
-FP_K8S_POD['k8s-api']='api-7f9f6'
-FP_K8S_NAMESPACE['k8s-api']='prod'
-FP_K8S_CONTEXT['k8s-api']='prod-cluster'
+FP_HOST_TRANSPORT['ssh-web']='ssh'
+FP_SSH_ADDRESS['ssh-web']='10.0.0.11'
+FP_WINRM_ADDRESS['ssh-web']='10.0.0.11'
+FP_SSH_USER['ssh-web']='deploy'
+FP_DOCKER_USER['ssh-web']='deploy'
+FP_WINRM_USER['ssh-web']='deploy'
+FP_SSH_PORT['ssh-web']='22'
+FP_WINRM_PORT['ssh-web']='22'
 FP_HOST_TRANSPORT['windows-admin']='winrm'
 FP_SSH_ADDRESS['windows-admin']='10.0.0.21'
 FP_WINRM_ADDRESS['windows-admin']='10.0.0.21'
@@ -42,109 +37,21 @@ FP_SSH_PORT['windows-admin']='5985'
 FP_WINRM_PORT['windows-admin']='5985'
 FP_WINRM_PASSWORD['windows-admin']='change-me'
 FP_WINRM_SCHEME['windows-admin']='http'
-FP_HOST_TRANSPORT['ssh-web']='ssh'
-FP_SSH_ADDRESS['ssh-web']='10.0.0.11'
-FP_WINRM_ADDRESS['ssh-web']='10.0.0.11'
-FP_SSH_USER['ssh-web']='deploy'
-FP_DOCKER_USER['ssh-web']='deploy'
-FP_WINRM_USER['ssh-web']='deploy'
-FP_SSH_PORT['ssh-web']='22'
-FP_WINRM_PORT['ssh-web']='22'
+FP_HOST_TRANSPORT['localhost']='local'
+FP_HOST_TRANSPORT['docker-app']='docker'
+FP_SSH_USER['docker-app']='root'
+FP_DOCKER_USER['docker-app']='root'
+FP_WINRM_USER['docker-app']='root'
+FP_DOCKER_CONTAINER['docker-app']='app'
+FP_K8S_CONTAINER['docker-app']='app'
+FP_HOST_TRANSPORT['k8s-api']='kubectl'
+FP_DOCKER_CONTAINER['k8s-api']='api'
+FP_K8S_CONTAINER['k8s-api']='api'
+FP_K8S_POD['k8s-api']='api-7f9f6'
+FP_K8S_NAMESPACE['k8s-api']='prod'
+FP_K8S_CONTEXT['k8s-api']='prod-cluster'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
-
-
-ssh_cmd() {
-  ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath="$SSH_CONTROL_PATH" -- "$@"
-}
-
-scp_cmd() {
-  scp -o ControlMaster=auto -o ControlPersist=60 -o ControlPath="$SSH_CONTROL_PATH" -- "$@"
-}
-
-rsync_cmd() {
-  rsync -e "ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=$SSH_CONTROL_PATH" "$@"
-}
-
-winrm_pwsh() {
-  local host="$1"
-  local mode="$2"
-  local command="${3:-}"
-  local source="${4:-}"
-  local destination="${5:-}"
-  local address="${FP_WINRM_ADDRESS[$host]}"
-  local user="${FP_WINRM_USER[$host]}"
-  local password="${FP_WINRM_PASSWORD[$host]:-}"
-  local scheme="${FP_WINRM_SCHEME[$host]:-http}"
-  local port="${FP_WINRM_PORT[$host]:-}"
-
-  if [[ -z "$password" ]]; then
-    echo "winrm password is required for non-interactive bash target: $host" >&2
-    return 1
-  fi
-
-  FP_WINRM_ADDRESS="$address" \
-  FP_WINRM_USER="$user" \
-  FP_WINRM_PASSWORD="$password" \
-  FP_WINRM_SCHEME="$scheme" \
-  FP_WINRM_PORT="$port" \
-  FP_WINRM_MODE="$mode" \
-  FP_WINRM_COMMAND="$command" \
-  FP_WINRM_SOURCE="$source" \
-  FP_WINRM_DESTINATION="$destination" \
-  pwsh -NoProfile -NonInteractive -Command '
-$ErrorActionPreference = "Stop"
-$sessionArgs = @{
-    ComputerName = $env:FP_WINRM_ADDRESS
-}
-if ($env:FP_WINRM_PORT) {
-    $sessionArgs.Port = [int]$env:FP_WINRM_PORT
-}
-$scheme = if ([string]::IsNullOrWhiteSpace($env:FP_WINRM_SCHEME)) {
-    "http"
-} else {
-    $env:FP_WINRM_SCHEME.ToLowerInvariant()
-}
-switch ($scheme) {
-    "http" {}
-    "https" { $sessionArgs.UseSSL = $true }
-    default { throw "unsupported winrm scheme: $($env:FP_WINRM_SCHEME)" }
-}
-$securePassword = ConvertTo-SecureString $env:FP_WINRM_PASSWORD -AsPlainText -Force
-$credential = New-Object System.Management.Automation.PSCredential($env:FP_WINRM_USER, $securePassword)
-$session = New-PSSession -Credential $credential @sessionArgs
-try {
-    switch ($env:FP_WINRM_MODE) {
-        "run" {
-            Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create($env:FP_WINRM_COMMAND))
-        }
-        "copy" {
-            $remoteDestination = $env:FP_WINRM_DESTINATION
-            $remoteDirectory = [System.IO.Path]::GetDirectoryName($remoteDestination)
-            if ($remoteDirectory) {
-                Invoke-Command -Session $session -ScriptBlock {
-                    param([string]$Directory)
-                    [System.IO.Directory]::CreateDirectory($Directory) | Out-Null
-                } -ArgumentList $remoteDirectory
-            }
-            Copy-Item -ToSession $session -Path $env:FP_WINRM_SOURCE -Destination $remoteDestination -Force
-        }
-        default {
-            throw "unsupported winrm mode: $($env:FP_WINRM_MODE)"
-        }
-    }
-}
-finally {
-    if ($null -ne $session) {
-        Remove-PSSession -Session $session
-    }
-}
-'
-}
-host_transport() {
-    local host="$1"
-    runtime_host_transport "${host}"
-}
 
 host_address() {
     local host="$1"
@@ -184,32 +91,6 @@ host_context() {
 run_local_host() {
     local cmd="$1"
     invoke_expression "${cmd}"
-}
-
-run_host() {
-    local host="$1"
-    local cmd="$2"
-    local transport="$(host_transport "${host}")"
-    case "${transport}" in
-        local)
-            run_local_host "${cmd}"
-            ;;
-        ssh)
-            run_ssh_host "${host}" "${cmd}"
-            ;;
-        docker)
-            run_docker_host "${host}" "${cmd}"
-            ;;
-        kubectl)
-            run_kubectl_host "${host}" "${cmd}"
-            ;;
-        winrm)
-            winrm_run "${host}" "${cmd}"
-            ;;
-        *)
-            runtime_fail "unsupported transport: ${transport}"
-            ;;
-    esac
 }
 
 ssh_target() {
@@ -330,7 +211,45 @@ process_ok() {
     ok "${command}"
 }
 
-shell_run() {
+should_apply() {
+    local only_if="$1"
+    local unless="$2"
+    local creates="$3"
+    local removes="$4"
+    if [[ "${only_if}" != '' ]]; then
+        if true; then
+        fi
+    fi
+    if [[ "${unless}" != '' ]]; then
+        if process_ok "${unless}"; then
+        fi
+    fi
+    if [[ "${creates}" != '' ]]; then
+        if true; then
+        fi
+    fi
+    if [[ "${removes}" != '' ]]; then
+        if true; then
+        fi
+    fi
+    printf '%s\n' 'true'
+}
+
+shell_run_local() {
+    local _host="$1"
+    local command="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    runtime_set_changed 'false'
+    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        run_local_host "${command}"
+        runtime_set_changed 'true'
+    fi
+}
+
+shell_run_ssh() {
     local host="$1"
     local command="$2"
     local only_if="$3"
@@ -338,60 +257,55 @@ shell_run() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if [[ "${only_if}" != '' ]]; then
-        if process_ok "${only_if}"; then
-            shell_run_after_only_if "${host}" "${command}" "${unless}" "${creates}" "${removes}"
-        fi
-    else
-        shell_run_after_only_if "${host}" "${command}" "${unless}" "${creates}" "${removes}"
-    fi
-}
-
-shell_run_after_only_if() {
-    local host="$1"
-    local command="$2"
-    local unless="$3"
-    local creates="$4"
-    local removes="$5"
-    if [[ "${unless}" != '' ]]; then
-        if true; then
-            shell_run_after_unless "${host}" "${command}" "${creates}" "${removes}"
-        fi
-    else
-        shell_run_after_unless "${host}" "${command}" "${creates}" "${removes}"
-    fi
-}
-
-shell_run_after_unless() {
-    local host="$1"
-    local command="$2"
-    local creates="$3"
-    local removes="$4"
-    if [[ "${creates}" != '' ]]; then
-        if process_ok "test ! -e ${creates}"; then
-            shell_run_after_creates "${host}" "${command}" "${removes}"
-        fi
-    else
-        shell_run_after_creates "${host}" "${command}" "${removes}"
-    fi
-}
-
-shell_run_after_creates() {
-    local host="$1"
-    local command="$2"
-    local removes="$3"
-    if [[ "${removes}" != '' ]]; then
-        if process_ok "test -e ${removes}"; then
-            run_host "${host}" "${command}"
-            runtime_set_changed 'true'
-        fi
-    else
-        run_host "${host}" "${command}"
+    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        run_ssh_host "${host}" "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell() {
+shell_run_docker() {
+    local host="$1"
+    local command="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    runtime_set_changed 'false'
+    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        run_docker_host "${host}" "${command}"
+        runtime_set_changed 'true'
+    fi
+}
+
+shell_run_kubectl() {
+    local host="$1"
+    local command="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    runtime_set_changed 'false'
+    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        run_kubectl_host "${host}" "${command}"
+        runtime_set_changed 'true'
+    fi
+}
+
+shell_run_winrm() {
+    local host="$1"
+    local command="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    runtime_set_changed 'false'
+    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        winrm_run "${host}" "${command}"
+        runtime_set_changed 'true'
+    fi
+}
+
+shell_local() {
     local command="$1"
     local hosts="$2"
     local only_if="$3"
@@ -401,13 +315,64 @@ shell() {
     local sudo="$7"
     local cwd="$8"
     local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    shell_run_local "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
     runtime_last_changed 
 }
 
-transport() {
-    local host="$1"
-    runtime_host_transport "${host}"
+shell_ssh() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
+    shell_run_ssh "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+shell_docker() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
+    shell_run_docker "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+shell_kubectl() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
+    shell_run_kubectl "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+shell_winrm() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
+    shell_run_winrm "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
 }
 
 address() {
@@ -430,8 +395,8 @@ ok() {
     shell_status "${command}"
 }
 
-shell 'echo local hello' '' '' '' '' '' '' ''
-shell 'echo ssh hello' 'ssh-web' '' '' '' '' '' ''
-shell 'echo docker hello' 'docker-app' '' '' '' '' '' ''
-shell 'echo kubectl hello' 'k8s-api' '' '' '' '' '' ''
-shell 'Write-Host winrm hello' 'windows-admin' '' '' '' '' '' ''
+shell_local 'echo local hello' 'localhost' '' '' '' '' '' ''
+shell_ssh 'echo ssh hello' 'ssh-web' '' '' '' '' '' ''
+shell_docker 'echo docker hello' 'docker-app' '' '' '' '' '' ''
+shell_kubectl 'echo kubectl hello' 'k8s-api' '' '' '' '' '' ''
+shell_winrm 'Write-Host winrm hello' 'windows-admin' '' '' '' '' '' ''

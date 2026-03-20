@@ -35,6 +35,15 @@ struct FunctionInfo {
     defaults: HashMap<String, Expr>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HostTransport {
+    Local,
+    Ssh,
+    Docker,
+    Kubectl,
+    Winrm,
+}
+
 impl<'a> Lowerer<'a> {
     fn new(inventory: &'a ShellInventory) -> Self {
         Self {
@@ -344,13 +353,16 @@ impl<'a> Lowerer<'a> {
         let Some(name) = self.call_target_name(&path) else {
             return Ok(None);
         };
-        let Some(info) = self.functions.get(name) else {
+        let Some(info) = self.functions.get(name.as_str()) else {
             return Ok(None);
         };
         let args = self.lower_call_arguments(invoke, info, host_override.as_ref())?;
+        let emitted_name = self
+            .specialized_emitted_call_name(&name, info, &args)
+            .unwrap_or_else(|| emitted_call_name(&name).to_string());
         Ok(Some(Expr::new(ExprKind::Invoke(ExprInvoke {
             span: invoke.span,
-            target: ExprInvokeTarget::Function(Name::ident(name)),
+            target: ExprInvokeTarget::Function(Name::ident(emitted_name)),
             args,
             kwargs: Vec::new(),
         }))))
@@ -379,6 +391,8 @@ impl<'a> Lowerer<'a> {
                 Expr::value(default.clone())
             } else if let Some(default) = info.defaults.get(param.name.as_str()) {
                 self.lower_typed_expr(default, &param.ty)?
+            } else if param.is_context {
+                string_literal_expr("localhost")
             } else {
                 self.default_value_for_type(&param.ty)?
             };
@@ -394,7 +408,7 @@ impl<'a> Lowerer<'a> {
         let Some(name) = self.call_target_name(&path) else {
             return Ok(None);
         };
-        let Some(info) = self.functions.get(name) else {
+        let Some(info) = self.functions.get(name.as_str()) else {
             return Ok(None);
         };
         let accepts_host = info.signature.params.iter().any(|param| param.is_context);
@@ -453,10 +467,11 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn call_target_name<'b>(&self, path: &'b [String]) -> Option<&'b str> {
-        match path {
-            [name] if self.is_known_callable(name) => Some(name),
-            [.., name] if self.is_known_callable(name) => Some(name),
+    fn call_target_name(&self, path: &[String]) -> Option<String> {
+        let full = path.join("::");
+        match (self.is_known_callable(&full), path.last()) {
+            (true, _) => Some(full),
+            (false, Some(name)) if self.is_known_callable(name) => Some(name.clone()),
             _ => None,
         }
     }
@@ -742,12 +757,13 @@ impl<'a> Lowerer<'a> {
             fp_core::ast::ExprKind::Invoke(invoke) => {
                 let path = invoke_target_segments(&invoke.target)?;
                 let name = self.call_target_name(&path)?;
-                let info = self.functions.get(name)?;
+                let info = self.functions.get(&name)?;
                 let mut args = Vec::new();
                 args.extend(self.lower_call_arguments(invoke, info, None).ok()?);
+                let emitted_name = emitted_call_name(&name);
                 Some(Expr::new(ExprKind::Invoke(ExprInvoke {
                     span: invoke.span,
-                    target: ExprInvokeTarget::Function(Name::ident(name)),
+                    target: ExprInvokeTarget::Function(Name::ident(emitted_name)),
                     args,
                     kwargs: Vec::new(),
                 })))
@@ -855,12 +871,13 @@ impl<'a> Lowerer<'a> {
             fp_core::ast::ExprKind::Invoke(invoke) => {
                 let path = invoke_target_segments(&invoke.target)?;
                 let name = self.call_target_name(&path)?;
-                let info = self.functions.get(name)?;
+                let info = self.functions.get(&name)?;
                 let mut args = Vec::new();
                 args.extend(self.lower_call_arguments(invoke, info, None).ok()?);
+                let emitted_name = emitted_call_name(&name);
                 Some(Expr::new(ExprKind::Invoke(ExprInvoke {
                     span: invoke.span,
-                    target: ExprInvokeTarget::Function(Name::ident(name)),
+                    target: ExprInvokeTarget::Function(Name::ident(emitted_name)),
                     args,
                     kwargs: Vec::new(),
                 })))
@@ -976,6 +993,64 @@ impl<'a> Lowerer<'a> {
     fn current_host_override(&self) -> Option<&Expr> {
         self.host_context.last()
     }
+
+    fn specialized_emitted_call_name(
+        &self,
+        name: &str,
+        info: &FunctionInfo,
+        args: &[Expr],
+    ) -> Option<String> {
+        let host = info
+            .signature
+            .params
+            .iter()
+            .enumerate()
+            .find(|(_, param)| param.is_context)
+            .and_then(|(index, _)| args.get(index))
+            .and_then(string_literal_value)?;
+        let transport = self.host_transport_for_name(&host)?;
+        match name {
+            "std::server::shell" | "shell" => Some(match transport {
+                HostTransport::Local => "shell_local",
+                HostTransport::Ssh => "shell_ssh",
+                HostTransport::Docker => "shell_docker",
+                HostTransport::Kubectl => "shell_kubectl",
+                HostTransport::Winrm => "shell_winrm",
+            }.to_string()),
+            "std::files::copy" | "copy" => Some(match transport {
+                HostTransport::Local => "copy_local",
+                HostTransport::Ssh => "copy_ssh",
+                HostTransport::Docker => "copy_docker",
+                HostTransport::Kubectl => "copy_kubectl",
+                HostTransport::Winrm => "copy_winrm",
+            }.to_string()),
+            "std::files::template" | "template" => Some(match transport {
+                HostTransport::Local => "template_local",
+                HostTransport::Ssh => "template_ssh",
+                _ => "shell_template",
+            }.to_string()),
+            "std::files::rsync" | "rsync" => Some(match transport {
+                HostTransport::Local => "rsync_local",
+                _ => "rsync_remote",
+            }.to_string()),
+            _ => None,
+        }
+    }
+
+    fn host_transport_for_name(&self, host: &str) -> Option<HostTransport> {
+        if host == "localhost" {
+            return Some(HostTransport::Local);
+        }
+        let host = self.inventory.hosts.get(host)?;
+        Some(match host.transport {
+            fp_shell_core::TransportKind::Local => HostTransport::Local,
+            fp_shell_core::TransportKind::Ssh => HostTransport::Ssh,
+            fp_shell_core::TransportKind::Docker => HostTransport::Docker,
+            fp_shell_core::TransportKind::Kubectl => HostTransport::Kubectl,
+            fp_shell_core::TransportKind::Winrm => HostTransport::Winrm,
+        })
+    }
+
 }
 
 fn statements_to_block_expr(statements: Vec<Expr>) -> ExprBlock {
@@ -1062,6 +1137,10 @@ fn invoke_target_segments(target: &ExprInvokeTarget) -> Option<Vec<String>> {
         ExprInvokeTarget::Function(name) => Some(name_to_segments(name)),
         _ => None,
     }
+}
+
+fn emitted_call_name(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
 }
 
 fn name_to_segments(name: &Name) -> Vec<String> {

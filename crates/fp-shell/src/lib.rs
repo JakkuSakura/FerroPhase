@@ -64,6 +64,15 @@ pub fn compile_source_with_options(
 
     let inventory = options.inventory.clone().unwrap_or_default();
     let lowered = lower::lower_node(&ast, &inventory).map_err(ShellError::Lower)?;
+    let lowered = match lowered.kind() {
+        NodeKind::File(file) => fp_backend::roundtrip_ast_file_via_hir(file)
+            .map_err(|err| ShellError::Lower(err.to_string()))?,
+        _ => {
+            return Err(ShellError::Lower(
+                "shell compilation requires file AST nodes".to_string(),
+            ))
+        }
+    };
     validate_extern_decls(&lowered, target).map_err(ShellError::Lower)?;
 
     let code = match target {
@@ -225,6 +234,8 @@ const fn main() {
 
         assert!(rendered.code.contains("#!/usr/bin/env bash"));
         assert!(rendered.code.contains("echo hello"));
+        assert!(!rendered.code.contains("shell_copy() {"));
+        assert!(!rendered.code.contains("winrm_pwsh() {"));
     }
 
     #[test]

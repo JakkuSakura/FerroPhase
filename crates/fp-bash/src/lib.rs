@@ -176,7 +176,6 @@ impl<'a> BashRenderer<'a> {
         }
         script.push_str("\nSSH_CONTROL_PATH=\"${TMPDIR:-/tmp}/fp-shell-%r@%h:%p\"\n\n");
         script.push_str(&self.render_runtime_validator());
-        script.push_str(BASH_RUNTIME_UTILITIES);
         for line in self.lines {
             script.push_str(&line);
             script.push('\n');
@@ -944,17 +943,8 @@ impl<'a> BashRenderer<'a> {
         args: &[Expr],
     ) -> Result<String, String> {
         Ok(match name {
-            "winrm_run" => format!(
-                "winrm_pwsh {} run {}",
-                self.render_value(&args[0])?,
-                self.render_value(&args[1])?
-            ),
-            "winrm_copy" => format!(
-                "winrm_pwsh {} copy {} {}",
-                self.render_value(&args[0])?,
-                self.render_value(&args[1])?,
-                self.render_value(&args[2])?
-            ),
+            "winrm_run" => self.render_bash_winrm_statement(args, "run")?,
+            "winrm_copy" => self.render_bash_winrm_statement(args, "copy")?,
             "render_template" => format!(
                 "eval {}",
                 shell_arg_quote(&format!(
@@ -999,6 +989,80 @@ impl<'a> BashRenderer<'a> {
         ))
     }
 
+    fn render_bash_winrm_statement(&mut self, args: &[Expr], mode: &str) -> Result<String, String> {
+        let host_name = self.next_temp_name("winrm_host");
+        let address_name = self.next_temp_name("winrm_address");
+        let user_name = self.next_temp_name("winrm_user");
+        let password_name = self.next_temp_name("winrm_password");
+        let scheme_name = self.next_temp_name("winrm_scheme");
+        let port_name = self.next_temp_name("winrm_port");
+
+        let host = self.render_value(&args[0])?;
+        let command = if mode == "run" {
+            self.render_value(&args[1])?
+        } else {
+            "''".to_string()
+        };
+        let source = if mode == "copy" {
+            self.render_value(&args[1])?
+        } else {
+            "''".to_string()
+        };
+        let destination = if mode == "copy" {
+            self.render_value(&args[2])?
+        } else {
+            "''".to_string()
+        };
+
+        Ok(format!(
+            "{host_name}={host}
+{address_name}=\"${{FP_WINRM_ADDRESS[${host_name}]:-}}\"
+{user_name}=\"${{FP_WINRM_USER[${host_name}]:-}}\"
+{password_name}=\"${{FP_WINRM_PASSWORD[${host_name}]:-}}\"
+{scheme_name}=\"${{FP_WINRM_SCHEME[${host_name}]:-http}}\"
+{port_name}=\"${{FP_WINRM_PORT[${host_name}]:-}}\"
+if [[ -z \"${{{password_name}}}\" ]]; then echo \"winrm password is required for non-interactive bash target: ${{{host_name}}}\" >&2; return 1; fi
+FP_WINRM_ADDRESS=\"${{{address_name}}}\" FP_WINRM_USER=\"${{{user_name}}}\" FP_WINRM_PASSWORD=\"${{{password_name}}}\" FP_WINRM_SCHEME=\"${{{scheme_name}}}\" FP_WINRM_PORT=\"${{{port_name}}}\" FP_WINRM_MODE='{mode}' FP_WINRM_COMMAND={command} FP_WINRM_SOURCE={source} FP_WINRM_DESTINATION={destination} pwsh -NoProfile -NonInteractive -Command '$ErrorActionPreference = \"Stop\"
+$sessionArgs = @{{ ComputerName = $env:FP_WINRM_ADDRESS }}
+if ($env:FP_WINRM_PORT) {{ $sessionArgs.Port = [int]$env:FP_WINRM_PORT }}
+$scheme = if ([string]::IsNullOrWhiteSpace($env:FP_WINRM_SCHEME)) {{ \"http\" }} else {{ $env:FP_WINRM_SCHEME.ToLowerInvariant() }}
+switch ($scheme) {{
+    \"http\" {{}}
+    \"https\" {{ $sessionArgs.UseSSL = $true }}
+    default {{ throw \"unsupported winrm scheme: $($env:FP_WINRM_SCHEME)\" }}
+}}
+$securePassword = ConvertTo-SecureString $env:FP_WINRM_PASSWORD -AsPlainText -Force
+$credential = New-Object System.Management.Automation.PSCredential($env:FP_WINRM_USER, $securePassword)
+$session = New-PSSession -Credential $credential @sessionArgs
+try {{
+    switch ($env:FP_WINRM_MODE) {{
+        \"run\" {{
+            Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create($env:FP_WINRM_COMMAND))
+        }}
+        \"copy\" {{
+            $remoteDestination = $env:FP_WINRM_DESTINATION
+            $remoteDirectory = [System.IO.Path]::GetDirectoryName($remoteDestination)
+            if ($remoteDirectory) {{
+                Invoke-Command -Session $session -ScriptBlock {{
+                    param([string]$Directory)
+                    [System.IO.Directory]::CreateDirectory($Directory) | Out-Null
+                }} -ArgumentList $remoteDirectory
+            }}
+            Copy-Item -ToSession $session -Path $env:FP_WINRM_SOURCE -Destination $remoteDestination -Force
+        }}
+        default {{
+            throw \"unsupported winrm mode: $($env:FP_WINRM_MODE)\"
+        }}
+    }}
+}}
+finally {{
+    if ($null -ne $session) {{
+        Remove-PSSession -Session $session
+    }}
+}}'"
+        ))
+    }
+
     fn render_runtime_validator(&self) -> String {
         let commands = self.required_commands.borrow();
         if commands.is_empty() {
@@ -1038,6 +1102,7 @@ impl<'a> BashRenderer<'a> {
             _ => Err("bash renderer only supports string-list for iterables".to_string()),
         }
     }
+
 }
 
 fn extract_match_case_string(pattern: &fp_core::ast::Pattern) -> Option<Expr> {
@@ -1167,95 +1232,6 @@ fn extern_decl_map<'a>(
     Ok(externs)
 }
 
-const BASH_RUNTIME_UTILITIES: &str = r#"
-ssh_cmd() {
-  ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath="$SSH_CONTROL_PATH" -- "$@"
-}
-
-scp_cmd() {
-  scp -o ControlMaster=auto -o ControlPersist=60 -o ControlPath="$SSH_CONTROL_PATH" -- "$@"
-}
-
-rsync_cmd() {
-  rsync -e "ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=$SSH_CONTROL_PATH" "$@"
-}
-
-winrm_pwsh() {
-  local host="$1"
-  local mode="$2"
-  local command="${3:-}"
-  local source="${4:-}"
-  local destination="${5:-}"
-  local address="${FP_WINRM_ADDRESS[$host]}"
-  local user="${FP_WINRM_USER[$host]}"
-  local password="${FP_WINRM_PASSWORD[$host]:-}"
-  local scheme="${FP_WINRM_SCHEME[$host]:-http}"
-  local port="${FP_WINRM_PORT[$host]:-}"
-
-  if [[ -z "$password" ]]; then
-    echo "winrm password is required for non-interactive bash target: $host" >&2
-    return 1
-  fi
-
-  FP_WINRM_ADDRESS="$address" \
-  FP_WINRM_USER="$user" \
-  FP_WINRM_PASSWORD="$password" \
-  FP_WINRM_SCHEME="$scheme" \
-  FP_WINRM_PORT="$port" \
-  FP_WINRM_MODE="$mode" \
-  FP_WINRM_COMMAND="$command" \
-  FP_WINRM_SOURCE="$source" \
-  FP_WINRM_DESTINATION="$destination" \
-  pwsh -NoProfile -NonInteractive -Command '
-$ErrorActionPreference = "Stop"
-$sessionArgs = @{
-    ComputerName = $env:FP_WINRM_ADDRESS
-}
-if ($env:FP_WINRM_PORT) {
-    $sessionArgs.Port = [int]$env:FP_WINRM_PORT
-}
-$scheme = if ([string]::IsNullOrWhiteSpace($env:FP_WINRM_SCHEME)) {
-    "http"
-} else {
-    $env:FP_WINRM_SCHEME.ToLowerInvariant()
-}
-switch ($scheme) {
-    "http" {}
-    "https" { $sessionArgs.UseSSL = $true }
-    default { throw "unsupported winrm scheme: $($env:FP_WINRM_SCHEME)" }
-}
-$securePassword = ConvertTo-SecureString $env:FP_WINRM_PASSWORD -AsPlainText -Force
-$credential = New-Object System.Management.Automation.PSCredential($env:FP_WINRM_USER, $securePassword)
-$session = New-PSSession -Credential $credential @sessionArgs
-try {
-    switch ($env:FP_WINRM_MODE) {
-        "run" {
-            Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create($env:FP_WINRM_COMMAND))
-        }
-        "copy" {
-            $remoteDestination = $env:FP_WINRM_DESTINATION
-            $remoteDirectory = [System.IO.Path]::GetDirectoryName($remoteDestination)
-            if ($remoteDirectory) {
-                Invoke-Command -Session $session -ScriptBlock {
-                    param([string]$Directory)
-                    [System.IO.Directory]::CreateDirectory($Directory) | Out-Null
-                } -ArgumentList $remoteDirectory
-            }
-            Copy-Item -ToSession $session -Path $env:FP_WINRM_SOURCE -Destination $remoteDestination -Force
-        }
-        default {
-            throw "unsupported winrm mode: $($env:FP_WINRM_MODE)"
-        }
-    }
-}
-finally {
-    if ($null -ne $session) {
-        Remove-PSSession -Session $session
-    }
-}
-'
-}
-"#;
 
 #[cfg(test)]
 mod tests {
@@ -1392,7 +1368,10 @@ mod tests {
         );
         assert!(script.contains("pwsh -NoProfile -NonInteractive -Command"));
         assert!(script.contains("FP_WINRM_SCHEME['win-1']='https'"));
-        assert!(script.contains("winrm_pwsh 'win-1' copy 'artifact.zip' 'C:\\Temp\\artifact.zip'"));
+        assert!(script.contains("FP_WINRM_MODE='copy'"));
+        assert!(script.contains("FP_WINRM_SOURCE='artifact.zip'"));
+        assert!(script.contains("FP_WINRM_DESTINATION='C:\\Temp\\artifact.zip'"));
+        assert!(!script.contains("winrm_pwsh() {"));
         assert!(!script.contains("backend_copy_winrm"));
         assert!(!script.contains("evil-winrm"));
     }

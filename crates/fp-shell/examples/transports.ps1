@@ -4,11 +4,11 @@ $ErrorActionPreference = 'Stop'
 $script:fpLastChanged = $false
 
 $script:FpHosts = @{}
-$script:FpHosts['windows-admin'] = @{ transport = 'winrm'; address = '10.0.0.21'; user = 'Administrator'; port = 5985; password = 'change-me'; scheme = 'http' }
-$script:FpHosts['docker-app'] = @{ transport = 'docker'; user = 'root'; container = 'app' }
-$script:FpHosts['ssh-web'] = @{ transport = 'ssh'; address = '10.0.0.11'; user = 'deploy'; port = 22 }
 $script:FpHosts['localhost'] = @{ transport = 'local' }
+$script:FpHosts['ssh-web'] = @{ transport = 'ssh'; address = '10.0.0.11'; user = 'deploy'; port = 22 }
+$script:FpHosts['windows-admin'] = @{ transport = 'winrm'; address = '10.0.0.21'; user = 'Administrator'; port = 5985; password = 'change-me'; scheme = 'http' }
 $script:FpHosts['k8s-api'] = @{ transport = 'kubectl'; container = 'api'; pod = 'api-7f9f6'; namespace = 'prod'; context = 'prod-cluster' }
+$script:FpHosts['docker-app'] = @{ transport = 'docker'; user = 'root'; container = 'app' }
 function Invoke-FpRuntimeValidation {
     if (-not (Get-Command -Name 'Invoke-Expression' -ErrorAction SilentlyContinue)) { throw 'missing required command: Invoke-Expression' }
     if (-not (Get-Command -Name 'New-PSSession' -ErrorAction SilentlyContinue)) { throw 'missing required command: New-PSSession' }
@@ -19,11 +19,6 @@ function Invoke-FpRuntimeValidation {
 }
 
 Invoke-FpRuntimeValidation
-
-function host_transport {
-    param([string]$host)
-    Write-Output $($script:FpHosts[$host].transport)
-}
 
 function host_address {
     param([string]$host)
@@ -63,31 +58,6 @@ function host_context {
 function run_local_host {
     param([string]$cmd)
     Write-Output $(Invoke-Expression $cmd)
-}
-
-function run_host {
-    param([string]$host, [string]$cmd)
-    $transport = $(host_transport $host)
-    switch -Exact ($transport) {
-        'local' {
-            Write-Output $(run_local_host $cmd)
-        }
-        'ssh' {
-            Write-Output $(run_ssh_host $host $cmd)
-        }
-        'docker' {
-            Write-Output $(run_docker_host $host $cmd)
-        }
-        'kubectl' {
-            Write-Output $(run_kubectl_host $host $cmd)
-        }
-        'winrm' {
-            Write-Output $(New-PSSession Invoke-Command Remove-PSSession $host $cmd)
-        }
-        default {
-            Write-Output $(runtime_fail "unsupported transport: $transport")
-        }
-    }
 }
 
 function ssh_target {
@@ -203,63 +173,123 @@ function process_ok {
     Write-Output $(ok $command)
 }
 
-function shell_run {
-    param([string]$host, [string]$command, [string]$only_if, [string]$unless, [string]$creates, [string]$removes)
-    $script:fpLastChanged = $false
+function should_apply {
+    param([string]$only_if, [string]$unless, [string]$creates, [string]$removes)
     if ($only_if -ne '') {
-        if (process_ok $only_if) {
-            Write-Output $(shell_run_after_only_if $host $command $unless $creates $removes)
-        }
-    } else {
-        Write-Output $(shell_run_after_only_if $host $command $unless $creates $removes)
-    }
-}
-
-function shell_run_after_only_if {
-    param([string]$host, [string]$command, [string]$unless, [string]$creates, [string]$removes)
-    if ($unless -ne '') {
         if ($true) {
-            Write-Output $(shell_run_after_unless $host $command $creates $removes)
         }
-    } else {
-        Write-Output $(shell_run_after_unless $host $command $creates $removes)
     }
-}
-
-function shell_run_after_unless {
-    param([string]$host, [string]$command, [string]$creates, [string]$removes)
+    if ($unless -ne '') {
+        if (process_ok $unless) {
+        }
+    }
     if ($creates -ne '') {
-        if (process_ok "test ! -e $creates") {
-            Write-Output $(shell_run_after_creates $host $command $removes)
+        if ($true) {
         }
-    } else {
-        Write-Output $(shell_run_after_creates $host $command $removes)
     }
+    if ($removes -ne '') {
+        if ($true) {
+        }
+    }
+    Write-Output $true
 }
 
-function shell_run_after_creates {
-    param([string]$host, [string]$command, [string]$removes)
-    if ($removes -ne '') {
-        if (process_ok "test -e $removes") {
-            run_host $host $command
-            Write-Output $(runtime_set_changed $true)
-        }
-    } else {
-        run_host $host $command
+function shell_run_local {
+    param([string]$_host, [string]$command, [string]$only_if, [string]$unless, [string]$creates, [string]$removes)
+    $script:fpLastChanged = $false
+    if (should_apply $only_if $unless $creates $removes) {
+        run_local_host $command
         Write-Output $(runtime_set_changed $true)
     }
 }
 
-function shell {
+function shell_run_ssh {
+    param([string]$host, [string]$command, [string]$only_if, [string]$unless, [string]$creates, [string]$removes)
+    $script:fpLastChanged = $false
+    if (should_apply $only_if $unless $creates $removes) {
+        run_ssh_host $host $command
+        Write-Output $(runtime_set_changed $true)
+    }
+}
+
+function shell_run_docker {
+    param([string]$host, [string]$command, [string]$only_if, [string]$unless, [string]$creates, [string]$removes)
+    $script:fpLastChanged = $false
+    if (should_apply $only_if $unless $creates $removes) {
+        run_docker_host $host $command
+        Write-Output $(runtime_set_changed $true)
+    }
+}
+
+function shell_run_kubectl {
+    param([string]$host, [string]$command, [string]$only_if, [string]$unless, [string]$creates, [string]$removes)
+    $script:fpLastChanged = $false
+    if (should_apply $only_if $unless $creates $removes) {
+        run_kubectl_host $host $command
+        Write-Output $(runtime_set_changed $true)
+    }
+}
+
+function shell_run_winrm {
+    param([string]$host, [string]$command, [string]$only_if, [string]$unless, [string]$creates, [string]$removes)
+    $script:fpLastChanged = $false
+    if (should_apply $only_if $unless $creates $removes) {
+        $__fpHost = $host
+        $__fpEntry = $script:FpHosts[$__fpHost]
+        $__fpSessionArgs = @{ ComputerName = $__fpEntry.address }
+        if ($__fpEntry.port) { $__fpSessionArgs.Port = $__fpEntry.port }
+        $__fpScheme = if ($__fpEntry.scheme) { $__fpEntry.scheme.ToLowerInvariant() } else { 'http' }
+        switch ($__fpScheme) {
+            'http' {}
+            'https' { $__fpSessionArgs.UseSSL = $true }
+            default { throw "unsupported winrm scheme for $__fpHost: $($__fpEntry.scheme)" }
+        }
+        if (-not $__fpEntry.password) { throw "winrm password is required for non-interactive PowerShell target: $__fpHost" }
+        $__fpSecurePassword = ConvertTo-SecureString $__fpEntry.password -AsPlainText -Force
+        $__fpCredential = New-Object System.Management.Automation.PSCredential($__fpEntry.user, $__fpSecurePassword)
+        $__fpSession = New-PSSession -Credential $__fpCredential @__fpSessionArgs
+        try {
+            Invoke-Command -Session $__fpSession -ScriptBlock ([scriptblock]::Create($command))
+        } finally {
+            Remove-PSSession -Session $__fpSession
+        }
+        Write-Output $(runtime_set_changed $true)
+    }
+}
+
+function shell_local {
     param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
     $command = $(command_with_options $command $cwd $sudo)
-    shell_run $hosts $command $only_if $unless $creates $removes
+    shell_run_local $hosts $command $only_if $unless $creates $removes
     Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
 }
 
-function transport {
-    param([string]$host)
-    Write-Output $($script:FpHosts[$host].transport)
+function shell_ssh {
+    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
+    $command = $(command_with_options $command $cwd $sudo)
+    shell_run_ssh $hosts $command $only_if $unless $creates $removes
+    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
+}
+
+function shell_docker {
+    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
+    $command = $(command_with_options $command $cwd $sudo)
+    shell_run_docker $hosts $command $only_if $unless $creates $removes
+    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
+}
+
+function shell_kubectl {
+    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
+    $command = $(command_with_options $command $cwd $sudo)
+    shell_run_kubectl $hosts $command $only_if $unless $creates $removes
+    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
+}
+
+function shell_winrm {
+    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
+    $command = $(command_with_options $command $cwd $sudo)
+    shell_run_winrm $hosts $command $only_if $unless $creates $removes
+    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
 }
 
 function address {
@@ -282,8 +312,8 @@ function ok {
     Write-Output $((& { pwsh -Command $command; $LASTEXITCODE -eq 0 }))
 }
 
-shell 'echo local hello' '' '' '' '' '' '' ''
-shell 'echo ssh hello' 'ssh-web' '' '' '' '' '' ''
-shell 'echo docker hello' 'docker-app' '' '' '' '' '' ''
-shell 'echo kubectl hello' 'k8s-api' '' '' '' '' '' ''
-shell 'Write-Host winrm hello' 'windows-admin' '' '' '' '' '' ''
+shell_local 'echo local hello' 'localhost' '' '' '' '' '' ''
+shell_ssh 'echo ssh hello' 'ssh-web' '' '' '' '' '' ''
+shell_docker 'echo docker hello' 'docker-app' '' '' '' '' '' ''
+shell_kubectl 'echo kubectl hello' 'k8s-api' '' '' '' '' '' ''
+shell_winrm 'Write-Host winrm hello' 'windows-admin' '' '' '' '' '' ''

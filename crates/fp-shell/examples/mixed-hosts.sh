@@ -34,94 +34,6 @@ FP_WINRM_USER['web-2']='deploy'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
-
-ssh_cmd() {
-  ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath="$SSH_CONTROL_PATH" -- "$@"
-}
-
-scp_cmd() {
-  scp -o ControlMaster=auto -o ControlPersist=60 -o ControlPath="$SSH_CONTROL_PATH" -- "$@"
-}
-
-rsync_cmd() {
-  rsync -e "ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=$SSH_CONTROL_PATH" "$@"
-}
-
-winrm_pwsh() {
-  local host="$1"
-  local mode="$2"
-  local command="${3:-}"
-  local source="${4:-}"
-  local destination="${5:-}"
-  local address="${FP_WINRM_ADDRESS[$host]}"
-  local user="${FP_WINRM_USER[$host]}"
-  local password="${FP_WINRM_PASSWORD[$host]:-}"
-  local scheme="${FP_WINRM_SCHEME[$host]:-http}"
-  local port="${FP_WINRM_PORT[$host]:-}"
-
-  if [[ -z "$password" ]]; then
-    echo "winrm password is required for non-interactive bash target: $host" >&2
-    return 1
-  fi
-
-  FP_WINRM_ADDRESS="$address" \
-  FP_WINRM_USER="$user" \
-  FP_WINRM_PASSWORD="$password" \
-  FP_WINRM_SCHEME="$scheme" \
-  FP_WINRM_PORT="$port" \
-  FP_WINRM_MODE="$mode" \
-  FP_WINRM_COMMAND="$command" \
-  FP_WINRM_SOURCE="$source" \
-  FP_WINRM_DESTINATION="$destination" \
-  pwsh -NoProfile -NonInteractive -Command '
-$ErrorActionPreference = "Stop"
-$sessionArgs = @{
-    ComputerName = $env:FP_WINRM_ADDRESS
-}
-if ($env:FP_WINRM_PORT) {
-    $sessionArgs.Port = [int]$env:FP_WINRM_PORT
-}
-$scheme = if ([string]::IsNullOrWhiteSpace($env:FP_WINRM_SCHEME)) {
-    "http"
-} else {
-    $env:FP_WINRM_SCHEME.ToLowerInvariant()
-}
-switch ($scheme) {
-    "http" {}
-    "https" { $sessionArgs.UseSSL = $true }
-    default { throw "unsupported winrm scheme: $($env:FP_WINRM_SCHEME)" }
-}
-$securePassword = ConvertTo-SecureString $env:FP_WINRM_PASSWORD -AsPlainText -Force
-$credential = New-Object System.Management.Automation.PSCredential($env:FP_WINRM_USER, $securePassword)
-$session = New-PSSession -Credential $credential @sessionArgs
-try {
-    switch ($env:FP_WINRM_MODE) {
-        "run" {
-            Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create($env:FP_WINRM_COMMAND))
-        }
-        "copy" {
-            $remoteDestination = $env:FP_WINRM_DESTINATION
-            $remoteDirectory = [System.IO.Path]::GetDirectoryName($remoteDestination)
-            if ($remoteDirectory) {
-                Invoke-Command -Session $session -ScriptBlock {
-                    param([string]$Directory)
-                    [System.IO.Directory]::CreateDirectory($Directory) | Out-Null
-                } -ArgumentList $remoteDirectory
-            }
-            Copy-Item -ToSession $session -Path $env:FP_WINRM_SOURCE -Destination $remoteDestination -Force
-        }
-        default {
-            throw "unsupported winrm mode: $($env:FP_WINRM_MODE)"
-        }
-    }
-}
-finally {
-    if ($null -ne $session) {
-        Remove-PSSession -Session $session
-    }
-}
-'
-}
 host_transport() {
     local host="$1"
     runtime_host_transport "${host}"
@@ -311,6 +223,30 @@ process_ok() {
     ok "${command}"
 }
 
+should_apply() {
+    local only_if="$1"
+    local unless="$2"
+    local creates="$3"
+    local removes="$4"
+    if [[ "${only_if}" != '' ]]; then
+        if true; then
+        fi
+    fi
+    if [[ "${unless}" != '' ]]; then
+        if process_ok "${unless}"; then
+        fi
+    fi
+    if [[ "${creates}" != '' ]]; then
+        if true; then
+        fi
+    fi
+    if [[ "${removes}" != '' ]]; then
+        if true; then
+        fi
+    fi
+    printf '%s\n' 'true'
+}
+
 shell_run() {
     local host="$1"
     local command="$2"
@@ -319,55 +255,36 @@ shell_run() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if [[ "${only_if}" != '' ]]; then
-        if process_ok "${only_if}"; then
-            shell_run_after_only_if "${host}" "${command}" "${unless}" "${creates}" "${removes}"
-        fi
-    else
-        shell_run_after_only_if "${host}" "${command}" "${unless}" "${creates}" "${removes}"
-    fi
-}
-
-shell_run_after_only_if() {
-    local host="$1"
-    local command="$2"
-    local unless="$3"
-    local creates="$4"
-    local removes="$5"
-    if [[ "${unless}" != '' ]]; then
-        if true; then
-            shell_run_after_unless "${host}" "${command}" "${creates}" "${removes}"
-        fi
-    else
-        shell_run_after_unless "${host}" "${command}" "${creates}" "${removes}"
-    fi
-}
-
-shell_run_after_unless() {
-    local host="$1"
-    local command="$2"
-    local creates="$3"
-    local removes="$4"
-    if [[ "${creates}" != '' ]]; then
-        if process_ok "test ! -e ${creates}"; then
-            shell_run_after_creates "${host}" "${command}" "${removes}"
-        fi
-    else
-        shell_run_after_creates "${host}" "${command}" "${removes}"
-    fi
-}
-
-shell_run_after_creates() {
-    local host="$1"
-    local command="$2"
-    local removes="$3"
-    if [[ "${removes}" != '' ]]; then
-        if process_ok "test -e ${removes}"; then
-            run_host "${host}" "${command}"
-            runtime_set_changed 'true'
-        fi
-    else
+    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
         run_host "${host}" "${command}"
+        runtime_set_changed 'true'
+    fi
+}
+
+shell_run_local() {
+    local _host="$1"
+    local command="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    runtime_set_changed 'false'
+    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        run_local_host "${command}"
+        runtime_set_changed 'true'
+    fi
+}
+
+shell_run_ssh() {
+    local host="$1"
+    local command="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    runtime_set_changed 'false'
+    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        run_ssh_host "${host}" "${command}"
         runtime_set_changed 'true'
     fi
 }
@@ -383,6 +300,34 @@ shell() {
     local cwd="$8"
     local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
     shell_run "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+shell_local() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
+    shell_run_local "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+shell_ssh() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
+    shell_run_ssh "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
     runtime_last_changed 
 }
 
@@ -422,8 +367,8 @@ ok() {
     shell_status "${command}"
 }
 
-shell 'echo local pre-check' '' '' '' '' '' '' ''
+shell_local 'echo local pre-check' 'localhost' '' '' '' '' '' ''
 restart 'fp-service' 'web-1' '' '' '' '' ''
-shell 'sudo journalctl -u fp-service -n 10' 'web-1' '' '' '' '' '' ''
-shell 'sudo journalctl -u fp-service -n 10' 'web-2' '' '' '' '' '' ''
-shell 'echo local post-check' '' '' '' '' '' '' ''
+shell_ssh 'sudo journalctl -u fp-service -n 10' 'web-1' '' '' '' '' '' ''
+shell_ssh 'sudo journalctl -u fp-service -n 10' 'web-2' '' '' '' '' '' ''
+shell_local 'echo local post-check' 'localhost' '' '' '' '' '' ''

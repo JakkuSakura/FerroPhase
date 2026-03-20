@@ -56,14 +56,14 @@ extern "bash" fn bash(cmd: str);
 extern "pwsh" fn invoke_expression(cmd: str);
 
 #[cfg(target_lang = "bash")]
-#[command = "ssh"]
+#[command = "ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=$SSH_CONTROL_PATH"]
 extern "bash" fn ssh(target: str, cmd: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "ssh"]
 extern "pwsh" fn ssh(target: str, cmd: str);
 
 #[cfg(target_lang = "bash")]
-#[command = "ssh -p"]
+#[command = "ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=$SSH_CONTROL_PATH -p"]
 extern "bash" fn ssh_port(port: str, target: str, cmd: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "ssh -p"]
@@ -154,14 +154,14 @@ extern "bash" fn cp(src: str, dest: str);
 extern "pwsh" fn copy_item(src: str, dest: str);
 
 #[cfg(target_lang = "bash")]
-#[command = "scp"]
+#[command = "scp -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=$SSH_CONTROL_PATH"]
 extern "bash" fn scp(src: str, dest: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "scp"]
 extern "pwsh" fn scp(src: str, dest: str);
 
 #[cfg(target_lang = "bash")]
-#[command = "scp -P"]
+#[command = "scp -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=$SSH_CONTROL_PATH -P"]
 extern "bash" fn scp_port(port: str, src: str, dest: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "scp -P"]
@@ -229,7 +229,7 @@ extern "bash" fn remove_file(path: str);
 extern "pwsh" fn remove_file(path: str);
 
 #[cfg(target_lang = "bash")]
-#[command = "rsync"]
+#[command = "rsync -e \"ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=$SSH_CONTROL_PATH\""]
 extern "bash" fn rsync(flags: str, src: str, dest: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "rsync"]
@@ -528,174 +528,176 @@ const fn rsync_flag_string_suffix(base: str, delete: bool, checksum: bool) -> st
     }
 }
 
+const fn should_apply(only_if: str, unless: str, creates: str, removes: str) -> bool {
+    if only_if != "" {
+        if !process_ok(only_if) {
+            return false;
+        }
+    }
+    if unless != "" {
+        if process_ok(unless) {
+            return false;
+        }
+    }
+    if creates != "" {
+        if !process_ok(f"test ! -e {creates}") {
+            return false;
+        }
+    }
+    if removes != "" {
+        if !process_ok(f"test -e {removes}") {
+            return false;
+        }
+    }
+    true
+}
+
 const fn shell_run(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
-    if only_if != "" {
-        if process_ok(only_if) {
-            shell_run_after_only_if(host, command, unless, creates, removes);
-        }
-    } else {
-        shell_run_after_only_if(host, command, unless, creates, removes);
-    }
-}
-
-const fn shell_run_after_only_if(host: str, command: str, unless: str, creates: str, removes: str) {
-    if unless != "" {
-        if !process_ok(unless) {
-            shell_run_after_unless(host, command, creates, removes);
-        }
-    } else {
-        shell_run_after_unless(host, command, creates, removes);
-    }
-}
-
-const fn shell_run_after_unless(host: str, command: str, creates: str, removes: str) {
-    if creates != "" {
-        if process_ok(f"test ! -e {creates}") {
-            shell_run_after_creates(host, command, removes);
-        }
-    } else {
-        shell_run_after_creates(host, command, removes);
-    }
-}
-
-const fn shell_run_after_creates(host: str, command: str, removes: str) {
-    if removes != "" {
-        if process_ok(f"test -e {removes}") {
-            run_host(host, command);
-            runtime_set_changed(true);
-        }
-    } else {
+    if should_apply(only_if, unless, creates, removes) {
         run_host(host, command);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_run_local(_host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        run_local_host(command);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_run_ssh(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        run_ssh_host(host, command);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_run_docker(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        run_docker_host(host, command);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_run_kubectl(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        run_kubectl_host(host, command);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_run_winrm(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        winrm_run(host, command);
         runtime_set_changed(true);
     }
 }
 
 const fn shell_copy(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
-    if only_if != "" {
-        if process_ok(only_if) {
-            shell_copy_after_only_if(host, src, dest, unless, creates, removes);
-        }
-    } else {
-        shell_copy_after_only_if(host, src, dest, unless, creates, removes);
-    }
-}
-
-const fn shell_copy_after_only_if(host: str, src: str, dest: str, unless: str, creates: str, removes: str) {
-    if unless != "" {
-        if !process_ok(unless) {
-            shell_copy_after_unless(host, src, dest, creates, removes);
-        }
-    } else {
-        shell_copy_after_unless(host, src, dest, creates, removes);
-    }
-}
-
-const fn shell_copy_after_unless(host: str, src: str, dest: str, creates: str, removes: str) {
-    if creates != "" {
-        if process_ok(f"test ! -e {creates}") {
-            shell_copy_after_creates(host, src, dest, removes);
-        }
-    } else {
-        shell_copy_after_creates(host, src, dest, removes);
-    }
-}
-
-const fn shell_copy_after_creates(host: str, src: str, dest: str, removes: str) {
-    if removes != "" {
-        if process_ok(f"test -e {removes}") {
-            copy_host(host, src, dest);
-            runtime_set_changed(true);
-        }
-    } else {
+    if should_apply(only_if, unless, creates, removes) {
         copy_host(host, src, dest);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_copy_local(_host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        copy_local_host(src, dest);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_copy_ssh(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        copy_ssh_host(host, src, dest);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_copy_docker(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        copy_docker_host(host, src, dest);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_copy_kubectl(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        copy_kubectl_host(host, src, dest);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_copy_winrm(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        winrm_copy(host, src, dest);
         runtime_set_changed(true);
     }
 }
 
 const fn shell_template(host: str, src: str, dest: str, vars: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
-    if only_if != "" {
-        if process_ok(only_if) {
-            shell_template_after_only_if(host, src, dest, vars, unless, creates, removes);
-        }
-    } else {
-        shell_template_after_only_if(host, src, dest, vars, unless, creates, removes);
-    }
-}
-
-const fn shell_template_after_only_if(host: str, src: str, dest: str, vars: str, unless: str, creates: str, removes: str) {
-    if unless != "" {
-        if !process_ok(unless) {
-            shell_template_after_unless(host, src, dest, vars, creates, removes);
-        }
-    } else {
-        shell_template_after_unless(host, src, dest, vars, creates, removes);
-    }
-}
-
-const fn shell_template_after_unless(host: str, src: str, dest: str, vars: str, creates: str, removes: str) {
-    if creates != "" {
-        if process_ok(f"test ! -e {creates}") {
-            shell_template_after_creates(host, src, dest, vars, removes);
-        }
-    } else {
-        shell_template_after_creates(host, src, dest, vars, removes);
-    }
-}
-
-const fn shell_template_after_creates(host: str, src: str, dest: str, vars: str, removes: str) {
-    if removes != "" {
-        if process_ok(f"test -e {removes}") {
-            template_host(host, src, dest, vars);
-            runtime_set_changed(true);
-        }
-    } else {
+    if should_apply(only_if, unless, creates, removes) {
         template_host(host, src, dest, vars);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_template_local(_host: str, src: str, dest: str, vars: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        let tmp = runtime_temp_path();
+        render_template(src, tmp, vars);
+        copy_local_host(tmp, dest);
+        remove_file(tmp);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_template_ssh(host: str, src: str, dest: str, vars: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        let tmp = runtime_temp_path();
+        render_template(src, tmp, vars);
+        copy_ssh_host(host, tmp, dest);
+        remove_file(tmp);
         runtime_set_changed(true);
     }
 }
 
 const fn shell_rsync(host: str, flags: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
-    if only_if != "" {
-        if process_ok(only_if) {
-            shell_rsync_after_only_if(host, flags, src, dest, unless, creates, removes);
-        }
-    } else {
-        shell_rsync_after_only_if(host, flags, src, dest, unless, creates, removes);
-    }
-}
-
-const fn shell_rsync_after_only_if(host: str, flags: str, src: str, dest: str, unless: str, creates: str, removes: str) {
-    if unless != "" {
-        if !process_ok(unless) {
-            shell_rsync_after_unless(host, flags, src, dest, creates, removes);
-        }
-    } else {
-        shell_rsync_after_unless(host, flags, src, dest, creates, removes);
-    }
-}
-
-const fn shell_rsync_after_unless(host: str, flags: str, src: str, dest: str, creates: str, removes: str) {
-    if creates != "" {
-        if process_ok(f"test ! -e {creates}") {
-            shell_rsync_after_creates(host, flags, src, dest, removes);
-        }
-    } else {
-        shell_rsync_after_creates(host, flags, src, dest, removes);
-    }
-}
-
-const fn shell_rsync_after_creates(host: str, flags: str, src: str, dest: str, removes: str) {
-    if removes != "" {
-        if process_ok(f"test -e {removes}") {
-            rsync_host(host, flags, src, dest);
-            runtime_set_changed(true);
-        }
-    } else {
+    if should_apply(only_if, unless, creates, removes) {
         rsync_host(host, flags, src, dest);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_rsync_local(_host: str, flags: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        rsync(flags, src, dest);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_rsync_remote(host: str, flags: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        rsync_remote_host(host, flags, src, dest);
         runtime_set_changed(true);
     }
 }

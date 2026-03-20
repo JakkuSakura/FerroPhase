@@ -34,99 +34,6 @@ FP_WINRM_USER['web-1']='deploy'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
-
-ssh_cmd() {
-  ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath="$SSH_CONTROL_PATH" -- "$@"
-}
-
-scp_cmd() {
-  scp -o ControlMaster=auto -o ControlPersist=60 -o ControlPath="$SSH_CONTROL_PATH" -- "$@"
-}
-
-rsync_cmd() {
-  rsync -e "ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=$SSH_CONTROL_PATH" "$@"
-}
-
-winrm_pwsh() {
-  local host="$1"
-  local mode="$2"
-  local command="${3:-}"
-  local source="${4:-}"
-  local destination="${5:-}"
-  local address="${FP_WINRM_ADDRESS[$host]}"
-  local user="${FP_WINRM_USER[$host]}"
-  local password="${FP_WINRM_PASSWORD[$host]:-}"
-  local scheme="${FP_WINRM_SCHEME[$host]:-http}"
-  local port="${FP_WINRM_PORT[$host]:-}"
-
-  if [[ -z "$password" ]]; then
-    echo "winrm password is required for non-interactive bash target: $host" >&2
-    return 1
-  fi
-
-  FP_WINRM_ADDRESS="$address" \
-  FP_WINRM_USER="$user" \
-  FP_WINRM_PASSWORD="$password" \
-  FP_WINRM_SCHEME="$scheme" \
-  FP_WINRM_PORT="$port" \
-  FP_WINRM_MODE="$mode" \
-  FP_WINRM_COMMAND="$command" \
-  FP_WINRM_SOURCE="$source" \
-  FP_WINRM_DESTINATION="$destination" \
-  pwsh -NoProfile -NonInteractive -Command '
-$ErrorActionPreference = "Stop"
-$sessionArgs = @{
-    ComputerName = $env:FP_WINRM_ADDRESS
-}
-if ($env:FP_WINRM_PORT) {
-    $sessionArgs.Port = [int]$env:FP_WINRM_PORT
-}
-$scheme = if ([string]::IsNullOrWhiteSpace($env:FP_WINRM_SCHEME)) {
-    "http"
-} else {
-    $env:FP_WINRM_SCHEME.ToLowerInvariant()
-}
-switch ($scheme) {
-    "http" {}
-    "https" { $sessionArgs.UseSSL = $true }
-    default { throw "unsupported winrm scheme: $($env:FP_WINRM_SCHEME)" }
-}
-$securePassword = ConvertTo-SecureString $env:FP_WINRM_PASSWORD -AsPlainText -Force
-$credential = New-Object System.Management.Automation.PSCredential($env:FP_WINRM_USER, $securePassword)
-$session = New-PSSession -Credential $credential @sessionArgs
-try {
-    switch ($env:FP_WINRM_MODE) {
-        "run" {
-            Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create($env:FP_WINRM_COMMAND))
-        }
-        "copy" {
-            $remoteDestination = $env:FP_WINRM_DESTINATION
-            $remoteDirectory = [System.IO.Path]::GetDirectoryName($remoteDestination)
-            if ($remoteDirectory) {
-                Invoke-Command -Session $session -ScriptBlock {
-                    param([string]$Directory)
-                    [System.IO.Directory]::CreateDirectory($Directory) | Out-Null
-                } -ArgumentList $remoteDirectory
-            }
-            Copy-Item -ToSession $session -Path $env:FP_WINRM_SOURCE -Destination $remoteDestination -Force
-        }
-        default {
-            throw "unsupported winrm mode: $($env:FP_WINRM_MODE)"
-        }
-    }
-}
-finally {
-    if ($null -ne $session) {
-        Remove-PSSession -Session $session
-    }
-}
-'
-}
-host_transport() {
-    local host="$1"
-    runtime_host_transport "${host}"
-}
-
 host_address() {
     local host="$1"
     runtime_host_address "${host}"
@@ -140,90 +47,6 @@ host_user() {
 host_port() {
     local host="$1"
     runtime_host_port "${host}"
-}
-
-host_container() {
-    local host="$1"
-    runtime_host_container "${host}"
-}
-
-host_pod() {
-    local host="$1"
-    runtime_host_pod "${host}"
-}
-
-host_namespace() {
-    local host="$1"
-    runtime_host_namespace "${host}"
-}
-
-host_context() {
-    local host="$1"
-    runtime_host_context "${host}"
-}
-
-run_local_host() {
-    local cmd="$1"
-    invoke_expression "${cmd}"
-}
-
-copy_local_host() {
-    local src="$1"
-    local dest="$2"
-    copy_item "${src}" "${dest}"
-}
-
-run_host() {
-    local host="$1"
-    local cmd="$2"
-    local transport="$(host_transport "${host}")"
-    case "${transport}" in
-        local)
-            run_local_host "${cmd}"
-            ;;
-        ssh)
-            run_ssh_host "${host}" "${cmd}"
-            ;;
-        docker)
-            run_docker_host "${host}" "${cmd}"
-            ;;
-        kubectl)
-            run_kubectl_host "${host}" "${cmd}"
-            ;;
-        winrm)
-            winrm_run "${host}" "${cmd}"
-            ;;
-        *)
-            runtime_fail "unsupported transport: ${transport}"
-            ;;
-    esac
-}
-
-copy_host() {
-    local host="$1"
-    local src="$2"
-    local dest="$3"
-    local transport="$(host_transport "${host}")"
-    case "${transport}" in
-        local)
-            copy_local_host "${src}" "${dest}"
-            ;;
-        ssh)
-            copy_ssh_host "${host}" "${src}" "${dest}"
-            ;;
-        docker)
-            copy_docker_host "${host}" "${src}" "${dest}"
-            ;;
-        kubectl)
-            copy_kubectl_host "${host}" "${src}" "${dest}"
-            ;;
-        winrm)
-            winrm_copy "${host}" "${src}" "${dest}"
-            ;;
-        *)
-            runtime_fail "unsupported transport for copy: ${transport}"
-            ;;
-    esac
 }
 
 ssh_target() {
@@ -263,116 +86,6 @@ copy_ssh_host() {
     fi
 }
 
-run_docker_host() {
-    local host="$1"
-    local cmd="$2"
-    local container="$(host_container "${host}")"
-    local user="$(host_user "${host}")"
-    if [[ "${user}" != '' ]]; then
-        docker_exec_user "${user}" "${container}" 'sh' '-lc' "${cmd}"
-    else
-        docker_exec "${container}" 'sh' '-lc' "${cmd}"
-    fi
-}
-
-run_kubectl_host() {
-    local host="$1"
-    local cmd="$2"
-    local context="$(host_context "${host}")"
-    local namespace="$(host_namespace "${host}")"
-    local container="$(host_container "${host}")"
-    local pod="$(host_pod "${host}")"
-    case "${context}" in
-        )
-            case "${namespace}" in
-                )
-                    case "${container}" in
-                        )
-                            kubectl_exec "${pod}" '--' 'sh' '-lc' "${cmd}"
-                            ;;
-                        *)
-                            kubectl_exec_container "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
-                            ;;
-                    esac
-                    ;;
-                *)
-                    case "${container}" in
-                        )
-                            kubectl_namespace_exec "${namespace}" 'exec' "${pod}" '--' 'sh' '-lc' "${cmd}"
-                            ;;
-                        *)
-                            kubectl_namespace_exec_container "${namespace}" 'exec' '-c' "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
-                            ;;
-                    esac
-                    ;;
-            esac
-            ;;
-        *)
-            case "${namespace}" in
-                )
-                    case "${container}" in
-                        )
-                            kubectl_context_exec "${context}" 'exec' "${pod}" '--' 'sh' '-lc' "${cmd}"
-                            ;;
-                        *)
-                            kubectl_context_exec_container "${context}" 'exec' '-c' "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
-                            ;;
-                    esac
-                    ;;
-                *)
-                    case "${container}" in
-                        )
-                            kubectl_context_namespace_exec "${context}" '-n' "${namespace}" 'exec' "${pod}" '--' 'sh' '-lc' "${cmd}"
-                            ;;
-                        *)
-                            kubectl_context_namespace_exec_container "${context}" '-n' "${namespace}" 'exec' '-c' "${container}" "${pod}" '--' 'sh' '-lc' "${cmd}"
-                            ;;
-                    esac
-                    ;;
-            esac
-            ;;
-    esac
-}
-
-copy_docker_host() {
-    local host="$1"
-    local src="$2"
-    local dest="$3"
-    local container="$(host_container "${host}")"
-    docker_cp "${src}" "${container}:${dest}"
-}
-
-copy_kubectl_host() {
-    local host="$1"
-    local src="$2"
-    local dest="$3"
-    local context="$(host_context "${host}")"
-    local namespace="$(host_namespace "${host}")"
-    local remote="$(host_pod "${host}"):${dest}"
-    case "${context}" in
-        )
-            case "${namespace}" in
-                )
-                    kubectl_cp "${src}" "${remote}"
-                    ;;
-                *)
-                    kubectl_namespace_cp "${namespace}" 'cp' "${src}" "${remote}"
-                    ;;
-            esac
-            ;;
-        *)
-            case "${namespace}" in
-                )
-                    kubectl_context_cp "${context}" 'cp' "${src}" "${remote}"
-                    ;;
-                *)
-                    kubectl_context_namespace_cp "${context}" '-n' "${namespace}" 'cp' "${src}" "${remote}"
-                    ;;
-            esac
-            ;;
-    esac
-}
-
 command_with_options() {
     local command="$1"
     local cwd="$2"
@@ -397,7 +110,31 @@ process_ok() {
     ok "${command}"
 }
 
-shell_run() {
+should_apply() {
+    local only_if="$1"
+    local unless="$2"
+    local creates="$3"
+    local removes="$4"
+    if [[ "${only_if}" != '' ]]; then
+        if true; then
+        fi
+    fi
+    if [[ "${unless}" != '' ]]; then
+        if process_ok "${unless}"; then
+        fi
+    fi
+    if [[ "${creates}" != '' ]]; then
+        if true; then
+        fi
+    fi
+    if [[ "${removes}" != '' ]]; then
+        if true; then
+        fi
+    fi
+    printf '%s\n' 'true'
+}
+
+shell_run_ssh() {
     local host="$1"
     local command="$2"
     local only_if="$3"
@@ -405,60 +142,13 @@ shell_run() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if [[ "${only_if}" != '' ]]; then
-        if process_ok "${only_if}"; then
-            shell_run_after_only_if "${host}" "${command}" "${unless}" "${creates}" "${removes}"
-        fi
-    else
-        shell_run_after_only_if "${host}" "${command}" "${unless}" "${creates}" "${removes}"
-    fi
-}
-
-shell_run_after_only_if() {
-    local host="$1"
-    local command="$2"
-    local unless="$3"
-    local creates="$4"
-    local removes="$5"
-    if [[ "${unless}" != '' ]]; then
-        if true; then
-            shell_run_after_unless "${host}" "${command}" "${creates}" "${removes}"
-        fi
-    else
-        shell_run_after_unless "${host}" "${command}" "${creates}" "${removes}"
-    fi
-}
-
-shell_run_after_unless() {
-    local host="$1"
-    local command="$2"
-    local creates="$3"
-    local removes="$4"
-    if [[ "${creates}" != '' ]]; then
-        if process_ok "test ! -e ${creates}"; then
-            shell_run_after_creates "${host}" "${command}" "${removes}"
-        fi
-    else
-        shell_run_after_creates "${host}" "${command}" "${removes}"
-    fi
-}
-
-shell_run_after_creates() {
-    local host="$1"
-    local command="$2"
-    local removes="$3"
-    if [[ "${removes}" != '' ]]; then
-        if process_ok "test -e ${removes}"; then
-            run_host "${host}" "${command}"
-            runtime_set_changed 'true'
-        fi
-    else
-        run_host "${host}" "${command}"
+    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        run_ssh_host "${host}" "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_copy() {
+shell_copy_ssh() {
     local host="$1"
     local src="$2"
     local dest="$3"
@@ -467,63 +157,13 @@ shell_copy() {
     local creates="$6"
     local removes="$7"
     runtime_set_changed 'false'
-    if [[ "${only_if}" != '' ]]; then
-        if process_ok "${only_if}"; then
-            shell_copy_after_only_if "${host}" "${src}" "${dest}" "${unless}" "${creates}" "${removes}"
-        fi
-    else
-        shell_copy_after_only_if "${host}" "${src}" "${dest}" "${unless}" "${creates}" "${removes}"
-    fi
-}
-
-shell_copy_after_only_if() {
-    local host="$1"
-    local src="$2"
-    local dest="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    if [[ "${unless}" != '' ]]; then
-        if true; then
-            shell_copy_after_unless "${host}" "${src}" "${dest}" "${creates}" "${removes}"
-        fi
-    else
-        shell_copy_after_unless "${host}" "${src}" "${dest}" "${creates}" "${removes}"
-    fi
-}
-
-shell_copy_after_unless() {
-    local host="$1"
-    local src="$2"
-    local dest="$3"
-    local creates="$4"
-    local removes="$5"
-    if [[ "${creates}" != '' ]]; then
-        if process_ok "test ! -e ${creates}"; then
-            shell_copy_after_creates "${host}" "${src}" "${dest}" "${removes}"
-        fi
-    else
-        shell_copy_after_creates "${host}" "${src}" "${dest}" "${removes}"
-    fi
-}
-
-shell_copy_after_creates() {
-    local host="$1"
-    local src="$2"
-    local dest="$3"
-    local removes="$4"
-    if [[ "${removes}" != '' ]]; then
-        if process_ok "test -e ${removes}"; then
-            copy_host "${host}" "${src}" "${dest}"
-            runtime_set_changed 'true'
-        fi
-    else
-        copy_host "${host}" "${src}" "${dest}"
+    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        copy_ssh_host "${host}" "${src}" "${dest}"
         runtime_set_changed 'true'
     fi
 }
 
-shell() {
+shell_ssh() {
     local command="$1"
     local hosts="$2"
     local only_if="$3"
@@ -533,11 +173,11 @@ shell() {
     local sudo="$7"
     local cwd="$8"
     local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    shell_run_ssh "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
     runtime_last_changed 
 }
 
-copy() {
+copy_ssh() {
     local src="$1"
     local dest="$2"
     local hosts="$3"
@@ -545,13 +185,8 @@ copy() {
     local unless="$5"
     local creates="$6"
     local removes="$7"
-    shell_copy "${hosts}" "${src}" "${dest}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    shell_copy_ssh "${hosts}" "${src}" "${dest}" "${only_if}" "${unless}" "${creates}" "${removes}"
     runtime_last_changed 
-}
-
-transport() {
-    local host="$1"
-    runtime_host_transport "${host}"
 }
 
 address() {
@@ -574,5 +209,5 @@ ok() {
     shell_status "${command}"
 }
 
-shell 'sudo systemctl restart fp-service' 'web-1' '' '' '' '' '' ''
-copy './config/prod.env' '/etc/fp-service/.env' 'web-1' '' '' '' ''
+shell_ssh 'sudo systemctl restart fp-service' 'web-1' '' '' '' '' '' ''
+copy_ssh './config/prod.env' '/etc/fp-service/.env' 'web-1' '' '' '' ''
