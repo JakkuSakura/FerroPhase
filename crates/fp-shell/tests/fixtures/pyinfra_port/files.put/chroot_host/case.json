@@ -1,0 +1,11 @@
+{
+  "copied_from": null,
+  "inventory": "inventory.fp",
+  "absent": [],
+  "contains": [
+    "builder)",
+    "printf '%s\\n' '/mnt/rootfs'",
+    "__fp_std_ops_files_copy_chroot_ 'rootfs.tar' '/tmp/rootfs.tar' 'builder' '' '' '' ''"
+  ],
+  "target": "bash"
+}

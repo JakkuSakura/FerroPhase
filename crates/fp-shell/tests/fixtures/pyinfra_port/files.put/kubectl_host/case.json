@@ -1,0 +1,13 @@
+{
+  "copied_from": null,
+  "inventory": "inventory.fp",
+  "absent": [],
+  "contains": [
+    "api)",
+    "printf '%s\\n' 'api-pod'",
+    "printf '%s\\n' 'prod'",
+    "printf '%s\\n' 'staging-cluster'",
+    "__fp_std_ops_files_copy_kubectl_ 'config.yaml' '/etc/myapp/config.yaml' 'api' '' '' '' ''"
+  ],
+  "target": "bash"
+}
