@@ -105,7 +105,7 @@ fn parse_expr_ast_supports_with_context() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser
-        .parse_expr_ast("with \"web-1\" { std::server::shell(\"uptime\"); }")
+        .parse_expr_ast("with \"web-1\" { std::ops::server::shell(\"uptime\"); }")
         .unwrap();
     assert!(matches!(expr.kind(), ExprKind::With(_)));
 }
@@ -558,6 +558,77 @@ fn parse_items_supports_lang_name_value_attributes() {
         unreachable!();
     };
     assert_eq!(meta.name.last().as_str(), "lang");
+}
+
+#[test]
+fn parse_items_supports_bool_and_int_name_value_attributes() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = "#[defaults(present = true, retries = 3)] fn f() {}";
+    let items = parser.parse_items_ast(src).unwrap();
+    let ItemKind::DefFunction(function) = items[0].kind() else {
+        panic!("expected function");
+    };
+    let defaults = function
+        .attrs
+        .iter()
+        .find(|attr| matches!(&attr.meta, AttrMeta::List(list) if list.name.last().as_str() == "defaults"))
+        .expect("expected defaults attribute");
+    let AttrMeta::List(list) = &defaults.meta else {
+        panic!("expected defaults list");
+    };
+    assert_eq!(list.items.len(), 2);
+
+    let AttrMeta::NameValue(present) = &list.items[0] else {
+        panic!("expected present default");
+    };
+    assert_eq!(present.name.last().as_str(), "present");
+    assert!(
+        matches!(present.value.kind(), ExprKind::Value(value) if matches!(value.as_ref(), Value::Bool(flag) if flag.value))
+    );
+
+    let AttrMeta::NameValue(retries) = &list.items[1] else {
+        panic!("expected retries default");
+    };
+    assert_eq!(retries.name.last().as_str(), "retries");
+    assert!(
+        matches!(retries.value.kind(), ExprKind::Value(value) if matches!(value.as_ref(), Value::Int(number) if number.value == 3))
+    );
+}
+
+#[test]
+fn parse_items_supports_python_like_function_defaults() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = "fn f(x: str = \"hi\", y: bool = true, z: i64 = 3) {}";
+    let items = parser.parse_items_ast(src).unwrap();
+    let ItemKind::DefFunction(function) = items[0].kind() else {
+        panic!("expected function");
+    };
+    let params = &function.sig.params;
+    assert_eq!(params.len(), 3);
+    assert!(matches!(params[0].default, Some(Value::String(_))));
+    assert!(matches!(params[1].default, Some(Value::Bool(_))));
+    assert!(matches!(params[2].default, Some(Value::Int(_))));
+}
+
+#[test]
+fn parse_items_supports_python_like_param_markers() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = "fn f(a: str, /, b: str, *args: str, c: str, **kwargs: str) {}";
+    let items = parser.parse_items_ast(src).unwrap();
+    let ItemKind::DefFunction(function) = items[0].kind() else {
+        panic!("expected function");
+    };
+    let params = &function.sig.params;
+    assert_eq!(params.len(), 5);
+    assert!(params[0].positional_only);
+    assert!(!params[1].positional_only);
+    assert!(params[2].as_tuple);
+    assert!(params[3].keyword_only);
+    assert!(params[4].as_dict);
+    assert!(params[4].keyword_only);
 }
 
 #[test]

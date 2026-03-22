@@ -1166,7 +1166,23 @@ fn render_function_signature(sig: &ast::FunctionSignature) -> String {
     if let Some(receiver) = sig.receiver.as_ref() {
         params.push(render_function_receiver(receiver));
     }
-    params.extend(sig.params.iter().map(render_function_param));
+    let mut inserted_keyword_boundary = false;
+    for (index, param) in sig.params.iter().enumerate() {
+        if index > 0 && sig.params[index - 1].positional_only && !param.positional_only {
+            params.push("/".to_string());
+        }
+        if param.keyword_only && !param.as_tuple && !inserted_keyword_boundary {
+            params.push("*".to_string());
+            inserted_keyword_boundary = true;
+        }
+        params.push(render_function_param(param));
+        if param.as_tuple {
+            inserted_keyword_boundary = true;
+        }
+    }
+    if sig.params.last().is_some_and(|param| param.positional_only) {
+        params.push("/".to_string());
+    }
     let params = params.join(", ");
     let ret = sig
         .ret_ty
@@ -1189,7 +1205,9 @@ fn render_function_param(param: &ast::FunctionParam) -> String {
     if param.is_const {
         parts.push_str("const ");
     }
-    if param.as_tuple {
+    if param.as_dict {
+        parts.push_str("**");
+    } else if param.as_tuple {
         parts.push('*');
     }
     parts.push_str(param.name.as_str());

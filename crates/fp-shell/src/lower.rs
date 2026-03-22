@@ -1,18 +1,17 @@
 use fp_core::ast::{
-    Abi, AttrMeta, Attribute, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprBinOp, ExprBlock,
-    ExprFor, ExprIf, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprMatch,
-    ExprMatchCase, ExprTry, ExprTryCatch, ExprWhile, File, FormatArgRef, FormatPlaceholder,
-    FormatTemplatePart, FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefFunction,
-    ItemKind, Name, Node, NodeKind, Pattern, PatternKind, Ty, TypePrimitive, Value,
+    Abi, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprBinOp, ExprBlock, ExprFor, ExprIf,
+    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprMatch, ExprMatchCase,
+    ExprTry, ExprTryCatch, ExprWhile, File, FormatArgRef, FormatPlaceholder, FormatTemplatePart,
+    FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefFunction, ItemKind, Name, Node,
+    NodeKind, Pattern, PatternKind, Ty, TypePrimitive, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
-use fp_shell_core::ShellInventory;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-pub fn lower_node(node: &Node, inventory: &ShellInventory) -> Result<Node, String> {
-    let mut lowerer = Lowerer::new(inventory);
+pub fn lower_node(node: &Node) -> Result<Node, String> {
+    let mut lowerer = Lowerer::new(Some(node));
     lowerer.lower_node(node)?;
     Ok(Node::file(File {
         path: lowerer.path,
@@ -24,15 +23,17 @@ struct Lowerer<'a> {
     path: PathBuf,
     items: Vec<Item>,
     known_functions: HashSet<String>,
+    callable_aliases: HashMap<String, Option<String>>,
     functions: HashMap<String, FunctionInfo>,
-    inventory: &'a ShellInventory,
+    inventory: Option<&'a Node>,
+    current_module_path: Vec<String>,
     host_context: Vec<Expr>,
 }
 
 #[derive(Clone)]
 struct FunctionInfo {
     signature: FunctionSignature,
-    defaults: HashMap<String, Expr>,
+    emitted_name: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,16 +43,19 @@ enum HostTransport {
     Docker,
     Kubectl,
     Winrm,
+    Chroot,
 }
 
 impl<'a> Lowerer<'a> {
-    fn new(inventory: &'a ShellInventory) -> Self {
+    fn new(inventory: Option<&'a Node>) -> Self {
         Self {
             path: PathBuf::new(),
             items: Vec::new(),
             known_functions: HashSet::new(),
+            callable_aliases: HashMap::new(),
             functions: HashMap::new(),
             inventory,
+            current_module_path: Vec::new(),
             host_context: Vec::new(),
         }
     }
@@ -61,13 +65,13 @@ impl<'a> Lowerer<'a> {
             NodeKind::File(file) => {
                 self.path = file.path.clone();
                 for item in &file.items {
-                    self.discover_functions(item);
+                    self.discover_functions(item, &[]);
                 }
                 for item in &file.items {
-                    self.lower_item(item, None)?;
+                    self.lower_item(item, None, &[])?;
                 }
             }
-            NodeKind::Item(item) => self.lower_item(item, None)?,
+            NodeKind::Item(item) => self.lower_item(item, None, &[])?,
             NodeKind::Expr(expr) => {
                 let mut out = Vec::new();
                 self.lower_expr_into(expr, &mut out)?;
@@ -79,38 +83,58 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    fn discover_functions(&mut self, item: &Item) {
+    fn discover_functions(&mut self, item: &Item, module_path: &[String]) {
         match item.kind() {
             ItemKind::DefFunction(function) => {
-                let name = function.name.as_str().to_string();
+                let name = qualify_name(module_path, function.name.as_str());
                 self.known_functions.insert(name.clone());
+                self.register_callable_alias(function.name.as_str(), &name);
                 self.functions.insert(
                     name,
                     FunctionInfo {
                         signature: function.sig.clone(),
-                        defaults: attribute_defaults(&function.attrs),
+                        emitted_name: emitted_call_name(&qualify_name(
+                            module_path,
+                            function.name.as_str(),
+                        )),
                     },
                 );
             }
             ItemKind::DeclFunction(function) => {
                 if !matches!(function.sig.abi, Abi::Rust) {
-                    let name = function.name.as_str().to_string();
+                    let name = qualify_name(module_path, function.name.as_str());
                     self.known_functions.insert(name.clone());
+                    self.register_callable_alias(function.name.as_str(), &name);
                     self.functions.insert(
                         name,
                         FunctionInfo {
                             signature: function.sig.clone(),
-                            defaults: attribute_defaults(&function.attrs),
+                            emitted_name: function.name.as_str().to_string(),
                         },
                     );
                 }
             }
             ItemKind::Module(module) => {
+                let mut child_path = module_path.to_vec();
+                child_path.push(module.name.as_str().to_string());
                 for child in &module.items {
-                    self.discover_functions(child);
+                    self.discover_functions(child, &child_path);
                 }
             }
             _ => {}
+        }
+    }
+
+    fn register_callable_alias(&mut self, alias: &str, full_name: &str) {
+        match self.callable_aliases.get(alias) {
+            None => {
+                self.callable_aliases
+                    .insert(alias.to_string(), Some(full_name.to_string()));
+            }
+            Some(Some(existing)) if existing == full_name => {}
+            _ => {
+                self.callable_aliases.insert(alias.to_string(), None);
+            }
         }
     }
 
@@ -118,10 +142,11 @@ impl<'a> Lowerer<'a> {
         &mut self,
         item: &Item,
         mut target: Option<&mut Vec<Expr>>,
+        module_path: &[String],
     ) -> Result<(), String> {
         match item.kind() {
             ItemKind::DefFunction(function) => {
-                let name = function.name.as_str().to_string();
+                let name = qualify_name(module_path, function.name.as_str());
                 if name == "main" {
                     if let Some(target) = target {
                         self.lower_expr_into(&function.body, target)?;
@@ -134,7 +159,10 @@ impl<'a> Lowerer<'a> {
                         );
                     }
                 } else {
-                    let def = self.lower_function(function)?;
+                    let previous_module_path =
+                        std::mem::replace(&mut self.current_module_path, module_path.to_vec());
+                    let def = self.lower_function(function, &name)?;
+                    self.current_module_path = previous_module_path;
                     self.insert_function(def);
                 }
             }
@@ -149,15 +177,22 @@ impl<'a> Lowerer<'a> {
                 }
             }
             ItemKind::Module(module) => {
+                let mut child_path = module_path.to_vec();
+                child_path.push(module.name.as_str().to_string());
+                let previous_module_path =
+                    std::mem::replace(&mut self.current_module_path, child_path.clone());
                 for child in &module.items {
-                    self.lower_item(child, target.as_deref_mut())?;
+                    self.lower_item(child, target.as_deref_mut(), &child_path)?;
                 }
+                self.current_module_path = previous_module_path;
             }
             ItemKind::DeclFunction(function) => {
                 if matches!(function.sig.abi, Abi::Rust) {
                     return Ok(());
                 }
-                self.insert_decl(function.clone());
+                let decl =
+                    self.lower_decl(function, &qualify_name(module_path, function.name.as_str()));
+                self.insert_decl(decl);
             }
             ItemKind::Expr(expr) => {
                 if let Some(target) = target {
@@ -176,12 +211,22 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    fn lower_function(&mut self, function: &ItemDefFunction) -> Result<ItemDefFunction, String> {
+    fn lower_function(
+        &mut self,
+        function: &ItemDefFunction,
+        logical_name: &str,
+    ) -> Result<ItemDefFunction, String> {
         let mut body = Vec::new();
         self.lower_expr_into(&function.body, &mut body)?;
         let mut lowered = function.clone();
+        lowered.name = Ident::new(emitted_call_name(logical_name));
         lowered.body = statements_to_block_expr(body).into_expr().into();
         Ok(lowered)
+    }
+
+    fn lower_decl(&self, function: &ItemDeclFunction, logical_name: &str) -> ItemDeclFunction {
+        let _ = logical_name;
+        function.clone()
     }
 
     fn lower_expr_into(&mut self, expr: &Expr, out: &mut Vec<Expr>) -> Result<(), String> {
@@ -278,7 +323,7 @@ impl<'a> Lowerer<'a> {
         }
         for statement in &block.stmts {
             match statement {
-                BlockStmt::Item(item) => self.lower_item(item, Some(out))?,
+                BlockStmt::Item(item) => self.lower_item(item, Some(out), &[])?,
                 BlockStmt::Expr(expr) => self.lower_expr_into(&expr.expr, out)?,
                 BlockStmt::Let(stmt) => {
                     let Some(_name) = stmt.pat.as_ident() else {
@@ -309,7 +354,7 @@ impl<'a> Lowerer<'a> {
                 BlockStmt::Defer(stmt_defer) => {
                     self.lower_expr_into(&stmt_defer.expr, &mut deferred)?;
                 }
-                BlockStmt::Item(item) => self.lower_item(item, Some(&mut body))?,
+                BlockStmt::Item(item) => self.lower_item(item, Some(&mut body), &[])?,
                 BlockStmt::Expr(expr) => self.lower_expr_into(&expr.expr, &mut body)?,
                 BlockStmt::Let(stmt) => {
                     let Some(_name) = stmt.pat.as_ident() else {
@@ -359,7 +404,7 @@ impl<'a> Lowerer<'a> {
         let args = self.lower_call_arguments(invoke, info, host_override.as_ref())?;
         let emitted_name = self
             .specialized_emitted_call_name(&name, info, &args)
-            .unwrap_or_else(|| emitted_call_name(&name).to_string());
+            .unwrap_or_else(|| info.emitted_name.clone());
         Ok(Some(Expr::new(ExprKind::Invoke(ExprInvoke {
             span: invoke.span,
             target: ExprInvokeTarget::Function(Name::ident(emitted_name)),
@@ -389,8 +434,6 @@ impl<'a> Lowerer<'a> {
                 self.lower_typed_expr(&kwarg.value, &param.ty)?
             } else if let Some(default) = &param.default {
                 Expr::value(default.clone())
-            } else if let Some(default) = info.defaults.get(param.name.as_str()) {
-                self.lower_typed_expr(default, &param.ty)?
             } else if param.is_context {
                 string_literal_expr("localhost")
             } else {
@@ -471,7 +514,20 @@ impl<'a> Lowerer<'a> {
         let full = path.join("::");
         match (self.is_known_callable(&full), path.last()) {
             (true, _) => Some(full),
-            (false, Some(name)) if self.is_known_callable(name) => Some(name.clone()),
+            (false, Some(name)) if path.len() == 1 => {
+                let scoped = qualify_name(&self.current_module_path, name);
+                if self.is_known_callable(&scoped) {
+                    Some(scoped)
+                } else {
+                    self.callable_aliases
+                        .get(name)
+                        .and_then(|resolved| resolved.clone())
+                }
+            }
+            (false, Some(name)) => self
+                .callable_aliases
+                .get(name)
+                .and_then(|resolved| resolved.clone()),
             _ => None,
         }
     }
@@ -760,7 +816,7 @@ impl<'a> Lowerer<'a> {
                 let info = self.functions.get(&name)?;
                 let mut args = Vec::new();
                 args.extend(self.lower_call_arguments(invoke, info, None).ok()?);
-                let emitted_name = emitted_call_name(&name);
+                let emitted_name = info.emitted_name.clone();
                 Some(Expr::new(ExprKind::Invoke(ExprInvoke {
                     span: invoke.span,
                     target: ExprInvokeTarget::Function(Name::ident(emitted_name)),
@@ -874,7 +930,7 @@ impl<'a> Lowerer<'a> {
                 let info = self.functions.get(&name)?;
                 let mut args = Vec::new();
                 args.extend(self.lower_call_arguments(invoke, info, None).ok()?);
-                let emitted_name = emitted_call_name(&name);
+                let emitted_name = info.emitted_name.clone();
                 Some(Expr::new(ExprKind::Invoke(ExprInvoke {
                     span: invoke.span,
                     target: ExprInvokeTarget::Function(Name::ident(emitted_name)),
@@ -949,8 +1005,8 @@ impl<'a> Lowerer<'a> {
                 match string_literal_value(&host) {
                     Some(name) if name == "localhost" => selectors.push(host),
                     Some(name) => {
-                        if let Some(group_hosts) = self.inventory.groups.get(&name) {
-                            selectors.extend(group_hosts.iter().cloned().map(string_literal_expr));
+                        if let Some(group_hosts) = inventory_group_hosts(self.inventory, &name) {
+                            selectors.extend(group_hosts.into_iter().map(string_literal_expr));
                         } else {
                             selectors.push(string_literal_expr(name));
                         }
@@ -1010,29 +1066,45 @@ impl<'a> Lowerer<'a> {
             .and_then(string_literal_value)?;
         let transport = self.host_transport_for_name(&host)?;
         match name {
-            "std::server::shell" | "shell" => Some(match transport {
-                HostTransport::Local => "shell_local",
-                HostTransport::Ssh => "shell_ssh",
-                HostTransport::Docker => "shell_docker",
-                HostTransport::Kubectl => "shell_kubectl",
-                HostTransport::Winrm => "shell_winrm",
-            }.to_string()),
-            "std::files::copy" | "copy" => Some(match transport {
-                HostTransport::Local => "copy_local",
-                HostTransport::Ssh => "copy_ssh",
-                HostTransport::Docker => "copy_docker",
-                HostTransport::Kubectl => "copy_kubectl",
-                HostTransport::Winrm => "copy_winrm",
-            }.to_string()),
-            "std::files::template" | "template" => Some(match transport {
-                HostTransport::Local => "template_local",
-                HostTransport::Ssh => "template_ssh",
-                _ => "shell_template",
-            }.to_string()),
-            "std::files::rsync" | "rsync" => Some(match transport {
-                HostTransport::Local => "rsync_local",
-                _ => "rsync_remote",
-            }.to_string()),
+            "std::ops::server::shell" => Some(
+                emitted_call_name(match transport {
+                    HostTransport::Local => "std::ops::server::shell_local",
+                    HostTransport::Ssh => "std::ops::server::shell_ssh",
+                    HostTransport::Docker => "std::ops::server::shell_docker",
+                    HostTransport::Kubectl => "std::ops::server::shell_kubectl",
+                    HostTransport::Winrm => "std::ops::server::shell_winrm",
+                    HostTransport::Chroot => "std::ops::server::shell_chroot",
+                })
+                .to_string(),
+            ),
+            "std::ops::files::copy" => Some(
+                emitted_call_name(match transport {
+                    HostTransport::Local => "std::ops::files::copy_local",
+                    HostTransport::Ssh => "std::ops::files::copy_ssh",
+                    HostTransport::Docker => "std::ops::files::copy_docker",
+                    HostTransport::Kubectl => "std::ops::files::copy_kubectl",
+                    HostTransport::Winrm => "std::ops::files::copy_winrm",
+                    HostTransport::Chroot => "std::ops::files::copy_chroot",
+                })
+                .to_string(),
+            ),
+            "std::ops::files::template" => Some(
+                emitted_call_name(match transport {
+                    HostTransport::Local => "std::ops::files::template_local",
+                    HostTransport::Ssh => "std::ops::files::template_ssh",
+                    HostTransport::Chroot => "std::ops::files::template_chroot",
+                    _ => "std::ops::files::template",
+                })
+                .to_string(),
+            ),
+            "std::ops::files::rsync" => Some(
+                emitted_call_name(match transport {
+                    HostTransport::Local => "std::ops::files::rsync_local",
+                    HostTransport::Chroot => "std::ops::files::rsync_chroot",
+                    _ => "std::ops::files::rsync_remote",
+                })
+                .to_string(),
+            ),
             _ => None,
         }
     }
@@ -1041,16 +1113,17 @@ impl<'a> Lowerer<'a> {
         if host == "localhost" {
             return Some(HostTransport::Local);
         }
-        let host = self.inventory.hosts.get(host)?;
-        Some(match host.transport {
-            fp_shell_core::TransportKind::Local => HostTransport::Local,
-            fp_shell_core::TransportKind::Ssh => HostTransport::Ssh,
-            fp_shell_core::TransportKind::Docker => HostTransport::Docker,
-            fp_shell_core::TransportKind::Kubectl => HostTransport::Kubectl,
-            fp_shell_core::TransportKind::Winrm => HostTransport::Winrm,
+        let transport = inventory_host_transport(self.inventory, host)?;
+        Some(match transport.as_str() {
+            "local" => HostTransport::Local,
+            "ssh" => HostTransport::Ssh,
+            "docker" => HostTransport::Docker,
+            "kubectl" => HostTransport::Kubectl,
+            "winrm" => HostTransport::Winrm,
+            "chroot" => HostTransport::Chroot,
+            _ => return None,
         })
     }
-
 }
 
 fn statements_to_block_expr(statements: Vec<Expr>) -> ExprBlock {
@@ -1139,8 +1212,37 @@ fn invoke_target_segments(target: &ExprInvokeTarget) -> Option<Vec<String>> {
     }
 }
 
-fn emitted_call_name(name: &str) -> &str {
-    name.rsplit("::").next().unwrap_or(name)
+fn emitted_call_name(name: &str) -> String {
+    if name.contains("::") {
+        return mangle_emitted_name(name);
+    }
+    name.to_string()
+}
+
+fn mangle_emitted_name(name: &str) -> String {
+    let mut out = String::from("__fp_");
+    for segment in name.split("::") {
+        if !out.ends_with('_') {
+            out.push('_');
+        }
+        for ch in segment.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                out.push(ch);
+            } else {
+                out.push('_');
+            }
+        }
+        out.push('_');
+    }
+    out
+}
+
+fn qualify_name(module_path: &[String], name: &str) -> String {
+    if module_path.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}::{}", module_path.join("::"), name)
+    }
 }
 
 fn name_to_segments(name: &Name) -> Vec<String> {
@@ -1151,21 +1253,134 @@ fn name_to_segments(name: &Name) -> Vec<String> {
         .collect()
 }
 
-fn attribute_defaults(attrs: &[Attribute]) -> HashMap<String, Expr> {
-    let mut defaults = HashMap::new();
-    for attr in attrs {
-        let AttrMeta::List(list) = &attr.meta else {
-            continue;
-        };
-        if list.name.last().as_str() != "defaults" {
+fn inventory_group_hosts(inventory: Option<&Node>, group: &str) -> Option<Vec<String>> {
+    let inventory_expr = inventory_root_expr(inventory?)?;
+    let groups = struct_field_expr(inventory_expr, "groups")?;
+    let entries = hashmap_from_entries(groups)?;
+    for (key, value) in entries {
+        if string_literal_value(key).as_deref() != Some(group) {
             continue;
         }
-        for item in &list.items {
-            let AttrMeta::NameValue(meta) = item else {
-                continue;
-            };
-            defaults.insert(meta.name.last().as_str().to_string(), (*meta.value).clone());
-        }
+        return string_list_literal_values(value);
     }
-    defaults
+    None
+}
+
+fn inventory_host_transport(inventory: Option<&Node>, host: &str) -> Option<String> {
+    let inventory_expr = inventory_root_expr(inventory?)?;
+    let hosts = struct_field_expr(inventory_expr, "hosts")?;
+    let entries = hashmap_from_entries(hosts)?;
+    for (key, value) in entries {
+        if string_literal_value(key).as_deref() != Some(host) {
+            continue;
+        }
+        return struct_field_expr(value, "transport").and_then(string_literal_value);
+    }
+    None
+}
+
+fn inventory_root_expr(node: &Node) -> Option<&Expr> {
+    let NodeKind::File(file) = node.kind() else {
+        return None;
+    };
+    let std_module = file.items.iter().find_map(|item| match item.kind() {
+        ItemKind::Module(module) if module.name.as_str() == "std" => Some(module),
+        _ => None,
+    })?;
+    let hosts_module = std_module.items.iter().find_map(|item| match item.kind() {
+        ItemKind::Module(module) if module.name.as_str() == "hosts" => Some(module),
+        _ => None,
+    })?;
+    let function = hosts_module
+        .items
+        .iter()
+        .find_map(|item| match item.kind() {
+            ItemKind::DefFunction(function) if function.name.as_str() == "inventory" => {
+                Some(function)
+            }
+            _ => None,
+        })?;
+    function_result_expr(&function.body)
+}
+
+fn function_result_expr(expr: &Expr) -> Option<&Expr> {
+    match expr.kind() {
+        ExprKind::Block(block) => block.stmts.iter().rev().find_map(|stmt| match stmt {
+            BlockStmt::Expr(expr) => Some(expr.expr.as_ref()),
+            _ => None,
+        }),
+        _ => Some(expr),
+    }
+}
+
+fn struct_field_expr<'a>(expr: &'a Expr, field: &str) -> Option<&'a Expr> {
+    let fields = match expr.kind() {
+        ExprKind::Struct(expr_struct) => &expr_struct.fields,
+        ExprKind::Structural(expr_structural) => &expr_structural.fields,
+        _ => return None,
+    };
+    fields
+        .iter()
+        .find(|candidate| candidate.name.as_str() == field)
+        .and_then(|candidate| candidate.value.as_ref())
+}
+
+fn hashmap_from_entries(expr: &Expr) -> Option<Vec<(&Expr, &Expr)>> {
+    match expr.kind() {
+        ExprKind::IntrinsicContainer(container) => match container {
+            fp_core::ast::ExprIntrinsicContainer::HashMapEntries { entries } => Some(
+                entries
+                    .iter()
+                    .map(|entry| (&entry.key, &entry.value))
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        },
+        ExprKind::Invoke(invoke) => {
+            let target = invoke_target_segments(&invoke.target)?;
+            match target.as_slice() {
+                [.., owner, method] if owner == "HashMap" && method == "from" => {}
+                _ => return None,
+            }
+            let [entries_expr] = invoke.args.as_slice() else {
+                return None;
+            };
+            tuple_like_values(entries_expr)?
+                .into_iter()
+                .map(|entry| match entry.kind() {
+                    ExprKind::Tuple(tuple) if tuple.values.len() == 2 => {
+                        Some((&tuple.values[0], &tuple.values[1]))
+                    }
+                    _ => None,
+                })
+                .collect()
+        }
+        _ => None,
+    }
+}
+
+fn string_list_literal_values(expr: &Expr) -> Option<Vec<String>> {
+    tuple_like_values(expr)?
+        .into_iter()
+        .map(string_literal_value)
+        .collect()
+}
+
+fn tuple_like_values(expr: &Expr) -> Option<Vec<&Expr>> {
+    match expr.kind() {
+        ExprKind::Array(array) => Some(array.values.iter().collect()),
+        ExprKind::Tuple(tuple) => Some(tuple.values.iter().collect()),
+        ExprKind::IntrinsicContainer(container) => match container {
+            fp_core::ast::ExprIntrinsicContainer::VecElements { elements } => {
+                Some(elements.iter().collect())
+            }
+            _ => None,
+        },
+        ExprKind::Paren(paren) => tuple_like_values(&paren.expr),
+        ExprKind::Struct(expr_struct) if expr_struct.fields.is_empty() => Some(Vec::new()),
+        ExprKind::Structural(expr_structural) if expr_structural.fields.is_empty() => {
+            Some(Vec::new())
+        }
+        _ => None,
+    }
 }

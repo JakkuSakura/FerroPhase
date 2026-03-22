@@ -789,6 +789,32 @@ fn parse_fn_sig_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
         if match_symbol(input, ",") {
             continue;
         }
+        if match_symbol(input, "/") {
+            children.push(SyntaxElement::Token(SyntaxToken {
+                kind: SyntaxTokenKind::Token,
+                text: "/".to_string(),
+                span: fp_core::span::Span::null(),
+            }));
+            continue;
+        }
+        if matches_symbol(input.first(), "*")
+            && !matches!(input.get(1), Some(Token { kind: TokenKind::Symbol, lexeme, .. }) if lexeme == "*")
+            && !matches!(
+                input.get(1),
+                Some(Token {
+                    kind: TokenKind::Ident,
+                    ..
+                })
+            )
+        {
+            let _ = advance(input);
+            children.push(SyntaxElement::Token(SyntaxToken {
+                kind: SyntaxTokenKind::Token,
+                text: "*".to_string(),
+                span: fp_core::span::Span::null(),
+            }));
+            continue;
+        }
 
         // Receiver.
         if is_receiver(input) {
@@ -836,11 +862,35 @@ fn parse_param_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
             span: fp_core::span::Span::null(),
         }));
     }
+    if match_symbol(input, "*") {
+        if match_symbol(input, "*") {
+            children.push(SyntaxElement::Token(SyntaxToken {
+                kind: SyntaxTokenKind::Token,
+                text: "**".to_string(),
+                span: fp_core::span::Span::null(),
+            }));
+        } else {
+            children.push(SyntaxElement::Token(SyntaxToken {
+                kind: SyntaxTokenKind::Token,
+                text: "*".to_string(),
+                span: fp_core::span::Span::null(),
+            }));
+        }
+    }
     let name = expect_ident_token(input)?;
     children.push(SyntaxElement::Token(name));
     expect_symbol(input, ":")?;
-    let ty = parse_type_prefix_from_tokens(input, &[",", ")"])?;
+    let ty = parse_type_prefix_from_tokens(input, &["=", ",", ")"])?;
     children.push(SyntaxElement::Node(Box::new(ty)));
+    if match_symbol(input, "=") {
+        children.push(SyntaxElement::Token(SyntaxToken {
+            kind: SyntaxTokenKind::Token,
+            text: "=".to_string(),
+            span: fp_core::span::Span::null(),
+        }));
+        let expr = parse_expr_prefix_from_tokens(input)?;
+        children.push(SyntaxElement::Node(Box::new(expr)));
+    }
     Ok(node(SyntaxKind::FnParam, children))
 }
 

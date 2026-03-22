@@ -666,13 +666,13 @@ fn parse_attr_meta_at(tokens: &[String], mut idx: usize) -> Option<(AttrMeta, us
 
     if tokens.get(idx).is_some_and(|tok| tok == "=") {
         idx += 1;
-        let value_expr = parse_attr_value_expr(&tokens[idx..])?;
+        let (value_expr, next_idx) = parse_attr_value_expr(tokens, idx)?;
         return Some((
             AttrMeta::NameValue(AttrMetaNameValue {
                 name: path,
                 value: value_expr,
             }),
-            tokens.len(),
+            next_idx,
         ));
     }
 
@@ -744,18 +744,45 @@ fn split_path_prefix(mut segments: Vec<Ident>, saw_root: bool) -> (PathPrefix, V
     }
 }
 
-fn parse_attr_value_expr(tokens: &[String]) -> Option<BExpr> {
-    let cleaned: Vec<&str> = tokens
+fn parse_attr_value_expr(tokens: &[String], start: usize) -> Option<(BExpr, usize)> {
+    let mut end = start;
+    let mut paren_depth = 0usize;
+    while let Some(token) = tokens.get(end) {
+        match token.as_str() {
+            "(" => paren_depth += 1,
+            ")" => {
+                if paren_depth == 0 {
+                    break;
+                }
+                paren_depth -= 1;
+            }
+            "," if paren_depth == 0 => break,
+            _ => {}
+        }
+        end += 1;
+    }
+
+    let cleaned: Vec<&str> = tokens[start..end]
         .iter()
         .map(|tok| tok.as_str())
         .filter(|t| !t.is_empty())
         .collect();
     if let Some(expr) = parse_include_str_macro_expr(&cleaned) {
-        return Some(expr);
+        return Some((expr, end));
     }
     let value_token = cleaned.first()?;
-    let decoded = decode_string_literal(value_token)?;
-    Some(Box::new(Expr::value(Value::string(decoded))))
+    let expr = match *value_token {
+        "true" => Box::new(Expr::value(Value::bool(true))),
+        "false" => Box::new(Expr::value(Value::bool(false))),
+        _ => {
+            if let Ok(value) = value_token.parse::<i64>() {
+                return Some((Box::new(Expr::value(Value::int(value))), end));
+            }
+            let decoded = decode_string_literal(value_token)?;
+            Box::new(Expr::value(Value::string(decoded)))
+        }
+    };
+    Some((expr, end))
 }
 
 fn is_attr_ident(token: &str) -> bool {
@@ -1103,12 +1130,20 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
 
     let mut receiver: Option<FunctionParamReceiver> = None;
     let mut params: Vec<FunctionParam> = Vec::new();
+    let mut saw_keyword_only_boundary = false;
     for child in &node.children {
-        let SyntaxElement::Node(n) = child else {
-            continue;
-        };
-        match n.kind {
-            SyntaxKind::FnReceiver => {
+        match child {
+            SyntaxElement::Token(token) if !token.is_trivia() && token.text == "/" => {
+                for param in &mut params {
+                    if !param.as_tuple && !param.as_dict {
+                        param.positional_only = true;
+                    }
+                }
+            }
+            SyntaxElement::Token(token) if !token.is_trivia() && token.text == "*" => {
+                saw_keyword_only_boundary = true;
+            }
+            SyntaxElement::Node(n) if n.kind == SyntaxKind::FnReceiver => {
                 let has_ref = n.children.iter().any(
                     |c| matches!(c, SyntaxElement::Token(t) if !t.is_trivia() && t.text == "&"),
                 );
@@ -1122,7 +1157,7 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
                     (false, false) => FunctionParamReceiver::Value,
                 });
             }
-            SyntaxKind::FnParam => {
+            SyntaxElement::Node(n) if n.kind == SyntaxKind::FnParam => {
                 let tokens = n
                     .children
                     .iter()
@@ -1158,6 +1193,27 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
                 let mut param = FunctionParam::new(pname, ty);
                 param.is_const = is_const;
                 param.is_context = is_context;
+                param.as_tuple = tokens.first() == Some(&"*");
+                param.as_dict = tokens.first() == Some(&"**");
+                if saw_keyword_only_boundary {
+                    param.keyword_only = true;
+                }
+                if param.as_tuple {
+                    saw_keyword_only_boundary = true;
+                }
+                if let Some(default_node) = n.children.iter().find_map(|child| match child {
+                    SyntaxElement::Node(node) if node.kind.category() == CstCategory::Expr => {
+                        Some(node.as_ref())
+                    }
+                    _ => None,
+                }) {
+                    let expr = lower_expr_from_cst(default_node)
+                        .map_err(|_| LowerItemsError::UnexpectedNode(default_node.kind))?;
+                    let ExprKind::Value(value) = expr.kind() else {
+                        return Err(LowerItemsError::MissingToken("literal default value"));
+                    };
+                    param.default = Some((**value).clone());
+                }
                 params.push(param);
             }
             _ => {}
