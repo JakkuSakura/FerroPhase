@@ -178,6 +178,8 @@ fn lowers_identity_function_with_parameter() {
         hir_id: 6,
         pat: param_pat.clone(),
         ty: param_ty.clone(),
+        is_context: false,
+        default: None,
     };
 
     let path = hir::Path {
@@ -323,11 +325,15 @@ fn lowers_index_expression_into_place_projection() {
         hir_id: 24,
         pat: values_pat.clone(),
         ty: values_ty,
+        is_context: false,
+        default: None,
     };
     let idx_param = hir::Param {
         hir_id: 25,
         pat: idx_pat.clone(),
         ty: idx_ty,
+        is_context: false,
+        default: None,
     };
 
     let values_path = Expr::new(

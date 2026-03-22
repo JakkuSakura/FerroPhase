@@ -5,6 +5,5 @@ edition = "2024"
 
 [dependencies]
 fp-core = { path = "../fp-core" }
-fp-shell-core = { path = "../fp-shell-core" }
 
 [dev-dependencies]

@@ -56,6 +56,11 @@ impl HirGenerator {
             ExprKind::Match(match_expr) => self.transform_match_to_hir(match_expr)?,
             ExprKind::Loop(loop_expr) => self.transform_loop_to_hir(loop_expr)?,
             ExprKind::While(while_expr) => self.transform_while_to_hir(while_expr)?,
+            ExprKind::With(expr_with) => {
+                let context = self.transform_expr_to_hir(expr_with.context.as_ref())?;
+                let body = self.transform_expr_to_hir(expr_with.body.as_ref())?;
+                hir::ExprKind::With(Box::new(context), Box::new(body))
+            }
             ExprKind::Assign(assign) => self.transform_assign_to_hir(assign)?,
             ExprKind::Paren(paren) => self.transform_paren_to_hir(paren)?,
             ExprKind::Let(let_expr) => self.transform_let_to_hir(let_expr)?,

@@ -96,9 +96,13 @@ impl HirGenerator {
                     value: body_expr,
                 };
 
-                Ok(hir::Function::new(sig, Some(body), false, false))
+                let mut function = hir::Function::new(sig, Some(body), false, false);
+                function.attrs = func.attrs.clone();
+                Ok(function)
             } else {
-                Ok(hir::Function::new(sig, None, false, false))
+                let mut function = hir::Function::new(sig, None, false, false);
+                function.attrs = func.attrs.clone();
+                Ok(function)
             }
         })();
 
@@ -139,7 +143,9 @@ impl HirGenerator {
                 abi: self.map_abi(&func.sig.abi),
             };
 
-            Ok(hir::Function::new(sig, None, func.sig.is_const, true))
+            let mut function = hir::Function::new(sig, None, func.sig.is_const, true);
+            function.attrs = func.attrs.clone();
+            Ok(function)
         })();
 
         self.pop_value_scope();
@@ -168,6 +174,12 @@ impl HirGenerator {
                     hir_id: self.next_id(),
                     pat,
                     ty,
+                    is_context: param.is_context,
+                    default: param
+                        .default
+                        .as_ref()
+                        .map(|value| self.transform_expr_to_hir(&ast::Expr::value(value.clone())))
+                        .transpose()?,
                 };
 
                 self.register_pattern_bindings(&hir_param.pat);
@@ -226,6 +238,8 @@ impl HirGenerator {
                 },
             },
             ty,
+            is_context: false,
+            default: None,
         })
     }
 

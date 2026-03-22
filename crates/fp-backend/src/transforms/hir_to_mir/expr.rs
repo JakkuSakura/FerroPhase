@@ -409,6 +409,7 @@ impl MirLowering {
                 hir::ItemKind::Impl(impl_block) => {
                     self.lower_impl(program, item, impl_block, Some(&mut mir_program))?;
                 }
+                hir::ItemKind::Expr(_) => {}
             }
         }
 
@@ -422,11 +423,15 @@ impl MirLowering {
         let (full_map, tail_map) = Self::build_item_name_maps(program);
         let mut roots = VecDeque::new();
         for item in &program.items {
-            if let hir::ItemKind::Function(func) = &item.kind {
-                let name = func.sig.name.as_str();
-                if name == "main" || name.ends_with("::main") {
-                    roots.push_back(item.def_id);
+            match &item.kind {
+                hir::ItemKind::Function(func) => {
+                    let name = func.sig.name.as_str();
+                    if name == "main" || name.ends_with("::main") {
+                        roots.push_back(item.def_id);
+                    }
                 }
+                hir::ItemKind::Expr(_) => roots.push_back(item.def_id),
+                _ => {}
             }
         }
 
@@ -548,6 +553,9 @@ impl MirLowering {
                         }
                     }
                 }
+            }
+            hir::ItemKind::Expr(expr) => {
+                Self::collect_def_ids_from_expr(expr, full_map, tail_map, work);
             }
         }
     }
@@ -714,6 +722,10 @@ impl MirLowering {
                 if let Some(expr) = &block.expr {
                     Self::collect_def_ids_from_expr(expr, full_map, tail_map, work);
                 }
+            }
+            hir::ExprKind::With(context, body) => {
+                Self::collect_def_ids_from_expr(context, full_map, tail_map, work);
+                Self::collect_def_ids_from_expr(body, full_map, tail_map, work);
             }
             hir::ExprKind::Array(elements) => {
                 for elem in elements {
@@ -1468,6 +1480,7 @@ impl MirLowering {
         match abi {
             hir::Abi::Rust => mir::ty::Abi::Rust,
             hir::Abi::C { unwind } => mir::ty::Abi::C { unwind: *unwind },
+            hir::Abi::Named(_) => mir::ty::Abi::Rust,
             hir::Abi::System { unwind } => mir::ty::Abi::System { unwind: *unwind },
             _ => mir::ty::Abi::Rust,
         }
@@ -6669,6 +6682,9 @@ impl<'a> BodyBuilder<'a> {
                     self.lowering.lower_function(self.program, item, function)?;
                 self.lowering.extra_items.push(mir_item);
                 self.lowering.extra_bodies.push((body_id, body));
+            }
+            hir::ItemKind::Expr(expr) => {
+                self.lower_expr_statement(expr)?;
             }
         }
         Ok(())

@@ -587,6 +587,10 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                 collect_paths(cond, out);
                 collect_paths_from_block(block, out);
             }
+            hir::ExprKind::With(context, body) => {
+                collect_paths(context, out);
+                collect_paths(body, out);
+            }
             hir::ExprKind::IntrinsicCall(call) => {
                 for arg in &call.callargs {
                     collect_paths(&arg.value, out);
@@ -648,6 +652,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                     }
                 }
             }
+            hir::ItemKind::Expr(expr) => collect_paths(expr, out),
             hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => {}
         }
     }

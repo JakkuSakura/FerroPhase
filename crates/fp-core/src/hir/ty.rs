@@ -151,10 +151,11 @@ pub enum Unsafety {
     Normal,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Abi {
     Rust,
     C { unwind: bool },
+    Named(String),
     Cdecl,
     Stdcall,
     Fastcall,

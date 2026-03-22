@@ -31,6 +31,10 @@ fn write_item(item: &Item, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
         ItemKind::Enum(enm) => write_enum(item, enm, f, ctx),
         ItemKind::Const(konst) => write_const(item, konst, f, ctx),
         ItemKind::Impl(imp) => write_impl(item, imp, f, ctx),
+        ItemKind::Expr(expr) => {
+            ctx.writeln(f, format!("expr#{} @ {:?}", item.hir_id, item.span))?;
+            ctx.with_indent(|ctx| write_expr(expr, f, ctx))
+        }
     }
 }
 
@@ -346,6 +350,10 @@ fn write_expr(expr: &Expr, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
             ctx.writeln(f, format!("while ({})", format_expr_inline(cond, ctx)))?;
             ctx.with_indent(|ctx| write_block(block, f, ctx))
         }
+        ExprKind::With(context, body) => {
+            ctx.writeln(f, format!("with ({})", format_expr_inline(context, ctx)))?;
+            ctx.with_indent(|ctx| write_expr(body, f, ctx))
+        }
         ExprKind::Match(scrutinee, arms) => {
             ctx.writeln(f, format!("match ({})", format_expr_inline(scrutinee, ctx)))?;
             ctx.writeln(f, "{")?;
@@ -487,6 +495,11 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 format_expr_inline(len, ctx)
             )
         }
+        ExprKind::With(context, body) => format!(
+            "with ({}) {}",
+            format_expr_inline(context, ctx),
+            format_expr_inline(body, ctx)
+        ),
         ExprKind::Match(scrutinee, arms) => {
             let arms = arms
                 .iter()

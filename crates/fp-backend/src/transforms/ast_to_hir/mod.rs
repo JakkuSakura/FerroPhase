@@ -47,6 +47,7 @@ pub struct HirGenerator {
     unimplemented_type_def_ids: HashSet<hir::DefId>,
     module_resolution: Option<fp_core::module::resolution::ModuleResolutionContext>,
     target_env: TargetEnv,
+    respect_cfg: bool,
 }
 
 enum MaterializedTypeAlias {
@@ -127,7 +128,7 @@ impl HirGenerator {
     }
 
     fn item_enabled_by_cfg(&self, item: &ast::Item) -> bool {
-        fp_core::cfg::item_enabled_by_cfg(item, &self.target_env)
+        !self.respect_cfg || fp_core::cfg::item_enabled_by_cfg(item, &self.target_env)
     }
 
     fn is_std_module(&self) -> bool {
@@ -301,6 +302,7 @@ impl HirGenerator {
             unimplemented_type_def_ids: HashSet::new(),
             module_resolution: None,
             target_env: TargetEnv::host(),
+            respect_cfg: true,
         }
     }
 
@@ -314,6 +316,10 @@ impl HirGenerator {
 
     pub fn set_target_triple(&mut self, target_triple: Option<&str>) {
         self.target_env = TargetEnv::from_triple(target_triple);
+    }
+
+    pub fn set_cfg_filtering(&mut self, enabled: bool) {
+        self.respect_cfg = enabled;
     }
 
     fn reset_file_context<P: AsRef<Path>>(&mut self, file_path: P) {
@@ -418,7 +424,7 @@ impl HirGenerator {
         match abi {
             ast::Abi::Rust => hir::Abi::Rust,
             ast::Abi::Named(name) if name == "C" => hir::Abi::C { unwind: false },
-            ast::Abi::Named(name) => panic!("unsupported ABI in AST lowering: {name}"),
+            ast::Abi::Named(name) => hir::Abi::Named(name.clone()),
         }
     }
 
@@ -827,13 +833,18 @@ impl HirGenerator {
                         return Ok(());
                     }
                 }
-                self.add_warning(
-                    Diagnostic::warning(
-                        "dropping unsupported module-level expression item".to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT)
-                    .with_span(item.span()),
-                );
+                let hir_expr = self.transform_expr_to_hir(expr)?;
+                let hir_item = hir::Item {
+                    hir_id: self.next_id(),
+                    def_id: self.allocate_def_id_for_item(item),
+                    visibility: hir::Visibility::Private,
+                    kind: hir::ItemKind::Expr(hir_expr),
+                    span: item.span(),
+                };
+                program.def_map.insert(hir_item.def_id, hir_item.clone());
+                self.program_def_map
+                    .insert(hir_item.def_id, hir_item.clone());
+                program.items.push(hir_item);
                 Ok(())
             }
             ItemKind::DeclFunction(decl) => {

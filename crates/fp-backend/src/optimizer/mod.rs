@@ -7,6 +7,8 @@ use fp_sql::extract_select_projection;
 
 use crate::error::optimization_error;
 
+pub mod hir;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MirPassName {
     ConstFold,

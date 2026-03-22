@@ -1322,7 +1322,6 @@ name = "fp-bash"
 version = "0.1.0"
 dependencies = [
  "fp-core",
- "fp-shell-core",
 ]
 
 [[package]]
@@ -1642,7 +1641,6 @@ name = "fp-powershell"
 version = "0.1.0"
 dependencies = [
  "fp-core",
- "fp-shell-core",
 ]
 
 [[package]]
@@ -1670,25 +1668,15 @@ name = "fp-shell"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "fp-backend",
  "fp-bash",
  "fp-core",
- "fp-interpret",
  "fp-lang",
  "fp-powershell",
- "fp-shell-core",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.17",
- "toml 0.8.23",
-]
-
-[[package]]
-name = "fp-shell-core"
-version = "0.1.0"
-dependencies = [
- "fp-core",
- "serde",
 ]
 
 [[package]]

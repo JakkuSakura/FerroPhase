@@ -1,14 +1,10 @@
 use fp_core::ast::{
-    Abi, BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind, ExprMatch, ExprStringTemplate,
-    ExprTry, FormatArgRef, FormatTemplatePart, ItemDeclFunction, ItemDefFunction, ItemKind, Node,
-    NodeKind, Pattern, PatternKind, Ty, Value,
+    Abi, AttrMeta, AttributesExt, BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind,
+    ExprMatch, ExprStringTemplate, ExprTry, FormatArgRef, FormatTemplatePart, ItemDeclFunction,
+    ItemDefFunction, ItemKind, Node, NodeKind, Pattern, PatternKind, Ty, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
-use fp_shell_core::{
-    ScriptTarget, ShellInventory, TransportKind, extern_command, runtime_requirements,
-    validate_extern_decl,
-};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 
@@ -58,17 +54,10 @@ impl<'a> PowerShellRenderer<'a> {
         script.push_str("Set-StrictMode -Version Latest\nSet-PSDebug -Trace 1\n$ErrorActionPreference = 'Stop'\n$script:fpLastChanged = $false\n\n");
         script.push_str("$script:FpHosts = @{}\n");
         for (name, host) in &self.inventory.hosts {
-            let transport = match host.transport {
-                TransportKind::Local => "local",
-                TransportKind::Ssh => "ssh",
-                TransportKind::Docker => "docker",
-                TransportKind::Kubectl => "kubectl",
-                TransportKind::Winrm => "winrm",
-            };
             script.push_str(&format!(
                 "$script:FpHosts[{0}] = @{{ transport = {1}",
                 ps_string(name),
-                ps_string(transport)
+                ps_string(&host.transport)
             ));
             if let Some(address) = host.get_string("address") {
                 script.push_str(&format!("; address = {}", ps_string(address)));
@@ -96,6 +85,12 @@ impl<'a> PowerShellRenderer<'a> {
             }
             if let Some(scheme) = host.get_string("scheme") {
                 script.push_str(&format!("; scheme = {}", ps_string(scheme)));
+            }
+            if let Some(chroot_directory) = host.get_string("chroot_directory") {
+                script.push_str(&format!(
+                    "; chroot_directory = {}",
+                    ps_string(chroot_directory)
+                ));
             }
             script.push_str(" }\n");
         }
@@ -733,6 +728,9 @@ impl<'a> PowerShellRenderer<'a> {
             "runtime_host_context" => self.render_host_field_lookup("context", args)?,
             "runtime_host_password" => self.render_host_field_lookup("password", args)?,
             "runtime_host_scheme" => self.render_host_field_lookup("scheme", args)?,
+            "runtime_host_chroot_directory" => {
+                self.render_host_field_lookup("chroot_directory", args)?
+            }
             "runtime_temp_path" => "[System.IO.Path]::GetTempFileName()".to_string(),
             "runtime_last_changed" => {
                 "if ($script:fpLastChanged) { 'true' } else { 'false' }".to_string()
@@ -1134,6 +1132,114 @@ fn extern_decl_map<'a>(
 
 const POWERSHELL_RUNTIME_UTILITIES: &str = "";
 
+#[derive(Debug, Clone, Default)]
+pub struct ShellInventory {
+    pub hosts: HashMap<String, InventoryHost>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct InventoryHost {
+    pub transport: String,
+    pub fields: HashMap<String, InventoryValue>,
+}
+
+impl InventoryHost {
+    pub fn get_string(&self, name: &str) -> Option<&str> {
+        match self.fields.get(name) {
+            Some(InventoryValue::String(value)) => Some(value.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn get_u16(&self, name: &str) -> Option<u16> {
+        match self.fields.get(name) {
+            Some(InventoryValue::U16(value)) => Some(*value),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InventoryValue {
+    String(String),
+    U16(u16),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScriptTarget {
+    PowerShell,
+}
+
+fn validate_extern_decl(function: &ItemDeclFunction, target: ScriptTarget) -> Result<(), String> {
+    let expected_abi = match target {
+        ScriptTarget::PowerShell => "pwsh",
+    };
+    let abi = match &function.sig.abi {
+        Abi::Rust => {
+            return Err(format!(
+                "extern `{}` uses ABI `rust`, but shell target requires `{}`",
+                function.name, expected_abi
+            ));
+        }
+        Abi::Named(name) => name.as_str(),
+    };
+    if abi != expected_abi {
+        return Err(format!(
+            "extern `{}` uses ABI `{}`, but shell target requires `{}`",
+            function.name, abi, expected_abi
+        ));
+    }
+    let command = extern_command(function);
+    if command.is_none() && !is_runtime_primitive(function.name.as_str()) {
+        return Err(format!(
+            "extern `{}` is missing #[command = \"...\"] for {} shell target",
+            function.name, expected_abi
+        ));
+    }
+    if command
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(format!(
+            "extern `{}` has an empty #[command] annotation",
+            function.name
+        ));
+    }
+    Ok(())
+}
+
+fn runtime_requirements(function: &ItemDeclFunction, _target: ScriptTarget) -> Vec<String> {
+    extern_command(function)
+        .map(|command| {
+            command
+                .split_whitespace()
+                .next()
+                .map(|tool| vec![tool.to_string()])
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
+}
+
+fn is_runtime_primitive(name: &str) -> bool {
+    matches!(
+        name,
+        "runtime_temp_path" | "runtime_fail" | "runtime_set_changed" | "runtime_last_changed"
+    )
+}
+
+fn extern_command(function: &ItemDeclFunction) -> Option<String> {
+    let AttrMeta::NameValue(meta) = function.attrs.find_by_name("command")? else {
+        return None;
+    };
+    let ExprKind::Value(value) = meta.value.kind() else {
+        return None;
+    };
+    let Value::String(text) = &**value else {
+        return None;
+    };
+    Some(text.value.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1142,7 +1248,6 @@ mod tests {
         ExprKind, File, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemKind,
         Name, Node, Path, Ty,
     };
-    use fp_shell_core::{InventoryHost, InventoryValue, TransportKind};
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -1198,7 +1303,7 @@ mod tests {
         hosts.insert(
             "win-1".to_string(),
             InventoryHost {
-                transport: TransportKind::Winrm,
+                transport: "winrm".to_string(),
                 fields: HashMap::from([
                     (
                         "address".to_string(),
@@ -1253,7 +1358,7 @@ mod tests {
         hosts.insert(
             "win-1".to_string(),
             InventoryHost {
-                transport: TransportKind::Winrm,
+                transport: "winrm".to_string(),
                 fields: HashMap::from([
                     (
                         "address".to_string(),

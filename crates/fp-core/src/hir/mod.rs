@@ -39,6 +39,7 @@ pub enum ItemKind {
     Enum(Enum),
     Const(Const),
     Impl(Impl),
+    Expr(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,6 +48,7 @@ pub struct Function {
     pub body: Option<Body>,
     pub is_const: bool,
     pub is_extern: bool,
+    pub attrs: Vec<crate::ast::Attribute>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +65,8 @@ pub struct Param {
     pub hir_id: HirId,
     pub pat: Pat,
     pub ty: TypeExpr,
+    pub is_context: bool,
+    pub default: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -164,6 +168,7 @@ pub enum ExprKind {
     Continue,
     Loop(Block),
     While(Box<Expr>, Block),
+    With(Box<Expr>, Box<Expr>),
     Array(Vec<Expr>),
     ArrayRepeat { elem: Box<Expr>, len: Box<Expr> },
 }
@@ -492,6 +497,7 @@ impl Function {
             body,
             is_const,
             is_extern,
+            attrs: Vec::new(),
         }
     }
 }
@@ -528,6 +534,7 @@ impl ItemKind {
             ItemKind::Enum(enm) => enm.span(),
             ItemKind::Const(cons) => cons.span(),
             ItemKind::Impl(imp) => imp.span(),
+            ItemKind::Expr(expr) => expr.span(),
         }
     }
 }
@@ -719,6 +726,7 @@ impl ExprKind {
             ExprKind::Continue => Span::null(),
             ExprKind::Loop(block) => block.span(),
             ExprKind::While(cond, block) => Span::union([cond.span(), block.span()]),
+            ExprKind::With(context, body) => Span::union([context.span(), body.span()]),
             ExprKind::Array(exprs) => Span::union(exprs.iter().map(Expr::span)),
             ExprKind::ArrayRepeat { elem, len } => Span::union([elem.span(), len.span()]),
         }
