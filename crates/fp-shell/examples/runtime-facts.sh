@@ -18,16 +18,65 @@ declare -A FP_WINRM_USER=()
 declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
+declare -A FP_CHROOT_DIRECTORY=()
 
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
-run_local_host() {
+__fp_std_facts_has_command_() {
+    local command="$1"
+    command_available "${command}"
+}
+
+__fp_std_facts_file_exists_() {
+    local path="$1"
+    file_exists_native "${path}"
+}
+
+__fp_std_facts_files_is_file_() {
+    local path="$1"
+    __fp_std_facts_file_exists_ "${path}"
+}
+
+__fp_std_facts_server_which_() {
+    local command="$1"
+    __fp_std_shell_process_process_output_ "command -v ${command}"
+}
+
+__fp_std_facts_systemd_is_active_() {
+    local service="$1"
+    __fp_std_shell_process_process_ok_ "systemctl is-active --quiet $(__fp_std_facts_systemd_normalize_service_ "${service}")"
+}
+
+__fp_std_facts_systemd_normalize_service_() {
+    local service="$1"
+    if __fp_std_shell_process_process_ok_ "printf '%s' ${service} | grep -Eq '\\.(service|socket|device|mount|automount|swap|target|path|timer|slice|scope)$'"; then
+        printf '%s\n' "${service}"
+    else
+        printf '%s\n' "${service}.service"
+    fi
+}
+
+__fp_std_ops_server_shell_local_() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(__fp_std_shell_backend_command_with_options_ "${command}" "${cwd}" "${sudo}")"
+    __fp_std_shell_backend_shell_run_local_ "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+__fp_std_shell_backend_run_local_host_() {
     local cmd="$1"
     invoke_expression "${cmd}"
 }
 
-command_with_options() {
+__fp_std_shell_backend_command_with_options_() {
     local command="$1"
     local cwd="$2"
     local sudo="$3"
@@ -46,12 +95,12 @@ command_with_options() {
     fi
 }
 
-process_ok() {
+__fp_std_shell_backend_process_ok_() {
     local command="$1"
-    ok "${command}"
+    __fp_std_shell_process_process_ok_ "${command}"
 }
 
-should_apply() {
+__fp_std_shell_backend_should_apply_() {
     local only_if="$1"
     local unless="$2"
     local creates="$3"
@@ -61,7 +110,7 @@ should_apply() {
         fi
     fi
     if [[ "${unless}" != '' ]]; then
-        if process_ok "${unless}"; then
+        if __fp_std_shell_backend_process_ok_ "${unless}"; then
         fi
     fi
     if [[ "${creates}" != '' ]]; then
@@ -75,7 +124,7 @@ should_apply() {
     printf '%s\n' 'true'
 }
 
-shell_run_local() {
+__fp_std_shell_backend_shell_run_local_() {
     local _host="$1"
     local command="$2"
     local only_if="$3"
@@ -83,48 +132,35 @@ shell_run_local() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        run_local_host "${command}"
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        __fp_std_shell_backend_run_local_host_ "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_local() {
-    local command="$1"
-    local hosts="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    local sudo="$7"
-    local cwd="$8"
-    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run_local "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
+__fp_std_shell_capabilities_capabilities_has_rsync_() {
+    __fp_std_facts_has_command_ 'rsync'
 }
 
-has_command() {
-    local command="$1"
-    command_available "${command}"
-}
-
-file_exists() {
-    local path="$1"
-    file_exists_native "${path}"
-}
-
-has_rsync() {
-    has_command 'rsync'
-}
-
-ok() {
+__fp_std_shell_process_process_ok_() {
     local command="$1"
     shell_status "${command}"
 }
 
-if file_exists '/etc/hosts'; then
-    shell_local 'echo hosts file present' 'localhost' '' '' '' '' '' ''
+__fp_std_shell_process_process_output_() {
+    local command="$1"
+    shell_output "${command}"
+}
+
+if __fp_std_facts_files_is_file_ '/etc/hosts'; then
+    __fp_std_ops_server_shell_local_ 'echo hosts file present' 'localhost' '' '' '' '' '' ''
 fi
-if has_rsync; then
-    shell_local 'echo rsync available' 'localhost' '' '' '' '' '' ''
+if [[ "$(__fp_std_facts_server_which_ 'git')" != '' ]]; then
+    __fp_std_ops_server_shell_local_ 'echo git available' 'localhost' '' '' '' '' '' ''
+fi
+if __fp_std_facts_systemd_is_active_ 'sshd'; then
+    __fp_std_ops_server_shell_local_ 'echo sshd active' 'localhost' '' '' '' '' '' ''
+fi
+if __fp_std_shell_capabilities_capabilities_has_rsync_; then
+    __fp_std_ops_server_shell_local_ 'echo rsync available' 'localhost' '' '' '' '' '' ''
 fi

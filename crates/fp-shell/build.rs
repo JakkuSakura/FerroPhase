@@ -12,8 +12,12 @@ fn main() {
     collect_fp_files(&std_root, &std_root, &mut files);
     files.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
 
-    let mut generated =
-        String::from("pub fn get(path: &str) -> Option<&'static str> {\n    match path {\n");
+    let mut generated = String::from("pub const PATHS: &[&str] = &[\n");
+    for (relative, _) in &files {
+        generated.push_str(&format!("    {relative:?},\n"));
+    }
+    generated.push_str("];\n\n");
+    generated.push_str("pub fn get(path: &str) -> Option<&'static str> {\n    match path {\n");
     for (relative, absolute) in files {
         generated.push_str(&format!(
             "        {relative:?} => Some(include_str!({absolute:?})),\n"

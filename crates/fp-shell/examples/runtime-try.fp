@@ -1,13 +1,13 @@
 const fn main() {
     try {
-        defer std::server::shell("echo cleanup");
+        defer std::ops::server::shell("echo cleanup");
 
-        std::server::shell("echo deploy body");
+        std::ops::server::shell("echo deploy body");
     } catch err {
-        std::server::shell(f"echo deploy failed={err}");
+        std::ops::server::shell(f"echo deploy failed={err}");
     } else {
-        std::server::shell("echo deploy success");
+        std::ops::server::shell("echo deploy success");
     } finally {
-        std::server::shell("echo deploy finally");
+        std::ops::server::shell("echo deploy finally");
     }
 }

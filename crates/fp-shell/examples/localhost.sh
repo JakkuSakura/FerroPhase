@@ -18,22 +18,49 @@ declare -A FP_WINRM_USER=()
 declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
+declare -A FP_CHROOT_DIRECTORY=()
 
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
-run_local_host() {
+__fp_std_ops_files_copy_local_() {
+    local src="$1"
+    local dest="$2"
+    local hosts="$3"
+    local only_if="$4"
+    local unless="$5"
+    local creates="$6"
+    local removes="$7"
+    __fp_std_shell_backend_shell_copy_local_ "${hosts}" "${src}" "${dest}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+__fp_std_ops_server_shell_local_() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(__fp_std_shell_backend_command_with_options_ "${command}" "${cwd}" "${sudo}")"
+    __fp_std_shell_backend_shell_run_local_ "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+__fp_std_shell_backend_run_local_host_() {
     local cmd="$1"
     invoke_expression "${cmd}"
 }
 
-copy_local_host() {
+__fp_std_shell_backend_copy_local_host_() {
     local src="$1"
     local dest="$2"
     copy_item "${src}" "${dest}"
 }
 
-command_with_options() {
+__fp_std_shell_backend_command_with_options_() {
     local command="$1"
     local cwd="$2"
     local sudo="$3"
@@ -52,12 +79,12 @@ command_with_options() {
     fi
 }
 
-process_ok() {
+__fp_std_shell_backend_process_ok_() {
     local command="$1"
-    ok "${command}"
+    __fp_std_shell_process_process_ok_ "${command}"
 }
 
-should_apply() {
+__fp_std_shell_backend_should_apply_() {
     local only_if="$1"
     local unless="$2"
     local creates="$3"
@@ -67,7 +94,7 @@ should_apply() {
         fi
     fi
     if [[ "${unless}" != '' ]]; then
-        if process_ok "${unless}"; then
+        if __fp_std_shell_backend_process_ok_ "${unless}"; then
         fi
     fi
     if [[ "${creates}" != '' ]]; then
@@ -81,7 +108,7 @@ should_apply() {
     printf '%s\n' 'true'
 }
 
-shell_run_local() {
+__fp_std_shell_backend_shell_run_local_() {
     local _host="$1"
     local command="$2"
     local only_if="$3"
@@ -89,13 +116,13 @@ shell_run_local() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        run_local_host "${command}"
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        __fp_std_shell_backend_run_local_host_ "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_copy_local() {
+__fp_std_shell_backend_shell_copy_local_() {
     local _host="$1"
     local src="$2"
     local dest="$3"
@@ -104,42 +131,16 @@ shell_copy_local() {
     local creates="$6"
     local removes="$7"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        copy_local_host "${src}" "${dest}"
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        __fp_std_shell_backend_copy_local_host_ "${src}" "${dest}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_local() {
-    local command="$1"
-    local hosts="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    local sudo="$7"
-    local cwd="$8"
-    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run_local "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-copy_local() {
-    local src="$1"
-    local dest="$2"
-    local hosts="$3"
-    local only_if="$4"
-    local unless="$5"
-    local creates="$6"
-    local removes="$7"
-    shell_copy_local "${hosts}" "${src}" "${dest}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-ok() {
+__fp_std_shell_process_process_ok_() {
     local command="$1"
     shell_status "${command}"
 }
 
-shell_local 'echo localhost deployment' 'localhost' '' '' '' '' '' ''
-copy_local './config/local.env' './.env' 'localhost' '' '' '' ''
+__fp_std_ops_server_shell_local_ 'echo localhost deployment' 'localhost' '' '' '' '' '' ''
+__fp_std_ops_files_copy_local_ './config/local.env' './.env' 'localhost' '' '' '' ''

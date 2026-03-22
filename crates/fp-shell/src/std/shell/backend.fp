@@ -1,54 +1,4 @@
 #[cfg(target_lang = "bash")]
-extern "bash" fn runtime_host_transport(host: str) -> str;
-#[cfg(target_lang = "pwsh")]
-extern "pwsh" fn runtime_host_transport(host: str) -> str;
-
-#[cfg(target_lang = "bash")]
-extern "bash" fn runtime_host_address(host: str) -> str;
-#[cfg(target_lang = "pwsh")]
-extern "pwsh" fn runtime_host_address(host: str) -> str;
-
-#[cfg(target_lang = "bash")]
-extern "bash" fn runtime_host_user(host: str) -> str;
-#[cfg(target_lang = "pwsh")]
-extern "pwsh" fn runtime_host_user(host: str) -> str;
-
-#[cfg(target_lang = "bash")]
-extern "bash" fn runtime_host_port(host: str) -> str;
-#[cfg(target_lang = "pwsh")]
-extern "pwsh" fn runtime_host_port(host: str) -> str;
-
-#[cfg(target_lang = "bash")]
-extern "bash" fn runtime_host_container(host: str) -> str;
-#[cfg(target_lang = "pwsh")]
-extern "pwsh" fn runtime_host_container(host: str) -> str;
-
-#[cfg(target_lang = "bash")]
-extern "bash" fn runtime_host_pod(host: str) -> str;
-#[cfg(target_lang = "pwsh")]
-extern "pwsh" fn runtime_host_pod(host: str) -> str;
-
-#[cfg(target_lang = "bash")]
-extern "bash" fn runtime_host_namespace(host: str) -> str;
-#[cfg(target_lang = "pwsh")]
-extern "pwsh" fn runtime_host_namespace(host: str) -> str;
-
-#[cfg(target_lang = "bash")]
-extern "bash" fn runtime_host_context(host: str) -> str;
-#[cfg(target_lang = "pwsh")]
-extern "pwsh" fn runtime_host_context(host: str) -> str;
-
-#[cfg(target_lang = "bash")]
-extern "bash" fn runtime_host_password(host: str) -> str;
-#[cfg(target_lang = "pwsh")]
-extern "pwsh" fn runtime_host_password(host: str) -> str;
-
-#[cfg(target_lang = "bash")]
-extern "bash" fn runtime_host_scheme(host: str) -> str;
-#[cfg(target_lang = "pwsh")]
-extern "pwsh" fn runtime_host_scheme(host: str) -> str;
-
-#[cfg(target_lang = "bash")]
 #[command = "bash -lc"]
 extern "bash" fn bash(cmd: str);
 #[cfg(target_lang = "pwsh")]
@@ -147,6 +97,13 @@ extern "bash" fn winrm_run(host: str, cmd: str);
 extern "pwsh" fn winrm_run(host: str, cmd: str);
 
 #[cfg(target_lang = "bash")]
+#[command = "chroot"]
+extern "bash" fn chroot_exec(directory: str, shell: str, flag: str, cmd: str);
+#[cfg(target_lang = "pwsh")]
+#[command = "chroot"]
+extern "pwsh" fn chroot_exec(directory: str, shell: str, flag: str, cmd: str);
+
+#[cfg(target_lang = "bash")]
 #[command = "cp --"]
 extern "bash" fn cp(src: str, dest: str);
 #[cfg(target_lang = "pwsh")]
@@ -230,17 +187,17 @@ extern "pwsh" fn remove_file(path: str);
 
 #[cfg(target_lang = "bash")]
 #[command = "rsync -e \"ssh -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=$SSH_CONTROL_PATH\""]
-extern "bash" fn rsync(flags: str, src: str, dest: str);
+extern "bash" fn rsync_cli(flags: str, src: str, dest: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "rsync"]
-extern "pwsh" fn rsync(flags: str, src: str, dest: str);
+extern "pwsh" fn rsync_cli(flags: str, src: str, dest: str);
 
 #[cfg(target_lang = "bash")]
 #[command = "rsync -e"]
-extern "bash" fn rsync_shell(shell: str, flags: str, src: str, dest: str);
+extern "bash" fn rsync_cli_shell(shell: str, flags: str, src: str, dest: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "rsync -e"]
-extern "pwsh" fn rsync_shell(shell: str, flags: str, src: str, dest: str);
+extern "pwsh" fn rsync_cli_shell(shell: str, flags: str, src: str, dest: str);
 
 #[cfg(target_lang = "bash")]
 extern "bash" fn runtime_fail(message: str);
@@ -258,35 +215,47 @@ extern "bash" fn runtime_last_changed() -> bool;
 extern "pwsh" fn runtime_last_changed() -> bool;
 
 const fn host_transport(host: str) -> str {
-    runtime_host_transport(host)
+    std::hosts::transport(host)
 }
 
 const fn host_address(host: str) -> str {
-    runtime_host_address(host)
+    std::hosts::address(host)
 }
 
 const fn host_user(host: str) -> str {
-    runtime_host_user(host)
+    std::hosts::user(host)
 }
 
 const fn host_port(host: str) -> str {
-    runtime_host_port(host)
+    std::hosts::port(host)
 }
 
 const fn host_container(host: str) -> str {
-    runtime_host_container(host)
+    std::hosts::container(host)
 }
 
 const fn host_pod(host: str) -> str {
-    runtime_host_pod(host)
+    std::hosts::pod(host)
 }
 
 const fn host_namespace(host: str) -> str {
-    runtime_host_namespace(host)
+    std::hosts::namespace(host)
 }
 
 const fn host_context(host: str) -> str {
-    runtime_host_context(host)
+    std::hosts::context(host)
+}
+
+const fn host_password(host: str) -> str {
+    std::hosts::password(host)
+}
+
+const fn host_scheme(host: str) -> str {
+    std::hosts::scheme(host)
+}
+
+const fn host_chroot_directory(host: str) -> str {
+    std::hosts::chroot_directory(host)
 }
 
 #[cfg(target_lang = "bash")]
@@ -317,6 +286,7 @@ const fn run_host(host: str, cmd: str) {
         "docker" => run_docker_host(host, cmd),
         "kubectl" => run_kubectl_host(host, cmd),
         "winrm" => winrm_run(host, cmd),
+        "chroot" => run_chroot_host(host, cmd),
         _ => runtime_fail(f"unsupported transport: {transport}"),
     }
 }
@@ -329,6 +299,7 @@ const fn copy_host(host: str, src: str, dest: str) {
         "docker" => copy_docker_host(host, src, dest),
         "kubectl" => copy_kubectl_host(host, src, dest),
         "winrm" => winrm_copy(host, src, dest),
+        "chroot" => copy_chroot_host(host, src, dest),
         _ => runtime_fail(f"unsupported transport for copy: {transport}"),
     }
 }
@@ -343,7 +314,8 @@ const fn template_host(host: str, src: str, dest: str, vars: str) {
 const fn rsync_host(host: str, flags: str, src: str, dest: str) {
     let transport = host_transport(host);
     match transport {
-        "local" => rsync(flags, src, dest),
+        "local" => rsync_cli(flags, src, dest),
+        "chroot" => rsync_chroot_host(host, flags, src, dest),
         _ => rsync_remote_host(host, flags, src, dest),
     }
 }
@@ -418,6 +390,10 @@ const fn run_kubectl_host(host: str, cmd: str) {
     }
 }
 
+const fn run_chroot_host(host: str, cmd: str) {
+    chroot_exec(host_chroot_directory(host), "sh", "-lc", cmd);
+}
+
 const fn copy_docker_host(host: str, src: str, dest: str) {
     let container = host_container(host);
     docker_cp(src, f"{container}:{dest}");
@@ -439,6 +415,14 @@ const fn copy_kubectl_host(host: str, src: str, dest: str) {
     }
 }
 
+const fn chroot_path(host: str, path: str) -> str {
+    f"{host_chroot_directory(host)}{path}"
+}
+
+const fn copy_chroot_host(host: str, src: str, dest: str) {
+    copy_local_host(src, chroot_path(host, dest));
+}
+
 const fn rsync_remote_target(host: str) -> str {
     let address = host_address(host);
     if address == "" {
@@ -458,10 +442,15 @@ const fn rsync_remote_host(host: str, flags: str, src: str, dest: str) {
     let remote = f"{rsync_remote_target(host)}:{dest}";
     let port = host_port(host);
     if port != "" {
-        rsync_shell(f"ssh -p {port}", flags, src, remote);
+        rsync_cli_shell(f"ssh -p {port}", flags, src, remote);
     } else {
-        rsync(flags, src, remote);
+        rsync_cli(flags, src, remote);
     }
+}
+
+const fn rsync_chroot_host(host: str, flags: str, src: str, dest: str) {
+    let target = chroot_path(host, dest);
+    rsync_cli(flags, src, target);
 }
 
 const fn command_with_options(command: str, cwd: str, sudo: bool) -> str {
@@ -600,6 +589,14 @@ const fn shell_run_winrm(host: str, command: str, only_if: str, unless: str, cre
     }
 }
 
+const fn shell_run_chroot(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        run_chroot_host(host, command);
+        runtime_set_changed(true);
+    }
+}
+
 const fn shell_copy(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if should_apply(only_if, unless, creates, removes) {
@@ -648,6 +645,14 @@ const fn shell_copy_winrm(host: str, src: str, dest: str, only_if: str, unless: 
     }
 }
 
+const fn shell_copy_chroot(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        copy_chroot_host(host, src, dest);
+        runtime_set_changed(true);
+    }
+}
+
 const fn shell_template(host: str, src: str, dest: str, vars: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if should_apply(only_if, unless, creates, removes) {
@@ -678,6 +683,17 @@ const fn shell_template_ssh(host: str, src: str, dest: str, vars: str, only_if: 
     }
 }
 
+const fn shell_template_chroot(host: str, src: str, dest: str, vars: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        let tmp = runtime_temp_path();
+        render_template(src, tmp, vars);
+        copy_chroot_host(host, tmp, dest);
+        remove_file(tmp);
+        runtime_set_changed(true);
+    }
+}
+
 const fn shell_rsync(host: str, flags: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if should_apply(only_if, unless, creates, removes) {
@@ -689,7 +705,7 @@ const fn shell_rsync(host: str, flags: str, src: str, dest: str, only_if: str, u
 const fn shell_rsync_local(_host: str, flags: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if should_apply(only_if, unless, creates, removes) {
-        rsync(flags, src, dest);
+        rsync_cli(flags, src, dest);
         runtime_set_changed(true);
     }
 }
@@ -698,6 +714,14 @@ const fn shell_rsync_remote(host: str, flags: str, src: str, dest: str, only_if:
     runtime_set_changed(false);
     if should_apply(only_if, unless, creates, removes) {
         rsync_remote_host(host, flags, src, dest);
+        runtime_set_changed(true);
+    }
+}
+
+const fn shell_rsync_chroot(host: str, flags: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
+    runtime_set_changed(false);
+    if should_apply(only_if, unless, creates, removes) {
+        rsync_chroot_host(host, flags, src, dest);
         runtime_set_changed(true);
     }
 }

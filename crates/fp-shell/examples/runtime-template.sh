@@ -18,22 +18,36 @@ declare -A FP_WINRM_USER=()
 declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
+declare -A FP_CHROOT_DIRECTORY=()
 
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
-copy_local_host() {
+__fp_std_ops_files_template_local_() {
+    local src="$1"
+    local dest="$2"
+    local hosts="$3"
+    local vars="$4"
+    local only_if="$5"
+    local unless="$6"
+    local creates="$7"
+    local removes="$8"
+    __fp_std_shell_backend_shell_template_local_ "${hosts}" "${src}" "${dest}" "${vars}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+__fp_std_shell_backend_copy_local_host_() {
     local src="$1"
     local dest="$2"
     copy_item "${src}" "${dest}"
 }
 
-process_ok() {
+__fp_std_shell_backend_process_ok_() {
     local command="$1"
-    ok "${command}"
+    __fp_std_shell_process_process_ok_ "${command}"
 }
 
-should_apply() {
+__fp_std_shell_backend_should_apply_() {
     local only_if="$1"
     local unless="$2"
     local creates="$3"
@@ -43,7 +57,7 @@ should_apply() {
         fi
     fi
     if [[ "${unless}" != '' ]]; then
-        if process_ok "${unless}"; then
+        if __fp_std_shell_backend_process_ok_ "${unless}"; then
         fi
     fi
     if [[ "${creates}" != '' ]]; then
@@ -57,7 +71,7 @@ should_apply() {
     printf '%s\n' 'true'
 }
 
-shell_template_local() {
+__fp_std_shell_backend_shell_template_local_() {
     local _host="$1"
     local src="$2"
     local dest="$3"
@@ -67,31 +81,18 @@ shell_template_local() {
     local creates="$7"
     local removes="$8"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
         local tmp="$(runtime_temp_path)"
         render_template "${src}" "${tmp}" "${vars}"
-        copy_local_host "${tmp}" "${dest}"
+        __fp_std_shell_backend_copy_local_host_ "${tmp}" "${dest}"
         remove_file "${tmp}"
         runtime_set_changed 'true'
     fi
 }
 
-template_local() {
-    local src="$1"
-    local dest="$2"
-    local hosts="$3"
-    local vars="$4"
-    local only_if="$5"
-    local unless="$6"
-    local creates="$7"
-    local removes="$8"
-    shell_template_local "${hosts}" "${src}" "${dest}" "${vars}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-ok() {
+__fp_std_shell_process_process_ok_() {
     local command="$1"
     shell_status "${command}"
 }
 
-template_local './templates/fp-service.conf.tpl' '/etc/fp-service/fp-service.conf' 'localhost' '' '' '' '' ''
+__fp_std_ops_files_template_local_ './templates/fp-service.conf.tpl' '/etc/fp-service/fp-service.conf' 'localhost' '' '' '' '' ''

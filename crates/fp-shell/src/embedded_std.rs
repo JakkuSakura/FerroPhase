@@ -5,3 +5,7 @@ mod generated {
 pub fn read(path: &str) -> Option<&'static str> {
     generated::get(path)
 }
+
+pub fn paths() -> &'static [&'static str] {
+    generated::PATHS
+}

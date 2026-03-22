@@ -1,5 +1,5 @@
 const fn main() {
     with "web" {
-        std::server::shell("uptime");
+        std::ops::server::shell("uptime");
     }
 }

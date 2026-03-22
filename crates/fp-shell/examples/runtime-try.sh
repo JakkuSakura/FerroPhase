@@ -18,16 +18,31 @@ declare -A FP_WINRM_USER=()
 declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
+declare -A FP_CHROOT_DIRECTORY=()
 
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
-run_local_host() {
+__fp_std_ops_server_shell_local_() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(__fp_std_shell_backend_command_with_options_ "${command}" "${cwd}" "${sudo}")"
+    __fp_std_shell_backend_shell_run_local_ "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+__fp_std_shell_backend_run_local_host_() {
     local cmd="$1"
     invoke_expression "${cmd}"
 }
 
-command_with_options() {
+__fp_std_shell_backend_command_with_options_() {
     local command="$1"
     local cwd="$2"
     local sudo="$3"
@@ -46,12 +61,12 @@ command_with_options() {
     fi
 }
 
-process_ok() {
+__fp_std_shell_backend_process_ok_() {
     local command="$1"
-    ok "${command}"
+    __fp_std_shell_process_process_ok_ "${command}"
 }
 
-should_apply() {
+__fp_std_shell_backend_should_apply_() {
     local only_if="$1"
     local unless="$2"
     local creates="$3"
@@ -61,7 +76,7 @@ should_apply() {
         fi
     fi
     if [[ "${unless}" != '' ]]; then
-        if process_ok "${unless}"; then
+        if __fp_std_shell_backend_process_ok_ "${unless}"; then
         fi
     fi
     if [[ "${creates}" != '' ]]; then
@@ -75,7 +90,7 @@ should_apply() {
     printf '%s\n' 'true'
 }
 
-shell_run_local() {
+__fp_std_shell_backend_shell_run_local_() {
     local _host="$1"
     local command="$2"
     local only_if="$3"
@@ -83,27 +98,13 @@ shell_run_local() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        run_local_host "${command}"
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        __fp_std_shell_backend_run_local_host_ "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_local() {
-    local command="$1"
-    local hosts="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    local sudo="$7"
-    local cwd="$8"
-    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run_local "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-ok() {
+__fp_std_shell_process_process_ok_() {
     local command="$1"
     shell_status "${command}"
 }
@@ -114,27 +115,27 @@ if {
     __fp_try_status_3=0
     __fp_try_handled_4=0
     if {
-        shell_local 'echo deploy body' 'localhost' '' '' '' '' '' ''
+        __fp_std_ops_server_shell_local_ 'echo deploy body' 'localhost' '' '' '' '' '' ''
     }; then
     else
         __fp_try_status_3=$?
         __fp_try_handled_4=0
     fi
-    shell_local 'echo cleanup' 'localhost' '' '' '' '' '' ''
+    __fp_std_ops_server_shell_local_ 'echo cleanup' 'localhost' '' '' '' '' '' ''
     if [[ $__fp_try_status_3 -ne 0 && $__fp_try_handled_4 -eq 0 ]]; then
         return $__fp_try_status_3 2>/dev/null || exit $__fp_try_status_3
     fi
 }; then
-    shell_local 'echo deploy success' 'localhost' '' '' '' '' '' ''
+    __fp_std_ops_server_shell_local_ 'echo deploy success' 'localhost' '' '' '' '' '' ''
 else
     __fp_try_status_1=$?
     if [[ $__fp_try_handled_2 -eq 0 ]]; then
         err=$__fp_try_status_1
-        shell_local "echo deploy failed=${err}" 'localhost' '' '' '' '' '' ''
+        __fp_std_ops_server_shell_local_ "echo deploy failed=${err}" 'localhost' '' '' '' '' '' ''
         __fp_try_handled_2=1
     fi
 fi
-shell_local 'echo deploy finally' 'localhost' '' '' '' '' '' ''
+__fp_std_ops_server_shell_local_ 'echo deploy finally' 'localhost' '' '' '' '' '' ''
 if [[ $__fp_try_status_1 -ne 0 && $__fp_try_handled_2 -eq 0 ]]; then
     return $__fp_try_status_1 2>/dev/null || exit $__fp_try_status_1
 fi

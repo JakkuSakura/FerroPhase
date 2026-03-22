@@ -18,85 +18,293 @@ declare -A FP_WINRM_USER=()
 declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
+declare -A FP_CHROOT_DIRECTORY=()
 
-FP_HOST_TRANSPORT['ssh-web']='ssh'
-FP_SSH_ADDRESS['ssh-web']='10.0.0.11'
-FP_WINRM_ADDRESS['ssh-web']='10.0.0.11'
-FP_SSH_USER['ssh-web']='deploy'
-FP_DOCKER_USER['ssh-web']='deploy'
-FP_WINRM_USER['ssh-web']='deploy'
-FP_SSH_PORT['ssh-web']='22'
-FP_WINRM_PORT['ssh-web']='22'
-FP_HOST_TRANSPORT['windows-admin']='winrm'
-FP_SSH_ADDRESS['windows-admin']='10.0.0.21'
-FP_WINRM_ADDRESS['windows-admin']='10.0.0.21'
-FP_SSH_USER['windows-admin']='Administrator'
-FP_DOCKER_USER['windows-admin']='Administrator'
-FP_WINRM_USER['windows-admin']='Administrator'
-FP_SSH_PORT['windows-admin']='5985'
-FP_WINRM_PORT['windows-admin']='5985'
-FP_WINRM_PASSWORD['windows-admin']='change-me'
-FP_WINRM_SCHEME['windows-admin']='http'
-FP_HOST_TRANSPORT['localhost']='local'
-FP_HOST_TRANSPORT['docker-app']='docker'
-FP_SSH_USER['docker-app']='root'
-FP_DOCKER_USER['docker-app']='root'
-FP_WINRM_USER['docker-app']='root'
-FP_DOCKER_CONTAINER['docker-app']='app'
-FP_K8S_CONTAINER['docker-app']='app'
-FP_HOST_TRANSPORT['k8s-api']='kubectl'
-FP_DOCKER_CONTAINER['k8s-api']='api'
-FP_K8S_CONTAINER['k8s-api']='api'
-FP_K8S_POD['k8s-api']='api-7f9f6'
-FP_K8S_NAMESPACE['k8s-api']='prod'
-FP_K8S_CONTEXT['k8s-api']='prod-cluster'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
-host_address() {
+__fp_std_hosts_address_() {
     local host="$1"
-    runtime_host_address "${host}"
+    case "${host}" in
+        localhost)
+            printf '%s\n' ''
+            ;;
+        ssh-web)
+            printf '%s\n' '10.0.0.11'
+            ;;
+        docker-app)
+            printf '%s\n' ''
+            ;;
+        k8s-api)
+            printf '%s\n' ''
+            ;;
+        windows-admin)
+            printf '%s\n' '10.0.0.21'
+            ;;
+        *)
+            printf '%s\n' ''
+            ;;
+    esac
 }
 
-host_user() {
+__fp_std_hosts_user_() {
     local host="$1"
-    runtime_host_user "${host}"
+    case "${host}" in
+        localhost)
+            printf '%s\n' ''
+            ;;
+        ssh-web)
+            printf '%s\n' 'deploy'
+            ;;
+        docker-app)
+            printf '%s\n' 'root'
+            ;;
+        k8s-api)
+            printf '%s\n' ''
+            ;;
+        windows-admin)
+            printf '%s\n' 'Administrator'
+            ;;
+        *)
+            printf '%s\n' ''
+            ;;
+    esac
 }
 
-host_port() {
+__fp_std_hosts_port_() {
     local host="$1"
-    runtime_host_port "${host}"
+    case "${host}" in
+        localhost)
+            printf '%s\n' '0'
+            ;;
+        ssh-web)
+            printf '%s\n' '22'
+            ;;
+        docker-app)
+            printf '%s\n' '0'
+            ;;
+        k8s-api)
+            printf '%s\n' '0'
+            ;;
+        windows-admin)
+            printf '%s\n' '5985'
+            ;;
+        *)
+            printf '%s\n' ''
+            ;;
+    esac
 }
 
-host_container() {
+__fp_std_hosts_container_() {
     local host="$1"
-    runtime_host_container "${host}"
+    case "${host}" in
+        localhost)
+            printf '%s\n' ''
+            ;;
+        ssh-web)
+            printf '%s\n' ''
+            ;;
+        docker-app)
+            printf '%s\n' 'app'
+            ;;
+        k8s-api)
+            printf '%s\n' 'api'
+            ;;
+        windows-admin)
+            printf '%s\n' ''
+            ;;
+        *)
+            printf '%s\n' ''
+            ;;
+    esac
 }
 
-host_pod() {
+__fp_std_hosts_pod_() {
     local host="$1"
-    runtime_host_pod "${host}"
+    case "${host}" in
+        localhost)
+            printf '%s\n' ''
+            ;;
+        ssh-web)
+            printf '%s\n' ''
+            ;;
+        docker-app)
+            printf '%s\n' ''
+            ;;
+        k8s-api)
+            printf '%s\n' 'api-7f9f6'
+            ;;
+        windows-admin)
+            printf '%s\n' ''
+            ;;
+        *)
+            printf '%s\n' ''
+            ;;
+    esac
 }
 
-host_namespace() {
+__fp_std_hosts_namespace_() {
     local host="$1"
-    runtime_host_namespace "${host}"
+    case "${host}" in
+        localhost)
+            printf '%s\n' ''
+            ;;
+        ssh-web)
+            printf '%s\n' ''
+            ;;
+        docker-app)
+            printf '%s\n' ''
+            ;;
+        k8s-api)
+            printf '%s\n' 'prod'
+            ;;
+        windows-admin)
+            printf '%s\n' ''
+            ;;
+        *)
+            printf '%s\n' ''
+            ;;
+    esac
 }
 
-host_context() {
+__fp_std_hosts_context_() {
     local host="$1"
-    runtime_host_context "${host}"
+    case "${host}" in
+        localhost)
+            printf '%s\n' ''
+            ;;
+        ssh-web)
+            printf '%s\n' ''
+            ;;
+        docker-app)
+            printf '%s\n' ''
+            ;;
+        k8s-api)
+            printf '%s\n' 'prod-cluster'
+            ;;
+        windows-admin)
+            printf '%s\n' ''
+            ;;
+        *)
+            printf '%s\n' ''
+            ;;
+    esac
 }
 
-run_local_host() {
+__fp_std_ops_server_shell_local_() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(__fp_std_shell_backend_command_with_options_ "${command}" "${cwd}" "${sudo}")"
+    __fp_std_shell_backend_shell_run_local_ "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+__fp_std_ops_server_shell_ssh_() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(__fp_std_shell_backend_command_with_options_ "${command}" "${cwd}" "${sudo}")"
+    __fp_std_shell_backend_shell_run_ssh_ "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+__fp_std_ops_server_shell_docker_() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(__fp_std_shell_backend_command_with_options_ "${command}" "${cwd}" "${sudo}")"
+    __fp_std_shell_backend_shell_run_docker_ "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+__fp_std_ops_server_shell_kubectl_() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(__fp_std_shell_backend_command_with_options_ "${command}" "${cwd}" "${sudo}")"
+    __fp_std_shell_backend_shell_run_kubectl_ "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+__fp_std_ops_server_shell_winrm_() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(__fp_std_shell_backend_command_with_options_ "${command}" "${cwd}" "${sudo}")"
+    __fp_std_shell_backend_shell_run_winrm_ "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+__fp_std_shell_backend_host_address_() {
+    local host="$1"
+    __fp_std_hosts_address_ "${host}"
+}
+
+__fp_std_shell_backend_host_user_() {
+    local host="$1"
+    __fp_std_hosts_user_ "${host}"
+}
+
+__fp_std_shell_backend_host_port_() {
+    local host="$1"
+    __fp_std_hosts_port_ "${host}"
+}
+
+__fp_std_shell_backend_host_container_() {
+    local host="$1"
+    __fp_std_hosts_container_ "${host}"
+}
+
+__fp_std_shell_backend_host_pod_() {
+    local host="$1"
+    __fp_std_hosts_pod_ "${host}"
+}
+
+__fp_std_shell_backend_host_namespace_() {
+    local host="$1"
+    __fp_std_hosts_namespace_ "${host}"
+}
+
+__fp_std_shell_backend_host_context_() {
+    local host="$1"
+    __fp_std_hosts_context_ "${host}"
+}
+
+__fp_std_shell_backend_run_local_host_() {
     local cmd="$1"
     invoke_expression "${cmd}"
 }
 
-ssh_target() {
+__fp_std_shell_backend_ssh_target_() {
     local host="$1"
-    local user="$(host_user "${host}")"
-    local address="$(host_address "${host}")"
+    local user="$(__fp_std_shell_backend_host_user_ "${host}")"
+    local address="$(__fp_std_shell_backend_host_address_ "${host}")"
     if [[ "${user}" != '' ]]; then
         printf '%s\n' "${user}@${address}"
     else
@@ -104,11 +312,11 @@ ssh_target() {
     fi
 }
 
-run_ssh_host() {
+__fp_std_shell_backend_run_ssh_host_() {
     local host="$1"
     local cmd="$2"
-    local target="$(ssh_target "${host}")"
-    local port="$(host_port "${host}")"
+    local target="$(__fp_std_shell_backend_ssh_target_ "${host}")"
+    local port="$(__fp_std_shell_backend_host_port_ "${host}")"
     if [[ "${port}" != '' ]]; then
         ssh_port "${port}" "${target}" "${cmd}"
     else
@@ -116,11 +324,11 @@ run_ssh_host() {
     fi
 }
 
-run_docker_host() {
+__fp_std_shell_backend_run_docker_host_() {
     local host="$1"
     local cmd="$2"
-    local container="$(host_container "${host}")"
-    local user="$(host_user "${host}")"
+    local container="$(__fp_std_shell_backend_host_container_ "${host}")"
+    local user="$(__fp_std_shell_backend_host_user_ "${host}")"
     if [[ "${user}" != '' ]]; then
         docker_exec_user "${user}" "${container}" 'sh' '-lc' "${cmd}"
     else
@@ -128,13 +336,13 @@ run_docker_host() {
     fi
 }
 
-run_kubectl_host() {
+__fp_std_shell_backend_run_kubectl_host_() {
     local host="$1"
     local cmd="$2"
-    local context="$(host_context "${host}")"
-    local namespace="$(host_namespace "${host}")"
-    local container="$(host_container "${host}")"
-    local pod="$(host_pod "${host}")"
+    local context="$(__fp_std_shell_backend_host_context_ "${host}")"
+    local namespace="$(__fp_std_shell_backend_host_namespace_ "${host}")"
+    local container="$(__fp_std_shell_backend_host_container_ "${host}")"
+    local pod="$(__fp_std_shell_backend_host_pod_ "${host}")"
     case "${context}" in
         )
             case "${namespace}" in
@@ -187,7 +395,7 @@ run_kubectl_host() {
     esac
 }
 
-command_with_options() {
+__fp_std_shell_backend_command_with_options_() {
     local command="$1"
     local cwd="$2"
     local sudo="$3"
@@ -206,12 +414,12 @@ command_with_options() {
     fi
 }
 
-process_ok() {
+__fp_std_shell_backend_process_ok_() {
     local command="$1"
-    ok "${command}"
+    __fp_std_shell_process_process_ok_ "${command}"
 }
 
-should_apply() {
+__fp_std_shell_backend_should_apply_() {
     local only_if="$1"
     local unless="$2"
     local creates="$3"
@@ -221,7 +429,7 @@ should_apply() {
         fi
     fi
     if [[ "${unless}" != '' ]]; then
-        if process_ok "${unless}"; then
+        if __fp_std_shell_backend_process_ok_ "${unless}"; then
         fi
     fi
     if [[ "${creates}" != '' ]]; then
@@ -235,7 +443,7 @@ should_apply() {
     printf '%s\n' 'true'
 }
 
-shell_run_local() {
+__fp_std_shell_backend_shell_run_local_() {
     local _host="$1"
     local command="$2"
     local only_if="$3"
@@ -243,13 +451,13 @@ shell_run_local() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        run_local_host "${command}"
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        __fp_std_shell_backend_run_local_host_ "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_run_ssh() {
+__fp_std_shell_backend_shell_run_ssh_() {
     local host="$1"
     local command="$2"
     local only_if="$3"
@@ -257,13 +465,13 @@ shell_run_ssh() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        run_ssh_host "${host}" "${command}"
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        __fp_std_shell_backend_run_ssh_host_ "${host}" "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_run_docker() {
+__fp_std_shell_backend_shell_run_docker_() {
     local host="$1"
     local command="$2"
     local only_if="$3"
@@ -271,13 +479,13 @@ shell_run_docker() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        run_docker_host "${host}" "${command}"
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        __fp_std_shell_backend_run_docker_host_ "${host}" "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_run_kubectl() {
+__fp_std_shell_backend_shell_run_kubectl_() {
     local host="$1"
     local command="$2"
     local only_if="$3"
@@ -285,13 +493,13 @@ shell_run_kubectl() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        run_kubectl_host "${host}" "${command}"
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        __fp_std_shell_backend_run_kubectl_host_ "${host}" "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_run_winrm() {
+__fp_std_shell_backend_shell_run_winrm_() {
     local host="$1"
     local command="$2"
     local only_if="$3"
@@ -299,104 +507,19 @@ shell_run_winrm() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
         winrm_run "${host}" "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_local() {
-    local command="$1"
-    local hosts="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    local sudo="$7"
-    local cwd="$8"
-    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run_local "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-shell_ssh() {
-    local command="$1"
-    local hosts="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    local sudo="$7"
-    local cwd="$8"
-    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run_ssh "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-shell_docker() {
-    local command="$1"
-    local hosts="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    local sudo="$7"
-    local cwd="$8"
-    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run_docker "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-shell_kubectl() {
-    local command="$1"
-    local hosts="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    local sudo="$7"
-    local cwd="$8"
-    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run_kubectl "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-shell_winrm() {
-    local command="$1"
-    local hosts="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    local sudo="$7"
-    local cwd="$8"
-    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run_winrm "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-address() {
-    local host="$1"
-    runtime_host_address "${host}"
-}
-
-user() {
-    local host="$1"
-    runtime_host_user "${host}"
-}
-
-port() {
-    local host="$1"
-    runtime_host_port "${host}"
-}
-
-ok() {
+__fp_std_shell_process_process_ok_() {
     local command="$1"
     shell_status "${command}"
 }
 
-shell_local 'echo local hello' 'localhost' '' '' '' '' '' ''
-shell_ssh 'echo ssh hello' 'ssh-web' '' '' '' '' '' ''
-shell_docker 'echo docker hello' 'docker-app' '' '' '' '' '' ''
-shell_kubectl 'echo kubectl hello' 'k8s-api' '' '' '' '' '' ''
-shell_winrm 'Write-Host winrm hello' 'windows-admin' '' '' '' '' '' ''
+__fp_std_ops_server_shell_local_ 'echo local hello' 'localhost' '' '' '' '' '' ''
+__fp_std_ops_server_shell_ssh_ 'echo ssh hello' 'ssh-web' '' '' '' '' '' ''
+__fp_std_ops_server_shell_docker_ 'echo docker hello' 'docker-app' '' '' '' '' '' ''
+__fp_std_ops_server_shell_kubectl_ 'echo kubectl hello' 'k8s-api' '' '' '' '' '' ''
+__fp_std_ops_server_shell_winrm_ 'Write-Host winrm hello' 'windows-admin' '' '' '' '' '' ''

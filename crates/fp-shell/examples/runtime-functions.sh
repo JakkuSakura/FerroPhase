@@ -18,86 +18,116 @@ declare -A FP_WINRM_USER=()
 declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
+declare -A FP_CHROOT_DIRECTORY=()
 
-FP_HOST_TRANSPORT['web-1']='ssh'
-FP_SSH_ADDRESS['web-1']='10.0.0.11'
-FP_WINRM_ADDRESS['web-1']='10.0.0.11'
-FP_SSH_USER['web-1']='deploy'
-FP_DOCKER_USER['web-1']='deploy'
-FP_WINRM_USER['web-1']='deploy'
-FP_HOST_TRANSPORT['web-2']='ssh'
-FP_SSH_ADDRESS['web-2']='10.0.0.12'
-FP_WINRM_ADDRESS['web-2']='10.0.0.12'
-FP_SSH_USER['web-2']='deploy'
-FP_DOCKER_USER['web-2']='deploy'
-FP_WINRM_USER['web-2']='deploy'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
-host_transport() {
-    local host="$1"
-    runtime_host_transport "${host}"
+__fp_std_ops_files_rsync_() {
+    local src="$1"
+    local dest="$2"
+    local hosts="$3"
+    local archive="$4"
+    local compress="$5"
+    local delete="$6"
+    local checksum="$7"
+    local only_if="$8"
+    local unless="$9"
+    local creates="$10"
+    local removes="$11"
+    local flags="$(__fp_std_shell_backend_rsync_flag_string_ "${archive}" "${compress}" "${delete}" "${checksum}")"
+    __fp_std_shell_backend_shell_rsync_ "${hosts}" "${flags}" "${src}" "${dest}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
 }
 
-host_address() {
-    local host="$1"
-    runtime_host_address "${host}"
+__fp_std_ops_server_shell_() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(__fp_std_shell_backend_command_with_options_ "${command}" "${cwd}" "${sudo}")"
+    __fp_std_shell_backend_shell_run_ "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
 }
 
-host_user() {
-    local host="$1"
-    runtime_host_user "${host}"
+__fp_std_ops_services_restart_() {
+    local name="$1"
+    local hosts="$2"
+    local sudo="$3"
+    local only_if="$4"
+    local unless="$5"
+    local creates="$6"
+    local removes="$7"
+    __fp_std_ops_server_shell_ "systemctl restart ${name}" "${hosts}" "${only_if}" "${unless}" "${creates}" "${removes}" "${sudo}" ''
 }
 
-host_port() {
+__fp_std_shell_backend_host_transport_() {
     local host="$1"
-    runtime_host_port "${host}"
 }
 
-host_container() {
+__fp_std_shell_backend_host_address_() {
     local host="$1"
-    runtime_host_container "${host}"
 }
 
-host_pod() {
+__fp_std_shell_backend_host_user_() {
     local host="$1"
-    runtime_host_pod "${host}"
 }
 
-host_namespace() {
+__fp_std_shell_backend_host_port_() {
     local host="$1"
-    runtime_host_namespace "${host}"
 }
 
-host_context() {
+__fp_std_shell_backend_host_container_() {
     local host="$1"
-    runtime_host_context "${host}"
 }
 
-run_local_host() {
+__fp_std_shell_backend_host_pod_() {
+    local host="$1"
+}
+
+__fp_std_shell_backend_host_namespace_() {
+    local host="$1"
+}
+
+__fp_std_shell_backend_host_context_() {
+    local host="$1"
+}
+
+__fp_std_shell_backend_host_chroot_directory_() {
+    local host="$1"
+}
+
+__fp_std_shell_backend_run_local_host_() {
     local cmd="$1"
     invoke_expression "${cmd}"
 }
 
-run_host() {
+__fp_std_shell_backend_run_host_() {
     local host="$1"
     local cmd="$2"
-    local transport="$(host_transport "${host}")"
+    local transport="$(__fp_std_shell_backend_host_transport_ "${host}")"
     case "${transport}" in
         local)
-            run_local_host "${cmd}"
+            __fp_std_shell_backend_run_local_host_ "${cmd}"
             ;;
         ssh)
-            run_ssh_host "${host}" "${cmd}"
+            __fp_std_shell_backend_run_ssh_host_ "${host}" "${cmd}"
             ;;
         docker)
-            run_docker_host "${host}" "${cmd}"
+            __fp_std_shell_backend_run_docker_host_ "${host}" "${cmd}"
             ;;
         kubectl)
-            run_kubectl_host "${host}" "${cmd}"
+            __fp_std_shell_backend_run_kubectl_host_ "${host}" "${cmd}"
             ;;
         winrm)
             winrm_run "${host}" "${cmd}"
+            ;;
+        chroot)
+            __fp_std_shell_backend_run_chroot_host_ "${host}" "${cmd}"
             ;;
         *)
             runtime_fail "unsupported transport: ${transport}"
@@ -105,26 +135,29 @@ run_host() {
     esac
 }
 
-rsync_host() {
+__fp_std_shell_backend_rsync_host_() {
     local host="$1"
     local flags="$2"
     local src="$3"
     local dest="$4"
-    local transport="$(host_transport "${host}")"
+    local transport="$(__fp_std_shell_backend_host_transport_ "${host}")"
     case "${transport}" in
         local)
-            rsync "${flags}" "${src}" "${dest}" '' '' '' '' '' '' '' ''
+            rsync_cli "${flags}" "${src}" "${dest}"
+            ;;
+        chroot)
+            __fp_std_shell_backend_rsync_chroot_host_ "${host}" "${flags}" "${src}" "${dest}"
             ;;
         *)
-            rsync_remote_host "${host}" "${flags}" "${src}" "${dest}"
+            __fp_std_shell_backend_rsync_remote_host_ "${host}" "${flags}" "${src}" "${dest}"
             ;;
     esac
 }
 
-ssh_target() {
+__fp_std_shell_backend_ssh_target_() {
     local host="$1"
-    local user="$(host_user "${host}")"
-    local address="$(host_address "${host}")"
+    local user="$(__fp_std_shell_backend_host_user_ "${host}")"
+    local address="$(__fp_std_shell_backend_host_address_ "${host}")"
     if [[ "${user}" != '' ]]; then
         printf '%s\n' "${user}@${address}"
     else
@@ -132,11 +165,11 @@ ssh_target() {
     fi
 }
 
-run_ssh_host() {
+__fp_std_shell_backend_run_ssh_host_() {
     local host="$1"
     local cmd="$2"
-    local target="$(ssh_target "${host}")"
-    local port="$(host_port "${host}")"
+    local target="$(__fp_std_shell_backend_ssh_target_ "${host}")"
+    local port="$(__fp_std_shell_backend_host_port_ "${host}")"
     if [[ "${port}" != '' ]]; then
         ssh_port "${port}" "${target}" "${cmd}"
     else
@@ -144,11 +177,11 @@ run_ssh_host() {
     fi
 }
 
-run_docker_host() {
+__fp_std_shell_backend_run_docker_host_() {
     local host="$1"
     local cmd="$2"
-    local container="$(host_container "${host}")"
-    local user="$(host_user "${host}")"
+    local container="$(__fp_std_shell_backend_host_container_ "${host}")"
+    local user="$(__fp_std_shell_backend_host_user_ "${host}")"
     if [[ "${user}" != '' ]]; then
         docker_exec_user "${user}" "${container}" 'sh' '-lc' "${cmd}"
     else
@@ -156,13 +189,13 @@ run_docker_host() {
     fi
 }
 
-run_kubectl_host() {
+__fp_std_shell_backend_run_kubectl_host_() {
     local host="$1"
     local cmd="$2"
-    local context="$(host_context "${host}")"
-    local namespace="$(host_namespace "${host}")"
-    local container="$(host_container "${host}")"
-    local pod="$(host_pod "${host}")"
+    local context="$(__fp_std_shell_backend_host_context_ "${host}")"
+    local namespace="$(__fp_std_shell_backend_host_namespace_ "${host}")"
+    local container="$(__fp_std_shell_backend_host_container_ "${host}")"
+    local pod="$(__fp_std_shell_backend_host_pod_ "${host}")"
     case "${context}" in
         )
             case "${namespace}" in
@@ -215,14 +248,26 @@ run_kubectl_host() {
     esac
 }
 
-rsync_remote_target() {
+__fp_std_shell_backend_run_chroot_host_() {
     local host="$1"
-    local address="$(host_address "${host}")"
+    local cmd="$2"
+    chroot_exec "$(__fp_std_shell_backend_host_chroot_directory_ "${host}")" 'sh' '-lc' "${cmd}"
+}
+
+__fp_std_shell_backend_chroot_path_() {
+    local host="$1"
+    local path="$2"
+    printf '%s\n' "$(__fp_std_shell_backend_host_chroot_directory_ "${host}")${path}"
+}
+
+__fp_std_shell_backend_rsync_remote_target_() {
+    local host="$1"
+    local address="$(__fp_std_shell_backend_host_address_ "${host}")"
     if [[ "${address}" == '' ]]; then
         runtime_fail "host is not rsync-reachable: missing address for ${host}"
         printf '%s\n' ''
     else
-        local user="$(host_user "${host}")"
+        local user="$(__fp_std_shell_backend_host_user_ "${host}")"
         if [[ "${user}" != '' ]]; then
             printf '%s\n' "${user}@${address}"
         else
@@ -231,21 +276,30 @@ rsync_remote_target() {
     fi
 }
 
-rsync_remote_host() {
+__fp_std_shell_backend_rsync_remote_host_() {
     local host="$1"
     local flags="$2"
     local src="$3"
     local dest="$4"
-    local remote="$(rsync_remote_target "${host}"):${dest}"
-    local port="$(host_port "${host}")"
+    local remote="$(__fp_std_shell_backend_rsync_remote_target_ "${host}"):${dest}"
+    local port="$(__fp_std_shell_backend_host_port_ "${host}")"
     if [[ "${port}" != '' ]]; then
-        rsync_shell "ssh -p ${port}" "${flags}" "${src}" "${remote}"
+        rsync_cli_shell "ssh -p ${port}" "${flags}" "${src}" "${remote}"
     else
-        rsync "${flags}" "${src}" "${remote}" '' '' '' '' '' '' '' ''
+        rsync_cli "${flags}" "${src}" "${remote}"
     fi
 }
 
-command_with_options() {
+__fp_std_shell_backend_rsync_chroot_host_() {
+    local host="$1"
+    local flags="$2"
+    local src="$3"
+    local dest="$4"
+    local target="$(__fp_std_shell_backend_chroot_path_ "${host}" "${dest}")"
+    rsync_cli "${flags}" "${src}" "${target}"
+}
+
+__fp_std_shell_backend_command_with_options_() {
     local command="$1"
     local cwd="$2"
     local sudo="$3"
@@ -264,32 +318,32 @@ command_with_options() {
     fi
 }
 
-process_ok() {
+__fp_std_shell_backend_process_ok_() {
     local command="$1"
-    ok "${command}"
+    __fp_std_shell_process_process_ok_ "${command}"
 }
 
-rsync_flag_string() {
+__fp_std_shell_backend_rsync_flag_string_() {
     local archive="$1"
     local compress="$2"
     local delete="$3"
     local checksum="$4"
     if [[ "${archive}" == 'true' ]]; then
         if [[ "${compress}" == 'true' ]]; then
-            rsync_flag_string_suffix '-az' "${delete}" "${checksum}"
+            __fp_std_shell_backend_rsync_flag_string_suffix_ '-az' "${delete}" "${checksum}"
         else
-            rsync_flag_string_suffix '-a' "${delete}" "${checksum}"
+            __fp_std_shell_backend_rsync_flag_string_suffix_ '-a' "${delete}" "${checksum}"
         fi
     else
         if [[ "${compress}" == 'true' ]]; then
-            rsync_flag_string_suffix '-z' "${delete}" "${checksum}"
+            __fp_std_shell_backend_rsync_flag_string_suffix_ '-z' "${delete}" "${checksum}"
         else
-            rsync_flag_string_suffix '' "${delete}" "${checksum}"
+            __fp_std_shell_backend_rsync_flag_string_suffix_ '' "${delete}" "${checksum}"
         fi
     fi
 }
 
-rsync_flag_string_suffix() {
+__fp_std_shell_backend_rsync_flag_string_suffix_() {
     local base="$1"
     local delete="$2"
     local checksum="$3"
@@ -320,7 +374,7 @@ rsync_flag_string_suffix() {
     fi
 }
 
-should_apply() {
+__fp_std_shell_backend_should_apply_() {
     local only_if="$1"
     local unless="$2"
     local creates="$3"
@@ -330,7 +384,7 @@ should_apply() {
         fi
     fi
     if [[ "${unless}" != '' ]]; then
-        if process_ok "${unless}"; then
+        if __fp_std_shell_backend_process_ok_ "${unless}"; then
         fi
     fi
     if [[ "${creates}" != '' ]]; then
@@ -344,7 +398,7 @@ should_apply() {
     printf '%s\n' 'true'
 }
 
-shell_run() {
+__fp_std_shell_backend_shell_run_() {
     local host="$1"
     local command="$2"
     local only_if="$3"
@@ -352,13 +406,13 @@ shell_run() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        run_host "${host}" "${command}"
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        __fp_std_shell_backend_run_host_ "${host}" "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_rsync() {
+__fp_std_shell_backend_shell_rsync_() {
     local host="$1"
     local flags="$2"
     local src="$3"
@@ -368,75 +422,13 @@ shell_rsync() {
     local creates="$7"
     local removes="$8"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        rsync_host "${host}" "${flags}" "${src}" "${dest}"
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        __fp_std_shell_backend_rsync_host_ "${host}" "${flags}" "${src}" "${dest}"
         runtime_set_changed 'true'
     fi
 }
 
-shell() {
-    local command="$1"
-    local hosts="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    local sudo="$7"
-    local cwd="$8"
-    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-rsync() {
-    local src="$1"
-    local dest="$2"
-    local hosts="$3"
-    local archive="$4"
-    local compress="$5"
-    local delete="$6"
-    local checksum="$7"
-    local only_if="$8"
-    local unless="$9"
-    local creates="$10"
-    local removes="$11"
-    local flags="$(rsync_flag_string "${archive}" "${compress}" "${delete}" "${checksum}")"
-    shell_rsync "${hosts}" "${flags}" "${src}" "${dest}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-restart() {
-    local name="$1"
-    local hosts="$2"
-    local sudo="$3"
-    local only_if="$4"
-    local unless="$5"
-    local creates="$6"
-    local removes="$7"
-    shell "systemctl restart ${name}" "${hosts}" "${only_if}" "${unless}" "${creates}" "${removes}" "${sudo}" ''
-}
-
-transport() {
-    local host="$1"
-    runtime_host_transport "${host}"
-}
-
-address() {
-    local host="$1"
-    runtime_host_address "${host}"
-}
-
-user() {
-    local host="$1"
-    runtime_host_user "${host}"
-}
-
-port() {
-    local host="$1"
-    runtime_host_port "${host}"
-}
-
-ok() {
+__fp_std_shell_process_process_ok_() {
     local command="$1"
     shell_status "${command}"
 }
@@ -444,8 +436,8 @@ ok() {
 sync_and_restart() {
     local host="$1"
     local service="$2"
-    rsync './dist/' '/srv/fp-service/dist/' "${host}" '' '' 'true' '' '' '' '' ''
-    restart "${service}" "${host}" '' '' '' '' ''
+    __fp_std_ops_files_rsync_ './dist/' '/srv/fp-service/dist/' "${host}" 'true' 'true' 'true' '' '' '' '' ''
+    __fp_std_ops_services_restart_ "${service}" "${host}" 'true' '' '' '' ''
 }
 
 sync_and_restart 'web-1' 'fp-service'

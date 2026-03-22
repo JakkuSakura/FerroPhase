@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::shell::{Host, Inventory};
+use std::hosts::{Host, Inventory};
 
 const fn inventory() -> Inventory {
     Inventory {

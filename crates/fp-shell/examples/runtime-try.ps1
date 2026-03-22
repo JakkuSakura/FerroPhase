@@ -11,12 +11,19 @@ function Invoke-FpRuntimeValidation {
 
 Invoke-FpRuntimeValidation
 
-function run_local_host {
+function __fp_std_ops_server_shell_local_ {
+    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
+    $command = $(__fp_std_shell_backend_command_with_options_ $command $cwd $sudo)
+    __fp_std_shell_backend_shell_run_local_ $hosts $command $only_if $unless $creates $removes
+    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
+}
+
+function __fp_std_shell_backend_run_local_host_ {
     param([string]$cmd)
     Write-Output $(Invoke-Expression $cmd)
 }
 
-function command_with_options {
+function __fp_std_shell_backend_command_with_options_ {
     param([string]$command, [string]$cwd, [string]$sudo)
     if ($cwd -ne '') {
         if ($sudo) {
@@ -33,19 +40,19 @@ function command_with_options {
     }
 }
 
-function process_ok {
+function __fp_std_shell_backend_process_ok_ {
     param([string]$command)
-    Write-Output $(ok $command)
+    Write-Output $(__fp_std_shell_process_process_ok_ $command)
 }
 
-function should_apply {
+function __fp_std_shell_backend_should_apply_ {
     param([string]$only_if, [string]$unless, [string]$creates, [string]$removes)
     if ($only_if -ne '') {
         if ($true) {
         }
     }
     if ($unless -ne '') {
-        if (process_ok $unless) {
+        if (__fp_std_shell_backend_process_ok_ $unless) {
         }
     }
     if ($creates -ne '') {
@@ -59,23 +66,16 @@ function should_apply {
     Write-Output $true
 }
 
-function shell_run_local {
+function __fp_std_shell_backend_shell_run_local_ {
     param([string]$_host, [string]$command, [string]$only_if, [string]$unless, [string]$creates, [string]$removes)
     $script:fpLastChanged = $false
-    if (should_apply $only_if $unless $creates $removes) {
-        run_local_host $command
+    if (__fp_std_shell_backend_should_apply_ $only_if $unless $creates $removes) {
+        __fp_std_shell_backend_run_local_host_ $command
         Write-Output $(runtime_set_changed $true)
     }
 }
 
-function shell_local {
-    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
-    $command = $(command_with_options $command $cwd $sudo)
-    shell_run_local $hosts $command $only_if $unless $creates $removes
-    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
-}
-
-function ok {
+function __fp_std_shell_process_process_ok_ {
     param([string]$command)
     Write-Output $((& { pwsh -Command $command; $LASTEXITCODE -eq 0 }))
 }
@@ -86,28 +86,28 @@ try {
     $__fpTrySuccess3 = $false
     $__fpTryHandled4 = $false
     try {
-        shell_local 'echo deploy body' 'localhost' '' '' '' '' '' ''
+        __fp_std_ops_server_shell_local_ 'echo deploy body' 'localhost' '' '' '' '' '' ''
         $__fpTrySuccess3 = $true
     } catch {
         if (-not $__fpTryHandled4) {
             throw
         }
     } finally {
-        shell_local 'echo cleanup' 'localhost' '' '' '' '' '' ''
+        __fp_std_ops_server_shell_local_ 'echo cleanup' 'localhost' '' '' '' '' '' ''
     }
     $__fpTrySuccess1 = $true
 } catch {
     if (-not $__fpTryHandled2) {
         $err = $_
-        shell_local "echo deploy failed=$err" 'localhost' '' '' '' '' '' ''
+        __fp_std_ops_server_shell_local_ "echo deploy failed=$err" 'localhost' '' '' '' '' '' ''
         $__fpTryHandled2 = $true
     }
     if (-not $__fpTryHandled2) {
         throw
     }
 } finally {
-    shell_local 'echo deploy finally' 'localhost' '' '' '' '' '' ''
+    __fp_std_ops_server_shell_local_ 'echo deploy finally' 'localhost' '' '' '' '' '' ''
 }
 if ($__fpTrySuccess1) {
-    shell_local 'echo deploy success' 'localhost' '' '' '' '' '' ''
+    __fp_std_ops_server_shell_local_ 'echo deploy success' 'localhost' '' '' '' '' '' ''
 }

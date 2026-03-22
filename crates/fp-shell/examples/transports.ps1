@@ -4,11 +4,6 @@ $ErrorActionPreference = 'Stop'
 $script:fpLastChanged = $false
 
 $script:FpHosts = @{}
-$script:FpHosts['localhost'] = @{ transport = 'local' }
-$script:FpHosts['ssh-web'] = @{ transport = 'ssh'; address = '10.0.0.11'; user = 'deploy'; port = 22 }
-$script:FpHosts['windows-admin'] = @{ transport = 'winrm'; address = '10.0.0.21'; user = 'Administrator'; port = 5985; password = 'change-me'; scheme = 'http' }
-$script:FpHosts['k8s-api'] = @{ transport = 'kubectl'; container = 'api'; pod = 'api-7f9f6'; namespace = 'prod'; context = 'prod-cluster' }
-$script:FpHosts['docker-app'] = @{ transport = 'docker'; user = 'root'; container = 'app' }
 function Invoke-FpRuntimeValidation {
     if (-not (Get-Command -Name 'Invoke-Expression' -ErrorAction SilentlyContinue)) { throw 'missing required command: Invoke-Expression' }
     if (-not (Get-Command -Name 'New-PSSession' -ErrorAction SilentlyContinue)) { throw 'missing required command: New-PSSession' }
@@ -20,50 +15,253 @@ function Invoke-FpRuntimeValidation {
 
 Invoke-FpRuntimeValidation
 
-function host_address {
+function __fp_std_hosts_address_ {
     param([string]$host)
-    Write-Output $($script:FpHosts[$host].address)
+    switch -Exact ($host) {
+        'localhost' {
+            Write-Output ''
+        }
+        'ssh-web' {
+            Write-Output '10.0.0.11'
+        }
+        'docker-app' {
+            Write-Output ''
+        }
+        'k8s-api' {
+            Write-Output ''
+        }
+        'windows-admin' {
+            Write-Output '10.0.0.21'
+        }
+        default {
+            Write-Output ''
+        }
+    }
 }
 
-function host_user {
+function __fp_std_hosts_user_ {
     param([string]$host)
-    Write-Output $($script:FpHosts[$host].user)
+    switch -Exact ($host) {
+        'localhost' {
+            Write-Output ''
+        }
+        'ssh-web' {
+            Write-Output 'deploy'
+        }
+        'docker-app' {
+            Write-Output 'root'
+        }
+        'k8s-api' {
+            Write-Output ''
+        }
+        'windows-admin' {
+            Write-Output 'Administrator'
+        }
+        default {
+            Write-Output ''
+        }
+    }
 }
 
-function host_port {
+function __fp_std_hosts_port_ {
     param([string]$host)
-    Write-Output $($script:FpHosts[$host].port)
+    switch -Exact ($host) {
+        'localhost' {
+            Write-Output '0'
+        }
+        'ssh-web' {
+            Write-Output '22'
+        }
+        'docker-app' {
+            Write-Output '0'
+        }
+        'k8s-api' {
+            Write-Output '0'
+        }
+        'windows-admin' {
+            Write-Output '5985'
+        }
+        default {
+            Write-Output ''
+        }
+    }
 }
 
-function host_container {
+function __fp_std_hosts_container_ {
     param([string]$host)
-    Write-Output $($script:FpHosts[$host].container)
+    switch -Exact ($host) {
+        'localhost' {
+            Write-Output ''
+        }
+        'ssh-web' {
+            Write-Output ''
+        }
+        'docker-app' {
+            Write-Output 'app'
+        }
+        'k8s-api' {
+            Write-Output 'api'
+        }
+        'windows-admin' {
+            Write-Output ''
+        }
+        default {
+            Write-Output ''
+        }
+    }
 }
 
-function host_pod {
+function __fp_std_hosts_pod_ {
     param([string]$host)
-    Write-Output $($script:FpHosts[$host].pod)
+    switch -Exact ($host) {
+        'localhost' {
+            Write-Output ''
+        }
+        'ssh-web' {
+            Write-Output ''
+        }
+        'docker-app' {
+            Write-Output ''
+        }
+        'k8s-api' {
+            Write-Output 'api-7f9f6'
+        }
+        'windows-admin' {
+            Write-Output ''
+        }
+        default {
+            Write-Output ''
+        }
+    }
 }
 
-function host_namespace {
+function __fp_std_hosts_namespace_ {
     param([string]$host)
-    Write-Output $($script:FpHosts[$host].namespace)
+    switch -Exact ($host) {
+        'localhost' {
+            Write-Output ''
+        }
+        'ssh-web' {
+            Write-Output ''
+        }
+        'docker-app' {
+            Write-Output ''
+        }
+        'k8s-api' {
+            Write-Output 'prod'
+        }
+        'windows-admin' {
+            Write-Output ''
+        }
+        default {
+            Write-Output ''
+        }
+    }
 }
 
-function host_context {
+function __fp_std_hosts_context_ {
     param([string]$host)
-    Write-Output $($script:FpHosts[$host].context)
+    switch -Exact ($host) {
+        'localhost' {
+            Write-Output ''
+        }
+        'ssh-web' {
+            Write-Output ''
+        }
+        'docker-app' {
+            Write-Output ''
+        }
+        'k8s-api' {
+            Write-Output 'prod-cluster'
+        }
+        'windows-admin' {
+            Write-Output ''
+        }
+        default {
+            Write-Output ''
+        }
+    }
 }
 
-function run_local_host {
+function __fp_std_ops_server_shell_local_ {
+    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
+    $command = $(__fp_std_shell_backend_command_with_options_ $command $cwd $sudo)
+    __fp_std_shell_backend_shell_run_local_ $hosts $command $only_if $unless $creates $removes
+    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
+}
+
+function __fp_std_ops_server_shell_ssh_ {
+    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
+    $command = $(__fp_std_shell_backend_command_with_options_ $command $cwd $sudo)
+    __fp_std_shell_backend_shell_run_ssh_ $hosts $command $only_if $unless $creates $removes
+    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
+}
+
+function __fp_std_ops_server_shell_docker_ {
+    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
+    $command = $(__fp_std_shell_backend_command_with_options_ $command $cwd $sudo)
+    __fp_std_shell_backend_shell_run_docker_ $hosts $command $only_if $unless $creates $removes
+    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
+}
+
+function __fp_std_ops_server_shell_kubectl_ {
+    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
+    $command = $(__fp_std_shell_backend_command_with_options_ $command $cwd $sudo)
+    __fp_std_shell_backend_shell_run_kubectl_ $hosts $command $only_if $unless $creates $removes
+    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
+}
+
+function __fp_std_ops_server_shell_winrm_ {
+    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
+    $command = $(__fp_std_shell_backend_command_with_options_ $command $cwd $sudo)
+    __fp_std_shell_backend_shell_run_winrm_ $hosts $command $only_if $unless $creates $removes
+    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
+}
+
+function __fp_std_shell_backend_host_address_ {
+    param([string]$host)
+    Write-Output $(__fp_std_hosts_address_ $host)
+}
+
+function __fp_std_shell_backend_host_user_ {
+    param([string]$host)
+    Write-Output $(__fp_std_hosts_user_ $host)
+}
+
+function __fp_std_shell_backend_host_port_ {
+    param([string]$host)
+    Write-Output $(__fp_std_hosts_port_ $host)
+}
+
+function __fp_std_shell_backend_host_container_ {
+    param([string]$host)
+    Write-Output $(__fp_std_hosts_container_ $host)
+}
+
+function __fp_std_shell_backend_host_pod_ {
+    param([string]$host)
+    Write-Output $(__fp_std_hosts_pod_ $host)
+}
+
+function __fp_std_shell_backend_host_namespace_ {
+    param([string]$host)
+    Write-Output $(__fp_std_hosts_namespace_ $host)
+}
+
+function __fp_std_shell_backend_host_context_ {
+    param([string]$host)
+    Write-Output $(__fp_std_hosts_context_ $host)
+}
+
+function __fp_std_shell_backend_run_local_host_ {
     param([string]$cmd)
     Write-Output $(Invoke-Expression $cmd)
 }
 
-function ssh_target {
+function __fp_std_shell_backend_ssh_target_ {
     param([string]$host)
-    $user = $(host_user $host)
-    $address = $(host_address $host)
+    $user = $(__fp_std_shell_backend_host_user_ $host)
+    $address = $(__fp_std_shell_backend_host_address_ $host)
     if ($user -ne '') {
         Write-Output "$user@$address"
     } else {
@@ -71,10 +269,10 @@ function ssh_target {
     }
 }
 
-function run_ssh_host {
+function __fp_std_shell_backend_run_ssh_host_ {
     param([string]$host, [string]$cmd)
-    $target = $(ssh_target $host)
-    $port = $(host_port $host)
+    $target = $(__fp_std_shell_backend_ssh_target_ $host)
+    $port = $(__fp_std_shell_backend_host_port_ $host)
     if ($port -ne '') {
         Write-Output $(ssh -p $port $target $cmd)
     } else {
@@ -82,10 +280,10 @@ function run_ssh_host {
     }
 }
 
-function run_docker_host {
+function __fp_std_shell_backend_run_docker_host_ {
     param([string]$host, [string]$cmd)
-    $container = $(host_container $host)
-    $user = $(host_user $host)
+    $container = $(__fp_std_shell_backend_host_container_ $host)
+    $user = $(__fp_std_shell_backend_host_user_ $host)
     if ($user -ne '') {
         Write-Output $(docker exec --user $user $container 'sh' '-lc' $cmd)
     } else {
@@ -93,12 +291,12 @@ function run_docker_host {
     }
 }
 
-function run_kubectl_host {
+function __fp_std_shell_backend_run_kubectl_host_ {
     param([string]$host, [string]$cmd)
-    $context = $(host_context $host)
-    $namespace = $(host_namespace $host)
-    $container = $(host_container $host)
-    $pod = $(host_pod $host)
+    $context = $(__fp_std_shell_backend_host_context_ $host)
+    $namespace = $(__fp_std_shell_backend_host_namespace_ $host)
+    $container = $(__fp_std_shell_backend_host_container_ $host)
+    $pod = $(__fp_std_shell_backend_host_pod_ $host)
     switch -Exact ($context) {
         '' {
             switch -Exact ($namespace) {
@@ -151,7 +349,7 @@ function run_kubectl_host {
     }
 }
 
-function command_with_options {
+function __fp_std_shell_backend_command_with_options_ {
     param([string]$command, [string]$cwd, [string]$sudo)
     if ($cwd -ne '') {
         if ($sudo) {
@@ -168,19 +366,19 @@ function command_with_options {
     }
 }
 
-function process_ok {
+function __fp_std_shell_backend_process_ok_ {
     param([string]$command)
-    Write-Output $(ok $command)
+    Write-Output $(__fp_std_shell_process_process_ok_ $command)
 }
 
-function should_apply {
+function __fp_std_shell_backend_should_apply_ {
     param([string]$only_if, [string]$unless, [string]$creates, [string]$removes)
     if ($only_if -ne '') {
         if ($true) {
         }
     }
     if ($unless -ne '') {
-        if (process_ok $unless) {
+        if (__fp_std_shell_backend_process_ok_ $unless) {
         }
     }
     if ($creates -ne '') {
@@ -194,46 +392,46 @@ function should_apply {
     Write-Output $true
 }
 
-function shell_run_local {
+function __fp_std_shell_backend_shell_run_local_ {
     param([string]$_host, [string]$command, [string]$only_if, [string]$unless, [string]$creates, [string]$removes)
     $script:fpLastChanged = $false
-    if (should_apply $only_if $unless $creates $removes) {
-        run_local_host $command
+    if (__fp_std_shell_backend_should_apply_ $only_if $unless $creates $removes) {
+        __fp_std_shell_backend_run_local_host_ $command
         Write-Output $(runtime_set_changed $true)
     }
 }
 
-function shell_run_ssh {
+function __fp_std_shell_backend_shell_run_ssh_ {
     param([string]$host, [string]$command, [string]$only_if, [string]$unless, [string]$creates, [string]$removes)
     $script:fpLastChanged = $false
-    if (should_apply $only_if $unless $creates $removes) {
-        run_ssh_host $host $command
+    if (__fp_std_shell_backend_should_apply_ $only_if $unless $creates $removes) {
+        __fp_std_shell_backend_run_ssh_host_ $host $command
         Write-Output $(runtime_set_changed $true)
     }
 }
 
-function shell_run_docker {
+function __fp_std_shell_backend_shell_run_docker_ {
     param([string]$host, [string]$command, [string]$only_if, [string]$unless, [string]$creates, [string]$removes)
     $script:fpLastChanged = $false
-    if (should_apply $only_if $unless $creates $removes) {
-        run_docker_host $host $command
+    if (__fp_std_shell_backend_should_apply_ $only_if $unless $creates $removes) {
+        __fp_std_shell_backend_run_docker_host_ $host $command
         Write-Output $(runtime_set_changed $true)
     }
 }
 
-function shell_run_kubectl {
+function __fp_std_shell_backend_shell_run_kubectl_ {
     param([string]$host, [string]$command, [string]$only_if, [string]$unless, [string]$creates, [string]$removes)
     $script:fpLastChanged = $false
-    if (should_apply $only_if $unless $creates $removes) {
-        run_kubectl_host $host $command
+    if (__fp_std_shell_backend_should_apply_ $only_if $unless $creates $removes) {
+        __fp_std_shell_backend_run_kubectl_host_ $host $command
         Write-Output $(runtime_set_changed $true)
     }
 }
 
-function shell_run_winrm {
+function __fp_std_shell_backend_shell_run_winrm_ {
     param([string]$host, [string]$command, [string]$only_if, [string]$unless, [string]$creates, [string]$removes)
     $script:fpLastChanged = $false
-    if (should_apply $only_if $unless $creates $removes) {
+    if (__fp_std_shell_backend_should_apply_ $only_if $unless $creates $removes) {
         $__fpHost = $host
         $__fpEntry = $script:FpHosts[$__fpHost]
         $__fpSessionArgs = @{ ComputerName = $__fpEntry.address }
@@ -257,63 +455,13 @@ function shell_run_winrm {
     }
 }
 
-function shell_local {
-    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
-    $command = $(command_with_options $command $cwd $sudo)
-    shell_run_local $hosts $command $only_if $unless $creates $removes
-    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
-}
-
-function shell_ssh {
-    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
-    $command = $(command_with_options $command $cwd $sudo)
-    shell_run_ssh $hosts $command $only_if $unless $creates $removes
-    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
-}
-
-function shell_docker {
-    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
-    $command = $(command_with_options $command $cwd $sudo)
-    shell_run_docker $hosts $command $only_if $unless $creates $removes
-    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
-}
-
-function shell_kubectl {
-    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
-    $command = $(command_with_options $command $cwd $sudo)
-    shell_run_kubectl $hosts $command $only_if $unless $creates $removes
-    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
-}
-
-function shell_winrm {
-    param([string]$command, [string]$hosts, [string]$only_if, [string]$unless, [string]$creates, [string]$removes, [string]$sudo, [string]$cwd)
-    $command = $(command_with_options $command $cwd $sudo)
-    shell_run_winrm $hosts $command $only_if $unless $creates $removes
-    Write-Output $(if ($script:fpLastChanged) { 'true' } else { 'false' })
-}
-
-function address {
-    param([string]$host)
-    Write-Output $($script:FpHosts[$host].address)
-}
-
-function user {
-    param([string]$host)
-    Write-Output $($script:FpHosts[$host].user)
-}
-
-function port {
-    param([string]$host)
-    Write-Output $($script:FpHosts[$host].port)
-}
-
-function ok {
+function __fp_std_shell_process_process_ok_ {
     param([string]$command)
     Write-Output $((& { pwsh -Command $command; $LASTEXITCODE -eq 0 }))
 }
 
-shell_local 'echo local hello' 'localhost' '' '' '' '' '' ''
-shell_ssh 'echo ssh hello' 'ssh-web' '' '' '' '' '' ''
-shell_docker 'echo docker hello' 'docker-app' '' '' '' '' '' ''
-shell_kubectl 'echo kubectl hello' 'k8s-api' '' '' '' '' '' ''
-shell_winrm 'Write-Host winrm hello' 'windows-admin' '' '' '' '' '' ''
+__fp_std_ops_server_shell_local_ 'echo local hello' 'localhost' '' '' '' '' '' ''
+__fp_std_ops_server_shell_ssh_ 'echo ssh hello' 'ssh-web' '' '' '' '' '' ''
+__fp_std_ops_server_shell_docker_ 'echo docker hello' 'docker-app' '' '' '' '' '' ''
+__fp_std_ops_server_shell_kubectl_ 'echo kubectl hello' 'k8s-api' '' '' '' '' '' ''
+__fp_std_ops_server_shell_winrm_ 'Write-Host winrm hello' 'windows-admin' '' '' '' '' '' ''

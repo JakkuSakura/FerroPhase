@@ -1,7 +1,7 @@
 const fn restart_service(host: str, service: str) {
     with host {
-        std::server::shell(f"echo restarting service={service} on host={host}");
-        std::server::shell(f"sudo systemctl restart {service}");
+        std::ops::server::shell(f"echo restarting service={service} on host={host}");
+        std::ops::server::shell(f"sudo systemctl restart {service}");
     }
 }
 
@@ -10,8 +10,8 @@ const fn main() {
 
     for host in ["web-1", "web-2"] {
         with host {
-            std::server::shell(f"echo loop host={host}");
-            std::server::shell("hostname");
+            std::ops::server::shell(f"echo loop host={host}");
+            std::ops::server::shell("hostname");
         }
         restart_service(host, service);
     }

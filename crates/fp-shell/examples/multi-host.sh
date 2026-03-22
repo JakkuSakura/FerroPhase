@@ -18,86 +18,88 @@ declare -A FP_WINRM_USER=()
 declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
+declare -A FP_CHROOT_DIRECTORY=()
 
-FP_HOST_TRANSPORT['web-2']='ssh'
-FP_SSH_ADDRESS['web-2']='10.0.0.12'
-FP_WINRM_ADDRESS['web-2']='10.0.0.12'
-FP_SSH_USER['web-2']='deploy'
-FP_DOCKER_USER['web-2']='deploy'
-FP_WINRM_USER['web-2']='deploy'
-FP_HOST_TRANSPORT['web-1']='ssh'
-FP_SSH_ADDRESS['web-1']='10.0.0.11'
-FP_WINRM_ADDRESS['web-1']='10.0.0.11'
-FP_SSH_USER['web-1']='deploy'
-FP_DOCKER_USER['web-1']='deploy'
-FP_WINRM_USER['web-1']='deploy'
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
-host_transport() {
-    local host="$1"
-    runtime_host_transport "${host}"
+__fp_std_ops_server_shell_() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(__fp_std_shell_backend_command_with_options_ "${command}" "${cwd}" "${sudo}")"
+    __fp_std_shell_backend_shell_run_ "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
 }
 
-host_address() {
+__fp_std_shell_backend_host_transport_() {
     local host="$1"
-    runtime_host_address "${host}"
 }
 
-host_user() {
+__fp_std_shell_backend_host_address_() {
     local host="$1"
-    runtime_host_user "${host}"
 }
 
-host_port() {
+__fp_std_shell_backend_host_user_() {
     local host="$1"
-    runtime_host_port "${host}"
 }
 
-host_container() {
+__fp_std_shell_backend_host_port_() {
     local host="$1"
-    runtime_host_container "${host}"
 }
 
-host_pod() {
+__fp_std_shell_backend_host_container_() {
     local host="$1"
-    runtime_host_pod "${host}"
 }
 
-host_namespace() {
+__fp_std_shell_backend_host_pod_() {
     local host="$1"
-    runtime_host_namespace "${host}"
 }
 
-host_context() {
+__fp_std_shell_backend_host_namespace_() {
     local host="$1"
-    runtime_host_context "${host}"
 }
 
-run_local_host() {
+__fp_std_shell_backend_host_context_() {
+    local host="$1"
+}
+
+__fp_std_shell_backend_host_chroot_directory_() {
+    local host="$1"
+}
+
+__fp_std_shell_backend_run_local_host_() {
     local cmd="$1"
     invoke_expression "${cmd}"
 }
 
-run_host() {
+__fp_std_shell_backend_run_host_() {
     local host="$1"
     local cmd="$2"
-    local transport="$(host_transport "${host}")"
+    local transport="$(__fp_std_shell_backend_host_transport_ "${host}")"
     case "${transport}" in
         local)
-            run_local_host "${cmd}"
+            __fp_std_shell_backend_run_local_host_ "${cmd}"
             ;;
         ssh)
-            run_ssh_host "${host}" "${cmd}"
+            __fp_std_shell_backend_run_ssh_host_ "${host}" "${cmd}"
             ;;
         docker)
-            run_docker_host "${host}" "${cmd}"
+            __fp_std_shell_backend_run_docker_host_ "${host}" "${cmd}"
             ;;
         kubectl)
-            run_kubectl_host "${host}" "${cmd}"
+            __fp_std_shell_backend_run_kubectl_host_ "${host}" "${cmd}"
             ;;
         winrm)
             winrm_run "${host}" "${cmd}"
+            ;;
+        chroot)
+            __fp_std_shell_backend_run_chroot_host_ "${host}" "${cmd}"
             ;;
         *)
             runtime_fail "unsupported transport: ${transport}"
@@ -105,10 +107,10 @@ run_host() {
     esac
 }
 
-ssh_target() {
+__fp_std_shell_backend_ssh_target_() {
     local host="$1"
-    local user="$(host_user "${host}")"
-    local address="$(host_address "${host}")"
+    local user="$(__fp_std_shell_backend_host_user_ "${host}")"
+    local address="$(__fp_std_shell_backend_host_address_ "${host}")"
     if [[ "${user}" != '' ]]; then
         printf '%s\n' "${user}@${address}"
     else
@@ -116,11 +118,11 @@ ssh_target() {
     fi
 }
 
-run_ssh_host() {
+__fp_std_shell_backend_run_ssh_host_() {
     local host="$1"
     local cmd="$2"
-    local target="$(ssh_target "${host}")"
-    local port="$(host_port "${host}")"
+    local target="$(__fp_std_shell_backend_ssh_target_ "${host}")"
+    local port="$(__fp_std_shell_backend_host_port_ "${host}")"
     if [[ "${port}" != '' ]]; then
         ssh_port "${port}" "${target}" "${cmd}"
     else
@@ -128,11 +130,11 @@ run_ssh_host() {
     fi
 }
 
-run_docker_host() {
+__fp_std_shell_backend_run_docker_host_() {
     local host="$1"
     local cmd="$2"
-    local container="$(host_container "${host}")"
-    local user="$(host_user "${host}")"
+    local container="$(__fp_std_shell_backend_host_container_ "${host}")"
+    local user="$(__fp_std_shell_backend_host_user_ "${host}")"
     if [[ "${user}" != '' ]]; then
         docker_exec_user "${user}" "${container}" 'sh' '-lc' "${cmd}"
     else
@@ -140,13 +142,13 @@ run_docker_host() {
     fi
 }
 
-run_kubectl_host() {
+__fp_std_shell_backend_run_kubectl_host_() {
     local host="$1"
     local cmd="$2"
-    local context="$(host_context "${host}")"
-    local namespace="$(host_namespace "${host}")"
-    local container="$(host_container "${host}")"
-    local pod="$(host_pod "${host}")"
+    local context="$(__fp_std_shell_backend_host_context_ "${host}")"
+    local namespace="$(__fp_std_shell_backend_host_namespace_ "${host}")"
+    local container="$(__fp_std_shell_backend_host_container_ "${host}")"
+    local pod="$(__fp_std_shell_backend_host_pod_ "${host}")"
     case "${context}" in
         )
             case "${namespace}" in
@@ -199,7 +201,13 @@ run_kubectl_host() {
     esac
 }
 
-command_with_options() {
+__fp_std_shell_backend_run_chroot_host_() {
+    local host="$1"
+    local cmd="$2"
+    chroot_exec "$(__fp_std_shell_backend_host_chroot_directory_ "${host}")" 'sh' '-lc' "${cmd}"
+}
+
+__fp_std_shell_backend_command_with_options_() {
     local command="$1"
     local cwd="$2"
     local sudo="$3"
@@ -218,12 +226,12 @@ command_with_options() {
     fi
 }
 
-process_ok() {
+__fp_std_shell_backend_process_ok_() {
     local command="$1"
-    ok "${command}"
+    __fp_std_shell_process_process_ok_ "${command}"
 }
 
-should_apply() {
+__fp_std_shell_backend_should_apply_() {
     local only_if="$1"
     local unless="$2"
     local creates="$3"
@@ -233,7 +241,7 @@ should_apply() {
         fi
     fi
     if [[ "${unless}" != '' ]]; then
-        if process_ok "${unless}"; then
+        if __fp_std_shell_backend_process_ok_ "${unless}"; then
         fi
     fi
     if [[ "${creates}" != '' ]]; then
@@ -247,7 +255,7 @@ should_apply() {
     printf '%s\n' 'true'
 }
 
-shell_run() {
+__fp_std_shell_backend_shell_run_() {
     local host="$1"
     local command="$2"
     local only_if="$3"
@@ -255,82 +263,20 @@ shell_run() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        run_host "${host}" "${command}"
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        __fp_std_shell_backend_run_host_ "${host}" "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_run_ssh() {
-    local host="$1"
-    local command="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        run_ssh_host "${host}" "${command}"
-        runtime_set_changed 'true'
-    fi
-}
-
-shell() {
-    local command="$1"
-    local hosts="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    local sudo="$7"
-    local cwd="$8"
-    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-shell_ssh() {
-    local command="$1"
-    local hosts="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    local sudo="$7"
-    local cwd="$8"
-    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run_ssh "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-transport() {
-    local host="$1"
-    runtime_host_transport "${host}"
-}
-
-address() {
-    local host="$1"
-    runtime_host_address "${host}"
-}
-
-user() {
-    local host="$1"
-    runtime_host_user "${host}"
-}
-
-port() {
-    local host="$1"
-    runtime_host_port "${host}"
-}
-
-ok() {
+__fp_std_shell_process_process_ok_() {
     local command="$1"
     shell_status "${command}"
 }
 
-shell_ssh 'uname -a' 'web-1' '' '' '' '' '' ''
-shell_ssh 'sudo systemctl status fp-service' 'web-1' '' '' '' '' '' ''
-shell_ssh 'uname -a' 'web-2' '' '' '' '' '' ''
-shell_ssh 'sudo systemctl status fp-service' 'web-2' '' '' '' '' '' ''
-shell 'uname -a' 'web-3' '' '' '' '' '' ''
-shell 'sudo systemctl status fp-service' 'web-3' '' '' '' '' '' ''
+__fp_std_ops_server_shell_ 'uname -a' 'web-1' '' '' '' '' '' ''
+__fp_std_ops_server_shell_ 'sudo systemctl status fp-service' 'web-1' '' '' '' '' '' ''
+__fp_std_ops_server_shell_ 'uname -a' 'web-2' '' '' '' '' '' ''
+__fp_std_ops_server_shell_ 'sudo systemctl status fp-service' 'web-2' '' '' '' '' '' ''
+__fp_std_ops_server_shell_ 'uname -a' 'web-3' '' '' '' '' '' ''
+__fp_std_ops_server_shell_ 'sudo systemctl status fp-service' 'web-3' '' '' '' '' '' ''

@@ -4,7 +4,7 @@ Compile a Ferro shell program to Bash:
 
 ```bash
 cargo run -p fp-shell -- compile crates/fp-shell/examples/transports.fp \
-  --inventory crates/fp-shell/examples/transports.inventory.toml \
+  --inventory crates/fp-shell/examples/transports.inventory.fp \
   --target bash
 ```
 
@@ -12,29 +12,18 @@ Compile the same program to PowerShell:
 
 ```bash
 cargo run -p fp-shell -- compile crates/fp-shell/examples/transports.fp \
-  --inventory crates/fp-shell/examples/transports.inventory.toml \
+  --inventory crates/fp-shell/examples/transports.inventory.fp \
   --target powershell
 ```
 
-Compile using a Ferro inventory instead of TOML:
-
-```bash
-cargo run -p fp-shell -- compile crates/fp-shell/examples/transports.fp \
-  --inventory crates/fp-shell/examples/transports.inventory.fp \
-  --target bash
-```
-
-Inventory is transport-driven only.
-
-You can also express inventory as Ferro source in a `.fp` file by defining
-`const fn inventory() -> Inventory` and returning a struct whose serialized shape
-matches the TOML document.
+Inventory is expressed as Ferro source under `std::hosts` by defining
+`const fn inventory() -> Inventory`.
 
 Minimal sketch:
 
 ```fp
 use std::collections::HashMap;
-use std::shell::{Host, Inventory};
+use std::hosts::{Host, Inventory};
 
 const fn inventory() -> Inventory {
     Inventory {
@@ -47,14 +36,16 @@ const fn inventory() -> Inventory {
 }
 ```
 
-For `.fp` inventory, empty strings and `0` are normalized as absent optional
-fields during loading.
-
 - `local` runs on the machine executing the generated script.
 - `ssh` uses `ssh` and `scp` in Bash, and `ssh` and `scp` in PowerShell.
 - `docker` uses `docker exec` and `docker cp`.
 - `kubectl` uses `kubectl exec` and `kubectl cp`.
 - `winrm` uses local `pwsh` remoting in Bash and `New-PSSession` in PowerShell.
+
+Pyinfra-style helpers now live under:
+
+- `std::facts::server`, `std::facts::files`, `std::facts::systemd`, `std::facts::git`, `std::facts::docker`
+- `std::ops::systemd`, `std::ops::git`, `std::ops::packages`, `std::ops::server_utils`
 
 Current limits:
 

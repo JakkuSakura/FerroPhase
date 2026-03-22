@@ -18,16 +18,31 @@ declare -A FP_WINRM_USER=()
 declare -A FP_WINRM_PASSWORD=()
 declare -A FP_WINRM_PORT=()
 declare -A FP_WINRM_SCHEME=()
+declare -A FP_CHROOT_DIRECTORY=()
 
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
-run_local_host() {
+__fp_std_ops_server_shell_local_() {
+    local command="$1"
+    local hosts="$2"
+    local only_if="$3"
+    local unless="$4"
+    local creates="$5"
+    local removes="$6"
+    local sudo="$7"
+    local cwd="$8"
+    local command="$(__fp_std_shell_backend_command_with_options_ "${command}" "${cwd}" "${sudo}")"
+    __fp_std_shell_backend_shell_run_local_ "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
+    runtime_last_changed 
+}
+
+__fp_std_shell_backend_run_local_host_() {
     local cmd="$1"
     invoke_expression "${cmd}"
 }
 
-command_with_options() {
+__fp_std_shell_backend_command_with_options_() {
     local command="$1"
     local cwd="$2"
     local sudo="$3"
@@ -46,12 +61,12 @@ command_with_options() {
     fi
 }
 
-process_ok() {
+__fp_std_shell_backend_process_ok_() {
     local command="$1"
-    ok "${command}"
+    __fp_std_shell_process_process_ok_ "${command}"
 }
 
-should_apply() {
+__fp_std_shell_backend_should_apply_() {
     local only_if="$1"
     local unless="$2"
     local creates="$3"
@@ -61,7 +76,7 @@ should_apply() {
         fi
     fi
     if [[ "${unless}" != '' ]]; then
-        if process_ok "${unless}"; then
+        if __fp_std_shell_backend_process_ok_ "${unless}"; then
         fi
     fi
     if [[ "${creates}" != '' ]]; then
@@ -75,7 +90,7 @@ should_apply() {
     printf '%s\n' 'true'
 }
 
-shell_run_local() {
+__fp_std_shell_backend_shell_run_local_() {
     local _host="$1"
     local command="$2"
     local only_if="$3"
@@ -83,52 +98,38 @@ shell_run_local() {
     local creates="$5"
     local removes="$6"
     runtime_set_changed 'false'
-    if should_apply "${only_if}" "${unless}" "${creates}" "${removes}"; then
-        run_local_host "${command}"
+    if __fp_std_shell_backend_should_apply_ "${only_if}" "${unless}" "${creates}" "${removes}"; then
+        __fp_std_shell_backend_run_local_host_ "${command}"
         runtime_set_changed 'true'
     fi
 }
 
-shell_local() {
-    local command="$1"
-    local hosts="$2"
-    local only_if="$3"
-    local unless="$4"
-    local creates="$5"
-    local removes="$6"
-    local sudo="$7"
-    local cwd="$8"
-    local command="$(command_with_options "${command}" "${cwd}" "${sudo}")"
-    shell_run_local "${hosts}" "${command}" "${only_if}" "${unless}" "${creates}" "${removes}"
-    runtime_last_changed 
-}
-
-raw() {
+__fp_std_shell_process_process_raw_() {
     local text="$1"
     printf '%s\n' "${text}"
 }
 
-pipe() {
+__fp_std_shell_process_process_pipe_() {
     local lhs="$1"
     local rhs="$2"
     printf '%s\n' "${lhs} | ${rhs}"
 }
 
-stdout_to() {
+__fp_std_shell_process_process_stdout_to_() {
     local command="$1"
     local path="$2"
     printf '%s\n' "${command} > ${path}"
 }
 
-run() {
+__fp_std_shell_process_process_run_() {
     local command="$1"
-    shell_local "${command}" 'localhost' '' '' '' '' '' ''
+    __fp_std_ops_server_shell_local_ "${command}" 'localhost' '' '' '' '' '' ''
 }
 
-ok() {
+__fp_std_shell_process_process_ok_() {
     local command="$1"
     shell_status "${command}"
 }
 
-local pipeline="$(pipe "$(raw 'printf deploy')" "$(stdout_to "$(raw 'cat')" '/tmp/fp-shell.log')")"
-run "${pipeline}"
+local pipeline="$(__fp_std_shell_process_process_pipe_ "$(__fp_std_shell_process_process_raw_ 'printf deploy')" "$(__fp_std_shell_process_process_stdout_to_ "$(__fp_std_shell_process_process_raw_ 'cat')" '/tmp/fp-shell.log')")"
+__fp_std_shell_process_process_run_ "${pipeline}"

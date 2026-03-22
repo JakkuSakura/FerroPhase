@@ -5,6 +5,12 @@ pub mod process {
     #[cfg(target_lang = "pwsh")]
     #[command = "pwsh -Command"]
     extern "pwsh" fn shell_status(command: str) -> bool;
+    #[cfg(target_lang = "bash")]
+    #[command = "bash -lc"]
+    extern "bash" fn shell_output(command: str) -> str;
+    #[cfg(target_lang = "pwsh")]
+    #[command = "pwsh -Command"]
+    extern "pwsh" fn shell_output(command: str) -> str;
 
     pub const fn raw(text: str) -> str {
         text
@@ -31,10 +37,14 @@ pub mod process {
     }
 
     pub const fn run(command: str) {
-        std::server::shell(command);
+        std::ops::server::shell(command);
     }
 
     pub const fn ok(command: str) -> bool {
         shell_status(command)
+    }
+
+    pub const fn output(command: str) -> str {
+        shell_output(command)
     }
 }

@@ -1,12 +1,12 @@
 const fn sync_and_restart(host: str, service: str) {
     with host {
-        std::files::rsync(
+        std::ops::files::rsync(
             src="./dist/",
             dest="/srv/fp-service/dist/",
             delete=true,
         );
 
-        std::service::restart(name=service);
+        std::ops::services::restart(name=service);
     }
 }
 

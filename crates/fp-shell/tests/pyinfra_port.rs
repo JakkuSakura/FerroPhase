@@ -1,6 +1,4 @@
-use fp_shell::{
-    CompileOptions, ScriptTarget, compile_source_with_options, load_inventory,
-};
+use fp_shell::{CompileOptions, ScriptTarget, compile_source_with_options, load_inventory};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -38,15 +36,25 @@ fn collect_case_paths(root: &Path) -> Vec<PathBuf> {
 
     while let Some(path) = pending.pop() {
         let entries = fs::read_dir(&path).unwrap_or_else(|error| {
-            panic!("failed to read fixture directory {}: {error}", path.display())
+            panic!(
+                "failed to read fixture directory {}: {error}",
+                path.display()
+            )
         });
 
         for entry in entries {
             let entry = entry.unwrap_or_else(|error| {
-                panic!("failed to read fixture entry in {}: {error}", path.display())
+                panic!(
+                    "failed to read fixture entry in {}: {error}",
+                    path.display()
+                )
             });
             let entry_path = entry.path();
-            if entry.file_type().map(|file_type| file_type.is_dir()).unwrap_or(false) {
+            if entry
+                .file_type()
+                .map(|file_type| file_type.is_dir())
+                .unwrap_or(false)
+            {
                 if entry_path.join("case.json").is_file() {
                     case_paths.push(entry_path);
                 } else {

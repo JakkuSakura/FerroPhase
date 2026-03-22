@@ -14,4 +14,5 @@ pub struct Host {
     namespace?: &'static str,
     context?: &'static str,
     scheme?: &'static str,
+    chroot_directory?: &'static str,
 }
