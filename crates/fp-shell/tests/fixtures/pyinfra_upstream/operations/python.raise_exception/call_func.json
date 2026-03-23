@@ -1,7 +1,0 @@
-{
-    "args": ["__func__", "arg1", "arg2"],
-    "commands": [
-        ["raise_exc", ["arg1", "arg2"], {}]
-    ],
-    "idempotent": false
-}

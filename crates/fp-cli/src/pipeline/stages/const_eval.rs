@@ -3,7 +3,7 @@ use fp_core::ast::{ItemKind, Node, NodeKind};
 use fp_interpret::const_eval::{
     ConstEvalContext, ConstEvalOptions, ConstEvalOutcome, ConstEvalResult, ConstEvalStage,
 };
-use std::fs;
+use fp_lang::embedded_std;
 
 impl Pipeline {
     pub(crate) fn stage_const_eval(
@@ -19,13 +19,13 @@ impl Pipeline {
         };
         if include_std {
             for std_path in runtime_std_paths() {
-                let source = match fs::read_to_string(&std_path) {
-                    Ok(source) => source,
-                    Err(err) => {
+                let source = match embedded_std::read(&std_path) {
+                    Some(source) => source,
+                    None => {
                         return Err(Pipeline::emit_stage_error(
                             STAGE_CONST_EVAL,
                             options,
-                            format!("failed to read std module {}: {}", std_path.display(), err),
+                            format!("failed to read std module {}", std_path.display()),
                         ));
                     }
                 };

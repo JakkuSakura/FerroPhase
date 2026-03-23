@@ -1,8 +1,0 @@
-{
-    "kwargs" : {
-        "jail" : "redis"
-    },
-    "commands" : [
-        "pkg -j redis clean -y"
-    ]
-}

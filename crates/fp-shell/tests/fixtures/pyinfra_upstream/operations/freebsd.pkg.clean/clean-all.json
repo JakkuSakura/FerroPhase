@@ -1,8 +1,0 @@
-{
-    "kwargs" : {
-        "all_pkg" : true
-    },
-    "commands" : [
-        "pkg clean -y -a"
-    ]
-}

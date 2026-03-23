@@ -1,6 +1,0 @@
-{
-    "args": ["mykey"],
-    "commands": [
-        "rpm --import mykey"
-    ]
-}

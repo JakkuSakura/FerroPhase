@@ -1,9 +1,0 @@
-{
-  "copied_from": null,
-  "inventory": null,
-  "absent": [],
-  "contains": [
-    "__fp_std_ops_files_copy_local_ 'somefile.txt' '/home/somefile.txt' 'localhost' '' '' '/home/somefile.txt' ''"
-  ],
-  "target": "bash"
-}

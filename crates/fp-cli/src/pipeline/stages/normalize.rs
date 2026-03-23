@@ -1,7 +1,7 @@
 use super::super::*;
 use fp_core::ast::{File, ItemKind, Node, NodeKind};
+use fp_lang::embedded_std;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
-use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -69,10 +69,10 @@ impl Pipeline {
             diagnostics.set_display_options(diag::display_options(options));
             let mut merged = ast.clone();
             for std_path in runtime_std_paths() {
-                let source = fs::read_to_string(&std_path).map_err(|err| {
+                let source = embedded_std::read(&std_path).ok_or_else(|| {
                     CliError::Io(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        format!("failed to read std module {}: {err}", std_path.display()),
+                        format!("failed to read std module {}", std_path.display()),
                     ))
                 })?;
                 let language = self.resolve_language(options, Some(&std_path));

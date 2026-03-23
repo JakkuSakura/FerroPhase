@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs;
 use std::io::Write;
+use std::process::Command;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -594,6 +596,12 @@ struct GenericTemplate {
 }
 
 #[derive(Debug, Clone)]
+struct ExternFunctionBinding {
+    sig: FunctionSignature,
+    command: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 struct ImportDirective {
     module_spec: String,
     binding: ImportBinding,
@@ -620,6 +628,7 @@ pub struct AstInterpreter<'ctx> {
     diag_manager: Option<Arc<DiagnosticManager>>,
     intrinsics: IntrinsicsRegistry,
     mode: InterpreterMode,
+    target_env: TargetEnv,
     debug_assertions: bool,
     diagnostic_context: &'static str,
     module_resolution: Option<ModuleResolutionContext>,
@@ -638,7 +647,7 @@ pub struct AstInterpreter<'ctx> {
     stdout: Vec<String>,
     functions: HashMap<String, ItemDefFunction>,
     generic_functions: HashMap<String, GenericTemplate>,
-    extern_functions: HashMap<String, FunctionSignature>,
+    extern_functions: HashMap<String, ExternFunctionBinding>,
     ffi_runtime: Option<FfiRuntime>,
     specialization_cache: HashMap<String, HashMap<String, String>>,
     specialization_counter: HashMap<String, usize>,
@@ -706,6 +715,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             diag_manager: options.diagnostics.clone(),
             intrinsics: IntrinsicsRegistry::new(),
             mode: options.mode,
+            target_env: options.target_env,
             debug_assertions: options.debug_assertions,
             diagnostic_context: options.diagnostic_context,
             module_resolution: options.module_resolution.clone(),
@@ -2846,6 +2856,9 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn evaluate_item(&mut self, item: &mut Item) {
+        if !self.item_enabled(item) {
+            return;
+        }
         if matches!(self.mode, InterpreterMode::CompileTime) {
             if let ItemKind::DefFunction(func) = item.kind() {
                 if let Some((name, kind)) = self.proc_macro_registration(func) {
@@ -3143,6 +3156,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 let mut idx = 0;
                 while idx < module.items.len() {
+                    if !self.item_enabled(&module.items[idx]) {
+                        idx += 1;
+                        continue;
+                    }
                     if self.should_skip_lazy_item(&module.items[idx]) {
                         idx += 1;
                         continue;
@@ -3207,6 +3224,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.pending_items.push(Vec::new());
                 let mut idx = 0;
                 while idx < impl_block.items.len() {
+                    if !self.item_enabled(&impl_block.items[idx]) {
+                        idx += 1;
+                        continue;
+                    }
                     self.evaluate_item(&mut impl_block.items[idx]);
                     if matches!(self.mode, InterpreterMode::CompileTime)
                         && matches!(
@@ -3372,13 +3393,18 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn register_extern_function(&mut self, decl: &ItemDeclFunction) {
-        if !decl.sig.abi.is_c() {
+        let command = extern_command_attr(decl);
+        if !decl.sig.abi.is_c() && command.is_none() {
             return;
         }
+        let binding = ExternFunctionBinding {
+            sig: decl.sig.clone(),
+            command,
+        };
         let base_name = decl.name.as_str().to_string();
         let qualified = self.qualified_name(decl.name.as_str());
-        self.extern_functions.insert(base_name, decl.sig.clone());
-        self.extern_functions.insert(qualified, decl.sig.clone());
+        self.extern_functions.insert(base_name, binding.clone());
+        self.extern_functions.insert(qualified, binding);
     }
 
     fn ensure_ffi_runtime(&mut self) -> Result<&mut FfiRuntime> {
@@ -3397,8 +3423,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             candidate_names.push(ident.as_str().to_string());
         }
         for name in candidate_names {
-            if let Some(sig) = self.extern_functions.get(&name).cloned() {
-                return Some(self.call_extern_function_runtime(&name, &sig, args));
+            if let Some(binding) = self.extern_functions.get(&name).cloned() {
+                return Some(self.call_extern_function_runtime(&name, &binding, args));
             }
         }
         None
@@ -3407,9 +3433,13 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn call_extern_function_runtime(
         &mut self,
         name: &str,
-        sig: &FunctionSignature,
+        binding: &ExternFunctionBinding,
         args: &[Value],
     ) -> RuntimeFlow {
+        if let Some(command) = &binding.command {
+            return self.call_command_extern_runtime(name, command, &binding.sig, args);
+        }
+        let sig = &binding.sig;
         let ffi = match self.ensure_ffi_runtime() {
             Ok(ffi) => ffi,
             Err(err) => {
@@ -3424,6 +3454,225 @@ impl<'ctx> AstInterpreter<'ctx> {
                 RuntimeFlow::Value(Value::undefined())
             }
         }
+    }
+
+    fn call_command_extern_runtime(
+        &mut self,
+        name: &str,
+        command: &str,
+        sig: &FunctionSignature,
+        args: &[Value],
+    ) -> RuntimeFlow {
+        if let Some(flow) = self.call_host_command_extern_runtime(name, command, args) {
+            return flow;
+        }
+        let fixed_args = match parse_command_attribute(command) {
+            Ok(parts) => parts,
+            Err(err) => {
+                self.emit_error(format!("invalid #[command] on extern '{}': {}", name, err));
+                return RuntimeFlow::Value(Value::undefined());
+            }
+        };
+        if fixed_args.is_empty() {
+            self.emit_error(format!("extern '{}' has an empty #[command] attribute", name));
+            return RuntimeFlow::Value(Value::undefined());
+        }
+        let runtime_args = match command_args_from_values(args) {
+            Ok(values) => values,
+            Err(err) => {
+                self.emit_error(format!("extern '{}' argument conversion failed: {}", name, err));
+                return RuntimeFlow::Value(Value::undefined());
+            }
+        };
+
+        let mut process = Command::new(&fixed_args[0]);
+        if fixed_args.len() > 1 {
+            process.args(&fixed_args[1..]);
+        }
+        process.args(&runtime_args);
+
+        let output = match process.output() {
+            Ok(output) => output,
+            Err(err) => {
+                self.emit_error(format!("extern '{}' command failed to start: {}", name, err));
+                return RuntimeFlow::Value(Value::undefined());
+            }
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let resolved_ret_ty = sig.ret_ty.as_ref().map(resolve_command_runtime_ty);
+        match resolved_ret_ty.as_ref() {
+            None | Some(Ty::Unit(_)) => {
+                if !output.status.success() {
+                    self.emit_error(command_failure_message(
+                        name,
+                        command,
+                        &stderr,
+                        output.status.code(),
+                    ));
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                if !stdout.is_empty() {
+                    self.emit_stdout_fragment(stdout);
+                }
+                RuntimeFlow::Value(Value::unit())
+            }
+            Some(Ty::Primitive(TypePrimitive::Bool)) => {
+                RuntimeFlow::Value(Value::bool(output.status.success()))
+            }
+            Some(Ty::Primitive(TypePrimitive::String)) => {
+                if !output.status.success() {
+                    self.emit_error(command_failure_message(
+                        name,
+                        command,
+                        &stderr,
+                        output.status.code(),
+                    ));
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                RuntimeFlow::Value(Value::string(stdout))
+            }
+            Some(Ty::Primitive(TypePrimitive::Int(_))) => {
+                if !stdout.is_empty() {
+                    self.emit_stdout_fragment(stdout);
+                }
+                RuntimeFlow::Value(Value::int(output.status.code().unwrap_or(-1) as i64))
+            }
+            Some(other) => {
+                self.emit_error(format!(
+                    "extern '{}' command returns unsupported runtime type {:?}",
+                    name, other
+                ));
+                RuntimeFlow::Value(Value::undefined())
+            }
+        }
+    }
+
+    fn call_host_command_extern_runtime(
+        &mut self,
+        name: &str,
+        command: &str,
+        args: &[Value],
+    ) -> Option<RuntimeFlow> {
+        let flow = match command {
+            "__fp_hostfs_read_dir_json" => {
+                let path = match host_command_string_arg(name, command, args, 0) {
+                    Ok(path) => path,
+                    Err(flow) => return Some(flow),
+                };
+                let entries = match fs::read_dir(path.as_str()) {
+                    Ok(entries) => {
+                        let mut values = Vec::new();
+                        for entry in entries {
+                            let entry = match entry {
+                                Ok(entry) => entry,
+                                Err(err) => {
+                                    self.emit_error(format!(
+                                        "extern '{}' host command '{}' failed to read directory entry: {}",
+                                        name, command, err
+                                    ));
+                                    return Some(RuntimeFlow::Value(Value::undefined()));
+                                }
+                            };
+                            values.push(entry.path().to_string_lossy().into_owned());
+                        }
+                        values.sort();
+                        values
+                    }
+                    Err(err) => {
+                        self.emit_error(format!(
+                            "extern '{}' host command '{}' failed: {}",
+                            name, command, err
+                        ));
+                        return Some(RuntimeFlow::Value(Value::undefined()));
+                    }
+                };
+                let json = match serde_json::to_string(&entries) {
+                    Ok(json) => json,
+                    Err(err) => {
+                        self.emit_error(format!(
+                            "extern '{}' host command '{}' failed to encode output: {}",
+                            name, command, err
+                        ));
+                        return Some(RuntimeFlow::Value(Value::undefined()));
+                    }
+                };
+                RuntimeFlow::Value(Value::string(json))
+            }
+            "__fp_hostfs_read_to_string" => {
+                let path = match host_command_string_arg(name, command, args, 0) {
+                    Ok(path) => path,
+                    Err(flow) => return Some(flow),
+                };
+                match fs::read_to_string(path.as_str()) {
+                    Ok(content) => RuntimeFlow::Value(Value::string(content)),
+                    Err(err) => {
+                        self.emit_error(format!(
+                            "extern '{}' host command '{}' failed: {}",
+                            name, command, err
+                        ));
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                }
+            }
+            "__fp_hostfs_write_string" => {
+                let path = match host_command_string_arg(name, command, args, 0) {
+                    Ok(path) => path,
+                    Err(flow) => return Some(flow),
+                };
+                let content = match host_command_string_arg(name, command, args, 1) {
+                    Ok(content) => content,
+                    Err(flow) => return Some(flow),
+                };
+                match fs::write(path.as_str(), content.as_str()) {
+                    Ok(()) => RuntimeFlow::Value(Value::unit()),
+                    Err(err) => {
+                        self.emit_error(format!(
+                            "extern '{}' host command '{}' failed: {}",
+                            name, command, err
+                        ));
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                }
+            }
+            "__fp_hostfs_is_dir" => {
+                let path = match host_command_string_arg(name, command, args, 0) {
+                    Ok(path) => path,
+                    Err(flow) => return Some(flow),
+                };
+                RuntimeFlow::Value(Value::bool(std::path::Path::new(path.as_str()).is_dir()))
+            }
+            "__fp_hostyaml_to_json" => {
+                let input = match host_command_string_arg(name, command, args, 0) {
+                    Ok(input) => input,
+                    Err(flow) => return Some(flow),
+                };
+                let value: serde_json::Value = match serde_yaml::from_str(input.as_str()) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.emit_error(format!(
+                            "extern '{}' host command '{}' failed to parse yaml: {}",
+                            name, command, err
+                        ));
+                        return Some(RuntimeFlow::Value(Value::undefined()));
+                    }
+                };
+                let json = match serde_json::to_string(&value) {
+                    Ok(json) => json,
+                    Err(err) => {
+                        self.emit_error(format!(
+                            "extern '{}' host command '{}' failed to encode output: {}",
+                            name, command, err
+                        ));
+                        return Some(RuntimeFlow::Value(Value::undefined()));
+                    }
+                };
+                RuntimeFlow::Value(Value::string(json))
+            }
+            _ => return None,
+        };
+        Some(flow)
     }
 
     // Determine enum payload shape for runtime construction/matching.
@@ -7029,6 +7278,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
+    fn item_enabled(&self, item: &Item) -> bool {
+        fp_core::cfg::item_enabled_by_cfg(item, &self.target_env)
+    }
+
     // build_quoted_fragment moved to quote.rs
 }
 
@@ -7124,6 +7377,137 @@ fn meta_to_token_texts(meta: &AttrMeta, out: &mut Vec<String>) {
             }
             out.push(")".to_string());
         }
+    }
+}
+
+fn extern_command_attr(function: &ItemDeclFunction) -> Option<String> {
+    let attr = function.attrs.iter().find(|attr| match &attr.meta {
+        AttrMeta::NameValue(nv) => nv.name.last().as_str() == "command",
+        _ => false,
+    })?;
+    let AttrMeta::NameValue(meta) = &attr.meta else {
+        return None;
+    };
+    match meta.value.kind() {
+        ExprKind::Value(value) => match value.as_ref() {
+            Value::String(text) => Some(text.value.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn parse_command_attribute(input: &str) -> std::result::Result<Vec<String>, String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut chars = input.chars();
+    let mut quote: Option<char> = None;
+
+    while let Some(ch) = chars.next() {
+        if let Some(active) = quote {
+            if ch == active {
+                quote = None;
+            } else if ch == '\\' {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '\\' => {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            }
+            ch if ch.is_ascii_whitespace() => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if quote.is_some() {
+        return Err("unterminated quoted segment".to_string());
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    Ok(args)
+}
+
+fn command_args_from_values(args: &[Value]) -> std::result::Result<Vec<String>, String> {
+    args.iter().map(command_arg_from_value).collect()
+}
+
+fn command_arg_from_value(value: &Value) -> std::result::Result<String, String> {
+    match value {
+        Value::String(text) => Ok(text.value.clone()),
+        Value::Bool(flag) => Ok(flag.value.to_string()),
+        Value::Int(value) => Ok(value.value.to_string()),
+        Value::Decimal(value) => Ok(value.value.to_string()),
+        Value::BigInt(value) => Ok(value.value.to_string()),
+        Value::BigDecimal(value) => Ok(value.value.to_string()),
+        Value::Char(value) => Ok(value.value.to_string()),
+        Value::Null(_) => Ok(String::new()),
+        other => Err(format!("unsupported command argument value: {:?}", other)),
+    }
+}
+
+fn command_failure_message(
+    name: &str,
+    command: &str,
+    stderr: &str,
+    exit_code: Option<i32>,
+) -> String {
+    let suffix = if stderr.is_empty() {
+        String::new()
+    } else {
+        format!(": {}", stderr.trim_end())
+    };
+    match exit_code {
+        Some(code) => format!(
+            "extern '{}' command `{}` failed with exit code {}{}",
+            name, command, code, suffix
+        ),
+        None => format!("extern '{}' command `{}` terminated{}", name, command, suffix),
+    }
+}
+
+fn resolve_command_runtime_ty(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Expr(expr) => match expr.kind() {
+            ExprKind::Name(locator) => {
+                let name = match locator {
+                    Name::Ident(ident) => ident.as_str(),
+                    Name::Path(path) => path.segments.last().map(|seg| seg.as_str()).unwrap_or(""),
+                    Name::ParameterPath(path) => {
+                        path.last().map(|seg| seg.ident.as_str()).unwrap_or("")
+                    }
+                };
+                match name {
+                    "bool" => Ty::Primitive(TypePrimitive::Bool),
+                    "str" | "String" | "string" => Ty::Primitive(TypePrimitive::String),
+                    "i64" => Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                    "i32" => Ty::Primitive(TypePrimitive::Int(TypeInt::I32)),
+                    "i16" => Ty::Primitive(TypePrimitive::Int(TypeInt::I16)),
+                    "i8" => Ty::Primitive(TypePrimitive::Int(TypeInt::I8)),
+                    "u64" | "usize" => Ty::Primitive(TypePrimitive::Int(TypeInt::U64)),
+                    "u32" => Ty::Primitive(TypePrimitive::Int(TypeInt::U32)),
+                    "u16" => Ty::Primitive(TypePrimitive::Int(TypeInt::U16)),
+                    "u8" => Ty::Primitive(TypePrimitive::Int(TypeInt::U8)),
+                    _ => ty.clone(),
+                }
+            }
+            _ => ty.clone(),
+        },
+        _ => ty.clone(),
     }
 }
 

@@ -19,6 +19,61 @@ pub fn parse(input: &str) -> JsonValue {
     parser.parse_value()
 }
 
+pub fn is_null(value: JsonValue) -> bool {
+    match value {
+        JsonValue::Null => true,
+        _ => false,
+    }
+}
+
+pub fn get_string(value: JsonValue) -> &str {
+    match value {
+        JsonValue::String(text) => text,
+        _ => panic("expected json string"),
+    }
+}
+
+pub fn get_array(value: JsonValue) -> Vec<JsonValue> {
+    match value {
+        JsonValue::Array(items) => items,
+        _ => panic("expected json array"),
+    }
+}
+
+pub fn get_object_field(value: JsonValue, key: &str) -> JsonValue {
+    match value {
+        JsonValue::Object(fields) => {
+            let mut idx = 0;
+            while idx < fields.len() {
+                let field = fields[idx];
+                if field.key == key {
+                    return field.value;
+                }
+                idx = idx + 1;
+            }
+            panic(f"missing json object field: {key}")
+        }
+        _ => panic("expected json object"),
+    }
+}
+
+pub fn find_object_field(value: JsonValue, key: &str) -> JsonValue {
+    match value {
+        JsonValue::Object(fields) => {
+            let mut idx = 0;
+            while idx < fields.len() {
+                let field = fields[idx];
+                if field.key == key {
+                    return field.value;
+                }
+                idx = idx + 1;
+            }
+            JsonValue::Null
+        }
+        _ => panic("expected json object"),
+    }
+}
+
 pub fn print(value: JsonValue) {
     print_value(&value);
 }

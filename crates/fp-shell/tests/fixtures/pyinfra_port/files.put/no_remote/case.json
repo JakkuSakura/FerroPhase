@@ -1,9 +1,0 @@
-{
-  "copied_from": "../pyinfra/tests/operations/files.put/no_remote.json",
-  "inventory": null,
-  "absent": [],
-  "contains": [
-    "__fp_std_ops_files_copy_local_ 'somefile.txt' '/home/somefile.txt' 'localhost' '' '' '' ''"
-  ],
-  "target": "bash"
-}

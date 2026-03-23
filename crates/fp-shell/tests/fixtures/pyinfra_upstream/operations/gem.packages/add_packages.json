@@ -1,9 +1,0 @@
-{
-    "args": ["rubyenv"],
-    "facts": {
-        "gem.GemPackages": {}
-    },
-    "commands": [
-        "gem install rubyenv"
-    ]
-}
