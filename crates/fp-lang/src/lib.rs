@@ -202,11 +202,61 @@ impl LanguageFrontend for FerroFrontend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
+
+    fn collect_fp_files(root: &Path, out: &mut Vec<std::path::PathBuf>) {
+        let entries = fs::read_dir(root).expect("read_dir");
+        for entry in entries {
+            let entry = entry.expect("dir entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_fp_files(&path, out);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) == Some("fp") {
+                out.push(path);
+            }
+        }
+    }
 
     #[test]
     fn language_identifier_is_ferrophase() {
         let frontend = FerroFrontend::new();
         assert_eq!(frontend.language(), FERROPHASE);
+    }
+
+    #[test]
+    fn parse_file_mode_handles_extern_c_declarations() {
+        let frontend = FerroFrontend::new();
+        let dir = std::env::temp_dir().join(format!("fp-lang-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("ffi_parse.fp");
+        let source = "extern \"C\" fn strlen(s: &std::ffi::CStr) -> i64;\n\nfn main() {\n    strlen(\"hello\")\n}\n";
+        fs::write(&path, source).expect("write temp source");
+
+        let result = frontend.parse(source, Some(&path));
+        assert!(result.is_ok(), "unexpected parse error: {:?}", result.err());
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn parse_embedded_std_sources() {
+        let frontend = FerroFrontend::new();
+        let mut files = Vec::new();
+        collect_fp_files(Path::new("src/std"), &mut files);
+        for path in files {
+            let source = fs::read_to_string(&path).expect("read std source");
+            let result = frontend.parse(&source, Some(&path));
+            assert!(
+                result.is_ok(),
+                "failed to parse {}: {:?}",
+                path.display(),
+                result.err()
+            );
+        }
     }
 }
 

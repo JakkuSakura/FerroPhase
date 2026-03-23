@@ -514,6 +514,18 @@ fn parse_items_ast_handles_generic_fn_with_where() {
 }
 
 #[test]
+fn parse_items_ast_handles_octal_literals_in_impl_methods() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            "impl OpenOptions { pub fn new() -> OpenOptions { OpenOptions { mode: 0o666 } } }",
+        )
+        .unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::Impl(_)));
+}
+
+#[test]
 fn parse_items_supports_fn_struct_and_use() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

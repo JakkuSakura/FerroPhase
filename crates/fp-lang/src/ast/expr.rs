@@ -1791,9 +1791,8 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
             if normalized.contains('.') {
                 return Err(LowerError::InvalidNumber(raw.to_string()));
             }
-            let value = normalized
-                .parse::<BigInt>()
-                .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
+            let value = parse_big_int_literal(&normalized)
+                .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
             Ok((
                 Value::big_int(value),
                 Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
@@ -1815,9 +1814,8 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
             if normalized.contains('.') {
                 return Err(LowerError::InvalidNumber(raw.to_string()));
             }
-            let value = normalized
-                .parse::<i64>()
-                .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
+            let value = parse_i64_literal(&normalized)
+                .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
             let ty = match suffix {
                 "i8" => TypeInt::I8,
                 "i16" => TypeInt::I16,
@@ -1855,13 +1853,38 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
                     .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
                 Ok((Value::decimal(d), None))
             } else {
-                let i = normalized
-                    .parse::<i64>()
-                    .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
+                let i = parse_i64_literal(&normalized)
+                    .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
                 Ok((Value::int(i), None))
             }
         }
     }
+}
+
+fn parse_i64_literal(raw: &str) -> Option<i64> {
+    let (digits, radix) = integer_digits_and_radix(raw)?;
+    i64::from_str_radix(digits, radix).ok()
+}
+
+fn parse_big_int_literal(raw: &str) -> Option<BigInt> {
+    let (digits, radix) = integer_digits_and_radix(raw)?;
+    BigInt::parse_bytes(digits.as_bytes(), radix)
+}
+
+fn integer_digits_and_radix(raw: &str) -> Option<(&str, u32)> {
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some(digits) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+        return Some((digits, 16));
+    }
+    if let Some(digits) = raw.strip_prefix("0o").or_else(|| raw.strip_prefix("0O")) {
+        return Some((digits, 8));
+    }
+    if let Some(digits) = raw.strip_prefix("0b").or_else(|| raw.strip_prefix("0B")) {
+        return Some((digits, 2));
+    }
+    Some((raw, 10))
 }
 
 fn parse_f_string_literal(raw: &str, file: fp_core::span::FileId) -> Result<Expr, LowerError> {
