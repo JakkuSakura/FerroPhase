@@ -6,6 +6,7 @@ pub mod fs;
 pub mod future;
 pub mod io;
 pub mod json;
+pub mod libc;
 pub mod intrinsics;
 pub mod meta;
 pub mod net;

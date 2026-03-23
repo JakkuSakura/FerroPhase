@@ -172,3 +172,26 @@ fn lang_instrinstic_preserves_fs_lang_item_name() {
         Some(IntrinsicCallKind::FsReadToString)
     );
 }
+
+#[test]
+fn lang_instrinstic_maps_core_fs_lang_items_to_call_kinds() {
+    let cases = [
+        ("fs_write_string", LangInstrinstic::FsWriteString, IntrinsicCallKind::FsWriteString),
+        (
+            "fs_append_string",
+            LangInstrinstic::FsAppendString,
+            IntrinsicCallKind::FsAppendString,
+        ),
+        ("fs_exists", LangInstrinstic::FsExists, IntrinsicCallKind::FsExists),
+        ("fs_is_dir", LangInstrinstic::FsIsDir, IntrinsicCallKind::FsIsDir),
+        ("fs_is_file", LangInstrinstic::FsIsFile, IntrinsicCallKind::FsIsFile),
+    ];
+
+    for (lang_item, expected_intrinsic, expected_call_kind) in cases {
+        let intrinsic =
+            lang_instrinstic_for_lang_item(lang_item).expect("missing fs lang instrinstic");
+        assert_eq!(intrinsic, expected_intrinsic);
+        assert_eq!(lang_instrinstic_lang_item(intrinsic), lang_item);
+        assert_eq!(lang_instrinstic_call_kind(intrinsic), Some(expected_call_kind));
+    }
+}

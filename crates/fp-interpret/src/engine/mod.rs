@@ -7423,11 +7423,6 @@ fn resolve_lang_instrinstic_handler(intrinsic: LangInstrinstic) -> Option<LangIt
     match intrinsic {
         LangInstrinstic::FsReadDir => Some(lang_fs_read_dir),
         LangInstrinstic::FsWalkDir => Some(lang_fs_walk_dir),
-        LangInstrinstic::FsWriteString => Some(lang_fs_write_string),
-        LangInstrinstic::FsAppendString => Some(lang_fs_append_string),
-        LangInstrinstic::FsExists => Some(lang_fs_exists),
-        LangInstrinstic::FsIsDir => Some(lang_fs_is_dir),
-        LangInstrinstic::FsIsFile => Some(lang_fs_is_file),
         LangInstrinstic::FsCreateDirAll => Some(lang_fs_create_dir_all),
         LangInstrinstic::FsRemoveFile => Some(lang_fs_remove_file),
         LangInstrinstic::FsRemoveDirAll => Some(lang_fs_remove_dir_all),
@@ -7447,23 +7442,18 @@ fn resolve_lang_instrinstic_handler(intrinsic: LangInstrinstic) -> Option<LangIt
         LangInstrinstic::IoReadStdinToString => Some(lang_io_read_stdin_to_string),
         LangInstrinstic::IoWriteStdout => Some(lang_io_write_stdout),
         LangInstrinstic::IoWriteStderr => Some(lang_io_write_stderr),
-        LangInstrinstic::ProcessRun => Some(lang_process_run),
-        LangInstrinstic::ProcessOk => Some(lang_process_ok),
-        LangInstrinstic::ProcessOutput => Some(lang_process_output),
-        LangInstrinstic::ProcessStatus => Some(lang_process_status),
-        LangInstrinstic::ProcessRunArgv => Some(lang_process_run_argv),
-        LangInstrinstic::ProcessOkArgv => Some(lang_process_ok_argv),
-        LangInstrinstic::ProcessOutputArgv => Some(lang_process_output_argv),
-        LangInstrinstic::ProcessStatusArgv => Some(lang_process_status_argv),
-        LangInstrinstic::ProcessRunArgvIn => Some(lang_process_run_argv_in),
-        LangInstrinstic::ProcessOkArgvIn => Some(lang_process_ok_argv_in),
-        LangInstrinstic::ProcessOutputArgvIn => Some(lang_process_output_argv_in),
-        LangInstrinstic::ProcessStatusArgvIn => Some(lang_process_status_argv_in),
+        LangInstrinstic::LibcProcessExec => Some(lang_libc_process_exec),
+        LangInstrinstic::LibcProcessShell => Some(lang_libc_process_shell),
         LangInstrinstic::YamlToJson => Some(lang_yaml_to_json),
         LangInstrinstic::TimeNow
         | LangInstrinstic::CreateStruct
         | LangInstrinstic::AddField
-        | LangInstrinstic::FsReadToString => None,
+        | LangInstrinstic::FsReadToString
+        | LangInstrinstic::FsWriteString
+        | LangInstrinstic::FsAppendString
+        | LangInstrinstic::FsExists
+        | LangInstrinstic::FsIsDir
+        | LangInstrinstic::FsIsFile => None,
     }
 }
 
@@ -7475,41 +7465,6 @@ fn lang_fs_read_dir(args: &[Value]) -> std::result::Result<Value, String> {
 fn lang_fs_walk_dir(args: &[Value]) -> std::result::Result<Value, String> {
     let path = expect_lang_string_arg(args, 0, "path")?;
     lang_fs_collect_dir(path.as_str(), true)
-}
-
-fn lang_fs_write_string(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_lang_string_arg(args, 0, "path")?;
-    let content = expect_lang_string_arg(args, 1, "content")?;
-    fs::write(path.as_str(), content.as_str()).map_err(|err| err.to_string())?;
-    Ok(Value::unit())
-}
-
-fn lang_fs_append_string(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_lang_string_arg(args, 0, "path")?;
-    let content = expect_lang_string_arg(args, 1, "content")?;
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path.as_str())
-        .map_err(|err| err.to_string())?;
-    file.write_all(content.as_bytes())
-        .map_err(|err| err.to_string())?;
-    Ok(Value::unit())
-}
-
-fn lang_fs_exists(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_lang_string_arg(args, 0, "path")?;
-    Ok(Value::bool(std::path::Path::new(path.as_str()).exists()))
-}
-
-fn lang_fs_is_dir(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_lang_string_arg(args, 0, "path")?;
-    Ok(Value::bool(std::path::Path::new(path.as_str()).is_dir()))
-}
-
-fn lang_fs_is_file(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_lang_string_arg(args, 0, "path")?;
-    Ok(Value::bool(std::path::Path::new(path.as_str()).is_file()))
 }
 
 fn lang_fs_create_dir_all(args: &[Value]) -> std::result::Result<Value, String> {
@@ -7664,36 +7619,25 @@ fn lang_io_write_stderr(args: &[Value]) -> std::result::Result<Value, String> {
     Ok(Value::unit())
 }
 
-fn lang_process_run_argv(args: &[Value]) -> std::result::Result<Value, String> {
-    run_lang_process(args, false, LangProcessReturn::Unit)
+fn lang_libc_process_exec(args: &[Value]) -> std::result::Result<Value, String> {
+    let program = expect_lang_string_arg(args, 0, "program")?;
+    let argv = expect_lang_string_list_arg(args, 1, "args")?;
+    let cwd = expect_lang_string_arg(args, 2, "cwd")?;
+
+    let mut command = Command::new(program.as_str());
+    command.args(argv);
+    if !cwd.is_empty() {
+        command.current_dir(cwd);
+    }
+
+    let output = command.output().map_err(|err| err.to_string())?;
+    Ok(lang_process_result_value(output))
 }
 
-fn lang_process_ok_argv(args: &[Value]) -> std::result::Result<Value, String> {
-    run_lang_process(args, false, LangProcessReturn::Bool)
-}
-
-fn lang_process_output_argv(args: &[Value]) -> std::result::Result<Value, String> {
-    run_lang_process(args, false, LangProcessReturn::Stdout)
-}
-
-fn lang_process_status_argv(args: &[Value]) -> std::result::Result<Value, String> {
-    run_lang_process(args, false, LangProcessReturn::Status)
-}
-
-fn lang_process_run_argv_in(args: &[Value]) -> std::result::Result<Value, String> {
-    run_lang_process(args, true, LangProcessReturn::Unit)
-}
-
-fn lang_process_ok_argv_in(args: &[Value]) -> std::result::Result<Value, String> {
-    run_lang_process(args, true, LangProcessReturn::Bool)
-}
-
-fn lang_process_output_argv_in(args: &[Value]) -> std::result::Result<Value, String> {
-    run_lang_process(args, true, LangProcessReturn::Stdout)
-}
-
-fn lang_process_status_argv_in(args: &[Value]) -> std::result::Result<Value, String> {
-    run_lang_process(args, true, LangProcessReturn::Status)
+fn lang_libc_process_shell(args: &[Value]) -> std::result::Result<Value, String> {
+    let command = expect_lang_string_arg(args, 0, "command")?;
+    let output = run_lang_shell_command(command.as_str())?;
+    Ok(lang_process_result_value(output))
 }
 
 fn lang_yaml_to_json(args: &[Value]) -> std::result::Result<Value, String> {
@@ -7792,65 +7736,6 @@ fn lang_fs_collect_dir_entries(
     Ok(())
 }
 
-enum LangProcessReturn {
-    Unit,
-    Bool,
-    Stdout,
-    Status,
-}
-
-fn run_lang_process(
-    args: &[Value],
-    has_cwd: bool,
-    ret: LangProcessReturn,
-) -> std::result::Result<Value, String> {
-    let program = expect_lang_string_arg(args, 0, "program")?;
-    let argv = expect_lang_string_list_arg(args, 1, "args")?;
-    let cwd = if has_cwd {
-        Some(expect_lang_string_arg(args, 2, "cwd")?)
-    } else {
-        None
-    };
-
-    let mut command = Command::new(program.as_str());
-    command.args(argv);
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-
-    let output = command.output().map_err(|err| err.to_string())?;
-    match ret {
-        LangProcessReturn::Unit => {
-            if !output.status.success() {
-                return Err(format!(
-                    "process exited with status {}",
-                    output.status.code().unwrap_or(-1)
-                ));
-            }
-            if !output.stdout.is_empty() {
-                std::io::stdout()
-                    .write_all(&output.stdout)
-                    .map_err(|err| err.to_string())?;
-            }
-            Ok(Value::unit())
-        }
-        LangProcessReturn::Bool => Ok(Value::bool(output.status.success())),
-        LangProcessReturn::Stdout => {
-            if !output.status.success() {
-                return Err(format!(
-                    "process exited with status {}: {}",
-                    output.status.code().unwrap_or(-1),
-                    String::from_utf8_lossy(&output.stderr).trim_end()
-                ));
-            }
-            Ok(Value::string(
-                String::from_utf8_lossy(&output.stdout).to_string(),
-            ))
-        }
-        LangProcessReturn::Status => Ok(Value::int(output.status.code().unwrap_or(-1) as i64)),
-    }
-}
-
 fn run_lang_shell_command(command: &str) -> std::result::Result<std::process::Output, String> {
     #[cfg(unix)]
     let mut process = {
@@ -7867,48 +7752,21 @@ fn run_lang_shell_command(command: &str) -> std::result::Result<std::process::Ou
     process.output().map_err(|err| err.to_string())
 }
 
-fn lang_process_run(args: &[Value]) -> std::result::Result<Value, String> {
-    let command = expect_lang_string_arg(args, 0, "command")?;
-    let output = run_lang_shell_command(command.as_str())?;
-    if !output.status.success() {
-        return Err(format!(
-            "process exited with status {}",
-            output.status.code().unwrap_or(-1)
-        ));
-    }
-    if !output.stdout.is_empty() {
-        std::io::stdout()
-            .write_all(&output.stdout)
-            .map_err(|err| err.to_string())?;
-    }
-    Ok(Value::unit())
-}
-
-fn lang_process_ok(args: &[Value]) -> std::result::Result<Value, String> {
-    let command = expect_lang_string_arg(args, 0, "command")?;
-    let output = run_lang_shell_command(command.as_str())?;
-    Ok(Value::bool(output.status.success()))
-}
-
-fn lang_process_output(args: &[Value]) -> std::result::Result<Value, String> {
-    let command = expect_lang_string_arg(args, 0, "command")?;
-    let output = run_lang_shell_command(command.as_str())?;
-    if !output.status.success() {
-        return Err(format!(
-            "process exited with status {}: {}",
-            output.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&output.stderr).trim_end()
-        ));
-    }
-    Ok(Value::string(
-        String::from_utf8_lossy(&output.stdout).to_string(),
-    ))
-}
-
-fn lang_process_status(args: &[Value]) -> std::result::Result<Value, String> {
-    let command = expect_lang_string_arg(args, 0, "command")?;
-    let output = run_lang_shell_command(command.as_str())?;
-    Ok(Value::int(output.status.code().unwrap_or(-1) as i64))
+fn lang_process_result_value(output: std::process::Output) -> Value {
+    Value::Structural(ValueStructural::new(vec![
+        ValueField::new(
+            Ident::new("stdout"),
+            Value::string(String::from_utf8_lossy(&output.stdout).to_string()),
+        ),
+        ValueField::new(
+            Ident::new("stderr"),
+            Value::string(String::from_utf8_lossy(&output.stderr).to_string()),
+        ),
+        ValueField::new(
+            Ident::new("status"),
+            Value::int(output.status.code().unwrap_or(-1) as i64),
+        ),
+    ]))
 }
 
 fn meta_path_to_texts(path: &Path, out: &mut Vec<String>) {

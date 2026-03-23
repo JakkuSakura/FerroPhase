@@ -25,6 +25,16 @@ pub enum IntrinsicCallKind {
     TimeNow,
     /// Read a UTF-8 file into a string.
     FsReadToString,
+    /// Write a string to a file, replacing existing contents.
+    FsWriteString,
+    /// Append a string to a file, creating it if needed.
+    FsAppendString,
+    /// Check whether a filesystem path exists.
+    FsExists,
+    /// Check whether a filesystem path is a directory.
+    FsIsDir,
+    /// Check whether a filesystem path is a regular file.
+    FsIsFile,
     /// Sleep for the given number of seconds.
     Sleep,
     /// Spawn a future onto the runtime.

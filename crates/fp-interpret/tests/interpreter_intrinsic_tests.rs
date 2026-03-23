@@ -240,6 +240,129 @@ fn runtime_invoke_lang_fs_read_to_string_uses_intrinsic_path() {
 }
 
 #[test]
+fn runtime_invoke_lang_core_fs_intrinsics_use_intrinsic_path() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "fp-core-fs-intrinsics-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("unix epoch")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let file_path = temp_dir.join("data.txt");
+
+    let mut registry = LangItemRegistry::default();
+    registry.insert(
+        "fs_write_string",
+        Path::plain(vec![Ident::new("std"), Ident::new("fs"), Ident::new("write_string")]),
+    );
+    registry.insert(
+        "fs_append_string",
+        Path::plain(vec![Ident::new("std"), Ident::new("fs"), Ident::new("append_string")]),
+    );
+    registry.insert(
+        "fs_exists",
+        Path::plain(vec![Ident::new("std"), Ident::new("fs"), Ident::new("exists")]),
+    );
+    registry.insert(
+        "fs_is_dir",
+        Path::plain(vec![Ident::new("std"), Ident::new("fs"), Ident::new("is_dir")]),
+    );
+    registry.insert(
+        "fs_is_file",
+        Path::plain(vec![Ident::new("std"), Ident::new("fs"), Ident::new("is_file")]),
+    );
+    register_threadlocal_lang_items(registry);
+
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(
+        &ctx,
+        InterpreterOptions {
+            mode: InterpreterMode::RunTime,
+            ..InterpreterOptions::default()
+        },
+    );
+
+    let file_path_text = file_path.to_string_lossy().into_owned();
+    let dir_path_text = temp_dir.to_string_lossy().into_owned();
+
+    let mut write_expr = Expr::new(ExprKind::Invoke(ExprInvoke {
+        target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("fs"),
+            Ident::new("write_string"),
+        ]))),
+        args: vec![
+            Expr::value(Value::string(file_path_text.clone())),
+            Expr::value(Value::string("hello".to_string())),
+        ],
+        kwargs: Vec::new(),
+        span: Span::null(),
+    }));
+    assert_eq!(interpreter.evaluate_expression(&mut write_expr), Value::unit());
+
+    let mut append_expr = Expr::new(ExprKind::Invoke(ExprInvoke {
+        target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("fs"),
+            Ident::new("append_string"),
+        ]))),
+        args: vec![
+            Expr::value(Value::string(file_path_text.clone())),
+            Expr::value(Value::string(" world".to_string())),
+        ],
+        kwargs: Vec::new(),
+        span: Span::null(),
+    }));
+    assert_eq!(interpreter.evaluate_expression(&mut append_expr), Value::unit());
+
+    let mut exists_expr = Expr::new(ExprKind::Invoke(ExprInvoke {
+        target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("fs"),
+            Ident::new("exists"),
+        ]))),
+        args: vec![Expr::value(Value::string(file_path_text.clone()))],
+        kwargs: Vec::new(),
+        span: Span::null(),
+    }));
+    assert_eq!(interpreter.evaluate_expression(&mut exists_expr), Value::bool(true));
+
+    let mut is_file_expr = Expr::new(ExprKind::Invoke(ExprInvoke {
+        target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("fs"),
+            Ident::new("is_file"),
+        ]))),
+        args: vec![Expr::value(Value::string(file_path_text.clone()))],
+        kwargs: Vec::new(),
+        span: Span::null(),
+    }));
+    assert_eq!(interpreter.evaluate_expression(&mut is_file_expr), Value::bool(true));
+
+    let mut is_dir_expr = Expr::new(ExprKind::Invoke(ExprInvoke {
+        target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("fs"),
+            Ident::new("is_dir"),
+        ]))),
+        args: vec![Expr::value(Value::string(dir_path_text))],
+        kwargs: Vec::new(),
+        span: Span::null(),
+    }));
+    assert_eq!(interpreter.evaluate_expression(&mut is_dir_expr), Value::bool(true));
+
+    assert_eq!(fs::read_to_string(&file_path).expect("read file"), "hello world");
+
+    let outcome = interpreter.take_outcome();
+    assert!(!outcome.has_errors);
+
+    fs::remove_file(&file_path).expect("remove temp file");
+    fs::remove_dir(&temp_dir).expect("remove temp dir");
+}
+
+#[test]
 fn println_uses_string_literal_template() {
     let ctx = SharedScopedContext::new();
     let mut interpreter = AstInterpreter::new(&ctx, InterpreterOptions::default());

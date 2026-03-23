@@ -206,6 +206,140 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
             }
+            IntrinsicCallKind::FsWriteString => {
+                if !call.kwargs.is_empty() {
+                    self.emit_error("fs_write_string intrinsic does not accept named arguments");
+                }
+                if call.args.len() != 2 {
+                    self.emit_error("fs_write_string intrinsic expects path and content");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let path = match self.eval_expr_runtime(&mut call.args[0]) {
+                    RuntimeFlow::Value(Value::String(path)) => path,
+                    RuntimeFlow::Value(_) => {
+                        self.emit_error("fs_write_string intrinsic expects a string path");
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                    other => return other,
+                };
+                let content = match self.eval_expr_runtime(&mut call.args[1]) {
+                    RuntimeFlow::Value(Value::String(content)) => content,
+                    RuntimeFlow::Value(_) => {
+                        self.emit_error("fs_write_string intrinsic expects string content");
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                    other => return other,
+                };
+                match std::fs::write(path.value.as_str(), content.value.as_str()) {
+                    Ok(()) => RuntimeFlow::Value(Value::unit()),
+                    Err(err) => {
+                        self.emit_error(err.to_string());
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                }
+            }
+            IntrinsicCallKind::FsAppendString => {
+                if !call.kwargs.is_empty() {
+                    self.emit_error("fs_append_string intrinsic does not accept named arguments");
+                }
+                if call.args.len() != 2 {
+                    self.emit_error("fs_append_string intrinsic expects path and content");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let path = match self.eval_expr_runtime(&mut call.args[0]) {
+                    RuntimeFlow::Value(Value::String(path)) => path,
+                    RuntimeFlow::Value(_) => {
+                        self.emit_error("fs_append_string intrinsic expects a string path");
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                    other => return other,
+                };
+                let content = match self.eval_expr_runtime(&mut call.args[1]) {
+                    RuntimeFlow::Value(Value::String(content)) => content,
+                    RuntimeFlow::Value(_) => {
+                        self.emit_error("fs_append_string intrinsic expects string content");
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                    other => return other,
+                };
+                let file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path.value.as_str());
+                let mut file = match file {
+                    Ok(file) => file,
+                    Err(err) => {
+                        self.emit_error(err.to_string());
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                };
+                match std::io::Write::write_all(&mut file, content.value.as_bytes()) {
+                    Ok(()) => RuntimeFlow::Value(Value::unit()),
+                    Err(err) => {
+                        self.emit_error(err.to_string());
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                }
+            }
+            IntrinsicCallKind::FsExists => {
+                if !call.kwargs.is_empty() {
+                    self.emit_error("fs_exists intrinsic does not accept named arguments");
+                }
+                if call.args.len() != 1 {
+                    self.emit_error("fs_exists intrinsic expects one path argument");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let flow = self.eval_expr_runtime(&mut call.args[0]);
+                let value = match flow {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                let Value::String(path) = value else {
+                    self.emit_error("fs_exists intrinsic expects a string path");
+                    return RuntimeFlow::Value(Value::undefined());
+                };
+                RuntimeFlow::Value(Value::bool(std::path::Path::new(path.value.as_str()).exists()))
+            }
+            IntrinsicCallKind::FsIsDir => {
+                if !call.kwargs.is_empty() {
+                    self.emit_error("fs_is_dir intrinsic does not accept named arguments");
+                }
+                if call.args.len() != 1 {
+                    self.emit_error("fs_is_dir intrinsic expects one path argument");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let flow = self.eval_expr_runtime(&mut call.args[0]);
+                let value = match flow {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                let Value::String(path) = value else {
+                    self.emit_error("fs_is_dir intrinsic expects a string path");
+                    return RuntimeFlow::Value(Value::undefined());
+                };
+                RuntimeFlow::Value(Value::bool(std::path::Path::new(path.value.as_str()).is_dir()))
+            }
+            IntrinsicCallKind::FsIsFile => {
+                if !call.kwargs.is_empty() {
+                    self.emit_error("fs_is_file intrinsic does not accept named arguments");
+                }
+                if call.args.len() != 1 {
+                    self.emit_error("fs_is_file intrinsic expects one path argument");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let flow = self.eval_expr_runtime(&mut call.args[0]);
+                let value = match flow {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                let Value::String(path) = value else {
+                    self.emit_error("fs_is_file intrinsic expects a string path");
+                    return RuntimeFlow::Value(Value::undefined());
+                };
+                RuntimeFlow::Value(Value::bool(
+                    std::path::Path::new(path.value.as_str()).is_file(),
+                ))
+            }
             IntrinsicCallKind::Sleep => {
                 if !call.kwargs.is_empty() {
                     self.emit_error("time::sleep intrinsic does not accept named arguments");
@@ -481,7 +615,12 @@ impl<'ctx> AstInterpreter<'ctx> {
             IntrinsicCallKind::Panic
             | IntrinsicCallKind::CatchUnwind
             | IntrinsicCallKind::CatchUnwindResult
-            | IntrinsicCallKind::FsReadToString => {
+            | IntrinsicCallKind::FsReadToString
+            | IntrinsicCallKind::FsWriteString
+            | IntrinsicCallKind::FsAppendString
+            | IntrinsicCallKind::FsExists
+            | IntrinsicCallKind::FsIsDir
+            | IntrinsicCallKind::FsIsFile => {
                 self.emit_error(format!(
                     "intrinsic {:?} is not supported during const evaluation",
                     call.kind
