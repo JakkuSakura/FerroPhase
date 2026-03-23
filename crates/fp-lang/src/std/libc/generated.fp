@@ -1606,6 +1606,7 @@ pub extern "C" fn ffsctl(arg1: c_int, arg2: c_ulong, arg3: *mut u8, arg4: c_uint
 pub extern "C" fn fsync_volume_np(arg1: c_int, arg2: c_int) -> c_int;
 pub extern "C" fn sync_volume_np(arg1: *const c_char, arg2: c_int) -> c_int;
 pub extern "C" fn creat(arg1: *const c_char, arg2: mode_t) -> c_int;
+pub extern "C" fn open(path: *const c_char, oflag: c_int, mode: mode_t) -> c_int;
 pub extern "C" fn openx_np(arg1: *const c_char, arg2: c_int, arg3: filesec_t) -> c_int;
 pub extern "C" fn openat_authenticated_np(arg1: c_int, arg2: *const c_char, arg3: c_int, arg4: c_int) -> c_int;
 pub extern "C" fn flock(arg1: c_int, arg2: c_int) -> c_int;

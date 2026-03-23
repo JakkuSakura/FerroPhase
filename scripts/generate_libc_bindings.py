@@ -124,6 +124,13 @@ def parse_bindgen_output(bindgen_rs: str) -> BindingSet:
 
             raw_args = re.sub(r"\s+", " ", raw_args.strip())
             if "..." in raw_args:
+                if name == "open":
+                    signature = (
+                        'pub extern "C" fn open(path: *const c_char, oflag: c_int, mode: mode_t) -> c_int;'
+                    )
+                    if signature not in seen_externs:
+                        externs.append(signature)
+                        seen_externs.add(signature)
                 continue
 
             fp_args: list[str] = []
