@@ -1,0 +1,9 @@
+{
+    "args": ["curl"],
+    "facts": {
+        "apk.ApkPackages": {}
+    },
+    "commands": [
+        "apk add curl"
+    ]
+}

@@ -1,0 +1,31 @@
+{
+    "args": [[
+        "git",
+        "python-devel",
+        "something"
+    ]],
+    "facts": {
+        "server.Which": {
+            "command=apk": null,
+            "command=apt": null,
+            "command=brew": null,
+            "command=dnf": null,
+            "command=pacman": null,
+            "command=xbps": null,
+            "command=zypper": null,
+            "command=xbps-install": null,
+            "command=yum": "/sbin/yum"
+        },
+        "rpm.RpmPackages": {
+            "something": [""]
+        },
+        "rpm.RpmPackageProvides": {
+            "package=git": null,
+            "package=python-devel": null,
+            "package=something": null
+        }
+    },
+    "commands": [
+        "yum install -y git python-devel"
+    ]
+}

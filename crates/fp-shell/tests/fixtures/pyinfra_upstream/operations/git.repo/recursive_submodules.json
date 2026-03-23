@@ -1,0 +1,24 @@
+{
+    "args": ["myrepo", "/home/myrepo"],
+    "kwargs": {
+        "update_submodules": true,
+        "recursive_submodules": true
+    },
+    "facts": {
+        "files.Directory": {
+            "path=/home/myrepo": {},
+            "path=/home/myrepo/.git": {
+                "mode": 0
+            }
+        },
+        "git.GitBranch": {
+            "repo=/home/myrepo": "master"
+        }
+    },
+    "commands": [
+        "cd /home/myrepo && git pull",
+        "cd /home/myrepo && git submodule update --init --recursive"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "git pull will always be executed"
+}

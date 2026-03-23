@@ -1,0 +1,27 @@
+{
+    "args": ["somescript.sh"],
+    "local_files": {
+        "files": {
+            "somescript.sh": null
+        },
+        "dirs": {}
+    },
+    "facts": {
+        "files.File": {
+            "path=_tempfile_": null
+        },
+        "files.Directory": {
+            "path=_tempfile_": null
+        }
+    },
+    "commands": [
+        ["upload", "/somescript.sh", "_tempfile_"],
+        "chmod +x _tempfile_",
+        "_tempfile_"
+    ],
+    "section_output_commands": [
+        "chmod +x _tempfile_",
+        "_tempfile_"
+    ],
+    "idempotent": false
+}

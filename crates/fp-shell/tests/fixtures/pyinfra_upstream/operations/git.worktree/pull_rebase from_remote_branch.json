@@ -1,0 +1,22 @@
+{
+    "args": ["/home/myworktree"],
+    "kwargs": {
+        "rebase": true,
+        "from_remote_branch": ["origin", "master"]
+    },
+    "facts": {
+        "files.Directory": {
+            "path=/home/myworktree": {
+                "mode": 0
+            }
+        },
+        "git.GitTrackingBranch" : {
+            "repo=/home/myworktree": null
+        }
+    },
+    "commands": [
+        "cd /home/myworktree && git pull --rebase origin master"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "git pull is always executed"
+}

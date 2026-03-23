@@ -1,0 +1,10 @@
+{
+    "args": ["filename", "match", "replace"],
+    "facts": {
+        "files.FindInFile": {
+            "interpolate_variables=False, path=filename, pattern=match": []
+        }
+    },
+    "commands": [],
+    "noop_description": "string \"match\" does not exist in filename"
+}

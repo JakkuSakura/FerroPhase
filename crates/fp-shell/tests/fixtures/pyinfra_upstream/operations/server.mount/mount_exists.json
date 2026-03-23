@@ -1,0 +1,10 @@
+{
+    "args": ["/data"],
+    "facts": {
+        "server.Mounts": {
+            "/data": {}
+        }
+    },
+    "commands": [],
+    "noop_description": "filesystem /data is mounted"
+}

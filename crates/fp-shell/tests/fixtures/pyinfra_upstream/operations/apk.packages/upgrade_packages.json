@@ -1,0 +1,14 @@
+{
+    "args": ["curl"],
+    "kwargs": {
+        "latest": true
+    },
+    "facts": {
+        "apk.ApkPackages": {}
+    },
+    "commands": [
+        "apk add curl"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "package upgrades are always executed"
+}

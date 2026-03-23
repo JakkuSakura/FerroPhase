@@ -1,0 +1,11 @@
+{
+    "args": ["remote-host.net", "echo hi"],
+    "kwargs": {
+        "user": "nick",
+        "port": 33
+    },
+    "commands": [
+        "ssh -p 33 nick@remote-host.net 'echo hi'"
+    ],
+    "idempotent": false
+}

@@ -1,0 +1,16 @@
+{
+    "kwargs": {
+        "update": true,
+        "clean": true
+    },
+    "facts": {
+        "rpm.RpmPackages": {},
+        "rpm.RpmPackageProvides": {}
+    },
+    "commands": [
+        "dnf clean all",
+        "dnf update -y"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "package upgrades are always executed"
+}

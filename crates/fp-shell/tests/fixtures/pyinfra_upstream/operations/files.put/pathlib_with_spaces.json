@@ -1,0 +1,22 @@
+{
+    "require_platform": ["Darwin", "Linux"],
+    "args": ["path:somefile.txt", "path:/home/some file.txt"],
+    "local_files": {
+        "files": {
+            "somefile.txt": null
+        },
+        "dirs": {}
+    },
+    "facts": {
+        "files.File": {
+            "path=/home/some file.txt": null
+        },
+        "files.Directory": {
+            "path=/home": true,
+            "path=/home/some file.txt": null
+        }
+    },
+    "commands": [
+        ["upload", "/somefile.txt", "/home/some file.txt"]
+    ]
+}

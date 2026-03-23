@@ -1,0 +1,15 @@
+{
+    "args": ["somefile", "match_line"],
+    "kwargs": {
+        "replace": "replace_line",
+        "flags": "abc"
+    },
+    "facts": {
+        "files.FindInFile": {
+            "interpolate_variables=False, path=somefile, pattern=^.*match_line.*$": [],
+            "interpolate_variables=False, path=somefile, pattern=^replace_line$": ["replace_line"]
+        }
+    },
+    "commands": [],
+    "noop_description": "line \"replace_line\" exists in somefile"
+}

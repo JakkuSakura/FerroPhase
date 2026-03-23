@@ -1,0 +1,43 @@
+{
+    "args": ["someuser"],
+    "kwargs": {
+        "home": "homedir",
+        "public_keys": "abc"
+    },
+    "facts": {
+        "server.Os": "Linux",
+        "server.Users": {
+            "someuser": {
+                "home": "homedir",
+                "group": null,
+                "groups": []
+            }
+        },
+        "files.Directory": {
+            "path=homedir": {
+                "user": "someuser",
+                "group": "someuser"
+            },
+            "path=homedir/.ssh": {
+                "user": "someuser",
+                "group": "someuser",
+                "mode": 700
+            }
+        },
+        "files.File": {
+            "path=homedir/.ssh/authorized_keys": {
+                "user": "someuser",
+                "group": "someuser",
+                "mode": 601
+            }
+        },
+        "files.FindInFile": {
+            "interpolate_variables=False, path=homedir/.ssh/authorized_keys, pattern=^.*abc.*$": []
+        },
+        "server.Groups": {}
+    },
+    "commands": [
+        "chmod 600 homedir/.ssh/authorized_keys",
+        "( [ $(tail -c1 homedir/.ssh/authorized_keys | wc -l) -eq 0 ] && echo ; echo abc ) >> homedir/.ssh/authorized_keys"
+    ]
+}

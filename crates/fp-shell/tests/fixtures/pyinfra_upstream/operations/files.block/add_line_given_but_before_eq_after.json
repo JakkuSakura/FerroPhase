@@ -1,0 +1,19 @@
+{
+    "require_platform": ["Darwin", "Linux"],
+    "args": ["/home/someone/something"],
+    "kwargs": {
+        "content": "please add this",
+        "line": "line",
+        "before": true,
+        "after": true
+    },
+    "facts": {
+        "files.Block": {
+            "begin=None, end=None, marker=None, path=/home/someone/something": null
+        }
+    },
+    "exception": {
+        "names": ["OperationValueError"],
+        "message": "only one of 'before' or 'after' used when 'line` is specified"
+    }
+}

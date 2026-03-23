@@ -1,0 +1,16 @@
+{
+    "args": [[
+        "git",
+        "python-devel",
+        "MozillaFirefox",
+        "something"
+    ]],
+    "facts": {
+        "rpm.RpmPackages": {
+            "something": [""]
+        }
+    },
+    "commands": [
+        "zypper --non-interactive install -y git python-devel MozillaFirefox"
+    ]
+}

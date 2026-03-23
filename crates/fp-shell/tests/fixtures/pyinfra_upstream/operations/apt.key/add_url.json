@@ -1,0 +1,14 @@
+{
+    "args": ["http://mykey"],
+    "facts": {
+        "apt.AptKeys": {},
+        "gpg.GpgKey": {
+            "src=http://mykey": {
+                "abc": {}
+            }
+        }
+    },
+    "commands": [
+        "(wget -O - http://mykey || curl -sSLf http://mykey) | apt-key add -"
+    ]
+}

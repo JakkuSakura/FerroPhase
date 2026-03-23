@@ -1,0 +1,27 @@
+{
+    "args": ["somefile.txt.j2"],
+    "local_files": {
+        "files": {
+            "somefile.txt.j2": null
+        },
+        "dirs": {}
+    },
+    "facts": {
+        "files.File": {
+            "path=_tempfile_": null
+        },
+        "files.Directory": {
+            "path=_tempfile_": null
+        }
+    },
+    "commands": [
+        ["upload", "_test_data_", "_tempfile_"],
+        "chmod +x _tempfile_",
+        "_tempfile_"
+    ],
+    "section_output_commands": [
+        "chmod +x _tempfile_",
+        "_tempfile_"
+    ],
+    "idempotent": false
+}

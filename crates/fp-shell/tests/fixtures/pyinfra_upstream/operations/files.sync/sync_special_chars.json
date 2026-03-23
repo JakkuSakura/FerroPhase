@@ -1,0 +1,40 @@
+{
+    "require_platform": ["Darwin", "Linux"],
+    "args": ["/somedir/", "/home/somedir"],
+    "local_files": {
+        "files": {},
+        "dirs": {
+            "somedir": {
+                "files": {
+                    "yet () another {} file $$ __.txt": null
+                },
+                "dirs": {}
+            }
+        }
+    },
+    "facts": {
+        "files.File": {
+            "path=/home/somedir/yet () another {} file $$ __.txt": null
+        },
+        "files.Directory": {
+            "path=/home/somedir": null,
+            "path=/home/somedir/yet () another {} file $$ __.txt": null
+        },
+        "files.FindFiles": {
+            "path=/home/somedir": []
+        },
+        "files.Link": {
+            "path=/home/somedir": false
+        }
+    },
+    "commands": [
+        "mkdir -p /home/somedir",
+        "chmod 755 /home/somedir",
+        [
+            "upload",
+            "/somedir/yet () another {} file $$ __.txt",
+            "/home/somedir/yet () another {} file $$ __.txt"
+        ],
+        "chmod 644 '/home/somedir/yet () another {} file $$ __.txt'"
+    ]
+}

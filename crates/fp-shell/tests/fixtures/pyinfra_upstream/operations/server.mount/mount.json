@@ -1,0 +1,9 @@
+{
+    "args": ["/data"],
+    "facts": {
+        "server.Mounts": {}
+    },
+    "commands": [
+        "mount /data"
+    ]
+}

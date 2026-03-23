@@ -1,0 +1,12 @@
+{
+    "args": ["this_is_a_command"],
+    "facts": {
+        "crontab.Crontab": {
+            "user=None": {}
+        }
+    },
+    "commands": [
+        "echo '* * * * * this_is_a_command' >> _tempfile_",
+        "crontab  _tempfile_"
+    ]
+}

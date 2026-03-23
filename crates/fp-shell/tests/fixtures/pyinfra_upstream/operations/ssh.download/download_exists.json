@@ -1,0 +1,10 @@
+{
+    "args": ["remote-host.net", "remote_filename", "local_filename"],
+    "facts": {
+        "files.File": {
+            "path=local_filename": true
+        }
+    },
+    "commands": [],
+    "noop_description": "file remote_filename is already downloaded"
+}

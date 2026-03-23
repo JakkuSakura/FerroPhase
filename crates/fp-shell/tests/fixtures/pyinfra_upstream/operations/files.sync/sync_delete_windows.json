@@ -1,0 +1,97 @@
+{
+    "require_platform": ["Windows"],
+    "args": ["\\somedir\\", "/home/somedir"],
+    "kwargs": {
+        "delete": true,
+        "exclude": "*.pyc",
+        "exclude_dir": "__pycache__"
+    },
+    "local_files": {
+        "files": {},
+        "dirs": {
+            "somedir": {
+                "files": {
+                    "somefile.txt": null,
+                    "anotherfile.txt": null,
+                    "thing.pyc": null
+                },
+                "dirs": {
+                    "underthat": {
+                        "files": {
+                            "yet-another-file.txt": null
+                        },
+                        "dirs": {
+                            "evendeeper": {
+                                "files": {
+                                    "a-very-deep-file.txt": null
+                                },
+                                "dirs": {}
+                            }
+                        }
+                    },
+                    "__pycache__": {
+                        "files": {
+                            "nope": null
+                        },
+                        "dirs": {}
+                    }
+                }
+            }
+        }
+    },
+    "facts": {
+        "files.File": {
+            "path=/home/somedir/somefile.txt": null,
+            "path=/home/somedir/anotherfile.txt": null,
+            "path=/home/somedir/deleteme.txt": true,
+            "path=/home/somedir/nodelete.pyc": true,
+            "path=/home/somedir/underthat/yet-another-file.txt": null,
+            "path=/home/somedir/underthat/evendeeper/a-very-deep-file.txt": null
+        },
+        "files.Directory": {
+            "path=/home/somedir": null,
+            "path=/home/somedir/underthat": null,
+            "path=/home/somedir/underthat/evendeeper": null,
+            "path=/home/somedir/somefile.txt": null,
+            "path=/home/somedir/anotherfile.txt": null,
+            "path=/home/somedir/underthat/yet-another-file.txt": null,
+            "path=/home/somedir/underthat/evendeeper/a-very-deep-file.txt": null
+        },
+        "files.FindFiles": {
+            "args=None, fname=None, iname=None, max_size=None, maxdepth=None, min_size=None, path=/home/somedir, quote_path=True, regex=None, size=None": [
+                "/home/somedir/deleteme.txt",
+                "/home/somedir/nodelete.pyc"
+            ],
+            "path=/home/somedir/underthat": [],
+            "path=/home/somedir/underthat/evendeeper": []
+        },
+        "files.Link": {
+            "path=/home/somedir": false
+        }
+    },
+    "commands": [
+        "mkdir -p /home/somedir",
+        "chmod 755 /home/somedir",
+        "mkdir -p /home/somedir/underthat",
+        "chmod 755 /home/somedir/underthat",
+        "mkdir -p /home/somedir/underthat/evendeeper",
+        "chmod 755 /home/somedir/underthat/evendeeper",
+        ["upload", "\\somedir\\somefile.txt", "/home/somedir/somefile.txt"],
+        "chmod 644 /home/somedir/somefile.txt",
+        ["upload", "\\somedir\\anotherfile.txt", "/home/somedir/anotherfile.txt"],
+        "chmod 644 /home/somedir/anotherfile.txt",
+        [
+            "upload",
+            "\\somedir\\underthat\\yet-another-file.txt",
+            "/home/somedir/underthat/yet-another-file.txt"
+        ],
+        "chmod 644 /home/somedir/underthat/yet-another-file.txt",
+        [
+            "upload",
+            "\\somedir\\underthat\\evendeeper\\a-very-deep-file.txt",
+            "/home/somedir/underthat/evendeeper/a-very-deep-file.txt"
+        ],
+        "chmod 644 /home/somedir/underthat/evendeeper/a-very-deep-file.txt",
+        "rm -f /home/somedir/deleteme.txt"
+    ]
+}

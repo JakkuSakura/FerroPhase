@@ -1,0 +1,16 @@
+{
+    "kwargs": {
+        "network": "nginx",
+        "ingress": true,
+        "attachable": true,
+        "present": true
+    },
+    "facts": {
+        "docker.DockerNetwork": {
+            "object_id=nginx": []
+        }
+    },
+    "commands": [
+        "docker network create nginx --ingress --attachable"
+    ]
+}

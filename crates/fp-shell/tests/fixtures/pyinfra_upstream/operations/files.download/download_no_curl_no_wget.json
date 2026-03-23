@@ -1,0 +1,24 @@
+{
+    "args": ["http://myfile"],
+    "kwargs": {
+        "dest": "/home/myfile",
+        "group": "mygroup",
+        "mode": 777
+    },
+    "facts": {
+        "server.Date": "datetime:2015-01-01T00:00:00",
+        "files.File": {
+            "path=/home/myfile": null
+        },
+        "server.Which": {
+            "command=curl": null,
+            "command=wget": null
+        }
+    },
+    "commands": [
+        "( curl -sSLf http://myfile -o _tempfile_ ) || ( wget -q http://myfile -O _tempfile_ || ( rm -f _tempfile_ ; exit 1 ) )",
+        "mv _tempfile_ /home/myfile",
+        "chgrp mygroup /home/myfile",
+        "chmod 777 /home/myfile"
+    ]
+}

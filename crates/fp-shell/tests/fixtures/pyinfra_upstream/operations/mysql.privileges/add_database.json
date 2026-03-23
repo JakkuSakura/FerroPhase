@@ -1,0 +1,17 @@
+{
+    "args": ["someuser", ["SELECT", "INSERT"]],
+    "kwargs": {
+        "database": "mydb"
+    },
+    "facts": {
+        "mysql.MysqlUserGrants": {
+            "hostname=localhost, mysql_host=None, mysql_password=None, mysql_port=None, mysql_user=None, user=someuser": {
+                "*.*": ["set:"]
+            }
+        }
+    },
+    "commands": [
+        "mysql -Be 'GRANT INSERT, SELECT ON `mydb`.* TO \"someuser\"@\"localhost\"'",
+        "mysql -Be 'FLUSH PRIVILEGES'"
+    ]
+}

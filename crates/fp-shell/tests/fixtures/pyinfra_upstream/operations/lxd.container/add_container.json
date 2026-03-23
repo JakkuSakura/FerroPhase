@@ -1,0 +1,12 @@
+{
+    "kwargs": {
+        "id": "container1",
+        "image": "ubuntu:16.04"
+    },
+    "facts": {
+        "lxd.LxdContainers": []
+    },
+    "commands": [
+        "lxc launch ubuntu:16.04 container1 < /dev/null"
+    ]
+}

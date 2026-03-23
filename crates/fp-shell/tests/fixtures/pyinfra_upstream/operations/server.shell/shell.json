@@ -1,0 +1,11 @@
+{
+    "args": [[
+        "some shell",
+        "some more shell"
+    ]],
+    "commands": [
+        "some shell",
+        "some more shell"
+    ],
+    "idempotent": false
+}

@@ -1,0 +1,25 @@
+{
+    "args": ["nginx"],
+    "kwargs": {
+        "managed": false
+    },
+    "facts": {
+        "files.Link": {
+            "path=/var/service/nginx": {
+                "user": "root",
+                "group": "root",
+                "link_target": "/etc/sv/nginx"
+            }
+        },
+        "files.Directory": {
+            "path=/var/service": {
+                "user": "root",
+                "group": "root",
+                "mode": 644
+            }
+        }
+    },
+    "commands": [
+        "rm -f /var/service/nginx"
+    ]
+}

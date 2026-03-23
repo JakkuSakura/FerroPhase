@@ -1,0 +1,16 @@
+{
+    "kwargs": {
+        "network": "nginx",
+        "opts": ["opta=A", "optB=B"],
+        "ipam_opts": ["ipam_opta=IPAM_A", "imap_optB=IPAM_B"],
+        "present": true
+    },
+    "facts": {
+        "docker.DockerNetwork": {
+            "object_id=nginx": []
+        }
+    },
+    "commands": [
+        "docker network create nginx --opt opta=A --opt optB=B --ipam-opt ipam_opta=IPAM_A --ipam-opt imap_optB=IPAM_B"
+    ]
+}

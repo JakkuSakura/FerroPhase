@@ -1,0 +1,19 @@
+{
+    "args": ["nginx"],
+    "kwargs": {
+        "restarted": true
+    },
+    "facts": {
+        "sysvinit.InitdStatus": {
+            "nginx": false
+        }
+    },
+    "commands": [
+        "/etc/init.d/nginx start"
+    ],
+    "second_output_commands": [
+        "/etc/init.d/nginx restart"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "service restarts are always executed"
+}

@@ -1,0 +1,17 @@
+{
+    "args": ["nginx"],
+    "kwargs": {
+        "reloaded": true
+    },
+    "facts": {
+        "server.Os": "FreeBSD",
+        "bsdinit.RcdStatus": {
+            "nginx": true
+        }
+    },
+    "commands": [
+        "test -e /etc/rc.d/nginx && /etc/rc.d/nginx reload || /usr/local/etc/rc.d/nginx reload"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "service reloads are always executed"
+}

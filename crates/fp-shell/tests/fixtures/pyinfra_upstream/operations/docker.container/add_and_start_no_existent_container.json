@@ -1,0 +1,20 @@
+{
+    "kwargs": {
+        "container": "nginx",
+        "image": "nginx:alpine",
+        "ports": [
+            "80:80"
+        ],
+        "present": true,
+        "start": true
+    },
+    "facts": {
+        "docker.DockerContainer": {
+            "object_id=nginx": []
+        }
+    },
+    "commands": [
+        "docker container create --name nginx -p 80:80 nginx:alpine",
+        "docker container start nginx"
+    ]
+}

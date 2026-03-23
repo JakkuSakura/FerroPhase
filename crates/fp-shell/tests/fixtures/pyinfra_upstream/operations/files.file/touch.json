@@ -1,0 +1,18 @@
+{
+    "args": ["testfile"],
+    "kwargs": {
+        "touch": true
+    },
+    "facts": {
+        "files.File": {
+            "path=testfile": {
+                "mode": 600
+            }
+        }
+    },
+    "commands": [
+        "touch testfile"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "touch operations are always executed"
+}

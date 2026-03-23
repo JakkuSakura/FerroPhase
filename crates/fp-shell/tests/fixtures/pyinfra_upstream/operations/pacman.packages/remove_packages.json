@@ -1,0 +1,18 @@
+{
+    "args": [["curl", "i-dont-exist"]],
+    "kwargs": {
+        "present": false
+    },
+    "facts": {
+        "pacman.PacmanUnpackGroup": {
+            "package=curl": ["curl"],
+            "package=i-dont-exist": []
+        },
+        "pacman.PacmanPackages": {
+            "curl": "1"
+        }
+    },
+    "commands": [
+        "pacman --noconfirm -R curl"
+    ]
+}

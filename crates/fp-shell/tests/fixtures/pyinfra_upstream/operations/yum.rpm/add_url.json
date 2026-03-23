@@ -1,0 +1,25 @@
+{
+    "args": ["https://something.rpm"],
+    "facts": {
+        "server.Date": "datetime:2015-01-01T00:00:00",
+        "files.File": {
+            "path=_tempfile_.rpm": null
+        },
+        "rpm.RpmPackage": {
+            "package=_tempfile_.rpm": null
+        },
+        "server.Which": {
+            "command=curl": "yes"
+        }
+    },
+    "commands": [
+        "curl -sSLf https://something.rpm -o _tempfile_",
+        "mv _tempfile_ _tempfile_.rpm",
+        "rpm -q `rpm -qp _tempfile_.rpm` 2> /dev/null || rpm -i _tempfile_.rpm"
+    ],
+    "second_output_commands": [
+        "rpm -q `rpm -qp _tempfile_.rpm` 2> /dev/null || rpm -i _tempfile_.rpm"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "packages that require downloads cannot be checked for presence during fact gathering"
+}

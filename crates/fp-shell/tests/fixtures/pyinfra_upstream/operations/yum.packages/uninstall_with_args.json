@@ -1,0 +1,20 @@
+{
+    "args": [[
+        "git"
+    ]],
+    "kwargs": {
+        "present": false,
+        "extra_uninstall_args": "--force"
+    },
+    "facts": {
+        "rpm.RpmPackages": {
+            "git": [""]
+        },
+        "rpm.RpmPackageProvides": {
+            "package=git": null
+        }
+    },
+    "commands": [
+        "yum remove -y --force git"
+    ]
+}

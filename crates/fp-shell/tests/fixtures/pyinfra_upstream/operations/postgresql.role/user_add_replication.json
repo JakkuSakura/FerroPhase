@@ -1,0 +1,15 @@
+{
+    "args": ["testuser"],
+    "kwargs": {
+        "login": false,
+        "replication": true
+    },
+    "facts": {
+        "postgres.PostgresRoles": {
+            "psql_database=None, psql_host=None, psql_password=None, psql_port=None, psql_user=None": {}
+        }
+    },
+    "commands": [
+        "psql -Ac 'CREATE ROLE \"testuser\" REPLICATION'"
+    ]
+}

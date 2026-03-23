@@ -1,0 +1,16 @@
+{
+  "kwargs": {
+    "packages": ["org.videolan.VLC", "tv.kodi.Kodi"]
+  },
+  "facts": {
+    "flatpak.FlatpakPackage": {
+      "package=org.videolan.VLC": {
+        "id": "org.videolan.VLC",
+        "ref": "app/org.videolan.VLC/x86_64/stable",
+        "version": "3.0.21"
+      }
+    },
+    "flatpak.FlatpakPackages": ["org.videolan.VLC"]
+  },
+  "commands": ["flatpak install --noninteractive tv.kodi.Kodi"]
+}

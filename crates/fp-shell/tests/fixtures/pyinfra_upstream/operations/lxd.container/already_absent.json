@@ -1,0 +1,17 @@
+{
+    "kwargs": {
+        "id": "container1",
+        "image": "ubuntu:16.04",
+        "present": false
+    },
+    "facts": {
+        "lxd.LxdContainers": [
+            {
+                "name": "container2",
+                "status": "Running"
+            }
+        ]
+    },
+    "commands": [],
+    "noop_description": "container container1 does not exist"
+}

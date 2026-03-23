@@ -1,0 +1,16 @@
+{
+    "args": ["http://somesite/somerepo.repo"],
+    "facts": {
+        "server.Date": "datetime:2015-01-01T00:00:00",
+        "files.File": {
+            "path=/etc/yum.repos.d/somerepo.repo": null
+        },
+        "server.Which": {
+            "command=curl": "yes"
+        }
+    },
+    "commands": [
+        "curl -sSLf http://somesite/somerepo.repo -o _tempfile_",
+        "mv _tempfile_ /etc/yum.repos.d/somerepo.repo"
+    ]
+}

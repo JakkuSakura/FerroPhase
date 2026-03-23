@@ -1,0 +1,12 @@
+{
+    "args": ["/data"],
+    "kwargs": {
+        "options": ["rw"]
+    },
+    "facts": {
+        "server.Mounts": {}
+    },
+    "commands": [
+        "mount -o rw /data"
+    ]
+}

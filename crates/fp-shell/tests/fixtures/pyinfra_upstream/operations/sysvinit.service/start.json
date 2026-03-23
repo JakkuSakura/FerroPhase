@@ -1,0 +1,11 @@
+{
+    "args": ["nginx"],
+    "facts": {
+        "sysvinit.InitdStatus": {
+            "nginx": false
+        }
+    },
+    "commands": [
+        "/etc/init.d/nginx start"
+    ]
+}

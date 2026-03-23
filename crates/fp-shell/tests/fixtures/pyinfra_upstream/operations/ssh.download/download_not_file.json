@@ -1,0 +1,21 @@
+{
+    "args": ["remote-host.net", "remote_filename", "local_filename"],
+    "facts": {
+        "files.File": {
+            "path=local_filename": false
+        },
+        "server.Home": "/home/pyinfra",
+        "files.Directory": {
+            "path=/home/pyinfra/.ssh": {
+                "mode": 700
+            }
+        },
+        "files.FindInFile": {
+            "path=/home/pyinfra/.ssh/known_hosts, pattern=remote-host.net": [true]
+        }
+    },
+    "exception": {
+        "name": "OperationError",
+        "message": "Local destination local_filename already exists and is not a file"
+    }
+}

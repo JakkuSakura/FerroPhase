@@ -1,0 +1,13 @@
+{
+    "args": ["key", "value"],
+    "facts": {
+        "git.GitConfig": {
+            "repo=None, system=False": {
+                "key": ["wrongvalue"]
+            }
+        }
+    },
+    "commands": [
+        "git config --global key \"value\""
+    ]
+}

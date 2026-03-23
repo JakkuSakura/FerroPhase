@@ -1,0 +1,14 @@
+{
+    "args": ["deb http://archive.canonical.com/ubuntu hardy partner"],
+    "facts": {
+        "apt.AptSources": [{
+            "type": "deb",
+            "url": "http://archive.canonical.com/ubuntu",
+            "distribution": "hardy",
+            "components": ["partner"],
+            "options": {}
+        }]
+    },
+    "commands": [],
+    "noop_description": "apt repo \"deb http://archive.canonical.com/ubuntu hardy partner\" exists"
+}

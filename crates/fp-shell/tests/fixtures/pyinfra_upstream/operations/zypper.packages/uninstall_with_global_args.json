@@ -1,0 +1,21 @@
+{
+    "args": [
+        [
+            "git"
+        ]
+    ],
+    "kwargs": {
+        "present": false,
+        "extra_global_uninstall_args": "--quiet"
+    },
+    "facts": {
+        "rpm.RpmPackages": {
+            "git": [
+                ""
+            ]
+        }
+    },
+    "commands": [
+        "zypper --quiet --non-interactive remove -y git"
+    ]
+}

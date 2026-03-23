@@ -1,0 +1,28 @@
+{
+    "args": ["somefile.txt.j2", "/home/somefile.txt.j2"],
+    "kwargs": {
+        "user": "testuser",
+        "group": "testgroup",
+        "mode": 644
+    },
+    "local_files": {
+        "files": {
+            "somefile.txt.j2": null
+        },
+        "dirs": {}
+    },
+    "facts": {
+        "files.File": {
+            "path=/home/somefile.txt.j2": null
+        },
+        "files.Directory": {
+            "path=/home": true,
+            "path=/home/somefile.txt.j2": null
+        }
+    },
+    "commands": [
+        ["upload", "_test_data_", "/home/somefile.txt.j2"],
+        "chown testuser:testgroup /home/somefile.txt.j2",
+        "chmod 644 /home/somefile.txt.j2"
+    ]
+}

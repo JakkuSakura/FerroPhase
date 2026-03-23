@@ -1,0 +1,15 @@
+{
+    "args": ["someuser", ["DELETE"]],
+    "facts": {
+        "mysql.MysqlUserGrants": {
+            "hostname=localhost, mysql_host=None, mysql_password=None, mysql_port=None, mysql_user=None, user=someuser": {
+                "*.*": ["set:", "ALL"]
+            }
+        }
+    },
+    "commands": [
+        "mysql -Be 'REVOKE ALL ON *.* FROM \"someuser\"@\"localhost\"'",
+        "mysql -Be 'GRANT DELETE ON *.* TO \"someuser\"@\"localhost\"'",
+        "mysql -Be 'FLUSH PRIVILEGES'"
+    ]
+}

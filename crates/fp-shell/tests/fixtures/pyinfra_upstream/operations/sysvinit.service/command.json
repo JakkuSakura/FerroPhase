@@ -1,0 +1,20 @@
+{
+    "args": ["nginx"],
+    "kwargs": {
+        "command": "something-else"
+    },
+    "facts": {
+        "sysvinit.InitdStatus": {
+            "nginx": false
+        }
+    },
+    "commands": [
+        "/etc/init.d/nginx start",
+        "/etc/init.d/nginx something-else"
+    ],
+    "second_output_commands": [
+        "/etc/init.d/nginx something-else"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "service commands are always executed"
+}

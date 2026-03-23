@@ -1,0 +1,18 @@
+{
+    "args": ["brokenfile.txt.j2", "/home/brokenfile.txt.j2"],
+    "kwargs": {
+        "user": "testuser",
+        "group": "testgroup",
+        "mode": 644
+    },
+    "local_files": {
+        "files": {
+            "brokenfile.txt.j2": "{{ something_does_not_exist }}"
+        },
+        "dirs": {}
+    },
+    "exception": {
+        "name": "OperationError",
+        "message": "Error in template: /brokenfile.txt.j2 (L1): 'something_does_not_exist' is undefined\n...\n{{\nsomething_does_not_exist\n..."
+    }
+}

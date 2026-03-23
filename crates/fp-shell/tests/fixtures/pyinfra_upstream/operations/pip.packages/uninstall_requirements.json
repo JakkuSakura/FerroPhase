@@ -1,0 +1,12 @@
+{
+    "kwargs": {
+        "requirements": "requirements.txt",
+        "present": false
+    },
+    "facts": {},
+    "commands": [
+        "pip uninstall --yes -r requirements.txt"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "pip package requirements are always executed"
+}

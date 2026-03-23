@@ -1,0 +1,29 @@
+{
+    "args": ["somefile.txt", "/home/somefile.txt"],
+    "kwargs": {
+        "user": "testuser",
+        "group": "testgroup",
+        "create_remote_dir": true
+    },
+    "local_files": {
+        "files": {
+            "somefile.txt": null
+        },
+        "dirs": {}
+    },
+    "facts": {
+        "files.File": {
+            "path=/home/somefile.txt": null
+        },
+        "files.Directory": {
+            "path=/home": null,
+            "path=/home/somefile.txt": null
+        }
+    },
+    "commands": [
+        "mkdir -p /home",
+        "chown testuser:testgroup /home",
+        ["upload", "/somefile.txt", "/home/somefile.txt"],
+        "chown testuser:testgroup /home/somefile.txt"
+    ]
+}

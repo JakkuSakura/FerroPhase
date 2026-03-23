@@ -1,0 +1,19 @@
+{
+    "args": ["key", "value"],
+    "kwargs": {
+        "repo": "/my/repo"
+    },
+    "facts": {
+        "git.GitConfig": {
+            "repo=/my/repo, system=False": {
+                "another_key": ["value"]
+            }
+        },
+        "files.Directory": {
+            "path=/my/repo/.git": true
+        }
+    },
+    "commands": [
+        "cd /my/repo && git config --local key \"value\""
+    ]
+}

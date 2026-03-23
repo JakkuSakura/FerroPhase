@@ -1,0 +1,15 @@
+{
+    "args": ["nginx"],
+    "kwargs": {
+        "running": false
+    },
+    "facts": {
+        "server.Os": "FreeBSD",
+        "bsdinit.RcdStatus": {
+            "nginx": true
+        }
+    },
+    "commands": [
+        "test -e /etc/rc.d/nginx && /etc/rc.d/nginx stop || /usr/local/etc/rc.d/nginx stop"
+    ]
+}

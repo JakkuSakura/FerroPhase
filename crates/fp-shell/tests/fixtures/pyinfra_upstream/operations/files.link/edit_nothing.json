@@ -1,0 +1,19 @@
+{
+    "args": ["/etc/rc.d/nginx"],
+    "kwargs": {
+        "target": "../init.d/nginx",
+        "user": "testuser",
+        "group": "testgroup"
+    },
+    "facts": {
+        "files.Link": {
+            "path=/etc/rc.d/nginx": {
+                "link_target": "../init.d/nginx",
+                "user": "testuser",
+                "group": "testgroup"
+            }
+        }
+    },
+    "commands": [],
+    "noop_description": "link /etc/rc.d/nginx already exists"
+}

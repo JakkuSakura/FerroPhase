@@ -1,0 +1,14 @@
+{
+    "args": ["mykey"],
+    "facts": {
+        "apt.AptKeys": {},
+        "gpg.GpgKey": {
+            "src=mykey": {
+                "abc": {}
+            }
+        }
+    },
+    "commands": [
+        "apt-key add mykey"
+    ]
+}

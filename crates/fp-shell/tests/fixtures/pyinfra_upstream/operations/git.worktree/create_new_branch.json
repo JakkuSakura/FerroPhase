@@ -1,0 +1,24 @@
+{
+    "args": ["/home/myworktree"],
+    "kwargs": {
+        "repo": "/home/mainrepo",
+        "new_branch": "mybranch"
+    },
+    "facts": {
+        "files.Directory": {
+            "path=/home/mainrepo": {},
+            "path=/home/mainrepo/.git": {
+                "mode": 0
+            },
+            "path=/home/myworktree": null
+        }
+    },
+    "commands": [
+        "cd /home/mainrepo && git worktree add -b mybranch /home/myworktree"
+    ],
+    "second_output_commands": [
+        "cd /home/myworktree && git pull"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "git pull is always executed"
+}

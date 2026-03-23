@@ -1,0 +1,7 @@
+{
+    "args": ["SELECT 1"],
+    "commands": [
+        "mysql -Be 'SELECT 1'"
+    ],
+    "idempotent": false
+}

@@ -1,0 +1,12 @@
+{
+    "args": ["someuser"],
+    "facts": {
+        "mysql.MysqlUsers": {
+            "mysql_host=None, mysql_password=None, mysql_port=None, mysql_user=None": {
+                "someuser@localhost": {}
+            }
+        }
+    },
+    "commands": [],
+    "noop_description": "mysql user someuser@localhost exists"
+}

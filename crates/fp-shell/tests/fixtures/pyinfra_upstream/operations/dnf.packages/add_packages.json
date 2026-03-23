@@ -1,0 +1,20 @@
+{
+    "args": [[
+        "git",
+        "python-devel",
+        "something"
+    ]],
+    "facts": {
+        "rpm.RpmPackages": {
+            "something": [""]
+        },
+        "rpm.RpmPackageProvides": {
+            "package=git": null,
+            "package=python-devel": null,
+            "package=something": null
+        }
+    },
+    "commands": [
+        "dnf install -y git python-devel"
+    ]
+}

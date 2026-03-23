@@ -1,0 +1,13 @@
+{
+    "args": ["/home/somefile.txt", "somefile.txt"],
+    "facts": {
+        "files.File": {
+            "path=/home/somefile.txt": {
+                "mode": 500
+            }
+        }
+    },
+    "commands": [
+        ["download", "/home/somefile.txt", "/somefile.txt"]
+    ]
+}

@@ -1,0 +1,23 @@
+{
+    "args": ["py-pip"],
+    "facts": {
+        "server.Os": "os",
+        "server.OsVersion": "os_version",
+        "server.Arch": "arch",
+        "pkg.PkgPackages": {},
+        "server.Which": {
+            "pkg": null
+        },
+        "files.File": {
+            "path=/etc/installurl": {
+                "size": 0
+            }
+        },
+        "server.Which": {
+            "command=pkg": null
+        }
+    },
+    "commands": [
+        "pkg_add py-pip"
+    ]
+}

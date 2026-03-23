@@ -1,0 +1,18 @@
+{
+    "args": ["myrepo", "/home/myrepo"],
+    "kwargs": {
+        "branch": "mybranch",
+        "user": "myuser",
+        "pull": false
+    },
+    "facts": {
+        "files.Directory": {
+            "path=/home/myrepo": {},
+            "path=/home/myrepo/.git": null
+        }
+    },
+    "commands": [
+        "cd /home/myrepo && git clone myrepo --branch mybranch .",
+        "chown -R myuser /home/myrepo"
+    ]
+}

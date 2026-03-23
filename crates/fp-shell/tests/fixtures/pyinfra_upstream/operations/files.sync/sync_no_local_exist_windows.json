@@ -1,0 +1,16 @@
+{
+    "require_platform": ["Windows"],
+    "args": ["\\i-do-not-exist", "/home/somedir"],
+    "facts": {
+        "files.Directory": {
+            "path=/home/somedir": null
+        },
+        "files.FindFiles": {
+            "path=/home/somedir": null
+        }
+    },
+    "exception": {
+        "names": ["OSError", "IOError"],
+        "message": "No such directory: \\i-do-not-exist"
+    }
+}

@@ -1,0 +1,21 @@
+{
+    "args": ["py-pip"],
+    "facts": {
+        "server.Os": "os",
+        "server.OsVersion": "os_version",
+        "server.Arch": "arch",
+        "pkg.PkgPackages": {},
+        "server.Which": {
+            "pkg": null
+        },
+        "files.File": {
+            "path=/etc/installurl": false
+        },
+        "server.Which": {
+            "command=pkg": null
+        }
+    },
+    "commands": [
+        "PKG_PATH=http://ftp.os.org/pub/os/os_version/packages/arch/ pkg_add py-pip"
+    ]
+}

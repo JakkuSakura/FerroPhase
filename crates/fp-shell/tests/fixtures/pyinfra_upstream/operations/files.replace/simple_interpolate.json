@@ -1,0 +1,15 @@
+{
+    "args": ["filename", "match", "replace"],
+    "kwargs": {
+        "flags": ["g", "i"],
+        "interpolate_variables": true
+    },
+    "facts": {
+        "files.FindInFile": {
+            "interpolate_variables=True, path=filename, pattern=match": ["matching line"]
+        }
+    },
+    "commands": [
+        "sed -i.a-timestamp \"s/match/replace/gi\" filename && rm -f filename.a-timestamp"
+    ]
+}

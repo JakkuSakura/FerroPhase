@@ -1,0 +1,10 @@
+{
+    "args": ["nginx"],
+    "facts": {
+        "sysvinit.InitdStatus": {
+            "nginx": true
+        }
+    },
+    "commands": [],
+    "noop_description": "service nginx is running"
+}
