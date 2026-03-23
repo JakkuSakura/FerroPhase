@@ -1,0 +1,18 @@
+{
+    "args": ["http://myfile"],
+    "kwargs": {
+        "dest": "/home",
+        "group": "mygroup",
+        "mode": 777
+    },
+    "facts": {
+        "server.Date": "datetime:2015-01-01T00:00:00",
+        "files.File": {
+            "path=/home": false
+        }
+    },
+    "exception": {
+        "name": "OperationError",
+        "message": "Destination /home already exists and is not a file"
+    }
+}

@@ -1,0 +1,16 @@
+{
+    "args": ["something.rpm"],
+    "facts": {
+        "rpm.RpmPackages": {},
+        "rpm.RpmPackage": {
+            "package=something.rpm": {
+                "name": "something",
+                "version": "abc"
+            },
+            "package=something": null
+        }
+    },
+    "commands": [
+        "rpm -i something.rpm"
+    ]
+}

@@ -1,0 +1,21 @@
+{
+    "args": ["curl"],
+    "kwargs": {
+        "update": true,
+        "upgrade": true
+    },
+    "facts": {
+        "pacman.PacmanUnpackGroup": {
+            "package=curl": ["curl"]
+        },
+        "pacman.PacmanPackages": {
+            "curl": ["1"]
+        }
+    },
+    "commands": [
+        "pacman -Sy",
+        "pacman --noconfirm -Su"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "package upgrades are always executed"
+}

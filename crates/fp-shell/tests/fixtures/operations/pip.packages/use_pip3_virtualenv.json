@@ -1,0 +1,18 @@
+{
+    "args": [["test"]],
+    "kwargs": {
+        "pip": "pip3",
+        "virtualenv": "testdir"
+    },
+    "facts": {
+        "pip.PipPackages": {
+            "pip=testdir/bin/pip3": {}
+        },
+        "files.File": {
+            "path=testdir/bin/activate": true
+        }
+    },
+    "commands": [
+        "testdir/bin/pip3 install test"
+    ]
+}

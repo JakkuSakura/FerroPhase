@@ -1,0 +1,23 @@
+{
+    "args": ["somerepo"],
+    "kwargs": {
+        "baseurl": "http://baseurl",
+        "description": "description",
+        "gpgcheck": false,
+        "gpgkey": "test"
+    },
+    "facts": {
+        "files.File": {
+            "path=/etc/yum.repos.d/somerepo.repo": {}
+        },
+        "files.Directory": {
+            "path=/etc/yum.repos.d": true,
+            "path=/etc/yum.repos.d/somerepo.repo": null
+        }
+    },
+    "commands": [[
+        "upload",
+        "[somerepo]\nname=description\nbaseurl=http://baseurl\nenabled=1\ngpgcheck=0\ngpgkey=test\n",
+            "/etc/yum.repos.d/somerepo.repo"
+    ]]
+}

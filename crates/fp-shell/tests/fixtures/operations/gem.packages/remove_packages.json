@@ -1,0 +1,14 @@
+{
+    "args": ["rubyenv"],
+    "kwargs": {
+        "present": false
+    },
+    "facts": {
+        "gem.GemPackages": {
+            "rubyenv": true
+        }
+    },
+    "commands": [
+        "gem uninstall rubyenv"
+    ]
+}

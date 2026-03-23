@@ -1,0 +1,18 @@
+{
+    "args": ["someuser"],
+    "kwargs": {
+        "require": "SSL"
+    },
+    "facts": {
+        "mysql.MysqlUsers": {
+            "mysql_host=None, mysql_password=None, mysql_port=None, mysql_user=None": {
+                "someuser@localhost": {
+                    "ssl_type": null
+                }
+            }
+        }
+    },
+    "commands": [
+        "mysql -Be 'ALTER USER \"someuser\"@\"localhost\" REQUIRE SSL'"
+    ]
+}

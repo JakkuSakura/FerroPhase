@@ -1,0 +1,66 @@
+{
+    "require_platform": ["Darwin", "Linux"],
+    "args": ["/somedir/", "/home/somedir"],
+    "local_files": {
+        "files": {},
+        "dirs": {
+            "somedir": {
+                "files": {
+                    "somefile.txt": null,
+                    "anotherfile.txt": null
+                },
+                "dirs": {
+                    "underthat": {
+                        "files": {
+                            "yet-another-file.txt": null
+                        },
+                        "dirs": {}
+                    }
+                }
+            }
+        }
+    },
+    "facts": {
+        "files.File": {
+            "path=/home/somedir/somefile.txt": {
+                "mode": 644
+            },
+            "path=/home/somedir/anotherfile.txt": null,
+            "path=/home/somedir/deleteme.txt": true,
+            "path=/home/somedir/underthat/yet-another-file.txt": null
+        },
+        "files.Directory": {
+            "path=/home/somedir": {
+                "mode": 755
+            },
+            "path=/home/somedir/underthat": {
+                "mode": 777
+            },
+            "path=/home/somedir/anotherfile.txt": null,
+            "path=/home/somedir/underthat/yet-another-file.txt": null
+        },
+        "files.FindFiles": {
+            "path=/home/somedir": [
+                "/home/somedir/somefile.txt"
+            ],
+            "path=/home/somedir/underthat": []
+        },
+        "files.Link": {
+            "path=/home/somedir": false
+        },
+        "files.Sha1File": {
+            "path=/home/somedir/somefile.txt": "ac2cd59a622114712b5b21081763c54bf0caacb8"
+        }
+    },
+    "commands": [
+        "chmod 755 /home/somedir/underthat",
+        ["upload", "/somedir/anotherfile.txt", "/home/somedir/anotherfile.txt"],
+        "chmod 644 /home/somedir/anotherfile.txt",
+        [
+            "upload",
+            "/somedir/underthat/yet-another-file.txt",
+            "/home/somedir/underthat/yet-another-file.txt"
+        ],
+        "chmod 644 /home/somedir/underthat/yet-another-file.txt"
+    ]
+}

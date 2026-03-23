@@ -1,0 +1,15 @@
+{
+    "args": ["somedb"],
+    "kwargs": {
+        "collate": "utf8_bin",
+        "charset": "UTF-8"
+    },
+    "facts": {
+        "mysql.MysqlDatabases": {
+            "mysql_host=None, mysql_password=None, mysql_port=None, mysql_user=None": {}
+        }
+    },
+    "commands": [
+        "mysql -Be 'CREATE DATABASE `somedb` COLLATE utf8_bin CHARSET UTF-8'"
+    ]
+}

@@ -1,0 +1,14 @@
+{
+    "args": [["mod1", "mod2", "mod3"]],
+    "kwargs": {
+        "present": false
+    },
+    "facts": {
+        "server.KernelModules": {
+            "mod1": {}
+        }
+    },
+    "commands": [
+        "modprobe -r -a mod1"
+    ]
+}

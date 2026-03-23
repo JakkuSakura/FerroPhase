@@ -1,5 +1,6 @@
 use std::fs;
 use std::json;
+use std::json::{JsonField, JsonValue};
 use std::process;
 use std::yaml;
 
@@ -137,7 +138,7 @@ fn run_case(case: FixtureCase) -> bool {
     true
 }
 
-fn build_case_source(case: FixtureCase, fixture: json::JsonValue) -> str {
+fn build_case_source(case: FixtureCase, fixture: JsonValue) -> str {
     let operation = operation_path(case.family);
     let args = render_args(json::find_object_field(fixture, "args"));
     let kwargs = render_kwargs(json::find_object_field(fixture, "kwargs"));
@@ -146,11 +147,11 @@ fn build_case_source(case: FixtureCase, fixture: json::JsonValue) -> str {
         true => match kwargs == "" {
             true => f"{operation}()",
             false => f"{operation}({kwargs})",
-        },
+        }
         false => match kwargs == "" {
             true => f"{operation}({args})",
             false => f"{operation}({args}, {kwargs})",
-        },
+        }
     };
 
     f"const fn main() {{\n    {call};\n}}\n"
@@ -169,10 +170,10 @@ fn operation_path(family: &str) -> str {
     out
 }
 
-fn render_args(value: json::JsonValue) -> str {
+fn render_args(value: JsonValue) -> str {
     match value {
-        json::JsonValue::Null => "",
-        json::JsonValue::Array(values) => {
+        JsonValue::Null => "",
+        JsonValue::Array(values) => {
             let mut rendered = Vec::new();
             let mut idx = 0;
 
@@ -187,10 +188,10 @@ fn render_args(value: json::JsonValue) -> str {
     }
 }
 
-fn render_kwargs(value: json::JsonValue) -> str {
+fn render_kwargs(value: JsonValue) -> str {
     match value {
-        json::JsonValue::Null => "",
-        json::JsonValue::Object(fields) => {
+        JsonValue::Null => "",
+        JsonValue::Object(fields) => {
             let mut rendered = Vec::new();
             let mut idx = 0;
 
@@ -206,51 +207,43 @@ fn render_kwargs(value: json::JsonValue) -> str {
     }
 }
 
-fn render_value(value: json::JsonValue) -> str {
+fn render_value(value: JsonValue) -> str {
     match value {
-        json::JsonValue::Null => "null",
-        json::JsonValue::Bool(flag) => {
-            match flag {
-                true => "true",
-                false => "false",
+        JsonValue::Null => "null",
+        JsonValue::Bool(true) => "true",
+        JsonValue::Bool(false) => "false",
+        JsonValue::Number(number) => number,
+        JsonValue::String(text) => fp_quote(text),
+        JsonValue::Array(values) => {
+            let mut rendered = Vec::new();
+            let mut idx = 0;
+
+            while idx < values.len() {
+                rendered.push(render_value(values[idx]));
+                idx = idx + 1;
             }
+
+            f"[{rendered.join(", ")}]"
         }
-        json::JsonValue::Number(number) => number,
-        json::JsonValue::String(text) => fp_quote(text),
-        json::JsonValue::Array(values) => render_array(values),
-        json::JsonValue::Object(fields) => render_object(fields),
+        JsonValue::Object(fields) => {
+            let mut rendered = Vec::new();
+            let mut idx = 0;
+
+            while idx < fields.len() {
+                let field = fields[idx];
+                rendered.push(f"{fp_quote(field.key)}: {render_value(field.value)}");
+                idx = idx + 1;
+            }
+
+            f"{{{rendered.join(", ")}}}"
+        }
     }
 }
 
-fn render_array(values: Vec<json::JsonValue>) -> str {
-    let mut rendered = Vec::new();
-    let mut idx = 0;
-
-    while idx < values.len() {
-        rendered.push(render_value(values[idx]));
-        idx = idx + 1;
-    }
-
-    f"[{rendered.join(", ")}]"
-}
-
-fn render_object(fields: Vec<json::JsonField>) -> str {
-    let mut rendered = Vec::new();
-    let mut idx = 0;
-
-    while idx < fields.len() {
-        let field = fields[idx];
-        rendered.push(f"{fp_quote(field.key)}: {render_value(field.value)}");
-        idx = idx + 1;
-    }
-
-    f"{{{rendered.join(", ")}}}"
-}
-
-fn expected_commands(fixture: json::JsonValue) -> Vec<&str> {
+fn expected_commands(fixture: JsonValue) -> Vec<&str> {
     match json::find_object_field(fixture, "commands") {
-        json::JsonValue::Null => Vec::new(),
-        json::JsonValue::Array(values) => {
+        JsonValue::Null => Vec::new(),
+        JsonValue::Array(values) => {
             let mut commands = Vec::new();
             let mut idx = 0;
 
@@ -265,7 +258,7 @@ fn expected_commands(fixture: json::JsonValue) -> Vec<&str> {
     }
 }
 
-fn load_fixture(path: &str) -> json::JsonValue {
+fn load_fixture(path: &str) -> JsonValue {
     let source = fs::read_to_string(path);
     match path.ends_with(".json") {
         true => json::parse(source),

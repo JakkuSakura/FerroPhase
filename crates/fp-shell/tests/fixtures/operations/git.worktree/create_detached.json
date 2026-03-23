@@ -1,0 +1,19 @@
+{
+    "args": ["/home/myworktree"],
+    "kwargs": {
+        "repo": "/home/mainrepo",
+        "detached": true
+    },
+    "facts": {
+        "files.Directory": {
+            "path=/home/mainrepo": {},
+            "path=/home/mainrepo/.git": {
+                "mode": 0
+            },
+            "path=/home/myworktree": null
+        }
+    },
+    "commands": [
+        "cd /home/mainrepo && git worktree add --detach /home/myworktree"
+    ]
+}

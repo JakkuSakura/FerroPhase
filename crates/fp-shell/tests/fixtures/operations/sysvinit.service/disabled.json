@@ -1,0 +1,19 @@
+{
+    "args": ["nginx"],
+    "kwargs": {
+        "enabled": false
+    },
+    "facts": {
+        "sysvinit.InitdStatus": {
+            "nginx": true
+        },
+        "files.FindLinks": {
+            "args=None, fname=None, iname=None, max_size=None, maxdepth=None, min_size=None, path=/etc/rc*.d/S*nginx, quote_path=False, regex=None, size=None": [
+                "somelink"
+            ]
+        }
+    },
+    "commands": [
+        "rm -f somelink"
+    ]
+}

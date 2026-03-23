@@ -1,0 +1,14 @@
+{
+    "args": ["somegroup"],
+    "kwargs": {
+        "gid" : 1000,
+        "system": true
+    },
+    "facts": {
+        "server.Groups": [],
+        "server.Os": "Linux"
+    },
+    "commands": [
+        "groupadd -r somegroup --gid 1000"
+    ]
+}

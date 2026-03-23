@@ -1,0 +1,10 @@
+{
+    "args": ["somemodule"],
+    "facts": {
+        "server.KernelModules": {
+            "somemodule": {}
+        }
+    },
+    "commands": [],
+    "noop_description": "module somemodule is loaded"
+}

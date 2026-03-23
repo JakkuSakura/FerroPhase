@@ -1,0 +1,14 @@
+{
+    "args": ["someuser"],
+    "kwargs": {
+        "require": "SSL"
+    },
+    "facts": {
+        "mysql.MysqlUsers": {
+            "mysql_host=None, mysql_password=None, mysql_port=None, mysql_user=None": {}
+        }
+    },
+    "commands": [
+        "mysql -Be 'CREATE USER \"someuser\"@\"localhost\" REQUIRE SSL'"
+    ]
+}

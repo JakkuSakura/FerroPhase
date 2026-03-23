@@ -1,0 +1,10 @@
+{
+    "args": [123],
+    "kwargs": {
+        "hostname": "my-host.name"
+    },
+    "commands": [
+        "vzctl set 123 --save --hostname my-host.name"
+    ],
+    "idempotent": false
+}

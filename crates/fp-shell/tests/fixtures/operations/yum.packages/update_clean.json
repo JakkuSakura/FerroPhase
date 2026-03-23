@@ -1,0 +1,16 @@
+{
+    "kwargs": {
+        "update": true,
+        "clean": true
+    },
+    "facts": {
+        "rpm.RpmPackages": {},
+        "rpm.RpmPackageProvides": {}
+    },
+    "commands": [
+        "yum clean all",
+        "yum update -y"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "package upgrades are always executed"
+}

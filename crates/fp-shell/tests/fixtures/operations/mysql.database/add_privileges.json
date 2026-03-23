@@ -1,0 +1,22 @@
+{
+    "args": ["somedb"],
+    "kwargs": {
+        "user": "someuser",
+        "user_privileges": "ALL"
+    },
+    "facts": {
+        "mysql.MysqlDatabases": {
+            "mysql_host=None, mysql_password=None, mysql_port=None, mysql_user=None": {}
+        },
+        "mysql.MysqlUserGrants": {
+            "hostname=localhost, mysql_host=None, mysql_password=None, mysql_port=None, mysql_user=None, user=someuser": {
+                "localhost": {}
+            }
+        }
+    },
+    "commands": [
+        "mysql -Be 'CREATE DATABASE `somedb`'",
+        "mysql -Be 'GRANT ALL ON `somedb`.* TO \"someuser\"@\"localhost\"'",
+        "mysql -Be 'FLUSH PRIVILEGES'"
+    ]
+}

@@ -1,0 +1,20 @@
+{
+    "args": ["http://somewhere.com/something.deb"],
+    "facts": {
+        "server.Date": "datetime:2015-01-01T00:00:00",
+        "files.File": {
+            "path=_tempfile_": ""
+        },
+        "deb.DebPackage": {
+            "package=_tempfile_": {
+                "name": "test",
+                "version": 0
+            }
+        },
+        "deb.DebPackages": {
+            "test": [0]
+        }
+    },
+    "commands": [],
+    "noop_description": "deb http://somewhere.com/something.deb is installed"
+}

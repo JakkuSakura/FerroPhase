@@ -1,0 +1,15 @@
+{
+    "kwargs": {
+        "network": "nginx",
+        "ip_range": "192.168.0.100/24",
+        "present": true
+    },
+    "facts": {
+        "docker.DockerNetwork": {
+            "object_id=nginx": []
+        }
+    },
+    "commands": [
+        "docker network create nginx --ip-range 192.168.0.100/24"
+    ]
+}

@@ -1,0 +1,16 @@
+{
+    "kwargs": {
+        "update": true,
+        "upgrade": true
+    },
+    "facts": {
+        "deb.DebPackages": {},
+        "apt.SimulateOperationWillChange": {
+            "command=upgrade": {}
+        }
+    },
+    "commands": [
+        "apt-get update",
+        "DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=\"--force-confdef\" -o Dpkg::Options::=\"--force-confold\" upgrade"
+    ]
+}

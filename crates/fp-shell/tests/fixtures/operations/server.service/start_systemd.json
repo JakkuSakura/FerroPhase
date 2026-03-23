@@ -1,0 +1,21 @@
+{
+    "args": ["nginx.service"],
+    "facts": {
+        "systemd.SystemdStatus": {
+            "machine=None, services=['nginx.service'], user_mode=False, user_name=None": {
+                "nginx.service": false
+            }
+        },
+        "server.Which": {
+            "command=systemctl": true,
+            "command=initctl": false
+        },
+        "files.Directory": {
+            "path=/etc/init.d": false,
+            "path=/etc/rc.d": false
+        }
+    },
+    "commands": [
+        "systemctl start nginx.service"
+    ]
+}

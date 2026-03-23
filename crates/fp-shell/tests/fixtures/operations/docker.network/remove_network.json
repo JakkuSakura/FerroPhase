@@ -1,0 +1,14 @@
+{
+    "kwargs": {
+        "network": "nginx",
+        "present": false
+    },
+    "facts": {
+        "docker.DockerNetwork": {
+            "object_id=nginx": []
+        }
+    },
+    "commands": [
+        "docker network rm nginx"
+    ]
+}

@@ -1,0 +1,12 @@
+{
+    "kwargs": {
+        "image": "nginx:alpine",
+        "present": true
+    },
+    "facts": {
+        "docker.DockerImages": []
+    },
+    "commands": [
+        "docker image pull nginx:alpine"
+    ]
+}

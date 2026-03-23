@@ -595,6 +595,8 @@ struct GenericTemplate {
     generics: Vec<String>,
 }
 
+type HostExternFn = fn(&[Value]) -> std::result::Result<Value, String>;
+
 #[derive(Debug, Clone)]
 struct ExternFunctionBinding {
     sig: FunctionSignature,
@@ -3394,7 +3396,7 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn register_extern_function(&mut self, decl: &ItemDeclFunction) {
         let command = extern_command_attr(decl);
-        if !decl.sig.abi.is_c() && command.is_none() {
+        if !decl.sig.abi.is_c() && !decl.sig.abi.is_named("host") && command.is_none() {
             return;
         }
         let binding = ExternFunctionBinding {
@@ -3436,6 +3438,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         binding: &ExternFunctionBinding,
         args: &[Value],
     ) -> RuntimeFlow {
+        if binding.sig.abi.is_named("host") {
+            return self.call_host_extern_runtime(name, args);
+        }
         if let Some(command) = &binding.command {
             return self.call_command_extern_runtime(name, command, &binding.sig, args);
         }
@@ -3463,9 +3468,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         sig: &FunctionSignature,
         args: &[Value],
     ) -> RuntimeFlow {
-        if let Some(flow) = self.call_host_command_extern_runtime(name, command, args) {
-            return flow;
-        }
         let fixed_args = match parse_command_attribute(command) {
             Ok(parts) => parts,
             Err(err) => {
@@ -3549,130 +3551,18 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn call_host_command_extern_runtime(
-        &mut self,
-        name: &str,
-        command: &str,
-        args: &[Value],
-    ) -> Option<RuntimeFlow> {
-        let flow = match command {
-            "__fp_hostfs_read_dir_json" => {
-                let path = match host_command_string_arg(name, command, args, 0) {
-                    Ok(path) => path,
-                    Err(flow) => return Some(flow),
-                };
-                let entries = match fs::read_dir(path.as_str()) {
-                    Ok(entries) => {
-                        let mut values = Vec::new();
-                        for entry in entries {
-                            let entry = match entry {
-                                Ok(entry) => entry,
-                                Err(err) => {
-                                    self.emit_error(format!(
-                                        "extern '{}' host command '{}' failed to read directory entry: {}",
-                                        name, command, err
-                                    ));
-                                    return Some(RuntimeFlow::Value(Value::undefined()));
-                                }
-                            };
-                            values.push(entry.path().to_string_lossy().into_owned());
-                        }
-                        values.sort();
-                        values
-                    }
-                    Err(err) => {
-                        self.emit_error(format!(
-                            "extern '{}' host command '{}' failed: {}",
-                            name, command, err
-                        ));
-                        return Some(RuntimeFlow::Value(Value::undefined()));
-                    }
-                };
-                let json = match serde_json::to_string(&entries) {
-                    Ok(json) => json,
-                    Err(err) => {
-                        self.emit_error(format!(
-                            "extern '{}' host command '{}' failed to encode output: {}",
-                            name, command, err
-                        ));
-                        return Some(RuntimeFlow::Value(Value::undefined()));
-                    }
-                };
-                RuntimeFlow::Value(Value::string(json))
-            }
-            "__fp_hostfs_read_to_string" => {
-                let path = match host_command_string_arg(name, command, args, 0) {
-                    Ok(path) => path,
-                    Err(flow) => return Some(flow),
-                };
-                match fs::read_to_string(path.as_str()) {
-                    Ok(content) => RuntimeFlow::Value(Value::string(content)),
-                    Err(err) => {
-                        self.emit_error(format!(
-                            "extern '{}' host command '{}' failed: {}",
-                            name, command, err
-                        ));
-                        RuntimeFlow::Value(Value::undefined())
-                    }
-                }
-            }
-            "__fp_hostfs_write_string" => {
-                let path = match host_command_string_arg(name, command, args, 0) {
-                    Ok(path) => path,
-                    Err(flow) => return Some(flow),
-                };
-                let content = match host_command_string_arg(name, command, args, 1) {
-                    Ok(content) => content,
-                    Err(flow) => return Some(flow),
-                };
-                match fs::write(path.as_str(), content.as_str()) {
-                    Ok(()) => RuntimeFlow::Value(Value::unit()),
-                    Err(err) => {
-                        self.emit_error(format!(
-                            "extern '{}' host command '{}' failed: {}",
-                            name, command, err
-                        ));
-                        RuntimeFlow::Value(Value::undefined())
-                    }
-                }
-            }
-            "__fp_hostfs_is_dir" => {
-                let path = match host_command_string_arg(name, command, args, 0) {
-                    Ok(path) => path,
-                    Err(flow) => return Some(flow),
-                };
-                RuntimeFlow::Value(Value::bool(std::path::Path::new(path.as_str()).is_dir()))
-            }
-            "__fp_hostyaml_to_json" => {
-                let input = match host_command_string_arg(name, command, args, 0) {
-                    Ok(input) => input,
-                    Err(flow) => return Some(flow),
-                };
-                let value: serde_json::Value = match serde_yaml::from_str(input.as_str()) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        self.emit_error(format!(
-                            "extern '{}' host command '{}' failed to parse yaml: {}",
-                            name, command, err
-                        ));
-                        return Some(RuntimeFlow::Value(Value::undefined()));
-                    }
-                };
-                let json = match serde_json::to_string(&value) {
-                    Ok(json) => json,
-                    Err(err) => {
-                        self.emit_error(format!(
-                            "extern '{}' host command '{}' failed to encode output: {}",
-                            name, command, err
-                        ));
-                        return Some(RuntimeFlow::Value(Value::undefined()));
-                    }
-                };
-                RuntimeFlow::Value(Value::string(json))
-            }
-            _ => return None,
+    fn call_host_extern_runtime(&mut self, name: &str, args: &[Value]) -> RuntimeFlow {
+        let Some(handler) = resolve_host_extern(name) else {
+            self.emit_error(format!("extern '{}' uses unsupported host binding", name));
+            return RuntimeFlow::Value(Value::undefined());
         };
-        Some(flow)
+        match handler(args) {
+            Ok(value) => RuntimeFlow::Value(value),
+            Err(err) => {
+                self.emit_error(format!("extern '{}' host call failed: {}", name, err));
+                RuntimeFlow::Value(Value::undefined())
+            }
+        }
     }
 
     // Determine enum payload shape for runtime construction/matching.
@@ -7508,6 +7398,81 @@ fn resolve_command_runtime_ty(ty: &Ty) -> Ty {
             _ => ty.clone(),
         },
         _ => ty.clone(),
+    }
+}
+
+fn resolve_host_extern(name: &str) -> Option<HostExternFn> {
+    match name {
+        "std::fs::read_dir_impl" | "read_dir_impl" => Some(host_fs_read_dir),
+        "std::fs::read_to_string_impl" | "read_to_string_impl" => Some(host_fs_read_to_string),
+        "std::fs::write_string_impl" | "write_string_impl" => Some(host_fs_write_string),
+        "std::fs::is_dir_impl" | "is_dir_impl" => Some(host_fs_is_dir),
+        "std::yaml::to_json_impl" | "to_json_impl" => Some(host_yaml_to_json),
+        _ => None,
+    }
+}
+
+fn host_fs_read_dir(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_host_string_arg(args, 0, "path")?;
+    let mut entries = Vec::new();
+    let iter = fs::read_dir(path.as_str()).map_err(|err| err.to_string())?;
+    for entry in iter {
+        let entry = entry.map_err(|err| err.to_string())?;
+        entries.push(Value::string(entry.path().to_string_lossy().into_owned()));
+    }
+    entries.sort_by(|lhs, rhs| {
+        host_string_value(lhs)
+            .cmp(host_string_value(rhs))
+    });
+    Ok(Value::List(ValueList::new(entries)))
+}
+
+fn host_fs_read_to_string(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_host_string_arg(args, 0, "path")?;
+    let content = fs::read_to_string(path.as_str()).map_err(|err| err.to_string())?;
+    Ok(Value::string(content))
+}
+
+fn host_fs_write_string(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_host_string_arg(args, 0, "path")?;
+    let content = expect_host_string_arg(args, 1, "content")?;
+    fs::write(path.as_str(), content.as_str()).map_err(|err| err.to_string())?;
+    Ok(Value::unit())
+}
+
+fn host_fs_is_dir(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_host_string_arg(args, 0, "path")?;
+    Ok(Value::bool(std::path::Path::new(path.as_str()).is_dir()))
+}
+
+fn host_yaml_to_json(args: &[Value]) -> std::result::Result<Value, String> {
+    let input = expect_host_string_arg(args, 0, "input")?;
+    let value: serde_json::Value = serde_yaml::from_str(input.as_str()).map_err(|err| err.to_string())?;
+    let json = serde_json::to_string(&value).map_err(|err| err.to_string())?;
+    Ok(Value::string(json))
+}
+
+fn expect_host_string_arg(
+    args: &[Value],
+    index: usize,
+    label: &str,
+) -> std::result::Result<String, String> {
+    let Some(value) = args.get(index) else {
+        return Err(format!("missing {} argument at index {}", label, index));
+    };
+    match value {
+        Value::String(text) => Ok(text.value.clone()),
+        other => Err(format!(
+            "expected {} argument at index {} to be string, got {:?}",
+            label, index, other
+        )),
+    }
+}
+
+fn host_string_value(value: &Value) -> &str {
+    match value {
+        Value::String(text) => text.value.as_str(),
+        _ => "",
     }
 }
 

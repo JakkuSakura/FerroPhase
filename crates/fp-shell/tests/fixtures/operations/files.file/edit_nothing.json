@@ -1,0 +1,19 @@
+{
+    "args": ["testfile"],
+    "kwargs": {
+        "user": "testuser",
+        "group": "testgroup",
+        "mode": 777
+    },
+    "facts": {
+        "files.File": {
+            "path=testfile": {
+                "mode": 777,
+                "user": "testuser",
+                "group": "testgroup"
+            }
+        }
+    },
+    "commands": [],
+    "noop_description": "file testfile already exists"
+}

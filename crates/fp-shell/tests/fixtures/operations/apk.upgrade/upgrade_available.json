@@ -1,0 +1,10 @@
+{
+    "args": [],
+    "kwargs": {
+        "available": true
+    },
+    "commands": [
+        "apk upgrade --available"
+    ],
+    "idempotent": false
+}

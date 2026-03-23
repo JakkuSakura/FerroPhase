@@ -1,0 +1,20 @@
+{
+    "args": ["com.fizzadar.thing"],
+    "kwargs": {
+        "restarted": true
+    },
+    "facts": {
+        "launchd.LaunchdStatus": {
+            "com.fizzadar.thing": false
+        }
+    },
+    "commands": [
+        "launchctl start com.fizzadar.thing"
+    ],
+    "second_output_commands": [
+        "launchctl stop com.fizzadar.thing",
+        "launchctl start com.fizzadar.thing"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "service restarts are always executed"
+}

@@ -1,0 +1,11 @@
+{
+    "args": ["my-hostname.net"],
+    "facts": {
+        "server.Hostname": "my-hostname.net",
+        "server.Which": {
+            "command=hostnamectl": "hostnamectl"
+        }
+    },
+    "commands": [],
+    "noop_description": "hostname is set"
+}

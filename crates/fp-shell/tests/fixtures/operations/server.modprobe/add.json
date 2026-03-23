@@ -1,0 +1,9 @@
+{
+    "args": ["somemodule"],
+    "facts": {
+        "server.KernelModules": {}
+    },
+    "commands": [
+        "modprobe -a somemodule"
+    ]
+}

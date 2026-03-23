@@ -1,0 +1,20 @@
+{
+    "args": ["someuser"],
+    "kwargs": {
+        "user_hostname": "localwhat",
+        "privileges": ["SELECT"]
+    },
+    "facts": {
+        "mysql.MysqlUsers": {
+            "mysql_host=None, mysql_password=None, mysql_port=None, mysql_user=None": {}
+        },
+        "mysql.MysqlUserGrants": {
+            "hostname=localwhat, mysql_host=None, mysql_password=None, mysql_port=None, mysql_user=None, user=someuser": {}
+        }
+    },
+    "commands": [
+        "mysql -Be 'CREATE USER \"someuser\"@\"localwhat\"'",
+        "mysql -Be 'GRANT SELECT ON *.* TO \"someuser\"@\"localwhat\"'",
+        "mysql -Be 'FLUSH PRIVILEGES'"
+    ]
+}

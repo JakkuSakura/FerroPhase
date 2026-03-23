@@ -1,0 +1,17 @@
+{
+    "args": ["/home/mybarerepo.git"],
+    "kwargs": {
+        "present": false
+    },
+    "facts": {
+        "files.Directory": {
+            "path=/home/mybarerepo.git": {"mode": 0}
+        },
+        "files.File": {
+            "path=/home/mybarerepo.git/HEAD": null
+        }
+    },
+    "commands": [
+        "rm -rf /home/mybarerepo.git"
+    ]
+}

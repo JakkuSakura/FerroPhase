@@ -1,0 +1,16 @@
+{
+    "require_platform": ["Darwin", "Linux"],
+    "args": ["/home/someone/something"],
+    "kwargs": {
+        "content": "the one true string",
+        "line": "before this",
+        "before": true
+    },
+    "facts": {
+        "files.Block": {
+            "begin=None, end=None, marker=None, path=/home/someone/something": ["the one true string"]
+        }
+    },
+    "commands": [],
+    "noop_description": "content already present"
+}

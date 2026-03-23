@@ -1,0 +1,19 @@
+{
+    "args": [[
+        "git",
+        "python-pip",
+        "another"
+    ]],
+    "kwargs": {
+        "present": false
+    },
+    "facts": {
+        "deb.DebPackages": {
+            "git": [""],
+            "python-pip": [""]
+        }
+    },
+    "commands": [
+        "DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=\"--force-confdef\" -o Dpkg::Options::=\"--force-confold\" remove git python-pip"
+    ]
+}

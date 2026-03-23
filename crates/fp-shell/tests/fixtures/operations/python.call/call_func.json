@@ -1,0 +1,10 @@
+{
+    "args": ["__func__", "arg1", "arg2"],
+    "kwargs": {
+        "hello": "world"
+    },
+    "commands": [
+        ["__func__", ["arg1", "arg2"], {"hello": "world"}]
+    ],
+    "idempotent": false
+}

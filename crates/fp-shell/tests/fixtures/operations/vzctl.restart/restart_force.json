@@ -1,0 +1,11 @@
+{
+    "args": [123],
+    "kwargs": {
+        "force": true
+    },
+    "commands": [
+        "vzctl stop 123",
+        "vzctl start 123 --force"
+    ],
+    "idempotent": false
+}

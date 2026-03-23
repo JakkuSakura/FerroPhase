@@ -1,0 +1,30 @@
+{
+    "args": ["http://somewhere.com/something.deb"],
+    "facts": {
+        "server.Date": "datetime:2015-01-01T00:00:00",
+        "files.File": {
+            "path=_tempfile_": null
+        },
+        "deb.DebPackage": {
+            "package=_tempfile_": null
+        },
+        "deb.DebPackages": {},
+        "server.Which": {
+            "command=curl": "yes"
+        }
+    },
+    "commands": [
+        "curl -sSLf http://somewhere.com/something.deb -o _tempfile_",
+        "mv _tempfile_ _tempfile_",
+        "dpkg --force-confdef --force-confold -i _tempfile_ 2> /dev/null || true",
+        "DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=\"--force-confdef\" -o Dpkg::Options::=\"--force-confold\" install -f",
+        "dpkg --force-confdef --force-confold -i _tempfile_"
+    ],
+    "second_output_commands": [
+        "dpkg --force-confdef --force-confold -i _tempfile_ 2> /dev/null || true",
+        "DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=\"--force-confdef\" -o Dpkg::Options::=\"--force-confold\" install -f",
+        "dpkg --force-confdef --force-confold -i _tempfile_"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "cannot know package details before downloading so the install is always attempted"
+}

@@ -1,0 +1,24 @@
+{
+    "args": ["nginx"],
+    "facts": {
+        "server.Which": {
+            "command=systemctl": false,
+            "command=initctl": false,
+            "command=rc-service": false,
+            "command=sv": false,
+            "command=service": false
+        },
+        "files.Directory": {
+            "path=/etc/init.d": false,
+            "path=/etc/rc.d": false
+        },
+        "files.Link": {
+            "path=/etc/init.d": false
+        },
+        "server.Os": "Linux"
+    },
+    "exception": {
+        "name": "OperationError",
+        "message": "No init system found (no systemctl, initctl, /etc/init.d or /etc/rc.d found)"
+    }
+}

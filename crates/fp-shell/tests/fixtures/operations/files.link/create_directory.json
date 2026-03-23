@@ -1,0 +1,19 @@
+{
+    "args": ["/home/testlink"],
+    "kwargs": {
+        "target": "/etc/init.d/nginx",
+        "create_remote_dir": true
+    },
+    "facts": {
+        "files.Link": {
+            "path=/home/testlink": null
+        },
+        "files.Directory": {
+            "path=/home": null
+        }
+    },
+    "commands": [
+        "mkdir -p /home",
+        "ln -s /etc/init.d/nginx /home/testlink"
+    ]
+}

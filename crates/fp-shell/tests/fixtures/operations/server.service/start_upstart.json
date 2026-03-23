@@ -1,0 +1,22 @@
+{
+    "args": ["nginx"],
+    "facts": {
+        "upstart.UpstartStatus": {
+            "nginx": false
+        },
+        "server.Which": {
+            "command=systemctl": false,
+            "command=initctl": true,
+            "command=rc-service": false,
+            "command=sv": false,
+            "command=service": false
+        },
+        "files.Directory": {
+            "path=/etc/init.d": false,
+            "path=/etc/rc.d": false
+        }
+    },
+    "commands": [
+        "initctl start nginx"
+    ]
+}

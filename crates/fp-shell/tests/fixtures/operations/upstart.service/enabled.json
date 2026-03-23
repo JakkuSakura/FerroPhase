@@ -1,0 +1,19 @@
+{
+    "args": ["redis-server"],
+    "kwargs": {
+        "enabled": true
+    },
+    "facts": {
+        "upstart.UpstartStatus": {
+            "redis-server": true
+        },
+        "files.File": {
+            "path=/etc/init/redis-server.override": {
+                "mode": 1
+            }
+        }
+    },
+    "commands": [
+        "rm -f /etc/init/redis-server.override"
+    ]
+}

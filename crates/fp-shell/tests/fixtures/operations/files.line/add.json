@@ -1,0 +1,11 @@
+{
+    "args": ["somefile", "match_line"],
+    "facts": {
+        "files.FindInFile": {
+            "interpolate_variables=False, path=somefile, pattern=^.*match_line.*$": []
+        }
+    },
+    "commands": [
+        "echo match_line >> somefile"
+    ]
+}

@@ -1,0 +1,21 @@
+{
+    "args": ["someuser", ["SELECT", "INSERT"]],
+    "kwargs": {
+        "table": "mytable"
+    },
+    "facts": {
+        "mysql.MysqlUserGrants": {
+            "hostname=localhost, mysql_host=None, mysql_password=None, mysql_port=None, mysql_user=None, user=someuser": {
+                "*.*": []
+            }
+        }
+    },
+    "commands": [
+        "mysql -Be \"GRANT SELECT, INSERT ON *.`mytable` TO \\\"someuser\\\"@\\\"localhost\\\"\"",
+        "mysql -Be \"FLUSH PRIVILEGES\""
+    ],
+    "exception": {
+        "name": "OperationError",
+        "message": "Cannot apply MySQL privileges on *.`mytable`, no database provided"
+    }
+}

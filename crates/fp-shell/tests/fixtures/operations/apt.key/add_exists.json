@@ -1,0 +1,15 @@
+{
+    "args": ["mykey"],
+    "facts": {
+        "apt.AptKeys": {
+            "abc": {}
+        },
+        "gpg.GpgKey": {
+            "src=mykey": {
+                "abc": {}
+            }
+        }
+    },
+    "commands": [],
+    "noop_description": "All keys from mykey are already available in the apt keychain"
+}

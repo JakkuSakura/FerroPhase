@@ -1,0 +1,21 @@
+{
+    "args": ["deb http://archive.canonical.com/ubuntu hardy partner"],
+    "kwargs": {
+        "present": false
+    },
+    "facts": {
+        "apt.AptSources": [{
+            "type": "deb",
+            "url": "http://archive.canonical.com/ubuntu",
+            "distribution": "hardy",
+            "components": ["partner"],
+            "options": {}
+        }],
+        "files.FindInFile": {
+            "interpolate_variables=False, path=/etc/apt/sources.list, pattern=^.*deb http://archive\\.canonical\\.com/ubuntu hardy partner.*$": [""]
+        }
+    },
+    "commands": [
+        "sed -i.a-timestamp '/^.*deb http:\\/\\/archive\\.canonical\\.com\\/ubuntu hardy partner.*$/d' /etc/apt/sources.list && rm -f /etc/apt/sources.list.a-timestamp"
+    ]
+}

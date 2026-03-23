@@ -1,0 +1,21 @@
+{
+    "args": ["testfile"],
+    "kwargs": {
+        "user": "testuser",
+        "group": "testgroup",
+        "mode": "+x"
+    },
+    "facts": {
+        "files.File": {
+            "path=testfile": {
+                "mode": 600,
+                "user": "wronguser",
+                "group": "wronggroup"
+            }
+        }
+    },
+    "commands": [
+        "chmod +x testfile",
+        "chown testuser:testgroup testfile"
+    ]
+}

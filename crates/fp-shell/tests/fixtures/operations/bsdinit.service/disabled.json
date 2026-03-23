@@ -1,0 +1,20 @@
+{
+    "args": ["nginx"],
+    "kwargs": {
+        "enabled": false
+    },
+    "facts": {
+        "server.Os": "FreeBSD",
+        "bsdinit.RcdStatus": {
+            "nginx": true
+        },
+        "files.FindInFile": {
+            "interpolate_variables=False, path=/etc/rc.conf.local, pattern=^nginx_enable=.*$": [
+                "nginx_enable=\"YES\""
+            ]
+        }
+    },
+    "commands": [
+        "sed -i.a-timestamp '/^nginx_enable=.*$/d' /etc/rc.conf.local && rm -f /etc/rc.conf.local.a-timestamp"
+    ]
+}

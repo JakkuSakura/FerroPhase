@@ -1,0 +1,14 @@
+{
+    "args": [["curl", "i-dont-exist"]],
+    "kwargs": {
+        "present": false
+    },
+    "facts": {
+        "apk.ApkPackages": {
+            "curl": "1"
+        }
+    },
+    "commands": [
+        "apk del curl"
+    ]
+}

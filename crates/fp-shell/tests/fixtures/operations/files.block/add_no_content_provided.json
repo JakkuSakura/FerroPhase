@@ -1,0 +1,13 @@
+{
+    "require_platform": ["Darwin", "Linux"],
+    "args": ["/home/someone/something"],
+    "facts": {
+        "files.Block": {
+            "begin=None, end=None, marker=None, path=/home/someone/something": null
+        }
+    },
+    "exception": {
+        "names": ["OperationValueError"],
+        "message": "'content' must be supplied when 'present' == True"
+    }
+}

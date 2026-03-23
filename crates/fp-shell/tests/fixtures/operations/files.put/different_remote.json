@@ -1,0 +1,37 @@
+{
+    "args": ["somefile.txt", "/home/somefile.txt"],
+    "kwargs": {
+        "user": "testuser",
+        "group": "testgroup",
+        "mode": 644
+    },
+    "local_files": {
+        "files": {
+            "somefile.txt": null
+        },
+        "dirs": {}
+    },
+    "facts": {
+        "files.File": {
+            "path=/home/somefile.txt": {
+                "mode": 500,
+                "user": "testuser",
+                "group": "testgroup"
+            }
+        },
+        "files.Directory": {
+            "path=/home": true
+        },
+        "files.Sha1File": {
+            "path=/home/somefile.txt": "nowt"
+        },
+        "files.FileContents": {
+            "path=/home/somefile.txt": []
+        }
+    },
+    "commands": [
+        ["upload", "/somefile.txt", "/home/somefile.txt"],
+        "chown testuser:testgroup /home/somefile.txt",
+        "chmod 644 /home/somefile.txt"
+    ]
+}

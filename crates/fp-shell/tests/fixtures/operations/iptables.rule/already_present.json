@@ -1,0 +1,18 @@
+{
+    "args": ["PREROUTING", "DNAT"],
+    "kwargs": {
+        "table": "nat",
+        "to_destination": "10.10.10.10"
+    },
+    "facts": {
+        "iptables.IptablesRules": {
+            "table=nat": [{
+                "to_destination": "10.10.10.10",
+                "chain": "PREROUTING",
+                "jump": "DNAT"
+            }]
+        }
+    },
+    "commands": [],
+    "noop_description": "iptables PREROUTING rule exists"
+}

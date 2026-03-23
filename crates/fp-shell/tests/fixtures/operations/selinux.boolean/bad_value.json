@@ -1,0 +1,10 @@
+{
+    "args": ["some_boolean", "really-off"],
+    "kwargs": {
+        "persistent": true
+    },
+    "exception": {
+        "name": "OperationValueError",
+        "message": "Invalid value 'really-off' for boolean operation"
+    }
+}

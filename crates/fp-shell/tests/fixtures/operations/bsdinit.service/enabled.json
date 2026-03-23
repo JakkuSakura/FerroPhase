@@ -1,0 +1,19 @@
+{
+    "args": ["nginx"],
+    "kwargs": {
+        "enabled": true
+    },
+    "facts": {
+        "server.Os": "FreeBSD",
+        "bsdinit.RcdStatus": {
+            "nginx": true
+        },
+        "files.FindInFile": {
+            "interpolate_variables=False, path=/etc/rc.conf.local, pattern=^nginx_enable=.*$": [],
+            "interpolate_variables=False, path=/etc/rc.conf.local, pattern=^nginx_enable=\"YES\"$": []
+        }
+    },
+    "commands": [
+        "echo 'nginx_enable=\"YES\"' >> /etc/rc.conf.local"
+    ]
+}

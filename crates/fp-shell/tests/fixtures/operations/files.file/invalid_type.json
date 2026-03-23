@@ -1,0 +1,7 @@
+{
+    "args": [["testfile", "anotherfile"]],
+    "exception": {
+        "name": "OperationTypeError",
+        "message": "`path` must be a string or `os.PathLike` object"
+    }
+}

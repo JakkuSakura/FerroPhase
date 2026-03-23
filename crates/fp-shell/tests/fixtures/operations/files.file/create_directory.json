@@ -1,0 +1,18 @@
+{
+    "args": ["/home/testfile"],
+    "kwargs": {
+        "create_remote_dir": true
+    },
+    "facts": {
+        "files.File": {
+            "path=/home/testfile": null
+        },
+        "files.Directory": {
+            "path=/home": null
+        }
+    },
+    "commands": [
+        "mkdir -p /home",
+        "touch /home/testfile"
+    ]
+}

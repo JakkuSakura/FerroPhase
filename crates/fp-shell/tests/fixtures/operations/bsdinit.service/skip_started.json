@@ -1,0 +1,11 @@
+{
+    "args": ["nginx"],
+    "facts": {
+        "server.Os": "FreeBSD",
+        "bsdinit.RcdStatus": {
+            "nginx": true
+        }
+    },
+    "commands": [],
+    "noop_description": "service nginx is running"
+}

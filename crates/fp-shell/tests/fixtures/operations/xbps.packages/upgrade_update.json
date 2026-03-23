@@ -1,0 +1,18 @@
+{
+    "args": ["curl"],
+    "kwargs": {
+        "update": true,
+        "upgrade": true
+    },
+    "facts": {
+        "xbps.XbpsPackages": {
+            "curl": ["1"]
+        }
+    },
+    "commands": [
+        "xbps-install -S",
+        "xbps-install -y -u"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "package upgrades are always executed"
+}

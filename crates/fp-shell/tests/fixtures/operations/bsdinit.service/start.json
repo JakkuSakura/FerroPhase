@@ -1,0 +1,12 @@
+{
+    "args": ["nginx"],
+    "facts": {
+        "server.Os": "FreeBSD",
+        "bsdinit.RcdStatus": {
+            "nginx": false
+        }
+    },
+    "commands": [
+        "test -e /etc/rc.d/nginx && /etc/rc.d/nginx start || /usr/local/etc/rc.d/nginx start"
+    ]
+}

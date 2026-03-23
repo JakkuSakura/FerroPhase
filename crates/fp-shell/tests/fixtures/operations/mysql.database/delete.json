@@ -1,0 +1,16 @@
+{
+    "args": ["somedb"],
+    "kwargs": {
+        "present": false
+    },
+    "facts": {
+        "mysql.MysqlDatabases": {
+            "mysql_host=None, mysql_password=None, mysql_port=None, mysql_user=None": {
+                "somedb": {}
+            }
+        }
+    },
+    "commands": [
+        "mysql -Be 'DROP DATABASE `somedb`'"
+    ]
+}

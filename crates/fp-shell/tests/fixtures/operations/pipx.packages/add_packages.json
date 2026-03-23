@@ -1,0 +1,10 @@
+{
+    "args": [["copier==0.9.1", "invoke", "ensurepath"]],
+    "facts": {
+        "pipx.PipxPackages": {"ensurepath": ["0.1.1"]}
+        },
+    "commands": [
+        "pipx install copier==0.9.1",
+        "pipx install invoke"
+    ]
+}

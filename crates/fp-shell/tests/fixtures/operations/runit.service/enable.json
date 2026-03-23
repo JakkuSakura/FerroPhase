@@ -1,0 +1,33 @@
+{
+    "args": ["nginx"],
+    "kwargs": {
+        "enabled": true
+    },
+    "facts": {
+        "runit.RunitManaged": {
+            "service=nginx, svdir=/var/service": {}
+        },
+        "files.Link": {
+            "path=/var/service/nginx": null
+        },
+        "files.Directory": {
+            "path=/var/service": {
+                "user": "root",
+                "group": "root",
+                "mode": 644
+            }
+        },
+        "files.File": {
+            "path=/var/service/nginx/down": null,
+            "path=/etc/sv/nginx/down": null
+        },
+        "runit.RunitStatus": {
+            "service=nginx, svdir=/var/service": {"nginx": true}
+        }
+    },
+    "commands": [
+        "touch /etc/sv/nginx/down",
+        "ln -s /etc/sv/nginx /var/service/nginx",
+        "export SVDIR=/var/service\nfor i in $(seq 10); do\n    sv status nginx > /dev/null && exit 0\n    sleep 1;\ndone\nexit 1"
+    ]
+}

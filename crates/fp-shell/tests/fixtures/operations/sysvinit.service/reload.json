@@ -1,0 +1,16 @@
+{
+    "args": ["nginx"],
+    "kwargs": {
+        "reloaded": true
+    },
+    "facts": {
+        "sysvinit.InitdStatus": {
+            "nginx": true
+        }
+    },
+    "commands": [
+        "/etc/init.d/nginx reload"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "service reloads are always executed"
+}

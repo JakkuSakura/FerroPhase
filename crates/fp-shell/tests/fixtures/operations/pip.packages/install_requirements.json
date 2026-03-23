@@ -1,0 +1,11 @@
+{
+    "kwargs": {
+        "requirements": "requirements.txt"
+    },
+    "facts": {},
+    "commands": [
+        "pip install -r requirements.txt"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "pip package requirements are always executed"
+}

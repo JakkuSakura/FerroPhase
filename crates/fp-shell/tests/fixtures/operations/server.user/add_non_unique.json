@@ -1,0 +1,15 @@
+{
+    "args": ["someuser"],
+    "kwargs": {
+        "unique": false,
+        "ensure_home": false
+    },
+    "facts": {
+        "server.Os": "Linux",
+        "server.Users": {},
+        "server.Groups": {}
+    },
+    "commands": [
+        "useradd -d /home/someuser -o -M someuser"
+    ]
+}

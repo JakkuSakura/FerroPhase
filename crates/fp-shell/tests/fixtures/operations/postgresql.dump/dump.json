@@ -1,0 +1,17 @@
+{
+    "args": ["somefile"],
+    "kwargs": {
+        "psql_user": "root",
+        "psql_password": "somepass",
+        "psql_host": "localhost",
+        "psql_port": 3306,
+        "psql_database": "somedb"
+    },
+    "commands": [
+        {
+            "raw": "PGPASSWORD=\"somepass\" pg_dump -d somedb -U root -h localhost -p 3306 > somefile",
+            "masked": "*** pg_dump -d somedb -U root -h localhost -p 3306 > somefile"
+        }
+    ],
+    "idempotent": false
+}

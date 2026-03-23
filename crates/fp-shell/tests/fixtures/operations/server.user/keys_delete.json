@@ -1,0 +1,57 @@
+{
+    "args": ["someuser"],
+    "kwargs": {
+        "home": "homedir",
+        "public_keys": ["abc", "def"],
+        "delete_keys": true
+    },
+    "facts": {
+        "server.Os": "Linux",
+        "server.Users": {
+            "someuser": {
+                "home": "homedir",
+                "group": null,
+                "groups": []
+            }
+        },
+        "files.Directory": {
+            "path=homedir": {
+                "user": "someuser",
+                "group": "someuser"
+            },
+            "path=homedir/.ssh": {
+                "user": "someuser",
+                "group": "someuser",
+                "mode": 700
+            }
+        },
+        "files.File": {
+            "path=homedir/.ssh/authorized_keys": {
+                "user": "someuser",
+                "group": "someuser",
+                "mode": 601
+            }
+        },
+        "find_in_file": {
+            "path=homedir/.ssh/authorized_keys, pattern=^.*abc.*$": []
+        },
+        "files.Sha1File": {
+            "path=homedir/.ssh/authorized_keys": null
+        },
+        "files.Md5File": {
+            "path=homedir/.ssh/authorized_keys": null
+        },
+        "files.Sha256File": {
+            "path=homedir/.ssh/authorized_keys": null
+        },
+        "files.FileContents": {
+            "path=homedir/.ssh/authorized_keys": null 
+        },
+        "server.Groups": {}
+    },
+    "commands": [
+        ["upload", "abc\ndef\n", "homedir/.ssh/authorized_keys"],
+        "chown someuser:someuser homedir/.ssh/authorized_keys",
+        "chmod 600 homedir/.ssh/authorized_keys"
+    ]
+}

@@ -1,0 +1,10 @@
+{
+    "args": ["com.fizzadar.thing"],
+    "facts": {
+        "launchd.LaunchdStatus": {
+            "com.fizzadar.thing": true
+        }
+    },
+    "commands": [],
+    "noop_description": "service com.fizzadar.thing is running"
+}

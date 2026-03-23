@@ -1,0 +1,19 @@
+{
+    "args": [[
+        "git",
+        "python-devel",
+        "something"
+    ]],
+    "facts": {
+        "server.Which": {
+            "command=apk": "/sbin/apk",
+            "command=zypper": null
+        },
+        "apk.ApkPackages": {
+            "something": [""]
+        }
+    },
+    "commands": [
+        "apk add git python-devel"
+    ]
+}

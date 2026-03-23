@@ -1,0 +1,16 @@
+{
+    "kwargs": {
+        "requirements": "requirements.pip",
+        "virtualenv": "testdir"
+    },
+    "facts": {
+        "files.File": {
+            "path=testdir/bin/activate": true
+        }
+    },
+    "commands": [
+        "testdir/bin/pip install -r requirements.pip"
+    ],
+    "idempotent": false,
+    "disable_idempotent_warning_reason": "pip package requirements are always executed"
+}
