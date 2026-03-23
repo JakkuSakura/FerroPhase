@@ -150,7 +150,6 @@ fn build_printf_format(
     args: &mut [Expr],
     newline: bool,
 ) -> Result<String> {
-    // info!("Building printf format for template: {:?}", template);
     let mut result = String::new();
     let mut implicit_index = 0usize;
 

@@ -85,6 +85,14 @@ impl IntrinsicNormalizer for NoopIntrinsicNormalizer {}
 pub trait IntrinsicMaterializer {
     fn prepare_file(&self, _file: &mut File) {}
 
+    fn materialize_invoke(
+        &self,
+        _invoke: &mut crate::ast::ExprInvoke,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
     fn materialize_call(
         &self,
         _call: &mut ExprIntrinsicCall,
@@ -216,7 +224,13 @@ pub enum StdIntrinsic {
 }
 
 pub mod calls;
+mod lang_instrinstic;
 pub mod normalize;
 
 pub use calls::IntrinsicCallKind;
+pub use lang_instrinstic::{
+    lang_instrinstic_call_kind, lang_instrinstic_capability, lang_instrinstic_for_lang_item,
+    lang_instrinstic_lang_item, lang_instrinstic_spec, LangInstrinstic, LangInstrinsticCapability,
+    LangInstrinsticSpec,
+};
 pub use normalize::{normalize_intrinsics, normalize_intrinsics_with};

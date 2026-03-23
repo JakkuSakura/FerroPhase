@@ -28,7 +28,6 @@ impl BinaryCompiler {
             cmd.arg("-mattr").arg(features);
         }
 
-        // Add optimization if requested
         if options.optimization_level > 0 {
             cmd.arg("-O2");
         }
@@ -62,7 +61,6 @@ impl BinaryCompiler {
         binary_path: &std::path::Path,
         options: &PipelineOptions,
     ) -> Result<String, CliError> {
-        // Try clang first (easiest and most compatible)
         if std::process::Command::new("clang")
             .arg("--version")
             .output()
@@ -71,7 +69,6 @@ impl BinaryCompiler {
             return Self::run_clang(obj_path, binary_path, options);
         }
 
-        // Try to find lld in common locations
         let lld_cmd = if std::process::Command::new("lld")
             .arg("--version")
             .output()
@@ -98,7 +95,6 @@ impl BinaryCompiler {
 
         let mut cmd = Command::new(lld_cmd);
 
-        // Minimal lld linking process as specified
         #[cfg(target_os = "linux")]
         {
             cmd.arg("-flavor")
@@ -147,7 +143,6 @@ impl BinaryCompiler {
             return Err(CliError::Compilation(format!("lld failed: {}", stderr)));
         }
 
-        // Make binary executable
         Self::make_executable(binary_path)?;
 
         Ok(format!(
@@ -164,9 +159,8 @@ impl BinaryCompiler {
         options: &PipelineOptions,
     ) -> Result<String, CliError> {
         let mut cmd = Command::new("clang");
-
-        // Simple clang linking - it handles all the platform details
         cmd.arg(obj_path).arg("-o").arg(binary_path);
+
         if let Some(target_triple) = options.target_triple.as_deref() {
             cmd.arg("--target").arg(target_triple);
         }
@@ -177,7 +171,6 @@ impl BinaryCompiler {
             cmd.arg(format!("-fuse-ld={}", linker_path.display()));
         }
 
-        // Add optimization if requested
         if options.optimization_level > 0 {
             cmd.arg("-O2");
         }
@@ -198,7 +191,6 @@ impl BinaryCompiler {
             return Err(CliError::Compilation(format!("clang failed: {}", stderr)));
         }
 
-        // Make binary executable
         Self::make_executable(binary_path)?;
 
         Ok(format!(
@@ -214,10 +206,10 @@ impl BinaryCompiler {
         {
             use std::os::unix::fs::PermissionsExt;
             let mut perms = std::fs::metadata(binary_path)
-                .map_err(|e| CliError::Io(e))?
+                .map_err(CliError::Io)?
                 .permissions();
             perms.set_mode(0o755);
-            std::fs::set_permissions(binary_path, perms).map_err(|e| CliError::Io(e))?;
+            std::fs::set_permissions(binary_path, perms).map_err(CliError::Io)?;
         }
         Ok(())
     }

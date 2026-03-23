@@ -30,7 +30,9 @@ use fp_core::cfg::TargetEnv;
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer};
+use fp_core::intrinsics::{
+    lang_instrinstic_for_lang_item, IntrinsicCallKind, IntrinsicNormalizer, LangInstrinstic,
+};
 use fp_core::module::path::{parse_path, PathPrefix};
 use fp_core::module::resolver::{ModuleImport, ResolvedSymbol, ResolverError, ResolverRegistry};
 use fp_core::module::{ModuleId, ModuleLanguage, SymbolDescriptor, SymbolKind};
@@ -3473,13 +3475,19 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         };
         if fixed_args.is_empty() {
-            self.emit_error(format!("extern '{}' has an empty #[command] attribute", name));
+            self.emit_error(format!(
+                "extern '{}' has an empty #[command] attribute",
+                name
+            ));
             return RuntimeFlow::Value(Value::undefined());
         }
         let runtime_args = match command_args_from_values(args) {
             Ok(values) => values,
             Err(err) => {
-                self.emit_error(format!("extern '{}' argument conversion failed: {}", name, err));
+                self.emit_error(format!(
+                    "extern '{}' argument conversion failed: {}",
+                    name, err
+                ));
                 return RuntimeFlow::Value(Value::undefined());
             }
         };
@@ -3493,7 +3501,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         let output = match process.output() {
             Ok(output) => output,
             Err(err) => {
-                self.emit_error(format!("extern '{}' command failed to start: {}", name, err));
+                self.emit_error(format!(
+                    "extern '{}' command failed to start: {}",
+                    name, err
+                ));
                 return RuntimeFlow::Value(Value::undefined());
             }
         };
@@ -7366,7 +7377,10 @@ fn command_failure_message(
             "extern '{}' command `{}` failed with exit code {}{}",
             name, command, code, suffix
         ),
-        None => format!("extern '{}' command `{}` terminated{}", name, command, suffix),
+        None => format!(
+            "extern '{}' command `{}` terminated{}",
+            name, command, suffix
+        ),
     }
 }
 
@@ -7402,48 +7416,54 @@ fn resolve_command_runtime_ty(ty: &Ty) -> Ty {
 }
 
 fn resolve_lang_item_handler(name: &str) -> Option<LangItemFn> {
-    match name {
-        "fs_read_dir" => Some(lang_fs_read_dir),
-        "fs_walk_dir" => Some(lang_fs_walk_dir),
-        "fs_read_to_string" => Some(lang_fs_read_to_string),
-        "fs_write_string" => Some(lang_fs_write_string),
-        "fs_append_string" => Some(lang_fs_append_string),
-        "fs_exists" => Some(lang_fs_exists),
-        "fs_is_dir" => Some(lang_fs_is_dir),
-        "fs_is_file" => Some(lang_fs_is_file),
-        "fs_create_dir_all" => Some(lang_fs_create_dir_all),
-        "fs_remove_file" => Some(lang_fs_remove_file),
-        "fs_remove_dir_all" => Some(lang_fs_remove_dir_all),
-        "fs_glob" => Some(lang_fs_glob),
-        "env_current_dir" => Some(lang_env_current_dir),
-        "env_temp_dir" => Some(lang_env_temp_dir),
-        "env_home_dir" => Some(lang_env_home_dir),
-        "env_var" => Some(lang_env_var),
-        "env_var_exists" => Some(lang_env_var_exists),
-        "path_join" => Some(lang_path_join),
-        "path_parent" => Some(lang_path_parent),
-        "path_file_name" => Some(lang_path_file_name),
-        "path_extension" => Some(lang_path_extension),
-        "path_stem" => Some(lang_path_stem),
-        "path_is_absolute" => Some(lang_path_is_absolute),
-        "path_normalize" => Some(lang_path_normalize),
-        "io_read_stdin_to_string" => Some(lang_io_read_stdin_to_string),
-        "io_write_stdout" => Some(lang_io_write_stdout),
-        "io_write_stderr" => Some(lang_io_write_stderr),
-        "process_run" => Some(lang_process_run),
-        "process_ok" => Some(lang_process_ok),
-        "process_output" => Some(lang_process_output),
-        "process_status" => Some(lang_process_status),
-        "process_run_argv" => Some(lang_process_run_argv),
-        "process_ok_argv" => Some(lang_process_ok_argv),
-        "process_output_argv" => Some(lang_process_output_argv),
-        "process_status_argv" => Some(lang_process_status_argv),
-        "process_run_argv_in" => Some(lang_process_run_argv_in),
-        "process_ok_argv_in" => Some(lang_process_ok_argv_in),
-        "process_output_argv_in" => Some(lang_process_output_argv_in),
-        "process_status_argv_in" => Some(lang_process_status_argv_in),
-        "yaml_to_json" => Some(lang_yaml_to_json),
-        _ => None,
+    lang_instrinstic_for_lang_item(name).and_then(resolve_lang_instrinstic_handler)
+}
+
+fn resolve_lang_instrinstic_handler(intrinsic: LangInstrinstic) -> Option<LangItemFn> {
+    match intrinsic {
+        LangInstrinstic::FsReadDir => Some(lang_fs_read_dir),
+        LangInstrinstic::FsWalkDir => Some(lang_fs_walk_dir),
+        LangInstrinstic::FsWriteString => Some(lang_fs_write_string),
+        LangInstrinstic::FsAppendString => Some(lang_fs_append_string),
+        LangInstrinstic::FsExists => Some(lang_fs_exists),
+        LangInstrinstic::FsIsDir => Some(lang_fs_is_dir),
+        LangInstrinstic::FsIsFile => Some(lang_fs_is_file),
+        LangInstrinstic::FsCreateDirAll => Some(lang_fs_create_dir_all),
+        LangInstrinstic::FsRemoveFile => Some(lang_fs_remove_file),
+        LangInstrinstic::FsRemoveDirAll => Some(lang_fs_remove_dir_all),
+        LangInstrinstic::FsGlob => Some(lang_fs_glob),
+        LangInstrinstic::EnvCurrentDir => Some(lang_env_current_dir),
+        LangInstrinstic::EnvTempDir => Some(lang_env_temp_dir),
+        LangInstrinstic::EnvHomeDir => Some(lang_env_home_dir),
+        LangInstrinstic::EnvVar => Some(lang_env_var),
+        LangInstrinstic::EnvVarExists => Some(lang_env_var_exists),
+        LangInstrinstic::PathJoin => Some(lang_path_join),
+        LangInstrinstic::PathParent => Some(lang_path_parent),
+        LangInstrinstic::PathFileName => Some(lang_path_file_name),
+        LangInstrinstic::PathExtension => Some(lang_path_extension),
+        LangInstrinstic::PathStem => Some(lang_path_stem),
+        LangInstrinstic::PathIsAbsolute => Some(lang_path_is_absolute),
+        LangInstrinstic::PathNormalize => Some(lang_path_normalize),
+        LangInstrinstic::IoReadStdinToString => Some(lang_io_read_stdin_to_string),
+        LangInstrinstic::IoWriteStdout => Some(lang_io_write_stdout),
+        LangInstrinstic::IoWriteStderr => Some(lang_io_write_stderr),
+        LangInstrinstic::ProcessRun => Some(lang_process_run),
+        LangInstrinstic::ProcessOk => Some(lang_process_ok),
+        LangInstrinstic::ProcessOutput => Some(lang_process_output),
+        LangInstrinstic::ProcessStatus => Some(lang_process_status),
+        LangInstrinstic::ProcessRunArgv => Some(lang_process_run_argv),
+        LangInstrinstic::ProcessOkArgv => Some(lang_process_ok_argv),
+        LangInstrinstic::ProcessOutputArgv => Some(lang_process_output_argv),
+        LangInstrinstic::ProcessStatusArgv => Some(lang_process_status_argv),
+        LangInstrinstic::ProcessRunArgvIn => Some(lang_process_run_argv_in),
+        LangInstrinstic::ProcessOkArgvIn => Some(lang_process_ok_argv_in),
+        LangInstrinstic::ProcessOutputArgvIn => Some(lang_process_output_argv_in),
+        LangInstrinstic::ProcessStatusArgvIn => Some(lang_process_status_argv_in),
+        LangInstrinstic::YamlToJson => Some(lang_yaml_to_json),
+        LangInstrinstic::TimeNow
+        | LangInstrinstic::CreateStruct
+        | LangInstrinstic::AddField
+        | LangInstrinstic::FsReadToString => None,
     }
 }
 
@@ -7455,12 +7475,6 @@ fn lang_fs_read_dir(args: &[Value]) -> std::result::Result<Value, String> {
 fn lang_fs_walk_dir(args: &[Value]) -> std::result::Result<Value, String> {
     let path = expect_lang_string_arg(args, 0, "path")?;
     lang_fs_collect_dir(path.as_str(), true)
-}
-
-fn lang_fs_read_to_string(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_lang_string_arg(args, 0, "path")?;
-    let content = fs::read_to_string(path.as_str()).map_err(|err| err.to_string())?;
-    Ok(Value::string(content))
 }
 
 fn lang_fs_write_string(args: &[Value]) -> std::result::Result<Value, String> {
@@ -7551,7 +7565,9 @@ fn lang_env_home_dir(args: &[Value]) -> std::result::Result<Value, String> {
 
 fn lang_env_var(args: &[Value]) -> std::result::Result<Value, String> {
     let name = expect_lang_string_arg(args, 0, "name")?;
-    Ok(Value::string(std::env::var(name.as_str()).unwrap_or_default()))
+    Ok(Value::string(
+        std::env::var(name.as_str()).unwrap_or_default(),
+    ))
 }
 
 fn lang_env_var_exists(args: &[Value]) -> std::result::Result<Value, String> {
@@ -7608,7 +7624,9 @@ fn lang_path_stem(args: &[Value]) -> std::result::Result<Value, String> {
 
 fn lang_path_is_absolute(args: &[Value]) -> std::result::Result<Value, String> {
     let path = expect_lang_string_arg(args, 0, "path")?;
-    Ok(Value::bool(std::path::Path::new(path.as_str()).is_absolute()))
+    Ok(Value::bool(
+        std::path::Path::new(path.as_str()).is_absolute(),
+    ))
 }
 
 fn lang_path_normalize(args: &[Value]) -> std::result::Result<Value, String> {
@@ -7680,7 +7698,8 @@ fn lang_process_status_argv_in(args: &[Value]) -> std::result::Result<Value, Str
 
 fn lang_yaml_to_json(args: &[Value]) -> std::result::Result<Value, String> {
     let input = expect_lang_string_arg(args, 0, "input")?;
-    let value: serde_json::Value = serde_yaml::from_str(input.as_str()).map_err(|err| err.to_string())?;
+    let value: serde_json::Value =
+        serde_yaml::from_str(input.as_str()).map_err(|err| err.to_string())?;
     let json = serde_json::to_string(&value).map_err(|err| err.to_string())?;
     Ok(Value::string(json))
 }

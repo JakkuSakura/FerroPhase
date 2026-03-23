@@ -300,7 +300,16 @@ fn materialize_expr(
                 args.push(materialize_expr(arg, strategy)?);
             }
             invoke.args = args;
-            ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), ty)
+            for kwarg in &mut invoke.kwargs {
+                let value =
+                    std::mem::replace(&mut kwarg.value, ast::Expr::value(ast::Value::unit()));
+                kwarg.value = materialize_expr(value, strategy)?;
+            }
+            if let Some(expr) = strategy.materialize_invoke(&mut invoke, &expr_ty)? {
+                expr
+            } else {
+                ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), ty)
+            }
         }
         ast::ExprKind::Select(mut select) => {
             select.obj = Box::new(materialize_expr(*select.obj, strategy)?);

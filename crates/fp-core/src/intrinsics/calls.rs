@@ -23,6 +23,8 @@ pub enum IntrinsicCallKind {
     CatchUnwindResult,
     /// Get the current time as seconds since the Unix epoch.
     TimeNow,
+    /// Read a UTF-8 file into a string.
+    FsReadToString,
     /// Sleep for the given number of seconds.
     Sleep,
     /// Spawn a future onto the runtime.

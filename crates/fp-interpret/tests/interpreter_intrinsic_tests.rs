@@ -1,12 +1,15 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprAsync, ExprBlock, ExprIntrinsicCall, ExprKind,
-    ExprStringTemplate, ExprTry, ExprTryCatch, FormatArgRef, FormatPlaceholder, FormatTemplatePart,
-    Pattern, PatternIdent, PatternKind, StmtDefer, Ty, TypeInt, TypePrimitive, Value,
+    BlockStmt, BlockStmtExpr, Expr, ExprAsync, ExprBlock, ExprIntrinsicCall, ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprTry, ExprTryCatch, FormatArgRef,
+    FormatPlaceholder, FormatTemplatePart, Ident, Name, Path, Pattern, PatternIdent, PatternKind,
+    StmtDefer, Ty, TypeInt, TypePrimitive, Value,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::lang::{register_threadlocal_lang_items, LangItemRegistry};
 use fp_core::span::Span;
 use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use std::fs;
 
 fn intrinsic_args_expr(kind: IntrinsicCallKind, values: Vec<Value>) -> Expr {
     let args = values.into_iter().map(Expr::value).collect();
@@ -180,6 +183,60 @@ fn format_uses_string_literal_template_in_runtime_mode() {
 
     let outcome = interpreter.take_outcome();
     assert!(!outcome.has_errors);
+}
+
+#[test]
+fn runtime_invoke_lang_fs_read_to_string_uses_intrinsic_path() {
+    let temp_path = std::env::temp_dir().join(format!(
+        "fp-read-to-string-{}-{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("unix epoch")
+            .as_nanos()
+    ));
+    fs::write(&temp_path, "intrinsic data").expect("write temp file");
+
+    let mut registry = LangItemRegistry::default();
+    registry.insert(
+        "fs_read_to_string",
+        Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("fs"),
+            Ident::new("read_to_string"),
+        ]),
+    );
+    register_threadlocal_lang_items(registry);
+
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(
+        &ctx,
+        InterpreterOptions {
+            mode: InterpreterMode::RunTime,
+            ..InterpreterOptions::default()
+        },
+    );
+
+    let mut expr = Expr::new(ExprKind::Invoke(ExprInvoke {
+        target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("fs"),
+            Ident::new("read_to_string"),
+        ]))),
+        args: vec![Expr::value(Value::string(
+            temp_path.to_string_lossy().into_owned(),
+        ))],
+        kwargs: Vec::new(),
+        span: Span::null(),
+    }));
+
+    let value = interpreter.evaluate_expression(&mut expr);
+    assert_eq!(value, Value::string("intrinsic data".to_string()));
+
+    let outcome = interpreter.take_outcome();
+    assert!(!outcome.has_errors);
+
+    fs::remove_file(temp_path).expect("remove temp file");
 }
 
 #[test]

@@ -3,7 +3,9 @@ use fp_core::ast::{
     TypePrimitive, Visibility,
 };
 use fp_core::intrinsics::{
-    ensure_function_decl, make_function_decl, IntrinsicCallKind, StdIntrinsic,
+    ensure_function_decl, lang_instrinstic_call_kind, lang_instrinstic_capability,
+    lang_instrinstic_for_lang_item, lang_instrinstic_lang_item, make_function_decl,
+    IntrinsicCallKind, LangInstrinstic, LangInstrinsticCapability, StdIntrinsic,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -143,4 +145,30 @@ fn std_intrinsic_variants_are_hashable() {
 fn intrinsic_call_kind_matches_expected_variants() {
     assert_eq!(IntrinsicCallKind::Print, IntrinsicCallKind::Print);
     assert_ne!(IntrinsicCallKind::Print, IntrinsicCallKind::Println);
+}
+
+#[test]
+fn lang_instrinstic_maps_time_lang_item_to_call_kind() {
+    let intrinsic = lang_instrinstic_for_lang_item("time_now").expect("missing lang instrinstic");
+    assert_eq!(intrinsic, LangInstrinstic::TimeNow);
+    assert_eq!(
+        lang_instrinstic_call_kind(intrinsic),
+        Some(IntrinsicCallKind::TimeNow)
+    );
+    assert_eq!(
+        lang_instrinstic_capability(intrinsic),
+        LangInstrinsticCapability::RuntimeOnly
+    );
+}
+
+#[test]
+fn lang_instrinstic_preserves_fs_lang_item_name() {
+    let intrinsic =
+        lang_instrinstic_for_lang_item("fs_read_to_string").expect("missing fs lang instrinstic");
+    assert_eq!(intrinsic, LangInstrinstic::FsReadToString);
+    assert_eq!(lang_instrinstic_lang_item(intrinsic), "fs_read_to_string");
+    assert_eq!(
+        lang_instrinstic_call_kind(intrinsic),
+        Some(IntrinsicCallKind::FsReadToString)
+    );
 }

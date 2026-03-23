@@ -1658,6 +1658,7 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
         IntrinsicCallKind::CatchUnwind => "catch_unwind",
         IntrinsicCallKind::CatchUnwindResult => "catch_unwind_result",
         IntrinsicCallKind::TimeNow => "time_now",
+        IntrinsicCallKind::FsReadToString => "fs_read_to_string",
         IntrinsicCallKind::Sleep => "sleep",
         IntrinsicCallKind::Spawn => "spawn",
         IntrinsicCallKind::Join => "join",

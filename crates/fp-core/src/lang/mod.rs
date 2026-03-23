@@ -2,7 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::ast::{AttrMeta, Attribute, ExprKind, Ident, Item, ItemKind, Name, Node, Path, Value};
-use crate::intrinsics::IntrinsicCallKind;
+use crate::intrinsics::{
+    lang_instrinstic_call_kind, lang_instrinstic_for_lang_item, IntrinsicCallKind,
+};
 
 #[derive(Clone, Default)]
 pub struct LangItemRegistry {
@@ -63,7 +65,7 @@ pub fn collect_lang_items(node: &Node) -> LangItemRegistry {
 
 pub fn lookup_lang_item_intrinsic(locator: &Name) -> Option<IntrinsicCallKind> {
     let name = lookup_lang_item_name(locator)?;
-    intrinsic_kind_for_lang_item(&name)
+    lang_instrinstic_for_lang_item(&name).and_then(lang_instrinstic_call_kind)
 }
 
 pub fn lookup_lang_item_name(locator: &Name) -> Option<String> {
@@ -83,13 +85,8 @@ pub fn lookup_lang_item_name(locator: &Name) -> Option<String> {
     None
 }
 
-fn intrinsic_kind_for_lang_item(name: &str) -> Option<IntrinsicCallKind> {
-    match name {
-        "time_now" => Some(IntrinsicCallKind::TimeNow),
-        "create_struct" => Some(IntrinsicCallKind::CreateStruct),
-        "addfield" => Some(IntrinsicCallKind::AddField),
-        _ => None,
-    }
+pub fn extract_lang_item(attrs: &[Attribute]) -> Option<String> {
+    extract_lang_attribute(attrs)
 }
 
 fn collect_lang_items_from_items(

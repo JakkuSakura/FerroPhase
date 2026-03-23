@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::ast::Name;
+use fp_core::ast::{intrinsic_call_from_invoke, Name};
 use fp_core::module::path::{parse_path, PathPrefix};
 use std::io::{Read, Write};
 
@@ -1995,6 +1995,9 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn eval_invoke(&mut self, invoke: &mut ExprInvoke) -> Value {
+        if let Some(mut call) = intrinsic_call_from_invoke(invoke) {
+            return self.eval_intrinsic(&mut call);
+        }
         if self.in_const_region() {
             return self.eval_invoke_compile_time(invoke);
         }
@@ -2429,6 +2432,9 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn eval_invoke_runtime_flow(&mut self, invoke: &mut ExprInvoke) -> RuntimeFlow {
+        if let Some(mut call) = intrinsic_call_from_invoke(invoke) {
+            return self.eval_intrinsic_runtime(&mut call);
+        }
         if !invoke.kwargs.is_empty() {
             match invoke.target {
                 ExprInvokeTarget::Function(_) => {}

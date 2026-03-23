@@ -10053,6 +10053,19 @@ impl<'a> BodyBuilder<'a> {
                         ty: now_ty,
                     });
                 }
+                if call.kind == IntrinsicCallKind::FsReadToString {
+                    self.lowering.emit_error(
+                        expr.span,
+                        "fs_read_to_string is not implemented for compiled backends",
+                    );
+                    let ty = expected
+                        .cloned()
+                        .unwrap_or_else(|| self.lowering.error_ty());
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
+                        ty,
+                    });
+                }
                 if call.kind == IntrinsicCallKind::Slice {
                     let args = &call.callargs;
                     if args.len() != 3 {
@@ -12645,6 +12658,23 @@ impl<'a> BodyBuilder<'a> {
                                 format: String::new(),
                                 args: Vec::new(),
                             },
+                        ),
+                    };
+                    self.push_statement(statement);
+                    return Ok(());
+                }
+                IntrinsicCallKind::FsReadToString => {
+                    self.lowering.emit_error(
+                        expr.span,
+                        "fs_read_to_string is not implemented for compiled backends",
+                    );
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::Use(mir::Operand::Constant(
+                                self.lowering.error_constant(expr.span),
+                            )),
                         ),
                     };
                     self.push_statement(statement);

@@ -1706,6 +1706,9 @@ fn main() {
                                         self.visit_expr(on_drop);
                                     }
                                 }
+                                ast::BlockStmt::Defer(stmt_defer) => {
+                                    self.visit_expr(stmt_defer.expr.as_ref())
+                                }
                                 ast::BlockStmt::Item(item) => self.visit_item(item),
                                 ast::BlockStmt::Noop | ast::BlockStmt::Any(_) => {}
                             }
@@ -1820,6 +1823,9 @@ fn main() {
                                     if let Some(on_drop) = &stmt_let.diverge {
                                         self.visit_expr(on_drop);
                                     }
+                                }
+                                ast::BlockStmt::Defer(stmt_defer) => {
+                                    self.visit_expr(stmt_defer.expr.as_ref())
                                 }
                                 ast::BlockStmt::Item(item) => self.visit_item(item),
                                 ast::BlockStmt::Noop | ast::BlockStmt::Any(_) => {}

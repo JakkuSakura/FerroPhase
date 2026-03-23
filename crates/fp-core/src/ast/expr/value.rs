@@ -882,6 +882,16 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
+        IntrinsicCallKind::FsReadToString => {
+            if invoke.args.len() != 1 {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(
+                kind,
+                vec![invoke.args[0].clone()],
+                invoke.kwargs.clone(),
+            ))
+        }
         IntrinsicCallKind::Sleep => {
             if invoke.args.len() != 1 {
                 return None;

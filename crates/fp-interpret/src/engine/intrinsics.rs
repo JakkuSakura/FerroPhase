@@ -181,6 +181,31 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
             }
+            IntrinsicCallKind::FsReadToString => {
+                if !call.kwargs.is_empty() {
+                    self.emit_error("fs_read_to_string intrinsic does not accept named arguments");
+                }
+                if call.args.len() != 1 {
+                    self.emit_error("fs_read_to_string intrinsic expects one argument");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let flow = self.eval_expr_runtime(&mut call.args[0]);
+                let value = match flow {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                let Value::String(path) = value else {
+                    self.emit_error("fs_read_to_string intrinsic expects a string path");
+                    return RuntimeFlow::Value(Value::undefined());
+                };
+                match std::fs::read_to_string(path.value.as_str()) {
+                    Ok(content) => RuntimeFlow::Value(Value::string(content)),
+                    Err(err) => {
+                        self.emit_error(err.to_string());
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                }
+            }
             IntrinsicCallKind::Sleep => {
                 if !call.kwargs.is_empty() {
                     self.emit_error("time::sleep intrinsic does not accept named arguments");
@@ -455,7 +480,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             IntrinsicCallKind::Panic
             | IntrinsicCallKind::CatchUnwind
-            | IntrinsicCallKind::CatchUnwindResult => {
+            | IntrinsicCallKind::CatchUnwindResult
+            | IntrinsicCallKind::FsReadToString => {
                 self.emit_error(format!(
                     "intrinsic {:?} is not supported during const evaluation",
                     call.kind
