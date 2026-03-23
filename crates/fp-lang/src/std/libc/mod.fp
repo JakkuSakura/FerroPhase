@@ -1,3 +1,6 @@
+mod generated;
+pub use generated::*;
+
 type RawProcessResult = {
     stdout: str,
     stderr: str,

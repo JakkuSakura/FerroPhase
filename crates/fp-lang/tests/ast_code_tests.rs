@@ -148,6 +148,49 @@ fn raw_ptr_requires_const_or_mut() {
     assert!(err_bare.is_err(), "expected bare * to be rejected");
 }
 
+#[test]
+fn parses_std_libc_rust_syntax_surface() {
+    let fe = FerroFrontend::new();
+    let source = r#"
+mod libc {
+    pub type c_int = i32;
+    pub type pid_t = i32;
+    pub const STDIN_FILENO: c_int = 0;
+    pub const STDOUT_FILENO: c_int = 1;
+    pub extern "C" fn fork() -> pid_t;
+    pub extern "C" fn execvp(file: &std::ffi::CStr, argv: *const *const u8) -> c_int;
+    pub extern "C" fn waitpid(pid: pid_t, status: *mut c_int, options: c_int) -> pid_t;
+    pub extern "C" fn pipe(fds: *mut c_int) -> c_int;
+    pub extern "C" fn dup2(oldfd: c_int, newfd: c_int) -> c_int;
+    pub extern "C" fn close(fd: c_int) -> c_int;
+    pub extern "C" fn chdir(path: &std::ffi::CStr) -> c_int;
+    pub extern "C" fn read(fd: c_int, buf: *mut u8, count: usize) -> isize;
+    pub extern "C" fn write(fd: c_int, buf: *const u8, count: usize) -> isize;
+    pub extern "C" fn _exit(status: c_int);
+}
+"#;
+
+    let parsed = fe.parse(source, None);
+    assert!(parsed.is_ok(), "expected std::libc rust syntax surface to parse");
+}
+
+#[test]
+fn parses_std_libc_generated_module_reexports() {
+    let fe = FerroFrontend::new();
+    let source = r#"
+mod libc {
+    mod generated;
+    pub use generated::*;
+}
+"#;
+
+    let parsed = fe.parse(source, None);
+    assert!(
+        parsed.is_ok(),
+        "expected std::libc generated module reexports to parse"
+    );
+}
+
 fn node_contains_splice_quote(node: &Node) -> bool {
     fn expr_contains(e: &Expr) -> bool {
         match e.kind() {
