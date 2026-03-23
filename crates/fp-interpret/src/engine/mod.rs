@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::ffi::CString;
 use std::fs;
 use std::io::{Read, Write};
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::engine::ffi::FfiRuntime;
@@ -7442,8 +7444,7 @@ fn resolve_lang_instrinstic_handler(intrinsic: LangInstrinstic) -> Option<LangIt
         LangInstrinstic::IoReadStdinToString => Some(lang_io_read_stdin_to_string),
         LangInstrinstic::IoWriteStdout => Some(lang_io_write_stdout),
         LangInstrinstic::IoWriteStderr => Some(lang_io_write_stderr),
-        LangInstrinstic::LibcProcessExec => Some(lang_libc_process_exec),
-        LangInstrinstic::LibcProcessShell => Some(lang_libc_process_shell),
+        LangInstrinstic::ProcessRun => Some(lang_process_run),
         LangInstrinstic::YamlToJson => Some(lang_yaml_to_json),
         LangInstrinstic::TimeNow
         | LangInstrinstic::CreateStruct
@@ -7619,25 +7620,21 @@ fn lang_io_write_stderr(args: &[Value]) -> std::result::Result<Value, String> {
     Ok(Value::unit())
 }
 
-fn lang_libc_process_exec(args: &[Value]) -> std::result::Result<Value, String> {
+fn lang_process_run(args: &[Value]) -> std::result::Result<Value, String> {
+    expect_lang_arg_count(args, 4)?;
     let program = expect_lang_string_arg(args, 0, "program")?;
     let argv = expect_lang_string_list_arg(args, 1, "args")?;
     let cwd = expect_lang_string_arg(args, 2, "cwd")?;
+    let shell_command = expect_lang_string_arg(args, 3, "shell_command")?;
 
-    let mut command = Command::new(program.as_str());
-    command.args(argv);
-    if !cwd.is_empty() {
-        command.current_dir(cwd);
-    }
+    let output = if !shell_command.is_empty() {
+        let (shell_program, shell_args) = lang_shell_program_and_args(shell_command.as_str());
+        run_lang_process(shell_program.as_str(), &shell_args, "")?
+    } else {
+        run_lang_process(program.as_str(), &argv, cwd.as_str())?
+    };
 
-    let output = command.output().map_err(|err| err.to_string())?;
-    Ok(lang_process_result_value(output))
-}
-
-fn lang_libc_process_shell(args: &[Value]) -> std::result::Result<Value, String> {
-    let command = expect_lang_string_arg(args, 0, "command")?;
-    let output = run_lang_shell_command(command.as_str())?;
-    Ok(lang_process_result_value(output))
+    Ok(lang_process_result_value(output.stdout, output.stderr, output.status))
 }
 
 fn lang_yaml_to_json(args: &[Value]) -> std::result::Result<Value, String> {
@@ -7736,36 +7733,227 @@ fn lang_fs_collect_dir_entries(
     Ok(())
 }
 
-fn run_lang_shell_command(command: &str) -> std::result::Result<std::process::Output, String> {
-    #[cfg(unix)]
-    let mut process = {
-        let mut process = Command::new("sh");
-        process.arg("-lc").arg(command);
-        process
-    };
-    #[cfg(windows)]
-    let mut process = {
-        let mut process = Command::new("pwsh");
-        process.arg("-Command").arg(command);
-        process
-    };
-    process.output().map_err(|err| err.to_string())
+struct LangProcessOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    status: i64,
 }
 
-fn lang_process_result_value(output: std::process::Output) -> Value {
+fn lang_shell_program_and_args(command: &str) -> (String, Vec<String>) {
+    #[cfg(unix)]
+    {
+        (
+            "sh".to_string(),
+            vec!["-lc".to_string(), command.to_string()],
+        )
+    }
+    #[cfg(windows)]
+    {
+        (
+            "pwsh".to_string(),
+            vec!["-Command".to_string(), command.to_string()],
+        )
+    }
+}
+
+#[cfg(unix)]
+fn run_lang_process(
+    program: &str,
+    args: &[String],
+    cwd: &str,
+) -> std::result::Result<LangProcessOutput, String> {
+    let (stdout_read, stdout_write) = lang_create_pipe()?;
+    let (stderr_read, stderr_write) = match lang_create_pipe() {
+        Ok(pipe) => pipe,
+        Err(err) => {
+            let _ = lang_close_fd(stdout_read);
+            let _ = lang_close_fd(stdout_write);
+            return Err(err);
+        }
+    };
+
+    let fork_result = unsafe { libc::fork() };
+    if fork_result < 0 {
+        let err = std::io::Error::last_os_error().to_string();
+        let _ = lang_close_fd(stdout_read);
+        let _ = lang_close_fd(stdout_write);
+        let _ = lang_close_fd(stderr_read);
+        let _ = lang_close_fd(stderr_write);
+        return Err(err);
+    }
+
+    if fork_result == 0 {
+        lang_child_exec(program, args, cwd, stdout_read, stdout_write, stderr_read, stderr_write);
+    }
+
+    lang_close_fd(stdout_write)?;
+    lang_close_fd(stderr_write)?;
+
+    let stdout_thread = thread::spawn(move || lang_read_fd_to_end(stdout_read));
+    let stderr_thread = thread::spawn(move || lang_read_fd_to_end(stderr_read));
+
+    let mut wait_status = 0;
+    let waited = unsafe { libc::waitpid(fork_result, &mut wait_status, 0) };
+    if waited < 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+
+    let stdout = stdout_thread
+        .join()
+        .map_err(|_| "stdout reader thread panicked".to_string())??;
+    let stderr = stderr_thread
+        .join()
+        .map_err(|_| "stderr reader thread panicked".to_string())??;
+
+    Ok(LangProcessOutput {
+        stdout,
+        stderr,
+        status: lang_wait_status_code(wait_status),
+    })
+}
+
+#[cfg(windows)]
+fn run_lang_process(
+    program: &str,
+    args: &[String],
+    cwd: &str,
+) -> std::result::Result<LangProcessOutput, String> {
+    let mut command = Command::new(program);
+    command.args(args);
+    if !cwd.is_empty() {
+        command.current_dir(cwd);
+    }
+    let output = command.output().map_err(|err| err.to_string())?;
+    Ok(LangProcessOutput {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        status: output.status.code().unwrap_or(-1) as i64,
+    })
+}
+
+#[cfg(unix)]
+fn lang_create_pipe() -> std::result::Result<(libc::c_int, libc::c_int), String> {
+    let mut fds = [0; 2];
+    let status = unsafe { libc::pipe(fds.as_mut_ptr()) };
+    if status != 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    Ok((fds[0], fds[1]))
+}
+
+#[cfg(unix)]
+fn lang_close_fd(fd: libc::c_int) -> std::result::Result<(), String> {
+    let status = unsafe { libc::close(fd) };
+    if status != 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn lang_read_fd_to_end(fd: libc::c_int) -> std::result::Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let read = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+        if read == 0 {
+            break;
+        }
+        if read < 0 {
+            let err = std::io::Error::last_os_error();
+            let _ = lang_close_fd(fd);
+            return Err(err.to_string());
+        }
+        out.extend_from_slice(&buf[..read as usize]);
+    }
+    lang_close_fd(fd)?;
+    Ok(out)
+}
+
+#[cfg(unix)]
+fn lang_wait_status_code(status: libc::c_int) -> i64 {
+    if libc::WIFEXITED(status) {
+        return libc::WEXITSTATUS(status) as i64;
+    }
+    if libc::WIFSIGNALED(status) {
+        return -(libc::WTERMSIG(status) as i64);
+    }
+    -1
+}
+
+#[cfg(unix)]
+fn lang_child_exec(
+    program: &str,
+    args: &[String],
+    cwd: &str,
+    stdout_read: libc::c_int,
+    stdout_write: libc::c_int,
+    stderr_read: libc::c_int,
+    stderr_write: libc::c_int,
+) -> ! {
+    let _ = lang_close_fd(stdout_read);
+    let _ = lang_close_fd(stderr_read);
+
+    if unsafe { libc::dup2(stdout_write, libc::STDOUT_FILENO) } < 0 {
+        lang_child_fail(stderr_write, "dup2 stdout failed\n");
+    }
+    if unsafe { libc::dup2(stderr_write, libc::STDERR_FILENO) } < 0 {
+        lang_child_fail(stderr_write, "dup2 stderr failed\n");
+    }
+
+    let _ = lang_close_fd(stdout_write);
+    let _ = lang_close_fd(stderr_write);
+
+    if !cwd.is_empty() {
+        let cwd_cstr = match CString::new(cwd) {
+            Ok(value) => value,
+            Err(_) => lang_child_fail(libc::STDERR_FILENO, "cwd contains NUL byte\n"),
+        };
+        if unsafe { libc::chdir(cwd_cstr.as_ptr()) } != 0 {
+            lang_child_fail(libc::STDERR_FILENO, "chdir failed\n");
+        }
+    }
+
+    let program_cstr = match CString::new(program) {
+        Ok(value) => value,
+        Err(_) => lang_child_fail(libc::STDERR_FILENO, "program contains NUL byte\n"),
+    };
+    let mut argv_cstrs = Vec::with_capacity(args.len() + 1);
+    argv_cstrs.push(program_cstr.clone());
+    for arg in args {
+        match CString::new(arg.as_str()) {
+            Ok(value) => argv_cstrs.push(value),
+            Err(_) => lang_child_fail(libc::STDERR_FILENO, "argument contains NUL byte\n"),
+        }
+    }
+    let mut argv_ptrs: Vec<*const libc::c_char> =
+        argv_cstrs.iter().map(|value| value.as_ptr()).collect();
+    argv_ptrs.push(std::ptr::null());
+
+    unsafe {
+        libc::execvp(program_cstr.as_ptr(), argv_ptrs.as_ptr());
+    }
+    lang_child_fail(libc::STDERR_FILENO, "execvp failed\n");
+}
+
+#[cfg(unix)]
+fn lang_child_fail(fd: libc::c_int, message: &str) -> ! {
+    let bytes = message.as_bytes();
+    let _ = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
+    unsafe { libc::_exit(127) }
+}
+
+fn lang_process_result_value(stdout: Vec<u8>, stderr: Vec<u8>, status: i64) -> Value {
     Value::Structural(ValueStructural::new(vec![
         ValueField::new(
             Ident::new("stdout"),
-            Value::string(String::from_utf8_lossy(&output.stdout).to_string()),
+            Value::string(String::from_utf8_lossy(&stdout).to_string()),
         ),
         ValueField::new(
             Ident::new("stderr"),
-            Value::string(String::from_utf8_lossy(&output.stderr).to_string()),
+            Value::string(String::from_utf8_lossy(&stderr).to_string()),
         ),
-        ValueField::new(
-            Ident::new("status"),
-            Value::int(output.status.code().unwrap_or(-1) as i64),
-        ),
+        ValueField::new(Ident::new("status"), Value::int(status)),
     ]))
 }
 
@@ -7789,6 +7977,31 @@ fn meta_path_to_texts(path: &Path, out: &mut Vec<String>) {
             out.push("::".to_string());
         }
         out.push(seg.as_str().to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn run_lang_process_execs_program_via_libc() {
+        let output = run_lang_process("/usr/bin/printf", &[String::from("hello")], "")
+            .expect("process should run");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "hello");
+        assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+        assert_eq!(output.status, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_lang_process_execs_shell_command_via_single_path() {
+        let (program, args) = lang_shell_program_and_args("printf shell");
+        let output = run_lang_process(program.as_str(), &args, "").expect("shell should run");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "shell");
+        assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+        assert_eq!(output.status, 0);
     }
 }
 

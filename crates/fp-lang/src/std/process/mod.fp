@@ -1,3 +1,41 @@
+type RawProcessResult = {
+    stdout: str,
+    stderr: str,
+    status: i64,
+};
+
+pub struct ProcessResult {
+    stdout: str,
+    stderr: str,
+    status: i64,
+}
+
+impl ProcessResult {
+    pub fn success(&self) -> bool {
+        self.status == 0
+    }
+
+    pub fn status(&self) -> i64 {
+        self.status
+    }
+
+    pub fn stdout(&self) -> &str {
+        &self.stdout
+    }
+
+    pub fn stderr(&self) -> &str {
+        &self.stderr
+    }
+
+    pub fn into_stdout(self) -> str {
+        self.stdout
+    }
+
+    pub fn into_stderr(self) -> str {
+        self.stderr
+    }
+}
+
 pub struct Command {
     shell_command: str,
     program: str,
@@ -85,13 +123,29 @@ impl Command {
         self.exec().status()
     }
 
-    fn exec(self) -> std::libc::ProcessResult {
-        if self.shell_command != "" {
-            return std::libc::shell(self.shell_command);
-        }
+    fn exec(self) -> ProcessResult {
+        let raw = if self.shell_command != "" {
+            intrinsic_process_run("", Vec::new(), "", self.shell_command)
+        } else {
+            intrinsic_process_run(self.program, self.args, self.cwd, "")
+        };
 
-        std::libc::exec(self.program, self.args, self.cwd)
+        ProcessResult {
+            stdout: raw.stdout,
+            stderr: raw.stderr,
+            status: raw.status,
+        }
     }
+}
+
+#[lang = "process_run"]
+fn intrinsic_process_run(
+    program: &str,
+    args: Vec<&str>,
+    cwd: &str,
+    shell_command: str,
+) -> RawProcessResult {
+    compile_error!("compiler intrinsic")
 }
 
 pub fn run(command: str) {

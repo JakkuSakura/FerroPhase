@@ -41,8 +41,7 @@ pub enum LangInstrinstic {
     IoReadStdinToString,
     IoWriteStdout,
     IoWriteStderr,
-    LibcProcessExec,
-    LibcProcessShell,
+    ProcessRun,
     YamlToJson,
 }
 
@@ -236,14 +235,8 @@ const LANG_INSTRINSTICS: &[LangInstrinsticSpec] = &[
         call_kind: None,
     },
     LangInstrinsticSpec {
-        intrinsic: LangInstrinstic::LibcProcessExec,
-        lang_item: "libc_process_exec",
-        capability: LangInstrinsticCapability::RuntimeOnly,
-        call_kind: None,
-    },
-    LangInstrinsticSpec {
-        intrinsic: LangInstrinstic::LibcProcessShell,
-        lang_item: "libc_process_shell",
+        intrinsic: LangInstrinstic::ProcessRun,
+        lang_item: "process_run",
         capability: LangInstrinsticCapability::RuntimeOnly,
         call_kind: None,
     },

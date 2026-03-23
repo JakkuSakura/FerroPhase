@@ -1548,6 +1548,7 @@ dependencies = [
  "futures-util",
  "glob",
  "itertools 0.12.1",
+ "libc",
  "libffi",
  "libloading",
  "num-traits",

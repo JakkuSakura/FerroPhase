@@ -1,3 +1,6 @@
+use std::path::Path;
+use std::libc;
+
 pub enum Result<T, E> {
     Ok(T),
     Err(E),
@@ -167,8 +170,22 @@ impl OpenOptions {
         }
     }
 
-    pub fn open(self, path: &str) -> Result<File, IoError> {
-        libc_file_open_options(path, self)
+    pub fn open(self, path: &Path) -> Result<File, IoError> {
+        let mut flags = open_flags(self);
+        if self.read && self.write {
+            flags = flags | libc::O_RDWR;
+        } else if self.write || self.append {
+            flags = flags | libc::O_WRONLY;
+        } else {
+            flags = flags | libc::O_RDONLY;
+        }
+
+        let fd = libc::open(path.as_str(), flags, self.mode);
+        if fd >= 0 {
+            Result::Ok(File { fd })
+        } else {
+            Result::Err(io_error_other("open failed"))
+        }
     }
 }
 
@@ -177,11 +194,11 @@ pub struct File {
 }
 
 impl File {
-    pub fn open(path: &str) -> Result<File, IoError> {
+    pub fn open(path: &Path) -> Result<File, IoError> {
         OpenOptions::new().read(true).open(path)
     }
 
-    pub fn create(path: &str) -> Result<File, IoError> {
+    pub fn create(path: &Path) -> Result<File, IoError> {
         OpenOptions::new()
             .write(true)
             .truncate(true)
@@ -194,35 +211,54 @@ impl File {
     }
 
     pub fn metadata(&self) -> Result<Metadata, IoError> {
-        libc_file_metadata(self.fd)
+        let _ = self.fd;
+        compile_error!("std::fs::File::metadata is not implemented for the current std surface")
     }
 
     pub fn read_to_string(&mut self) -> Result<str, IoError> {
-        libc_file_read_to_string(self.fd)
+        let _ = self.fd;
+        compile_error!("std::fs::File::read_to_string is not implemented for the current std surface")
     }
 
     pub fn write_all(&mut self, content: &str) -> Result<(), IoError> {
-        libc_file_write_all(self.fd, content)
+        let _ = self.fd;
+        let _ = content;
+        compile_error!("std::fs::File::write_all is not implemented for the current std surface")
     }
 
     pub fn flush(&mut self) -> Result<(), IoError> {
-        libc_file_flush(self.fd)
+        Result::Ok(())
     }
 
     pub fn sync_all(&mut self) -> Result<(), IoError> {
-        libc_file_sync_all(self.fd)
+        if libc::fsync(self.fd) == 0 {
+            Result::Ok(())
+        } else {
+            Result::Err(io_error_other("fsync failed"))
+        }
     }
 
     pub fn seek(&mut self, pos: SeekFrom) -> Result<i64, IoError> {
-        match pos {
-            SeekFrom::Start(offset) => libc_file_seek(self.fd, offset, 0),
-            SeekFrom::Current(offset) => libc_file_seek(self.fd, offset, 1),
-            SeekFrom::End(offset) => libc_file_seek(self.fd, offset, 2),
+        let (offset, whence) = match pos {
+            SeekFrom::Start(offset) => (offset, libc::SEEK_SET),
+            SeekFrom::Current(offset) => (offset, libc::SEEK_CUR),
+            SeekFrom::End(offset) => (offset, libc::SEEK_END),
+        };
+
+        let next = libc::lseek(self.fd, offset, whence);
+        if next >= 0 {
+            Result::Ok(next)
+        } else {
+            Result::Err(io_error_other("lseek failed"))
         }
     }
 
     pub fn close(self) -> Result<(), IoError> {
-        libc_file_close(self.fd)
+        if libc::close(self.fd) == 0 {
+            Result::Ok(())
+        } else {
+            Result::Err(io_error_other("close failed"))
+        }
     }
 
     pub fn as_raw_fd(&self) -> i32 {
@@ -230,78 +266,66 @@ impl File {
     }
 }
 
-#[lang = "libc_file_open_options"]
-fn libc_file_open_options(path: &str, options: OpenOptions) -> Result<File, IoError> {
-    compile_error!("std::fs::File open hooks are not implemented yet")
+fn io_error_other(message: &str) -> IoError {
+    IoError {
+        kind: ErrorKind::Other,
+        raw_os_error: 0,
+        message,
+    }
 }
 
-#[lang = "libc_file_metadata"]
-fn libc_file_metadata(fd: i32) -> Result<Metadata, IoError> {
-    compile_error!("std::fs::File metadata hooks are not implemented yet")
-}
-
-#[lang = "libc_file_read_to_string"]
-fn libc_file_read_to_string(fd: i32) -> Result<str, IoError> {
-    compile_error!("std::fs::File read hooks are not implemented yet")
-}
-
-#[lang = "libc_file_write_all"]
-fn libc_file_write_all(fd: i32, content: &str) -> Result<(), IoError> {
-    compile_error!("std::fs::File write hooks are not implemented yet")
-}
-
-#[lang = "libc_file_flush"]
-fn libc_file_flush(fd: i32) -> Result<(), IoError> {
-    compile_error!("std::fs::File flush hooks are not implemented yet")
-}
-
-#[lang = "libc_file_sync_all"]
-fn libc_file_sync_all(fd: i32) -> Result<(), IoError> {
-    compile_error!("std::fs::File sync hooks are not implemented yet")
-}
-
-#[lang = "libc_file_seek"]
-fn libc_file_seek(fd: i32, offset: i64, whence: i32) -> Result<i64, IoError> {
-    compile_error!("std::fs::File seek hooks are not implemented yet")
-}
-
-#[lang = "libc_file_close"]
-fn libc_file_close(fd: i32) -> Result<(), IoError> {
-    compile_error!("std::fs::File close hooks are not implemented yet")
+fn open_flags(options: OpenOptions) -> i32 {
+    let mut flags = 0;
+    if options.append {
+        flags = flags | libc::O_APPEND;
+    }
+    if options.truncate {
+        flags = flags | libc::O_TRUNC;
+    }
+    if options.create {
+        flags = flags | libc::O_CREAT;
+    }
+    if options.create_new {
+        flags = flags | libc::O_CREAT | libc::O_EXCL;
+    }
+    flags
 }
 
 #[lang = "fs_read_dir"]
-pub fn read_dir(path: &str) -> Vec<&str> { compile_error!("compiler intrinsic") }
+pub fn read_dir(path: &Path) -> Vec<&str> { compile_error!("compiler intrinsic") }
 
 #[lang = "fs_walk_dir"]
-pub fn walk_dir(path: &str) -> Vec<&str> { compile_error!("compiler intrinsic") }
+pub fn walk_dir(path: &Path) -> Vec<&str> { compile_error!("compiler intrinsic") }
 
 #[lang = "fs_read_to_string"]
-pub fn read_to_string(path: &str) -> str { compile_error!("compiler intrinsic") }
+pub fn read_to_string(path: &Path) -> str { compile_error!("compiler intrinsic") }
 
 #[lang = "fs_write_string"]
-pub fn write_string(path: &str, content: &str) { compile_error!("compiler intrinsic") }
+pub fn write_string(path: &Path, content: &str) { compile_error!("compiler intrinsic") }
 
 #[lang = "fs_append_string"]
-pub fn append_string(path: &str, content: &str) { compile_error!("compiler intrinsic") }
+pub fn append_string(path: &Path, content: &str) { compile_error!("compiler intrinsic") }
 
-#[lang = "fs_exists"]
-pub fn exists(path: &str) -> bool { compile_error!("compiler intrinsic") }
+pub fn exists(path: &Path) -> bool {
+    libc::access(path.as_str(), libc::F_OK) == 0
+}
 
 #[lang = "fs_is_dir"]
-pub fn is_dir(path: &str) -> bool { compile_error!("compiler intrinsic") }
+pub fn is_dir(path: &Path) -> bool { compile_error!("compiler intrinsic") }
 
 #[lang = "fs_is_file"]
-pub fn is_file(path: &str) -> bool { compile_error!("compiler intrinsic") }
+pub fn is_file(path: &Path) -> bool { compile_error!("compiler intrinsic") }
 
-#[lang = "fs_create_dir_all"]
-pub fn create_dir_all(path: &str) { compile_error!("compiler intrinsic") }
+pub fn create_dir_all(path: &Path) {
+    libc::mkpath_np(path.as_str(), 0o777);
+}
 
-#[lang = "fs_remove_file"]
-pub fn remove_file(path: &str) { compile_error!("compiler intrinsic") }
+pub fn remove_file(path: &Path) {
+    libc::unlink(path.as_str());
+}
 
 #[lang = "fs_remove_dir_all"]
-pub fn remove_dir_all(path: &str) { compile_error!("compiler intrinsic") }
+pub fn remove_dir_all(path: &Path) { compile_error!("compiler intrinsic") }
 
 #[lang = "fs_glob"]
 pub fn glob(pattern: &str) -> Vec<&str> { compile_error!("compiler intrinsic") }
