@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -68,7 +68,7 @@ pub enum QuotedFragment {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterpreterMode {
     /// Compile-time evaluation for const regions: allow most operations that do
-    /// not require external access (IO, host bindings, runtime-only intrinsics).
+    /// not require external access (IO, compiler-supported runtime hooks, runtime-only intrinsics).
     CompileTime,
     /// Runtime evaluation with full semantics and side effects.
     RunTime,
@@ -595,7 +595,7 @@ struct GenericTemplate {
     generics: Vec<String>,
 }
 
-type HostExternFn = fn(&[Value]) -> std::result::Result<Value, String>;
+type LangItemFn = fn(&[Value]) -> std::result::Result<Value, String>;
 
 #[derive(Debug, Clone)]
 struct ExternFunctionBinding {
@@ -3396,7 +3396,7 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn register_extern_function(&mut self, decl: &ItemDeclFunction) {
         let command = extern_command_attr(decl);
-        if !decl.sig.abi.is_c() && !decl.sig.abi.is_named("host") && command.is_none() {
+        if !decl.sig.abi.is_c() && command.is_none() {
             return;
         }
         let binding = ExternFunctionBinding {
@@ -3438,9 +3438,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         binding: &ExternFunctionBinding,
         args: &[Value],
     ) -> RuntimeFlow {
-        if binding.sig.abi.is_named("host") {
-            return self.call_host_extern_runtime(name, args);
-        }
         if let Some(command) = &binding.command {
             return self.call_command_extern_runtime(name, command, &binding.sig, args);
         }
@@ -3546,20 +3543,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                     "extern '{}' command returns unsupported runtime type {:?}",
                     name, other
                 ));
-                RuntimeFlow::Value(Value::undefined())
-            }
-        }
-    }
-
-    fn call_host_extern_runtime(&mut self, name: &str, args: &[Value]) -> RuntimeFlow {
-        let Some(handler) = resolve_host_extern(name) else {
-            self.emit_error(format!("extern '{}' uses unsupported host binding", name));
-            return RuntimeFlow::Value(Value::undefined());
-        };
-        match handler(args) {
-            Ok(value) => RuntimeFlow::Value(value),
-            Err(err) => {
-                self.emit_error(format!("extern '{}' host call failed: {}", name, err));
                 RuntimeFlow::Value(Value::undefined())
             }
         }
@@ -7287,6 +7270,23 @@ fn extern_command_attr(function: &ItemDeclFunction) -> Option<String> {
     }
 }
 
+fn function_lang_item(function: &ItemDefFunction) -> Option<String> {
+    let attr = function.attrs.iter().find(|attr| match &attr.meta {
+        AttrMeta::NameValue(nv) => nv.name.last().as_str() == "lang",
+        _ => false,
+    })?;
+    let AttrMeta::NameValue(meta) = &attr.meta else {
+        return None;
+    };
+    match meta.value.kind() {
+        ExprKind::Value(value) => match value.as_ref() {
+            Value::String(text) => Some(text.value.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn parse_command_attribute(input: &str) -> std::result::Result<Vec<String>, String> {
     let mut args = Vec::new();
     let mut current = String::new();
@@ -7401,58 +7401,291 @@ fn resolve_command_runtime_ty(ty: &Ty) -> Ty {
     }
 }
 
-fn resolve_host_extern(name: &str) -> Option<HostExternFn> {
+fn resolve_lang_item_handler(name: &str) -> Option<LangItemFn> {
     match name {
-        "std::fs::read_dir_impl" | "read_dir_impl" => Some(host_fs_read_dir),
-        "std::fs::read_to_string_impl" | "read_to_string_impl" => Some(host_fs_read_to_string),
-        "std::fs::write_string_impl" | "write_string_impl" => Some(host_fs_write_string),
-        "std::fs::is_dir_impl" | "is_dir_impl" => Some(host_fs_is_dir),
-        "std::yaml::to_json_impl" | "to_json_impl" => Some(host_yaml_to_json),
+        "fs_read_dir" => Some(lang_fs_read_dir),
+        "fs_walk_dir" => Some(lang_fs_walk_dir),
+        "fs_read_to_string" => Some(lang_fs_read_to_string),
+        "fs_write_string" => Some(lang_fs_write_string),
+        "fs_append_string" => Some(lang_fs_append_string),
+        "fs_exists" => Some(lang_fs_exists),
+        "fs_is_dir" => Some(lang_fs_is_dir),
+        "fs_is_file" => Some(lang_fs_is_file),
+        "fs_create_dir_all" => Some(lang_fs_create_dir_all),
+        "fs_remove_file" => Some(lang_fs_remove_file),
+        "fs_remove_dir_all" => Some(lang_fs_remove_dir_all),
+        "fs_glob" => Some(lang_fs_glob),
+        "env_current_dir" => Some(lang_env_current_dir),
+        "env_temp_dir" => Some(lang_env_temp_dir),
+        "env_home_dir" => Some(lang_env_home_dir),
+        "env_var" => Some(lang_env_var),
+        "env_var_exists" => Some(lang_env_var_exists),
+        "path_join" => Some(lang_path_join),
+        "path_parent" => Some(lang_path_parent),
+        "path_file_name" => Some(lang_path_file_name),
+        "path_extension" => Some(lang_path_extension),
+        "path_stem" => Some(lang_path_stem),
+        "path_is_absolute" => Some(lang_path_is_absolute),
+        "path_normalize" => Some(lang_path_normalize),
+        "io_read_stdin_to_string" => Some(lang_io_read_stdin_to_string),
+        "io_write_stdout" => Some(lang_io_write_stdout),
+        "io_write_stderr" => Some(lang_io_write_stderr),
+        "process_run" => Some(lang_process_run),
+        "process_ok" => Some(lang_process_ok),
+        "process_output" => Some(lang_process_output),
+        "process_status" => Some(lang_process_status),
+        "process_run_argv" => Some(lang_process_run_argv),
+        "process_ok_argv" => Some(lang_process_ok_argv),
+        "process_output_argv" => Some(lang_process_output_argv),
+        "process_status_argv" => Some(lang_process_status_argv),
+        "process_run_argv_in" => Some(lang_process_run_argv_in),
+        "process_ok_argv_in" => Some(lang_process_ok_argv_in),
+        "process_output_argv_in" => Some(lang_process_output_argv_in),
+        "process_status_argv_in" => Some(lang_process_status_argv_in),
+        "yaml_to_json" => Some(lang_yaml_to_json),
         _ => None,
     }
 }
 
-fn host_fs_read_dir(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_host_string_arg(args, 0, "path")?;
-    let mut entries = Vec::new();
-    let iter = fs::read_dir(path.as_str()).map_err(|err| err.to_string())?;
-    for entry in iter {
-        let entry = entry.map_err(|err| err.to_string())?;
-        entries.push(Value::string(entry.path().to_string_lossy().into_owned()));
-    }
-    entries.sort_by(|lhs, rhs| {
-        host_string_value(lhs)
-            .cmp(host_string_value(rhs))
-    });
-    Ok(Value::List(ValueList::new(entries)))
+fn lang_fs_read_dir(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    lang_fs_collect_dir(path.as_str(), false)
 }
 
-fn host_fs_read_to_string(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_host_string_arg(args, 0, "path")?;
+fn lang_fs_walk_dir(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    lang_fs_collect_dir(path.as_str(), true)
+}
+
+fn lang_fs_read_to_string(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
     let content = fs::read_to_string(path.as_str()).map_err(|err| err.to_string())?;
     Ok(Value::string(content))
 }
 
-fn host_fs_write_string(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_host_string_arg(args, 0, "path")?;
-    let content = expect_host_string_arg(args, 1, "content")?;
+fn lang_fs_write_string(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    let content = expect_lang_string_arg(args, 1, "content")?;
     fs::write(path.as_str(), content.as_str()).map_err(|err| err.to_string())?;
     Ok(Value::unit())
 }
 
-fn host_fs_is_dir(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_host_string_arg(args, 0, "path")?;
+fn lang_fs_append_string(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    let content = expect_lang_string_arg(args, 1, "content")?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path.as_str())
+        .map_err(|err| err.to_string())?;
+    file.write_all(content.as_bytes())
+        .map_err(|err| err.to_string())?;
+    Ok(Value::unit())
+}
+
+fn lang_fs_exists(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    Ok(Value::bool(std::path::Path::new(path.as_str()).exists()))
+}
+
+fn lang_fs_is_dir(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
     Ok(Value::bool(std::path::Path::new(path.as_str()).is_dir()))
 }
 
-fn host_yaml_to_json(args: &[Value]) -> std::result::Result<Value, String> {
-    let input = expect_host_string_arg(args, 0, "input")?;
+fn lang_fs_is_file(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    Ok(Value::bool(std::path::Path::new(path.as_str()).is_file()))
+}
+
+fn lang_fs_create_dir_all(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    fs::create_dir_all(path.as_str()).map_err(|err| err.to_string())?;
+    Ok(Value::unit())
+}
+
+fn lang_fs_remove_file(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    fs::remove_file(path.as_str()).map_err(|err| err.to_string())?;
+    Ok(Value::unit())
+}
+
+fn lang_fs_remove_dir_all(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    fs::remove_dir_all(path.as_str()).map_err(|err| err.to_string())?;
+    Ok(Value::unit())
+}
+
+fn lang_fs_glob(args: &[Value]) -> std::result::Result<Value, String> {
+    let pattern = expect_lang_string_arg(args, 0, "pattern")?;
+    let mut values = Vec::new();
+    let entries = glob::glob(pattern.as_str()).map_err(|err| err.to_string())?;
+    for entry in entries {
+        let path = entry.map_err(|err| err.to_string())?;
+        values.push(Value::string(path.to_string_lossy().into_owned()));
+    }
+    values.sort_by(|lhs, rhs| lang_string_value(lhs).cmp(lang_string_value(rhs)));
+    Ok(Value::List(ValueList::new(values)))
+}
+
+fn lang_env_current_dir(args: &[Value]) -> std::result::Result<Value, String> {
+    expect_lang_arg_count(args, 0)?;
+    let dir = std::env::current_dir().map_err(|err| err.to_string())?;
+    Ok(Value::string(dir.to_string_lossy().into_owned()))
+}
+
+fn lang_env_temp_dir(args: &[Value]) -> std::result::Result<Value, String> {
+    expect_lang_arg_count(args, 0)?;
+    Ok(Value::string(
+        std::env::temp_dir().to_string_lossy().into_owned(),
+    ))
+}
+
+fn lang_env_home_dir(args: &[Value]) -> std::result::Result<Value, String> {
+    expect_lang_arg_count(args, 0)?;
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default();
+    Ok(Value::string(home))
+}
+
+fn lang_env_var(args: &[Value]) -> std::result::Result<Value, String> {
+    let name = expect_lang_string_arg(args, 0, "name")?;
+    Ok(Value::string(std::env::var(name.as_str()).unwrap_or_default()))
+}
+
+fn lang_env_var_exists(args: &[Value]) -> std::result::Result<Value, String> {
+    let name = expect_lang_string_arg(args, 0, "name")?;
+    Ok(Value::bool(std::env::var_os(name.as_str()).is_some()))
+}
+
+fn lang_path_join(args: &[Value]) -> std::result::Result<Value, String> {
+    let lhs = expect_lang_string_arg(args, 0, "lhs")?;
+    let rhs = expect_lang_string_arg(args, 1, "rhs")?;
+    Ok(Value::string(
+        std::path::Path::new(lhs.as_str())
+            .join(rhs.as_str())
+            .to_string_lossy()
+            .into_owned(),
+    ))
+}
+
+fn lang_path_parent(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    let value = std::path::Path::new(path.as_str())
+        .parent()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(Value::string(value))
+}
+
+fn lang_path_file_name(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    let value = std::path::Path::new(path.as_str())
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(Value::string(value))
+}
+
+fn lang_path_extension(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    let value = std::path::Path::new(path.as_str())
+        .extension()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(Value::string(value))
+}
+
+fn lang_path_stem(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    let value = std::path::Path::new(path.as_str())
+        .file_stem()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(Value::string(value))
+}
+
+fn lang_path_is_absolute(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    Ok(Value::bool(std::path::Path::new(path.as_str()).is_absolute()))
+}
+
+fn lang_path_normalize(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_string_arg(args, 0, "path")?;
+    let normalized = std::path::Path::new(path.as_str())
+        .components()
+        .as_path()
+        .to_string_lossy()
+        .into_owned();
+    Ok(Value::string(normalized))
+}
+
+fn lang_io_read_stdin_to_string(args: &[Value]) -> std::result::Result<Value, String> {
+    expect_lang_arg_count(args, 0)?;
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|err| err.to_string())?;
+    Ok(Value::string(input))
+}
+
+fn lang_io_write_stdout(args: &[Value]) -> std::result::Result<Value, String> {
+    let text = expect_lang_string_arg(args, 0, "text")?;
+    std::io::stdout()
+        .write_all(text.as_bytes())
+        .map_err(|err| err.to_string())?;
+    Ok(Value::unit())
+}
+
+fn lang_io_write_stderr(args: &[Value]) -> std::result::Result<Value, String> {
+    let text = expect_lang_string_arg(args, 0, "text")?;
+    std::io::stderr()
+        .write_all(text.as_bytes())
+        .map_err(|err| err.to_string())?;
+    Ok(Value::unit())
+}
+
+fn lang_process_run_argv(args: &[Value]) -> std::result::Result<Value, String> {
+    run_lang_process(args, false, LangProcessReturn::Unit)
+}
+
+fn lang_process_ok_argv(args: &[Value]) -> std::result::Result<Value, String> {
+    run_lang_process(args, false, LangProcessReturn::Bool)
+}
+
+fn lang_process_output_argv(args: &[Value]) -> std::result::Result<Value, String> {
+    run_lang_process(args, false, LangProcessReturn::Stdout)
+}
+
+fn lang_process_status_argv(args: &[Value]) -> std::result::Result<Value, String> {
+    run_lang_process(args, false, LangProcessReturn::Status)
+}
+
+fn lang_process_run_argv_in(args: &[Value]) -> std::result::Result<Value, String> {
+    run_lang_process(args, true, LangProcessReturn::Unit)
+}
+
+fn lang_process_ok_argv_in(args: &[Value]) -> std::result::Result<Value, String> {
+    run_lang_process(args, true, LangProcessReturn::Bool)
+}
+
+fn lang_process_output_argv_in(args: &[Value]) -> std::result::Result<Value, String> {
+    run_lang_process(args, true, LangProcessReturn::Stdout)
+}
+
+fn lang_process_status_argv_in(args: &[Value]) -> std::result::Result<Value, String> {
+    run_lang_process(args, true, LangProcessReturn::Status)
+}
+
+fn lang_yaml_to_json(args: &[Value]) -> std::result::Result<Value, String> {
+    let input = expect_lang_string_arg(args, 0, "input")?;
     let value: serde_json::Value = serde_yaml::from_str(input.as_str()).map_err(|err| err.to_string())?;
     let json = serde_json::to_string(&value).map_err(|err| err.to_string())?;
     Ok(Value::string(json))
 }
 
-fn expect_host_string_arg(
+fn expect_lang_string_arg(
     args: &[Value],
     index: usize,
     label: &str,
@@ -7469,11 +7702,194 @@ fn expect_host_string_arg(
     }
 }
 
-fn host_string_value(value: &Value) -> &str {
+fn expect_lang_string_list_arg(
+    args: &[Value],
+    index: usize,
+    label: &str,
+) -> std::result::Result<Vec<String>, String> {
+    let Some(value) = args.get(index) else {
+        return Err(format!("missing {} argument at index {}", label, index));
+    };
+    match value {
+        Value::List(list) => list
+            .values
+            .iter()
+            .enumerate()
+            .map(|(idx, value)| match value {
+                Value::String(text) => Ok(text.value.clone()),
+                other => Err(format!(
+                    "expected {} argument item {} to be string, got {:?}",
+                    label, idx, other
+                )),
+            })
+            .collect(),
+        other => Err(format!(
+            "expected {} argument at index {} to be list, got {:?}",
+            label, index, other
+        )),
+    }
+}
+
+fn expect_lang_arg_count(args: &[Value], expected: usize) -> std::result::Result<(), String> {
+    if args.len() == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "expected {} arguments, got {}",
+            expected,
+            args.len()
+        ))
+    }
+}
+
+fn lang_string_value(value: &Value) -> &str {
     match value {
         Value::String(text) => text.value.as_str(),
         _ => "",
     }
+}
+
+fn lang_fs_collect_dir(path: &str, recursive: bool) -> std::result::Result<Value, String> {
+    let mut values = Vec::new();
+    lang_fs_collect_dir_entries(std::path::Path::new(path), recursive, &mut values)?;
+    values.sort_by(|lhs, rhs| lang_string_value(lhs).cmp(lang_string_value(rhs)));
+    Ok(Value::List(ValueList::new(values)))
+}
+
+fn lang_fs_collect_dir_entries(
+    path: &std::path::Path,
+    recursive: bool,
+    out: &mut Vec<Value>,
+) -> std::result::Result<(), String> {
+    let entries = fs::read_dir(path).map_err(|err| err.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let entry_path = entry.path();
+        out.push(Value::string(entry_path.to_string_lossy().into_owned()));
+        if recursive && entry_path.is_dir() {
+            lang_fs_collect_dir_entries(entry_path.as_path(), true, out)?;
+        }
+    }
+    Ok(())
+}
+
+enum LangProcessReturn {
+    Unit,
+    Bool,
+    Stdout,
+    Status,
+}
+
+fn run_lang_process(
+    args: &[Value],
+    has_cwd: bool,
+    ret: LangProcessReturn,
+) -> std::result::Result<Value, String> {
+    let program = expect_lang_string_arg(args, 0, "program")?;
+    let argv = expect_lang_string_list_arg(args, 1, "args")?;
+    let cwd = if has_cwd {
+        Some(expect_lang_string_arg(args, 2, "cwd")?)
+    } else {
+        None
+    };
+
+    let mut command = Command::new(program.as_str());
+    command.args(argv);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+
+    let output = command.output().map_err(|err| err.to_string())?;
+    match ret {
+        LangProcessReturn::Unit => {
+            if !output.status.success() {
+                return Err(format!(
+                    "process exited with status {}",
+                    output.status.code().unwrap_or(-1)
+                ));
+            }
+            if !output.stdout.is_empty() {
+                std::io::stdout()
+                    .write_all(&output.stdout)
+                    .map_err(|err| err.to_string())?;
+            }
+            Ok(Value::unit())
+        }
+        LangProcessReturn::Bool => Ok(Value::bool(output.status.success())),
+        LangProcessReturn::Stdout => {
+            if !output.status.success() {
+                return Err(format!(
+                    "process exited with status {}: {}",
+                    output.status.code().unwrap_or(-1),
+                    String::from_utf8_lossy(&output.stderr).trim_end()
+                ));
+            }
+            Ok(Value::string(
+                String::from_utf8_lossy(&output.stdout).to_string(),
+            ))
+        }
+        LangProcessReturn::Status => Ok(Value::int(output.status.code().unwrap_or(-1) as i64)),
+    }
+}
+
+fn run_lang_shell_command(command: &str) -> std::result::Result<std::process::Output, String> {
+    #[cfg(unix)]
+    let mut process = {
+        let mut process = Command::new("sh");
+        process.arg("-lc").arg(command);
+        process
+    };
+    #[cfg(windows)]
+    let mut process = {
+        let mut process = Command::new("pwsh");
+        process.arg("-Command").arg(command);
+        process
+    };
+    process.output().map_err(|err| err.to_string())
+}
+
+fn lang_process_run(args: &[Value]) -> std::result::Result<Value, String> {
+    let command = expect_lang_string_arg(args, 0, "command")?;
+    let output = run_lang_shell_command(command.as_str())?;
+    if !output.status.success() {
+        return Err(format!(
+            "process exited with status {}",
+            output.status.code().unwrap_or(-1)
+        ));
+    }
+    if !output.stdout.is_empty() {
+        std::io::stdout()
+            .write_all(&output.stdout)
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(Value::unit())
+}
+
+fn lang_process_ok(args: &[Value]) -> std::result::Result<Value, String> {
+    let command = expect_lang_string_arg(args, 0, "command")?;
+    let output = run_lang_shell_command(command.as_str())?;
+    Ok(Value::bool(output.status.success()))
+}
+
+fn lang_process_output(args: &[Value]) -> std::result::Result<Value, String> {
+    let command = expect_lang_string_arg(args, 0, "command")?;
+    let output = run_lang_shell_command(command.as_str())?;
+    if !output.status.success() {
+        return Err(format!(
+            "process exited with status {}: {}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr).trim_end()
+        ));
+    }
+    Ok(Value::string(
+        String::from_utf8_lossy(&output.stdout).to_string(),
+    ))
+}
+
+fn lang_process_status(args: &[Value]) -> std::result::Result<Value, String> {
+    let command = expect_lang_string_arg(args, 0, "command")?;
+    let output = run_lang_shell_command(command.as_str())?;
+    Ok(Value::int(output.status.code().unwrap_or(-1) as i64))
 }
 
 fn meta_path_to_texts(path: &Path, out: &mut Vec<String>) {

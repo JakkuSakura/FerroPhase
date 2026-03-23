@@ -1,47 +1,35 @@
-#[cfg(unix)]
-#[command = "sh -lc"]
-extern "cli" fn shell_run(command: str);
+#[lang = "process_run"]
+pub fn run(command: str) { compile_error!("compiler intrinsic") }
 
-#[cfg(windows)]
-#[command = "pwsh -Command"]
-extern "cli" fn shell_run(command: str);
+#[lang = "process_ok"]
+pub fn ok(command: str) -> bool { compile_error!("compiler intrinsic") }
 
-#[cfg(unix)]
-#[command = "sh -lc"]
-extern "cli" fn shell_ok(command: str) -> bool;
+#[lang = "process_output"]
+pub fn output(command: str) -> str { compile_error!("compiler intrinsic") }
 
-#[cfg(windows)]
-#[command = "pwsh -Command"]
-extern "cli" fn shell_ok(command: str) -> bool;
+#[lang = "process_status"]
+pub fn status(command: str) -> i64 { compile_error!("compiler intrinsic") }
 
-#[cfg(unix)]
-#[command = "sh -lc"]
-extern "cli" fn shell_output(command: str) -> str;
+#[lang = "process_run_argv"]
+pub fn run_argv(program: &str, args: Vec<&str>) { compile_error!("compiler intrinsic") }
 
-#[cfg(windows)]
-#[command = "pwsh -Command"]
-extern "cli" fn shell_output(command: str) -> str;
+#[lang = "process_ok_argv"]
+pub fn ok_argv(program: &str, args: Vec<&str>) -> bool { compile_error!("compiler intrinsic") }
 
-#[cfg(unix)]
-#[command = "sh -lc"]
-extern "cli" fn shell_status_code(command: str) -> i64;
+#[lang = "process_output_argv"]
+pub fn output_argv(program: &str, args: Vec<&str>) -> str { compile_error!("compiler intrinsic") }
 
-#[cfg(windows)]
-#[command = "pwsh -Command"]
-extern "cli" fn shell_status_code(command: str) -> i64;
+#[lang = "process_status_argv"]
+pub fn status_argv(program: &str, args: Vec<&str>) -> i64 { compile_error!("compiler intrinsic") }
 
-pub fn run(command: str) {
-    shell_run(command)
-}
+#[lang = "process_run_argv_in"]
+pub fn run_argv_in(program: &str, args: Vec<&str>, cwd: &str) { compile_error!("compiler intrinsic") }
 
-pub fn ok(command: str) -> bool {
-    shell_ok(command)
-}
+#[lang = "process_ok_argv_in"]
+pub fn ok_argv_in(program: &str, args: Vec<&str>, cwd: &str) -> bool { compile_error!("compiler intrinsic") }
 
-pub fn output(command: str) -> str {
-    shell_output(command)
-}
+#[lang = "process_output_argv_in"]
+pub fn output_argv_in(program: &str, args: Vec<&str>, cwd: &str) -> str { compile_error!("compiler intrinsic") }
 
-pub fn status(command: str) -> i64 {
-    shell_status_code(command)
-}
+#[lang = "process_status_argv_in"]
+pub fn status_argv_in(program: &str, args: Vec<&str>, cwd: &str) -> i64 { compile_error!("compiler intrinsic") }

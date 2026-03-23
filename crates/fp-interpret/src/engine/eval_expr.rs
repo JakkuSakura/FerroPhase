@@ -2282,8 +2282,21 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.resolve_function_call(&mut locator, invoke, ResolutionMode::Default)
                 {
                     invoke.target = ExprInvokeTarget::Function(locator.clone());
-                    // Call user-defined const function
                     let evaluated = self.evaluate_args(&mut invoke.args);
+                    if let Some(lang_name) = super::function_lang_item(&function) {
+                        if let Some(handler) = super::resolve_lang_item_handler(&lang_name) {
+                            return match handler(&evaluated) {
+                                Ok(value) => value,
+                                Err(err) => {
+                                    self.emit_error(format!(
+                                        "lang item '{}' call failed: {}",
+                                        lang_name, err
+                                    ));
+                                    Value::undefined()
+                                }
+                            };
+                        }
+                    }
                     if let Some(stack) = Self::module_stack_from_locator(&locator) {
                         let saved = std::mem::take(&mut self.module_stack);
                         self.module_stack = stack;
@@ -2520,6 +2533,20 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.resolve_function_call(&mut locator, invoke, ResolutionMode::Default)
                 {
                     invoke.target = ExprInvokeTarget::Function(locator.clone());
+                    if let Some(lang_name) = super::function_lang_item(&function) {
+                        if let Some(handler) = super::resolve_lang_item_handler(&lang_name) {
+                            return match handler(&args) {
+                                Ok(value) => RuntimeFlow::Value(value),
+                                Err(err) => {
+                                    self.emit_error(format!(
+                                        "lang item '{}' call failed: {}",
+                                        lang_name, err
+                                    ));
+                                    RuntimeFlow::Value(Value::undefined())
+                                }
+                            };
+                        }
+                    }
                     let mut impl_context = None;
                     let segments = Self::locator_segments(&locator);
                     if segments.len() >= 2 {

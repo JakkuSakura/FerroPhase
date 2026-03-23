@@ -1546,6 +1546,7 @@ dependencies = [
  "fp-pipeline",
  "fp-typing",
  "futures-util",
+ "glob",
  "itertools 0.12.1",
  "libffi",
  "libloading",

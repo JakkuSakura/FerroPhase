@@ -62,6 +62,11 @@ pub fn collect_lang_items(node: &Node) -> LangItemRegistry {
 }
 
 pub fn lookup_lang_item_intrinsic(locator: &Name) -> Option<IntrinsicCallKind> {
+    let name = lookup_lang_item_name(locator)?;
+    intrinsic_kind_for_lang_item(&name)
+}
+
+pub fn lookup_lang_item_name(locator: &Name) -> Option<String> {
     let registry = try_get_threadlocal_lang_items()?;
     let locator_segments: Vec<&str> = match locator {
         Name::Ident(ident) => vec![ident.name.as_str()],
@@ -72,9 +77,7 @@ pub fn lookup_lang_item_intrinsic(locator: &Name) -> Option<IntrinsicCallKind> {
     for (name, path) in registry.items {
         let path_segments: Vec<&str> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
         if path_segments == locator_segments {
-            if let Some(kind) = intrinsic_kind_for_lang_item(&name) {
-                return Some(kind);
-            }
+            return Some(name);
         }
     }
     None

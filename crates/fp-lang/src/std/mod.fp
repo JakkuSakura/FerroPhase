@@ -1,11 +1,15 @@
+pub mod assert;
 pub mod collections;
+pub mod env;
 pub mod ffi;
 pub mod fs;
 pub mod future;
+pub mod io;
 pub mod json;
 pub mod intrinsics;
 pub mod meta;
 pub mod net;
+pub mod path;
 pub mod process;
 pub mod proc_macro;
 pub mod task;
