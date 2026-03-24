@@ -1,6 +1,9 @@
 use std::path::Path;
 use std::libc;
 
+#[link_name = "write"]
+extern "C" fn libc_write_str(fd: i32, buf: &std::ffi::CStr, len: usize) -> isize;
+
 pub enum Result<T, E> {
     Ok(T),
     Err(E),
@@ -221,9 +224,18 @@ impl File {
     }
 
     pub fn write_all(&mut self, content: &str) -> Result<(), IoError> {
-        let _ = self.fd;
-        let _ = content;
-        compile_error!("std::fs::File::write_all is not implemented for the current std surface")
+        let written = libc_write_str(self.fd, content, content.len());
+        if written < 0 {
+            return Result::Err(io_error_other("write failed"));
+        }
+        if written as usize != content.len() {
+            return Result::Err(IoError {
+                kind: ErrorKind::WriteZero,
+                raw_os_error: 0,
+                message: "partial write",
+            });
+        }
+        Result::Ok(())
     }
 
     pub fn flush(&mut self) -> Result<(), IoError> {
@@ -306,9 +318,8 @@ pub fn write_string(path: &Path, content: &str) { compile_error!("compiler intri
 #[lang = "fs_append_string"]
 pub fn append_string(path: &Path, content: &str) { compile_error!("compiler intrinsic") }
 
-pub fn exists(path: &Path) -> bool {
-    libc::access(path.as_str(), libc::F_OK) == 0
-}
+#[lang = "fs_exists"]
+pub fn exists(path: &Path) -> bool { compile_error!("compiler intrinsic") }
 
 #[lang = "fs_is_dir"]
 pub fn is_dir(path: &Path) -> bool { compile_error!("compiler intrinsic") }
@@ -316,13 +327,11 @@ pub fn is_dir(path: &Path) -> bool { compile_error!("compiler intrinsic") }
 #[lang = "fs_is_file"]
 pub fn is_file(path: &Path) -> bool { compile_error!("compiler intrinsic") }
 
-pub fn create_dir_all(path: &Path) {
-    libc::mkpath_np(path.as_str(), 0o777);
-}
+#[lang = "fs_create_dir_all"]
+pub fn create_dir_all(path: &Path) { compile_error!("compiler intrinsic") }
 
-pub fn remove_file(path: &Path) {
-    libc::unlink(path.as_str());
-}
+#[lang = "fs_remove_file"]
+pub fn remove_file(path: &Path) { compile_error!("compiler intrinsic") }
 
 #[lang = "fs_remove_dir_all"]
 pub fn remove_dir_all(path: &Path) { compile_error!("compiler intrinsic") }

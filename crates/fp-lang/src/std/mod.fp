@@ -10,6 +10,7 @@ pub mod libc;
 pub mod intrinsics;
 pub mod meta;
 pub mod net;
+pub mod option;
 pub mod path;
 pub mod process;
 pub mod proc_macro;

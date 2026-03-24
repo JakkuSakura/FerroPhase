@@ -968,7 +968,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                             if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
                                 if let Some(shared) = stored.shared_handle() {
                                     return RuntimeFlow::Value(Value::Any(AnyBox::new(
-                                        RuntimeRef { shared },
+                                        RuntimeRef {
+                                            target: RuntimeRefTarget::Whole(shared),
+                                        },
                                     )));
                                 }
                                 self.emit_error(format!(
@@ -976,6 +978,121 @@ impl<'ctx> AstInterpreter<'ctx> {
                                     ident.as_str()
                                 ));
                                 return RuntimeFlow::Value(Value::undefined());
+                            }
+                        }
+                    }
+                    if let ExprKind::Select(select) = reference.referee.kind() {
+                        if let ExprKind::Name(locator) = select.obj.kind() {
+                            if let Some(ident) = locator.as_ident() {
+                                if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                                    if let Some(shared) = stored.shared_handle() {
+                                        return RuntimeFlow::Value(Value::Any(AnyBox::new(
+                                            RuntimeRef {
+                                                target: RuntimeRefTarget::Field {
+                                                    shared,
+                                                    field: select.field.as_str().to_string(),
+                                                },
+                                            },
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let ExprKind::Index(index_expr) = reference.referee.kind() {
+                        if let ExprKind::Name(locator) = index_expr.obj.kind() {
+                            if let Some(ident) = locator.as_ident() {
+                                if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                                    if let Some(shared) = stored.shared_handle() {
+                                        if let ExprKind::Range(range) = index_expr.index.kind() {
+                                            let start = match range.start.as_ref() {
+                                                Some(expr) => {
+                                                    let mut expr = expr.as_ref().clone();
+                                                    match self.eval_value_runtime(&mut expr) {
+                                                        Ok(value) => Some(value),
+                                                        Err(flow) => return flow,
+                                                    }
+                                                }
+                                                None => None,
+                                            };
+                                            let end = match range.end.as_ref() {
+                                                Some(expr) => {
+                                                    let mut expr = expr.as_ref().clone();
+                                                    match self.eval_value_runtime(&mut expr) {
+                                                        Ok(value) => Some(value),
+                                                        Err(flow) => return flow,
+                                                    }
+                                                }
+                                                None => None,
+                                            };
+                                            let start_idx = match start {
+                                                Some(value) => match self
+                                                    .numeric_to_non_negative_usize(&value, "range start")
+                                                {
+                                                    Some(value) => value,
+                                                    None => {
+                                                        return RuntimeFlow::Value(
+                                                            Value::undefined(),
+                                                        )
+                                                    }
+                                                },
+                                                None => 0,
+                                            };
+                                            let end_idx = match end {
+                                                Some(value) => match self
+                                                    .numeric_to_non_negative_usize(&value, "range end")
+                                                {
+                                                    Some(value) => {
+                                                        if matches!(
+                                                            range.limit,
+                                                            ExprRangeLimit::Inclusive
+                                                        ) {
+                                                            value.saturating_add(1)
+                                                        } else {
+                                                            value
+                                                        }
+                                                    }
+                                                    None => {
+                                                        return RuntimeFlow::Value(
+                                                            Value::undefined(),
+                                                        )
+                                                    }
+                                                },
+                                                None => {
+                                                    self.emit_error(
+                                                        "mutable slice reference requires an explicit end bound",
+                                                    );
+                                                    return RuntimeFlow::Value(Value::undefined());
+                                                }
+                                            };
+                                            return RuntimeFlow::Value(Value::Any(AnyBox::new(
+                                                RuntimeRef {
+                                                    target: RuntimeRefTarget::Slice {
+                                                        shared,
+                                                        start: start_idx,
+                                                        end: end_idx,
+                                                    },
+                                                },
+                                            )));
+                                        }
+                                        let mut index_expr_value = index_expr.index.clone();
+                                        let index_value = match self
+                                            .eval_value_runtime(index_expr_value.as_mut())
+                                        {
+                                            Ok(value) => value,
+                                            Err(flow) => return flow,
+                                        };
+                                        if let Some(index) =
+                                            self.numeric_to_non_negative_usize(&index_value, "index")
+                                        {
+                                            return RuntimeFlow::Value(Value::Any(AnyBox::new(
+                                                RuntimeRef {
+                                                    target: RuntimeRefTarget::Index { shared, index },
+                                                },
+                                            )));
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1015,11 +1132,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
                 if let Value::Any(any) = target {
                     if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
-                        let value = runtime_ref
-                            .shared
-                            .lock()
-                            .map(|value| value.clone())
-                            .unwrap_or_else(|err| err.into_inner().clone());
+                        let value = self.runtime_ref_value(runtime_ref);
                         return RuntimeFlow::Value(value);
                     }
                     if let Some(runtime_box) = any.downcast_ref::<RuntimeBox>() {
@@ -1837,13 +1950,100 @@ impl<'ctx> AstInterpreter<'ctx> {
                         if let Some(ident) = locator.as_ident() {
                             if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
                                 if let Some(shared) = stored.shared_handle() {
-                                    return Value::Any(AnyBox::new(RuntimeRef { shared }));
+                                    return Value::Any(AnyBox::new(RuntimeRef {
+                                        target: RuntimeRefTarget::Whole(shared),
+                                    }));
                                 }
                                 self.emit_error(format!(
                                     "mutable reference requires mutable binding for '{}'",
                                     ident.as_str()
                                 ));
                                 return Value::undefined();
+                            }
+                        }
+                    }
+                    if let ExprKind::Select(select) = reference.referee.kind() {
+                        if let ExprKind::Name(locator) = select.obj.kind() {
+                            if let Some(ident) = locator.as_ident() {
+                                if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                                    if let Some(shared) = stored.shared_handle() {
+                                        return Value::Any(AnyBox::new(RuntimeRef {
+                                            target: RuntimeRefTarget::Field {
+                                                shared,
+                                                field: select.field.as_str().to_string(),
+                                            },
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let ExprKind::Index(index_expr) = reference.referee.kind() {
+                        if let ExprKind::Name(locator) = index_expr.obj.kind() {
+                            if let Some(ident) = locator.as_ident() {
+                                if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                                    if let Some(shared) = stored.shared_handle() {
+                                        if let ExprKind::Range(range) = index_expr.index.kind() {
+                                            let mut start_expr =
+                                                range.start.as_ref().map(|expr| expr.as_ref().clone());
+                                            let start = start_expr
+                                                .as_mut()
+                                                .map(|expr| self.eval_expr(expr));
+                                            let mut end_expr =
+                                                range.end.as_ref().map(|expr| expr.as_ref().clone());
+                                            let end =
+                                                end_expr.as_mut().map(|expr| self.eval_expr(expr));
+                                            let start_idx = match start {
+                                                Some(value) => match self
+                                                    .numeric_to_non_negative_usize(&value, "range start")
+                                                {
+                                                    Some(value) => value,
+                                                    None => return Value::undefined(),
+                                                },
+                                                None => 0,
+                                            };
+                                            let end_idx = match end {
+                                                Some(value) => match self
+                                                    .numeric_to_non_negative_usize(&value, "range end")
+                                                {
+                                                    Some(value) => {
+                                                        if matches!(
+                                                            range.limit,
+                                                            ExprRangeLimit::Inclusive
+                                                        ) {
+                                                            value.saturating_add(1)
+                                                        } else {
+                                                            value
+                                                        }
+                                                    }
+                                                    None => return Value::undefined(),
+                                                },
+                                                None => {
+                                                    self.emit_error(
+                                                        "mutable slice reference requires an explicit end bound",
+                                                    );
+                                                    return Value::undefined();
+                                                }
+                                            };
+                                            return Value::Any(AnyBox::new(RuntimeRef {
+                                                target: RuntimeRefTarget::Slice {
+                                                    shared,
+                                                    start: start_idx,
+                                                    end: end_idx,
+                                                },
+                                            }));
+                                        }
+                                        let mut index_expr_value = index_expr.index.as_ref().clone();
+                                        let index_value = self.eval_expr(&mut index_expr_value);
+                                        if let Some(index) =
+                                            self.numeric_to_non_negative_usize(&index_value, "index")
+                                        {
+                                            return Value::Any(AnyBox::new(RuntimeRef {
+                                                target: RuntimeRefTarget::Index { shared, index },
+                                            }));
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1857,11 +2057,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let target = self.eval_expr(deref.referee.as_mut());
                 if let Value::Any(any) = target {
                     if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
-                        return runtime_ref
-                            .shared
-                            .lock()
-                            .map(|value| value.clone())
-                            .unwrap_or_else(|err| err.into_inner().clone());
+                        return self.runtime_ref_value(runtime_ref);
                     }
                     if let Some(runtime_box) = any.downcast_ref::<RuntimeBox>() {
                         return runtime_box.value.clone();
@@ -3669,17 +3865,13 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn runtime_buffer_capacity_hint(&self, value: &Value) -> usize {
+    fn runtime_buffer_capacity_hint(&mut self, value: &Value) -> usize {
         match value {
             Value::List(list) => list.values.len().max(1),
             Value::Bytes(bytes) => bytes.value.len().max(1),
             Value::Any(any) => {
                 if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
-                    let guard = match runtime_ref.shared.lock() {
-                        Ok(guard) => guard,
-                        Err(err) => err.into_inner(),
-                    };
-                    return match &*guard {
+                    return match self.runtime_ref_value(runtime_ref) {
                         Value::List(list) => list.values.len().max(1),
                         Value::Bytes(bytes) => bytes.value.len().max(1),
                         _ => 1024,
@@ -3698,25 +3890,51 @@ impl<'ctx> AstInterpreter<'ctx> {
         let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() else {
             return;
         };
-        let mut guard = match runtime_ref.shared.lock() {
+        let shared = Arc::clone(runtime_ref.shared());
+        let mut guard = match shared.lock() {
             Ok(guard) => guard,
             Err(err) => err.into_inner(),
         };
-        match &mut *guard {
-            Value::List(list) => {
-                for (index, byte) in bytes.iter().enumerate() {
-                    if index >= list.values.len() {
-                        break;
+        match &runtime_ref.target {
+            RuntimeRefTarget::Whole(_) => match &mut *guard {
+                Value::List(list) => {
+                    for (index, byte) in bytes.iter().enumerate() {
+                        if index >= list.values.len() {
+                            break;
+                        }
+                        list.values[index] = Value::int(*byte as i64);
                     }
-                    list.values[index] = Value::int(*byte as i64);
                 }
-            }
-            Value::Bytes(value_bytes) => {
-                if value_bytes.value.len() < bytes.len() {
-                    value_bytes.value.resize(bytes.len(), 0);
+                Value::Bytes(value_bytes) => {
+                    if value_bytes.value.len() < bytes.len() {
+                        value_bytes.value.resize(bytes.len(), 0);
+                    }
+                    value_bytes.value[..bytes.len()].copy_from_slice(bytes);
                 }
-                value_bytes.value[..bytes.len()].copy_from_slice(bytes);
-            }
+                _ => {}
+            },
+            RuntimeRefTarget::Slice { start, end, .. } => match &mut *guard {
+                Value::List(list) => {
+                    let slice_len = end.saturating_sub(*start);
+                    for (offset, byte) in bytes.iter().take(slice_len).enumerate() {
+                        let index = start + offset;
+                        if index >= list.values.len() {
+                            break;
+                        }
+                        list.values[index] = Value::int(*byte as i64);
+                    }
+                }
+                Value::Bytes(value_bytes) => {
+                    let slice_len = end.saturating_sub(*start);
+                    let write_len = bytes.len().min(slice_len);
+                    if value_bytes.value.len() < *end {
+                        value_bytes.value.resize(*end, 0);
+                    }
+                    value_bytes.value[*start..*start + write_len]
+                        .copy_from_slice(&bytes[..write_len]);
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -3753,11 +3971,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             Value::Any(any) => {
                 if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
-                    let guard = match runtime_ref.shared.lock() {
-                        Ok(guard) => guard,
-                        Err(err) => err.into_inner(),
-                    };
-                    return self.runtime_value_to_bytes(&guard);
+                    let value = self.runtime_ref_value(runtime_ref);
+                    return self.runtime_value_to_bytes(&value);
                 }
                 if let Some(slice_ref) = any.downcast_ref::<fp_native::ffi::FfiSliceRef>() {
                     let mut out = Vec::new();
@@ -3836,6 +4051,9 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         for name in &candidate_names {
             if let Some(function) = self.functions.get(name).cloned() {
+                if !Self::invoke_shape_matches(invoke, &function.sig.params) {
+                    continue;
+                }
                 if !self.apply_kwargs_to_invoke(invoke, &function.sig.params) {
                     return None;
                 }
@@ -3847,6 +4065,9 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         for name in &candidate_names {
             if let Some(template) = self.generic_functions.get(name).cloned() {
+                if !Self::invoke_shape_matches(invoke, &template.function.sig.params) {
+                    continue;
+                }
                 if !self.apply_kwargs_to_invoke(invoke, &template.function.sig.params) {
                     return None;
                 }
@@ -3862,6 +4083,9 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         // Fallback: find by fully qualified name
         if let Some(function) = self.functions.get(&locator.to_string()).cloned() {
+            if !Self::invoke_shape_matches(invoke, &function.sig.params) {
+                return None;
+            }
             if !self.apply_kwargs_to_invoke(invoke, &function.sig.params) {
                 return None;
             }
@@ -3926,6 +4150,23 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         invoke.args = slots.into_iter().map(|slot| slot.unwrap()).collect();
+        true
+    }
+
+    fn invoke_shape_matches(invoke: &ExprInvoke, params: &[FunctionParam]) -> bool {
+        if invoke.args.len() > params.len() {
+            return false;
+        }
+
+        for kwarg in &invoke.kwargs {
+            if !params
+                .iter()
+                .any(|param| param.name.as_str() == kwarg.name.as_str())
+            {
+                return false;
+            }
+        }
+
         true
     }
 

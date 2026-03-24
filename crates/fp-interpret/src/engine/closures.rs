@@ -227,7 +227,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             if let Value::Any(any) = &value {
                 if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
-                    self.insert_shared_value(param.name.as_str(), Arc::clone(&runtime_ref.shared));
+                    self.insert_shared_value(param.name.as_str(), Arc::clone(runtime_ref.shared()));
                     continue;
                 }
             }
@@ -365,7 +365,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             if let Value::Any(any) = &value {
                 if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
-                    self.insert_shared_value(param.name.as_str(), Arc::clone(&runtime_ref.shared));
+                    self.insert_shared_value(param.name.as_str(), Arc::clone(runtime_ref.shared()));
                     continue;
                 }
             }

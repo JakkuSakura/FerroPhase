@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+#
+# Transitional generator: `scripts/generate_libc_bindings.fp` is intended to
+# become the source of truth, and this Python version should eventually be
+# transpiled from it.
 
 from __future__ import annotations
 
@@ -25,7 +29,7 @@ CANONICAL_TYPE_ALIASES = [
 ]
 
 RUST_TO_FP_TYPES = {
-    "!": "!",
+    "!": "c_int",
     "i8": "i8",
     "i32": "i32",
     "isize": "isize",
@@ -79,6 +83,11 @@ def normalize_rust_type(raw: str) -> str:
     text = text.replace("std::ffi::", "")
     text = re.sub(r"\s+", " ", text)
 
+    if 'extern "C" fn' in text:
+        if text.startswith("::std::option::Option<") or text.startswith("std::option::Option<"):
+            return "::std::option::Option<usize>"
+        return "usize"
+
     if text in RUST_TO_FP_TYPES:
         return RUST_TO_FP_TYPES[text]
     if text.startswith("*const "):
@@ -86,6 +95,13 @@ def normalize_rust_type(raw: str) -> str:
     if text.startswith("*mut "):
         return f"*mut {normalize_rust_type(text[len('*mut '):])}"
     return text
+
+
+def normalize_function_arg_type(raw: str) -> str:
+    normalized = normalize_rust_type(raw)
+    if normalized == "*const c_char":
+        return "&std::ffi::CStr"
+    return normalized
 
 
 def parse_bindgen_output(bindgen_rs: str) -> BindingSet:
@@ -111,10 +127,9 @@ def parse_bindgen_output(bindgen_rs: str) -> BindingSet:
         seen_type_aliases.add(alias)
 
     for match in const_pattern.finditer(bindgen_rs):
-        name, rust_ty, value = match.groups()
+        name, _rust_ty, _value = match.groups()
         if name in seen_consts:
             continue
-        consts.append(f"pub const {name}: {normalize_rust_type(rust_ty)} = {value.strip()};")
         seen_consts.add(name)
 
     for extern_block in extern_block_pattern.finditer(bindgen_rs):
@@ -126,7 +141,7 @@ def parse_bindgen_output(bindgen_rs: str) -> BindingSet:
             if "..." in raw_args:
                 if name == "open":
                     signature = (
-                        'pub extern "C" fn open(path: *const c_char, oflag: c_int, mode: mode_t) -> c_int;'
+                        'pub extern "C" fn open(path: &std::ffi::CStr, oflag: c_int, mode: mode_t) -> c_int;'
                     )
                     if signature not in seen_externs:
                         externs.append(signature)
@@ -140,7 +155,7 @@ def parse_bindgen_output(bindgen_rs: str) -> BindingSet:
                     if not arg_match:
                         raise ValueError(f"unable to parse function arg: {raw_arg}")
                     arg_name, arg_ty = arg_match.groups()
-                    fp_args.append(f"{arg_name}: {normalize_rust_type(arg_ty)}")
+                    fp_args.append(f"{arg_name}: {normalize_function_arg_type(arg_ty)}")
 
             signature = f'pub extern "C" fn {name}({", ".join(fp_args)})'
             if raw_ret and raw_ret.strip() != "()":

@@ -218,12 +218,76 @@ enum StoredValue {
 
 #[derive(Debug, Clone)]
 struct RuntimeRef {
-    shared: Arc<Mutex<Value>>,
+    target: RuntimeRefTarget,
+}
+
+#[derive(Debug, Clone)]
+enum RuntimeRefTarget {
+    Whole(Arc<Mutex<Value>>),
+    Field {
+        shared: Arc<Mutex<Value>>,
+        field: String,
+    },
+    Index {
+        shared: Arc<Mutex<Value>>,
+        index: usize,
+    },
+    Slice {
+        shared: Arc<Mutex<Value>>,
+        start: usize,
+        end: usize,
+    },
 }
 
 impl PartialEq for RuntimeRef {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.shared, &other.shared)
+        match (&self.target, &other.target) {
+            (RuntimeRefTarget::Whole(lhs), RuntimeRefTarget::Whole(rhs)) => Arc::ptr_eq(lhs, rhs),
+            (
+                RuntimeRefTarget::Field {
+                    shared: lhs,
+                    field: lhs_field,
+                },
+                RuntimeRefTarget::Field {
+                    shared: rhs,
+                    field: rhs_field,
+                },
+            ) => Arc::ptr_eq(lhs, rhs) && lhs_field == rhs_field,
+            (
+                RuntimeRefTarget::Index {
+                    shared: lhs,
+                    index: lhs_index,
+                },
+                RuntimeRefTarget::Index {
+                    shared: rhs,
+                    index: rhs_index,
+                },
+            ) => Arc::ptr_eq(lhs, rhs) && lhs_index == rhs_index,
+            (
+                RuntimeRefTarget::Slice {
+                    shared: lhs,
+                    start: lhs_start,
+                    end: lhs_end,
+                },
+                RuntimeRefTarget::Slice {
+                    shared: rhs,
+                    start: rhs_start,
+                    end: rhs_end,
+                },
+            ) => Arc::ptr_eq(lhs, rhs) && lhs_start == rhs_start && lhs_end == rhs_end,
+            _ => false,
+        }
+    }
+}
+
+impl RuntimeRef {
+    fn shared(&self) -> &Arc<Mutex<Value>> {
+        match &self.target {
+            RuntimeRefTarget::Whole(shared)
+            | RuntimeRefTarget::Field { shared, .. }
+            | RuntimeRefTarget::Index { shared, .. }
+            | RuntimeRefTarget::Slice { shared, .. } => shared,
+        }
     }
 }
 
@@ -605,6 +669,7 @@ type LangItemFn = fn(&[Value]) -> std::result::Result<Value, String>;
 struct ExternFunctionBinding {
     sig: FunctionSignature,
     command: Option<String>,
+    link_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1386,6 +1451,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         TypeStruct {
             name: Ident::new("Future"),
             generics_params: Vec::new(),
+            repr_c: false,
             fields: vec![StructuralField::new(Ident::new("handle"), Ty::Any(TypeAny))],
         }
     }
@@ -3400,12 +3466,14 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn register_extern_function(&mut self, decl: &ItemDeclFunction) {
         let command = extern_command_attr(decl);
+        let link_name = extern_link_name_attr(&decl.attrs);
         if !decl.sig.abi.is_c() && command.is_none() {
             return;
         }
         let binding = ExternFunctionBinding {
             sig: decl.sig.clone(),
             command,
+            link_name,
         };
         let base_name = decl.name.as_str().to_string();
         let qualified = self.qualified_name(decl.name.as_str());
@@ -3453,7 +3521,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return RuntimeFlow::Value(Value::undefined());
             }
         };
-        match ffi.call(name, sig, args) {
+        let symbol_name = binding.link_name.as_deref().unwrap_or(name);
+        match ffi.call(symbol_name, sig, args) {
             Ok(value) => RuntimeFlow::Value(value),
             Err(err) => {
                 self.emit_error(err.to_string());
@@ -4987,15 +5056,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
                 if let Value::Any(any) = target {
                     if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
-                        match runtime_ref.shared.lock() {
-                            Ok(mut guard) => {
-                                *guard = value.clone();
-                                return RuntimeFlow::Value(value);
-                            }
-                            Err(err) => {
-                                *err.into_inner() = value.clone();
-                                return RuntimeFlow::Value(value);
-                            }
+                        if self.assign_runtime_ref(runtime_ref, value.clone()) {
+                            return RuntimeFlow::Value(value);
                         }
                     }
                 }
@@ -5032,7 +5094,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
                 if let Value::Any(any) = target {
                     if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
-                        if self.assign_index_shared(&runtime_ref.shared, idx, value.clone()) {
+                        if self.assign_runtime_ref_index(runtime_ref, idx, value.clone()) {
                             return RuntimeFlow::Value(value);
                         }
                     }
@@ -5077,6 +5139,125 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             _ => {
                 self.emit_error("index assignment requires list or tuple");
+                false
+            }
+        }
+    }
+
+    fn runtime_ref_value(&mut self, runtime_ref: &RuntimeRef) -> Value {
+        let guard = match runtime_ref.shared().lock() {
+            Ok(guard) => guard,
+            Err(err) => err.into_inner(),
+        };
+        match &runtime_ref.target {
+            RuntimeRefTarget::Whole(_) => guard.clone(),
+            RuntimeRefTarget::Field { field, .. } => match &*guard {
+                Value::Struct(struct_value) => struct_value
+                    .structural
+                    .fields
+                    .iter()
+                    .find(|existing| existing.name.as_str() == field.as_str())
+                    .map(|existing| existing.value.clone())
+                    .unwrap_or_else(|| {
+                        self.emit_error(format!("field '{}' not found on struct", field));
+                        Value::undefined()
+                    }),
+                Value::Structural(structural) => structural
+                    .fields
+                    .iter()
+                    .find(|existing| existing.name.as_str() == field.as_str())
+                    .map(|existing| existing.value.clone())
+                    .unwrap_or_else(|| {
+                        self.emit_error(format!("field '{}' not found on struct", field));
+                        Value::undefined()
+                    }),
+                _ => {
+                    self.emit_error("field reference requires struct value");
+                    Value::undefined()
+                }
+            },
+            RuntimeRefTarget::Index { index, .. } => match &*guard {
+                Value::List(list) => list.values.get(*index).cloned().unwrap_or_else(|| {
+                    self.emit_error("index out of bounds for list");
+                    Value::undefined()
+                }),
+                Value::Tuple(tuple) => tuple.values.get(*index).cloned().unwrap_or_else(|| {
+                    self.emit_error("index out of bounds for tuple");
+                    Value::undefined()
+                }),
+                _ => {
+                    self.emit_error("index reference requires list or tuple");
+                    Value::undefined()
+                }
+            },
+            RuntimeRefTarget::Slice { start, end, .. } => match &*guard {
+                Value::List(list) => {
+                    if *start > *end || *end > list.values.len() {
+                        self.emit_error("range slice is out of bounds");
+                        return Value::undefined();
+                    }
+                    Value::List(ValueList::new(list.values[*start..*end].to_vec()))
+                }
+                Value::Bytes(bytes) => {
+                    if *start > *end || *end > bytes.value.len() {
+                        self.emit_error("range slice is out of bounds");
+                        return Value::undefined();
+                    }
+                    Value::Bytes((&bytes.value[*start..*end]).into())
+                }
+                _ => {
+                    self.emit_error("slice reference requires list or bytes");
+                    Value::undefined()
+                }
+            },
+        }
+    }
+
+    fn assign_runtime_ref(&mut self, runtime_ref: &RuntimeRef, value: Value) -> bool {
+        match &runtime_ref.target {
+            RuntimeRefTarget::Whole(shared) => {
+                let mut guard = match shared.lock() {
+                    Ok(guard) => guard,
+                    Err(err) => err.into_inner(),
+                };
+                *guard = value;
+                true
+            }
+            RuntimeRefTarget::Field { shared, field } => {
+                let mut guard = match shared.lock() {
+                    Ok(guard) => guard,
+                    Err(err) => err.into_inner(),
+                };
+                self.assign_field_value(&mut guard, &Ident::new(field.clone()), value)
+            }
+            RuntimeRefTarget::Index { shared, index } => {
+                self.assign_index_shared(shared, *index, value)
+            }
+            RuntimeRefTarget::Slice { .. } => {
+                self.emit_error("cannot assign whole value through mutable slice reference");
+                false
+            }
+        }
+    }
+
+    fn assign_runtime_ref_index(
+        &mut self,
+        runtime_ref: &RuntimeRef,
+        idx: usize,
+        value: Value,
+    ) -> bool {
+        match &runtime_ref.target {
+            RuntimeRefTarget::Whole(shared) => self.assign_index_shared(shared, idx, value),
+            RuntimeRefTarget::Slice { shared, start, end } => {
+                let actual = start.saturating_add(idx);
+                if actual >= *end {
+                    self.emit_error("index out of bounds for slice");
+                    return false;
+                }
+                self.assign_index_shared(shared, actual, value)
+            }
+            _ => {
+                self.emit_error("index assignment requires list or slice reference");
                 false
             }
         }
@@ -5415,11 +5596,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         match target {
             Value::Any(any) => {
                 if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
-                    let shared_value = runtime_ref
-                        .shared
-                        .lock()
-                        .map(|value| value.clone())
-                        .unwrap_or_else(|err| err.into_inner().clone());
+                    let shared_value = self.runtime_ref_value(runtime_ref);
                     return self.evaluate_index(shared_value, index);
                 }
                 self.emit_error("cannot index into non-collection reference");
@@ -5499,11 +5676,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         match target {
             Value::Any(any) => {
                 if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
-                    let shared_value = runtime_ref
-                        .shared
-                        .lock()
-                        .map(|value| value.clone())
-                        .unwrap_or_else(|err| err.into_inner().clone());
+                    let shared_value = self.runtime_ref_value(runtime_ref);
                     return self.evaluate_range_index_slices(shared_value, start, end, inclusive);
                 }
                 self.emit_error("cannot slice non-collection reference");
@@ -7283,6 +7456,23 @@ fn extern_command_attr(function: &ItemDeclFunction) -> Option<String> {
     }
 }
 
+fn extern_link_name_attr(attrs: &[Attribute]) -> Option<String> {
+    let attr = attrs.iter().find(|attr| match &attr.meta {
+        AttrMeta::NameValue(nv) => nv.name.last().as_str() == "link_name",
+        _ => false,
+    })?;
+    let AttrMeta::NameValue(meta) = &attr.meta else {
+        return None;
+    };
+    match meta.value.kind() {
+        ExprKind::Value(value) => match value.as_ref() {
+            Value::String(text) => Some(text.value.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn function_lang_item(function: &ItemDefFunction) -> Option<String> {
     let attr = function.attrs.iter().find(|attr| match &attr.meta {
         AttrMeta::NameValue(nv) => nv.name.last().as_str() == "lang",
@@ -7425,6 +7615,12 @@ fn resolve_lang_instrinstic_handler(intrinsic: LangInstrinstic) -> Option<LangIt
     match intrinsic {
         LangInstrinstic::FsReadDir => Some(lang_fs_read_dir),
         LangInstrinstic::FsWalkDir => Some(lang_fs_walk_dir),
+        LangInstrinstic::FsReadToString => Some(lang_fs_read_to_string),
+        LangInstrinstic::FsWriteString => Some(lang_fs_write_string),
+        LangInstrinstic::FsAppendString => Some(lang_fs_append_string),
+        LangInstrinstic::FsExists => Some(lang_fs_exists),
+        LangInstrinstic::FsIsDir => Some(lang_fs_is_dir),
+        LangInstrinstic::FsIsFile => Some(lang_fs_is_file),
         LangInstrinstic::FsCreateDirAll => Some(lang_fs_create_dir_all),
         LangInstrinstic::FsRemoveFile => Some(lang_fs_remove_file),
         LangInstrinstic::FsRemoveDirAll => Some(lang_fs_remove_dir_all),
@@ -7446,42 +7642,77 @@ fn resolve_lang_instrinstic_handler(intrinsic: LangInstrinstic) -> Option<LangIt
         LangInstrinstic::IoWriteStderr => Some(lang_io_write_stderr),
         LangInstrinstic::ProcessRun => Some(lang_process_run),
         LangInstrinstic::YamlToJson => Some(lang_yaml_to_json),
-        LangInstrinstic::TimeNow
-        | LangInstrinstic::CreateStruct
-        | LangInstrinstic::AddField
-        | LangInstrinstic::FsReadToString
-        | LangInstrinstic::FsWriteString
-        | LangInstrinstic::FsAppendString
-        | LangInstrinstic::FsExists
-        | LangInstrinstic::FsIsDir
-        | LangInstrinstic::FsIsFile => None,
+        LangInstrinstic::TimeNow | LangInstrinstic::CreateStruct | LangInstrinstic::AddField => {
+            None
+        }
     }
 }
 
 fn lang_fs_read_dir(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_lang_string_arg(args, 0, "path")?;
+    let path = expect_lang_path_arg(args, 0, "path")?;
     lang_fs_collect_dir(path.as_str(), false)
 }
 
 fn lang_fs_walk_dir(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_lang_string_arg(args, 0, "path")?;
+    let path = expect_lang_path_arg(args, 0, "path")?;
     lang_fs_collect_dir(path.as_str(), true)
 }
 
+fn lang_fs_read_to_string(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_path_arg(args, 0, "path")?;
+    let content = fs::read_to_string(path.as_str()).map_err(|err| err.to_string())?;
+    Ok(Value::string(content))
+}
+
+fn lang_fs_write_string(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_path_arg(args, 0, "path")?;
+    let content = expect_lang_string_arg(args, 1, "content")?;
+    fs::write(path.as_str(), content.as_str()).map_err(|err| err.to_string())?;
+    Ok(Value::unit())
+}
+
+fn lang_fs_append_string(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_path_arg(args, 0, "path")?;
+    let content = expect_lang_string_arg(args, 1, "content")?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path.as_str())
+        .map_err(|err| err.to_string())?;
+    file.write_all(content.as_bytes())
+        .map_err(|err| err.to_string())?;
+    Ok(Value::unit())
+}
+
+fn lang_fs_exists(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_path_arg(args, 0, "path")?;
+    Ok(Value::bool(std::path::Path::new(path.as_str()).exists()))
+}
+
+fn lang_fs_is_dir(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_path_arg(args, 0, "path")?;
+    Ok(Value::bool(std::path::Path::new(path.as_str()).is_dir()))
+}
+
+fn lang_fs_is_file(args: &[Value]) -> std::result::Result<Value, String> {
+    let path = expect_lang_path_arg(args, 0, "path")?;
+    Ok(Value::bool(std::path::Path::new(path.as_str()).is_file()))
+}
+
 fn lang_fs_create_dir_all(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_lang_string_arg(args, 0, "path")?;
+    let path = expect_lang_path_arg(args, 0, "path")?;
     fs::create_dir_all(path.as_str()).map_err(|err| err.to_string())?;
     Ok(Value::unit())
 }
 
 fn lang_fs_remove_file(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_lang_string_arg(args, 0, "path")?;
+    let path = expect_lang_path_arg(args, 0, "path")?;
     fs::remove_file(path.as_str()).map_err(|err| err.to_string())?;
     Ok(Value::unit())
 }
 
 fn lang_fs_remove_dir_all(args: &[Value]) -> std::result::Result<Value, String> {
-    let path = expect_lang_string_arg(args, 0, "path")?;
+    let path = expect_lang_path_arg(args, 0, "path")?;
     fs::remove_dir_all(path.as_str()).map_err(|err| err.to_string())?;
     Ok(Value::unit())
 }
@@ -7662,6 +7893,22 @@ fn expect_lang_string_arg(
     }
 }
 
+fn expect_lang_path_arg(
+    args: &[Value],
+    index: usize,
+    label: &str,
+) -> std::result::Result<String, String> {
+    let Some(value) = args.get(index) else {
+        return Err(format!("missing {} argument at index {}", label, index));
+    };
+    lang_path_value(value).ok_or_else(|| {
+        format!(
+            "expected {} argument at index {} to be path-like, got {:?}",
+            label, index, value
+        )
+    })
+}
+
 fn expect_lang_string_list_arg(
     args: &[Value],
     index: usize,
@@ -7707,6 +7954,27 @@ fn lang_string_value(value: &Value) -> &str {
         Value::String(text) => text.value.as_str(),
         _ => "",
     }
+}
+
+fn lang_path_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.value.clone()),
+        Value::Struct(struct_value) => lang_path_fields_value(&struct_value.structural.fields),
+        Value::Structural(struct_value) => lang_path_fields_value(&struct_value.fields),
+        _ => None,
+    }
+}
+
+fn lang_path_fields_value(fields: &[ValueField]) -> Option<String> {
+    fields.iter().find_map(|field| {
+        if field.name.as_str() != "inner" {
+            return None;
+        }
+        match &field.value {
+            Value::String(text) => Some(text.value.clone()),
+            _ => None,
+        }
+    })
 }
 
 fn lang_fs_collect_dir(path: &str, recursive: bool) -> std::result::Result<Value, String> {

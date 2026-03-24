@@ -123,6 +123,10 @@ impl Command {
         self.exec().status()
     }
 
+    pub fn output_result(self) -> ProcessResult {
+        self.exec()
+    }
+
     fn exec(self) -> ProcessResult {
         let raw = if self.shell_command != "" {
             intrinsic_process_run("", Vec::new(), "", self.shell_command)
