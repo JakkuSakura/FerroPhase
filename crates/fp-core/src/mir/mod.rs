@@ -40,6 +40,7 @@ pub struct Function {
     pub body_id: BodyId,
     pub abi: ty::Abi,
     pub is_extern: bool,
+    pub attrs: Vec<crate::ast::Attribute>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

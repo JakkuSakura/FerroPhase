@@ -867,6 +867,7 @@ impl MirLowering {
                 body_id,
                 abi: mir::ty::Abi::Rust,
                 is_extern: false,
+                attrs: Vec::new(),
             };
 
             program.items.push(mir::Item {
@@ -934,6 +935,7 @@ impl MirLowering {
             body_id,
             abi: self.map_abi(&function.sig.abi),
             is_extern: function.is_extern,
+            attrs: function.attrs.clone(),
         };
 
         let mir_item = mir::Item {
@@ -1025,6 +1027,7 @@ impl MirLowering {
             body_id,
             abi: self.map_abi(&function.sig.abi),
             is_extern: false,
+            attrs: Vec::new(),
         };
 
         let mir_item = mir::Item {
@@ -1237,6 +1240,7 @@ impl MirLowering {
             body_id,
             abi: self.map_abi(&def.function.sig.abi),
             is_extern: false,
+            attrs: Vec::new(),
         };
         let mir_item = mir::Item {
             mir_id: self.next_mir_id,
@@ -1340,6 +1344,7 @@ impl MirLowering {
             body_id,
             abi: self.map_abi(&def.function.sig.abi),
             is_extern: false,
+            attrs: Vec::new(),
         };
         let mir_item = mir::Item {
             mir_id: self.next_mir_id,
@@ -3825,6 +3830,7 @@ impl MirLowering {
             body_id,
             abi: self.map_abi(&function.sig.abi),
             is_extern: false,
+            attrs: Vec::new(),
         };
 
         let mir_item = mir::Item {

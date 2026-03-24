@@ -311,14 +311,17 @@ impl LirGenerator {
         }
 
         if mir_func.is_extern || abi::is_c_abi_mir(&mir_func.abi) {
-            let extern_name = abi::extern_symbol_name(&base);
+            let extern_name = abi::extern_symbol_name_with_attrs(&base, &mir_func.attrs);
             self.function_symbol_map
                 .insert(base.clone(), extern_name.clone());
             if !mir_func.name.as_str().is_empty() {
                 self.function_symbol_map
                     .entry(String::from(mir_func.name.clone()))
                     .or_insert(extern_name.clone());
-                let short_name = abi::extern_symbol_name(mir_func.name.as_str());
+                let short_name = abi::extern_symbol_name_with_attrs(
+                    mir_func.name.as_str(),
+                    &mir_func.attrs,
+                );
                 self.function_symbol_map
                     .entry(short_name)
                     .or_insert(extern_name.clone());
