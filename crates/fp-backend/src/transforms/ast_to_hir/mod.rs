@@ -3,7 +3,7 @@ use fp_core::ast::Pattern;
 use fp_core::error::Result;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::{FileId, Span};
-use fp_core::{ast, ast::ItemKind, cfg::TargetEnv, hir};
+use fp_core::{ast, ast::ItemKind, ast::attrs_repr, cfg::TargetEnv, hir};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -1006,6 +1006,7 @@ impl HirGenerator {
                         name,
                         fields,
                         generics,
+                        repr: attrs_repr(&struct_def.attrs),
                     }),
                     self.map_visibility(&struct_def.visibility),
                 )
@@ -1032,6 +1033,7 @@ impl HirGenerator {
                         name,
                         fields,
                         generics: hir::Generics::default(),
+                        repr: attrs_repr(&struct_def.attrs),
                     }),
                     self.map_visibility(&struct_def.visibility),
                 )
@@ -1115,6 +1117,7 @@ impl HirGenerator {
                         name: qualified_enum_name,
                         variants,
                         generics,
+                        repr: attrs_repr(&enum_def.attrs),
                     }),
                     self.map_visibility(&enum_def.visibility),
                 )
@@ -1750,6 +1753,7 @@ impl HirGenerator {
                 name: name_symbol,
                 fields: hir_fields,
                 generics: hir::Generics::default(),
+                repr: ast::ReprOptions::default(),
             }),
             span,
         };
@@ -2011,6 +2015,11 @@ impl HirGenerator {
                         name,
                         fields,
                         generics,
+                        repr: def_type
+                            .value
+                            .as_struct()
+                            .map(|struct_ty| struct_ty.repr.clone())
+                            .unwrap_or_default(),
                     }),
                     self.map_visibility(&def_type.visibility),
                 )
@@ -2036,6 +2045,7 @@ impl HirGenerator {
                         name,
                         fields,
                         generics: hir::Generics::default(),
+                        repr: ast::ReprOptions::default(),
                     }),
                     self.map_visibility(&def_type.visibility),
                 )
@@ -2109,6 +2119,7 @@ impl HirGenerator {
                         name: qualified_enum_name,
                         variants,
                         generics,
+                        repr: attrs_repr(&def_type.attrs),
                     }),
                     self.map_visibility(&def_type.visibility),
                 )
@@ -2561,6 +2572,7 @@ impl ClosureLowering {
         let struct_decl = ast::TypeStruct {
             name: struct_ident.clone(),
             generics_params: Vec::new(),
+            repr: ast::ReprOptions::default(),
             fields: struct_fields,
         };
         let env_struct_ty = ast::Ty::Struct(struct_decl.clone());

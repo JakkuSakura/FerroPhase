@@ -20,11 +20,11 @@ use fp_core::ast::{
     ExprRangeLimit, ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam,
     FunctionSignature, Item, ItemDeclFunction, ItemDefFunction, ItemImport, ItemImportTree,
     ItemKind, MacroDelimiter, MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Node,
-    NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny,
-    TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference,
-    TypeSlice, TypeStruct, TypeStructural, TypeTokenStream, TypeTuple, TypeUnit, TypeVec, Value,
-    ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTokenStream,
-    ValueTuple,
+    NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, ReprOptions, StmtLet, StructuralField,
+    Ty, TypeAny, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote,
+    TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTokenStream, TypeTuple, TypeUnit,
+    TypeVec, Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural,
+    ValueTokenStream, ValueTuple,
 };
 use fp_core::ast::{Ident, Name};
 use fp_core::ast::{Pattern, PatternKind};
@@ -1451,7 +1451,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         TypeStruct {
             name: Ident::new("Future"),
             generics_params: Vec::new(),
-            repr_c: false,
+            repr: ReprOptions::default(),
             fields: vec![StructuralField::new(Ident::new("handle"), Ty::Any(TypeAny))],
         }
     }

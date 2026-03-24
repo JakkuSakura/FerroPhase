@@ -1120,6 +1120,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             let struct_ty = TypeStruct {
                                 name: Ident::new("HashMap"),
                                 generics_params: Vec::new(),
+                                repr: ReprOptions::default(),
                                 fields: Vec::new(),
                             };
                             self.bind(var, TypeTerm::Struct(struct_ty));

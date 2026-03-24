@@ -7,8 +7,8 @@ use fp_core::ast::{
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
     ItemImportTree, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter, MacroInvocation, Module,
-    Name, Path, QuoteFragmentKind, StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind, TypeBounds,
-    TypeEnum, TypeQuote, TypeStruct, Value, ValueNone, Visibility,
+    Name, Path, QuoteFragmentKind, ReprOptions, StructuralField, Ty, TypeBinaryOp,
+    TypeBinaryOpKind, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value, ValueNone, Visibility,
 };
 use fp_core::cst::CstCategory;
 use fp_core::module::path::PathPrefix;
@@ -323,6 +323,7 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
         value: TypeStruct {
             name,
             generics_params: generics,
+            repr: ReprOptions::default(),
             fields,
         },
     })
@@ -393,6 +394,7 @@ fn lower_enum(node: &SyntaxNode) -> Result<ItemDefEnum, LowerItemsError> {
         value: TypeEnum {
             name,
             generics_params: generics,
+            repr: ReprOptions::default(),
             variants,
         },
     })

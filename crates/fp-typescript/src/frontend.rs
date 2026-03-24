@@ -7,8 +7,8 @@ use fp_core::ast::{
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclConst, ItemDefConst, ItemDefEnum,
     ItemDefFunction, ItemDefStruct, ItemDefType, ItemImport, ItemImportGroup, ItemImportPath,
     ItemImportRename, ItemImportTree, ItemKind, Module as AstModule, Name, Node, NodeKind,
-    StructuralField, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct, TypeStructural, TypeTuple,
-    TypeVec, Value, Visibility,
+    ReprOptions, StructuralField, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct,
+    TypeStructural, TypeTuple, TypeVec, Value, Visibility,
 };
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::error::{Error as CoreError, Result as CoreResult};
@@ -608,6 +608,7 @@ fn lower_type_alias(
             value: TypeStruct {
                 name: ident.clone(),
                 generics_params: Vec::new(),
+                repr: ReprOptions::default(),
                 fields: structural.fields.clone(),
             },
         };
@@ -717,6 +718,7 @@ fn lower_interface_decl(
         value: TypeStruct {
             name: ident.clone(),
             generics_params: Vec::new(),
+            repr: ReprOptions::default(),
             fields: merged_fields,
         },
     };
@@ -849,6 +851,7 @@ fn lower_enum_decl(enum_decl: &TsEnumDecl, visibility: Visibility) -> Vec<Item> 
         value: TypeEnum {
             name: ident.clone(),
             generics_params: Vec::new(),
+            repr: ReprOptions::default(),
             variants,
         },
     };

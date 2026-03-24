@@ -4,8 +4,8 @@ use std::fs;
 use std::path::Path;
 
 use fp_core::ast::{
-    DecimalType, EnumTypeVariant, Expr, Ident, StructuralField, Ty, TypeAny, TypeArray, TypeEnum,
-    TypeInt, TypePrimitive, TypeStruct, TypeTuple, TypeUnit, TypeVec, Value,
+    DecimalType, EnumTypeVariant, Expr, Ident, ReprOptions, StructuralField, Ty, TypeAny,
+    TypeArray, TypeEnum, TypeInt, TypePrimitive, TypeStruct, TypeTuple, TypeUnit, TypeVec, Value,
 };
 use wit_parser::{
     Function, Interface, Package, Resolve, Type, TypeDef, TypeDefKind, TypeId, Variant,
@@ -183,6 +183,7 @@ impl<'a> Lowering<'a> {
             TypeDefKind::Record(record) => Ok(Ty::Struct(TypeStruct {
                 name: type_name_or_fallback(typedef, type_id),
                 generics_params: Vec::new(),
+                repr: ReprOptions::default(),
                 fields: self.lower_record_fields(record)?,
             })),
             TypeDefKind::Tuple(tuple) => Ok(Ty::Tuple(TypeTuple {
@@ -195,6 +196,7 @@ impl<'a> Lowering<'a> {
             TypeDefKind::Flags(flags) => Ok(Ty::Struct(TypeStruct {
                 name: type_name_or_fallback(typedef, type_id),
                 generics_params: Vec::new(),
+                repr: ReprOptions::default(),
                 fields: flags
                     .flags
                     .iter()
@@ -210,6 +212,7 @@ impl<'a> Lowering<'a> {
             TypeDefKind::Enum(enum_) => Ok(Ty::Enum(TypeEnum {
                 name: type_name_or_fallback(typedef, type_id),
                 generics_params: Vec::new(),
+                repr: ReprOptions::default(),
                 variants: enum_
                     .cases
                     .iter()
@@ -223,6 +226,7 @@ impl<'a> Lowering<'a> {
             TypeDefKind::Option(inner) => Ok(Ty::Enum(TypeEnum {
                 name: type_name_or_fallback(typedef, type_id),
                 generics_params: Vec::new(),
+                repr: ReprOptions::default(),
                 variants: vec![
                     EnumTypeVariant {
                         name: make_ident("none"),
@@ -251,6 +255,7 @@ impl<'a> Lowering<'a> {
                 Ok(Ty::Enum(TypeEnum {
                     name: type_name_or_fallback(typedef, type_id),
                     generics_params: Vec::new(),
+                    repr: ReprOptions::default(),
                     variants: vec![
                         EnumTypeVariant {
                             name: make_ident("ok"),
@@ -322,6 +327,7 @@ impl<'a> Lowering<'a> {
         Ok(Ty::Enum(TypeEnum {
             name: type_name_or_fallback(typedef, type_id),
             generics_params: Vec::new(),
+            repr: ReprOptions::default(),
             variants,
         }))
     }

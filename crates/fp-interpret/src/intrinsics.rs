@@ -305,6 +305,7 @@ pub fn intrinsic_addfield() -> IntrinsicFunction {
                 let modified_struct = TypeStruct {
                     name: type_struct.name.clone(),
                     generics_params: type_struct.generics_params.clone(),
+                    repr: type_struct.repr.clone(),
                     fields: new_fields,
                 };
 
@@ -410,6 +411,7 @@ pub fn intrinsic_create_struct() -> IntrinsicFunction {
         let struct_type = TypeStruct {
             name: struct_name.into(),
             generics_params: Vec::new(),
+            repr: ReprOptions::default(),
             fields: Vec::new(),
         };
 
@@ -432,6 +434,7 @@ pub fn intrinsic_clone_struct() -> IntrinsicFunction {
                 let cloned_struct = TypeStruct {
                     name: format!("Clone_{}", type_struct.name.name).into(),
                     generics_params: type_struct.generics_params.clone(),
+                    repr: type_struct.repr.clone(),
                     fields: type_struct.fields.clone(),
                 };
 

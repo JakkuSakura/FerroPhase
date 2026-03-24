@@ -623,6 +623,7 @@ fn parse_type_node(node: TsNode, source: &str) -> Result<Ty> {
             Ok(Ty::Struct(fp_core::ast::TypeStruct {
                 name,
                 generics_params: Vec::new(),
+                repr: fp_core::ast::ReprOptions::default(),
                 fields,
             }))
         }

@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fp_core::ast::{
-    AstSerializer, File, Ident, Item, ItemDefEnum, ItemDefStruct, Node, TypeEnum, Visibility,
+    AstSerializer, File, Ident, Item, ItemDefEnum, ItemDefStruct, Node, ReprOptions, TypeEnum,
+    Visibility,
 };
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::Result as CoreResult;
@@ -95,6 +96,7 @@ fn collect_items(source: &str) -> Vec<Item> {
                         value: TypeEnum {
                             name: ident,
                             generics_params: Vec::new(),
+                            repr: ReprOptions::default(),
                             variants: Vec::new(),
                         },
                     };

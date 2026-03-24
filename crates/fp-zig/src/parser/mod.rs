@@ -163,6 +163,7 @@ fn parse_enum_decl(
         value: fp_core::ast::TypeEnum {
             name,
             generics_params: Vec::new(),
+            repr: fp_core::ast::ReprOptions::default(),
             variants,
         },
     };

@@ -1,7 +1,7 @@
 use crate::ast::{
     Attribute, BExpr, FunctionParam, FunctionParamReceiver, FunctionSignature, Ident, ItemChunk,
-    StructuralField, Ty, TySlot, TypeBounds, TypeEnum, TypeFunction, TypeStruct, TypeStructural,
-    ValueFunction, Visibility,
+    ReprOptions, StructuralField, Ty, TySlot, TypeBounds, TypeEnum, TypeFunction, TypeStruct,
+    TypeStructural, ValueFunction, Visibility,
 };
 use crate::common_struct;
 use crate::span::Span;
@@ -23,6 +23,7 @@ impl ItemDefStruct {
             value: TypeStruct {
                 name: name.clone(),
                 generics_params: Vec::new(),
+                repr: ReprOptions::default(),
                 fields,
             },
             name,

@@ -74,6 +74,7 @@ pub struct Struct {
     pub name: Symbol,
     pub fields: Vec<StructField>,
     pub generics: Generics,
+    pub repr: crate::ast::ReprOptions,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +82,7 @@ pub struct Enum {
     pub name: Symbol,
     pub variants: Vec<EnumVariant>,
     pub generics: Generics,
+    pub repr: crate::ast::ReprOptions,
 }
 
 #[derive(Debug, Clone, PartialEq)]

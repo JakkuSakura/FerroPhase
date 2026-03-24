@@ -34,6 +34,7 @@ fn lift_item(item: &hir::Item) -> Result<Item> {
             value: TypeStruct {
                 name: Ident::new(def.name.as_str()),
                 generics_params: Vec::new(),
+                repr: def.repr.clone(),
                 fields: def
                     .fields
                     .iter()
@@ -50,6 +51,7 @@ fn lift_item(item: &hir::Item) -> Result<Item> {
             value: TypeEnum {
                 name: Ident::new(def.name.as_str()),
                 generics_params: Vec::new(),
+                repr: def.repr.clone(),
                 variants: def
                     .variants
                     .iter()

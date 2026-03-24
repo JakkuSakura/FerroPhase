@@ -1041,6 +1041,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             let placeholder = TypeStruct {
                 name: Ident::new(placeholder_name),
                 generics_params: Vec::new(),
+                repr: ReprOptions::default(),
                 fields: Vec::new(),
             };
             self.emit_warning(format!(
@@ -1187,6 +1188,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let struct_ty = TypeStruct {
                     name: def.name.clone(),
                     generics_params: Vec::new(),
+                    repr: ReprOptions::default(),
                     fields: def.value.fields.clone(),
                 };
                 self.insert_struct_def(&def.name, struct_ty);
@@ -1459,6 +1461,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let ty = TypeStruct {
             name: Ident::new(name),
             generics_params: Vec::new(),
+            repr: ReprOptions::default(),
             fields: Vec::new(),
         };
         self.struct_defs.insert(key, ty);
@@ -1475,6 +1478,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let ty = TypeEnum {
             name: Ident::new(name),
             generics_params: Vec::new(),
+            repr: ReprOptions::default(),
             variants: Vec::new(),
         };
         self.enum_defs.insert(key, ty);
@@ -1786,6 +1790,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     let struct_ty = TypeStruct {
                         name: def.name.clone(),
                         generics_params: Vec::new(),
+                        repr: ReprOptions::default(),
                         fields: def.value.fields.clone(),
                     };
                     self.insert_struct_def(&def.name, struct_ty.clone());
@@ -1808,6 +1813,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             let struct_ty = TypeStruct {
                                 name: def.name.clone(),
                                 generics_params: Vec::new(),
+                                repr: ReprOptions::default(),
                                 fields: structural.fields.clone(),
                             };
                             self.insert_struct_def(&def.name, struct_ty.clone());

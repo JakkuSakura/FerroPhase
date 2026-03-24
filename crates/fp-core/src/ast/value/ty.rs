@@ -322,10 +322,97 @@ impl StructuralField {
     }
 }
 common_struct! {
+    pub struct ReprOptions {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub int: Option<ReprInt>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub align: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub pack: Option<u64>,
+        #[serde(default)]
+        pub flags: ReprFlags,
+    }
+}
+
+common_enum! {
+    #[derive(Copy, Eq)]
+    pub enum ReprInt {
+        I8,
+        I16,
+        I32,
+        I64,
+        I128,
+        U8,
+        U16,
+        U32,
+        U64,
+        U128,
+        Isize,
+        Usize,
+    }
+}
+
+common_struct! {
+    #[derive(Copy, Eq)]
+    pub struct ReprFlags {
+        pub bits: u8,
+    }
+}
+
+impl ReprFlags {
+    pub const IS_C: u8 = 1 << 0;
+    pub const IS_SIMD: u8 = 1 << 1;
+    pub const IS_TRANSPARENT: u8 = 1 << 2;
+    pub const IS_LINEAR: u8 = 1 << 3;
+    pub const IS_PACKED: u8 = 1 << 4;
+
+    pub const fn empty() -> Self {
+        Self { bits: 0 }
+    }
+
+    pub const fn contains(&self, bits: u8) -> bool {
+        (self.bits & bits) == bits
+    }
+
+    pub fn insert(&mut self, bits: u8) {
+        self.bits |= bits;
+    }
+}
+
+impl Default for ReprFlags {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl ReprOptions {
+    pub const fn rust() -> Self {
+        Self {
+            int: None,
+            align: None,
+            pack: None,
+            flags: ReprFlags::empty(),
+        }
+    }
+
+    pub const fn is_c(&self) -> bool {
+        self.flags.contains(ReprFlags::IS_C)
+    }
+}
+
+impl Default for ReprOptions {
+    fn default() -> Self {
+        Self::rust()
+    }
+}
+
+common_struct! {
     pub struct TypeStruct {
         pub name: Ident,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub generics_params: Vec<GenericParam>,
+        #[serde(default)]
+        pub repr: ReprOptions,
         pub fields: Vec<StructuralField>,
     }
 }
@@ -334,6 +421,8 @@ common_struct! {
         pub name: Ident,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub generics_params: Vec<GenericParam>,
+        #[serde(default)]
+        pub repr: ReprOptions,
         pub variants: Vec<EnumTypeVariant>,
     }
 }

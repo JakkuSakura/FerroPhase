@@ -66,6 +66,7 @@ fn serialize_enum_with_impl_and_struct_variant_construction() {
         value: TypeEnum {
             name: Ident::new("Shape"),
             generics_params: Vec::new(),
+            repr: ReprOptions::default(),
             variants: vec![
                 EnumTypeVariant {
                     name: Ident::new("Point"),

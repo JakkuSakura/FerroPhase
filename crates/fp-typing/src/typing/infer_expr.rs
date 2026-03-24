@@ -2014,6 +2014,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         TypeStruct {
             name: Ident::new("HashMap"),
             generics_params: Vec::new(),
+            repr: ReprOptions::default(),
             fields: Vec::new(),
         }
     }
