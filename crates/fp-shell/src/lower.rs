@@ -1,9 +1,10 @@
 use fp_core::ast::{
     Abi, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprBinOp, ExprBlock, ExprFor, ExprIf,
     ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprMatch, ExprMatchCase,
-    ExprTry, ExprTryCatch, ExprWhile, File, FormatArgRef, FormatPlaceholder, FormatTemplatePart,
-    FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefFunction, ItemKind, Name, Node,
-    NodeKind, Pattern, PatternKind, Ty, TypePrimitive, Value,
+    ExprSelect, ExprSelectType, ExprTry, ExprTryCatch, ExprWhile, File, FormatArgRef,
+    FormatPlaceholder, FormatTemplatePart, FunctionSignature, Ident, Item, ItemDeclFunction,
+    ItemDefFunction, ItemKind, Name, Node, NodeKind, Pattern, PatternKind, Ty, TypePrimitive,
+    Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
@@ -524,10 +525,7 @@ impl<'a> Lowerer<'a> {
                         .and_then(|resolved| resolved.clone())
                 }
             }
-            (false, Some(name)) => self
-                .callable_aliases
-                .get(name)
-                .and_then(|resolved| resolved.clone()),
+            (false, Some(_name)) => None,
             _ => None,
         }
     }
@@ -796,7 +794,8 @@ impl<'a> Lowerer<'a> {
                 .lower_bool_expr(expr)
                 .or_else(|| self.lower_int_expr(expr))
                 .ok_or_else(|| "expression could not be lowered".to_string()),
-            ExprKind::FormatString(_)
+            ExprKind::Select(_)
+            | ExprKind::FormatString(_)
             | ExprKind::IntrinsicCall(_)
             | ExprKind::Invoke(_)
             | ExprKind::Paren(_) => self
@@ -809,6 +808,7 @@ impl<'a> Lowerer<'a> {
     fn lower_string_expr(&self, expr: &Expr) -> Option<Expr> {
         match expr.kind() {
             ExprKind::Value(value) => value_to_string_expr(value),
+            ExprKind::Select(select) => self.lower_host_field_select(select),
             ExprKind::Name(_) => Some(expr.clone()),
             fp_core::ast::ExprKind::Invoke(invoke) => {
                 let path = invoke_target_segments(&invoke.target)?;
@@ -844,6 +844,40 @@ impl<'a> Lowerer<'a> {
             fp_core::ast::ExprKind::Paren(paren) => self.lower_string_expr(&paren.expr),
             _ => None,
         }
+    }
+
+    fn lower_host_field_select(&self, select: &ExprSelect) -> Option<Expr> {
+        if select.select != ExprSelectType::Field {
+            return None;
+        }
+        let field = select.field.as_str();
+        if !matches!(
+            field,
+            "transport"
+                | "address"
+                | "user"
+                | "port"
+                | "container"
+                | "pod"
+                | "namespace"
+                | "context"
+                | "password"
+                | "scheme"
+                | "chroot_directory"
+        ) {
+            return None;
+        }
+        let target = Name::path(fp_core::ast::Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("hosts"),
+            Ident::new(field),
+        ]));
+        Some(Expr::new(ExprKind::Invoke(ExprInvoke {
+            span: select.span,
+            target: ExprInvokeTarget::Function(target),
+            args: vec![(*select.obj.clone())],
+            kwargs: Vec::new(),
+        })))
     }
 
     fn lower_intrinsic_string(&self, call: &ExprIntrinsicCall) -> Option<Expr> {

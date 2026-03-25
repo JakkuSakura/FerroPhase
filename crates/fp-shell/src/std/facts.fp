@@ -41,19 +41,3 @@ pub const fn dir_exists(path: str) -> bool {
 pub const fn path_exists(path: str) -> bool {
     path_exists_native(path)
 }
-
-pub const fn host_transport(host: str) -> str {
-    std::hosts::transport(host)
-}
-
-pub const fn host_address(host: str) -> str {
-    std::hosts::address(host)
-}
-
-pub const fn host_user(host: str) -> str {
-    std::hosts::user(host)
-}
-
-pub const fn host_port(host: str) -> str {
-    std::hosts::port(host)
-}

@@ -214,50 +214,6 @@ extern "bash" fn runtime_last_changed() -> bool;
 #[cfg(target_lang = "pwsh")]
 extern "pwsh" fn runtime_last_changed() -> bool;
 
-const fn host_transport(host: str) -> str {
-    std::hosts::transport(host)
-}
-
-const fn host_address(host: str) -> str {
-    std::hosts::address(host)
-}
-
-const fn host_user(host: str) -> str {
-    std::hosts::user(host)
-}
-
-const fn host_port(host: str) -> str {
-    std::hosts::port(host)
-}
-
-const fn host_container(host: str) -> str {
-    std::hosts::container(host)
-}
-
-const fn host_pod(host: str) -> str {
-    std::hosts::pod(host)
-}
-
-const fn host_namespace(host: str) -> str {
-    std::hosts::namespace(host)
-}
-
-const fn host_context(host: str) -> str {
-    std::hosts::context(host)
-}
-
-const fn host_password(host: str) -> str {
-    std::hosts::password(host)
-}
-
-const fn host_scheme(host: str) -> str {
-    std::hosts::scheme(host)
-}
-
-const fn host_chroot_directory(host: str) -> str {
-    std::hosts::chroot_directory(host)
-}
-
 #[cfg(target_lang = "bash")]
 const fn run_local_host(cmd: str) {
     bash(cmd)
@@ -279,7 +235,10 @@ const fn copy_local_host(src: str, dest: str) {
 }
 
 const fn run_host(host: str, cmd: str) {
-    let transport = host_transport(host);
+    let transport = match host {
+        "localhost" => "local",
+        _ => host.transport,
+    };
     match transport {
         "local" => run_local_host(cmd),
         "ssh" => run_ssh_host(host, cmd),
@@ -292,7 +251,10 @@ const fn run_host(host: str, cmd: str) {
 }
 
 const fn copy_host(host: str, src: str, dest: str) {
-    let transport = host_transport(host);
+    let transport = match host {
+        "localhost" => "local",
+        _ => host.transport,
+    };
     match transport {
         "local" => copy_local_host(src, dest),
         "ssh" => copy_ssh_host(host, src, dest),
@@ -312,7 +274,10 @@ const fn template_host(host: str, src: str, dest: str, vars: str) {
 }
 
 const fn rsync_host(host: str, flags: str, src: str, dest: str) {
-    let transport = host_transport(host);
+    let transport = match host {
+        "localhost" => "local",
+        _ => host.transport,
+    };
     match transport {
         "local" => rsync_cli(flags, src, dest),
         "chroot" => rsync_chroot_host(host, flags, src, dest),
@@ -321,8 +286,8 @@ const fn rsync_host(host: str, flags: str, src: str, dest: str) {
 }
 
 const fn ssh_target(host: str) -> str {
-    let user = host_user(host);
-    let address = host_address(host);
+    let user = host.user;
+    let address = host.address;
     if user != "" {
         f"{user}@{address}"
     } else {
@@ -332,7 +297,7 @@ const fn ssh_target(host: str) -> str {
 
 const fn run_ssh_host(host: str, cmd: str) {
     let target = ssh_target(host);
-    let port = host_port(host);
+    let port = host.port;
     if port != "" {
         ssh_port(port, target, cmd);
     } else {
@@ -343,7 +308,7 @@ const fn run_ssh_host(host: str, cmd: str) {
 const fn copy_ssh_host(host: str, src: str, dest: str) {
     let target = ssh_target(host);
     let remote = f"{target}:{dest}";
-    let port = host_port(host);
+    let port = host.port;
     if port != "" {
         scp_port(port, src, remote);
     } else {
@@ -352,8 +317,8 @@ const fn copy_ssh_host(host: str, src: str, dest: str) {
 }
 
 const fn run_docker_host(host: str, cmd: str) {
-    let container = host_container(host);
-    let user = host_user(host);
+    let container = host.container;
+    let user = host.user;
     if user != "" {
         docker_exec_user(user, container, "sh", "-lc", cmd);
     } else {
@@ -362,10 +327,10 @@ const fn run_docker_host(host: str, cmd: str) {
 }
 
 const fn run_kubectl_host(host: str, cmd: str) {
-    let context = host_context(host);
-    let namespace = host_namespace(host);
-    let container = host_container(host);
-    let pod = host_pod(host);
+    let context = host.context;
+    let namespace = host.namespace;
+    let container = host.container;
+    let pod = host.pod;
     match context {
         "" => match namespace {
             "" => match container {
@@ -391,18 +356,18 @@ const fn run_kubectl_host(host: str, cmd: str) {
 }
 
 const fn run_chroot_host(host: str, cmd: str) {
-    chroot_exec(host_chroot_directory(host), "sh", "-lc", cmd);
+    chroot_exec(host.chroot_directory, "sh", "-lc", cmd);
 }
 
 const fn copy_docker_host(host: str, src: str, dest: str) {
-    let container = host_container(host);
+    let container = host.container;
     docker_cp(src, f"{container}:{dest}");
 }
 
 const fn copy_kubectl_host(host: str, src: str, dest: str) {
-    let context = host_context(host);
-    let namespace = host_namespace(host);
-    let remote = f"{host_pod(host)}:{dest}";
+    let context = host.context;
+    let namespace = host.namespace;
+    let remote = f"{host.pod}:{dest}";
     match context {
         "" => match namespace {
             "" => kubectl_cp(src, remote),
@@ -416,7 +381,7 @@ const fn copy_kubectl_host(host: str, src: str, dest: str) {
 }
 
 const fn chroot_path(host: str, path: str) -> str {
-    f"{host_chroot_directory(host)}{path}"
+    f"{host.chroot_directory}{path}"
 }
 
 const fn copy_chroot_host(host: str, src: str, dest: str) {
@@ -424,12 +389,12 @@ const fn copy_chroot_host(host: str, src: str, dest: str) {
 }
 
 const fn rsync_remote_target(host: str) -> str {
-    let address = host_address(host);
+    let address = host.address;
     if address == "" {
         runtime_fail(f"host is not rsync-reachable: missing address for {host}");
         ""
     } else {
-        let user = host_user(host);
+        let user = host.user;
         if user != "" {
             f"{user}@{address}"
         } else {
@@ -440,7 +405,7 @@ const fn rsync_remote_target(host: str) -> str {
 
 const fn rsync_remote_host(host: str, flags: str, src: str, dest: str) {
     let remote = f"{rsync_remote_target(host)}:{dest}";
-    let port = host_port(host);
+    let port = host.port;
     if port != "" {
         rsync_cli_shell(f"ssh -p {port}", flags, src, remote);
     } else {
