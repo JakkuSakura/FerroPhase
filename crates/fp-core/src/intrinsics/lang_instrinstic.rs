@@ -41,8 +41,12 @@ pub enum LangInstrinstic {
     IoReadStdinToString,
     IoWriteStdout,
     IoWriteStderr,
-    ProcessRun,
     YamlToJson,
+    JsonParse,
+    TestCommandMockReset,
+    TestCommandMockPush,
+    TestCommandMockTakeCalls,
+    TestCommandMockApply,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,15 +239,39 @@ const LANG_INSTRINSTICS: &[LangInstrinsticSpec] = &[
         call_kind: None,
     },
     LangInstrinsticSpec {
-        intrinsic: LangInstrinstic::ProcessRun,
-        lang_item: "process_run",
-        capability: LangInstrinsticCapability::RuntimeOnly,
-        call_kind: None,
-    },
-    LangInstrinsticSpec {
         intrinsic: LangInstrinstic::YamlToJson,
         lang_item: "yaml_to_json",
         capability: LangInstrinsticCapability::BackendLimited,
+        call_kind: None,
+    },
+    LangInstrinsticSpec {
+        intrinsic: LangInstrinstic::JsonParse,
+        lang_item: "json_parse",
+        capability: LangInstrinsticCapability::BackendLimited,
+        call_kind: None,
+    },
+    LangInstrinsticSpec {
+        intrinsic: LangInstrinstic::TestCommandMockReset,
+        lang_item: "test_command_mock_reset",
+        capability: LangInstrinsticCapability::InterpreterOnly,
+        call_kind: None,
+    },
+    LangInstrinsticSpec {
+        intrinsic: LangInstrinstic::TestCommandMockPush,
+        lang_item: "test_command_mock_push",
+        capability: LangInstrinsticCapability::InterpreterOnly,
+        call_kind: None,
+    },
+    LangInstrinsticSpec {
+        intrinsic: LangInstrinstic::TestCommandMockTakeCalls,
+        lang_item: "test_command_mock_take_calls",
+        capability: LangInstrinsticCapability::InterpreterOnly,
+        call_kind: None,
+    },
+    LangInstrinsticSpec {
+        intrinsic: LangInstrinstic::TestCommandMockApply,
+        lang_item: "test_command_mock_apply",
+        capability: LangInstrinsticCapability::InterpreterOnly,
         call_kind: None,
     },
 ];

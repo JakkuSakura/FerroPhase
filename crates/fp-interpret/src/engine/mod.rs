@@ -1,11 +1,10 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::ffi::CString;
 use std::fs;
 use std::io::{Read, Write};
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::engine::ffi::FfiRuntime;
@@ -138,6 +137,8 @@ pub struct InterpreterOptions {
     pub macro_parser: Option<Arc<dyn fp_core::ast::MacroExpansionParser>>,
     pub intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
     pub stdout_mode: StdoutMode,
+    pub command_mock_state: Option<Arc<Mutex<CommandMockState>>>,
+    pub runtime_extern_hook: Option<Arc<dyn RuntimeExternHook>>,
 }
 
 impl Default for InterpreterOptions {
@@ -152,6 +153,8 @@ impl Default for InterpreterOptions {
             macro_parser: None,
             intrinsic_normalizer: None,
             stdout_mode: StdoutMode::Capture,
+            command_mock_state: None,
+            runtime_extern_hook: None,
         }
     }
 }
@@ -214,6 +217,85 @@ struct ConstClosure {
 enum StoredValue {
     Plain(Value),
     Shared(Arc<Mutex<Value>>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandMock {
+    pub pattern: String,
+    pub stdout: String,
+    pub stderr: String,
+    pub status: i64,
+}
+
+#[derive(Debug, Default)]
+pub struct CommandMockState {
+    enabled: bool,
+    mocks: Vec<CommandMock>,
+    calls: Vec<String>,
+}
+
+impl CommandMockState {
+    pub fn reset(&mut self) {
+        self.enabled = true;
+        self.mocks.clear();
+        self.calls.clear();
+    }
+
+    pub fn push(&mut self, mock: CommandMock) {
+        self.enabled = true;
+        self.mocks.push(mock);
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn record_call(&mut self, command: String) {
+        self.calls.push(command);
+    }
+
+    pub fn find_mock(&self, command: &str) -> Option<CommandMock> {
+        self.mocks
+            .iter()
+            .find(|mock| command.contains(mock.pattern.as_str()))
+            .cloned()
+    }
+
+    pub fn take_calls(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.calls)
+    }
+}
+
+pub trait RuntimeExternHook {
+    fn call(&self, name: &str, sig: &FunctionSignature, args: &[Value]) -> Option<Result<Value>>;
+}
+
+thread_local! {
+    static CURRENT_COMMAND_MOCK_STATE: RefCell<Option<Arc<Mutex<CommandMockState>>>> = const { RefCell::new(None) };
+}
+
+struct ScopedCommandMockState {
+    prev: Option<Arc<Mutex<CommandMockState>>>,
+}
+
+impl ScopedCommandMockState {
+    fn enter(state: Option<Arc<Mutex<CommandMockState>>>) -> Self {
+        let prev = CURRENT_COMMAND_MOCK_STATE.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let prev = slot.clone();
+            *slot = state;
+            prev
+        });
+        Self { prev }
+    }
+}
+
+impl Drop for ScopedCommandMockState {
+    fn drop(&mut self) {
+        CURRENT_COMMAND_MOCK_STATE.with(|slot| {
+            *slot.borrow_mut() = self.prev.clone();
+        });
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -706,6 +788,8 @@ pub struct AstInterpreter<'ctx> {
     macro_parser: Option<Arc<dyn fp_core::ast::MacroExpansionParser>>,
     intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
     stdout_mode: StdoutMode,
+    command_mock_state: Option<Arc<Mutex<CommandMockState>>>,
+    runtime_extern_hook: Option<Arc<dyn RuntimeExternHook>>,
 
     module_stack: Vec<String>,
     value_env: Vec<HashMap<String, StoredValue>>,
@@ -793,6 +877,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             macro_parser: options.macro_parser.clone(),
             intrinsic_normalizer: options.intrinsic_normalizer.clone(),
             stdout_mode: options.stdout_mode,
+            command_mock_state: options.command_mock_state.clone(),
+            runtime_extern_hook: options.runtime_extern_hook.clone(),
             module_stack: Vec::new(),
             value_env: vec![HashMap::new()],
             type_env: vec![HashMap::new()],
@@ -3077,10 +3163,6 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemKind::OpaqueType(_) => {}
             ItemKind::DefConst(def) => {
                 let is_mutable = def.mutable.unwrap_or(false);
-                if is_mutable && !matches!(self.mode, InterpreterMode::CompileTime) {
-                    self.emit_error("const mut is only supported during const evaluation");
-                    return;
-                }
                 if let Some(inner_ty) = def.ty_annotation_mut().as_mut() {
                     self.evaluate_ty(inner_ty);
                 }
@@ -3467,7 +3549,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn register_extern_function(&mut self, decl: &ItemDeclFunction) {
         let command = extern_command_attr(decl);
         let link_name = extern_link_name_attr(&decl.attrs);
-        if !decl.sig.abi.is_c() && command.is_none() {
+        if !decl.sig.abi.is_c() && command.is_none() && self.runtime_extern_hook.is_none() {
             return;
         }
         let binding = ExternFunctionBinding {
@@ -3491,6 +3573,56 @@ impl<'ctx> AstInterpreter<'ctx> {
             .expect("ffi runtime must be initialized"))
     }
 
+    fn with_command_mock_state<T>(
+        &self,
+        f: impl FnOnce(&mut CommandMockState) -> T,
+    ) -> Option<T> {
+        let state = self.command_mock_state.as_ref()?;
+        let mut guard = match state.lock() {
+            Ok(guard) => guard,
+            Err(err) => err.into_inner(),
+        };
+        Some(f(&mut guard))
+    }
+
+    fn try_call_runtime_extern_hook(
+        &self,
+        name: &str,
+        sig: &FunctionSignature,
+        args: &[Value],
+    ) -> Option<Result<Value>> {
+        let hook = self.runtime_extern_hook.as_ref()?;
+        hook.call(name, sig, args).or_else(|| {
+            name.rsplit("::")
+                .next()
+                .and_then(|short| hook.call(short, sig, args))
+        })
+    }
+
+    fn try_mock_command(
+        &self,
+        command: &str,
+        ret_ty: Option<&Ty>,
+    ) -> Option<Result<Value>> {
+        let ret_ty = ret_ty.cloned();
+        self.with_command_mock_state(|state| {
+            if !state.enabled() {
+                return None;
+            }
+            state.record_call(command.to_string());
+            if let Some(mock) = state.find_mock(command) {
+                return Some(command_mock_result(
+                    command,
+                    mock.stdout,
+                    mock.stderr,
+                    mock.status,
+                    ret_ty.as_ref(),
+                ));
+            }
+            Some(default_mock_command_result(command, ret_ty.as_ref()))
+        })?
+    }
+
     fn try_call_extern_function(&mut self, locator: &Name, args: &[Value]) -> Option<RuntimeFlow> {
         let mut candidate_names = vec![locator.to_string()];
         if let Some(ident) = locator.as_ident() {
@@ -3510,6 +3642,15 @@ impl<'ctx> AstInterpreter<'ctx> {
         binding: &ExternFunctionBinding,
         args: &[Value],
     ) -> RuntimeFlow {
+        if let Some(result) = self.try_call_runtime_extern_hook(name, &binding.sig, args) {
+            return match result {
+                Ok(value) => RuntimeFlow::Value(value),
+                Err(err) => {
+                    self.emit_error(err.to_string());
+                    RuntimeFlow::Value(Value::undefined())
+                }
+            };
+        }
         if let Some(command) = &binding.command {
             return self.call_command_extern_runtime(name, command, &binding.sig, args);
         }
@@ -3562,6 +3703,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return RuntimeFlow::Value(Value::undefined());
             }
         };
+        let rendered_command = render_command_line(&fixed_args, &runtime_args);
+        if let Some(result) = self.try_mock_command(rendered_command.as_str(), sig.ret_ty.as_ref()) {
+            return match result {
+                Ok(value) => RuntimeFlow::Value(value),
+                Err(err) => {
+                    self.emit_error(err.to_string());
+                    RuntimeFlow::Value(Value::undefined())
+                }
+            };
+        }
 
         let mut process = Command::new(&fixed_args[0]);
         if fixed_args.len() > 1 {
@@ -4971,8 +5122,16 @@ impl<'ctx> AstInterpreter<'ctx> {
             };
             if let Some(name) = local_name {
                 if let Some(stored) = self.lookup_stored_value(name) {
+                    let value = stored.value();
+                    let value = match &value {
+                        Value::Any(any) => any
+                            .downcast_ref::<RuntimeRef>()
+                            .map(|runtime_ref| self.runtime_ref_value(runtime_ref))
+                            .unwrap_or(value),
+                        _ => value,
+                    };
                     return ReceiverBinding {
-                        value: stored.value(),
+                        value,
                         shared: stored.shared_handle(),
                     };
                 }
@@ -5750,12 +5909,17 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn lookup_enum_variant(&self, locator: &Name) -> Option<EnumVariantInfo> {
-        let mut candidates = vec![locator.to_string()];
+        let locator_name = locator.to_string();
+        let mut candidates = vec![locator_name.clone()];
+        if let Some(expanded) = self.expand_imported_locator(locator) {
+            if expanded != locator_name {
+                candidates.push(expanded);
+            }
+        }
         if let Some(ident) = locator.as_ident() {
             candidates.push(ident.as_str().to_string());
         }
         if !self.module_stack.is_empty() {
-            let locator_name = locator.to_string();
             let qualified_prefix = self.module_stack.join("::");
             if !locator_name.starts_with(&qualified_prefix) {
                 candidates.push(self.qualified_name(&locator_name));
@@ -5767,6 +5931,74 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         }
         None
+    }
+
+    fn expand_imported_locator(&self, locator: &Name) -> Option<String> {
+        match locator {
+            Name::Ident(ident) => self.import_alias_target(ident.as_str()),
+            Name::Path(path) if path.prefix == PathPrefix::Plain => {
+                let first = path.segments.first()?;
+                let target = self.import_alias_target(first.as_str())?;
+                if path.segments.len() == 1 {
+                    return Some(target);
+                }
+                let suffix = path
+                    .segments
+                    .iter()
+                    .skip(1)
+                    .map(|segment| segment.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                Some(format!("{}::{}", target, suffix))
+            }
+            Name::ParameterPath(path) if path.prefix == PathPrefix::Plain => {
+                let first = path.segments.first()?;
+                let target = self.import_alias_target(first.ident.as_str())?;
+                if path.segments.len() == 1 {
+                    return Some(target);
+                }
+                let suffix = path
+                    .segments
+                    .iter()
+                    .skip(1)
+                    .map(|segment| segment.ident.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                Some(format!("{}::{}", target, suffix))
+            }
+            _ => None,
+        }
+    }
+
+    fn import_alias_target(&self, name: &str) -> Option<String> {
+        if let Some(target) = self.local_imports.get(name) {
+            return Some(target.clone());
+        }
+        if let Some(module) = self.imported_modules.get(name) {
+            return self.module_id_path(module);
+        }
+        let imported = self.lookup_value(name)?;
+        let Value::Any(any) = imported else {
+            return None;
+        };
+        if let Some(symbol) = any.downcast_ref::<ImportedSymbol>() {
+            let mut path = self.module_id_path(&symbol.module)?;
+            if !path.is_empty() {
+                path.push_str("::");
+            }
+            path.push_str(&symbol.symbol.name);
+            return Some(path);
+        }
+        if let Some(module) = any.downcast_ref::<ImportedModule>() {
+            return self.module_id_path(&module.module);
+        }
+        None
+    }
+
+    fn module_id_path(&self, module_id: &ModuleId) -> Option<String> {
+        let context = self.module_resolution.as_ref()?;
+        let module = context.graph.module(module_id)?;
+        Some(module.module_path.join("::"))
     }
 
     fn resolve_enum_variant(&self, locator: &Name) -> Option<Value> {
@@ -7539,6 +7771,15 @@ fn command_args_from_values(args: &[Value]) -> std::result::Result<Vec<String>, 
     args.iter().map(command_arg_from_value).collect()
 }
 
+fn render_command_line(fixed_args: &[String], runtime_args: &[String]) -> String {
+    fixed_args
+        .iter()
+        .chain(runtime_args.iter())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn command_arg_from_value(value: &Value) -> std::result::Result<String, String> {
     match value {
         Value::String(text) => Ok(text.value.clone()),
@@ -7550,6 +7791,89 @@ fn command_arg_from_value(value: &Value) -> std::result::Result<String, String> 
         Value::Char(value) => Ok(value.value.to_string()),
         Value::Null(_) => Ok(String::new()),
         other => Err(format!("unsupported command argument value: {:?}", other)),
+    }
+}
+
+fn command_mock_result(
+    command: &str,
+    stdout: String,
+    stderr: String,
+    status: i64,
+    ret_ty: Option<&Ty>,
+) -> Result<Value> {
+    match ret_ty {
+        None | Some(Ty::Unit(_)) => {
+            if status == 0 {
+                Ok(Value::unit())
+            } else {
+                Err(interpretation_error(command_failure_message(
+                    command,
+                    command,
+                    &stderr,
+                    Some(status as i32),
+                )))
+            }
+        }
+        Some(Ty::Primitive(TypePrimitive::Bool)) => Ok(Value::bool(status == 0)),
+        Some(Ty::Primitive(TypePrimitive::String)) => {
+            if status == 0 {
+                Ok(Value::string(stdout))
+            } else {
+                Err(interpretation_error(command_failure_message(
+                    command,
+                    command,
+                    &stderr,
+                    Some(status as i32),
+                )))
+            }
+        }
+        Some(Ty::Primitive(TypePrimitive::Int(_))) => Ok(Value::int(status)),
+        Some(other) => Err(interpretation_error(format!(
+            "mocked command '{}' returns unsupported runtime type {:?}",
+            command, other
+        ))),
+    }
+}
+
+fn default_mock_command_result(command: &str, ret_ty: Option<&Ty>) -> Result<Value> {
+    if let Some(result) = builtin_mock_command_result(command, ret_ty) {
+        return result;
+    }
+    command_mock_result(command, String::new(), String::new(), 0, ret_ty)
+}
+
+fn builtin_mock_command_result(command: &str, ret_ty: Option<&Ty>) -> Option<Result<Value>> {
+    let parts = command.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        ["test", "-f", path] => Some(command_mock_result(
+            command,
+            String::new(),
+            String::new(),
+            if std::path::Path::new(path).is_file() { 0 } else { 1 },
+            ret_ty,
+        )),
+        ["test", "-d", path] => Some(command_mock_result(
+            command,
+            String::new(),
+            String::new(),
+            if std::path::Path::new(path).is_dir() { 0 } else { 1 },
+            ret_ty,
+        )),
+        ["test", "-e", path] => Some(command_mock_result(
+            command,
+            String::new(),
+            String::new(),
+            if std::path::Path::new(path).exists() { 0 } else { 1 },
+            ret_ty,
+        )),
+        ["command", "-v", _] => Some(command_mock_result(
+            command,
+            String::new(),
+            String::new(),
+            0,
+            ret_ty,
+        )),
+        _ => None,
     }
 }
 
@@ -7640,8 +7964,12 @@ fn resolve_lang_instrinstic_handler(intrinsic: LangInstrinstic) -> Option<LangIt
         LangInstrinstic::IoReadStdinToString => Some(lang_io_read_stdin_to_string),
         LangInstrinstic::IoWriteStdout => Some(lang_io_write_stdout),
         LangInstrinstic::IoWriteStderr => Some(lang_io_write_stderr),
-        LangInstrinstic::ProcessRun => Some(lang_process_run),
         LangInstrinstic::YamlToJson => Some(lang_yaml_to_json),
+        LangInstrinstic::JsonParse => Some(lang_json_parse),
+        LangInstrinstic::TestCommandMockReset => Some(lang_test_command_mock_reset),
+        LangInstrinstic::TestCommandMockPush => Some(lang_test_command_mock_push),
+        LangInstrinstic::TestCommandMockTakeCalls => Some(lang_test_command_mock_take_calls),
+        LangInstrinstic::TestCommandMockApply => Some(lang_test_command_mock_apply),
         LangInstrinstic::TimeNow | LangInstrinstic::CreateStruct | LangInstrinstic::AddField => {
             None
         }
@@ -7725,7 +8053,7 @@ fn lang_fs_glob(args: &[Value]) -> std::result::Result<Value, String> {
         let path = entry.map_err(|err| err.to_string())?;
         values.push(Value::string(path.to_string_lossy().into_owned()));
     }
-    values.sort_by(|lhs, rhs| lang_string_value(lhs).cmp(lang_string_value(rhs)));
+    values.sort_by(|lhs, rhs| lang_string_value(lhs).cmp(&lang_string_value(rhs)));
     Ok(Value::List(ValueList::new(values)))
 }
 
@@ -7851,21 +8179,77 @@ fn lang_io_write_stderr(args: &[Value]) -> std::result::Result<Value, String> {
     Ok(Value::unit())
 }
 
-fn lang_process_run(args: &[Value]) -> std::result::Result<Value, String> {
+fn lang_test_command_mock_reset(args: &[Value]) -> std::result::Result<Value, String> {
+    expect_lang_arg_count(args, 0)?;
+    with_current_command_mock_state(|state| state.reset())?;
+    Ok(Value::unit())
+}
+
+fn lang_test_command_mock_push(args: &[Value]) -> std::result::Result<Value, String> {
     expect_lang_arg_count(args, 4)?;
-    let program = expect_lang_string_arg(args, 0, "program")?;
-    let argv = expect_lang_string_list_arg(args, 1, "args")?;
-    let cwd = expect_lang_string_arg(args, 2, "cwd")?;
-    let shell_command = expect_lang_string_arg(args, 3, "shell_command")?;
+    let pattern = expect_lang_string_arg(args, 0, "pattern")?;
+    let stdout = expect_lang_string_arg(args, 1, "stdout")?;
+    let stderr = expect_lang_string_arg(args, 2, "stderr")?;
+    let status = expect_lang_int_arg(args, 3, "status")?;
+    with_current_command_mock_state(|state| {
+        state.push(CommandMock {
+            pattern,
+            stdout,
+            stderr,
+            status,
+        })
+    })?;
+    Ok(Value::unit())
+}
 
-    let output = if !shell_command.is_empty() {
-        let (shell_program, shell_args) = lang_shell_program_and_args(shell_command.as_str());
-        run_lang_process(shell_program.as_str(), &shell_args, "")?
-    } else {
-        run_lang_process(program.as_str(), &argv, cwd.as_str())?
-    };
+fn lang_test_command_mock_take_calls(args: &[Value]) -> std::result::Result<Value, String> {
+    expect_lang_arg_count(args, 0)?;
+    let calls = with_current_command_mock_state(|state| state.take_calls())?;
+    Ok(Value::List(ValueList::new(
+        calls.into_iter().map(Value::string).collect(),
+    )))
+}
 
-    Ok(lang_process_result_value(output.stdout, output.stderr, output.status))
+fn lang_test_command_mock_apply(args: &[Value]) -> std::result::Result<Value, String> {
+    expect_lang_arg_count(args, 1)?;
+    let command = expect_lang_string_arg(args, 0, "command")?;
+    let result = with_current_command_mock_state(|state| {
+        if !state.enabled() {
+            return None;
+        }
+        state.record_call(command.clone());
+        match state.find_mock(command.as_str()) {
+            Some(mock) => Some(mock),
+            None => Some(CommandMock {
+                pattern: command.clone(),
+                stdout: String::new(),
+                stderr: String::new(),
+                status: 0,
+            }),
+        }
+    })?;
+    Ok(command_mock_match_value(result))
+}
+
+fn command_mock_match_value(mock: Option<CommandMock>) -> Value {
+    match mock {
+        Some(mock) => Value::Any(AnyBox::new(RuntimeEnum {
+            enum_name: "Option".to_string(),
+            variant_name: "Some".to_string(),
+            payload: Some(Value::Structural(ValueStructural::new(vec![
+                ValueField::new(Ident::new("stdout"), Value::string(mock.stdout)),
+                ValueField::new(Ident::new("stderr"), Value::string(mock.stderr)),
+                ValueField::new(Ident::new("status"), Value::int(mock.status)),
+            ]))),
+            discriminant: None,
+        })),
+        None => Value::Any(AnyBox::new(RuntimeEnum {
+            enum_name: "Option".to_string(),
+            variant_name: "None".to_string(),
+            payload: None,
+            discriminant: None,
+        })),
+    }
 }
 
 fn lang_yaml_to_json(args: &[Value]) -> std::result::Result<Value, String> {
@@ -7876,6 +8260,68 @@ fn lang_yaml_to_json(args: &[Value]) -> std::result::Result<Value, String> {
     Ok(Value::string(json))
 }
 
+fn lang_json_parse(args: &[Value]) -> std::result::Result<Value, String> {
+    let input = expect_lang_string_arg(args, 0, "input")?;
+    let value: serde_json::Value =
+        serde_json::from_str(input.as_str()).map_err(|err| err.to_string())?;
+    Ok(lang_json_value(&value))
+}
+
+fn lang_json_value(value: &serde_json::Value) -> Value {
+    match value {
+        serde_json::Value::Null => Value::Any(AnyBox::new(RuntimeEnum {
+            enum_name: "JsonValue".to_string(),
+            variant_name: "Null".to_string(),
+            payload: None,
+            discriminant: None,
+        })),
+        serde_json::Value::Bool(flag) => Value::Any(AnyBox::new(RuntimeEnum {
+            enum_name: "JsonValue".to_string(),
+            variant_name: "Bool".to_string(),
+            payload: Some(Value::bool(*flag)),
+            discriminant: None,
+        })),
+        serde_json::Value::Number(number) => Value::Any(AnyBox::new(RuntimeEnum {
+            enum_name: "JsonValue".to_string(),
+            variant_name: "Number".to_string(),
+            payload: Some(Value::string(number.to_string())),
+            discriminant: None,
+        })),
+        serde_json::Value::String(text) => Value::Any(AnyBox::new(RuntimeEnum {
+            enum_name: "JsonValue".to_string(),
+            variant_name: "String".to_string(),
+            payload: Some(Value::string(text.clone())),
+            discriminant: None,
+        })),
+        serde_json::Value::Array(items) => {
+            let values = items.iter().map(lang_json_value).collect::<Vec<_>>();
+            Value::Any(AnyBox::new(RuntimeEnum {
+                enum_name: "JsonValue".to_string(),
+                variant_name: "Array".to_string(),
+                payload: Some(Value::List(ValueList::new(values))),
+                discriminant: None,
+            }))
+        }
+        serde_json::Value::Object(fields) => {
+            let values = fields
+                .iter()
+                .map(|(key, value)| {
+                    Value::Structural(ValueStructural::new(vec![
+                        ValueField::new(Ident::new("key"), Value::string(key.clone())),
+                        ValueField::new(Ident::new("value"), lang_json_value(value)),
+                    ]))
+                })
+                .collect::<Vec<_>>();
+            Value::Any(AnyBox::new(RuntimeEnum {
+                enum_name: "JsonValue".to_string(),
+                variant_name: "Object".to_string(),
+                payload: Some(Value::List(ValueList::new(values))),
+                discriminant: None,
+            }))
+        }
+    }
+}
+
 fn expect_lang_string_arg(
     args: &[Value],
     index: usize,
@@ -7884,10 +8330,27 @@ fn expect_lang_string_arg(
     let Some(value) = args.get(index) else {
         return Err(format!("missing {} argument at index {}", label, index));
     };
-    match value {
+    match lang_runtime_value(value) {
         Value::String(text) => Ok(text.value.clone()),
         other => Err(format!(
             "expected {} argument at index {} to be string, got {:?}",
+            label, index, other
+        )),
+    }
+}
+
+fn expect_lang_int_arg(
+    args: &[Value],
+    index: usize,
+    label: &str,
+) -> std::result::Result<i64, String> {
+    let Some(value) = args.get(index) else {
+        return Err(format!("missing {} argument at index {}", label, index));
+    };
+    match lang_runtime_value(value) {
+        Value::Int(number) => Ok(number.value),
+        other => Err(format!(
+            "expected {} argument at index {} to be int, got {:?}",
             label, index, other
         )),
     }
@@ -7909,34 +8372,6 @@ fn expect_lang_path_arg(
     })
 }
 
-fn expect_lang_string_list_arg(
-    args: &[Value],
-    index: usize,
-    label: &str,
-) -> std::result::Result<Vec<String>, String> {
-    let Some(value) = args.get(index) else {
-        return Err(format!("missing {} argument at index {}", label, index));
-    };
-    match value {
-        Value::List(list) => list
-            .values
-            .iter()
-            .enumerate()
-            .map(|(idx, value)| match value {
-                Value::String(text) => Ok(text.value.clone()),
-                other => Err(format!(
-                    "expected {} argument item {} to be string, got {:?}",
-                    label, idx, other
-                )),
-            })
-            .collect(),
-        other => Err(format!(
-            "expected {} argument at index {} to be list, got {:?}",
-            label, index, other
-        )),
-    }
-}
-
 fn expect_lang_arg_count(args: &[Value], expected: usize) -> std::result::Result<(), String> {
     if args.len() == expected {
         Ok(())
@@ -7949,15 +8384,28 @@ fn expect_lang_arg_count(args: &[Value], expected: usize) -> std::result::Result
     }
 }
 
-fn lang_string_value(value: &Value) -> &str {
-    match value {
-        Value::String(text) => text.value.as_str(),
-        _ => "",
+fn with_current_command_mock_state<T>(
+    f: impl FnOnce(&mut CommandMockState) -> T,
+) -> std::result::Result<T, String> {
+    let state = CURRENT_COMMAND_MOCK_STATE
+        .with(|slot| slot.borrow().clone())
+        .ok_or_else(|| "command mock state is not available in this interpreter".to_string())?;
+    let mut guard = match state.lock() {
+        Ok(guard) => guard,
+        Err(err) => err.into_inner(),
+    };
+    Ok(f(&mut guard))
+}
+
+fn lang_string_value(value: &Value) -> String {
+    match lang_runtime_value(value) {
+        Value::String(text) => text.value.clone(),
+        _ => String::new(),
     }
 }
 
 fn lang_path_value(value: &Value) -> Option<String> {
-    match value {
+    match lang_runtime_value(value) {
         Value::String(text) => Some(text.value.clone()),
         Value::Struct(struct_value) => lang_path_fields_value(&struct_value.structural.fields),
         Value::Structural(struct_value) => lang_path_fields_value(&struct_value.fields),
@@ -7970,17 +8418,76 @@ fn lang_path_fields_value(fields: &[ValueField]) -> Option<String> {
         if field.name.as_str() != "inner" {
             return None;
         }
-        match &field.value {
+        match lang_runtime_value(&field.value) {
             Value::String(text) => Some(text.value.clone()),
             _ => None,
         }
     })
 }
 
+fn lang_runtime_value(value: &Value) -> Value {
+    match value {
+        Value::Any(any) => {
+            if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                return lang_runtime_ref_value(runtime_ref);
+            }
+            value.clone()
+        }
+        _ => value.clone(),
+    }
+}
+
+fn lang_runtime_ref_value(runtime_ref: &RuntimeRef) -> Value {
+    let guard = match runtime_ref.shared().lock() {
+        Ok(guard) => guard,
+        Err(err) => err.into_inner(),
+    };
+    match &runtime_ref.target {
+        RuntimeRefTarget::Whole(_) => guard.clone(),
+        RuntimeRefTarget::Field { field, .. } => match &*guard {
+            Value::Struct(struct_value) => struct_value
+                .structural
+                .fields
+                .iter()
+                .find(|candidate| candidate.name.as_str() == field.as_str())
+                .map(|candidate| candidate.value.clone())
+                .unwrap_or_else(Value::undefined),
+            Value::Structural(structural) => structural
+                .fields
+                .iter()
+                .find(|candidate| candidate.name.as_str() == field.as_str())
+                .map(|candidate| candidate.value.clone())
+                .unwrap_or_else(Value::undefined),
+            _ => Value::undefined(),
+        },
+        RuntimeRefTarget::Index { index, .. } => match &*guard {
+            Value::List(list) => list.values.get(*index).cloned().unwrap_or_else(Value::undefined),
+            Value::Tuple(tuple) => tuple
+                .values
+                .get(*index)
+                .cloned()
+                .unwrap_or_else(Value::undefined),
+            _ => Value::undefined(),
+        },
+        RuntimeRefTarget::Slice { start, end, .. } => match &*guard {
+            Value::List(list) => Value::List(ValueList::new(
+                list.values[*start..(*end).min(list.values.len())].to_vec(),
+            )),
+            Value::String(text) => {
+                let chars = text.value.chars().collect::<Vec<_>>();
+                let start = (*start).min(chars.len());
+                let end = (*end).min(chars.len());
+                Value::string(chars[start..end].iter().collect::<String>())
+            }
+            _ => Value::undefined(),
+        },
+    }
+}
+
 fn lang_fs_collect_dir(path: &str, recursive: bool) -> std::result::Result<Value, String> {
     let mut values = Vec::new();
     lang_fs_collect_dir_entries(std::path::Path::new(path), recursive, &mut values)?;
-    values.sort_by(|lhs, rhs| lang_string_value(lhs).cmp(lang_string_value(rhs)));
+    values.sort_by(|lhs, rhs| lang_string_value(lhs).cmp(&lang_string_value(rhs)));
     Ok(Value::List(ValueList::new(values)))
 }
 
@@ -7999,230 +8506,6 @@ fn lang_fs_collect_dir_entries(
         }
     }
     Ok(())
-}
-
-struct LangProcessOutput {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    status: i64,
-}
-
-fn lang_shell_program_and_args(command: &str) -> (String, Vec<String>) {
-    #[cfg(unix)]
-    {
-        (
-            "sh".to_string(),
-            vec!["-lc".to_string(), command.to_string()],
-        )
-    }
-    #[cfg(windows)]
-    {
-        (
-            "pwsh".to_string(),
-            vec!["-Command".to_string(), command.to_string()],
-        )
-    }
-}
-
-#[cfg(unix)]
-fn run_lang_process(
-    program: &str,
-    args: &[String],
-    cwd: &str,
-) -> std::result::Result<LangProcessOutput, String> {
-    let (stdout_read, stdout_write) = lang_create_pipe()?;
-    let (stderr_read, stderr_write) = match lang_create_pipe() {
-        Ok(pipe) => pipe,
-        Err(err) => {
-            let _ = lang_close_fd(stdout_read);
-            let _ = lang_close_fd(stdout_write);
-            return Err(err);
-        }
-    };
-
-    let fork_result = unsafe { libc::fork() };
-    if fork_result < 0 {
-        let err = std::io::Error::last_os_error().to_string();
-        let _ = lang_close_fd(stdout_read);
-        let _ = lang_close_fd(stdout_write);
-        let _ = lang_close_fd(stderr_read);
-        let _ = lang_close_fd(stderr_write);
-        return Err(err);
-    }
-
-    if fork_result == 0 {
-        lang_child_exec(program, args, cwd, stdout_read, stdout_write, stderr_read, stderr_write);
-    }
-
-    lang_close_fd(stdout_write)?;
-    lang_close_fd(stderr_write)?;
-
-    let stdout_thread = thread::spawn(move || lang_read_fd_to_end(stdout_read));
-    let stderr_thread = thread::spawn(move || lang_read_fd_to_end(stderr_read));
-
-    let mut wait_status = 0;
-    let waited = unsafe { libc::waitpid(fork_result, &mut wait_status, 0) };
-    if waited < 0 {
-        return Err(std::io::Error::last_os_error().to_string());
-    }
-
-    let stdout = stdout_thread
-        .join()
-        .map_err(|_| "stdout reader thread panicked".to_string())??;
-    let stderr = stderr_thread
-        .join()
-        .map_err(|_| "stderr reader thread panicked".to_string())??;
-
-    Ok(LangProcessOutput {
-        stdout,
-        stderr,
-        status: lang_wait_status_code(wait_status),
-    })
-}
-
-#[cfg(windows)]
-fn run_lang_process(
-    program: &str,
-    args: &[String],
-    cwd: &str,
-) -> std::result::Result<LangProcessOutput, String> {
-    let mut command = Command::new(program);
-    command.args(args);
-    if !cwd.is_empty() {
-        command.current_dir(cwd);
-    }
-    let output = command.output().map_err(|err| err.to_string())?;
-    Ok(LangProcessOutput {
-        stdout: output.stdout,
-        stderr: output.stderr,
-        status: output.status.code().unwrap_or(-1) as i64,
-    })
-}
-
-#[cfg(unix)]
-fn lang_create_pipe() -> std::result::Result<(libc::c_int, libc::c_int), String> {
-    let mut fds = [0; 2];
-    let status = unsafe { libc::pipe(fds.as_mut_ptr()) };
-    if status != 0 {
-        return Err(std::io::Error::last_os_error().to_string());
-    }
-    Ok((fds[0], fds[1]))
-}
-
-#[cfg(unix)]
-fn lang_close_fd(fd: libc::c_int) -> std::result::Result<(), String> {
-    let status = unsafe { libc::close(fd) };
-    if status != 0 {
-        return Err(std::io::Error::last_os_error().to_string());
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn lang_read_fd_to_end(fd: libc::c_int) -> std::result::Result<Vec<u8>, String> {
-    let mut out = Vec::new();
-    let mut buf = [0u8; 4096];
-    loop {
-        let read = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
-        if read == 0 {
-            break;
-        }
-        if read < 0 {
-            let err = std::io::Error::last_os_error();
-            let _ = lang_close_fd(fd);
-            return Err(err.to_string());
-        }
-        out.extend_from_slice(&buf[..read as usize]);
-    }
-    lang_close_fd(fd)?;
-    Ok(out)
-}
-
-#[cfg(unix)]
-fn lang_wait_status_code(status: libc::c_int) -> i64 {
-    if libc::WIFEXITED(status) {
-        return libc::WEXITSTATUS(status) as i64;
-    }
-    if libc::WIFSIGNALED(status) {
-        return -(libc::WTERMSIG(status) as i64);
-    }
-    -1
-}
-
-#[cfg(unix)]
-fn lang_child_exec(
-    program: &str,
-    args: &[String],
-    cwd: &str,
-    stdout_read: libc::c_int,
-    stdout_write: libc::c_int,
-    stderr_read: libc::c_int,
-    stderr_write: libc::c_int,
-) -> ! {
-    let _ = lang_close_fd(stdout_read);
-    let _ = lang_close_fd(stderr_read);
-
-    if unsafe { libc::dup2(stdout_write, libc::STDOUT_FILENO) } < 0 {
-        lang_child_fail(stderr_write, "dup2 stdout failed\n");
-    }
-    if unsafe { libc::dup2(stderr_write, libc::STDERR_FILENO) } < 0 {
-        lang_child_fail(stderr_write, "dup2 stderr failed\n");
-    }
-
-    let _ = lang_close_fd(stdout_write);
-    let _ = lang_close_fd(stderr_write);
-
-    if !cwd.is_empty() {
-        let cwd_cstr = match CString::new(cwd) {
-            Ok(value) => value,
-            Err(_) => lang_child_fail(libc::STDERR_FILENO, "cwd contains NUL byte\n"),
-        };
-        if unsafe { libc::chdir(cwd_cstr.as_ptr()) } != 0 {
-            lang_child_fail(libc::STDERR_FILENO, "chdir failed\n");
-        }
-    }
-
-    let program_cstr = match CString::new(program) {
-        Ok(value) => value,
-        Err(_) => lang_child_fail(libc::STDERR_FILENO, "program contains NUL byte\n"),
-    };
-    let mut argv_cstrs = Vec::with_capacity(args.len() + 1);
-    argv_cstrs.push(program_cstr.clone());
-    for arg in args {
-        match CString::new(arg.as_str()) {
-            Ok(value) => argv_cstrs.push(value),
-            Err(_) => lang_child_fail(libc::STDERR_FILENO, "argument contains NUL byte\n"),
-        }
-    }
-    let mut argv_ptrs: Vec<*const libc::c_char> =
-        argv_cstrs.iter().map(|value| value.as_ptr()).collect();
-    argv_ptrs.push(std::ptr::null());
-
-    unsafe {
-        libc::execvp(program_cstr.as_ptr(), argv_ptrs.as_ptr());
-    }
-    lang_child_fail(libc::STDERR_FILENO, "execvp failed\n");
-}
-
-#[cfg(unix)]
-fn lang_child_fail(fd: libc::c_int, message: &str) -> ! {
-    let bytes = message.as_bytes();
-    let _ = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
-    unsafe { libc::_exit(127) }
-}
-
-fn lang_process_result_value(stdout: Vec<u8>, stderr: Vec<u8>, status: i64) -> Value {
-    Value::Structural(ValueStructural::new(vec![
-        ValueField::new(
-            Ident::new("stdout"),
-            Value::string(String::from_utf8_lossy(&stdout).to_string()),
-        ),
-        ValueField::new(
-            Ident::new("stderr"),
-            Value::string(String::from_utf8_lossy(&stderr).to_string()),
-        ),
-        ValueField::new(Ident::new("status"), Value::int(status)),
-    ]))
 }
 
 fn meta_path_to_texts(path: &Path, out: &mut Vec<String>) {
@@ -8245,31 +8528,6 @@ fn meta_path_to_texts(path: &Path, out: &mut Vec<String>) {
             out.push("::".to_string());
         }
         out.push(seg.as_str().to_string());
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[cfg(unix)]
-    #[test]
-    fn run_lang_process_execs_program_via_libc() {
-        let output = run_lang_process("/usr/bin/printf", &[String::from("hello")], "")
-            .expect("process should run");
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "hello");
-        assert_eq!(String::from_utf8_lossy(&output.stderr), "");
-        assert_eq!(output.status, 0);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn run_lang_process_execs_shell_command_via_single_path() {
-        let (program, args) = lang_shell_program_and_args("printf shell");
-        let output = run_lang_process(program.as_str(), &args, "").expect("shell should run");
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "shell");
-        assert_eq!(String::from_utf8_lossy(&output.stderr), "");
-        assert_eq!(output.status, 0);
     }
 }
 

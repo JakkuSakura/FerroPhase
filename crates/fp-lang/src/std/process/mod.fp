@@ -1,8 +1,4 @@
-type RawProcessResult = {
-    stdout: str,
-    stderr: str,
-    status: i64,
-};
+use std::option::Option;
 
 pub struct ProcessResult {
     stdout: str,
@@ -36,16 +32,16 @@ impl ProcessResult {
     }
 }
 
-pub struct Command {
+pub struct Process {
     shell_command: str,
     program: str,
     args: Vec<&str>,
     cwd: str,
 }
 
-impl Command {
-    pub fn new(program: &str) -> Command {
-        Command {
+impl Process {
+    pub fn new(program: &str) -> Process {
+        Process {
             shell_command: "",
             program,
             args: Vec::new(),
@@ -53,8 +49,8 @@ impl Command {
         }
     }
 
-    pub fn shell(command: str) -> Command {
-        Command {
+    pub fn shell(command: str) -> Process {
+        Process {
             shell_command: command,
             program: "",
             args: Vec::new(),
@@ -62,11 +58,11 @@ impl Command {
         }
     }
 
-    pub fn arg(self, arg: &str) -> Command {
+    pub fn arg(self, arg: &str) -> Process {
         let mut args = self.args;
         args.push(arg);
 
-        Command {
+        Process {
             shell_command: self.shell_command,
             program: self.program,
             args,
@@ -74,19 +70,19 @@ impl Command {
         }
     }
 
-    pub fn args(self, extra_args: Vec<&str>) -> Command {
-        let mut command = self;
+    pub fn args(self, extra_args: Vec<&str>) -> Process {
+        let mut process = self;
         let mut idx = 0;
         let extra_len = extra_args.len();
         while idx < extra_len {
-            command = command.arg(extra_args[idx]);
+            process = process.arg(extra_args[idx]);
             idx = idx + 1;
         }
-        command
+        process
     }
 
-    pub fn current_dir(self, cwd: &str) -> Command {
-        Command {
+    pub fn current_dir(self, cwd: &str) -> Process {
+        Process {
             shell_command: self.shell_command,
             program: self.program,
             args: self.args,
@@ -95,7 +91,7 @@ impl Command {
     }
 
     pub fn run(self) {
-        let result = self.exec();
+        let result = exec_command(self);
         if !result.success() {
             panic(f"process exited with status {result.status()}: {result.stderr()}");
         }
@@ -107,11 +103,11 @@ impl Command {
     }
 
     pub fn ok(self) -> bool {
-        self.exec().success()
+        self.output_result().success()
     }
 
     pub fn output(self) -> str {
-        let result = self.exec();
+        let result = self.output_result();
         if !result.success() {
             panic(f"process exited with status {result.status()}: {result.stderr()}");
         }
@@ -120,82 +116,171 @@ impl Command {
     }
 
     pub fn status(self) -> i64 {
-        self.exec().status()
+        self.output_result().status()
     }
 
     pub fn output_result(self) -> ProcessResult {
-        self.exec()
-    }
-
-    fn exec(self) -> ProcessResult {
-        let raw = if self.shell_command != "" {
-            intrinsic_process_run("", Vec::new(), "", self.shell_command)
-        } else {
-            intrinsic_process_run(self.program, self.args, self.cwd, "")
-        };
-
-        ProcessResult {
-            stdout: raw.stdout,
-            stderr: raw.stderr,
-            status: raw.status,
+        let rendered_command = render_process_command(self);
+        match std::test::apply_command_mock(&rendered_command) {
+            Option::Some(mocked) => ProcessResult {
+                stdout: mocked.stdout,
+                stderr: mocked.stderr,
+                status: mocked.status,
+            },
+            Option::None => ProcessResult {
+                stdout: "",
+                stderr: "",
+                status: decode_exit_status(std::libc::system(&rendered_command)),
+            },
         }
     }
 }
 
-#[lang = "process_run"]
-fn intrinsic_process_run(
-    program: &str,
-    args: Vec<&str>,
-    cwd: &str,
-    shell_command: str,
-) -> RawProcessResult {
-    compile_error!("compiler intrinsic")
+pub struct Command {
+    inner: Process,
+}
+
+impl Command {
+    pub fn new(program: &str) -> Command {
+        Command {
+            inner: Process::new(program),
+        }
+    }
+
+    pub fn shell(command: str) -> Command {
+        Command {
+            inner: Process::shell(command),
+        }
+    }
+
+    pub fn arg(self, arg: &str) -> Command {
+        Command {
+            inner: self.inner.arg(arg),
+        }
+    }
+
+    pub fn args(self, extra_args: Vec<&str>) -> Command {
+        Command {
+            inner: self.inner.args(extra_args),
+        }
+    }
+
+    pub fn current_dir(self, cwd: &str) -> Command {
+        Command {
+            inner: self.inner.current_dir(cwd),
+        }
+    }
+
+    pub fn run(self) {
+        self.inner.run()
+    }
+
+    pub fn ok(self) -> bool {
+        self.inner.ok()
+    }
+
+    pub fn output(self) -> str {
+        self.inner.output()
+    }
+
+    pub fn status(self) -> i64 {
+        self.inner.status()
+    }
+
+    pub fn output_result(self) -> ProcessResult {
+        self.inner.output_result()
+    }
+}
+
+fn exec_command(command: Command) -> ProcessResult {
+    command.inner.output_result()
 }
 
 pub fn run(command: str) {
-    Command::shell(command).run()
+    Process::shell(command).run()
 }
 
 pub fn ok(command: str) -> bool {
-    Command::shell(command).ok()
+    Process::shell(command).ok()
 }
 
 pub fn output(command: str) -> str {
-    Command::shell(command).output()
+    Process::shell(command).output()
 }
 
 pub fn status(command: str) -> i64 {
-    Command::shell(command).status()
+    Process::shell(command).status()
 }
 
 pub fn run_argv(program: &str, args: Vec<&str>) {
-    Command::new(program).args(args).run()
+    Process::new(program).args(args).run()
 }
 
 pub fn ok_argv(program: &str, args: Vec<&str>) -> bool {
-    Command::new(program).args(args).ok()
+    Process::new(program).args(args).ok()
 }
 
 pub fn output_argv(program: &str, args: Vec<&str>) -> str {
-    Command::new(program).args(args).output()
+    Process::new(program).args(args).output()
 }
 
 pub fn status_argv(program: &str, args: Vec<&str>) -> i64 {
-    Command::new(program).args(args).status()
+    Process::new(program).args(args).status()
 }
 
 pub fn run_argv_in(program: &str, args: Vec<&str>, cwd: &str) {
-    Command::new(program).args(args).current_dir(cwd).run()
+    Process::new(program).args(args).current_dir(cwd).run()
 }
 
 pub fn ok_argv_in(program: &str, args: Vec<&str>, cwd: &str) -> bool {
-    Command::new(program).args(args).current_dir(cwd).ok()
+    Process::new(program).args(args).current_dir(cwd).ok()
 }
 
 pub fn output_argv_in(program: &str, args: Vec<&str>, cwd: &str) -> str {
-    Command::new(program).args(args).current_dir(cwd).output()
+    Process::new(program).args(args).current_dir(cwd).output()
 }
 
 pub fn status_argv_in(program: &str, args: Vec<&str>, cwd: &str) -> i64 {
-    Command::new(program).args(args).current_dir(cwd).status()
+    Process::new(program).args(args).current_dir(cwd).status()
+}
+
+fn render_process_command(process: Process) -> str {
+    let command = match process.shell_command != "" {
+        true => process.shell_command,
+        false => render_argv_command(process.program, process.args),
+    };
+    match process.cwd != "" {
+        true => wrap_command_with_cwd(&process.cwd, &command),
+        false => command,
+    }
+}
+
+fn render_argv_command(program: &str, args: Vec<&str>) -> str {
+    let mut parts: Vec<str> = Vec::new();
+    parts.push(quote_shell_arg(program));
+    let mut idx = 0;
+    while idx < args.len() {
+        parts.push(quote_shell_arg(args[idx]));
+        idx = idx + 1;
+    }
+    parts.join(" ")
+}
+
+fn decode_exit_status(status: i64) -> i64 {
+    match status < 0 {
+        true => -1,
+        false => match status % 256 == 0 {
+            true => status / 256,
+            false => -(status % 256),
+        },
+    }
+}
+
+fn wrap_command_with_cwd(cwd: &str, command: &str) -> str {
+    f"cd {quote_shell_arg(cwd)} && {command}"
+}
+
+fn quote_shell_arg(value: &str) -> str {
+    let escaped = value.replace("'", "'\"'\"'");
+    f"'{escaped}'"
 }
