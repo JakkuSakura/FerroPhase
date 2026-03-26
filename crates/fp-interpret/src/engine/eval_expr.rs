@@ -1638,7 +1638,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return self.eval_expr(expr);
             }
             ExprKind::Quote(_quote) => {
-                if matches!(self.mode, InterpreterMode::CompileTime) {
+                if matches!(self.mode, InterpreterMode::Comptime) {
                     if let ExprKind::Quote(quote) = expr.kind() {
                         let kind = quote.kind;
                         let fragment = self.build_quoted_fragment(quote);
@@ -1650,7 +1650,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return Value::undefined();
             }
             ExprKind::Splice(_splice) => {
-                if !self.in_const_region() && !matches!(self.mode, InterpreterMode::CompileTime) {
+                if !self.in_const_region() && !matches!(self.mode, InterpreterMode::Comptime) {
                     self.emit_error("splice is only supported during const evaluation");
                     return Value::undefined();
                 }
@@ -2198,12 +2198,24 @@ impl<'ctx> AstInterpreter<'ctx> {
             return self.eval_invoke_compile_time(invoke);
         }
         match self.mode {
-            InterpreterMode::CompileTime => self.eval_invoke_compile_time(invoke),
-            InterpreterMode::RunTime => self.eval_invoke_runtime(invoke),
+            InterpreterMode::Comptime => self.eval_invoke_compile_time(invoke),
+            InterpreterMode::Runtime => self.eval_invoke_runtime(invoke),
         }
     }
 
     pub(super) fn eval_invoke_compile_time(&mut self, invoke: &mut ExprInvoke) -> Value {
+        if let ExprInvokeTarget::Function(locator) = &invoke.target {
+            if let Some(ident) = locator.as_ident() {
+                if ident.as_str() == "panic" {
+                    let mut call = ExprIntrinsicCall::new(
+                        IntrinsicCallKind::Panic,
+                        std::mem::take(&mut invoke.args),
+                        std::mem::take(&mut invoke.kwargs),
+                    );
+                    return self.eval_intrinsic(&mut call);
+                }
+            }
+        }
         if !invoke.kwargs.is_empty() {
             match invoke.target {
                 ExprInvokeTarget::Function(_) => {}
@@ -2250,6 +2262,39 @@ impl<'ctx> AstInterpreter<'ctx> {
                     _ => *value == needle,
                 });
                 return Value::bool(found);
+            }
+            if method_name == "join" && invoke.args.len() == 1 {
+                let receiver_value = self.eval_expr(select.obj.as_mut());
+                let separator = self.eval_expr(&mut invoke.args[0]);
+                let Value::List(list) = receiver_value else {
+                    self.emit_error("join expects a list receiver");
+                    return Value::undefined();
+                };
+                let separator = match separator {
+                    Value::String(text) => text.value,
+                    other => {
+                        self.emit_error(format!(
+                            "join expects a string separator, found {:?}",
+                            other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                let mut parts = Vec::with_capacity(list.values.len());
+                for value in &list.values {
+                    match value {
+                        Value::String(text) => parts.push(text.value.clone()),
+                        Value::Char(ch) => parts.push(ch.value.to_string()),
+                        other => {
+                            self.emit_error(format!(
+                                "join expects string list items, found {:?}",
+                                other
+                            ));
+                            return Value::undefined();
+                        }
+                    }
+                }
+                return Value::string(parts.join(&separator));
             }
             if select.field.name.as_str() == "push" && invoke.args.len() == 1 {
                 let value = self.eval_expr(&mut invoke.args[0]);
@@ -2386,6 +2431,46 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return Value::bool(result);
             }
 
+            if select.field.name.as_str() == "replace" && invoke.args.len() == 2 {
+                let value = self.eval_expr(select.obj.as_mut());
+                let from = self.eval_expr(&mut invoke.args[0]);
+                let to = self.eval_expr(&mut invoke.args[1]);
+                let hay = match value {
+                    Value::String(text) => text.value,
+                    other => {
+                        self.emit_error(format!(
+                            "string method 'replace' expects a string receiver, found {:?}",
+                            other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                let from = match from {
+                    Value::String(text) => text.value,
+                    Value::Char(ch) => ch.value.to_string(),
+                    other => {
+                        self.emit_error(format!(
+                            "string method 'replace' expects a string needle, found {:?}",
+                            other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                let to = match to {
+                    Value::String(text) => text.value,
+                    Value::Char(ch) => ch.value.to_string(),
+                    other => {
+                        self.emit_error(format!(
+                            "string method 'replace' expects a string replacement, found {:?}",
+                            other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                self.set_pending_expr_ty(Some(Ty::Primitive(TypePrimitive::String)));
+                return Value::string(hay.replace(&from, &to));
+            }
+
             if select.field.name.as_str() == "to_string" && invoke.args.is_empty() {
                 let value = self.eval_expr(select.obj.as_mut());
                 self.set_pending_expr_ty(Some(Ty::Primitive(TypePrimitive::String)));
@@ -2481,9 +2566,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.resolve_function_call(&mut locator, invoke, ResolutionMode::Default)
                 {
                     invoke.target = ExprInvokeTarget::Function(locator.clone());
-                    let evaluated = self.evaluate_args(&mut invoke.args);
+                    let evaluated =
+                        match self.evaluate_invoke_args(invoke, Some(&function.sig.params)) {
+                            Ok(values) => values,
+                            Err(_) => return Value::undefined(),
+                        };
                     if let Some(lang_name) = super::function_lang_item(&function) {
                         if let Some(handler) = super::resolve_lang_item_handler(&lang_name) {
+                            let _command_mock_state =
+                                super::ScopedCommandMockState::enter(self.command_mock_state.clone());
                             return match handler(&evaluated) {
                                 Ok(value) => value,
                                 Err(err) => {
@@ -2507,7 +2598,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
 
                 if let Some(Value::Function(function)) = self.lookup_callable_value(&locator) {
-                    let evaluated = self.evaluate_args(&mut invoke.args);
+                    let evaluated =
+                        match self.evaluate_invoke_args(invoke, Some(&function.sig.params)) {
+                            Ok(values) => values,
+                            Err(_) => return Value::undefined(),
+                        };
                     return self.call_value_function(&function, evaluated);
                 }
 
@@ -2518,7 +2613,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let target = self.eval_expr(expr.as_mut());
                 match target {
                     Value::Function(function) => {
-                        let evaluated = self.evaluate_args(&mut invoke.args);
+                        let evaluated =
+                            match self.evaluate_invoke_args(invoke, Some(&function.sig.params)) {
+                                Ok(values) => values,
+                                Err(_) => return Value::undefined(),
+                            };
                         self.call_value_function(&function, evaluated)
                     }
                     _ => {
@@ -2530,13 +2629,21 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprInvokeTarget::Closure(func) => {
-                let args = self.evaluate_args(&mut invoke.args);
-                let ret_ty = Self::value_function_ret_ty(func);
+                let func = func.clone();
+                let params = func.sig.params.clone();
+                let ret_ty = Self::value_function_ret_ty(&func);
+                let args = match self.evaluate_invoke_args(invoke, Some(&params)) {
+                    Ok(values) => values,
+                    Err(_) => return Value::undefined(),
+                };
                 self.set_pending_expr_ty(ret_ty);
-                self.call_value_function(func, args)
+                self.call_value_function(&func, args)
             }
             ExprInvokeTarget::Type(_) | ExprInvokeTarget::BinOp(_) => {
-                let evaluated = self.evaluate_args(&mut invoke.args);
+                let evaluated = match self.evaluate_invoke_args(invoke, None) {
+                    Ok(values) => values,
+                    Err(_) => return Value::undefined(),
+                };
                 Value::Tuple(ValueTuple::new(evaluated))
             }
             ExprInvokeTarget::Method(_) => unreachable!(),
@@ -2572,6 +2679,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 .collect(),
         )
     }
+
 
     fn try_eval_method_chain(&mut self, locator: &Name) -> Option<Value> {
         let text = locator.to_string();
@@ -2628,6 +2736,18 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn eval_invoke_runtime_flow(&mut self, invoke: &mut ExprInvoke) -> RuntimeFlow {
+        if let ExprInvokeTarget::Function(locator) = &invoke.target {
+            if let Some(ident) = locator.as_ident() {
+                if ident.as_str() == "panic" {
+                    let mut call = ExprIntrinsicCall::new(
+                        IntrinsicCallKind::Panic,
+                        std::mem::take(&mut invoke.args),
+                        std::mem::take(&mut invoke.kwargs),
+                    );
+                    return self.eval_intrinsic_runtime(&mut call);
+                }
+            }
+        }
         if let Some(mut call) = intrinsic_call_from_invoke(invoke) {
             return self.eval_intrinsic_runtime(&mut call);
         }
@@ -2719,24 +2839,27 @@ impl<'ctx> AstInterpreter<'ctx> {
                     return flow;
                 }
 
-                let args = match self.evaluate_args_runtime(&mut invoke.args) {
-                    Ok(values) => values,
-                    Err(flow) => return flow,
-                };
-                for (expr, value) in invoke.args.iter_mut().zip(args.iter()) {
-                    if expr.ty().is_none() {
-                        if let Some(ty) = self.infer_value_ty(value) {
-                            expr.set_ty(ty);
-                        }
-                    }
-                }
-
                 if let Some(function) =
                     self.resolve_function_call(&mut locator, invoke, ResolutionMode::Default)
                 {
                     invoke.target = ExprInvokeTarget::Function(locator.clone());
+                    let args = match self.evaluate_invoke_args(invoke, Some(&function.sig.params)) {
+                        Ok(values) => values,
+                        Err(flow) => return flow,
+                    };
+                    if !Self::invoke_has_splat(invoke) {
+                        for (expr, value) in invoke.args.iter_mut().zip(args.iter()) {
+                            if expr.ty().is_none() {
+                                if let Some(ty) = self.infer_value_ty(value) {
+                                    expr.set_ty(ty);
+                                }
+                            }
+                        }
+                    }
                     if let Some(lang_name) = super::function_lang_item(&function) {
                         if let Some(handler) = super::resolve_lang_item_handler(&lang_name) {
+                            let _command_mock_state =
+                                super::ScopedCommandMockState::enter(self.command_mock_state.clone());
                             return match handler(&args) {
                                 Ok(value) => RuntimeFlow::Value(value),
                                 Err(err) => {
@@ -2800,28 +2923,54 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 for name in candidate_names {
                     if let Some(template) = self.generic_functions.get(&name) {
+                        let function = template.function.clone();
+                        let params = function.sig.params.clone();
+                        let args = match self.evaluate_invoke_args(invoke, Some(&params)) {
+                            Ok(values) => values,
+                            Err(flow) => return flow,
+                        };
                         if let Some(stack) = Self::module_stack_from_locator(&locator) {
                             let saved = std::mem::take(&mut self.module_stack);
                             self.module_stack = stack;
-                            let flow = self.call_function_runtime(template.function.clone(), args);
+                            let flow = self.call_function_runtime(function.clone(), args);
                             self.module_stack = saved;
                             return flow;
                         }
-                        return self.call_function_runtime(template.function.clone(), args);
+                        return self.call_function_runtime(function, args);
                     }
                 }
 
-                if let Some(flow) = self.try_call_extern_function(&locator, &args) {
-                    return flow;
+                let mut extern_candidate_names = vec![locator.to_string()];
+                if let Some(ident) = locator.as_ident() {
+                    extern_candidate_names.push(ident.as_str().to_string());
+                }
+                for name in extern_candidate_names {
+                    if let Some(binding) = self.extern_functions.get(&name).cloned() {
+                        let args = match self.evaluate_invoke_args(invoke, None) {
+                            Ok(values) => values,
+                            Err(flow) => return flow,
+                        };
+                        return self.call_extern_function_runtime(&name, &binding, &args);
+                    }
                 }
 
                 if let Some(value) = self.lookup_callable_value(&locator) {
                     match value {
                         Value::Function(function) => {
+                            let args =
+                                match self.evaluate_invoke_args(invoke, Some(&function.sig.params))
+                                {
+                                Ok(values) => values,
+                                Err(flow) => return flow,
+                            };
                             return self.call_value_function_runtime(&function, args);
                         }
                         Value::Any(any) => {
                             if let Some(closure) = any.downcast_ref::<ConstClosure>() {
+                                let args = match self.evaluate_invoke_args(invoke, None) {
+                                    Ok(values) => values,
+                                    Err(flow) => return flow,
+                                };
                                 return self.call_const_closure_runtime(closure, args);
                             }
                         }
@@ -2839,7 +2988,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
                 match target {
                     Value::Function(function) => {
-                        let args = match self.evaluate_args_runtime(&mut invoke.args) {
+                        let args =
+                            match self.evaluate_invoke_args(invoke, Some(&function.sig.params)) {
                             Ok(values) => values,
                             Err(flow) => return flow,
                         };
@@ -2847,7 +2997,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                     Value::Any(any) => {
                         if let Some(closure) = any.downcast_ref::<ConstClosure>() {
-                            let args = match self.evaluate_args_runtime(&mut invoke.args) {
+                            let args = match self.evaluate_invoke_args(invoke, None) {
                                 Ok(values) => values,
                                 Err(flow) => return flow,
                             };
@@ -2863,16 +3013,18 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprInvokeTarget::Closure(func) => {
-                let args = match self.evaluate_args_runtime(&mut invoke.args) {
+                let func = func.clone();
+                let params = func.sig.params.clone();
+                let args = match self.evaluate_invoke_args(invoke, Some(&params)) {
                     Ok(values) => values,
                     Err(flow) => return flow,
                 };
-                let ret_ty = Self::value_function_ret_ty(func);
+                let ret_ty = Self::value_function_ret_ty(&func);
                 self.set_pending_expr_ty(ret_ty);
-                self.call_value_function_runtime(func, args)
+                self.call_value_function_runtime(&func, args)
             }
             ExprInvokeTarget::Type(_) | ExprInvokeTarget::BinOp(_) => {
-                let args = match self.evaluate_args_runtime(&mut invoke.args) {
+                let args = match self.evaluate_invoke_args(invoke, None) {
                     Ok(values) => values,
                     Err(flow) => return flow,
                 };
@@ -2887,9 +3039,24 @@ impl<'ctx> AstInterpreter<'ctx> {
     ) -> std::result::Result<Vec<Value>, RuntimeFlow> {
         let mut values = Vec::with_capacity(args.len());
         for arg in args.iter_mut() {
-            match self.eval_expr_runtime(arg) {
-                RuntimeFlow::Value(value) => values.push(value),
-                other => return Err(other),
+            match arg.kind_mut() {
+                ExprKind::Splat(splat) => match self.eval_expr_runtime(splat.iter.as_mut()) {
+                    RuntimeFlow::Value(Value::List(list)) => values.extend(list.values),
+                    RuntimeFlow::Value(Value::Tuple(tuple)) => values.extend(tuple.values),
+                    RuntimeFlow::Value(_) => {
+                        self.emit_error("splat expects a list or tuple value");
+                        return Err(RuntimeFlow::Value(Value::undefined()));
+                    }
+                    other => return Err(other),
+                },
+                ExprKind::SplatDict(_) => {
+                    self.emit_error("splat dict is not supported in positional arguments");
+                    return Err(RuntimeFlow::Value(Value::undefined()));
+                }
+                _ => match self.eval_expr_runtime(arg) {
+                    RuntimeFlow::Value(value) => values.push(value),
+                    other => return Err(other),
+                },
             }
         }
         Ok(values)
@@ -2941,6 +3108,35 @@ impl<'ctx> AstInterpreter<'ctx> {
             return self.call_method_runtime(function, receiver, arg_values);
         }
 
+        if matches!(method_name.as_str(), "starts_with" | "ends_with" | "contains")
+            && args.len() == 1
+        {
+            if let Value::String(receiver_text) = &receiver.value {
+                let needle = match self.evaluate_args_runtime(args) {
+                    Ok(mut values) => values.pop().unwrap_or_else(Value::undefined),
+                    Err(flow) => return flow,
+                };
+                let needle = match needle {
+                    Value::String(text) => text.value,
+                    Value::Char(ch) => ch.value.to_string(),
+                    other => {
+                        self.emit_error(format!(
+                            "string method '{}' expects a string argument, found {:?}",
+                            method_name, other
+                        ));
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                };
+                let result = match method_name.as_str() {
+                    "starts_with" => receiver_text.value.starts_with(&needle),
+                    "ends_with" => receiver_text.value.ends_with(&needle),
+                    "contains" => receiver_text.value.contains(&needle),
+                    _ => false,
+                };
+                return RuntimeFlow::Value(Value::bool(result));
+            }
+        }
+
         if method_name.as_str() == "contains" && args.len() == 1 {
             let Value::List(list) = &receiver.value else {
                 self.emit_error("contains expects a list receiver");
@@ -2961,6 +3157,42 @@ impl<'ctx> AstInterpreter<'ctx> {
                 _ => *value == needle,
             });
             return RuntimeFlow::Value(Value::bool(found));
+        }
+
+        if method_name == "join" && args.len() == 1 {
+            let separator = match self.evaluate_args_runtime(args) {
+                Ok(mut values) => values.pop().unwrap_or_else(Value::undefined),
+                Err(flow) => return flow,
+            };
+            let separator = match separator {
+                Value::String(text) => text.value,
+                other => {
+                    self.emit_error(format!(
+                        "join expects a string separator, found {:?}",
+                        other
+                    ));
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+            };
+            let Value::List(list) = &receiver.value else {
+                self.emit_error("join expects a list receiver");
+                return RuntimeFlow::Value(Value::undefined());
+            };
+            let mut parts = Vec::with_capacity(list.values.len());
+            for value in &list.values {
+                match value {
+                    Value::String(text) => parts.push(text.value.clone()),
+                    Value::Char(ch) => parts.push(ch.value.to_string()),
+                    other => {
+                        self.emit_error(format!(
+                            "join expects string list items, found {:?}",
+                            other
+                        ));
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                }
+            }
+            return RuntimeFlow::Value(Value::string(parts.join(&separator)));
         }
 
         if args.is_empty() {
@@ -3154,6 +3386,42 @@ impl<'ctx> AstInterpreter<'ctx> {
             if let Value::Map(map) = &receiver.value {
                 return RuntimeFlow::Value(Value::bool(map.entries.is_empty()));
             }
+        }
+
+        if method_name == "replace" && args.len() == 2 {
+            let arg_values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return flow,
+            };
+            let from = arg_values.first().cloned().unwrap_or_else(Value::undefined);
+            let to = arg_values.get(1).cloned().unwrap_or_else(Value::undefined);
+            let Value::String(receiver_text) = receiver.value else {
+                self.emit_error("string method 'replace' expects a string receiver");
+                return RuntimeFlow::Value(Value::undefined());
+            };
+            let from = match from {
+                Value::String(text) => text.value,
+                Value::Char(ch) => ch.value.to_string(),
+                other => {
+                    self.emit_error(format!(
+                        "string method 'replace' expects a string needle, found {:?}",
+                        other
+                    ));
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+            };
+            let to = match to {
+                Value::String(text) => text.value,
+                Value::Char(ch) => ch.value.to_string(),
+                other => {
+                    self.emit_error(format!(
+                        "string method 'replace' expects a string replacement, found {:?}",
+                        other
+                    ));
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+            };
+            return RuntimeFlow::Value(Value::string(receiver_text.value.replace(&from, &to)));
         }
 
         self.emit_error(format!("cannot resolve method '{}'", method_name));
@@ -3994,7 +4262,26 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn evaluate_args(&mut self, args: &mut Vec<Expr>) -> Vec<Value> {
-        args.iter_mut().map(|arg| self.eval_expr(arg)).collect()
+        let mut values = Vec::with_capacity(args.len());
+        for arg in args.iter_mut() {
+            match arg.kind_mut() {
+                ExprKind::Splat(splat) => {
+                    let value = self.eval_expr(splat.iter.as_mut());
+                    match value {
+                        Value::List(list) => values.extend(list.values),
+                        Value::Tuple(tuple) => values.extend(tuple.values),
+                        _ => {
+                            self.emit_error("splat expects a list or tuple value");
+                        }
+                    }
+                }
+                ExprKind::SplatDict(_) => {
+                    self.emit_error("splat dict is not supported in positional arguments");
+                }
+                _ => values.push(self.eval_expr(arg)),
+            }
+        }
+        values
     }
 
     pub(super) fn evaluate_arg_slice(&mut self, args: &mut [Expr]) -> Vec<Value> {
@@ -4003,9 +4290,25 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     // Helpers moved from interpreter.rs to support const-eval invoke resolution.
     pub(super) fn lookup_callable_value(&mut self, locator: &Name) -> Option<Value> {
-        locator
-            .as_ident()
-            .and_then(|ident| self.lookup_value(ident.as_str()))
+        if let Some(ident) = locator.as_ident() {
+            if let Some(value) = self.lookup_value(ident.as_str()) {
+                return Some(value);
+            }
+            let qualified = self.qualified_name(ident.as_str());
+            if let Some(value) = self.evaluated_constants.get(&qualified) {
+                return Some(value.clone());
+            }
+        }
+        let locator_name = locator.to_string();
+        if let Some(value) = self.evaluated_constants.get(&locator_name) {
+            return Some(value.clone());
+        }
+        if let Some(expanded) = self.expand_imported_locator(locator) {
+            if let Some(value) = self.evaluated_constants.get(&expanded) {
+                return Some(value.clone());
+            }
+        }
+        None
     }
 
     pub(super) fn resolve_function_call(
@@ -4049,16 +4352,19 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         }
 
+        let has_splat = Self::invoke_has_splat(invoke);
         for name in &candidate_names {
             if let Some(function) = self.functions.get(name).cloned() {
                 if !Self::invoke_shape_matches(invoke, &function.sig.params) {
                     continue;
                 }
-                if !self.apply_kwargs_to_invoke(invoke, &function.sig.params) {
-                    return None;
+                if !has_splat {
+                    if !self.apply_kwargs_to_invoke(invoke, &function.sig.params) {
+                        return None;
+                    }
+                    // Annotate arguments with expected parameter types
+                    self.annotate_invoke_args_slice(&mut invoke.args, &function.sig.params);
                 }
-                // Annotate arguments with expected parameter types
-                self.annotate_invoke_args_slice(&mut invoke.args, &function.sig.params);
                 return Some(function);
             }
         }
@@ -4068,14 +4374,18 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if !Self::invoke_shape_matches(invoke, &template.function.sig.params) {
                     continue;
                 }
-                if !self.apply_kwargs_to_invoke(invoke, &template.function.sig.params) {
-                    return None;
+                if !has_splat {
+                    if !self.apply_kwargs_to_invoke(invoke, &template.function.sig.params) {
+                        return None;
+                    }
                 }
                 if let Some(function) =
                     self.instantiate_generic_function(name, template, locator, &mut invoke.args)
                 {
-                    // Annotate arguments now that we know the specialized function signature
-                    self.annotate_invoke_args_slice(&mut invoke.args, &function.sig.params);
+                    if !has_splat {
+                        // Annotate arguments now that we know the specialized function signature
+                        self.annotate_invoke_args_slice(&mut invoke.args, &function.sig.params);
+                    }
                     return Some(function);
                 }
             }
@@ -4086,10 +4396,12 @@ impl<'ctx> AstInterpreter<'ctx> {
             if !Self::invoke_shape_matches(invoke, &function.sig.params) {
                 return None;
             }
-            if !self.apply_kwargs_to_invoke(invoke, &function.sig.params) {
-                return None;
+            if !has_splat {
+                if !self.apply_kwargs_to_invoke(invoke, &function.sig.params) {
+                    return None;
+                }
+                self.annotate_invoke_args_slice(&mut invoke.args, &function.sig.params);
             }
-            self.annotate_invoke_args_slice(&mut invoke.args, &function.sig.params);
             Some(function)
         } else {
             None
@@ -4154,6 +4466,9 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn invoke_shape_matches(invoke: &ExprInvoke, params: &[FunctionParam]) -> bool {
+        if Self::invoke_has_splat(invoke) {
+            return true;
+        }
         if invoke.args.len() > params.len() {
             return false;
         }
@@ -4168,6 +4483,327 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         true
+    }
+
+    fn invoke_has_splat(invoke: &ExprInvoke) -> bool {
+        invoke.args.iter().any(|arg| match arg.kind() {
+            ExprKind::Splat(_) | ExprKind::SplatDict(_) => true,
+            _ => false,
+        })
+    }
+
+    fn collect_invoke_values_runtime(
+        &mut self,
+        invoke: &mut ExprInvoke,
+    ) -> std::result::Result<(Vec<Value>, Vec<(String, Value)>), RuntimeFlow> {
+        let mut positional = Vec::new();
+        let mut kwargs = Vec::new();
+        let mut saw_kwarg = false;
+
+        for arg in invoke.args.iter_mut() {
+            match arg.kind_mut() {
+                ExprKind::Splat(splat) => {
+                    if saw_kwarg {
+                        self.emit_error("positional arguments cannot follow keyword arguments");
+                        return Err(RuntimeFlow::Value(Value::undefined()));
+                    }
+                    match self.eval_expr_runtime(splat.iter.as_mut()) {
+                        RuntimeFlow::Value(Value::List(list)) => positional.extend(list.values),
+                        RuntimeFlow::Value(Value::Tuple(tuple)) => positional.extend(tuple.values),
+                        RuntimeFlow::Value(_) => {
+                            self.emit_error("splat expects a list or tuple value");
+                            return Err(RuntimeFlow::Value(Value::undefined()));
+                        }
+                        other => return Err(other),
+                    }
+                }
+                ExprKind::SplatDict(splat) => {
+                    let value = match self.eval_expr_runtime(splat.dict.as_mut()) {
+                        RuntimeFlow::Value(value) => value,
+                        other => return Err(other),
+                    };
+                    saw_kwarg = true;
+                    match value {
+                        Value::Map(map) => {
+                            for (key, value) in map.iter() {
+                                let Value::String(text) = key else {
+                                    self.emit_error(
+                                        "splat dict expects string keys for keyword arguments",
+                                    );
+                                    return Err(RuntimeFlow::Value(Value::undefined()));
+                                };
+                                kwargs.push((text.value.clone(), value.clone()));
+                            }
+                        }
+                        Value::Structural(structural) => {
+                            for field in structural.fields {
+                                kwargs.push((field.name.as_str().to_string(), field.value));
+                            }
+                        }
+                        Value::Struct(struct_value) => {
+                            for field in struct_value.structural.fields {
+                                kwargs.push((field.name.as_str().to_string(), field.value));
+                            }
+                        }
+                        _ => {
+                            self.emit_error("splat dict expects a map or structural value");
+                            return Err(RuntimeFlow::Value(Value::undefined()));
+                        }
+                    }
+                }
+                _ => {
+                    if saw_kwarg {
+                        self.emit_error("positional arguments cannot follow keyword arguments");
+                        return Err(RuntimeFlow::Value(Value::undefined()));
+                    }
+                    match self.eval_expr_runtime(arg) {
+                        RuntimeFlow::Value(value) => positional.push(value),
+                        other => return Err(other),
+                    }
+                }
+            }
+        }
+
+        for kwarg in invoke.kwargs.iter_mut() {
+            let value = match self.eval_expr_runtime(&mut kwarg.value) {
+                RuntimeFlow::Value(value) => value,
+                other => return Err(other),
+            };
+            kwargs.push((kwarg.name.as_str().to_string(), value));
+        }
+
+        Ok((positional, kwargs))
+    }
+
+    fn collect_invoke_values_const(
+        &mut self,
+        invoke: &mut ExprInvoke,
+    ) -> Option<(Vec<Value>, Vec<(String, Value)>)> {
+        let mut positional = Vec::new();
+        let mut kwargs = Vec::new();
+        let mut saw_kwarg = false;
+
+        for arg in invoke.args.iter_mut() {
+            match arg.kind_mut() {
+                ExprKind::Splat(splat) => {
+                    if saw_kwarg {
+                        self.emit_error("positional arguments cannot follow keyword arguments");
+                        return None;
+                    }
+                    let value = self.eval_expr(splat.iter.as_mut());
+                    match value {
+                        Value::List(list) => positional.extend(list.values),
+                        Value::Tuple(tuple) => positional.extend(tuple.values),
+                        _ => {
+                            self.emit_error("splat expects a list or tuple value");
+                            return None;
+                        }
+                    }
+                }
+                ExprKind::SplatDict(splat) => {
+                    let value = self.eval_expr(splat.dict.as_mut());
+                    saw_kwarg = true;
+                    match value {
+                        Value::Map(map) => {
+                            for (key, value) in map.iter() {
+                                let Value::String(text) = key else {
+                                    self.emit_error(
+                                        "splat dict expects string keys for keyword arguments",
+                                    );
+                                    return None;
+                                };
+                                kwargs.push((text.value.clone(), value.clone()));
+                            }
+                        }
+                        Value::Structural(structural) => {
+                            for field in structural.fields {
+                                kwargs.push((field.name.as_str().to_string(), field.value));
+                            }
+                        }
+                        Value::Struct(struct_value) => {
+                            for field in struct_value.structural.fields {
+                                kwargs.push((field.name.as_str().to_string(), field.value));
+                            }
+                        }
+                        _ => {
+                            self.emit_error("splat dict expects a map or structural value");
+                            return None;
+                        }
+                    }
+                }
+                _ => {
+                    if saw_kwarg {
+                        self.emit_error("positional arguments cannot follow keyword arguments");
+                        return None;
+                    }
+                    positional.push(self.eval_expr(arg));
+                }
+            }
+        }
+
+        for kwarg in invoke.kwargs.iter_mut() {
+            let value = self.eval_expr(&mut kwarg.value);
+            kwargs.push((kwarg.name.as_str().to_string(), value));
+        }
+
+        Some((positional, kwargs))
+    }
+
+    fn apply_invoke_values_to_params_runtime(
+        &mut self,
+        params: &[FunctionParam],
+        positional: Vec<Value>,
+        kwargs: Vec<(String, Value)>,
+    ) -> std::result::Result<Vec<Value>, RuntimeFlow> {
+        if positional.len() > params.len() {
+            self.emit_error(format!(
+                "function expects {} arguments, found {}",
+                params.len(),
+                positional.len()
+            ));
+            return Err(RuntimeFlow::Value(Value::undefined()));
+        }
+
+        let mut slots: Vec<Option<Value>> = vec![None; params.len()];
+        for (idx, value) in positional.into_iter().enumerate() {
+            slots[idx] = Some(value);
+        }
+        for (name, value) in kwargs.into_iter() {
+            let pos = params
+                .iter()
+                .position(|param| param.name.as_str() == name.as_str());
+            let Some(index) = pos else {
+                self.emit_error(format!("unknown keyword argument '{}'", name));
+                return Err(RuntimeFlow::Value(Value::undefined()));
+            };
+            if slots[index].is_some() {
+                self.emit_error(format!("duplicate keyword argument '{}'", name));
+                return Err(RuntimeFlow::Value(Value::undefined()));
+            }
+            slots[index] = Some(value);
+        }
+
+        for (idx, slot) in slots.iter_mut().enumerate() {
+            if slot.is_some() {
+                continue;
+            }
+            if let Some(context_arg) = self.resolve_context_argument(&params[idx]) {
+                let mut context_arg = context_arg;
+                let value = match self.eval_expr_runtime(&mut context_arg) {
+                    RuntimeFlow::Value(value) => value,
+                    other => return Err(other),
+                };
+                *slot = Some(value);
+                continue;
+            }
+            if let Some(default) = params[idx].default.as_ref() {
+                *slot = Some(default.clone());
+                continue;
+            }
+            self.emit_error(format!(
+                "missing argument '{}' at position {}",
+                params[idx].name.as_str(),
+                idx
+            ));
+            return Err(RuntimeFlow::Value(Value::undefined()));
+        }
+
+        Ok(slots.into_iter().map(|slot| slot.unwrap()).collect())
+    }
+
+    fn apply_invoke_values_to_params_const(
+        &mut self,
+        params: &[FunctionParam],
+        positional: Vec<Value>,
+        kwargs: Vec<(String, Value)>,
+    ) -> Option<Vec<Value>> {
+        if positional.len() > params.len() {
+            self.emit_error(format!(
+                "function expects {} arguments, found {}",
+                params.len(),
+                positional.len()
+            ));
+            return None;
+        }
+
+        let mut slots: Vec<Option<Value>> = vec![None; params.len()];
+        for (idx, value) in positional.into_iter().enumerate() {
+            slots[idx] = Some(value);
+        }
+        for (name, value) in kwargs.into_iter() {
+            let pos = params
+                .iter()
+                .position(|param| param.name.as_str() == name.as_str());
+            let Some(index) = pos else {
+                self.emit_error(format!("unknown keyword argument '{}'", name));
+                return None;
+            };
+            if slots[index].is_some() {
+                self.emit_error(format!("duplicate keyword argument '{}'", name));
+                return None;
+            }
+            slots[index] = Some(value);
+        }
+
+        for (idx, slot) in slots.iter_mut().enumerate() {
+            if slot.is_some() {
+                continue;
+            }
+            if let Some(context_arg) = self.resolve_context_argument(&params[idx]) {
+                let mut context_arg = context_arg;
+                let value = self.eval_expr(&mut context_arg);
+                *slot = Some(value);
+                continue;
+            }
+            if let Some(default) = params[idx].default.as_ref() {
+                *slot = Some(default.clone());
+                continue;
+            }
+            self.emit_error(format!(
+                "missing argument '{}' at position {}",
+                params[idx].name.as_str(),
+                idx
+            ));
+            return None;
+        }
+
+        Some(slots.into_iter().map(|slot| slot.unwrap()).collect())
+    }
+
+    fn evaluate_invoke_args(
+        &mut self,
+        invoke: &mut ExprInvoke,
+        params: Option<&[FunctionParam]>,
+    ) -> std::result::Result<Vec<Value>, RuntimeFlow> {
+        // Const vs runtime is determined by interpreter mode and const region.
+        // Capability gating (IO/exec/etc.) is orthogonal and handled elsewhere.
+        let (positional, kwargs) = if self.in_const_region()
+            || matches!(self.mode, InterpreterMode::Comptime)
+        {
+            match self.collect_invoke_values_const(invoke) {
+                Some(values) => values,
+                None => return Err(RuntimeFlow::Value(Value::undefined())),
+            }
+        } else {
+            self.collect_invoke_values_runtime(invoke)?
+        };
+        match params {
+            Some(params) => {
+        if self.in_const_region() || matches!(self.mode, InterpreterMode::Comptime) {
+                    self.apply_invoke_values_to_params_const(params, positional, kwargs)
+                        .ok_or_else(|| RuntimeFlow::Value(Value::undefined()))
+                } else {
+                    self.apply_invoke_values_to_params_runtime(params, positional, kwargs)
+                }
+            }
+            None => {
+                if !kwargs.is_empty() {
+                    self.emit_error("keyword arguments are only supported on function calls");
+                    return Err(RuntimeFlow::Value(Value::undefined()));
+                }
+                Ok(positional)
+            }
+        }
     }
 
     fn resolve_context_argument(&self, param: &FunctionParam) -> Option<Expr> {
@@ -4198,10 +4834,10 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn apply_local_import_alias(&mut self, locator: &mut Name) -> bool {
         match locator {
             Name::Ident(ident) => {
-                let Some(target) = self.local_imports.get(ident.as_str()) else {
+                let Some(target) = self.import_alias_target(ident.as_str()) else {
                     return false;
                 };
-                let Some(new_locator) = Self::locator_from_import_target(target) else {
+                let Some(new_locator) = Self::locator_from_import_target(&target) else {
                     return false;
                 };
                 *locator = new_locator;
@@ -4214,10 +4850,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let Some(first) = path.segments.first() else {
                     return false;
                 };
-                let Some(target) = self.local_imports.get(first.as_str()) else {
+                let Some(target) = self.import_alias_target(first.as_str()) else {
                     return false;
                 };
-                let Some(mut target_path) = Self::import_target_path(target) else {
+                let Some(mut target_path) = Self::import_target_path(&target) else {
                     return false;
                 };
                 target_path
@@ -4233,10 +4869,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let Some(first) = param_path.segments.first() else {
                     return false;
                 };
-                let Some(target) = self.local_imports.get(first.ident.as_str()) else {
+                let Some(target) = self.import_alias_target(first.ident.as_str()) else {
                     return false;
                 };
-                let Some(mut target_path) = Self::import_target_path(target) else {
+                let Some(mut target_path) = Self::import_target_path(&target) else {
                     return false;
                 };
                 for segment in param_path.segments.iter().skip(1) {

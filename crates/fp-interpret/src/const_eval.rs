@@ -13,7 +13,9 @@ use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::lang::{collect_lang_items, register_threadlocal_lang_items};
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 
-use crate::engine::{AstInterpreter, InterpreterMode, InterpreterOptions, StdoutMode};
+use crate::engine::{
+    AstInterpreter, InterpreterCapability, InterpreterMode, InterpreterOptions, StdoutMode,
+};
 
 pub const STAGE_CONST_EVAL: &str = "const-eval";
 
@@ -71,7 +73,8 @@ impl ConstEvaluationOrchestrator {
     ) -> CoreResult<ConstEvalOutcome> {
         register_threadlocal_serializer(self.serializer.clone());
         let options = InterpreterOptions {
-            mode: InterpreterMode::CompileTime,
+            mode: InterpreterMode::Comptime,
+            capability: InterpreterCapability::default(),
             debug_assertions: self.debug_assertions,
             diagnostics: self.diagnostics.clone(),
             diagnostic_context: STAGE_CONST_EVAL,
@@ -81,8 +84,8 @@ impl ConstEvaluationOrchestrator {
             stdout_mode: StdoutMode::Capture,
             target_env: TargetEnv::host(),
             command_mock_state: None,
-        runtime_extern_hook: None,
-    };
+            runtime_extern_hook: None,
+        };
 
         let mut interpreter = AstInterpreter::new(ctx, options);
         interpreter.enable_incremental_typing(ast);

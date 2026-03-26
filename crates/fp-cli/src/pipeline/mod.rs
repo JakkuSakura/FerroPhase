@@ -24,7 +24,7 @@ use fp_core::{hir, lir};
 use fp_dotnet::{emit_assembly, emit_cil};
 use fp_interpret::const_eval::ConstEvalOutcome;
 use fp_interpret::engine::{
-    AstInterpreter, InterpreterMode, InterpreterOptions, InterpreterOutcome,
+    AstInterpreter, InterpreterCapability, InterpreterMode, InterpreterOptions, InterpreterOutcome,
 };
 use fp_jvm;
 use fp_lang::embedded_std;
@@ -1148,6 +1148,7 @@ impl Pipeline {
         };
         let interpreter_opts = InterpreterOptions {
             mode,
+            capability: InterpreterCapability::default(),
             debug_assertions: !options.release,
             diagnostics: None,
             diagnostic_context: STAGE_AST_INTERPRET,
@@ -1219,7 +1220,7 @@ impl Pipeline {
         _file_path: Option<&Path>,
     ) -> Result<Value, CliError> {
         let (value, mut outcome) =
-            self.run_ast_interpreter(ast, options, InterpreterMode::RunTime)?;
+            self.run_ast_interpreter(ast, options, InterpreterMode::Runtime)?;
 
         if !outcome.stdout.is_empty() {
             for chunk in outcome.stdout.drain(..) {
@@ -1241,7 +1242,7 @@ impl Pipeline {
         match runtime_name {
             "rust" | "literal" => {
                 let (value, mut outcome) =
-                    self.run_ast_interpreter(ast, options, InterpreterMode::RunTime)?;
+                    self.run_ast_interpreter(ast, options, InterpreterMode::Runtime)?;
 
                 if !outcome.stdout.is_empty() {
                     for chunk in outcome.stdout.drain(..) {

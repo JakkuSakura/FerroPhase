@@ -11,7 +11,7 @@ use fp_core::error::Result as CoreResult;
 use fp_core::lang::{collect_lang_items, register_threadlocal_lang_items};
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 
-use crate::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use crate::engine::{AstInterpreter, InterpreterCapability, InterpreterMode, InterpreterOptions};
 
 pub const STAGE_CONST_EVAL: &str = "const-eval";
 
@@ -68,7 +68,8 @@ impl ConstEvaluationOrchestrator {
     ) -> CoreResult<ConstEvalOutcome> {
         register_threadlocal_serializer(self.serializer.clone());
         let options = InterpreterOptions {
-            mode: InterpreterMode::CompileTime,
+            mode: InterpreterMode::Comptime,
+            capability: InterpreterCapability::default(),
             debug_assertions: self.debug_assertions,
             diagnostics: self.diagnostics.clone(),
             diagnostic_context: STAGE_CONST_EVAL,

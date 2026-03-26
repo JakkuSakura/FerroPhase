@@ -5,7 +5,9 @@ use fp_core::context::SharedScopedContext;
 use fp_core::ops::BinOpKind;
 use fp_core::span::Span;
 use fp_core::Result;
-use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions, StdoutMode};
+use fp_interpret::engine::{
+    AstInterpreter, InterpreterCapability, InterpreterMode, InterpreterOptions, StdoutMode,
+};
 
 fn i32_ty() -> Ty {
     Ty::Primitive(TypePrimitive::Int(TypeInt::I32))
@@ -44,7 +46,8 @@ fn quote_fn_structural_pattern_binds_name() -> Result<()> {
 
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
-        mode: InterpreterMode::CompileTime,
+        mode: InterpreterMode::Comptime,
+        capability: InterpreterCapability::default(),
         debug_assertions: false,
         diagnostics: None,
         diagnostic_context: "ast-interpreter",
@@ -90,7 +93,8 @@ fn quote_items_plural_pattern_binds_list() -> Result<()> {
 
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
-        mode: InterpreterMode::CompileTime,
+        mode: InterpreterMode::Comptime,
+        capability: InterpreterCapability::default(),
         debug_assertions: false,
         diagnostics: None,
         diagnostic_context: "ast-interpreter",
@@ -160,7 +164,8 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
 
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
-        mode: InterpreterMode::CompileTime,
+        mode: InterpreterMode::Comptime,
+        capability: InterpreterCapability::default(),
         debug_assertions: false,
         diagnostics: None,
         diagnostic_context: "ast-interpreter",
@@ -399,7 +404,8 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
     let mut ast = Node::file(file);
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
-        mode: InterpreterMode::CompileTime,
+        mode: InterpreterMode::Comptime,
+        capability: InterpreterCapability::default(),
         debug_assertions: false,
         diagnostics: None,
         diagnostic_context: "ast-interpreter",
@@ -467,7 +473,8 @@ fn splice_executes_expr_outside_const_block() -> Result<()> {
     let mut ast = Node::file(file);
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
-        mode: InterpreterMode::CompileTime,
+        mode: InterpreterMode::Comptime,
+        capability: InterpreterCapability::default(),
         debug_assertions: false,
         diagnostics: None,
         diagnostic_context: "ast-interpreter",
@@ -551,7 +558,8 @@ fn splice_allows_items_inside_function_bodies() -> Result<()> {
     let mut ast = Node::file(file);
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
-        mode: InterpreterMode::CompileTime,
+        mode: InterpreterMode::Comptime,
+        capability: InterpreterCapability::default(),
         debug_assertions: false,
         diagnostics: None,
         diagnostic_context: "ast-interpreter",

@@ -14,7 +14,7 @@ fn interpret_and_run(source: &str) -> Result<Value> {
 
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
-        mode: InterpreterMode::RunTime,
+        mode: InterpreterMode::Runtime,
         macro_parser: result.macro_parser,
         intrinsic_normalizer: result.intrinsic_normalizer,
         ..InterpreterOptions::default()

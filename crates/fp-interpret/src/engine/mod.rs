@@ -69,11 +69,13 @@ pub enum QuotedFragment {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterpreterMode {
-    /// Compile-time evaluation for const regions: allow most operations that do
-    /// not require external access (IO, compiler-supported runtime hooks, runtime-only intrinsics).
-    CompileTime,
-    /// Runtime evaluation with full semantics and side effects.
-    RunTime,
+    /// Compile-time evaluation mode. The interpreter evaluates `const` regions
+    /// and materializes AST output from them; it does not represent a runtime
+    /// program execution and should be treated as returning AST after const eval.
+    Comptime,
+    /// Runtime evaluation mode. The interpreter executes the program and
+    /// produces runtime values.
+    Runtime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,8 +127,21 @@ impl<'ctx> TypeResolutionHook for InterpreterTypeHook<'ctx> {
 }
 
 #[derive(Clone)]
+pub struct InterpreterCapability {
+    pub io: bool,
+    pub exec: bool,
+}
+
+impl Default for InterpreterCapability {
+    fn default() -> Self {
+        Self { io: true, exec: true }
+    }
+}
+
+#[derive(Clone)]
 pub struct InterpreterOptions {
     pub mode: InterpreterMode,
+    pub capability: InterpreterCapability,
     pub target_env: TargetEnv,
     pub debug_assertions: bool,
     pub diagnostics: Option<Arc<DiagnosticManager>>,
@@ -143,7 +158,8 @@ pub struct InterpreterOptions {
 impl Default for InterpreterOptions {
     fn default() -> Self {
         Self {
-            mode: InterpreterMode::CompileTime,
+            mode: InterpreterMode::Comptime,
+            capability: InterpreterCapability::default(),
             target_env: TargetEnv::host(),
             debug_assertions: false,
             diagnostics: None,
@@ -780,6 +796,7 @@ pub struct AstInterpreter<'ctx> {
     diag_manager: Option<Arc<DiagnosticManager>>,
     intrinsics: IntrinsicsRegistry,
     mode: InterpreterMode,
+    capability: InterpreterCapability,
     target_env: TargetEnv,
     debug_assertions: bool,
     diagnostic_context: &'static str,
@@ -859,8 +876,30 @@ struct RuntimeContextBinding {
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
+    fn require_io_capability(&mut self, operation: &str) -> bool {
+        if self.capability.io {
+            return true;
+        }
+        self.emit_error(format!(
+            "{} is disabled by interpreter capability",
+            operation
+        ));
+        false
+    }
+
+    fn require_exec_capability(&mut self, operation: &str) -> bool {
+        if self.capability.exec {
+            return true;
+        }
+        self.emit_error(format!(
+            "{} is disabled by interpreter capability",
+            operation
+        ));
+        false
+    }
+
     pub fn new(ctx: &'ctx SharedScopedContext, options: InterpreterOptions) -> Self {
-        let in_const_region = if matches!(options.mode, InterpreterMode::CompileTime) {
+        let in_const_region = if matches!(options.mode, InterpreterMode::Comptime) {
             1
         } else {
             0
@@ -870,6 +909,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             diag_manager: options.diagnostics.clone(),
             intrinsics: IntrinsicsRegistry::new(),
             mode: options.mode,
+            capability: options.capability.clone(),
             target_env: options.target_env,
             debug_assertions: options.debug_assertions,
             diagnostic_context: options.diagnostic_context,
@@ -980,7 +1020,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         continue;
                     }
                     self.evaluate_item(&mut file.items[idx]);
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && matches!(
                             file.items.get(idx).map(|item| item.kind()),
                             Some(ItemKind::DefFunction(func))
@@ -991,7 +1031,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.mark_mutated();
                         continue;
                     }
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && is_quote_only_item(&file.items[idx])
                     {
                         file.items.remove(idx);
@@ -1036,14 +1076,14 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub fn execute_main(&mut self) -> Option<Value> {
         let function = self.functions.get("main").cloned()?;
         match self.mode {
-            InterpreterMode::CompileTime => {
+            InterpreterMode::Comptime => {
                 let mut body_expr = (*function.body).clone();
                 self.push_scope();
                 let value = self.eval_expr(&mut body_expr);
                 self.pop_scope();
                 Some(value)
             }
-            InterpreterMode::RunTime => {
+            InterpreterMode::Runtime => {
                 let flow = self.call_function_runtime(function, Vec::new());
                 let value = self.finish_runtime_flow(flow);
                 let should_await = self.extract_spawned_future_handle(&value).is_some()
@@ -1715,7 +1755,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn materialize_symbol(&mut self, name: &str) -> bool {
-        if !matches!(self.mode, InterpreterMode::CompileTime) {
+        if !matches!(self.mode, InterpreterMode::Comptime) {
             return false;
         }
         if self.symbol_available(name) {
@@ -2623,8 +2663,8 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn eval_expr_with_mode(&mut self, expr: &mut Expr) -> Value {
         match self.mode {
-            InterpreterMode::CompileTime => self.eval_expr(expr),
-            InterpreterMode::RunTime => {
+            InterpreterMode::Comptime => self.eval_expr(expr),
+            InterpreterMode::Runtime => {
                 let flow = self.eval_expr_runtime(expr);
                 self.finish_runtime_flow(flow)
             }
@@ -2664,7 +2704,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         if attrs.is_empty() {
             return false;
         }
-        if !self.in_const_region() && !matches!(self.mode, InterpreterMode::CompileTime) {
+        if !self.in_const_region() && !matches!(self.mode, InterpreterMode::Comptime) {
             self.emit_error("attributes require const evaluation");
             return true;
         }
@@ -3019,7 +3059,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         if !self.item_enabled(item) {
             return;
         }
-        if matches!(self.mode, InterpreterMode::CompileTime) {
+        if matches!(self.mode, InterpreterMode::Comptime) {
             if let ItemKind::DefFunction(func) = item.kind() {
                 if let Some((name, kind)) = self.proc_macro_registration(func) {
                     self.register_proc_macro(
@@ -3049,7 +3089,7 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         match item.kind_mut() {
             ItemKind::Macro(mac) => {
-                if matches!(self.mode, InterpreterMode::CompileTime) {
+                if matches!(self.mode, InterpreterMode::Comptime) {
                     let macro_name = mac
                         .invocation
                         .path
@@ -3321,7 +3361,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         continue;
                     }
                     self.evaluate_item(&mut module.items[idx]);
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && matches!(
                             module.items.get(idx).map(|item| item.kind()),
                             Some(ItemKind::DefFunction(func))
@@ -3332,7 +3372,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.mark_mutated();
                         continue;
                     }
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && is_quote_only_item(&module.items[idx])
                     {
                         module.items.remove(idx);
@@ -3385,7 +3425,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         continue;
                     }
                     self.evaluate_item(&mut impl_block.items[idx]);
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && matches!(
                             impl_block.items.get(idx).map(|item| item.kind()),
                             Some(ItemKind::DefFunction(func))
@@ -3396,7 +3436,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.mark_mutated();
                         continue;
                     }
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && is_quote_only_item(&impl_block.items[idx])
                     {
                         impl_block.items.remove(idx);
@@ -3480,7 +3520,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ItemKind::Expr(expr) => {
-                if matches!(self.mode, InterpreterMode::CompileTime) {
+                if matches!(self.mode, InterpreterMode::Comptime) {
                     if let ExprKind::Splice(splice) = expr.kind_mut() {
                         let Some(fragments) = self.resolve_splice_fragments(splice.token.as_mut())
                         else {
@@ -3625,19 +3665,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         })?
     }
 
-    fn try_call_extern_function(&mut self, locator: &Name, args: &[Value]) -> Option<RuntimeFlow> {
-        let mut candidate_names = vec![locator.to_string()];
-        if let Some(ident) = locator.as_ident() {
-            candidate_names.push(ident.as_str().to_string());
-        }
-        for name in candidate_names {
-            if let Some(binding) = self.extern_functions.get(&name).cloned() {
-                return Some(self.call_extern_function_runtime(&name, &binding, args));
-            }
-        }
-        None
-    }
-
     fn call_extern_function_runtime(
         &mut self,
         name: &str,
@@ -3714,6 +3741,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                     RuntimeFlow::Value(Value::undefined())
                 }
             };
+        }
+        if !self.require_exec_capability("command execution") {
+            return RuntimeFlow::Value(Value::undefined());
         }
 
         let mut process = Command::new(&fixed_args[0]);
@@ -7528,7 +7558,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return value;
             }
         }
-        if matches!(self.mode, InterpreterMode::CompileTime) && self.materialize_symbol(&symbol) {
+        if matches!(self.mode, InterpreterMode::Comptime) && self.materialize_symbol(&symbol) {
             if let Some(value) = self.evaluated_constants.get(&symbol) {
                 return value.clone();
             }

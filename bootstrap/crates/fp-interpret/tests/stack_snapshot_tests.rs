@@ -23,7 +23,7 @@ fn stack_snapshot_tracks_runtime_values() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );

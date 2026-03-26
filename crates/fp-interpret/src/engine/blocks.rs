@@ -14,7 +14,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 // Quoted fragments inside function analysis remain as-is until evaluated (e.g., by splice)
             }
             ExprKind::Splice(splice) => {
-                if !self.in_const_region() && !matches!(self.mode, InterpreterMode::CompileTime) {
+                if !self.in_const_region() && !matches!(self.mode, InterpreterMode::Comptime) {
                     self.emit_error("splice is only supported during const evaluation");
                     return;
                 }
@@ -439,7 +439,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     // Handle statement-position splice expansion
                     if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
                         if !self.in_const_region()
-                            && !matches!(self.mode, InterpreterMode::CompileTime)
+                            && !matches!(self.mode, InterpreterMode::Comptime)
                         {
                             self.emit_error("splice is only supported during const evaluation");
                             // Keep original statement to avoid dropping code
@@ -516,7 +516,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 BlockStmt::Item(item) => {
                     self.evaluate_item(item.as_mut());
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && is_quote_only_item(item.as_ref())
                     {
                         self.mark_mutated();

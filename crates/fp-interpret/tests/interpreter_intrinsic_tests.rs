@@ -163,7 +163,7 @@ fn format_uses_string_literal_template_in_runtime_mode() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );
@@ -212,7 +212,7 @@ fn runtime_invoke_lang_fs_read_to_string_uses_intrinsic_path() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );
@@ -279,7 +279,7 @@ fn runtime_invoke_lang_core_fs_intrinsics_use_intrinsic_path() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );
@@ -389,7 +389,7 @@ fn println_uses_string_literal_template_in_runtime_mode() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );
@@ -431,7 +431,7 @@ fn runtime_try_runs_else_and_finally_on_success() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );
@@ -458,7 +458,7 @@ fn runtime_try_catch_binds_panic_and_runs_finally() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );
@@ -503,7 +503,7 @@ fn runtime_defer_runs_in_lifo_order_during_panic_unwind() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );
@@ -592,7 +592,7 @@ fn spawn_join_returns_async_value() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );
@@ -610,7 +610,7 @@ fn select_prefers_ready_task_over_sleeping_one() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );
@@ -637,7 +637,7 @@ fn join_multiple_futures_returns_tuple() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );

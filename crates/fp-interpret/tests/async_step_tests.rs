@@ -48,7 +48,7 @@ fn runtime_step_eval_yields_then_completes() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );

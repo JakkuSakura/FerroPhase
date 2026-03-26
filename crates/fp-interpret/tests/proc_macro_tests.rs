@@ -6,7 +6,9 @@ use fp_core::ast::{
 use fp_core::context::SharedScopedContext;
 use fp_core::error::Result;
 use fp_core::span::Span;
-use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions, StdoutMode};
+use fp_interpret::engine::{
+    AstInterpreter, InterpreterCapability, InterpreterMode, InterpreterOptions, StdoutMode,
+};
 
 struct TokenStreamParser;
 
@@ -130,7 +132,8 @@ fn expands_function_like_proc_macro() -> Result<()> {
 
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
-        mode: InterpreterMode::CompileTime,
+        mode: InterpreterMode::Comptime,
+        capability: InterpreterCapability::default(),
         debug_assertions: false,
         diagnostics: None,
         diagnostic_context: "proc-macro-test",

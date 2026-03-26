@@ -13,7 +13,7 @@ fn interpret_source(source: &str) -> Result<Node> {
     let mut ast = result.ast;
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
-        mode: InterpreterMode::CompileTime,
+        mode: InterpreterMode::Comptime,
         macro_parser: result.macro_parser,
         ..InterpreterOptions::default()
     };

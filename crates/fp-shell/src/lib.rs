@@ -5,11 +5,19 @@ mod lower;
 use fp_core::ast::{
     Abi, AstTargetOutput, AttrMeta, AttributesExt, BlockStmt, Expr, ExprInvokeTarget, ExprKind,
     Ident, Item, ItemDeclFunction, ItemKind, Module, Name, Node, NodeKind, Value, Visibility,
+    register_threadlocal_serializer,
 };
+use fp_core::cfg::TargetEnv;
+use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
-use fp_lang::FerroFrontend;
+use fp_interpret::engine::{
+    AstInterpreter, CommandMockState, InterpreterCapability, InterpreterMode, InterpreterOptions,
+    RuntimeExternHook, StdoutMode,
+};
+use fp_lang::{FerroFrontend, PrettyAstSerializer};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 pub use ScriptTarget as ShellTarget;
 pub use inventory::load_inventory;
@@ -34,6 +42,21 @@ pub struct CompileOptions {
     pub inventory: Option<Node>,
 }
 
+#[derive(Debug, Clone)]
+pub struct InterpretOptions {
+    pub inventory: Option<Node>,
+    pub target: ScriptTarget,
+}
+
+impl Default for InterpretOptions {
+    fn default() -> Self {
+        Self {
+            inventory: None,
+            target: ScriptTarget::Bash,
+        }
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum ShellError {
     #[error("I/O error: {0}")]
@@ -46,6 +69,8 @@ pub enum ShellError {
     Emit(String),
     #[error("failed to parse inventory: {0}")]
     Inventory(String),
+    #[error("failed to interpret source: {0}")]
+    Interpret(String),
     #[error("unsupported target: {0}")]
     UnsupportedTarget(String),
 }
@@ -106,6 +131,217 @@ pub fn compile_source_with_options(
     })
 }
 
+#[derive(Default)]
+struct ShellRuntimeState {
+    changed: bool,
+}
+
+struct ShellRuntimeHook {
+    inventory: Option<Node>,
+    target: ScriptTarget,
+    state: Arc<Mutex<ShellRuntimeState>>,
+    command_mock_state: Option<Arc<Mutex<CommandMockState>>>,
+}
+
+impl RuntimeExternHook for ShellRuntimeHook {
+    fn call(
+        &self,
+        name: &str,
+        _sig: &fp_core::ast::FunctionSignature,
+        args: &[Value],
+    ) -> Option<fp_core::error::Result<Value>> {
+        match name {
+            "runtime_temp_path" => Some(Ok(Value::string(
+                std::env::temp_dir().to_string_lossy().into_owned(),
+            ))),
+            "runtime_fail" => Some(string_arg(args, 0).and_then(|message| Err(message.into()))),
+            "runtime_set_changed" => {
+                Some(bool_arg(args, 0).map(|changed| {
+                    let mut guard = lock_mutex(&self.state);
+                    guard.changed = changed;
+                    Value::unit()
+                }))
+            }
+            "runtime_last_changed" => {
+                let guard = lock_mutex(&self.state);
+                Some(Ok(Value::bool(guard.changed)))
+            }
+            "runtime_eval_shell_source" => {
+                Some(string_arg(args, 0).and_then(|source| {
+                    string_arg(args, 1).and_then(|cwd| {
+                        eval_shell_source_runtime(
+                            source.as_str(),
+                            cwd.as_str(),
+                            self.target,
+                            self.inventory.clone(),
+                            self.state.clone(),
+                            self.command_mock_state.clone(),
+                        )
+                    })
+                }))
+            }
+            _ => None,
+        }
+    }
+}
+
+fn lock_mutex<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(err) => err.into_inner(),
+    }
+}
+
+fn string_arg(args: &[Value], index: usize) -> fp_core::error::Result<String> {
+    let Some(value) = args.get(index) else {
+        return Err(format!(
+            "missing string argument at index {}",
+            index
+        )
+        .into());
+    };
+    match value {
+        Value::String(text) => Ok(text.value.clone()),
+        other => Err(format!(
+            "expected string argument at index {}, got {:?}",
+            index, other
+        )
+        .into()),
+    }
+}
+
+fn bool_arg(args: &[Value], index: usize) -> fp_core::error::Result<bool> {
+    let Some(value) = args.get(index) else {
+        return Err(format!(
+            "missing bool argument at index {}",
+            index
+        )
+        .into());
+    };
+    match value {
+        Value::Bool(flag) => Ok(flag.value),
+        other => Err(format!(
+            "expected bool argument at index {}, got {:?}",
+            index, other
+        )
+        .into()),
+    }
+}
+
+pub fn interpret_source(
+    source: &str,
+    source_path: &Path,
+) -> Result<Value, ShellError> {
+    interpret_source_with_options(source, source_path, &InterpretOptions::default())
+}
+
+pub fn interpret_source_with_options(
+    source: &str,
+    source_path: &Path,
+    options: &InterpretOptions,
+) -> Result<Value, ShellError> {
+    let command_mock_state = Some(Arc::new(Mutex::new(CommandMockState::default())));
+    interpret_source_with_runtime_state(
+        source,
+        source_path,
+        options,
+        Arc::new(Mutex::new(ShellRuntimeState::default())),
+        command_mock_state,
+    )
+}
+
+fn interpret_source_with_runtime_state(
+    source: &str,
+    source_path: &Path,
+    options: &InterpretOptions,
+    runtime_state: Arc<Mutex<ShellRuntimeState>>,
+    command_mock_state: Option<Arc<Mutex<CommandMockState>>>,
+) -> Result<Value, ShellError> {
+    let frontend = FerroFrontend::new();
+    register_threadlocal_serializer(Arc::new(PrettyAstSerializer::new()));
+    let parsed = frontend
+        .parse(source, Some(source_path))
+        .map_err(|err| ShellError::Parse(err.to_string()))?;
+    let mut ast = merge_runtime_helpers(parsed.ast, options.inventory.as_ref())?;
+    let ctx = SharedScopedContext::new();
+    let runtime_hook: Arc<dyn RuntimeExternHook> = Arc::new(ShellRuntimeHook {
+        inventory: options.inventory.clone(),
+        target: options.target,
+        state: runtime_state,
+        command_mock_state: command_mock_state.clone(),
+    });
+    let mut interpreter = AstInterpreter::new(
+        &ctx,
+        InterpreterOptions {
+            mode: InterpreterMode::Runtime,
+            capability: InterpreterCapability::default(),
+            target_env: shell_target_env(options.target),
+            debug_assertions: true,
+            diagnostics: None,
+            diagnostic_context: "fp-shell-interpret",
+            module_resolution: None,
+            macro_parser: None,
+            intrinsic_normalizer: None,
+            stdout_mode: StdoutMode::Inherit,
+            command_mock_state,
+            runtime_extern_hook: Some(runtime_hook),
+        },
+    );
+    interpreter.enable_incremental_typing(&ast);
+    interpreter.interpret(&mut ast);
+    let value = interpreter.execute_main().unwrap_or_else(Value::unit);
+    let outcome = interpreter.take_outcome();
+    if outcome.has_errors {
+        return Err(ShellError::Interpret(
+            outcome
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.clone())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ));
+    }
+    Ok(value)
+}
+
+fn eval_shell_source_runtime(
+    source: &str,
+    cwd: &str,
+    target: ScriptTarget,
+    inventory: Option<Node>,
+    runtime_state: Arc<Mutex<ShellRuntimeState>>,
+    command_mock_state: Option<Arc<Mutex<CommandMockState>>>,
+) -> fp_core::error::Result<Value> {
+    let previous = std::env::current_dir()?;
+    if !cwd.is_empty() {
+        std::env::set_current_dir(cwd)?;
+    }
+    let result = interpret_source_with_runtime_state(
+        source,
+        Path::new("<fp-shell-eval>/case.fp"),
+        &InterpretOptions { inventory, target },
+        runtime_state,
+        command_mock_state,
+    )
+    .map_err(|err| fp_core::error::Error::from(err.to_string()));
+    let restore = std::env::set_current_dir(previous);
+    match (result, restore) {
+        (Ok(_), Ok(())) => Ok(Value::string(String::new())),
+        (Err(err), Ok(())) => Ok(Value::string(err.to_string())),
+        (Ok(_), Err(err)) => Err(fp_core::error::Error::from(err.to_string())),
+        (Err(err), Err(_)) => Ok(Value::string(err.to_string())),
+    }
+}
+
+fn shell_target_env(target: ScriptTarget) -> TargetEnv {
+    let mut env = TargetEnv::host();
+    env.lang = Some(match target {
+        ScriptTarget::Bash => "bash".to_string(),
+        ScriptTarget::PowerShell => "pwsh".to_string(),
+    });
+    env
+}
+
 fn merge_runtime_helpers(ast: Node, inventory: Option<&Node>) -> Result<Node, ShellError> {
     let frontend = FerroFrontend::new();
     let NodeKind::File(mut user_file) = ast.kind else {
@@ -115,11 +351,38 @@ fn merge_runtime_helpers(ast: Node, inventory: Option<&Node>) -> Result<Node, Sh
     };
 
     ensure_std_module(&mut user_file);
+    merge_core_std_tree(&frontend, &mut user_file)?;
     merge_embedded_std_tree(&frontend, &mut user_file)?;
     if let Some(inventory) = inventory {
         merge_inventory_items(&frontend, &mut user_file, inventory)?;
     }
     Ok(Node::file(user_file))
+}
+
+fn merge_core_std_tree(
+    frontend: &FerroFrontend,
+    user_file: &mut fp_core::ast::File,
+) -> Result<(), ShellError> {
+    let core_std_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fp-lang/src/std");
+    let mut files = Vec::new();
+    collect_fp_files(core_std_root.as_path(), &mut files)?;
+    for path in files {
+        let relative = path
+            .strip_prefix(core_std_root.as_path())
+            .map_err(|err| ShellError::Lower(err.to_string()))?;
+        let embedded_path = relative.to_string_lossy().replace('\\', "/");
+        let module_path = module_path_for_core_std(embedded_path.as_str())?;
+        merge_source_items(
+            frontend,
+            user_file,
+            &module_path,
+            embedded_path.as_str(),
+            embedded_path.as_str(),
+            true,
+        )?;
+    }
+    Ok(())
 }
 
 fn merge_embedded_std_tree(
@@ -157,27 +420,86 @@ fn merge_embedded_std_items(
     module_path: &[&str],
     embedded_path: &str,
 ) -> Result<(), ShellError> {
-    let source = embedded_std::read(embedded_path)
-        .ok_or_else(|| ShellError::Lower(format!("missing embedded shell std: {embedded_path}")))?;
+    merge_source_items(
+        frontend,
+        user_file,
+        module_path,
+        embedded_path,
+        &format!("<fp-shell-std>/{embedded_path}"),
+        false,
+    )
+}
+
+fn merge_source_items(
+    frontend: &FerroFrontend,
+    user_file: &mut fp_core::ast::File,
+    module_path: &[&str],
+    embedded_path: &str,
+    display_path: &str,
+    core_std: bool,
+) -> Result<(), ShellError> {
+    let source = if core_std {
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../fp-lang/src/std").join(embedded_path))
+            .map_err(|err| ShellError::Lower(format!("missing embedded core std {embedded_path}: {err}")))?
+    } else {
+        embedded_std::read(embedded_path)
+            .ok_or_else(|| ShellError::Lower(format!("missing embedded shell std: {embedded_path}")))?
+            .to_string()
+    };
     let parsed = frontend
-        .parse(
-            source,
-            Some(Path::new(&format!("<fp-shell-std>/{embedded_path}"))),
-        )
+        .parse(source.as_str(), Some(Path::new(display_path)))
         .map_err(|err| {
             ShellError::Lower(format!(
-                "failed to parse embedded shell std {embedded_path}: {}",
+                "failed to parse embedded std {embedded_path}: {}",
                 err
             ))
         })?;
     let NodeKind::File(file) = parsed.ast.kind else {
         return Err(ShellError::Lower(format!(
-            "embedded shell std must be a file document: {embedded_path}"
+            "embedded std must be a file document: {embedded_path}"
         )));
     };
     let target = ensure_nested_module(user_file, module_path)?;
     target.items.extend(file.items);
     Ok(())
+}
+
+fn collect_fp_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), ShellError> {
+    let mut entries = fs::read_dir(dir)?.collect::<std::result::Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.path());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_fp_files(path.as_path(), out)?;
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) == Some("fp") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn module_path_for_core_std(embedded_path: &str) -> Result<Vec<&str>, ShellError> {
+    let without_prefix = embedded_path
+        .strip_prefix("std/")
+        .unwrap_or(embedded_path);
+    if without_prefix == "mod.fp" {
+        return Ok(Vec::new());
+    }
+    let without_mod = without_prefix
+        .strip_suffix("/mod.fp")
+        .or_else(|| without_prefix.strip_suffix(".fp"))
+        .ok_or_else(|| {
+            ShellError::Lower(format!(
+                "embedded core std path must end in .fp: {embedded_path}"
+            ))
+        })?;
+    let segments = without_mod
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    Ok(segments)
 }
 
 fn module_path_for_embedded_std(embedded_path: &str) -> Result<Vec<&str>, ShellError> {
@@ -606,6 +928,18 @@ pub fn compile_file_with_options(
     Ok(destination)
 }
 
+pub fn interpret_file(input: &Path) -> Result<Value, ShellError> {
+    interpret_file_with_options(input, &InterpretOptions::default())
+}
+
+pub fn interpret_file_with_options(
+    input: &Path,
+    options: &InterpretOptions,
+) -> Result<Value, ShellError> {
+    let source = fs::read_to_string(input)?;
+    interpret_source_with_options(&source, input, options)
+}
+
 fn validate_extern_decl(function: &ItemDeclFunction, target: ScriptTarget) -> Result<(), String> {
     let expected_abi = match target {
         ScriptTarget::Bash => "bash",
@@ -646,10 +980,11 @@ fn validate_extern_decl(function: &ItemDeclFunction, target: ScriptTarget) -> Re
 }
 
 fn is_runtime_primitive(name: &str) -> bool {
-    matches!(
-        name,
-        "runtime_temp_path" | "runtime_fail" | "runtime_set_changed" | "runtime_last_changed"
-    )
+    name.contains("runtime_host_")
+        || name.ends_with("runtime_temp_path")
+        || name.ends_with("runtime_fail")
+        || name.ends_with("runtime_set_changed")
+        || name.ends_with("runtime_last_changed")
 }
 
 fn extern_command(function: &ItemDeclFunction) -> Option<String> {

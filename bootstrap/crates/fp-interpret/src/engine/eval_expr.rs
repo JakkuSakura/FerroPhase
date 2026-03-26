@@ -1227,7 +1227,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return self.eval_expr(expr);
             }
             ExprKind::Quote(_quote) => {
-                if matches!(self.mode, InterpreterMode::CompileTime) {
+                if matches!(self.mode, InterpreterMode::Comptime) {
                     if let ExprKind::Quote(quote) = expr.kind() {
                         let kind = quote.kind;
                         let fragment = self.build_quoted_fragment(quote);
@@ -1239,7 +1239,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return Value::undefined();
             }
             ExprKind::Splice(_splice) => {
-                if !self.in_const_region() && !matches!(self.mode, InterpreterMode::CompileTime) {
+                if !self.in_const_region() && !matches!(self.mode, InterpreterMode::Comptime) {
                     self.emit_error("splice is only supported during const evaluation");
                     return Value::undefined();
                 }
@@ -1684,8 +1684,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             return self.eval_invoke_compile_time(invoke);
         }
         match self.mode {
-            InterpreterMode::CompileTime => self.eval_invoke_compile_time(invoke),
-            InterpreterMode::RunTime => self.eval_invoke_runtime(invoke),
+            InterpreterMode::Comptime => self.eval_invoke_compile_time(invoke),
+            InterpreterMode::Runtime => self.eval_invoke_runtime(invoke),
         }
     }
 

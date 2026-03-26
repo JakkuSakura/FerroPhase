@@ -185,7 +185,7 @@ fn spawn_join_returns_async_value() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );
@@ -203,7 +203,7 @@ fn select_prefers_ready_task_over_sleeping_one() {
     let mut interpreter = AstInterpreter::new(
         &ctx,
         InterpreterOptions {
-            mode: InterpreterMode::RunTime,
+            mode: InterpreterMode::Runtime,
             ..InterpreterOptions::default()
         },
     );

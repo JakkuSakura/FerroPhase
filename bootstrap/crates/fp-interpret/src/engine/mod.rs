@@ -59,9 +59,9 @@ pub enum QuotedFragment {
 pub enum InterpreterMode {
     /// Compile-time evaluation for const regions: allow most operations that do
     /// not require external access (IO, host bindings, runtime-only intrinsics).
-    CompileTime,
+    Comptime,
     /// Runtime evaluation with full semantics and side effects.
-    RunTime,
+    Runtime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,8 +121,21 @@ impl<'ctx> TypeEvaluationHook for InterpreterTypeEvalHook<'ctx> {
 }
 
 #[derive(Clone)]
+pub struct InterpreterCapability {
+    pub io: bool,
+    pub exec: bool,
+}
+
+impl Default for InterpreterCapability {
+    fn default() -> Self {
+        Self { io: true, exec: true }
+    }
+}
+
+#[derive(Clone)]
 pub struct InterpreterOptions {
     pub mode: InterpreterMode,
+    pub capability: InterpreterCapability,
     pub debug_assertions: bool,
     pub diagnostics: Option<Arc<DiagnosticManager>>,
     pub diagnostic_context: &'static str,
@@ -134,7 +147,8 @@ pub struct InterpreterOptions {
 impl Default for InterpreterOptions {
     fn default() -> Self {
         Self {
-            mode: InterpreterMode::CompileTime,
+            mode: InterpreterMode::Comptime,
+            capability: InterpreterCapability::default(),
             debug_assertions: false,
             diagnostics: None,
             diagnostic_context: DEFAULT_DIAGNOSTIC_CONTEXT,
@@ -547,6 +561,7 @@ pub struct AstInterpreter<'ctx> {
     diag_manager: Option<Arc<DiagnosticManager>>,
     intrinsics: IntrinsicsRegistry,
     mode: InterpreterMode,
+    capability: InterpreterCapability,
     debug_assertions: bool,
     diagnostic_context: &'static str,
     module_resolution: Option<ModuleResolutionContext>,
@@ -611,7 +626,7 @@ pub struct AstInterpreter<'ctx> {
 
 impl<'ctx> AstInterpreter<'ctx> {
     pub fn new(ctx: &'ctx SharedScopedContext, options: InterpreterOptions) -> Self {
-        let in_const_region = if matches!(options.mode, InterpreterMode::CompileTime) {
+        let in_const_region = if matches!(options.mode, InterpreterMode::Comptime) {
             1
         } else {
             0
@@ -621,6 +636,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             diag_manager: options.diagnostics.clone(),
             intrinsics: IntrinsicsRegistry::new(),
             mode: options.mode,
+            capability: options.capability.clone(),
             debug_assertions: options.debug_assertions,
             diagnostic_context: options.diagnostic_context,
             module_resolution: options.module_resolution.clone(),
@@ -701,7 +717,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn eval_type_expr_bridge(&mut self, expr: &Expr) -> Result<Option<Ty>> {
-        if !matches!(self.mode, InterpreterMode::CompileTime) {
+        if !matches!(self.mode, InterpreterMode::Comptime) {
             return Ok(None);
         }
         let mut expr = expr.clone();
@@ -734,7 +750,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         continue;
                     }
                     self.evaluate_item(&mut file.items[idx]);
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && matches!(
                             file.items.get(idx).map(|item| item.kind()),
                             Some(ItemKind::DefFunction(func))
@@ -745,7 +761,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.mark_mutated();
                         continue;
                     }
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && is_quote_only_item(&file.items[idx])
                     {
                         file.items.remove(idx);
@@ -790,14 +806,14 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub fn execute_main(&mut self) -> Option<Value> {
         let function = self.functions.get("main").cloned()?;
         match self.mode {
-            InterpreterMode::CompileTime => {
+            InterpreterMode::Comptime => {
                 let mut body_expr = (*function.body).clone();
                 self.push_scope();
                 let value = self.eval_expr(&mut body_expr);
                 self.pop_scope();
                 Some(value)
             }
-            InterpreterMode::RunTime => {
+            InterpreterMode::Runtime => {
                 let flow = self.call_function_runtime(function, Vec::new());
                 Some(self.finish_runtime_flow(flow))
             }
@@ -1322,7 +1338,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn materialize_symbol(&mut self, name: &str) -> bool {
-        if !matches!(self.mode, InterpreterMode::CompileTime) {
+        if !matches!(self.mode, InterpreterMode::Comptime) {
             return false;
         }
         if self.symbol_available(name) {
@@ -2034,8 +2050,8 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn eval_expr_with_mode(&mut self, expr: &mut Expr) -> Value {
         match self.mode {
-            InterpreterMode::CompileTime => self.eval_expr(expr),
-            InterpreterMode::RunTime => {
+            InterpreterMode::Comptime => self.eval_expr(expr),
+            InterpreterMode::Runtime => {
                 let flow = self.eval_expr_runtime(expr);
                 self.finish_runtime_flow(flow)
             }
@@ -2075,7 +2091,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         if attrs.is_empty() {
             return false;
         }
-        if !self.in_const_region() && !matches!(self.mode, InterpreterMode::CompileTime) {
+        if !self.in_const_region() && !matches!(self.mode, InterpreterMode::Comptime) {
             self.emit_error("attributes require const evaluation");
             return true;
         }
@@ -2409,7 +2425,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn evaluate_item(&mut self, item: &mut Item) {
-        if matches!(self.mode, InterpreterMode::CompileTime) {
+        if matches!(self.mode, InterpreterMode::Comptime) {
             if let ItemKind::DefFunction(func) = item.kind() {
                 if let Some((name, kind)) = self.proc_macro_registration(func) {
                     self.register_proc_macro(
@@ -2439,7 +2455,7 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         match item.kind_mut() {
             ItemKind::Macro(mac) => {
-                if matches!(self.mode, InterpreterMode::CompileTime) {
+                if matches!(self.mode, InterpreterMode::Comptime) {
                     let macro_name = mac
                         .invocation
                         .path
@@ -2554,7 +2570,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ItemKind::DefConst(def) => {
                 let is_mutable = def.mutable.unwrap_or(false);
-                if is_mutable && !matches!(self.mode, InterpreterMode::CompileTime) {
+                if is_mutable && !matches!(self.mode, InterpreterMode::Comptime) {
                     self.emit_error("const mut is only supported during const evaluation");
                     return;
                 }
@@ -2710,7 +2726,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         continue;
                     }
                     self.evaluate_item(&mut module.items[idx]);
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && matches!(
                             module.items.get(idx).map(|item| item.kind()),
                             Some(ItemKind::DefFunction(func))
@@ -2721,7 +2737,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.mark_mutated();
                         continue;
                     }
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && is_quote_only_item(&module.items[idx])
                     {
                         module.items.remove(idx);
@@ -2770,7 +2786,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let mut idx = 0;
                 while idx < impl_block.items.len() {
                     self.evaluate_item(&mut impl_block.items[idx]);
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && matches!(
                             impl_block.items.get(idx).map(|item| item.kind()),
                             Some(ItemKind::DefFunction(func))
@@ -2781,7 +2797,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.mark_mutated();
                         continue;
                     }
-                    if matches!(self.mode, InterpreterMode::CompileTime)
+                    if matches!(self.mode, InterpreterMode::Comptime)
                         && is_quote_only_item(&impl_block.items[idx])
                     {
                         impl_block.items.remove(idx);
@@ -2865,7 +2881,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ItemKind::Expr(expr) => {
-                if matches!(self.mode, InterpreterMode::CompileTime) {
+                if matches!(self.mode, InterpreterMode::Comptime) {
                     if let ExprKind::Splice(splice) = expr.kind_mut() {
                         let Some(fragments) = self.resolve_splice_fragments(splice.token.as_mut())
                         else {
@@ -6281,7 +6297,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return value;
             }
         }
-        if matches!(self.mode, InterpreterMode::CompileTime) && self.materialize_symbol(&symbol) {
+        if matches!(self.mode, InterpreterMode::Comptime) && self.materialize_symbol(&symbol) {
             if let Some(value) = self.evaluated_constants.get(&symbol) {
                 return value.clone();
             }
