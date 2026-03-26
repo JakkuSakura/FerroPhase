@@ -140,7 +140,6 @@ struct ShellRuntimeHook {
     inventory: Option<Node>,
     target: ScriptTarget,
     state: Arc<Mutex<ShellRuntimeState>>,
-    command_mock_state: Option<Arc<Mutex<CommandMockState>>>,
 }
 
 impl RuntimeExternHook for ShellRuntimeHook {
@@ -165,20 +164,6 @@ impl RuntimeExternHook for ShellRuntimeHook {
             "runtime_last_changed" => {
                 let guard = lock_mutex(&self.state);
                 Some(Ok(Value::bool(guard.changed)))
-            }
-            "runtime_eval_shell_source" => {
-                Some(string_arg(args, 0).and_then(|source| {
-                    string_arg(args, 1).and_then(|cwd| {
-                        eval_shell_source_runtime(
-                            source.as_str(),
-                            cwd.as_str(),
-                            self.target,
-                            self.inventory.clone(),
-                            self.state.clone(),
-                            self.command_mock_state.clone(),
-                        )
-                    })
-                }))
             }
             _ => None,
         }
@@ -268,7 +253,6 @@ fn interpret_source_with_runtime_state(
         inventory: options.inventory.clone(),
         target: options.target,
         state: runtime_state,
-        command_mock_state: command_mock_state.clone(),
     });
     let mut interpreter = AstInterpreter::new(
         &ctx,
@@ -302,35 +286,6 @@ fn interpret_source_with_runtime_state(
         ));
     }
     Ok(value)
-}
-
-fn eval_shell_source_runtime(
-    source: &str,
-    cwd: &str,
-    target: ScriptTarget,
-    inventory: Option<Node>,
-    runtime_state: Arc<Mutex<ShellRuntimeState>>,
-    command_mock_state: Option<Arc<Mutex<CommandMockState>>>,
-) -> fp_core::error::Result<Value> {
-    let previous = std::env::current_dir()?;
-    if !cwd.is_empty() {
-        std::env::set_current_dir(cwd)?;
-    }
-    let result = interpret_source_with_runtime_state(
-        source,
-        Path::new("<fp-shell-eval>/case.fp"),
-        &InterpretOptions { inventory, target },
-        runtime_state,
-        command_mock_state,
-    )
-    .map_err(|err| fp_core::error::Error::from(err.to_string()));
-    let restore = std::env::set_current_dir(previous);
-    match (result, restore) {
-        (Ok(_), Ok(())) => Ok(Value::string(String::new())),
-        (Err(err), Ok(())) => Ok(Value::string(err.to_string())),
-        (Ok(_), Err(err)) => Err(fp_core::error::Error::from(err.to_string())),
-        (Err(err), Err(_)) => Ok(Value::string(err.to_string())),
-    }
 }
 
 fn shell_target_env(target: ScriptTarget) -> TargetEnv {
