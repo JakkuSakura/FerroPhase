@@ -98,6 +98,14 @@ pub const fn command(command: str) -> str {
     std::shell::process::output(command)
 }
 
+#[cfg(target_lang = "bash")]
 pub const fn which(command: str) -> str {
     std::shell::process::output(f"command -v {command}")
+}
+
+#[cfg(target_lang = "pwsh")]
+pub const fn which(command: str) -> str {
+    std::shell::process::output(
+        f"Get-Command -Name \"{command}\" | Select -ExpandProperty Source",
+    )
 }
