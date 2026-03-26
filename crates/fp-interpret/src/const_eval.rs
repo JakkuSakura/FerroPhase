@@ -80,7 +80,9 @@ impl ConstEvaluationOrchestrator {
             intrinsic_normalizer,
             stdout_mode: StdoutMode::Capture,
             target_env: TargetEnv::host(),
-        };
+            command_mock_state: None,
+        runtime_extern_hook: None,
+    };
 
         let mut interpreter = AstInterpreter::new(ctx, options);
         interpreter.enable_incremental_typing(ast);

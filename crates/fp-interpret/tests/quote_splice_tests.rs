@@ -53,6 +53,8 @@ fn quote_fn_structural_pattern_binds_name() -> Result<()> {
         intrinsic_normalizer: None,
         stdout_mode: StdoutMode::Capture,
         target_env: fp_core::cfg::TargetEnv::host(),
+        command_mock_state: None,
+        runtime_extern_hook: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
 
@@ -97,6 +99,8 @@ fn quote_items_plural_pattern_binds_list() -> Result<()> {
         intrinsic_normalizer: None,
         stdout_mode: StdoutMode::Capture,
         target_env: fp_core::cfg::TargetEnv::host(),
+        command_mock_state: None,
+        runtime_extern_hook: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
 
@@ -148,6 +152,7 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
 
     let file = File {
         path: PathBuf::from("quote_splice.fp"),
+        attrs: Vec::new(),
         items: vec![Item::from(ItemKind::DefFunction(func))],
     };
 
@@ -164,6 +169,8 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
         intrinsic_normalizer: None,
         stdout_mode: StdoutMode::Capture,
         target_env: fp_core::cfg::TargetEnv::host(),
+        command_mock_state: None,
+        runtime_extern_hook: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);
@@ -382,6 +389,7 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
 
     let file = File {
         path: PathBuf::from("quote_splice_items.fp"),
+        attrs: Vec::new(),
         items: vec![
             Item::from(ItemKind::DefFunction(build_fn)),
             Item::from(ItemKind::Expr(const_block)),
@@ -400,6 +408,8 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
         intrinsic_normalizer: None,
         stdout_mode: StdoutMode::Capture,
         target_env: fp_core::cfg::TargetEnv::host(),
+        command_mock_state: None,
+        runtime_extern_hook: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);
@@ -450,6 +460,7 @@ fn splice_executes_expr_outside_const_block() -> Result<()> {
 
     let file = File {
         path: PathBuf::from("quote_splice_exec.fp"),
+        attrs: Vec::new(),
         items: vec![Item::from(ItemKind::DefFunction(func))],
     };
 
@@ -465,6 +476,8 @@ fn splice_executes_expr_outside_const_block() -> Result<()> {
         intrinsic_normalizer: None,
         stdout_mode: StdoutMode::Capture,
         target_env: fp_core::cfg::TargetEnv::host(),
+        command_mock_state: None,
+        runtime_extern_hook: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);
@@ -531,6 +544,7 @@ fn splice_allows_items_inside_function_bodies() -> Result<()> {
 
     let file = File {
         path: PathBuf::from("quote_splice_items_fn.fp"),
+        attrs: Vec::new(),
         items: vec![Item::from(ItemKind::DefFunction(func))],
     };
 
@@ -546,6 +560,8 @@ fn splice_allows_items_inside_function_bodies() -> Result<()> {
         intrinsic_normalizer: None,
         stdout_mode: StdoutMode::Capture,
         target_env: fp_core::cfg::TargetEnv::host(),
+        command_mock_state: None,
+        runtime_extern_hook: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);

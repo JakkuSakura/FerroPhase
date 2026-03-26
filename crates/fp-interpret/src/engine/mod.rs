@@ -14,18 +14,17 @@ use crate::intrinsics::IntrinsicFunction;
 use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::DecimalType;
 use fp_core::ast::{
-    AttrMeta, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField,
-    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange,
-    ExprRangeLimit, ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam,
-    FunctionSignature, Item, ItemDeclFunction, ItemDefFunction, ItemImport, ItemImportTree,
-    ItemKind, MacroDelimiter, MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Node,
+    AttrMeta, AttrMetaList, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure,
+    ExprField, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange,
+    ExprRangeLimit, ExprStringTemplate, File, FormatArgRef, FormatTemplatePart, FunctionParam,
+    FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefFunction, ItemImport, ItemImportTree,
+    ItemKind, MacroDelimiter, MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Name, Node,
     NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, ReprOptions, StmtLet, StructuralField,
     Ty, TypeAny, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote,
     TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTokenStream, TypeTuple, TypeUnit,
     TypeVec, Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural,
     ValueTokenStream, ValueTuple,
 };
-use fp_core::ast::{Ident, Name};
 use fp_core::ast::{Pattern, PatternKind};
 use fp_core::cfg::TargetEnv;
 use fp_core::context::SharedScopedContext;
@@ -790,6 +789,7 @@ pub struct AstInterpreter<'ctx> {
     stdout_mode: StdoutMode,
     command_mock_state: Option<Arc<Mutex<CommandMockState>>>,
     runtime_extern_hook: Option<Arc<dyn RuntimeExternHook>>,
+    allow_binding_replacement: bool,
 
     module_stack: Vec<String>,
     value_env: Vec<HashMap<String, StoredValue>>,
@@ -879,6 +879,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             stdout_mode: options.stdout_mode,
             command_mock_state: options.command_mock_state.clone(),
             runtime_extern_hook: options.runtime_extern_hook.clone(),
+            allow_binding_replacement: false,
             module_stack: Vec::new(),
             value_env: vec![HashMap::new()],
             type_env: vec![HashMap::new()],
@@ -962,6 +963,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub fn interpret(&mut self, node: &mut Node) {
         match node.kind_mut() {
             NodeKind::File(file) => {
+                self.allow_binding_replacement = self.file_has_feature(file, "replace-bindings");
                 let root_ptr = &mut file.items as *mut Vec<Item>;
                 self.root_items = Some(root_ptr);
                 self.push_item_scope(&mut file.items);
@@ -5161,6 +5163,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                         return RuntimeFlow::Value(value);
                     }
                 }
+                if self.allow_binding_replacement
+                    && self.try_replace_declared_binding(locator, value.clone())
+                {
+                    return RuntimeFlow::Value(value);
+                }
                 self.emit_error(format!("assignment target '{}' is not mutable", locator));
                 RuntimeFlow::Value(Value::undefined())
             }
@@ -5267,6 +5274,128 @@ impl<'ctx> AstInterpreter<'ctx> {
                 RuntimeFlow::Value(Value::undefined())
             }
         }
+    }
+
+    fn try_replace_declared_binding(&mut self, locator: &Name, value: Value) -> bool {
+        if !self.allow_binding_replacement {
+            return false;
+        }
+        let candidates = self.binding_candidate_names(locator);
+        if candidates.is_empty() {
+            return false;
+        }
+
+        let mut found = false;
+        for name in &candidates {
+            if self.functions.contains_key(name) {
+                found = true;
+                break;
+            }
+        }
+
+        if found {
+            for name in &candidates {
+                self.functions.remove(name);
+                self.generic_functions.remove(name);
+                self.extern_functions.remove(name);
+                self.evaluated_constants.insert(name.clone(), value.clone());
+                self.replace_stored_value(name, value.clone());
+            }
+            return true;
+        }
+
+        for name in &candidates {
+            if self.generic_functions.contains_key(name) {
+                self.emit_error(format!("cannot replace generic function '{}'", name));
+                return true;
+            }
+        }
+
+        let mut has_const = false;
+        for name in &candidates {
+            if self.evaluated_constants.contains_key(name) {
+                has_const = true;
+                break;
+            }
+            if self.mutable_const_targets.contains_key(name) {
+                has_const = true;
+                break;
+            }
+            if self.extern_functions.contains_key(name) {
+                has_const = true;
+                break;
+            }
+        }
+
+        if has_const {
+            for name in &candidates {
+                if self.extern_functions.remove(name).is_some() {
+                    self.evaluated_constants.insert(name.clone(), value.clone());
+                }
+                if self.evaluated_constants.contains_key(name)
+                    || self.mutable_const_targets.contains_key(name)
+                {
+                    self.evaluated_constants.insert(name.clone(), value.clone());
+                }
+                if let Some(target) = self.mutable_const_targets.get(name) {
+                    unsafe {
+                        let mut expr_value = Expr::value(value.clone());
+                        if let Some(ty) = target.ty.clone() {
+                            expr_value.set_ty(ty);
+                        }
+                        *target.expr_ptr = expr_value;
+                    }
+                }
+                self.replace_stored_value(name, value.clone());
+            }
+            return true;
+        }
+
+        false
+    }
+
+    fn binding_candidate_names(&mut self, locator: &Name) -> Vec<String> {
+        let mut names = Vec::new();
+        let locator_name = locator.to_string();
+        names.push(locator_name.clone());
+
+        if let Some(expanded) = self.expand_imported_locator(locator) {
+            if expanded != locator_name {
+                names.push(expanded);
+            }
+        }
+
+        if let Some(ident) = locator.as_ident() {
+            let simple = ident.as_str().to_string();
+            if !names.contains(&simple) {
+                names.push(simple.clone());
+            }
+            let qualified = self.qualified_name(ident.as_str());
+            if !names.contains(&qualified) {
+                names.push(qualified);
+            }
+        }
+
+        names
+    }
+
+    fn file_has_feature(&self, file: &File, feature: &str) -> bool {
+        for attr in &file.attrs {
+            let AttrMeta::List(AttrMetaList { name, items }) = &attr.meta else {
+                continue;
+            };
+            if name.last().as_str() != "feature" {
+                continue;
+            }
+            for item in items {
+                if let AttrMeta::Path(path) = item {
+                    if path.last().as_str() == feature {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     fn assign_index_shared(

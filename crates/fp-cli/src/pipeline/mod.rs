@@ -484,6 +484,7 @@ impl Pipeline {
         let merged_items = loader.resolve_items(&file.items, &root_dir)?;
         Ok(Node::file(File {
             path: file.path,
+            attrs: file.attrs,
             items: merged_items,
         }))
     }
@@ -1155,6 +1156,8 @@ impl Pipeline {
             intrinsic_normalizer: self.intrinsic_normalizer.clone(),
             stdout_mode,
             target_env: TargetEnv::from_triple(options.target_triple.as_deref()),
+            command_mock_state: None,
+            runtime_extern_hook: None,
         };
         let mut interpreter = AstInterpreter::new(&ctx, interpreter_opts);
         interpreter.enable_incremental_typing(&working_ast);
