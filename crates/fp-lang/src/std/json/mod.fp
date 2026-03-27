@@ -1,344 +1,264 @@
 //! Minimal JSON parser and printer for ASCII input.
 
-pub struct JsonField {
+use std::option::Option;
+
+pub struct Field {
     key: &str,
-    value: JsonValue,
+    value: Value,
 }
 
-pub enum JsonValue {
+pub enum Value {
     Null,
     Bool(bool),
-    Number(&str),
+    Number(Number),
     String(&str),
-    Array(Vec<JsonValue>),
-    Object(Vec<JsonField>),
+    Array(Vec<Value>),
+    Object(Vec<Field>),
 }
 
-pub fn parse(input: &str) -> JsonValue {
-    let mut parser = Parser::new(input);
-    parser.parse_value()
+pub enum NumberKind {
+    Int,
+    UInt,
+    Float,
 }
 
-pub fn is_null(value: JsonValue) -> bool {
-    match value {
-        JsonValue::Null => true,
-        _ => false,
+pub struct Number {
+    raw: &str,
+    kind: NumberKind,
+    int: Option<i64>,
+    uint: Option<u64>,
+    float: Option<f64>,
+}
+
+impl Number {
+    pub fn as_i64(&self) -> Option<i64> {
+        self.int
+    }
+
+    pub fn as_u64(&self) -> Option<u64> {
+        self.uint
+    }
+
+    pub fn as_f64(&self) -> Option<f64> {
+        self.float
+    }
+
+    pub fn is_i64(&self) -> bool {
+        self.as_i64().is_some()
+    }
+
+    pub fn is_u64(&self) -> bool {
+        self.as_u64().is_some()
+    }
+
+    pub fn is_f64(&self) -> bool {
+        self.as_f64().is_some()
+    }
+
+    pub fn to_string(&self) -> &str {
+        self.raw
     }
 }
 
-pub fn get_string(value: JsonValue) -> &str {
-    match value {
-        JsonValue::String(text) => text,
-        _ => panic("expected json string"),
-    }
-}
-
-pub fn get_array(value: JsonValue) -> Vec<JsonValue> {
-    match value {
-        JsonValue::Array(items) => items,
-        _ => panic("expected json array"),
-    }
-}
-
-pub fn get_object_field(value: JsonValue, key: &str) -> JsonValue {
-    match value {
-        JsonValue::Object(fields) => {
-            let mut idx = 0;
-            while idx < fields.len() {
-                let field = fields[idx];
-                if field.key == key {
-                    return field.value;
-                }
-                idx = idx + 1;
-            }
-            panic(f"missing json object field: {key}")
+impl Value {
+    pub fn is_null(&self) -> bool {
+        match self {
+            Value::Null => true,
+            _ => false,
         }
-        _ => panic("expected json object"),
     }
-}
 
-pub fn find_object_field(value: JsonValue, key: &str) -> JsonValue {
-    match value {
-        JsonValue::Object(fields) => {
-            let mut idx = 0;
-            while idx < fields.len() {
-                let field = fields[idx];
-                if field.key == key {
-                    return field.value;
-                }
-                idx = idx + 1;
-            }
-            JsonValue::Null
+    pub fn is_bool(&self) -> bool {
+        match self {
+            Value::Bool(_) => true,
+            _ => false,
         }
-        _ => panic("expected json object"),
+    }
+
+    pub fn is_number(&self) -> bool {
+        match self {
+            Value::Number(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_string(&self) -> bool {
+        match self {
+            Value::String(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_array(&self) -> bool {
+        match self {
+            Value::Array(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_object(&self) -> bool {
+        match self {
+            Value::Object(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Value::Bool(flag) => Option::Some(flag),
+            _ => Option::None,
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Value::String(text) => Option::Some(text),
+            _ => Option::None,
+        }
+    }
+
+    pub fn as_number(&self) -> Option<Number> {
+        match self {
+            Value::Number(number) => Option::Some(number),
+            _ => Option::None,
+        }
+    }
+
+    pub fn as_array(&self) -> Option<Vec<Value>> {
+        match self {
+            Value::Array(values) => Option::Some(values),
+            _ => Option::None,
+        }
+    }
+
+    pub fn as_object(&self) -> Option<Vec<Field>> {
+        match self {
+            Value::Object(fields) => Option::Some(fields),
+            _ => Option::None,
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<Value> {
+        match self {
+            Value::Object(fields) => {
+                let mut idx = 0;
+                while idx < fields.len() {
+                    let field = fields[idx];
+                    if field.key == key {
+                        return Option::Some(field.value);
+                    }
+                    idx = idx + 1;
+                }
+                Option::None
+            }
+            _ => Option::None,
+        }
+    }
+
+    pub fn get_index(&self, index: i64) -> Option<Value> {
+        match self {
+            Value::Array(values) => {
+                if index < 0 {
+                    return Option::None;
+                }
+                let idx = index as usize;
+                if idx >= values.len() {
+                    return Option::None;
+                }
+                Option::Some(values[idx])
+            }
+            _ => Option::None,
+        }
     }
 }
 
-pub fn print(value: JsonValue) {
+#[lang = "json_parse"]
+pub fn parse(input: &str) -> Value { compile_error!("compiler intrinsic") }
+
+pub fn is_null(value: Value) -> bool {
+    value.is_null()
+}
+
+pub fn get_string(value: Value) -> &str {
+    match value.as_str() {
+        Option::Some(text) => text,
+        Option::None => panic("expected json string"),
+    }
+}
+
+pub fn get_array(value: Value) -> Vec<Value> {
+    match value.as_array() {
+        Option::Some(items) => items,
+        Option::None => panic("expected json array"),
+    }
+}
+
+pub fn get_object_field(value: Value, key: &str) -> Value {
+    match value.get(key) {
+        Option::Some(found) => found,
+        Option::None => panic(f"missing json object field: {key}"),
+    }
+}
+
+pub fn find_object_field(value: Value, key: &str) -> Value {
+    match value.get(key) {
+        Option::Some(found) => found,
+        Option::None => Value::Null,
+    }
+}
+
+pub fn print(value: Value) {
     print_value(&value);
 }
 
-fn print_value(value: &JsonValue) {
+fn print_value(value: &Value) {
     match value {
-        JsonValue::Null => print("null"),
-        JsonValue::Bool(b) => {
+        Value::Null => print("null"),
+        Value::Bool(b) => {
             if b {
                 print("true");
             } else {
                 print("false");
             }
         }
-        JsonValue::Number(n) => print(n),
-        JsonValue::String(s) => {
+        Value::Number(n) => print(n.to_string()),
+        Value::String(s) => {
             print("\"");
             print(s);
             print("\"");
         }
-        JsonValue::Array(items) => {
+        Value::Array(items) => {
             print("[");
-        let mut idx = 0usize;
-        let items_len = items.len();
-        while idx < items_len {
-            if idx > 0 {
-                print(",");
+            let mut idx = 0usize;
+            let items_len = items.len();
+            while idx < items_len {
+                if idx > 0 {
+                    print(",");
+                }
+                let item = items[idx];
+                print_value(&item);
+                idx = idx + 1;
             }
-            let item = items[idx];
-            print_value(&item);
-            idx = idx + 1;
-        }
 
             print("]");
         }
-        JsonValue::Object(fields) => {
+        Value::Object(fields) => {
             print("{");
-        let mut idx = 0usize;
-        let fields_len = fields.len();
-        while idx < fields_len {
-            if idx > 0 {
-                print(",");
+            let mut idx = 0usize;
+            let fields_len = fields.len();
+            while idx < fields_len {
+                if idx > 0 {
+                    print(",");
+                }
+                let field = fields[idx];
+                print("\"");
+                print(field.key);
+                print("\":");
+                print_value(&field.value);
+                idx = idx + 1;
             }
-            let field = fields[idx];
-            print("\"");
-            print(field.key);
-            print("\":");
-            print_value(&field.value);
-            idx = idx + 1;
-        }
 
             print("}");
         }
-    }
-}
-
-struct Parser {
-    src: Vec<&str>,
-    pos: i64,
-}
-
-impl Parser {
-    fn new(src: &str) -> Parser {
-        let mut chars = Vec::new();
-        let mut idx = 0i64;
-        let src_len = src.len() as i64;
-        while idx < src_len {
-            let offset = idx as usize;
-            let ch = src[offset..offset + 1];
-            chars.push(ch);
-            idx = idx + 1;
-        }
-        Parser { src: chars, pos: 0i64 }
-    }
-
-    fn bump(&mut self, amount: i64) {
-        self.pos = self.pos + amount;
-    }
-
-    fn parse_value(&mut self) -> JsonValue {
-        self.skip_ws();
-        let ch = self.peek();
-        if ch == "{" {
-            return self.parse_object();
-        }
-        if ch == "[" {
-            return self.parse_array();
-        }
-        if ch == "\"" {
-            return JsonValue::String(self.parse_string());
-        }
-        if self.starts_with("true") {
-            self.bump(4);
-            return JsonValue::Bool(true);
-        }
-        if self.starts_with("false") {
-            self.bump(5);
-            return JsonValue::Bool(false);
-        }
-        if self.starts_with("null") {
-            self.bump(4);
-            return JsonValue::Null;
-        }
-        JsonValue::Number(self.parse_number())
-    }
-
-    fn parse_array(&mut self) -> JsonValue {
-        self.expect_char("[");
-        self.skip_ws();
-        if self.peek() == "]" {
-            self.bump(1);
-            return JsonValue::Array(Vec::new());
-        }
-        let mut items = Vec::new();
-        loop {
-            let value = self.parse_value();
-            items.push(value);
-            self.skip_ws();
-            let ch = self.peek();
-            if ch == "," {
-                self.bump(1);
-                self.skip_ws();
-                continue;
-            }
-            if ch == "]" {
-                self.bump(1);
-                break;
-            }
-        }
-        JsonValue::Array(items)
-    }
-
-    fn parse_object(&mut self) -> JsonValue {
-        self.expect_char("{");
-        self.skip_ws();
-        if self.peek() == "}" {
-            self.bump(1);
-            return JsonValue::Object(Vec::new());
-        }
-        let mut fields = Vec::new();
-        loop {
-            let key = self.parse_string();
-            self.skip_ws();
-            self.expect_char(":");
-            self.skip_ws();
-            let value = self.parse_value();
-            fields.push(JsonField { key, value });
-            self.skip_ws();
-            let ch = self.peek();
-            if ch == "," {
-                self.bump(1);
-                self.skip_ws();
-                continue;
-            }
-            if ch == "}" {
-                self.bump(1);
-                break;
-            }
-        }
-        JsonValue::Object(fields)
-    }
-
-    fn parse_string(&mut self) -> &str {
-        self.expect_char("\"");
-        let start = self.pos as usize;
-        while !self.is_eof() {
-            let ch = self.peek();
-            if ch == "\"" {
-                let value = self.src[start..self.pos as usize];
-                self.bump(1);
-                return value;
-            }
-            if ch == "\\" {
-                self.bump(1);
-                if !self.is_eof() {
-                    self.bump(1);
-                }
-                continue;
-            }
-            self.bump(1);
-        }
-        self.src[start..self.pos as usize]
-    }
-
-    fn parse_number(&mut self) -> &str {
-        let start = self.pos as usize;
-        while !self.is_eof() {
-            let ch = self.peek();
-            if is_number_char(ch) {
-                self.bump(1);
-            } else {
-                break;
-            }
-        }
-        self.src[start..self.pos as usize]
-    }
-
-    fn skip_ws(&mut self) {
-        while !self.is_eof() {
-            let ch = self.peek();
-            if ch == " " || ch == "\n" || ch == "\t" || ch == "\r" {
-                self.bump(1);
-            } else {
-                break;
-            }
-        }
-    }
-
-    fn expect_char(&mut self, ch: &str) {
-        if self.peek() == ch {
-            self.bump(1);
-        }
-    }
-
-    fn starts_with(&self, literal: &str) -> bool {
-        let pos = self.pos as usize;
-        let mut idx = 0i64;
-        let literal_len = literal.len() as i64;
-        let src_len = self.src.len() as i64;
-        let pos_i64 = pos as i64;
-        while idx < literal_len {
-            let offset = idx as usize;
-            if pos_i64 + idx >= src_len {
-                return false;
-            }
-            if self.src[pos + offset] != literal[offset..offset + 1] {
-                return false;
-            }
-            idx = idx + 1;
-        }
-        true
-
-    }
-
-    fn peek(&self) -> &str {
-        if self.is_eof() {
-            return "";
-        }
-        self.src[self.pos as usize]
-    }
-
-    fn is_eof(&self) -> bool {
-        let pos = self.pos as i64;
-        let len = self.src.len() as i64;
-        pos >= len
-    }
-}
-
-fn is_number_char(ch: &str) -> bool {
-    match ch {
-        "0" => true,
-        "1" => true,
-        "2" => true,
-        "3" => true,
-        "4" => true,
-        "5" => true,
-        "6" => true,
-        "7" => true,
-        "8" => true,
-        "9" => true,
-        "-" => true,
-        "+" => true,
-        "." => true,
-        "e" => true,
-        "E" => true,
-        _ => false,
     }
 }

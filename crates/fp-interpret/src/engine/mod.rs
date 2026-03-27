@@ -501,9 +501,30 @@ pub enum RuntimeFlow {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExceptionReturnMode {
+    Disabled,
+    ExplicitResult,
+    AutoResult,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EvalMode {
     Const,
     Runtime,
+}
+
+struct ExceptionReturnGuard {
+    interpreter: *mut (),
+}
+
+impl Drop for ExceptionReturnGuard {
+    fn drop(&mut self) {
+        unsafe {
+            (*(self.interpreter as *mut AstInterpreter<'static>))
+                .exception_stack
+                .pop();
+        }
+    }
 }
 
 type ExprDiscriminant = std::mem::Discriminant<ExprKind>;
@@ -807,6 +828,8 @@ pub struct AstInterpreter<'ctx> {
     command_mock_state: Option<Arc<Mutex<CommandMockState>>>,
     runtime_extern_hook: Option<Arc<dyn RuntimeExternHook>>,
     allow_binding_replacement: bool,
+    exception_mode: bool,
+    exception_stack: Vec<ExceptionReturnMode>,
 
     module_stack: Vec<String>,
     value_env: Vec<HashMap<String, StoredValue>>,
@@ -920,6 +943,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             command_mock_state: options.command_mock_state.clone(),
             runtime_extern_hook: options.runtime_extern_hook.clone(),
             allow_binding_replacement: false,
+            exception_mode: false,
+            exception_stack: Vec::new(),
             module_stack: Vec::new(),
             value_env: vec![HashMap::new()],
             type_env: vec![HashMap::new()],
@@ -1003,7 +1028,10 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub fn interpret(&mut self, node: &mut Node) {
         match node.kind_mut() {
             NodeKind::File(file) => {
-                self.allow_binding_replacement = self.file_has_feature(file, "replace-bindings");
+                let previous_exception = self.exception_mode;
+                self.allow_binding_replacement = self.file_has_feature(file, "replace-bindings")
+                    || self.file_has_feature(file, "replace_binding");
+                self.exception_mode = self.file_has_feature(file, "exception");
                 let root_ptr = &mut file.items as *mut Vec<Item>;
                 self.root_items = Some(root_ptr);
                 self.push_item_scope(&mut file.items);
@@ -1056,6 +1084,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 self.pending_items.pop();
                 self.pop_item_scope();
+                self.exception_mode = previous_exception;
             }
             NodeKind::Item(item) => self.evaluate_item(item),
             NodeKind::Expr(expr) => {
@@ -5265,6 +5294,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                     RuntimeFlow::Value(value) => value,
                     other => return other,
                 };
+                if let ExprKind::Name(locator) = index_expr.obj.kind() {
+                    if self.allow_binding_replacement
+                        && self.try_replace_declared_binding(locator, index_value.clone())
+                    {
+                        return RuntimeFlow::Value(index_value);
+                    }
+                }
                 let idx = match self.numeric_to_non_negative_usize(&index_value, "index") {
                     Some(value) => value,
                     None => return RuntimeFlow::Value(Value::undefined()),
@@ -5426,6 +5462,122 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         }
         false
+    }
+
+    fn push_exception_return_mode(&mut self, mode: ExceptionReturnMode) -> ExceptionReturnGuard {
+        self.exception_stack.push(mode);
+        ExceptionReturnGuard {
+            interpreter: self as *mut _ as *mut (),
+        }
+    }
+
+    fn current_exception_return_mode(&self) -> ExceptionReturnMode {
+        self.exception_stack
+            .last()
+            .copied()
+            .unwrap_or(ExceptionReturnMode::Disabled)
+    }
+
+    fn exception_return_mode_for_sig(&self, sig: &FunctionSignature) -> ExceptionReturnMode {
+        if !self.exception_mode {
+            return ExceptionReturnMode::Disabled;
+        }
+        match sig.ret_ty.as_ref() {
+            Some(ty) if self.is_result_return_ty(ty) => ExceptionReturnMode::ExplicitResult,
+            Some(_) => ExceptionReturnMode::Disabled,
+            None => ExceptionReturnMode::AutoResult,
+        }
+    }
+
+    fn is_result_return_ty(&self, ty: &Ty) -> bool {
+        let Ty::Expr(expr) = ty else {
+            return false;
+        };
+        let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+            return false;
+        };
+        if path.segments.len() < 3 {
+            return false;
+        }
+        let n = path.segments.len();
+        let a = path.segments[n - 3].ident.as_str();
+        let b = path.segments[n - 2].ident.as_str();
+        let last = &path.segments[n - 1];
+        let is_std_result = a == "std" && b == "result" && last.ident.as_str() == "Result";
+        let is_fs_result = a == "std" && b == "fs" && last.ident.as_str() == "Result";
+        (is_std_result || is_fs_result) && last.args.len() == 2
+    }
+
+    fn result_variant_locator(&self, variant: &str) -> Name {
+        Name::path(Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("result"),
+            Ident::new("Result"),
+            Ident::new(variant),
+        ]))
+    }
+
+    fn make_result_variant(&mut self, variant: &str, payload: Value) -> Value {
+        let locator = self.result_variant_locator(variant);
+        let Some(info) = self.lookup_enum_variant(&locator) else {
+            self.emit_error(format!("unable to locate std::result::Result::{variant}"));
+            return Value::undefined();
+        };
+        self.build_enum_value(&info, Some(payload))
+    }
+
+    fn make_result_ok(&mut self, value: Value) -> Value {
+        self.make_result_variant("Ok", value)
+    }
+
+    fn make_result_err(&mut self, value: Value) -> Value {
+        self.make_result_variant("Err", value)
+    }
+
+    fn make_error_value(&mut self, message: String) -> Value {
+        let Some(ty) = self.resolve_type_binding_spec("std::error::Error") else {
+            return Value::string(message);
+        };
+        match ty {
+            Ty::Struct(struct_ty) => Value::Struct(ValueStruct::new(
+                struct_ty,
+                vec![ValueField::new(Ident::new("message"), Value::string(message))],
+            )),
+            _ => Value::string(message),
+        }
+    }
+
+    fn match_result_value(&self, value: &Value) -> Option<std::result::Result<Value, Value>> {
+        let Value::Any(any) = value else {
+            return None;
+        };
+        let enum_value = any.downcast_ref::<RuntimeEnum>()?;
+        if enum_value.enum_name != "Result" {
+            return None;
+        }
+        let payload = enum_value
+            .payload
+            .clone()
+            .unwrap_or_else(Value::unit);
+        match enum_value.variant_name.as_str() {
+            "Ok" => Some(Ok(payload)),
+            "Err" => Some(Err(payload)),
+            _ => None,
+        }
+    }
+
+    fn finish_exception_return(&mut self, value: Value, mode: ExceptionReturnMode) -> Value {
+        match mode {
+            ExceptionReturnMode::Disabled => value,
+            ExceptionReturnMode::ExplicitResult => value,
+            ExceptionReturnMode::AutoResult => {
+                if self.match_result_value(&value).is_some() {
+                    value
+                } else {
+                    self.make_result_ok(value)
+                }
+            }
+        }
     }
 
     fn assign_index_shared(
@@ -5917,7 +6069,57 @@ impl<'ctx> AstInterpreter<'ctx> {
                     let shared_value = self.runtime_ref_value(runtime_ref);
                     return self.evaluate_index(shared_value, index);
                 }
+                if let Some(module) = any.downcast_ref::<ImportedModule>() {
+                    let key = match index {
+                        Value::String(text) => text.value,
+                        Value::Char(ch) => ch.value.to_string(),
+                        other => {
+                            self.emit_error(format!(
+                                "module index expects a string key, got {}",
+                                other
+                            ));
+                            return Value::undefined();
+                        }
+                    };
+                    let Some(base) = self.module_id_path(&module.module) else {
+                        self.emit_error("unable to resolve module path for dynamic index");
+                        return Value::undefined();
+                    };
+                    let symbol = if base.is_empty() {
+                        key
+                    } else {
+                        format!("{}::{}", base, key)
+                    };
+                    if let Some(value) = self.resolve_imported_symbol_path(&symbol) {
+                        return value;
+                    }
+                    self.emit_error(format!("unable to resolve symbol '{}'", symbol));
+                    return Value::undefined();
+                }
                 self.emit_error("cannot index into non-collection reference");
+                Value::undefined()
+            }
+            Value::String(text) => {
+                let key = match index {
+                    Value::String(name) => name.value,
+                    Value::Char(ch) => ch.value.to_string(),
+                    other => {
+                        self.emit_error(format!(
+                            "module index expects a string key, got {}",
+                            other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                if !text.value.contains("::") {
+                    self.emit_error("cannot index into string value");
+                    return Value::undefined();
+                }
+                let symbol = format!("{}::{}", text.value, key);
+                if let Some(value) = self.resolve_imported_symbol_path(&symbol) {
+                    return value;
+                }
+                self.emit_error(format!("unable to resolve symbol '{}'", symbol));
                 Value::undefined()
             }
             Value::List(list) => {
@@ -8426,28 +8628,88 @@ fn lang_json_parse(args: &[Value]) -> std::result::Result<Value, String> {
     Ok(lang_json_value(&value))
 }
 
+fn json_option_some(value: Value) -> Value {
+    Value::Any(AnyBox::new(RuntimeEnum {
+        enum_name: "Option".to_string(),
+        variant_name: "Some".to_string(),
+        payload: Some(value),
+        discriminant: None,
+    }))
+}
+
+fn json_option_none() -> Value {
+    Value::Any(AnyBox::new(RuntimeEnum {
+        enum_name: "Option".to_string(),
+        variant_name: "None".to_string(),
+        payload: None,
+        discriminant: None,
+    }))
+}
+
+fn json_number_kind(name: &str) -> Value {
+    Value::Any(AnyBox::new(RuntimeEnum {
+        enum_name: "NumberKind".to_string(),
+        variant_name: name.to_string(),
+        payload: None,
+        discriminant: None,
+    }))
+}
+
+fn json_number_value(number: &serde_json::Number) -> Value {
+    let raw = number.to_string();
+    let int_value = match number.as_i64() {
+        Some(value) => json_option_some(Value::int(value)),
+        None => json_option_none(),
+    };
+    let uint_value = match number.as_u64() {
+        Some(value) if value <= i64::MAX as u64 => json_option_some(Value::int(value as i64)),
+        Some(_) => {
+            // TODO(json): preserve u64 values larger than i64::MAX without precision loss.
+            json_option_none()
+        }
+        None => json_option_none(),
+    };
+    let float_value = match number.as_f64() {
+        Some(value) => json_option_some(Value::decimal(value)),
+        None => json_option_none(),
+    };
+    let kind = match (number.as_i64(), number.as_u64()) {
+        (Some(_), _) => json_number_kind("Int"),
+        (None, Some(_)) => json_number_kind("UInt"),
+        (None, None) => json_number_kind("Float"),
+    };
+
+    Value::Structural(ValueStructural::new(vec![
+        ValueField::new(Ident::new("raw"), Value::string(raw)),
+        ValueField::new(Ident::new("kind"), kind),
+        ValueField::new(Ident::new("int"), int_value),
+        ValueField::new(Ident::new("uint"), uint_value),
+        ValueField::new(Ident::new("float"), float_value),
+    ]))
+}
+
 fn lang_json_value(value: &serde_json::Value) -> Value {
     match value {
         serde_json::Value::Null => Value::Any(AnyBox::new(RuntimeEnum {
-            enum_name: "JsonValue".to_string(),
+            enum_name: "Value".to_string(),
             variant_name: "Null".to_string(),
             payload: None,
             discriminant: None,
         })),
         serde_json::Value::Bool(flag) => Value::Any(AnyBox::new(RuntimeEnum {
-            enum_name: "JsonValue".to_string(),
+            enum_name: "Value".to_string(),
             variant_name: "Bool".to_string(),
             payload: Some(Value::bool(*flag)),
             discriminant: None,
         })),
         serde_json::Value::Number(number) => Value::Any(AnyBox::new(RuntimeEnum {
-            enum_name: "JsonValue".to_string(),
+            enum_name: "Value".to_string(),
             variant_name: "Number".to_string(),
-            payload: Some(Value::string(number.to_string())),
+            payload: Some(json_number_value(number)),
             discriminant: None,
         })),
         serde_json::Value::String(text) => Value::Any(AnyBox::new(RuntimeEnum {
-            enum_name: "JsonValue".to_string(),
+            enum_name: "Value".to_string(),
             variant_name: "String".to_string(),
             payload: Some(Value::string(text.clone())),
             discriminant: None,
@@ -8455,7 +8717,7 @@ fn lang_json_value(value: &serde_json::Value) -> Value {
         serde_json::Value::Array(items) => {
             let values = items.iter().map(lang_json_value).collect::<Vec<_>>();
             Value::Any(AnyBox::new(RuntimeEnum {
-                enum_name: "JsonValue".to_string(),
+                enum_name: "Value".to_string(),
                 variant_name: "Array".to_string(),
                 payload: Some(Value::List(ValueList::new(values))),
                 discriminant: None,
@@ -8472,7 +8734,7 @@ fn lang_json_value(value: &serde_json::Value) -> Value {
                 })
                 .collect::<Vec<_>>();
             Value::Any(AnyBox::new(RuntimeEnum {
-                enum_name: "JsonValue".to_string(),
+                enum_name: "Value".to_string(),
                 variant_name: "Object".to_string(),
                 payload: Some(Value::List(ValueList::new(values))),
                 discriminant: None,

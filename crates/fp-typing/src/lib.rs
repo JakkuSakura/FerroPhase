@@ -29,6 +29,25 @@ fn attrs_has_name(attrs: &[Attribute], name: &str) -> bool {
     })
 }
 
+fn attrs_has_feature(attrs: &[Attribute], feature: &str) -> bool {
+    for attr in attrs {
+        let AttrMeta::List(AttrMetaList { name, items }) = &attr.meta else {
+            continue;
+        };
+        if name.last().as_str() != "feature" {
+            continue;
+        }
+        for item in items {
+            if let AttrMeta::Path(path) = item {
+                if path.last().as_str() == feature {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn detect_lossy_mode() -> bool {
     config::lossy_mode()
 }
@@ -51,6 +70,55 @@ fn make_std_task_future_ty(inner: Ty) -> Ty {
         ],
     );
     Ty::locator(Name::ParameterPath(path))
+}
+
+fn make_std_result_ty(ok: Ty, err: Ty) -> Ty {
+    let result_seg = ParameterPathSegment::new(Ident::new("Result"), vec![ok, err]);
+    let path = ParameterPath::new(
+        PathPrefix::Plain,
+        vec![
+            ParameterPathSegment::new(Ident::new("std"), vec![]),
+            ParameterPathSegment::new(Ident::new("result"), vec![]),
+            result_seg,
+        ],
+    );
+    Ty::locator(Name::ParameterPath(path))
+}
+
+fn std_error_ty() -> Ty {
+    let path = Path::plain(vec![Ident::new("std"), Ident::new("error"), Ident::new("Error")]);
+    Ty::locator(Name::Path(path))
+}
+
+fn std_result_inner_types(ty: &Ty) -> Option<(Ty, Ty)> {
+    let Ty::Expr(expr) = ty else {
+        return None;
+    };
+    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        return None;
+    };
+    if path.segments.len() < 3 {
+        return None;
+    }
+    let n = path.segments.len();
+    let (prefix_a, prefix_b, result_seg) = (
+        path.segments[n - 3].ident.as_str(),
+        path.segments[n - 2].ident.as_str(),
+        &path.segments[n - 1],
+    );
+    let is_std_result = prefix_a == "std" && prefix_b == "result" && result_seg.ident.as_str() == "Result";
+    let is_fs_result = prefix_a == "std" && prefix_b == "fs" && result_seg.ident.as_str() == "Result";
+    if !is_std_result && !is_fs_result {
+        return None;
+    }
+    if result_seg.args.len() != 2 {
+        return None;
+    }
+    Some((result_seg.args[0].clone(), result_seg.args[1].clone()))
+}
+
+fn is_std_result_ty(ty: &Ty) -> bool {
+    std_result_inner_types(ty).is_some()
 }
 
 fn is_std_task_future_ty(ty: &Ty) -> bool {
@@ -180,6 +248,29 @@ struct ContextBinding {
     expr: Expr,
 }
 
+#[derive(Clone, Copy)]
+enum ExceptionReturnPolicy {
+    Disabled,
+    ExplicitResult,
+    AutoResult,
+}
+
+struct ExceptionContext {
+    policy: ExceptionReturnPolicy,
+}
+
+struct ExceptionContextGuard<'ctx> {
+    inferencer: *mut AstTypeInferencer<'ctx>,
+}
+
+impl<'ctx> Drop for ExceptionContextGuard<'ctx> {
+    fn drop(&mut self) {
+        unsafe {
+            (*self.inferencer).exception_stack.pop();
+        }
+    }
+}
+
 pub struct AstTypeInferencer<'ctx> {
     ctx: Option<&'ctx SharedScopedContext>,
     type_vars: Vec<TypeVar>,
@@ -211,6 +302,8 @@ pub struct AstTypeInferencer<'ctx> {
     lossy_mode: bool,
     hashmap_args: HashMap<TypeVarId, (TypeVarId, TypeVarId)>,
     context_env: Vec<Vec<ContextBinding>>,
+    exception_mode: bool,
+    exception_stack: Vec<ExceptionContext>,
     current_span: Option<Span>,
     resolution_hook: Option<Box<dyn TypeResolutionHook + 'ctx>>,
 }
@@ -287,6 +380,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             lossy_mode: detect_lossy_mode(),
             hashmap_args: HashMap::new(),
             context_env: vec![Vec::new()],
+            exception_mode: false,
+            exception_stack: Vec::new(),
             current_span: None,
             resolution_hook: None,
             unimplemented_symbols: HashSet::new(),
@@ -320,6 +415,31 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub fn set_resolution_hook(&mut self, hook: Box<dyn TypeResolutionHook + 'ctx>) {
         self.resolution_hook = Some(hook);
+    }
+
+    fn exception_policy_for_ret(&self, ret_ty: Option<&Ty>) -> ExceptionReturnPolicy {
+        if !self.exception_mode {
+            return ExceptionReturnPolicy::Disabled;
+        }
+        match ret_ty {
+            Some(ty) if is_std_result_ty(ty) => ExceptionReturnPolicy::ExplicitResult,
+            Some(_) => ExceptionReturnPolicy::Disabled,
+            None => ExceptionReturnPolicy::AutoResult,
+        }
+    }
+
+    fn current_exception_policy(&self) -> ExceptionReturnPolicy {
+        self.exception_stack
+            .last()
+            .map(|ctx| ctx.policy)
+            .unwrap_or(ExceptionReturnPolicy::Disabled)
+    }
+
+    fn push_exception_context(&mut self, policy: ExceptionReturnPolicy) -> ExceptionContextGuard<'ctx> {
+        self.exception_stack.push(ExceptionContext { policy });
+        ExceptionContextGuard {
+            inferencer: self as *mut _,
+        }
     }
 
     fn record_hashmap_args(
@@ -366,14 +486,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 node.set_ty(ty);
             }
             NodeKind::File(file) => {
+                let previous_exception = self.exception_mode;
+                self.exception_mode = attrs_has_feature(&file.attrs, "exception");
                 for item in &file.items {
                     self.predeclare_item(item);
                 }
                 for item in &mut file.items {
                     if let Err(err) = self.infer_item(item) {
+                        self.exception_mode = previous_exception;
                         return Err(self.error_with_span(err, self.span_option(item.span())));
                     }
                 }
+                self.exception_mode = previous_exception;
                 node.set_ty(Ty::Unit(TypeUnit));
             }
             NodeKind::Query(_) => {
@@ -912,6 +1036,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     ) -> Option<QualifiedPath> {
         if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
             return None;
+        }
+        if matches!(prefix, PathPrefix::Plain)
+            && !segments.is_empty()
+        {
+            if let Some(symbol_path) = self.lookup_symbol_alias(&segments[0]) {
+                return Some(symbol_path.join(&segments[1..]));
+            }
+            if let Some(module_path) = self.lookup_module_alias(&segments[0]) {
+                return Some(module_path.join(&segments[1..]));
+            }
         }
         let parsed = ParsedPath {
             prefix,
@@ -2147,6 +2281,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         };
 
+        let exception_policy = self.exception_policy_for_ret(func.sig.ret_ty.as_ref());
+        let _exception_guard = self.push_exception_context(exception_policy);
+
         self.enter_scope();
 
         let mut receiver_ty: Option<Ty> = None;
@@ -2209,7 +2346,27 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.infer_expr(&mut body)?
         };
 
-        let ret_var = if let Some(existing) = existing_signature.as_ref().map(|sig| sig.ret) {
+        let ret_var = if matches!(exception_policy, ExceptionReturnPolicy::AutoResult) {
+            let body_ty = self.resolve_to_ty(body_var)?;
+            let inner_ty = if is_async_fn {
+                std_task_future_inner_ty(&body_ty).unwrap_or(body_ty)
+            } else {
+                body_ty
+            };
+            let result_ty = make_std_result_ty(inner_ty, std_error_ty());
+            let final_ret_ty = if is_async_fn {
+                make_std_task_future_ty(result_ty)
+            } else {
+                result_ty
+            };
+            let result_var = self.type_from_ast_ty(&final_ret_ty)?;
+            if let Some(existing) = existing_signature.as_ref().map(|sig| sig.ret) {
+                self.unify(existing, result_var)?;
+                existing
+            } else {
+                result_var
+            }
+        } else if let Some(existing) = existing_signature.as_ref().map(|sig| sig.ret) {
             if !is_async_fn || body_is_async_expr {
                 self.unify(existing, body_var)?;
             }
@@ -2328,6 +2485,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn infer_trait_method(&mut self, func: &mut ItemDefFunction) -> Result<Ty> {
         let fn_var = self.symbol_var(&func.name);
 
+        let exception_policy = self.exception_policy_for_ret(func.sig.ret_ty.as_ref());
+        let _exception_guard = self.push_exception_context(exception_policy);
+
         self.enter_scope();
 
         if let Some(receiver) = func.sig.receiver.as_ref() {
@@ -2388,7 +2548,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.infer_expr(&mut body)?
         };
 
-        let ret_var = if let Some(ret) = &func.sig.ret_ty {
+        let ret_var = if matches!(exception_policy, ExceptionReturnPolicy::AutoResult) {
+            let body_ty = self.resolve_to_ty(body_var)?;
+            let result_ty = make_std_result_ty(body_ty, std_error_ty());
+            self.type_from_ast_ty(&result_ty)?
+        } else if let Some(ret) = &func.sig.ret_ty {
             let annot_var = self.type_from_ast_ty(ret)?;
             self.unify(body_var, annot_var)?;
             annot_var

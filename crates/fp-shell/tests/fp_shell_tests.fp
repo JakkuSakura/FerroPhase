@@ -1,11 +1,14 @@
-#![feature(replace-bindings)]
+#![feature(replace_binding)]
+#![feature(exception)]
 use std::assert;
 use std::env;
 use std::fs;
-use std::json::JsonValue;
+use std::json::Value;
 use std::path::Path;
-use std::test;
 use std::yaml;
+use std::shell::backend;
+use std::collections::hash_map::HashMap;
+use std::option::Option;
 
 struct FixtureSummary {
     total: i64,
@@ -13,7 +16,45 @@ struct FixtureSummary {
     failed: i64,
 }
 
+type JsonValue = Value;
+
+const mut COMMAND_CALLS: Vec<str> = Vec::new();
+
+fn reset_command_calls() {
+    COMMAND_CALLS = Vec::new();
+}
+
+fn record_command(command: str) {
+    COMMAND_CALLS.push(command);
+}
+
+fn take_command_calls() -> Vec<str> {
+    let calls = COMMAND_CALLS;
+    COMMAND_CALLS = Vec::new();
+    calls
+}
+
+fn install_shell_hooks() {
+    let handler = move |_host: str,
+                        command: str,
+                        _only_if: str,
+                        _unless: str,
+                        _creates: str,
+                        _removes: str| {
+        record_command(command);
+        std::shell::backend::runtime_set_changed(true);
+    };
+    std::shell::backend::shell_run = handler;
+    std::shell::backend::shell_run_local = handler;
+    std::shell::backend::shell_run_ssh = handler;
+    std::shell::backend::shell_run_docker = handler;
+    std::shell::backend::shell_run_kubectl = handler;
+    std::shell::backend::shell_run_winrm = handler;
+    std::shell::backend::shell_run_chroot = handler;
+}
+
 fn main() {
+    install_shell_hooks();
     let repo_root = env::current_dir();
     let fixture_root = join_path(&repo_root, "crates/fp-shell/tests/fixtures/operations");
 
@@ -63,15 +104,14 @@ fn is_fixture_path(path: &str) -> bool {
 fn run_case(path: &str) -> bool {
     let fixture = load_fixture(path);
     let family = case_family(path);
-    let source = build_case_source(&family, fixture);
     let workspace = case_workspace(path);
 
     reset_workspace(&workspace);
     materialize_fixture_workspace(&workspace, fixture);
-    test::reset_command_mocks();
+    reset_command_calls();
 
-    let error = test::eval_shell_source(source, workspace);
-    let calls = test::take_command_calls();
+    let error = run_shell_case(path, family, fixture);
+    let calls = take_command_calls();
     let rendered = calls.join("\n");
     let expects_failure = expects_exception(fixture);
 
@@ -121,17 +161,31 @@ fn case_family(path: &str) -> str {
     parent.file_name().unwrap()
 }
 
+fn run_shell_case(path: &str, family: &str, fixture: JsonValue) -> str {
+    let op_path = operation_path(family);
+    let op_name = operation_name(path);
+    let args = json_args(std::json::find_object_field(fixture, "args"));
+    let kwargs = json_kwargs(std::json::find_object_field(fixture, "kwargs"));
+    let mut error = "";
+
+    try {
+        let operation = op_path[op_name];
+        operation(*args, **kwargs);
+    } catch err {
+        error = err;
+    }
+
+    error
+}
+
+fn operation_name(path: &str) -> str {
+    let name = Path::new(path).file_name().unwrap_or("");
+    Path::new(name).stem().unwrap_or(name)
+}
+
 fn load_fixture(path: &str) -> JsonValue {
     let source = fs::read_to_string(Path::new(path));
     yaml::parse(&source)
-}
-
-fn build_case_source(family: &str, fixture: JsonValue) -> str {
-    let operation = operation_path(family);
-    let args = render_args(std::json::find_object_field(fixture, "args"));
-    let kwargs = render_kwargs(std::json::find_object_field(fixture, "kwargs"));
-    let call = render_call(&operation, &args, &kwargs);
-    f"fn main() {{\n    {call};\n}}\n"
 }
 
 fn operation_path(family: &str) -> str {
@@ -139,51 +193,84 @@ fn operation_path(family: &str) -> str {
     f"std::ops::{rendered}"
 }
 
-fn render_call(operation: &str, args: &str, kwargs: &str) -> str {
-    if args == "" {
-        if kwargs == "" {
-            return f"{operation}()";
-        }
-        return f"{operation}({kwargs})";
-    }
-
-    if kwargs == "" {
-        return f"{operation}({args})";
-    }
-
-    f"{operation}({args}, {kwargs})"
-}
-
-fn render_args(value: JsonValue) -> str {
+fn json_args(value: JsonValue) -> Vec<any> {
     match value {
-        JsonValue::Null => "",
+        JsonValue::Null => Vec::new(),
         JsonValue::Array(values) => {
-            let mut rendered = Vec::new();
+            let mut out = Vec::new();
             let mut idx = 0;
             while idx < values.len() {
-                rendered.push(render_value(values[idx]));
+                out.push(json_to_value(values[idx]));
                 idx = idx + 1;
             }
-            rendered.join(", ")
+            out
         }
         _ => panic("expected args array"),
     }
 }
 
-fn render_kwargs(value: JsonValue) -> str {
+fn json_kwargs(value: JsonValue) -> any {
     match value {
-        JsonValue::Null => "",
+        JsonValue::Null => HashMap::new(),
         JsonValue::Object(fields) => {
-            let mut rendered = Vec::new();
+            let mut entries = Vec::new();
             let mut idx = 0;
             while idx < fields.len() {
                 let field = fields[idx];
-                rendered.push(f"{field.key}={render_value(field.value)}");
+                entries.push((field.key, json_to_value(field.value)));
                 idx = idx + 1;
             }
-            rendered.join(", ")
+            HashMap::from(entries)
         }
         _ => panic("expected kwargs object"),
+    }
+}
+
+fn json_to_value(value: JsonValue) -> any {
+    match value {
+        JsonValue::Null => null,
+        JsonValue::Bool(flag) => {
+            flag
+        }
+        JsonValue::Number(number) => {
+            match number.as_i64() {
+                Option::Some(value) => value,
+                Option::None => {
+                    match number.as_u64() {
+                        Option::Some(value) => value,
+                        Option::None => {
+                            match number.as_f64() {
+                                Option::Some(value) => value,
+                                Option::None => panic("unsupported json number"),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        JsonValue::String(text) => text,
+        JsonValue::Array(values) => {
+            if array_is_string_list(values) {
+                return join_string_list(values);
+            }
+            let mut rendered = Vec::new();
+            let mut idx = 0;
+            while idx < values.len() {
+                rendered.push(json_to_value(values[idx]));
+                idx = idx + 1;
+            }
+            rendered
+        }
+        JsonValue::Object(fields) => {
+            let mut entries = Vec::new();
+            let mut idx = 0;
+            while idx < fields.len() {
+                let field = fields[idx];
+                entries.push((field.key, json_to_value(field.value)));
+                idx = idx + 1;
+            }
+            HashMap::from(entries)
+        }
     }
 }
 
@@ -197,7 +284,7 @@ fn render_value(value: JsonValue) -> str {
                 "false"
             }
         }
-        JsonValue::Number(number) => number,
+        JsonValue::Number(number) => number.to_string(),
         JsonValue::String(text) => fp_quote(text),
         JsonValue::Array(values) => {
             if array_is_string_list(values) {
