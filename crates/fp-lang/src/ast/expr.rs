@@ -1109,6 +1109,24 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             })
             .into())
         }
+        SyntaxKind::ExprSplat => {
+            let inner = last_child_expr(node)?;
+            let inner = lower_expr_from_cst(inner)?;
+            Ok(ExprKind::Splat(fp_core::ast::ExprSplat {
+                span: node.span,
+                iter: Box::new(inner),
+            })
+            .into())
+        }
+        SyntaxKind::ExprSplatDict => {
+            let inner = last_child_expr(node)?;
+            let inner = lower_expr_from_cst(inner)?;
+            Ok(ExprKind::SplatDict(fp_core::ast::ExprSplatDict {
+                span: node.span,
+                dict: Box::new(inner),
+            })
+            .into())
+        }
         SyntaxKind::ExprCall => {
             let mut nodes = node_children_exprs(node);
             let callee = nodes
@@ -1506,6 +1524,12 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
             if name == "_" {
                 return Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {})));
             }
+            if name == "true" || name == "false" {
+                return Ok(Pattern::new(PatternKind::Variant(PatternVariant {
+                    name: Expr::value(Value::bool(name == "true")),
+                    pattern: None,
+                })));
+            }
             Ok(Pattern::new(PatternKind::Ident(PatternIdent::new(
                 Ident::new(name),
             ))))
@@ -1519,6 +1543,16 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
         }
         SyntaxKind::ExprPath => {
             let expr = lower_expr_from_cst(node)?;
+            if let ExprKind::Name(name) = expr.kind() {
+                if let Some(ident) = name.as_ident() {
+                    if ident.as_str() == "true" || ident.as_str() == "false" {
+                        return Ok(Pattern::new(PatternKind::Variant(PatternVariant {
+                            name: Expr::value(Value::bool(ident.as_str() == "true")),
+                            pattern: None,
+                        })));
+                    }
+                }
+            }
             Ok(Pattern::new(PatternKind::Variant(PatternVariant {
                 name: expr,
                 pattern: None,
@@ -1809,8 +1843,7 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
                 ))),
             ))
         }
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
-        | "usize" => {
+        "i8" | "i16" | "i32" | "i64" | "isize" => {
             if normalized.contains('.') {
                 return Err(LowerError::InvalidNumber(raw.to_string()));
             }
@@ -1821,16 +1854,53 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
                 "i16" => TypeInt::I16,
                 "i32" => TypeInt::I32,
                 "i64" => TypeInt::I64,
-                "u8" => TypeInt::U8,
-                "u16" => TypeInt::U16,
-                "u32" => TypeInt::U32,
-                "u64" => TypeInt::U64,
-                "i128" | "u128" | "isize" | "usize" => TypeInt::I64,
+                "isize" => TypeInt::I64,
                 _ => TypeInt::I64,
             };
             Ok((
                 Value::int(value),
                 Some(Ty::Primitive(TypePrimitive::Int(ty))),
+            ))
+        }
+        "i128" => {
+            if normalized.contains('.') {
+                return Err(LowerError::InvalidNumber(raw.to_string()));
+            }
+            let value = parse_big_int_literal(&normalized)
+                .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
+            Ok((
+                Value::big_int(value),
+                Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I128))),
+            ))
+        }
+        "u8" | "u16" | "u32" | "u64" | "usize" => {
+            if normalized.contains('.') {
+                return Err(LowerError::InvalidNumber(raw.to_string()));
+            }
+            let value = parse_u64_literal(&normalized)
+                .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
+            let ty = match suffix {
+                "u8" => TypeInt::U8,
+                "u16" => TypeInt::U16,
+                "u32" => TypeInt::U32,
+                "u64" => TypeInt::U64,
+                "usize" => TypeInt::U64,
+                _ => TypeInt::U64,
+            };
+            Ok((
+                Value::uint(value),
+                Some(Ty::Primitive(TypePrimitive::Int(ty))),
+            ))
+        }
+        "u128" => {
+            if normalized.contains('.') {
+                return Err(LowerError::InvalidNumber(raw.to_string()));
+            }
+            let value = parse_big_int_literal(&normalized)
+                .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
+            Ok((
+                Value::big_int(value),
+                Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U128))),
             ))
         }
         "f32" | "f64" => {
@@ -1864,6 +1934,11 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
 fn parse_i64_literal(raw: &str) -> Option<i64> {
     let (digits, radix) = integer_digits_and_radix(raw)?;
     i64::from_str_radix(digits, radix).ok()
+}
+
+fn parse_u64_literal(raw: &str) -> Option<u64> {
+    let (digits, radix) = integer_digits_and_radix(raw)?;
+    u64::from_str_radix(digits, radix).ok()
 }
 
 fn parse_big_int_literal(raw: &str) -> Option<BigInt> {

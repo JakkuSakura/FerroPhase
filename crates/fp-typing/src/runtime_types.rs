@@ -137,8 +137,16 @@ fn key_terminal_segment(key: &str) -> &str {
 pub fn builtin_type_bindings() -> HashMap<String, Ty> {
     let mut bindings = HashMap::new();
     bindings.insert(
+        "i128".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::I128)),
+    );
+    bindings.insert(
         "i64".to_string(),
         Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
+    );
+    bindings.insert(
+        "u128".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::U128)),
     );
     bindings.insert(
         "u64".to_string(),
@@ -186,6 +194,7 @@ pub fn builtin_type_bindings() -> HashMap<String, Ty> {
 pub fn infer_value_ty(value: &Value) -> Option<Ty> {
     match value {
         Value::Int(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
+        Value::UInt(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U64))),
         Value::BigInt(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
         Value::Decimal(_) => Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64))),
         Value::BigDecimal(_) => Some(Ty::Primitive(TypePrimitive::Decimal(

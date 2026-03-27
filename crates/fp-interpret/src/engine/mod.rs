@@ -513,19 +513,6 @@ enum EvalMode {
     Runtime,
 }
 
-struct ExceptionReturnGuard {
-    interpreter: *mut (),
-}
-
-impl Drop for ExceptionReturnGuard {
-    fn drop(&mut self) {
-        unsafe {
-            (*(self.interpreter as *mut AstInterpreter<'static>))
-                .exception_stack
-                .pop();
-        }
-    }
-}
 
 type ExprDiscriminant = std::mem::Discriminant<ExprKind>;
 
@@ -1600,6 +1587,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.extract_spawned_future_handle_from_value(&field.value)
             .or_else(|| match &field.value {
                 Value::Int(int) => Some(int.value as u64),
+                Value::UInt(int) => Some(int.value),
                 _ => None,
             })
     }
@@ -3935,6 +3923,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                     };
 
                     match name {
+                        Some("i128") => Some(TypePrimitive::Int(TypeInt::I128)),
+                        Some("u128") => Some(TypePrimitive::Int(TypeInt::U128)),
                         Some("i64") => Some(TypePrimitive::Int(TypeInt::I64)),
                         Some("u64") => Some(TypePrimitive::Int(TypeInt::U64)),
                         Some("i32") => Some(TypePrimitive::Int(TypeInt::I32)),
@@ -3957,6 +3947,18 @@ impl<'ctx> AstInterpreter<'ctx> {
         match primitive_target {
             Some(TypePrimitive::Int(_)) => match value {
                 Value::Int(int_val) => Value::int(int_val.value),
+                Value::UInt(int_val) => {
+                    if int_val.value <= i64::MAX as u64 {
+                        Value::int(int_val.value as i64)
+                    } else {
+                        self.emit_error(format!(
+                            "cannot cast value {} to integer type {}",
+                            Value::UInt(int_val),
+                            target_ty
+                        ));
+                        Value::undefined()
+                    }
+                }
                 Value::Bool(bool_val) => Value::int(if bool_val.value { 1 } else { 0 }),
                 Value::Decimal(decimal_val) => Value::int(decimal_val.value as i64),
                 Value::BigInt(big_int) => match i64::try_from(&big_int.value) {
@@ -4005,6 +4007,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             Some(TypePrimitive::Bool) => match value {
                 Value::Bool(bool_val) => Value::bool(bool_val.value),
                 Value::Int(int_val) => Value::bool(int_val.value != 0),
+                Value::UInt(int_val) => Value::bool(int_val.value != 0),
                 other => {
                     self.emit_error(format!(
                         "cannot cast value {} to bool during const evaluation",
@@ -4026,6 +4029,14 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn numeric_to_i64(&mut self, value: &Value, context: &str) -> Option<i64> {
         match value {
             Value::Int(int_val) => Some(int_val.value),
+            Value::UInt(int_val) => {
+                if int_val.value <= i64::MAX as u64 {
+                    Some(int_val.value as i64)
+                } else {
+                    self.emit_error(format!("{} is out of range for i64", context));
+                    None
+                }
+            }
             Value::Decimal(decimal_val) => Some(decimal_val.value as i64),
             Value::BigInt(big_int) => match i64::try_from(&big_int.value) {
                 Ok(value) => Some(value),
@@ -4052,15 +4063,23 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn numeric_to_non_negative_usize(&mut self, value: &Value, context: &str) -> Option<usize> {
-        let numeric_value = self.numeric_to_i64(value, context)?;
-        if numeric_value < 0 {
-            self.emit_error(format!("{} must be non-negative", context));
-            return None;
+        match value {
+            Value::UInt(int_val) => usize::try_from(int_val.value).ok().or_else(|| {
+                self.emit_error(format!("{} is out of range for usize", context));
+                None
+            }),
+            _ => {
+                let numeric_value = self.numeric_to_i64(value, context)?;
+                if numeric_value < 0 {
+                    self.emit_error(format!("{} must be non-negative", context));
+                    return None;
+                }
+                usize::try_from(numeric_value).ok().or_else(|| {
+                    self.emit_error(format!("{} is out of range for usize", context));
+                    None
+                })
+            }
         }
-        usize::try_from(numeric_value).ok().or_else(|| {
-            self.emit_error(format!("{} is out of range for usize", context));
-            None
-        })
     }
 
     fn locator_segments(locator: &Name) -> Vec<String> {
@@ -5464,13 +5483,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         false
     }
 
-    fn push_exception_return_mode(&mut self, mode: ExceptionReturnMode) -> ExceptionReturnGuard {
-        self.exception_stack.push(mode);
-        ExceptionReturnGuard {
-            interpreter: self as *mut _ as *mut (),
-        }
-    }
-
     fn current_exception_return_mode(&self) -> ExceptionReturnMode {
         self.exception_stack
             .last()
@@ -6481,7 +6493,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 };
                 let idx = match &args[0] {
-                    Value::Int(int_val) if int_val.value >= 0 => int_val.value as usize,
+                Value::Int(int_val) if int_val.value >= 0 => int_val.value as usize,
+                Value::UInt(int_val) => int_val.value as usize,
                     _ => {
                         self.emit_error("field_name_at expects a non-negative integer index");
                         return Some(Value::undefined());
@@ -6585,6 +6598,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                             "i16" | "u16" => 2,
                             "i32" | "u32" => 4,
                             "i64" | "u64" => 8,
+                            "i128" | "u128" => 16,
                             "f32" => 4,
                             "f64" => 8,
                             "bool" => 1,
@@ -6603,7 +6617,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     TypeInt::I16 | TypeInt::U16 => 2,
                     TypeInt::I32 | TypeInt::U32 => 4,
                     TypeInt::I64 | TypeInt::U64 => 8,
-                    TypeInt::BigInt => 16,
+                    TypeInt::I128 | TypeInt::U128 | TypeInt::BigInt => 16,
                 },
                 TypePrimitive::Decimal(decimal_ty) => match decimal_ty {
                     DecimalType::F32 => 4,
@@ -6627,6 +6641,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn infer_value_ty(&self, value: &Value) -> Option<Ty> {
         match value {
             Value::Int(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
+            Value::UInt(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U64))),
             Value::BigInt(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
             Value::Decimal(_) => Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64))),
             Value::BigDecimal(_) => Some(Ty::Primitive(TypePrimitive::Decimal(
@@ -7113,6 +7128,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn literal_value_from_value(&self, value: &Value) -> Option<Value> {
         match value {
             Value::Int(_)
+            | Value::UInt(_)
             | Value::Bool(_)
             | Value::Decimal(_)
             | Value::BigInt(_)
@@ -7788,6 +7804,8 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn primitive_type_from_name(name: &str) -> Option<TypePrimitive> {
         match name {
+            "i128" => Some(TypePrimitive::Int(TypeInt::I128)),
+            "u128" => Some(TypePrimitive::Int(TypeInt::U128)),
             "i64" => Some(TypePrimitive::Int(TypeInt::I64)),
             "u64" => Some(TypePrimitive::Int(TypeInt::U64)),
             "i32" => Some(TypePrimitive::Int(TypeInt::I32)),
@@ -8146,6 +8164,7 @@ fn command_arg_from_value(value: &Value) -> std::result::Result<String, String> 
         Value::String(text) => Ok(text.value.clone()),
         Value::Bool(flag) => Ok(flag.value.to_string()),
         Value::Int(value) => Ok(value.value.to_string()),
+        Value::UInt(value) => Ok(value.value.to_string()),
         Value::Decimal(value) => Ok(value.value.to_string()),
         Value::BigInt(value) => Ok(value.value.to_string()),
         Value::BigDecimal(value) => Ok(value.value.to_string()),
@@ -8275,10 +8294,12 @@ fn resolve_command_runtime_ty(ty: &Ty) -> Ty {
                 match name {
                     "bool" => Ty::Primitive(TypePrimitive::Bool),
                     "str" | "String" | "string" => Ty::Primitive(TypePrimitive::String),
+                    "i128" => Ty::Primitive(TypePrimitive::Int(TypeInt::I128)),
                     "i64" => Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
                     "i32" => Ty::Primitive(TypePrimitive::Int(TypeInt::I32)),
                     "i16" => Ty::Primitive(TypePrimitive::Int(TypeInt::I16)),
                     "i8" => Ty::Primitive(TypePrimitive::Int(TypeInt::I8)),
+                    "u128" => Ty::Primitive(TypePrimitive::Int(TypeInt::U128)),
                     "u64" | "usize" => Ty::Primitive(TypePrimitive::Int(TypeInt::U64)),
                     "u32" => Ty::Primitive(TypePrimitive::Int(TypeInt::U32)),
                     "u16" => Ty::Primitive(TypePrimitive::Int(TypeInt::U16)),
@@ -8628,24 +8649,6 @@ fn lang_json_parse(args: &[Value]) -> std::result::Result<Value, String> {
     Ok(lang_json_value(&value))
 }
 
-fn json_option_some(value: Value) -> Value {
-    Value::Any(AnyBox::new(RuntimeEnum {
-        enum_name: "Option".to_string(),
-        variant_name: "Some".to_string(),
-        payload: Some(value),
-        discriminant: None,
-    }))
-}
-
-fn json_option_none() -> Value {
-    Value::Any(AnyBox::new(RuntimeEnum {
-        enum_name: "Option".to_string(),
-        variant_name: "None".to_string(),
-        payload: None,
-        discriminant: None,
-    }))
-}
-
 fn json_number_kind(name: &str) -> Value {
     Value::Any(AnyBox::new(RuntimeEnum {
         enum_name: "NumberKind".to_string(),
@@ -8657,21 +8660,17 @@ fn json_number_kind(name: &str) -> Value {
 
 fn json_number_value(number: &serde_json::Number) -> Value {
     let raw = number.to_string();
-    let int_value = match number.as_i64() {
-        Some(value) => json_option_some(Value::int(value)),
-        None => json_option_none(),
+    let (int_value, has_int) = match number.as_i64() {
+        Some(value) => (value, true),
+        None => (0, false),
     };
-    let uint_value = match number.as_u64() {
-        Some(value) if value <= i64::MAX as u64 => json_option_some(Value::int(value as i64)),
-        Some(_) => {
-            // TODO(json): preserve u64 values larger than i64::MAX without precision loss.
-            json_option_none()
-        }
-        None => json_option_none(),
+    let (uint_value, has_uint) = match number.as_u64() {
+        Some(value) => (value, true),
+        None => (0, false),
     };
-    let float_value = match number.as_f64() {
-        Some(value) => json_option_some(Value::decimal(value)),
-        None => json_option_none(),
+    let (float_value, has_float) = match number.as_f64() {
+        Some(value) => (value, true),
+        None => (0.0, false),
     };
     let kind = match (number.as_i64(), number.as_u64()) {
         (Some(_), _) => json_number_kind("Int"),
@@ -8679,13 +8678,49 @@ fn json_number_value(number: &serde_json::Number) -> Value {
         (None, None) => json_number_kind("Float"),
     };
 
-    Value::Structural(ValueStructural::new(vec![
-        ValueField::new(Ident::new("raw"), Value::string(raw)),
-        ValueField::new(Ident::new("kind"), kind),
-        ValueField::new(Ident::new("int"), int_value),
-        ValueField::new(Ident::new("uint"), uint_value),
-        ValueField::new(Ident::new("float"), float_value),
-    ]))
+    Value::Struct(ValueStruct::new(
+        json_number_struct_type(),
+        vec![
+            ValueField::new(Ident::new("raw"), Value::string(raw)),
+            ValueField::new(Ident::new("kind"), kind),
+            ValueField::new(Ident::new("int"), Value::int(int_value)),
+            ValueField::new(Ident::new("uint"), Value::uint(uint_value)),
+            ValueField::new(Ident::new("float"), Value::decimal(float_value)),
+            ValueField::new(Ident::new("has_int"), Value::bool(has_int)),
+            ValueField::new(Ident::new("has_uint"), Value::bool(has_uint)),
+            ValueField::new(Ident::new("has_float"), Value::bool(has_float)),
+        ],
+    ))
+}
+
+fn json_number_struct_type() -> TypeStruct {
+    TypeStruct {
+        name: Ident::new("Number"),
+        generics_params: Vec::new(),
+        repr: ReprOptions::default(),
+        fields: vec![
+            StructuralField::new(Ident::new("raw"), Ty::Any(TypeAny)),
+            StructuralField::new(Ident::new("kind"), Ty::Any(TypeAny)),
+            StructuralField::new(Ident::new("int"), Ty::Any(TypeAny)),
+            StructuralField::new(Ident::new("uint"), Ty::Any(TypeAny)),
+            StructuralField::new(Ident::new("float"), Ty::Any(TypeAny)),
+            StructuralField::new(Ident::new("has_int"), Ty::Any(TypeAny)),
+            StructuralField::new(Ident::new("has_uint"), Ty::Any(TypeAny)),
+            StructuralField::new(Ident::new("has_float"), Ty::Any(TypeAny)),
+        ],
+    }
+}
+
+fn json_field_struct_type() -> TypeStruct {
+    TypeStruct {
+        name: Ident::new("Field"),
+        generics_params: Vec::new(),
+        repr: ReprOptions::default(),
+        fields: vec![
+            StructuralField::new(Ident::new("key"), Ty::Any(TypeAny)),
+            StructuralField::new(Ident::new("value"), Ty::Any(TypeAny)),
+        ],
+    }
 }
 
 fn lang_json_value(value: &serde_json::Value) -> Value {
@@ -8727,10 +8762,13 @@ fn lang_json_value(value: &serde_json::Value) -> Value {
             let values = fields
                 .iter()
                 .map(|(key, value)| {
-                    Value::Structural(ValueStructural::new(vec![
-                        ValueField::new(Ident::new("key"), Value::string(key.clone())),
-                        ValueField::new(Ident::new("value"), lang_json_value(value)),
-                    ]))
+                    Value::Struct(ValueStruct::new(
+                        json_field_struct_type(),
+                        vec![
+                            ValueField::new(Ident::new("key"), Value::string(key.clone())),
+                            ValueField::new(Ident::new("value"), lang_json_value(value)),
+                        ],
+                    ))
                 })
                 .collect::<Vec<_>>();
             Value::Any(AnyBox::new(RuntimeEnum {
@@ -8770,6 +8808,16 @@ fn expect_lang_int_arg(
     };
     match lang_runtime_value(value) {
         Value::Int(number) => Ok(number.value),
+        Value::UInt(number) => {
+            if number.value <= i64::MAX as u64 {
+                Ok(number.value as i64)
+            } else {
+                Err(format!(
+                    "expected {} argument at index {} to be int, got {:?}",
+                    label, index, value
+                ))
+            }
+        }
         other => Err(format!(
             "expected {} argument at index {} to be int, got {:?}",
             label, index, other

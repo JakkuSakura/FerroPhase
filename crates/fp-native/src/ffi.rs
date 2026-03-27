@@ -212,6 +212,9 @@ fn ffi_type_for_arg(ty: &Ty) -> Result<FfiType> {
                 FfiType::I64
             }
             TypeInt::U8 | TypeInt::U16 | TypeInt::U32 | TypeInt::U64 => FfiType::U64,
+            TypeInt::I128 | TypeInt::U128 => {
+                return Err(Error::from("unsupported extern 128-bit integer arg without libffi"));
+            }
         }),
         Ty::Primitive(TypePrimitive::Decimal(_)) => {
             Err(Error::from("unsupported extern decimal arg without libffi"))
@@ -357,6 +360,9 @@ fn push_int_arg(int_ty: TypeInt, value: i64, args: &mut Vec<FfiValue>) -> Result
         }
         TypeInt::U8 | TypeInt::U16 | TypeInt::U32 | TypeInt::U64 => {
             args.push(FfiValue::U64(value as u64));
+        }
+        TypeInt::I128 | TypeInt::U128 => {
+            return Err(Error::from("unsupported extern 128-bit integer arg without libffi"));
         }
     }
     Ok(())
@@ -508,7 +514,7 @@ fn c_abi_layout_for_primitive(primitive: TypePrimitive) -> Result<CAbiLayout> {
             TypeInt::U32 => (4, 4),
             TypeInt::I64 => (8, 8),
             TypeInt::U64 => (8, 8),
-            TypeInt::BigInt => (8, 8),
+            TypeInt::I128 | TypeInt::U128 | TypeInt::BigInt => (16, 16),
         },
         TypePrimitive::Decimal(decimal_ty) => match decimal_ty {
             DecimalType::F32 => (4, 4),
@@ -856,10 +862,13 @@ fn write_int_value(int_ty: TypeInt, value: i64, buf: &mut [u8], base: usize) -> 
         TypeInt::U16 => buf[base..base + 2].copy_from_slice(&(value as u16).to_ne_bytes()),
         TypeInt::I32 => buf[base..base + 4].copy_from_slice(&(value as i32).to_ne_bytes()),
         TypeInt::U32 => buf[base..base + 4].copy_from_slice(&(value as u32).to_ne_bytes()),
-        TypeInt::I64 | TypeInt::BigInt => {
+        TypeInt::I64 => {
             buf[base..base + 8].copy_from_slice(&(value as i64).to_ne_bytes())
         }
         TypeInt::U64 => buf[base..base + 8].copy_from_slice(&(value as u64).to_ne_bytes()),
+        TypeInt::I128 | TypeInt::U128 | TypeInt::BigInt => {
+            return Err(Error::from("unsupported 128-bit integer in C ABI layout"));
+        }
     };
     Ok(())
 }
@@ -890,6 +899,8 @@ fn resolve_ffi_ty(ty: &Ty) -> Option<Ty> {
         Ty::Expr(expr) => match expr.kind() {
             ExprKind::Name(locator) => match locator {
                 Name::Ident(ident) => match ident.as_str() {
+                    "i128" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I128))),
+                    "u128" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U128))),
                     "i64" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
                     "u64" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U64))),
                     "i32" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I32))),

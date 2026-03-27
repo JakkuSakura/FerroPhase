@@ -902,6 +902,8 @@ fn fmt_type_primitive(prim: &crate::ast::TypePrimitive) -> String {
 
     match prim {
         TypePrimitive::Int(int_ty) => match int_ty {
+            TypeInt::I128 => "i128",
+            TypeInt::U128 => "u128",
             TypeInt::I64 => "i64",
             TypeInt::U64 => "u64",
             TypeInt::I32 => "i32",

@@ -208,6 +208,8 @@ impl Display for Ty {
 common_enum! {
     #[derive(Copy)]
     pub enum TypeInt {
+        I128,
+        U128,
         I64,
         U64,
         I32,
@@ -222,6 +224,8 @@ common_enum! {
 impl Display for TypeInt {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            TypeInt::I128 => write!(f, "i128"),
+            TypeInt::U128 => write!(f, "u128"),
             TypeInt::I64 => write!(f, "i64"),
             TypeInt::U64 => write!(f, "u64"),
             TypeInt::I32 => write!(f, "i32"),

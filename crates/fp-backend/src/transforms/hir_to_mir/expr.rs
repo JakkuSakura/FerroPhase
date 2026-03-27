@@ -2588,6 +2588,9 @@ impl MirLowering {
                 TypeInt::I64 => Ty {
                     kind: TyKind::Int(IntTy::I64),
                 },
+                TypeInt::I128 => Ty {
+                    kind: TyKind::Int(IntTy::I128),
+                },
                 TypeInt::U8 => Ty {
                     kind: TyKind::Uint(UintTy::U8),
                 },
@@ -2599,6 +2602,9 @@ impl MirLowering {
                 },
                 TypeInt::U64 => Ty {
                     kind: TyKind::Uint(UintTy::U64),
+                },
+                TypeInt::U128 => Ty {
+                    kind: TyKind::Uint(UintTy::U128),
                 },
                 TypeInt::BigInt => {
                     self.emit_error(span, "big integers are not yet supported in MIR");

@@ -741,6 +741,15 @@ impl PrettyPrintable for ast::File {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
         ctx.writeln(f, "ast::File {")?;
         ctx.with_indent(|ctx| {
+            if !self.attrs.is_empty() {
+                ctx.writeln(f, "attrs:")?;
+                ctx.with_indent(|ctx| {
+                    for attr in &self.attrs {
+                        ctx.writeln(f, format!("{:?}", attr))?;
+                    }
+                    Ok(())
+                })?;
+            }
             if !self.items.is_empty() {
                 ctx.writeln(f, "items:")?;
                 ctx.with_indent(|ctx| {
@@ -834,6 +843,8 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
     match ty {
         ast::Ty::Primitive(primitive) => match primitive {
             ast::TypePrimitive::Int(int_ty) => match int_ty {
+                ast::TypeInt::I128 => "i128".into(),
+                ast::TypeInt::U128 => "u128".into(),
                 ast::TypeInt::I64 => "i64".into(),
                 ast::TypeInt::U64 => "u64".into(),
                 ast::TypeInt::I32 => "i32".into(),
@@ -1235,6 +1246,7 @@ fn render_function_receiver(receiver: &ast::FunctionParamReceiver) -> String {
 fn summarize_value(value: &ast::Value) -> String {
     match value {
         ast::Value::Int(int_val) => int_val.value.to_string(),
+        ast::Value::UInt(int_val) => int_val.value.to_string(),
         ast::Value::BigInt(int_val) => format!("{}ib", int_val.value),
         ast::Value::Bool(bool_val) => bool_val.value.to_string(),
         ast::Value::Decimal(decimal) => decimal.value.to_string(),
