@@ -16,8 +16,6 @@ struct FixtureSummary {
     failed: i64,
 }
 
-type JsonValue = Value;
-
 const mut COMMAND_CALLS: Vec<str> = Vec::new();
 
 fn reset_command_calls() {
@@ -161,7 +159,7 @@ fn case_family(path: &str) -> str {
     parent.file_name().unwrap()
 }
 
-fn run_shell_case(path: &str, family: &str, fixture: JsonValue) -> str {
+fn run_shell_case(path: &str, family: &str, fixture: Value) -> str {
     let op_path = operation_path(family);
     let op_name = operation_name(path);
     let args = json_args(std::json::find_object_field(fixture, "args"));
@@ -183,7 +181,7 @@ fn operation_name(path: &str) -> str {
     Path::new(name).stem().unwrap_or(name)
 }
 
-fn load_fixture(path: &str) -> JsonValue {
+fn load_fixture(path: &str) -> Value {
     let source = fs::read_to_string(Path::new(path));
     yaml::parse(&source)
 }
@@ -193,10 +191,10 @@ fn operation_path(family: &str) -> str {
     f"std::ops::{rendered}"
 }
 
-fn json_args(value: JsonValue) -> Vec<any> {
+fn json_args(value: Value) -> Vec<any> {
     match value {
-        JsonValue::Null => Vec::new(),
-        JsonValue::Array(values) => {
+        Value::Null => Vec::new(),
+        Value::Array(values) => {
             let mut out = Vec::new();
             let mut idx = 0;
             while idx < values.len() {
@@ -209,10 +207,10 @@ fn json_args(value: JsonValue) -> Vec<any> {
     }
 }
 
-fn json_kwargs(value: JsonValue) -> any {
+fn json_kwargs(value: Value) -> any {
     match value {
-        JsonValue::Null => HashMap::new(),
-        JsonValue::Object(fields) => {
+        Value::Null => HashMap::new(),
+        Value::Object(fields) => {
             let mut entries = Vec::new();
             let mut idx = 0;
             while idx < fields.len() {
@@ -226,13 +224,13 @@ fn json_kwargs(value: JsonValue) -> any {
     }
 }
 
-fn json_to_value(value: JsonValue) -> any {
+fn json_to_value(value: Value) -> any {
     match value {
-        JsonValue::Null => null,
-        JsonValue::Bool(flag) => {
+        Value::Null => null,
+        Value::Bool(flag) => {
             flag
         }
-        JsonValue::Number(number) => {
+        Value::Number(number) => {
             match number.as_i64() {
                 Option::Some(value) => value,
                 Option::None => {
@@ -248,8 +246,8 @@ fn json_to_value(value: JsonValue) -> any {
                 }
             }
         }
-        JsonValue::String(text) => text,
-        JsonValue::Array(values) => {
+        Value::String(text) => text,
+        Value::Array(values) => {
             if array_is_string_list(values) {
                 return join_string_list(values);
             }
@@ -261,7 +259,7 @@ fn json_to_value(value: JsonValue) -> any {
             }
             rendered
         }
-        JsonValue::Object(fields) => {
+        Value::Object(fields) => {
             let mut entries = Vec::new();
             let mut idx = 0;
             while idx < fields.len() {
@@ -274,19 +272,19 @@ fn json_to_value(value: JsonValue) -> any {
     }
 }
 
-fn render_value(value: JsonValue) -> str {
+fn render_value(value: Value) -> str {
     match value {
-        JsonValue::Null => "null",
-        JsonValue::Bool(flag) => {
+        Value::Null => "null",
+        Value::Bool(flag) => {
             if flag {
                 "true"
             } else {
                 "false"
             }
         }
-        JsonValue::Number(number) => number.to_string(),
-        JsonValue::String(text) => fp_quote(text),
-        JsonValue::Array(values) => {
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => fp_quote(text),
+        Value::Array(values) => {
             if array_is_string_list(values) {
                 return fp_quote(join_string_list(values));
             }
@@ -299,7 +297,7 @@ fn render_value(value: JsonValue) -> str {
             let body = rendered.join(", ");
             f"[{body}]"
         }
-        JsonValue::Object(fields) => {
+        Value::Object(fields) => {
             let mut rendered = Vec::new();
             let mut idx = 0;
             while idx < fields.len() {
@@ -313,11 +311,11 @@ fn render_value(value: JsonValue) -> str {
     }
 }
 
-fn array_is_string_list(values: Vec<JsonValue>) -> bool {
+fn array_is_string_list(values: Vec<Value>) -> bool {
     let mut idx = 0;
     while idx < values.len() {
         match values[idx] {
-            JsonValue::String(_) => {}
+            Value::String(_) => {}
             _ => return false,
         }
         idx = idx + 1;
@@ -325,12 +323,12 @@ fn array_is_string_list(values: Vec<JsonValue>) -> bool {
     true
 }
 
-fn join_string_list(values: Vec<JsonValue>) -> str {
+fn join_string_list(values: Vec<Value>) -> str {
     let mut out = Vec::new();
     let mut idx = 0;
     while idx < values.len() {
         match values[idx] {
-            JsonValue::String(text) => out.push(text),
+            Value::String(text) => out.push(text),
             _ => {}
         }
         idx = idx + 1;
@@ -353,15 +351,15 @@ fn reset_workspace(workspace: &str) {
     fs::create_dir_all(Path::new(workspace));
 }
 
-fn materialize_fixture_workspace(workspace: &str, fixture: JsonValue) {
+fn materialize_fixture_workspace(workspace: &str, fixture: Value) {
     materialize_local_files(workspace, std::json::find_object_field(fixture, "local_files"));
     materialize_directories(workspace, std::json::find_object_field(fixture, "directories"));
 }
 
-fn materialize_local_files(workspace: &str, value: JsonValue) {
+fn materialize_local_files(workspace: &str, value: Value) {
     match value {
-        JsonValue::Null => {}
-        JsonValue::Object(_) => {
+        Value::Null => {}
+        Value::Object(_) => {
             materialize_file_map(workspace, std::json::find_object_field(value, "files"));
             materialize_dir_map(workspace, std::json::find_object_field(value, "dirs"));
         }
@@ -369,10 +367,10 @@ fn materialize_local_files(workspace: &str, value: JsonValue) {
     }
 }
 
-fn materialize_directories(workspace: &str, value: JsonValue) {
+fn materialize_directories(workspace: &str, value: Value) {
     match value {
-        JsonValue::Null => {}
-        JsonValue::Object(fields) => {
+        Value::Null => {}
+        Value::Object(fields) => {
             let mut idx = 0;
             while idx < fields.len() {
                 let dir_path = join_path(workspace, fields[idx].key);
@@ -384,17 +382,17 @@ fn materialize_directories(workspace: &str, value: JsonValue) {
     }
 }
 
-fn materialize_file_map(workspace: &str, value: JsonValue) {
+fn materialize_file_map(workspace: &str, value: Value) {
     match value {
-        JsonValue::Null => {}
-        JsonValue::Object(fields) => {
+        Value::Null => {}
+        Value::Object(fields) => {
             let mut idx = 0;
             while idx < fields.len() {
                 let field = fields[idx];
                 let file_path = join_path(workspace, field.key);
                 match field.value {
-                    JsonValue::Null => fs::write_string(Path::new(&file_path), ""),
-                    JsonValue::String(content) => fs::write_string(Path::new(&file_path), content),
+                    Value::Null => fs::write_string(Path::new(&file_path), ""),
+                    Value::String(content) => fs::write_string(Path::new(&file_path), content),
                     _ => panic("expected local file content to be string or null"),
                 }
                 idx = idx + 1;
@@ -404,10 +402,10 @@ fn materialize_file_map(workspace: &str, value: JsonValue) {
     }
 }
 
-fn materialize_dir_map(workspace: &str, value: JsonValue) {
+fn materialize_dir_map(workspace: &str, value: Value) {
     match value {
-        JsonValue::Null => {}
-        JsonValue::Object(fields) => {
+        Value::Null => {}
+        Value::Object(fields) => {
             let mut idx = 0;
             while idx < fields.len() {
                 let dir_path = join_path(workspace, fields[idx].key);
@@ -423,11 +421,11 @@ fn join_path(base: &str, child: &str) -> str {
     f"{base}/{child}"
 }
 
-fn expects_exception(fixture: JsonValue) -> bool {
+fn expects_exception(fixture: Value) -> bool {
     !std::json::is_null(std::json::find_object_field(fixture, "exception"))
 }
 
-fn expected_exception_message(fixture: JsonValue) -> str {
+fn expected_exception_message(fixture: Value) -> str {
     let exception = std::json::find_object_field(fixture, "exception");
     if std::json::is_null(exception) {
         return "";
@@ -441,11 +439,11 @@ fn expected_exception_message(fixture: JsonValue) -> str {
     std::json::get_string(message)
 }
 
-fn expected_commands(fixture: JsonValue) -> Vec<&str> {
+fn expected_commands(fixture: Value) -> Vec<&str> {
     let commands = std::json::find_object_field(fixture, "commands");
     match commands {
-        JsonValue::Null => Vec::new(),
-        JsonValue::Array(values) => {
+        Value::Null => Vec::new(),
+        Value::Array(values) => {
             let mut out = Vec::new();
             let mut idx = 0;
             while idx < values.len() {
@@ -461,18 +459,18 @@ fn expected_commands(fixture: JsonValue) -> Vec<&str> {
     }
 }
 
-fn command_fragment(value: JsonValue) -> str {
+fn command_fragment(value: Value) -> str {
     match value {
-        JsonValue::Null => "",
-        JsonValue::String(text) => text,
-        JsonValue::Object(_) => {
+        Value::Null => "",
+        Value::String(text) => text,
+        Value::Object(_) => {
             let masked = std::json::find_object_field(value, "masked");
             if !std::json::is_null(masked) {
                 return std::json::get_string(masked);
             }
             std::json::get_string(std::json::find_object_field(value, "raw"))
         }
-        JsonValue::Array(values) => {
+        Value::Array(values) => {
             let mut rendered = Vec::new();
             let mut idx = 0;
             while idx < values.len() {

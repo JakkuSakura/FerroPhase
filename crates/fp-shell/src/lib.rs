@@ -137,8 +137,6 @@ struct ShellRuntimeState {
 }
 
 struct ShellRuntimeHook {
-    inventory: Option<Node>,
-    target: ScriptTarget,
     state: Arc<Mutex<ShellRuntimeState>>,
 }
 
@@ -250,8 +248,6 @@ fn interpret_source_with_runtime_state(
     let mut ast = merge_runtime_helpers(parsed.ast, options.inventory.as_ref())?;
     let ctx = SharedScopedContext::new();
     let runtime_hook: Arc<dyn RuntimeExternHook> = Arc::new(ShellRuntimeHook {
-        inventory: options.inventory.clone(),
-        target: options.target,
         state: runtime_state,
     });
     let mut interpreter = AstInterpreter::new(

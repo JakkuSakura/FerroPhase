@@ -1218,6 +1218,32 @@ impl<'ctx> AstInterpreter<'ctx> {
             ExprKind::While(while_expr) => self.eval_while_runtime(while_expr),
             ExprKind::For(for_expr) => self.eval_for_runtime(for_expr),
             ExprKind::Try(expr_try) => {
+                if expr_try.catches.is_empty()
+                    && expr_try.elze.is_none()
+                    && expr_try.finally.is_none()
+                {
+                    let mode = self.current_exception_return_mode();
+                    if !matches!(
+                        mode,
+                        ExceptionReturnMode::AutoResult | ExceptionReturnMode::ExplicitResult
+                    ) {
+                        self.emit_error("`?` is only allowed in exception-enabled functions");
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                    let body_flow = self.eval_expr_runtime(expr_try.expr.as_mut());
+                    return match body_flow {
+                        RuntimeFlow::Value(value) => match self.match_result_value(&value) {
+                            Some(Ok(ok)) => RuntimeFlow::Value(ok),
+                            Some(Err(_)) => RuntimeFlow::Return(Some(value)),
+                            None => {
+                                self.emit_error("`?` expects a Result value");
+                                RuntimeFlow::Value(Value::undefined())
+                            }
+                        },
+                        other => other,
+                    };
+                }
+
                 let body_flow = self.eval_expr_runtime(expr_try.expr.as_mut());
                 let mut flow = match body_flow {
                     RuntimeFlow::Panic(panic) => {
@@ -1237,7 +1263,61 @@ impl<'ctx> AstInterpreter<'ctx> {
                         handled.unwrap_or(RuntimeFlow::Panic(panic))
                     }
                     RuntimeFlow::Value(value) => {
-                        if let Some(elze) = expr_try.elze.as_mut() {
+                        if self.exception_mode {
+                            if let Some(result) = self.match_result_value(&value) {
+                                match result {
+                                    Ok(ok) => {
+                                        if let Some(elze) = expr_try.elze.as_mut() {
+                                            self.eval_expr_runtime(elze.as_mut())
+                                        } else {
+                                            RuntimeFlow::Value(ok)
+                                        }
+                                    }
+                                    Err(err) => {
+                                        let panic_value = match &err {
+                                            Value::String(text) => {
+                                                Value::string(text.value.clone())
+                                            }
+                                            Value::Struct(struct_value)
+                                                if struct_value.ty.name.as_str() == "Error" =>
+                                            {
+                                                let message = struct_value
+                                                    .structural
+                                                    .get_field(&Ident::new("message".to_string()))
+                                                    .and_then(|field| match &field.value {
+                                                        Value::String(text) => {
+                                                            Some(text.value.clone())
+                                                        }
+                                                        _ => None,
+                                                    });
+                                                let message = message
+                                                    .unwrap_or_else(|| self.render_panic_value(&err));
+                                                Value::string(message)
+                                            }
+                                            Value::Structural(structural) => {
+                                                let message = structural
+                                                    .get_field(&Ident::new("message".to_string()))
+                                                    .and_then(|field| match &field.value {
+                                                        Value::String(text) => {
+                                                            Some(text.value.clone())
+                                                        }
+                                                        _ => None,
+                                                    });
+                                                let message = message
+                                                    .unwrap_or_else(|| self.render_panic_value(&err));
+                                                Value::string(message)
+                                            }
+                                            _ => Value::string(self.render_panic_value(&err)),
+                                        };
+                                        RuntimeFlow::Panic(panic_value)
+                                    }
+                                }
+                            } else if let Some(elze) = expr_try.elze.as_mut() {
+                                self.eval_expr_runtime(elze.as_mut())
+                            } else {
+                                RuntimeFlow::Value(value)
+                            }
+                        } else if let Some(elze) = expr_try.elze.as_mut() {
                             self.eval_expr_runtime(elze.as_mut())
                         } else {
                             RuntimeFlow::Value(value)
@@ -2990,12 +3070,47 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Value::Function(function) => {
                         let args =
                             match self.evaluate_invoke_args(invoke, Some(&function.sig.params)) {
-                            Ok(values) => values,
-                            Err(flow) => return flow,
-                        };
+                                Ok(values) => values,
+                                Err(flow) => return flow,
+                            };
                         self.call_value_function_runtime(&function, args)
                     }
                     Value::Any(any) => {
+                        if let Some(symbol) = any.downcast_ref::<ImportedSymbol>() {
+                            let Some(module_path) = self.module_id_path(&symbol.module) else {
+                                self.emit_error("unable to resolve module path for imported symbol");
+                                return RuntimeFlow::Value(Value::undefined());
+                            };
+                            let mut segments = module_path
+                                .split("::")
+                                .filter(|segment| !segment.is_empty())
+                                .map(|segment| Ident::new(segment.to_string()))
+                                .collect::<Vec<_>>();
+                            segments.push(Ident::new(symbol.symbol.name.clone()));
+                            let mut locator = Name::path(Path::new(PathPrefix::Plain, segments));
+                            if let Some(function) =
+                                self.resolve_function_call(&mut locator, invoke, ResolutionMode::Default)
+                            {
+                                invoke.target = ExprInvokeTarget::Function(locator.clone());
+                                let args = match self.evaluate_invoke_args(
+                                    invoke,
+                                    Some(&function.sig.params),
+                                ) {
+                                    Ok(values) => values,
+                                    Err(flow) => return flow,
+                                };
+                                if let Some(stack) = Self::module_stack_from_locator(&locator) {
+                                    let saved = std::mem::take(&mut self.module_stack);
+                                    self.module_stack = stack;
+                                    let flow = self.call_function_runtime(function, args);
+                                    self.module_stack = saved;
+                                    return flow;
+                                }
+                                return self.call_function_runtime(function, args);
+                            }
+                            self.emit_error("unable to resolve imported function");
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
                         if let Some(closure) = any.downcast_ref::<ConstClosure>() {
                             let args = match self.evaluate_invoke_args(invoke, None) {
                                 Ok(values) => values,
@@ -3073,6 +3188,19 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         let receiver = self.resolve_receiver_binding(select.obj.as_mut());
         let method_name = select.field.name.as_str().to_string();
+        if let Some(flow) = self.try_eval_option_method(&receiver.value, &method_name, args) {
+            return flow;
+        }
+        if let Some(flow) =
+            self.try_eval_json_value_method(&receiver.value, &method_name, args)
+        {
+            return flow;
+        }
+        if let Some(flow) =
+            self.try_eval_json_number_method(&receiver.value, &method_name, args)
+        {
+            return flow;
+        }
         if let Some(flow) =
             self.try_eval_std_net_method_runtime(&receiver.value, &method_name, args)
         {
@@ -3426,6 +3554,389 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         self.emit_error(format!("cannot resolve method '{}'", method_name));
         return RuntimeFlow::Value(Value::undefined());
+    }
+
+    fn try_eval_json_value_method(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        let Value::Any(any) = receiver else {
+            return None;
+        };
+        let enum_value = any.downcast_ref::<RuntimeEnum>()?;
+        if enum_value.enum_name != "Value" {
+            return None;
+        }
+
+        let make_option_some = |value: Value| {
+            Value::Any(AnyBox::new(RuntimeEnum {
+                enum_name: "Option".to_string(),
+                variant_name: "Some".to_string(),
+                payload: Some(value),
+                discriminant: None,
+            }))
+        };
+        let make_option_none = || {
+            Value::Any(AnyBox::new(RuntimeEnum {
+                enum_name: "Option".to_string(),
+                variant_name: "None".to_string(),
+                payload: None,
+                discriminant: None,
+            }))
+        };
+
+        match method_name {
+            "is_null" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "Null",
+                )));
+            }
+            "is_bool" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "Bool",
+                )));
+            }
+            "is_number" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "Number",
+                )));
+            }
+            "is_string" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "String",
+                )));
+            }
+            "is_array" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "Array",
+                )));
+            }
+            "is_object" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "Object",
+                )));
+            }
+            "as_bool" => {
+                let value = match enum_value.variant_name.as_str() {
+                    "Bool" => enum_value
+                        .payload
+                        .as_ref()
+                        .cloned()
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none),
+                    _ => make_option_none(),
+                };
+                return Some(RuntimeFlow::Value(value));
+            }
+            "as_str" => {
+                let value = match enum_value.variant_name.as_str() {
+                    "String" => enum_value
+                        .payload
+                        .as_ref()
+                        .cloned()
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none),
+                    _ => make_option_none(),
+                };
+                return Some(RuntimeFlow::Value(value));
+            }
+            "as_number" => {
+                let value = match enum_value.variant_name.as_str() {
+                    "Number" => enum_value
+                        .payload
+                        .as_ref()
+                        .cloned()
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none),
+                    _ => make_option_none(),
+                };
+                return Some(RuntimeFlow::Value(value));
+            }
+            "as_array" => {
+                let value = match enum_value.variant_name.as_str() {
+                    "Array" => enum_value
+                        .payload
+                        .as_ref()
+                        .cloned()
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none),
+                    _ => make_option_none(),
+                };
+                return Some(RuntimeFlow::Value(value));
+            }
+            "as_object" => {
+                let value = match enum_value.variant_name.as_str() {
+                    "Object" => enum_value
+                        .payload
+                        .as_ref()
+                        .cloned()
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none),
+                    _ => make_option_none(),
+                };
+                return Some(RuntimeFlow::Value(value));
+            }
+            "get" => {
+                if args.len() != 1 {
+                    return Some(RuntimeFlow::Value(make_option_none()));
+                }
+                let mut values = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let needle = values.pop().unwrap_or_else(Value::undefined);
+                let needle = match needle {
+                    Value::String(text) => text.value,
+                    other => {
+                        self.emit_error(format!(
+                            "Value::get expects a string key, found {:?}",
+                            other
+                        ));
+                        return Some(RuntimeFlow::Value(make_option_none()));
+                    }
+                };
+                if enum_value.variant_name != "Object" {
+                    return Some(RuntimeFlow::Value(make_option_none()));
+                }
+                let Some(Value::List(list)) = enum_value.payload.as_ref() else {
+                    return Some(RuntimeFlow::Value(make_option_none()));
+                };
+                for field in &list.values {
+                    let structural = match field {
+                        Value::Struct(value_struct) => &value_struct.structural,
+                        Value::Structural(structural) => structural,
+                        _ => continue,
+                    };
+                    let key = structural.get_field(&Ident::new("key".to_string()));
+                    let value = structural.get_field(&Ident::new("value".to_string()));
+                    let Some(key) = key else { continue; };
+                    let Some(value) = value else { continue; };
+                    if let Value::String(text) = &key.value {
+                        if text.value == needle {
+                            return Some(RuntimeFlow::Value(make_option_some(value.value.clone())));
+                        }
+                    }
+                }
+                return Some(RuntimeFlow::Value(make_option_none()));
+            }
+            "get_index" => {
+                if args.len() != 1 {
+                    return Some(RuntimeFlow::Value(make_option_none()));
+                }
+                let mut values = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let index_value = values.pop().unwrap_or_else(Value::undefined);
+                let idx = match self.numeric_to_non_negative_usize(&index_value, "index") {
+                    Some(value) => value,
+                    None => return Some(RuntimeFlow::Value(make_option_none())),
+                };
+                if enum_value.variant_name != "Array" {
+                    return Some(RuntimeFlow::Value(make_option_none()));
+                }
+                let Some(Value::List(list)) = enum_value.payload.as_ref() else {
+                    return Some(RuntimeFlow::Value(make_option_none()));
+                };
+                if let Some(value) = list.values.get(idx) {
+                    return Some(RuntimeFlow::Value(make_option_some(value.clone())));
+                }
+                return Some(RuntimeFlow::Value(make_option_none()));
+            }
+            _ => {}
+        }
+
+        None
+    }
+
+    fn try_eval_option_method(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        let Value::Any(any) = receiver else {
+            return None;
+        };
+        let enum_value = any.downcast_ref::<RuntimeEnum>()?;
+        if enum_value.enum_name != "Option" {
+            return None;
+        }
+
+        match method_name {
+            "is_some" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "Some",
+                )));
+            }
+            "is_none" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name != "Some",
+                )));
+            }
+            "unwrap" => {
+                if !args.is_empty() {
+                    self.emit_error("Option::unwrap expects no arguments");
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                }
+                return match enum_value.variant_name.as_str() {
+                    "Some" => Some(RuntimeFlow::Value(
+                        enum_value.payload.clone().unwrap_or_else(Value::unit),
+                    )),
+                    "None" => Some(RuntimeFlow::Panic(Value::string(
+                        "called Option::unwrap() on a None value".to_string(),
+                    ))),
+                    _ => Some(RuntimeFlow::Value(Value::undefined())),
+                };
+            }
+            "expect" => {
+                if args.len() != 1 {
+                    self.emit_error("Option::expect expects one message argument");
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                }
+                let mut values = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let message = match values.pop().unwrap_or_else(Value::undefined) {
+                    Value::String(text) => text.value,
+                    other => {
+                        self.emit_error(format!(
+                            "Option::expect expects a string message, found {:?}",
+                            other
+                        ));
+                        return Some(RuntimeFlow::Value(Value::undefined()));
+                    }
+                };
+                return match enum_value.variant_name.as_str() {
+                    "Some" => Some(RuntimeFlow::Value(
+                        enum_value.payload.clone().unwrap_or_else(Value::unit),
+                    )),
+                    "None" => Some(RuntimeFlow::Panic(Value::string(message))),
+                    _ => Some(RuntimeFlow::Value(Value::undefined())),
+                };
+            }
+            "unwrap_or" => {
+                if args.len() != 1 {
+                    self.emit_error("Option::unwrap_or expects one argument");
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                }
+                let mut values = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let default = values.pop().unwrap_or_else(Value::undefined);
+                return match enum_value.variant_name.as_str() {
+                    "Some" => Some(RuntimeFlow::Value(
+                        enum_value.payload.clone().unwrap_or_else(Value::unit),
+                    )),
+                    "None" => Some(RuntimeFlow::Value(default)),
+                    _ => Some(RuntimeFlow::Value(Value::undefined())),
+                };
+            }
+            _ => {}
+        }
+
+        None
+    }
+
+    fn try_eval_json_number_method(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        let Value::Struct(value_struct) = receiver else {
+            return None;
+        };
+        if value_struct.ty.name.as_str() != "Number" {
+            return None;
+        }
+        if !args.is_empty() {
+            return None;
+        }
+
+        let make_option_some = |value: Value| {
+            Value::Any(AnyBox::new(RuntimeEnum {
+                enum_name: "Option".to_string(),
+                variant_name: "Some".to_string(),
+                payload: Some(value),
+                discriminant: None,
+            }))
+        };
+        let make_option_none = || {
+            Value::Any(AnyBox::new(RuntimeEnum {
+                enum_name: "Option".to_string(),
+                variant_name: "None".to_string(),
+                payload: None,
+                discriminant: None,
+            }))
+        };
+
+        let structural = &value_struct.structural;
+        let field = |name: &str| {
+            structural
+                .get_field(&Ident::new(name.to_string()))
+                .map(|field| field.value.clone())
+        };
+
+        match method_name {
+            "as_i64" => {
+                let has = matches!(field("has_int"), Some(Value::Bool(flag)) if flag.value);
+                let value = if has {
+                    field("int").map(make_option_some).unwrap_or_else(make_option_none)
+                } else {
+                    make_option_none()
+                };
+                Some(RuntimeFlow::Value(value))
+            }
+            "as_u64" => {
+                let has = matches!(field("has_uint"), Some(Value::Bool(flag)) if flag.value);
+                let value = if has {
+                    field("uint").map(make_option_some).unwrap_or_else(make_option_none)
+                } else {
+                    make_option_none()
+                };
+                Some(RuntimeFlow::Value(value))
+            }
+            "as_f64" => {
+                let has = matches!(field("has_float"), Some(Value::Bool(flag)) if flag.value);
+                let value = if has {
+                    field("float").map(make_option_some).unwrap_or_else(make_option_none)
+                } else {
+                    make_option_none()
+                };
+                Some(RuntimeFlow::Value(value))
+            }
+            "is_i64" => {
+                let has = matches!(field("has_int"), Some(Value::Bool(flag)) if flag.value);
+                Some(RuntimeFlow::Value(Value::bool(has)))
+            }
+            "is_u64" => {
+                let has = matches!(field("has_uint"), Some(Value::Bool(flag)) if flag.value);
+                Some(RuntimeFlow::Value(Value::bool(has)))
+            }
+            "is_f64" => {
+                let has = matches!(field("has_float"), Some(Value::Bool(flag)) if flag.value);
+                Some(RuntimeFlow::Value(Value::bool(has)))
+            }
+            "to_string" => match field("raw") {
+                Some(Value::String(text)) => {
+                    Some(RuntimeFlow::Value(Value::string(text.value)))
+                }
+                Some(value) => {
+                    self.emit_error(format!(
+                        "Number::to_string expected string field, got {:?}",
+                        value
+                    ));
+                    Some(RuntimeFlow::Value(Value::undefined()))
+                }
+                None => Some(RuntimeFlow::Value(Value::undefined())),
+            },
+            _ => None,
+        }
     }
 
     fn try_eval_std_net_associated_method_runtime(
