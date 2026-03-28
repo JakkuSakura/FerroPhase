@@ -412,17 +412,17 @@ ast::File {
       pub module json : _ {
         pub struct JsonField : _ {
           key: &Expr(str)
-          value: Expr(JsonValue)
+          value: Expr(Value)
         }
-        pub enum JsonValue : _ {
+        pub enum Value : _ {
           Null: ()
           Bool: (Expr(bool))
           Number: (&Expr(str))
           String: (&Expr(str))
-          Array: (Vec<Expr(JsonValue)>)
+          Array: (Vec<Expr(Value)>)
           Object: (Vec<Expr(JsonField)>)
         }
-        pub fn parse(input: &Expr(str)) -> Expr(JsonValue) : _
+        pub fn parse(input: &Expr(str)) -> Expr(Value) : _
           block (2 stmts) : _
             let mut parser
               init:
@@ -433,7 +433,7 @@ ast::File {
             expr_stmt (value)
               invoke : _
                 target: parser.parse_value
-        pub fn print(value: Expr(JsonValue)) : _
+        pub fn print(value: Expr(Value)) : _
           block (1 stmt) : _
             expr_stmt ;
               invoke : _
@@ -441,7 +441,7 @@ ast::File {
                 args:
                   reference (mutable: unspecified) : _
                     locator value : _
-        pub fn print_value(value: &Expr(JsonValue)) : _
+        pub fn print_value(value: &Expr(Value)) : _
           block (1 stmt) : _
             expr_stmt (value)
               match : _
@@ -750,7 +750,7 @@ ast::File {
                             locator self : _
                       rhs:
                         locator amount : _
-          pub fn parse_value(&mut self) -> Expr(JsonValue) : _
+          pub fn parse_value(&mut self) -> Expr(Value) : _
             block (9 stmts) : _
               expr_stmt ;
                 invoke : _
@@ -800,7 +800,7 @@ ast::File {
                       expr_stmt ;
                         return : _
                           invoke : _
-                            target: JsonValue::String
+                            target: Value::String
                             args:
                               invoke : _
                                 target: self.parse_string
@@ -821,7 +821,7 @@ ast::File {
                       expr_stmt ;
                         return : _
                           invoke : _
-                            target: JsonValue::Bool
+                            target: Value::Bool
                             args:
                               value true : _
               expr_stmt (value)
@@ -841,7 +841,7 @@ ast::File {
                       expr_stmt ;
                         return : _
                           invoke : _
-                            target: JsonValue::Bool
+                            target: Value::Bool
                             args:
                               value false : _
               expr_stmt (value)
@@ -860,14 +860,14 @@ ast::File {
                             value 4 : _
                       expr_stmt ;
                         return : _
-                          locator JsonValue::Null : _
+                          locator Value::Null : _
               expr_stmt (value)
                 invoke : _
-                  target: JsonValue::Number
+                  target: Value::Number
                   args:
                     invoke : _
                       target: self.parse_number
-          pub fn parse_array(&mut self) -> Expr(JsonValue) : _
+          pub fn parse_array(&mut self) -> Expr(Value) : _
             block (6 stmts) : _
               expr_stmt ;
                 invoke : _
@@ -896,7 +896,7 @@ ast::File {
                       expr_stmt ;
                         return : _
                           invoke : _
-                            target: JsonValue::Array
+                            target: Value::Array
                             args:
                               value [0 values] : _
               let mut items
@@ -960,10 +960,10 @@ ast::File {
                               break : _
               expr_stmt (value)
                 invoke : _
-                  target: JsonValue::Array
+                  target: Value::Array
                   args:
                     locator items : _
-          pub fn parse_object(&mut self) -> Expr(JsonValue) : _
+          pub fn parse_object(&mut self) -> Expr(Value) : _
             block (6 stmts) : _
               expr_stmt ;
                 invoke : _
@@ -992,7 +992,7 @@ ast::File {
                       expr_stmt ;
                         return : _
                           invoke : _
-                            target: JsonValue::Object
+                            target: Value::Object
                             args:
                               value [0 values] : _
               let mut fields
@@ -1075,7 +1075,7 @@ ast::File {
                               break : _
               expr_stmt (value)
                 invoke : _
-                  target: JsonValue::Object
+                  target: Value::Object
                   args:
                     locator fields : _
           pub fn parse_string(&mut self) -> &Expr(str) : _
@@ -2245,17 +2245,17 @@ ast::File {
       pub module json : _ {
         pub struct JsonField : _ {
           key: &Expr(str)
-          value: Expr(JsonValue)
+          value: Expr(Value)
         }
-        pub enum JsonValue : _ {
+        pub enum Value : _ {
           Null: ()
           Bool: (Expr(bool))
           Number: (&Expr(str))
           String: (&Expr(str))
-          Array: (Vec<Expr(JsonValue)>)
+          Array: (Vec<Expr(Value)>)
           Object: (Vec<Expr(JsonField)>)
         }
-        pub fn parse(input: &Expr(str)) -> Expr(JsonValue) : _
+        pub fn parse(input: &Expr(str)) -> Expr(Value) : _
           block (2 stmts) : _
             let mut parser
               init:
@@ -2266,7 +2266,7 @@ ast::File {
             expr_stmt (value)
               invoke : _
                 target: parser.parse_value
-        pub fn print(value: Expr(JsonValue)) : _
+        pub fn print(value: Expr(Value)) : _
           block (1 stmt) : _
             expr_stmt ;
               invoke : _
@@ -2274,7 +2274,7 @@ ast::File {
                 args:
                   reference (mutable: unspecified) : _
                     locator value : _
-        pub fn print_value(value: &Expr(JsonValue)) : _
+        pub fn print_value(value: &Expr(Value)) : _
           block (1 stmt) : _
             expr_stmt (value)
               match : _
@@ -2583,7 +2583,7 @@ ast::File {
                             locator self : _
                       rhs:
                         locator amount : _
-          pub fn parse_value(&mut self) -> Expr(JsonValue) : _
+          pub fn parse_value(&mut self) -> Expr(Value) : _
             block (9 stmts) : _
               expr_stmt ;
                 invoke : _
@@ -2633,7 +2633,7 @@ ast::File {
                       expr_stmt ;
                         return : _
                           invoke : _
-                            target: JsonValue::String
+                            target: Value::String
                             args:
                               invoke : _
                                 target: self.parse_string
@@ -2654,7 +2654,7 @@ ast::File {
                       expr_stmt ;
                         return : _
                           invoke : _
-                            target: JsonValue::Bool
+                            target: Value::Bool
                             args:
                               value true : _
               expr_stmt (value)
@@ -2674,7 +2674,7 @@ ast::File {
                       expr_stmt ;
                         return : _
                           invoke : _
-                            target: JsonValue::Bool
+                            target: Value::Bool
                             args:
                               value false : _
               expr_stmt (value)
@@ -2693,14 +2693,14 @@ ast::File {
                             value 4 : _
                       expr_stmt ;
                         return : _
-                          locator JsonValue::Null : _
+                          locator Value::Null : _
               expr_stmt (value)
                 invoke : _
-                  target: JsonValue::Number
+                  target: Value::Number
                   args:
                     invoke : _
                       target: self.parse_number
-          pub fn parse_array(&mut self) -> Expr(JsonValue) : _
+          pub fn parse_array(&mut self) -> Expr(Value) : _
             block (6 stmts) : _
               expr_stmt ;
                 invoke : _
@@ -2729,7 +2729,7 @@ ast::File {
                       expr_stmt ;
                         return : _
                           invoke : _
-                            target: JsonValue::Array
+                            target: Value::Array
                             args:
                               value [0 values] : _
               let mut items
@@ -2793,10 +2793,10 @@ ast::File {
                               break : _
               expr_stmt (value)
                 invoke : _
-                  target: JsonValue::Array
+                  target: Value::Array
                   args:
                     locator items : _
-          pub fn parse_object(&mut self) -> Expr(JsonValue) : _
+          pub fn parse_object(&mut self) -> Expr(Value) : _
             block (6 stmts) : _
               expr_stmt ;
                 invoke : _
@@ -2825,7 +2825,7 @@ ast::File {
                       expr_stmt ;
                         return : _
                           invoke : _
-                            target: JsonValue::Object
+                            target: Value::Object
                             args:
                               value [0 values] : _
               let mut fields
@@ -2908,7 +2908,7 @@ ast::File {
                               break : _
               expr_stmt (value)
                 invoke : _
-                  target: JsonValue::Object
+                  target: Value::Object
                   args:
                     locator fields : _
           pub fn parse_string(&mut self) -> &Expr(str) : _

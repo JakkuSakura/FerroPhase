@@ -412,17 +412,17 @@ ast::File {
       pub module json {
         pub struct JsonField {
           key: &Expr(str)
-          value: Expr(JsonValue)
+          value: Expr(Value)
         }
-        pub enum JsonValue {
+        pub enum Value {
           Null: ()
           Bool: (Expr(bool))
           Number: (&Expr(str))
           String: (&Expr(str))
-          Array: (Vec<Expr(JsonValue)>)
+          Array: (Vec<Expr(Value)>)
           Object: (Vec<Expr(JsonField)>)
         }
-        pub fn parse(input: &Expr(str)) -> Expr(JsonValue)
+        pub fn parse(input: &Expr(str)) -> Expr(Value)
           block (2 stmts)
             let mut parser
               init:
@@ -433,7 +433,7 @@ ast::File {
             expr_stmt (value)
               invoke
                 target: parser.parse_value
-        pub fn print(value: Expr(JsonValue))
+        pub fn print(value: Expr(Value))
           block (1 stmt)
             expr_stmt ;
               invoke
@@ -441,7 +441,7 @@ ast::File {
                 args:
                   reference (mutable: unspecified)
                     locator value
-        pub fn print_value(value: &Expr(JsonValue))
+        pub fn print_value(value: &Expr(Value))
           block (1 stmt)
             expr_stmt (value)
               match
@@ -750,7 +750,7 @@ ast::File {
                             locator self
                       rhs:
                         locator amount
-          pub fn parse_value(&mut self) -> Expr(JsonValue)
+          pub fn parse_value(&mut self) -> Expr(Value)
             block (9 stmts)
               expr_stmt ;
                 invoke
@@ -800,7 +800,7 @@ ast::File {
                       expr_stmt ;
                         return
                           invoke
-                            target: JsonValue::String
+                            target: Value::String
                             args:
                               invoke
                                 target: self.parse_string
@@ -821,7 +821,7 @@ ast::File {
                       expr_stmt ;
                         return
                           invoke
-                            target: JsonValue::Bool
+                            target: Value::Bool
                             args:
                               value true
               expr_stmt (value)
@@ -841,7 +841,7 @@ ast::File {
                       expr_stmt ;
                         return
                           invoke
-                            target: JsonValue::Bool
+                            target: Value::Bool
                             args:
                               value false
               expr_stmt (value)
@@ -860,14 +860,14 @@ ast::File {
                             value 4
                       expr_stmt ;
                         return
-                          locator JsonValue::Null
+                          locator Value::Null
               expr_stmt (value)
                 invoke
-                  target: JsonValue::Number
+                  target: Value::Number
                   args:
                     invoke
                       target: self.parse_number
-          pub fn parse_array(&mut self) -> Expr(JsonValue)
+          pub fn parse_array(&mut self) -> Expr(Value)
             block (6 stmts)
               expr_stmt ;
                 invoke
@@ -896,7 +896,7 @@ ast::File {
                       expr_stmt ;
                         return
                           invoke
-                            target: JsonValue::Array
+                            target: Value::Array
                             args:
                               value [0 values]
               let mut items
@@ -960,10 +960,10 @@ ast::File {
                               break
               expr_stmt (value)
                 invoke
-                  target: JsonValue::Array
+                  target: Value::Array
                   args:
                     locator items
-          pub fn parse_object(&mut self) -> Expr(JsonValue)
+          pub fn parse_object(&mut self) -> Expr(Value)
             block (6 stmts)
               expr_stmt ;
                 invoke
@@ -992,7 +992,7 @@ ast::File {
                       expr_stmt ;
                         return
                           invoke
-                            target: JsonValue::Object
+                            target: Value::Object
                             args:
                               value [0 values]
               let mut fields
@@ -1075,7 +1075,7 @@ ast::File {
                               break
               expr_stmt (value)
                 invoke
-                  target: JsonValue::Object
+                  target: Value::Object
                   args:
                     locator fields
           pub fn parse_string(&mut self) -> &Expr(str)
@@ -2245,17 +2245,17 @@ ast::File {
       pub module json {
         pub struct JsonField {
           key: &Expr(str)
-          value: Expr(JsonValue)
+          value: Expr(Value)
         }
-        pub enum JsonValue {
+        pub enum Value {
           Null: ()
           Bool: (Expr(bool))
           Number: (&Expr(str))
           String: (&Expr(str))
-          Array: (Vec<Expr(JsonValue)>)
+          Array: (Vec<Expr(Value)>)
           Object: (Vec<Expr(JsonField)>)
         }
-        pub fn parse(input: &Expr(str)) -> Expr(JsonValue)
+        pub fn parse(input: &Expr(str)) -> Expr(Value)
           block (2 stmts)
             let mut parser
               init:
@@ -2266,7 +2266,7 @@ ast::File {
             expr_stmt (value)
               invoke
                 target: parser.parse_value
-        pub fn print(value: Expr(JsonValue))
+        pub fn print(value: Expr(Value))
           block (1 stmt)
             expr_stmt ;
               invoke
@@ -2274,7 +2274,7 @@ ast::File {
                 args:
                   reference (mutable: unspecified)
                     locator value
-        pub fn print_value(value: &Expr(JsonValue))
+        pub fn print_value(value: &Expr(Value))
           block (1 stmt)
             expr_stmt (value)
               match
@@ -2583,7 +2583,7 @@ ast::File {
                             locator self
                       rhs:
                         locator amount
-          pub fn parse_value(&mut self) -> Expr(JsonValue)
+          pub fn parse_value(&mut self) -> Expr(Value)
             block (9 stmts)
               expr_stmt ;
                 invoke
@@ -2633,7 +2633,7 @@ ast::File {
                       expr_stmt ;
                         return
                           invoke
-                            target: JsonValue::String
+                            target: Value::String
                             args:
                               invoke
                                 target: self.parse_string
@@ -2654,7 +2654,7 @@ ast::File {
                       expr_stmt ;
                         return
                           invoke
-                            target: JsonValue::Bool
+                            target: Value::Bool
                             args:
                               value true
               expr_stmt (value)
@@ -2674,7 +2674,7 @@ ast::File {
                       expr_stmt ;
                         return
                           invoke
-                            target: JsonValue::Bool
+                            target: Value::Bool
                             args:
                               value false
               expr_stmt (value)
@@ -2693,14 +2693,14 @@ ast::File {
                             value 4
                       expr_stmt ;
                         return
-                          locator JsonValue::Null
+                          locator Value::Null
               expr_stmt (value)
                 invoke
-                  target: JsonValue::Number
+                  target: Value::Number
                   args:
                     invoke
                       target: self.parse_number
-          pub fn parse_array(&mut self) -> Expr(JsonValue)
+          pub fn parse_array(&mut self) -> Expr(Value)
             block (6 stmts)
               expr_stmt ;
                 invoke
@@ -2729,7 +2729,7 @@ ast::File {
                       expr_stmt ;
                         return
                           invoke
-                            target: JsonValue::Array
+                            target: Value::Array
                             args:
                               value [0 values]
               let mut items
@@ -2793,10 +2793,10 @@ ast::File {
                               break
               expr_stmt (value)
                 invoke
-                  target: JsonValue::Array
+                  target: Value::Array
                   args:
                     locator items
-          pub fn parse_object(&mut self) -> Expr(JsonValue)
+          pub fn parse_object(&mut self) -> Expr(Value)
             block (6 stmts)
               expr_stmt ;
                 invoke
@@ -2825,7 +2825,7 @@ ast::File {
                       expr_stmt ;
                         return
                           invoke
-                            target: JsonValue::Object
+                            target: Value::Object
                             args:
                               value [0 values]
               let mut fields
@@ -2908,7 +2908,7 @@ ast::File {
                               break
               expr_stmt (value)
                 invoke
-                  target: JsonValue::Object
+                  target: Value::Object
                   args:
                     locator fields
           pub fn parse_string(&mut self) -> &Expr(str)

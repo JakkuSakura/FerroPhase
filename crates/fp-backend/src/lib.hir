@@ -131,10 +131,10 @@ hir::Program {
 
     pub struct std::json::JsonField {
         pub key: &str,
-        pub value: JsonValue,
+        pub value: Value,
     }
 
-    pub enum std::json::JsonValue {
+    pub enum std::json::Value {
         Null,
         Bool,
         Number,
@@ -143,7 +143,7 @@ hir::Program {
         Object,
     }
 
-    pub fn std::json::parse(input: &str) -> JsonValue {
+    pub fn std::json::parse(input: &str) -> Value {
         // params: [input: &str]
         {
             let mut parser = Parser::new(arg0 = input);
@@ -151,21 +151,21 @@ hir::Program {
         }
     }
 
-    pub fn std::json::print(value: JsonValue) -> () {
-        // params: [value: JsonValue]
+    pub fn std::json::print(value: Value) -> () {
+        // params: [value: Value]
         {
             print_value(arg0 = value);
         }
     }
 
-    pub fn std::json::print_value(value: &JsonValue) -> () {
-        // params: [value: &JsonValue]
+    pub fn std::json::print_value(value: &Value) -> () {
+        // params: [value: &Value]
         {
             match (value)
             {
-                JsonValue::Null =>
+                Value::Null =>
                     printf(arg0 = "null")
-                JsonValue::Bool(b) =>
+                Value::Bool(b) =>
                     {
                         if (b)
                             {
@@ -176,15 +176,15 @@ hir::Program {
                                 printf(arg0 = "false");
                             }
                     }
-                JsonValue::Number(n) =>
+                Value::Number(n) =>
                     std::print(arg0 = format_string("{}"), arg1 = n)
-                JsonValue::String(s) =>
+                Value::String(s) =>
                     {
                         printf(arg0 = "\"");
                         std::print(arg0 = format_string("{}"), arg1 = s);
                         printf(arg0 = "\"");
                     }
-                JsonValue::Array(items) =>
+                Value::Array(items) =>
                     {
                         printf(arg0 = "[");
                         let mut idx = 0;
@@ -201,7 +201,7 @@ hir::Program {
                             }
                         printf(arg0 = "]");
                     }
-                JsonValue::Object(fields) =>
+                Value::Object(fields) =>
                     {
                         printf(arg0 = "{");
                         let mut idx = 0;
@@ -255,7 +255,7 @@ hir::Program {
             }
         }
 
-        fn std::json::parse_value(self: &Parser) -> JsonValue {
+        fn std::json::parse_value(self: &Parser) -> Value {
             // params: [self: &Parser]
             {
                 self.skip_ws();
@@ -270,28 +270,28 @@ hir::Program {
                     }
                 if ((ch == "\""))
                     {
-                        return JsonValue::String(arg0 = self.parse_string());
+                        return Value::String(arg0 = self.parse_string());
                     }
                 if (self.starts_with(arg0 = "true"))
                     {
                         self.bump(arg0 = 4);
-                        return JsonValue::Bool(arg0 = true);
+                        return Value::Bool(arg0 = true);
                     }
                 if (self.starts_with(arg0 = "false"))
                     {
                         self.bump(arg0 = 5);
-                        return JsonValue::Bool(arg0 = false);
+                        return Value::Bool(arg0 = false);
                     }
                 if (self.starts_with(arg0 = "null"))
                     {
                         self.bump(arg0 = 4);
-                        return JsonValue::Null;
+                        return Value::Null;
                     }
-                JsonValue::Number(arg0 = self.parse_number())
+                Value::Number(arg0 = self.parse_number())
             }
         }
 
-        fn std::json::parse_array(self: &Parser) -> JsonValue {
+        fn std::json::parse_array(self: &Parser) -> Value {
             // params: [self: &Parser]
             {
                 self.expect_char(arg0 = "[");
@@ -299,7 +299,7 @@ hir::Program {
                 if ((self.peek() == "]"))
                     {
                         self.bump(arg0 = 1);
-                        return JsonValue::Array(arg0 = []);
+                        return Value::Array(arg0 = []);
                     }
                 let mut items = [];
                 loop
@@ -320,11 +320,11 @@ hir::Program {
                                 break;
                             }
                     }
-                JsonValue::Array(arg0 = items)
+                Value::Array(arg0 = items)
             }
         }
 
-        fn std::json::parse_object(self: &Parser) -> JsonValue {
+        fn std::json::parse_object(self: &Parser) -> Value {
             // params: [self: &Parser]
             {
                 self.expect_char(arg0 = "{");
@@ -332,7 +332,7 @@ hir::Program {
                 if ((self.peek() == "}"))
                     {
                         self.bump(arg0 = 1);
-                        return JsonValue::Object(arg0 = []);
+                        return Value::Object(arg0 = []);
                     }
                 let mut fields = [];
                 loop
@@ -357,7 +357,7 @@ hir::Program {
                                 break;
                             }
                     }
-                JsonValue::Object(arg0 = fields)
+                Value::Object(arg0 = fields)
             }
         }
 
@@ -831,10 +831,10 @@ hir::Program {
 
     pub struct std::json::JsonField {
         pub key: &str,
-        pub value: JsonValue,
+        pub value: Value,
     }
 
-    pub enum std::json::JsonValue {
+    pub enum std::json::Value {
         Null,
         Bool,
         Number,
@@ -843,7 +843,7 @@ hir::Program {
         Object,
     }
 
-    pub fn std::json::parse(input: &str) -> JsonValue {
+    pub fn std::json::parse(input: &str) -> Value {
         // params: [input: &str]
         {
             let mut parser = Parser::new(arg0 = input);
@@ -851,21 +851,21 @@ hir::Program {
         }
     }
 
-    pub fn std::json::print(value: JsonValue) -> () {
-        // params: [value: JsonValue]
+    pub fn std::json::print(value: Value) -> () {
+        // params: [value: Value]
         {
             print_value(arg0 = value);
         }
     }
 
-    pub fn std::json::print_value(value: &JsonValue) -> () {
-        // params: [value: &JsonValue]
+    pub fn std::json::print_value(value: &Value) -> () {
+        // params: [value: &Value]
         {
             match (value)
             {
-                JsonValue::Null =>
+                Value::Null =>
                     printf(arg0 = "null")
-                JsonValue::Bool(b) =>
+                Value::Bool(b) =>
                     {
                         if (b)
                             {
@@ -876,15 +876,15 @@ hir::Program {
                                 printf(arg0 = "false");
                             }
                     }
-                JsonValue::Number(n) =>
+                Value::Number(n) =>
                     std::print(arg0 = format_string("{}"), arg1 = n)
-                JsonValue::String(s) =>
+                Value::String(s) =>
                     {
                         printf(arg0 = "\"");
                         std::print(arg0 = format_string("{}"), arg1 = s);
                         printf(arg0 = "\"");
                     }
-                JsonValue::Array(items) =>
+                Value::Array(items) =>
                     {
                         printf(arg0 = "[");
                         let mut idx = 0;
@@ -901,7 +901,7 @@ hir::Program {
                             }
                         printf(arg0 = "]");
                     }
-                JsonValue::Object(fields) =>
+                Value::Object(fields) =>
                     {
                         printf(arg0 = "{");
                         let mut idx = 0;
@@ -955,7 +955,7 @@ hir::Program {
             }
         }
 
-        fn std::json::parse_value(self: &Parser) -> JsonValue {
+        fn std::json::parse_value(self: &Parser) -> Value {
             // params: [self: &Parser]
             {
                 self.skip_ws();
@@ -970,28 +970,28 @@ hir::Program {
                     }
                 if ((ch == "\""))
                     {
-                        return JsonValue::String(arg0 = self.parse_string());
+                        return Value::String(arg0 = self.parse_string());
                     }
                 if (self.starts_with(arg0 = "true"))
                     {
                         self.bump(arg0 = 4);
-                        return JsonValue::Bool(arg0 = true);
+                        return Value::Bool(arg0 = true);
                     }
                 if (self.starts_with(arg0 = "false"))
                     {
                         self.bump(arg0 = 5);
-                        return JsonValue::Bool(arg0 = false);
+                        return Value::Bool(arg0 = false);
                     }
                 if (self.starts_with(arg0 = "null"))
                     {
                         self.bump(arg0 = 4);
-                        return JsonValue::Null;
+                        return Value::Null;
                     }
-                JsonValue::Number(arg0 = self.parse_number())
+                Value::Number(arg0 = self.parse_number())
             }
         }
 
-        fn std::json::parse_array(self: &Parser) -> JsonValue {
+        fn std::json::parse_array(self: &Parser) -> Value {
             // params: [self: &Parser]
             {
                 self.expect_char(arg0 = "[");
@@ -999,7 +999,7 @@ hir::Program {
                 if ((self.peek() == "]"))
                     {
                         self.bump(arg0 = 1);
-                        return JsonValue::Array(arg0 = []);
+                        return Value::Array(arg0 = []);
                     }
                 let mut items = [];
                 loop
@@ -1020,11 +1020,11 @@ hir::Program {
                                 break;
                             }
                     }
-                JsonValue::Array(arg0 = items)
+                Value::Array(arg0 = items)
             }
         }
 
-        fn std::json::parse_object(self: &Parser) -> JsonValue {
+        fn std::json::parse_object(self: &Parser) -> Value {
             // params: [self: &Parser]
             {
                 self.expect_char(arg0 = "{");
@@ -1032,7 +1032,7 @@ hir::Program {
                 if ((self.peek() == "}"))
                     {
                         self.bump(arg0 = 1);
-                        return JsonValue::Object(arg0 = []);
+                        return Value::Object(arg0 = []);
                     }
                 let mut fields = [];
                 loop
@@ -1057,7 +1057,7 @@ hir::Program {
                                 break;
                             }
                     }
-                JsonValue::Object(arg0 = fields)
+                Value::Object(arg0 = fields)
             }
         }
 
