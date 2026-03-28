@@ -282,10 +282,12 @@ impl SyclEmitter {
             TypeInt::I16 => "std::int16_t".to_string(),
             TypeInt::I32 => "std::int32_t".to_string(),
             TypeInt::I64 => "std::int64_t".to_string(),
+            TypeInt::I128 => "std::int64_t".to_string(),
             TypeInt::U8 => "std::uint8_t".to_string(),
             TypeInt::U16 => "std::uint16_t".to_string(),
             TypeInt::U32 => "std::uint32_t".to_string(),
             TypeInt::U64 => "std::uint64_t".to_string(),
+            TypeInt::U128 => "std::uint64_t".to_string(),
             TypeInt::BigInt => "std::int64_t".to_string(),
         }
     }

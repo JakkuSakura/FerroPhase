@@ -592,10 +592,12 @@ impl InterfaceBuilder {
                     TypeInt::I16 => "s16".to_string(),
                     TypeInt::I32 => "s32".to_string(),
                     TypeInt::I64 => "s64".to_string(),
+                    TypeInt::I128 => "s64".to_string(),
                     TypeInt::U8 => "u8".to_string(),
                     TypeInt::U16 => "u16".to_string(),
                     TypeInt::U32 => "u32".to_string(),
                     TypeInt::U64 => "u64".to_string(),
+                    TypeInt::U128 => "u64".to_string(),
                     TypeInt::BigInt => "s64".to_string(),
                 },
                 TypePrimitive::Decimal(dec) => match dec {
@@ -1142,6 +1144,7 @@ mod tests {
         let item = Item::from(func);
         let file = AstFile {
             path: PathBuf::new(),
+            attrs: Vec::new(),
             items: vec![item],
         };
         let node = Node::from(NodeKind::File(file));
@@ -1443,10 +1446,12 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
                 TypeInt::I16 => "s16".to_string(),
                 TypeInt::I32 => "s32".to_string(),
                 TypeInt::I64 => "s64".to_string(),
+                TypeInt::I128 => "s64".to_string(),
                 TypeInt::U8 => "u8".to_string(),
                 TypeInt::U16 => "u16".to_string(),
                 TypeInt::U32 => "u32".to_string(),
                 TypeInt::U64 => "u64".to_string(),
+                TypeInt::U128 => "u64".to_string(),
                 TypeInt::BigInt => "s64".to_string(),
             },
             TypePrimitive::Decimal(dec) => match dec {

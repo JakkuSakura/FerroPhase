@@ -6,7 +6,9 @@ impl ZigEmitter {
     pub(super) fn render_type(&self, ty: &Ty) -> String {
         match ty {
             Ty::Primitive(TypePrimitive::Int(int_ty)) => match int_ty {
+                fp_core::ast::TypeInt::I128 => "i128".to_string(),
                 fp_core::ast::TypeInt::I64 => "i64".to_string(),
+                fp_core::ast::TypeInt::U128 => "u128".to_string(),
                 fp_core::ast::TypeInt::U64 => "u64".to_string(),
                 fp_core::ast::TypeInt::I32 => "i32".to_string(),
                 fp_core::ast::TypeInt::U32 => "u32".to_string(),

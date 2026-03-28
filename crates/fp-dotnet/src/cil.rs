@@ -904,10 +904,12 @@ fn cil_type(ty: Option<&Ty>) -> EyreResult<String> {
             TypeInt::I16 => "int16",
             TypeInt::I32 => "int32",
             TypeInt::I64 => "int64",
+            TypeInt::I128 => "int64",
             TypeInt::U8 => "uint8",
             TypeInt::U16 => "uint16",
             TypeInt::U32 => "uint32",
             TypeInt::U64 => "uint64",
+            TypeInt::U128 => "uint64",
             TypeInt::BigInt => "int64",
         }
         .to_string()),

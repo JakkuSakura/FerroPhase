@@ -1,13 +1,4 @@
 use std::path::Path;
-use std::libc;
-
-#[link_name = "write"]
-extern "C" fn libc_write_str(fd: i32, buf: &std::ffi::CStr, len: usize) -> isize;
-
-pub enum Result<T, E> {
-    Ok(T),
-    Err(E),
-}
 
 pub enum ErrorKind {
     NotFound,
@@ -173,22 +164,10 @@ impl OpenOptions {
         }
     }
 
-    pub fn open(self, path: &Path) -> Result<File, IoError> {
-        let mut flags = open_flags(self);
-        if self.read && self.write {
-            flags = flags | libc::O_RDWR;
-        } else if self.write || self.append {
-            flags = flags | libc::O_WRONLY;
-        } else {
-            flags = flags | libc::O_RDONLY;
-        }
-
-        let fd = libc::open(path.as_str(), flags, self.mode);
-        if fd >= 0 {
-            Result::Ok(File { fd })
-        } else {
-            Result::Err(io_error_other("open failed"))
-        }
+    pub fn open(self, path: &Path) -> std::result::Result<File, IoError> {
+        let _ = self;
+        let _ = path;
+        compile_error!("std::fs::OpenOptions::open is not implemented for the current std surface")
     }
 }
 
@@ -197,11 +176,11 @@ pub struct File {
 }
 
 impl File {
-    pub fn open(path: &Path) -> Result<File, IoError> {
+    pub fn open(path: &Path) -> std::result::Result<File, IoError> {
         OpenOptions::new().read(true).open(path)
     }
 
-    pub fn create(path: &Path) -> Result<File, IoError> {
+    pub fn create(path: &Path) -> std::result::Result<File, IoError> {
         OpenOptions::new()
             .write(true)
             .truncate(true)
@@ -213,64 +192,40 @@ impl File {
         OpenOptions::new()
     }
 
-    pub fn metadata(&self) -> Result<Metadata, IoError> {
+    pub fn metadata(&self) -> std::result::Result<Metadata, IoError> {
         let _ = self.fd;
         compile_error!("std::fs::File::metadata is not implemented for the current std surface")
     }
 
-    pub fn read_to_string(&mut self) -> Result<str, IoError> {
+    pub fn read_to_string(&mut self) -> std::result::Result<str, IoError> {
         let _ = self.fd;
         compile_error!("std::fs::File::read_to_string is not implemented for the current std surface")
     }
 
-    pub fn write_all(&mut self, content: &str) -> Result<(), IoError> {
-        let written = libc_write_str(self.fd, content, content.len());
-        if written < 0 {
-            return Result::Err(io_error_other("write failed"));
-        }
-        if written as usize != content.len() {
-            return Result::Err(IoError {
-                kind: ErrorKind::WriteZero,
-                raw_os_error: 0,
-                message: "partial write",
-            });
-        }
+    pub fn write_all(&mut self, content: &str) -> std::result::Result<(), IoError> {
+        let _ = self;
+        let _ = content;
+        compile_error!("std::fs::File::write_all is not implemented for the current std surface")
+    }
+
+    pub fn flush(&mut self) -> std::result::Result<(), IoError> {
         Result::Ok(())
     }
 
-    pub fn flush(&mut self) -> Result<(), IoError> {
-        Result::Ok(())
+    pub fn sync_all(&mut self) -> std::result::Result<(), IoError> {
+        let _ = self;
+        compile_error!("std::fs::File::sync_all is not implemented for the current std surface")
     }
 
-    pub fn sync_all(&mut self) -> Result<(), IoError> {
-        if libc::fsync(self.fd) == 0 {
-            Result::Ok(())
-        } else {
-            Result::Err(io_error_other("fsync failed"))
-        }
+    pub fn seek(&mut self, pos: SeekFrom) -> std::result::Result<i64, IoError> {
+        let _ = self;
+        let _ = pos;
+        compile_error!("std::fs::File::seek is not implemented for the current std surface")
     }
 
-    pub fn seek(&mut self, pos: SeekFrom) -> Result<i64, IoError> {
-        let (offset, whence) = match pos {
-            SeekFrom::Start(offset) => (offset, libc::SEEK_SET),
-            SeekFrom::Current(offset) => (offset, libc::SEEK_CUR),
-            SeekFrom::End(offset) => (offset, libc::SEEK_END),
-        };
-
-        let next = libc::lseek(self.fd, offset, whence);
-        if next >= 0 {
-            Result::Ok(next)
-        } else {
-            Result::Err(io_error_other("lseek failed"))
-        }
-    }
-
-    pub fn close(self) -> Result<(), IoError> {
-        if libc::close(self.fd) == 0 {
-            Result::Ok(())
-        } else {
-            Result::Err(io_error_other("close failed"))
-        }
+    pub fn close(self) -> std::result::Result<(), IoError> {
+        let _ = self;
+        compile_error!("std::fs::File::close is not implemented for the current std surface")
     }
 
     pub fn as_raw_fd(&self) -> i32 {
@@ -284,23 +239,6 @@ fn io_error_other(message: &str) -> IoError {
         raw_os_error: 0,
         message,
     }
-}
-
-fn open_flags(options: OpenOptions) -> i32 {
-    let mut flags = 0;
-    if options.append {
-        flags = flags | libc::O_APPEND;
-    }
-    if options.truncate {
-        flags = flags | libc::O_TRUNC;
-    }
-    if options.create {
-        flags = flags | libc::O_CREAT;
-    }
-    if options.create_new {
-        flags = flags | libc::O_CREAT | libc::O_EXCL;
-    }
-    flags
 }
 
 #[lang = "fs_read_dir"]

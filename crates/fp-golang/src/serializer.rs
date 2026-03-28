@@ -71,6 +71,7 @@ impl GoEmitter {
             NodeKind::File(file) => self.emit_file(file),
             NodeKind::Item(item) => self.emit_file(&File {
                 path: Default::default(),
+                attrs: Vec::new(),
                 items: vec![item.clone()],
             }),
             NodeKind::Expr(expr) => {
@@ -563,10 +564,12 @@ fn render_primitive_type(primitive: &TypePrimitive) -> String {
         TypePrimitive::String => "string".to_string(),
         TypePrimitive::Char => "rune".to_string(),
         TypePrimitive::Int(int_ty) => match int_ty {
+            fp_core::ast::TypeInt::I128 => "int64".to_string(),
             fp_core::ast::TypeInt::I64 => "int64".to_string(),
             fp_core::ast::TypeInt::I32 => "int32".to_string(),
             fp_core::ast::TypeInt::I16 => "int16".to_string(),
             fp_core::ast::TypeInt::I8 => "int8".to_string(),
+            fp_core::ast::TypeInt::U128 => "uint64".to_string(),
             fp_core::ast::TypeInt::U64 => "uint64".to_string(),
             fp_core::ast::TypeInt::U32 => "uint32".to_string(),
             fp_core::ast::TypeInt::U16 => "uint16".to_string(),
