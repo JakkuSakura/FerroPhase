@@ -5499,7 +5499,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         } else if let Name::ParameterPath(path) = locator {
             if path.prefix != PathPrefix::Plain {
-                let plain = Path::new(PathPrefix::Plain, path.segments.clone());
+                let plain = Path::new(PathPrefix::Plain, path.segments.iter().map(|s| s.ident.clone()).collect());
                 let plain_name = plain.to_string();
                 if !names.contains(&plain_name) {
                     names.push(plain_name);
@@ -8423,7 +8423,7 @@ fn resolve_lang_item_handler(name: &str) -> Option<LangItemFn> {
 
 fn resolve_lang_instrinstic_handler(intrinsic: LangInstrinstic) -> Option<LangItemFn> {
     match intrinsic {
-        LangInstrinstic::TimeNow | LangInstrinstic::CreateStruct | LangInstrinstic::AddField => {
+        LangInstrinstic::TimeNow | LangInstrinstic::CreateStruct | LangInstrinstic::AddField | _ => {
             None
         }
     }
