@@ -1181,6 +1181,26 @@ impl Parser {
     }
 
     fn parse_call_arg(&mut self) -> Result<(SyntaxNode, bool), ExprCstParseError> {
+        if self.peek_non_trivia_raw() == Some("**") {
+            let mut children = Vec::new();
+            self.bump_trivia_into(&mut children);
+            self.bump_token_into(&mut children); // '**'
+            self.bump_trivia_into(&mut children);
+            let value = self.parse_expr_bp(0)?;
+            children.push(SyntaxElement::Node(Box::new(value)));
+            let span = span_for_children(&children);
+            return Ok((SyntaxNode::new(SyntaxKind::ExprSplatDict, children, span), true));
+        }
+        if self.peek_non_trivia_raw() == Some("*") {
+            let mut children = Vec::new();
+            self.bump_trivia_into(&mut children);
+            self.bump_token_into(&mut children); // '*'
+            self.bump_trivia_into(&mut children);
+            let value = self.parse_expr_bp(0)?;
+            children.push(SyntaxElement::Node(Box::new(value)));
+            let span = span_for_children(&children);
+            return Ok((SyntaxNode::new(SyntaxKind::ExprSplat, children, span), false));
+        }
         if self.peek_non_trivia_token_kind() == Some(TokenKind::Ident)
             && self
                 .peek_nth_non_trivia(2)

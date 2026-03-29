@@ -37,6 +37,7 @@ fn serialize_basic_gdscript_module() {
 
     let file = File {
         path: Default::default(),
+        attrs: Vec::new(),
         items: vec![
             Item::new(ItemKind::DefStruct(user_struct)),
             Item::new(ItemKind::DefConst(const_item)),
@@ -154,6 +155,7 @@ fn serialize_enum_with_impl_and_struct_variant_construction() {
 
     let file = File {
         path: Default::default(),
+        attrs: Vec::new(),
         items: vec![
             Item::new(ItemKind::DefEnum(shape_enum)),
             Item::new(ItemKind::Impl(impl_shape)),

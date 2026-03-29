@@ -112,6 +112,7 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
 
     let mut ast = Node::file(File {
         path: PathBuf::from("const_eval.fp"),
+        attrs: Vec::new(),
         items,
     });
 
@@ -268,6 +269,7 @@ fn const_eval_materializes_late_type_for_typing() -> Result<()> {
 
     let mut ast = Node::file(File {
         path: PathBuf::from("lazy_types.fp"),
+        attrs: Vec::new(),
         items: vec![const_item, later_struct],
     });
 

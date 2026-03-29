@@ -1,5 +1,8 @@
 use clap::{Args, Parser, Subcommand};
-use fp_shell::{CompileOptions, compile_file_with_options, load_inventory, parse_target};
+use fp_shell::{
+    CompileOptions, InterpretOptions, compile_file_with_options, interpret_file_with_options,
+    load_inventory, parse_target,
+};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -16,6 +19,7 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     Compile(CompileArgs),
+    Interpret(InterpretArgs),
 }
 
 #[derive(Args, Debug)]
@@ -31,6 +35,18 @@ struct CompileArgs {
 
     #[arg(long)]
     check: bool,
+
+    #[arg(long)]
+    inventory: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+struct InterpretArgs {
+    #[arg(required = true)]
+    input: PathBuf,
+
+    #[arg(long, default_value = "bash")]
+    target: String,
 
     #[arg(long)]
     inventory: Option<PathBuf>,
@@ -61,6 +77,17 @@ fn run() -> Result<(), fp_shell::ShellError> {
             } else {
                 println!("generated: {}", output.display());
             }
+            Ok(())
+        }
+        Command::Interpret(args) => {
+            let target = parse_target(&args.target)?;
+            let inventory = if let Some(path) = args.inventory.as_deref() {
+                Some(load_inventory(path)?)
+            } else {
+                None
+            };
+            let options = InterpretOptions { inventory, target };
+            let _ = interpret_file_with_options(&args.input, &options)?;
             Ok(())
         }
     }

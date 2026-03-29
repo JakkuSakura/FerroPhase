@@ -2290,6 +2290,38 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.call_value_function_runtime(&function, args)
                     }
                     Value::Any(any) => {
+                        if let Some(symbol) = any.downcast_ref::<ImportedSymbol>() {
+                            let Some(module_path) = self.module_id_path(&symbol.module) else {
+                                self.emit_error("unable to resolve module path for imported symbol");
+                                return RuntimeFlow::Value(Value::undefined());
+                            };
+                            let mut segments = module_path
+                                .split("::")
+                                .filter(|segment| !segment.is_empty())
+                                .map(|segment| Ident::new(segment.to_string()))
+                                .collect::<Vec<_>>();
+                            segments.push(Ident::new(symbol.symbol.name.clone()));
+                            let mut locator = Name::path(Path::new(PathPrefix::Plain, segments));
+                            if let Some(function) =
+                                self.resolve_function_call(&mut locator, invoke, ResolutionMode::Default)
+                            {
+                                invoke.target = ExprInvokeTarget::Function(locator.clone());
+                                let args = match self.evaluate_args_runtime(&mut invoke.args) {
+                                    Ok(values) => values,
+                                    Err(flow) => return flow,
+                                };
+                                if let Some(stack) = Self::module_stack_from_locator(&locator) {
+                                    let saved = std::mem::take(&mut self.module_stack);
+                                    self.module_stack = stack;
+                                    let flow = self.call_function_runtime(function, args);
+                                    self.module_stack = saved;
+                                    return flow;
+                                }
+                                return self.call_function_runtime(function, args);
+                            }
+                            self.emit_error("unable to resolve imported function");
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
                         if let Some(closure) = any.downcast_ref::<ConstClosure>() {
                             let args = match self.evaluate_args_runtime(&mut invoke.args) {
                                 Ok(values) => values,

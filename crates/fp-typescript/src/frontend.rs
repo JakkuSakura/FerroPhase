@@ -6,8 +6,8 @@ use fp_core::ast::{
     DecimalType, EnumTypeVariant, Expr, ExprBlock, ExprInvoke, ExprInvokeTarget, ExprKind, File,
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclConst, ItemDefConst, ItemDefEnum,
     ItemDefFunction, ItemDefStruct, ItemDefType, ItemImport, ItemImportGroup, ItemImportPath,
-    ItemImportRename, ItemImportTree, ItemKind, Module as AstModule, Name, Node, NodeKind,
-    ReprOptions, StructuralField, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct,
+    ItemImportRename, ItemImportStyle, ItemImportTree, ItemKind, Module as AstModule, Name, Node,
+    NodeKind, ReprOptions, StructuralField, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct,
     TypeStructural, TypeTuple, TypeVec, Value, Visibility,
 };
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
@@ -165,6 +165,7 @@ impl LanguageFrontend for TypeScriptFrontend {
 
         let file = File {
             path: Self::file_path(path),
+            attrs: Vec::new(),
             items,
         };
         let node = Node::from(NodeKind::File(file.clone()));
@@ -442,6 +443,7 @@ fn lower_import(import: &ImportDecl) -> Vec<Item> {
     vec![Item::from(ItemImport {
         attrs: Vec::new(),
         visibility: Visibility::Inherited,
+        style: ItemImportStyle::Plain,
         tree: ItemImportTree::Path(path),
     })]
 }
@@ -470,6 +472,7 @@ fn lower_export_all(export: &ExportAll) -> Vec<Item> {
     vec![Item::from(ItemImport {
         attrs: Vec::new(),
         visibility: Visibility::Public,
+        style: ItemImportStyle::Plain,
         tree: ItemImportTree::Path(path),
     })]
 }
@@ -536,6 +539,7 @@ fn lower_named_export(export: &NamedExport) -> Vec<Item> {
             items.push(Item::from(ItemImport {
                 attrs: Vec::new(),
                 visibility: Visibility::Public,
+                style: ItemImportStyle::Plain,
                 tree: ItemImportTree::Path(path),
             }));
         }

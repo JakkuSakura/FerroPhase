@@ -6,9 +6,10 @@ use fp_core::ast::{
     FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType,
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
-    ItemImportTree, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter, MacroInvocation, Module,
-    Name, Path, QuoteFragmentKind, ReprOptions, StructuralField, Ty, TypeBinaryOp,
-    TypeBinaryOpKind, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value, ValueNone, Visibility,
+    ItemImportStyle, ItemImportTree, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter,
+    MacroInvocation, Module, Name, Path, QuoteFragmentKind, ReprOptions, StructuralField, Ty,
+    TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value, ValueNone,
+    Visibility,
 };
 use fp_core::cst::CstCategory;
 use fp_core::module::path::PathPrefix;
@@ -49,6 +50,20 @@ pub fn lower_items_from_cst(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsEr
         out.push(lower_item_from_cst(n.as_ref())?);
     }
     Ok(out)
+}
+
+pub fn lower_file_from_cst(node: &SyntaxNode) -> Result<(Vec<Attribute>, Vec<Item>), LowerItemsError> {
+    if node.kind != SyntaxKind::ItemList {
+        if node.kind.category() == CstCategory::Item {
+            let item = lower_item_from_cst(node)?;
+            return Ok((Vec::new(), vec![item]));
+        }
+        return Err(LowerItemsError::UnexpectedNode(node.kind));
+    }
+
+    let attrs = lower_inner_attrs(node);
+    let items = lower_items_from_cst(node)?;
+    Ok((attrs, items))
 }
 
 pub(crate) fn lower_item_from_cst(node: &SyntaxNode) -> Result<Item, LowerItemsError> {
@@ -199,6 +214,7 @@ fn lower_use_item(node: &SyntaxNode) -> Result<ItemImport, LowerItemsError> {
     Ok(ItemImport {
         attrs,
         visibility,
+        style: ItemImportStyle::Plain,
         tree: lower_use_tree(tree)?,
     })
 }
@@ -234,6 +250,7 @@ fn lower_extern_crate(node: &SyntaxNode) -> Result<ItemImport, LowerItemsError> 
     Ok(ItemImport {
         attrs,
         visibility,
+        style: ItemImportStyle::Plain,
         tree,
     })
 }

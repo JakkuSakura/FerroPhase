@@ -58,6 +58,7 @@ mod tests {
     fn roundtrip_via_hir_prunes_unused_functions_for_top_level_expr_roots() {
         let file = File {
             path: PathBuf::from("dce_example.fp"),
+            attrs: Vec::new(),
             items: vec![
                 function_item("used_helper"),
                 function_item("unused_helper"),

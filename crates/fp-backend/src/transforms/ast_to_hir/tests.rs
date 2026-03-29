@@ -137,6 +137,7 @@ fn transform_index_expression_to_hir() -> Result<()> {
 
     let ast_file = ast::File {
         path: "index.fp".into(),
+        attrs: Vec::new(),
         items,
     };
 
@@ -241,6 +242,7 @@ fn cfg_filters_items_by_target_os() -> Result<()> {
 
     let ast_file = ast::File {
         path: "cfg.fp".into(),
+        attrs: Vec::new(),
         items: vec![linux_fn, mac_fn],
     };
 
@@ -346,6 +348,7 @@ fn transform_file_with_function_and_struct() -> Result<()> {
 
     let ast_file = ast::File {
         path: "test.fp".into(),
+        attrs: Vec::new(),
         items,
     };
 
@@ -410,6 +413,7 @@ fn transform_generic_function_and_method() -> Result<()> {
 
     let ast_file = ast::File {
         path: "generics.fp".into(),
+        attrs: Vec::new(),
         items,
     };
 
@@ -497,6 +501,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
 
     let ast_file = ast::File {
         path: "scopes.fp".into(),
+        attrs: Vec::new(),
         items,
     };
 

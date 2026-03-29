@@ -2,11 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 use eyre::eyre;
 use fp_core::ast::{
-    self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprIntrinsicCall, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprStruct, ExprUnOp, FormatArgRef,
-    FormatTemplatePart, FunctionParam, Item, ItemKind, Node, NodeKind, Pattern, Ty, TypeEnum,
-    TypePrimitive, TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry,
-    ValueStruct, ValueTuple,
+    self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprBreak, ExprContinue, ExprFor, ExprIf,
+    ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprReturn,
+    ExprStringTemplate, ExprStruct, ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart,
+    FunctionParam, Item, ItemImport, ItemImportTree, ItemKind, Node, NodeKind, Pattern,
+    PatternKind, Ty, TypeEnum, TypePrimitive, TypeStruct, TypeTuple, TypeVec, Value, ValueList,
+    ValueMap, ValueMapEntry, ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
@@ -60,8 +61,7 @@ impl PythonEmitter {
                 if let ExprKind::Block(block) = expr.kind() {
                     self.emit_script_block(block)?;
                 } else {
-                    let rendered = self.render_expr(expr)?;
-                    self.push_line(&rendered);
+                    self.emit_expr_statement(expr, false)?;
                 }
             }
             NodeKind::Query(_) => {
@@ -100,11 +100,12 @@ impl PythonEmitter {
                 }
             }
             ItemKind::Expr(expr) => {
-                let rendered = self.render_expr(expr)?;
-                self.push_line(&rendered);
+                self.emit_expr_statement(expr, false)?;
             }
-            ItemKind::Import(_)
-            | ItemKind::OpaqueType(_)
+            ItemKind::Import(import) => {
+                self.emit_import(import)?;
+            }
+            ItemKind::OpaqueType(_)
             | ItemKind::DefType(_)
             | ItemKind::DefStatic(_)
             | ItemKind::DeclConst(_)
@@ -197,6 +198,8 @@ impl PythonEmitter {
 
         if let ExprKind::Block(block) = func.body.as_ref().kind() {
             self.emit_block(block)?;
+        } else if self.is_statement_expr(func.body.as_ref()) {
+            self.emit_expr_statement(func.body.as_ref(), false)?;
         } else {
             let rendered = self.render_expr(func.body.as_ref())?;
             self.push_line(&format!("return {}", rendered));
@@ -261,19 +264,7 @@ impl PythonEmitter {
                 }
             }
             BlockStmt::Expr(expr_stmt) => {
-                let expr = expr_stmt.expr.as_ref();
-                if let ExprKind::IntrinsicCall(call) = expr.kind() {
-                    self.emit_intrinsic_statement(call)?;
-                } else if let ExprKind::Block(block_expr) = expr.kind() {
-                    self.emit_block(block_expr)?;
-                } else {
-                    let rendered = self.render_expr(expr)?;
-                    if expr_stmt.has_value() {
-                        self.push_line(&format!("return {}", rendered));
-                    } else {
-                        self.push_line(&rendered);
-                    }
-                }
+                self.emit_expr_statement(expr_stmt.expr.as_ref(), expr_stmt.has_value())?;
             }
             BlockStmt::Item(item) => self.emit_item(item.as_ref())?,
             BlockStmt::Defer(_) => {
@@ -314,6 +305,122 @@ impl PythonEmitter {
         }
     }
 
+    fn emit_import(&mut self, import: &ItemImport) -> Result<()> {
+        self.push_line(&self.render_import(import)?);
+        Ok(())
+    }
+
+    fn emit_expr_statement(&mut self, expr: &Expr, as_return: bool) -> Result<()> {
+        match expr.kind() {
+            ExprKind::IntrinsicCall(call) if !as_return => self.emit_intrinsic_statement(call),
+            ExprKind::Block(block) if !as_return => self.emit_block(block),
+            ExprKind::If(stmt_if) if self.is_statement_if(stmt_if) => {
+                self.emit_if_statement(stmt_if)
+            }
+            ExprKind::While(stmt_while) => self.emit_while_statement(stmt_while),
+            ExprKind::For(stmt_for) => self.emit_for_statement(stmt_for),
+            ExprKind::Return(stmt_return) => self.emit_return_statement(stmt_return),
+            ExprKind::Break(stmt_break) => self.emit_break_statement(stmt_break),
+            ExprKind::Continue(stmt_continue) => self.emit_continue_statement(stmt_continue),
+            _ => {
+                let rendered = self.render_expr(expr)?;
+                if as_return {
+                    self.push_line(&format!("return {}", rendered));
+                } else {
+                    self.push_line(&rendered);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn emit_if_statement(&mut self, stmt_if: &ExprIf) -> Result<()> {
+        let cond = self.render_expr(stmt_if.cond.as_ref())?;
+        self.start_block(&format!("if {}:", cond));
+        self.emit_statement_body(stmt_if.then.as_ref())?;
+        self.end_block();
+
+        if let Some(elze) = &stmt_if.elze {
+            self.start_block("else:");
+            self.emit_statement_body(elze.as_ref())?;
+            self.end_block();
+        }
+
+        Ok(())
+    }
+
+    fn emit_while_statement(&mut self, stmt_while: &ExprWhile) -> Result<()> {
+        let cond = self.render_expr(stmt_while.cond.as_ref())?;
+        self.start_block(&format!("while {}:", cond));
+        self.emit_statement_body(stmt_while.body.as_ref())?;
+        self.end_block();
+        Ok(())
+    }
+
+    fn emit_for_statement(&mut self, stmt_for: &ExprFor) -> Result<()> {
+        let pat = self.render_pattern(stmt_for.pat.as_ref());
+        let iter = self.render_expr(stmt_for.iter.as_ref())?;
+        self.start_block(&format!("for {} in {}:", pat, iter));
+        self.emit_statement_body(stmt_for.body.as_ref())?;
+        self.end_block();
+        Ok(())
+    }
+
+    fn emit_return_statement(&mut self, stmt_return: &ExprReturn) -> Result<()> {
+        if let Some(value) = &stmt_return.value {
+            let rendered = self.render_expr(value.as_ref())?;
+            self.push_line(&format!("return {}", rendered));
+        } else {
+            self.push_line("return");
+        }
+        Ok(())
+    }
+
+    fn emit_break_statement(&mut self, stmt_break: &ExprBreak) -> Result<()> {
+        if let Some(value) = &stmt_break.value {
+            return Err(eyre!(
+                "Python output does not support break with value: {}",
+                self.render_expr(value.as_ref())?
+            )
+            .into());
+        }
+        self.push_line("break");
+        Ok(())
+    }
+
+    fn emit_continue_statement(&mut self, _stmt_continue: &ExprContinue) -> Result<()> {
+        self.push_line("continue");
+        Ok(())
+    }
+
+    fn emit_statement_body(&mut self, expr: &Expr) -> Result<()> {
+        match expr.kind() {
+            ExprKind::Block(block) => self.emit_block(block),
+            _ => self.emit_expr_statement(expr, false),
+        }
+    }
+
+    fn is_statement_if(&self, stmt_if: &ExprIf) -> bool {
+        matches!(stmt_if.then.as_ref().kind(), ExprKind::Block(_))
+            || matches!(
+                stmt_if.elze.as_ref().map(|expr| expr.kind()),
+                Some(ExprKind::Block(_))
+            )
+            || stmt_if.elze.is_none()
+    }
+
+    fn is_statement_expr(&self, expr: &Expr) -> bool {
+        match expr.kind() {
+            ExprKind::If(stmt_if) => self.is_statement_if(stmt_if),
+            ExprKind::While(_)
+            | ExprKind::For(_)
+            | ExprKind::Return(_)
+            | ExprKind::Break(_)
+            | ExprKind::Continue(_) => true,
+            _ => false,
+        }
+    }
+
     fn render_params(&mut self, params: &[FunctionParam]) -> Result<String> {
         if params.is_empty() {
             return Ok(String::new());
@@ -339,11 +446,13 @@ impl PythonEmitter {
                 self.render_expr(select.obj.as_ref())?,
                 select.field.name
             )),
+            ExprKind::Index(index) => self.render_index(index),
             ExprKind::Assign(assign) => Ok(format!(
                 "{} = {}",
                 self.render_expr(assign.target.as_ref())?,
                 self.render_expr(assign.value.as_ref())?
             )),
+            ExprKind::If(expr_if) => self.render_if_expr(expr_if),
             ExprKind::BinOp(bin_op) => Ok(format!(
                 "({} {} {})",
                 self.render_expr(bin_op.lhs.as_ref())?,
@@ -385,6 +494,31 @@ impl PythonEmitter {
             .into()),
             other => Err(eyre!("Unsupported expression in target emitter: {:?}", other).into()),
         }
+    }
+
+    fn render_if_expr(&mut self, expr_if: &ExprIf) -> Result<String> {
+        let Some(elze) = &expr_if.elze else {
+            return Err(eyre!("Python conditional expressions require an else branch").into());
+        };
+        if matches!(expr_if.then.as_ref().kind(), ExprKind::Block(_))
+            || matches!(elze.as_ref().kind(), ExprKind::Block(_))
+        {
+            return Err(eyre!("Cannot render block-based if expression inline").into());
+        }
+        Ok(format!(
+            "({} if {} else {})",
+            self.render_expr(expr_if.then.as_ref())?,
+            self.render_expr(expr_if.cond.as_ref())?,
+            self.render_expr(elze.as_ref())?
+        ))
+    }
+
+    fn render_index(&mut self, index: &ExprIndex) -> Result<String> {
+        Ok(format!(
+            "{}[{}]",
+            self.render_expr(index.obj.as_ref())?,
+            self.render_expr(index.index.as_ref())?
+        ))
     }
 
     fn render_unary(&mut self, unop: &ExprUnOp) -> Result<String> {
@@ -576,10 +710,42 @@ impl PythonEmitter {
     }
 
     fn render_pattern(&self, pattern: &Pattern) -> String {
-        if let Some(ident) = pattern.as_ident() {
-            ident.name.clone()
-        } else {
-            "_".to_string()
+        match pattern.kind() {
+            PatternKind::Ident(ident) => ident.ident.name.clone(),
+            PatternKind::Tuple(tuple) => {
+                let values = tuple
+                    .patterns
+                    .iter()
+                    .map(|pattern| self.render_pattern(pattern))
+                    .collect::<Vec<_>>();
+                format!("({})", values.join(", "))
+            }
+            _ => pattern
+                .as_ident()
+                .map(|ident| ident.name.clone())
+                .unwrap_or_else(|| "_".to_string()),
+        }
+    }
+
+    fn render_import(&self, import: &ItemImport) -> Result<String> {
+        if let Some(module) = import.module_path() {
+            let module_text = render_import_module(&module.segments)?;
+            let names = render_imported_names(import)?;
+            let prefix = ".".repeat(import.level() as usize);
+            return Ok(format!("from {}{} import {}", prefix, module_text, names));
+        }
+
+        match &import.tree {
+            ItemImportTree::Group(group) => Ok(format!(
+                "import {}",
+                group
+                    .items
+                    .iter()
+                    .map(render_import_path_like)
+                    .collect::<Result<Vec<_>>>()?
+                    .join(", ")
+            )),
+            _ => Ok(format!("import {}", render_import_path_like(&import.tree)?)),
         }
     }
 
@@ -809,4 +975,151 @@ fn escape_fstring(text: &str) -> String {
 
 fn value_with_type(name: &str, ty: &str, value: &str) -> String {
     format!("{}: {} = {}", name, ty, value)
+}
+
+fn render_import_module(segments: &[ItemImportTree]) -> Result<String> {
+    if segments.is_empty() {
+        return Err(eyre!("Import-from statement is missing a module path").into());
+    }
+    segments
+        .iter()
+        .map(render_import_module_segment)
+        .collect::<Result<Vec<_>>>()
+        .map(|segments| segments.join("."))
+}
+
+fn render_import_module_segment(tree: &ItemImportTree) -> Result<String> {
+    match tree {
+        ItemImportTree::Ident(ident) => Ok(ident.name.clone()),
+        ItemImportTree::Path(path) => path
+            .segments
+            .iter()
+            .map(render_import_module_segment)
+            .collect::<Result<Vec<_>>>()
+            .map(|segments| segments.join(".")),
+        _ => Err(eyre!("Unsupported Python module import segment: {}", tree).into()),
+    }
+}
+
+fn render_import_name(tree: &ItemImportTree) -> Result<String> {
+    match tree {
+        ItemImportTree::Ident(ident) => Ok(ident.name.clone()),
+        ItemImportTree::Rename(rename) => Ok(format!("{} as {}", rename.from.name, rename.to.name)),
+        ItemImportTree::Glob => Ok("*".to_string()),
+        ItemImportTree::Path(path) => render_import_path_like(&ItemImportTree::Path(path.clone())),
+        ItemImportTree::Group(group) => group
+            .items
+            .iter()
+            .map(render_import_name)
+            .collect::<Result<Vec<_>>>()
+            .map(|names| names.join(", ")),
+        _ => Err(eyre!("Unsupported Python import target: {}", tree).into()),
+    }
+}
+
+fn render_import_path_like(tree: &ItemImportTree) -> Result<String> {
+    match tree {
+        ItemImportTree::Ident(ident) => Ok(ident.name.clone()),
+        ItemImportTree::Rename(rename) => Ok(format!("{} as {}", rename.from.name, rename.to.name)),
+        ItemImportTree::Path(path) => path
+            .segments
+            .iter()
+            .map(render_import_module_segment)
+            .collect::<Result<Vec<_>>>()
+            .map(|segments| segments.join(".")),
+        _ => Err(eyre!("Unsupported Python import tree: {}", tree).into()),
+    }
+}
+
+fn render_imported_names(import: &ItemImport) -> Result<String> {
+    let module = import
+        .module_path()
+        .ok_or_else(|| eyre!("expected from-import metadata"))?;
+    let ItemImportTree::Path(full_path) = &import.tree else {
+        return render_import_name(&import.tree);
+    };
+
+    if full_path.segments.len() < module.segments.len() {
+        return Err(eyre!("import tree is shorter than from-import module path").into());
+    }
+
+    let suffix = &full_path.segments[module.segments.len()..];
+    if suffix.is_empty() {
+        return Err(eyre!("from-import is missing imported names").into());
+    }
+
+    if suffix.len() == 1 {
+        return render_import_name(&suffix[0]);
+    }
+
+    render_import_name(&ItemImportTree::Path(fp_core::ast::ItemImportPath {
+        segments: suffix.to_vec(),
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use fp_core::ast::AstSerializer;
+    use fp_core::frontend::LanguageFrontend;
+
+    use crate::PythonFrontend;
+
+    use super::PythonSerializer;
+
+    fn round_trip(source: &str) -> String {
+        let frontend = PythonFrontend::new();
+        let parsed = frontend.parse(source, None).expect("parse python");
+        let serializer = PythonSerializer;
+        serializer
+            .serialize_node(&parsed.ast)
+            .expect("serialize python")
+    }
+
+    #[test]
+    fn serializes_control_flow_statements() {
+        let source = "\
+def walk(items):
+    for item in items:
+        if item:
+            continue
+        while item < 3:
+            break
+    return items[0]
+";
+        let rendered = round_trip(source);
+        assert!(rendered.contains("def walk(items: Any) -> None:"));
+        assert!(rendered.contains("for item in items:"));
+        assert!(rendered.contains("if item:"));
+        assert!(rendered.contains("continue"));
+        assert!(rendered.contains("while (item < 3):"));
+        assert!(rendered.contains("break"));
+        assert!(rendered.contains("return items[0]"));
+    }
+
+    #[test]
+    fn serializes_python_imports() {
+        let source = "\
+import os, sys as system
+import pkg.submodule
+from pkg import submodule
+from collections import defaultdict as dd, deque
+from package import *
+";
+        let rendered = round_trip(source);
+        assert!(rendered.contains("import os, sys as system"));
+        assert!(rendered.contains("import pkg.submodule"));
+        assert!(rendered.contains("from pkg import submodule"));
+        assert!(rendered.contains("from collections import defaultdict as dd, deque"));
+        assert!(rendered.contains("from package import *"));
+    }
+
+    #[test]
+    fn serializes_conditional_expression() {
+        let source = "\
+def pick(flag, left, right):
+    return left if flag else right
+";
+        let rendered = round_trip(source);
+        assert!(rendered.contains("return (left if flag else right)"));
+    }
 }

@@ -506,7 +506,7 @@ const fn should_apply(only_if: str, unless: str, creates: str, removes: str) -> 
     true
 }
 
-const fn shell_run(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+pub const fn shell_run(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if should_apply(only_if, unless, creates, removes) {
         run_host(host, command);
@@ -514,7 +514,7 @@ const fn shell_run(host: str, command: str, only_if: str, unless: str, creates: 
     }
 }
 
-const fn shell_run_local(_host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+pub const fn shell_run_local(_host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if should_apply(only_if, unless, creates, removes) {
         run_local_host(command);
@@ -522,7 +522,7 @@ const fn shell_run_local(_host: str, command: str, only_if: str, unless: str, cr
     }
 }
 
-const fn shell_run_ssh(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+pub const fn shell_run_ssh(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if should_apply(only_if, unless, creates, removes) {
         run_ssh_host(host, command);
@@ -530,7 +530,7 @@ const fn shell_run_ssh(host: str, command: str, only_if: str, unless: str, creat
     }
 }
 
-const fn shell_run_docker(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+pub const fn shell_run_docker(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if should_apply(only_if, unless, creates, removes) {
         run_docker_host(host, command);
@@ -538,7 +538,7 @@ const fn shell_run_docker(host: str, command: str, only_if: str, unless: str, cr
     }
 }
 
-const fn shell_run_kubectl(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+pub const fn shell_run_kubectl(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if should_apply(only_if, unless, creates, removes) {
         run_kubectl_host(host, command);
@@ -546,7 +546,7 @@ const fn shell_run_kubectl(host: str, command: str, only_if: str, unless: str, c
     }
 }
 
-const fn shell_run_winrm(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+pub const fn shell_run_winrm(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if should_apply(only_if, unless, creates, removes) {
         winrm_run(host, command);
@@ -554,7 +554,7 @@ const fn shell_run_winrm(host: str, command: str, only_if: str, unless: str, cre
     }
 }
 
-const fn shell_run_chroot(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+pub const fn shell_run_chroot(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
     runtime_set_changed(false);
     if should_apply(only_if, unless, creates, removes) {
         run_chroot_host(host, command);

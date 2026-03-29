@@ -74,6 +74,8 @@ pub enum CstKind {
     ExprSelect,
     ExprIndex,
     ExprCall,
+    ExprSplat,
+    ExprSplatDict,
     ExprKwArg,
     ExprMacroCall,
     ExprBlock,
@@ -172,6 +174,8 @@ impl CstKind {
             | CstKind::ExprSelect
             | CstKind::ExprIndex
             | CstKind::ExprCall
+            | CstKind::ExprSplat
+            | CstKind::ExprSplatDict
             | CstKind::ExprKwArg
             | CstKind::ExprMacroCall
             | CstKind::ExprBlock

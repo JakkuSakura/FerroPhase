@@ -70,6 +70,7 @@ impl LanguageFrontend for PythonFrontend {
         let items = lower_suite(&program)?;
         let file = File {
             path: Self::file_path(path),
+            attrs: Vec::new(),
             items,
         };
         let node = Node::from(NodeKind::File(file));
@@ -665,17 +666,22 @@ fn lower_import(names: &[PyAlias]) -> CoreResult<fp_core::ast::ItemImport> {
         fp_core::ast::ItemImportTree::Group(fp_core::ast::ItemImportGroup { items })
     };
 
-    Ok(fp_core::ast::ItemImport {
-        attrs: Vec::new(),
-        visibility: fp_core::ast::Visibility::Public,
+    Ok(fp_core::ast::ItemImport::plain(
+        fp_core::ast::Visibility::Public,
         tree,
-    })
+    ))
 }
 
 fn lower_import_from(
     import: &py_ast::StmtImportFrom<TextRange>,
 ) -> CoreResult<fp_core::ast::ItemImport> {
-    if import.level.is_some() {
+    if import
+        .level
+        .as_ref()
+        .map(|level| level.to_u32())
+        .unwrap_or(0)
+        > 0
+    {
         return Err(CoreError::from("python relative imports are not supported"));
     }
     let module = import
@@ -694,6 +700,10 @@ fn lower_import_from(
         imported.push(lower_import_alias(alias)?);
     }
 
+    let module_path = fp_core::ast::ItemImportPath {
+        segments: base_segments.clone(),
+    };
+
     let mut path = fp_core::ast::ItemImportPath::new();
     for seg in base_segments {
         path.push(seg);
@@ -707,11 +717,16 @@ fn lower_import_from(
         ));
     }
 
-    Ok(fp_core::ast::ItemImport {
-        attrs: Vec::new(),
-        visibility: fp_core::ast::Visibility::Public,
-        tree: fp_core::ast::ItemImportTree::Path(path),
-    })
+    Ok(fp_core::ast::ItemImport::from_import(
+        fp_core::ast::Visibility::Public,
+        module_path,
+        import
+            .level
+            .as_ref()
+            .map(|level| level.to_u32())
+            .unwrap_or(0),
+        fp_core::ast::ItemImportTree::Path(path),
+    ))
 }
 
 fn lower_import_alias(alias: &PyAlias) -> CoreResult<fp_core::ast::ItemImportTree> {

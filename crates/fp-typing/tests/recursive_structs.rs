@@ -33,6 +33,7 @@ fn recursive_struct_rejected_without_box() {
     let def = ItemDefStruct::new(name.clone(), vec![field]);
     let file = File {
         path: "recursive.fp".into(),
+        attrs: Vec::new(),
         items: vec![Item::from(ItemKind::DefStruct(def))],
     };
 
@@ -50,6 +51,7 @@ fn recursive_struct_allowed_with_box() {
     let def = ItemDefStruct::new(name.clone(), vec![field]);
     let file = File {
         path: "recursive_box.fp".into(),
+        attrs: Vec::new(),
         items: vec![Item::from(ItemKind::DefStruct(def))],
     };
 
@@ -71,6 +73,7 @@ fn recursive_struct_allowed_with_vec() {
     let def = ItemDefStruct::new(name.clone(), vec![field]);
     let file = File {
         path: "recursive_vec.fp".into(),
+        attrs: Vec::new(),
         items: vec![Item::from(ItemKind::DefStruct(def))],
     };
 
@@ -94,6 +97,7 @@ fn recursive_struct_allowed_with_ref() {
     let def = ItemDefStruct::new(name.clone(), vec![field]);
     let file = File {
         path: "recursive_ref.fp".into(),
+        attrs: Vec::new(),
         items: vec![Item::from(ItemKind::DefStruct(def))],
     };
 
@@ -113,6 +117,7 @@ fn recursive_struct_allowed_with_arc() {
     let def = ItemDefStruct::new(name.clone(), vec![field]);
     let file = File {
         path: "recursive_arc.fp".into(),
+        attrs: Vec::new(),
         items: vec![Item::from(ItemKind::DefStruct(def))],
     };
 
@@ -132,6 +137,7 @@ fn recursive_struct_allowed_with_rc() {
     let def = ItemDefStruct::new(name.clone(), vec![field]);
     let file = File {
         path: "recursive_rc.fp".into(),
+        attrs: Vec::new(),
         items: vec![Item::from(ItemKind::DefStruct(def))],
     };
 
@@ -151,6 +157,7 @@ fn recursive_struct_allowed_with_weak() {
     let def = ItemDefStruct::new(name.clone(), vec![field]);
     let file = File {
         path: "recursive_weak.fp".into(),
+        attrs: Vec::new(),
         items: vec![Item::from(ItemKind::DefStruct(def))],
     };
 

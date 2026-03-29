@@ -4334,6 +4334,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                     RuntimeFlow::Value(value) => value,
                     other => return other,
                 };
+                if let ExprKind::Name(locator) = index_expr.obj.kind() {
+                    if self.allow_binding_replacement
+                        && self.try_replace_declared_binding(locator, index_value.clone())
+                    {
+                        return RuntimeFlow::Value(index_value);
+                    }
+                }
                 let idx = match self.numeric_to_non_negative_usize(&index_value, "index") {
                     Some(value) => value,
                     None => return RuntimeFlow::Value(Value::undefined()),
@@ -4748,7 +4755,57 @@ impl<'ctx> AstInterpreter<'ctx> {
                         .unwrap_or_else(|err| err.into_inner().clone());
                     return self.evaluate_index(shared_value, index);
                 }
+                if let Some(module) = any.downcast_ref::<ImportedModule>() {
+                    let key = match index {
+                        Value::String(text) => text.value,
+                        Value::Char(ch) => ch.value.to_string(),
+                        other => {
+                            self.emit_error(format!(
+                                "module index expects a string key, got {}",
+                                other
+                            ));
+                            return Value::undefined();
+                        }
+                    };
+                    let Some(base) = self.module_id_path(&module.module) else {
+                        self.emit_error("unable to resolve module path for dynamic index");
+                        return Value::undefined();
+                    };
+                    let symbol = if base.is_empty() {
+                        key
+                    } else {
+                        format!("{}::{}", base, key)
+                    };
+                    if let Some(value) = self.resolve_imported_symbol_path(&symbol) {
+                        return value;
+                    }
+                    self.emit_error(format!("unable to resolve symbol '{}'", symbol));
+                    return Value::undefined();
+                }
                 self.emit_error("cannot index into non-collection reference");
+                Value::undefined()
+            }
+            Value::String(text) => {
+                let key = match index {
+                    Value::String(name) => name.value,
+                    Value::Char(ch) => ch.value.to_string(),
+                    other => {
+                        self.emit_error(format!(
+                            "module index expects a string key, got {}",
+                            other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                if !text.value.contains("::") {
+                    self.emit_error("cannot index into string value");
+                    return Value::undefined();
+                }
+                let symbol = format!("{}::{}", text.value, key);
+                if let Some(value) = self.resolve_imported_symbol_path(&symbol) {
+                    return value;
+                }
+                self.emit_error(format!("unable to resolve symbol '{}'", symbol));
                 Value::undefined()
             }
             Value::List(list) => {

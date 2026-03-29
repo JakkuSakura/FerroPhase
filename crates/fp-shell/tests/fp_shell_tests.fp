@@ -1,4 +1,4 @@
-#![feature(replace_binding)]
+#![feature(replace-bindings)]
 #![feature(exception)]
 use std::assert;
 use std::env;
@@ -17,6 +17,7 @@ struct FixtureSummary {
 }
 
 const mut COMMAND_CALLS: Vec<str> = Vec::new();
+const mut CURRENT_FACTS: Value = Value::Null;
 
 fn reset_command_calls() {
     COMMAND_CALLS = Vec::new();
@@ -26,6 +27,21 @@ fn record_command(command: str) {
     COMMAND_CALLS.push(command);
 }
 
+fn invoke_shell_handler(
+    command: str,
+    _host: str,
+    _only_if: str,
+    _unless: str,
+    _creates: str,
+    _removes: str,
+    _sudo: bool,
+    _cwd: str,
+) -> bool {
+    record_command(command);
+    std::shell::backend::runtime_set_changed(true);
+    true
+}
+
 fn take_command_calls() -> Vec<str> {
     let calls = COMMAND_CALLS;
     COMMAND_CALLS = Vec::new();
@@ -33,22 +49,13 @@ fn take_command_calls() -> Vec<str> {
 }
 
 fn install_shell_hooks() {
-    let handler = move |_host: str,
-                        command: str,
-                        _only_if: str,
-                        _unless: str,
-                        _creates: str,
-                        _removes: str| {
-        record_command(command);
-        std::shell::backend::runtime_set_changed(true);
-    };
-    std::shell::backend::shell_run = handler;
-    std::shell::backend::shell_run_local = handler;
-    std::shell::backend::shell_run_ssh = handler;
-    std::shell::backend::shell_run_docker = handler;
-    std::shell::backend::shell_run_kubectl = handler;
-    std::shell::backend::shell_run_winrm = handler;
-    std::shell::backend::shell_run_chroot = handler;
+    std::ops::server::shell = invoke_shell_handler;
+    std::ops::server::shell_local = invoke_shell_handler;
+    std::ops::server::shell_ssh = invoke_shell_handler;
+    std::ops::server::shell_docker = invoke_shell_handler;
+    std::ops::server::shell_kubectl = invoke_shell_handler;
+    std::ops::server::shell_winrm = invoke_shell_handler;
+    std::ops::server::shell_chroot = invoke_shell_handler;
 }
 
 fn main() {
@@ -106,6 +113,7 @@ fn run_case(path: &str) -> bool {
 
     reset_workspace(&workspace);
     materialize_fixture_workspace(&workspace, fixture);
+    install_fact_hooks(fixture);
     reset_command_calls();
 
     let error = run_shell_case(path, family, fixture);
@@ -215,13 +223,65 @@ fn json_kwargs(value: Value) -> any {
             let mut idx = 0;
             while idx < fields.len() {
                 let field = fields[idx];
-                entries.push((field.key, json_to_value(field.value)));
+                entries.push((field.key, json_to_value_with_key(field.key, field.value)));
                 idx = idx + 1;
             }
             HashMap::from(entries)
         }
         _ => panic("expected kwargs object"),
     }
+}
+
+fn json_to_value_with_key(key: &str, value: Value) -> any {
+    if key == "content" {
+        match value {
+            Value::Array(values) => {
+                if array_is_string_list(values) {
+                    let mut out = Vec::new();
+                    let mut idx = 0;
+                    while idx < values.len() {
+                        match values[idx] {
+                            Value::String(text) => out.push(text),
+                            _ => {}
+                        }
+                        idx = idx + 1;
+                    }
+                    return out.join("\n");
+                }
+                let mut rendered = Vec::new();
+                let mut idx = 0;
+                while idx < values.len() {
+                    rendered.push(json_to_value(values[idx]));
+                    idx = idx + 1;
+                }
+                return rendered;
+            }
+            _ => {}
+        }
+    }
+    if key == "keyid" {
+        match value {
+            Value::String(text) => {
+                let mut out = Vec::new();
+                out.push(text);
+                return out;
+            }
+            Value::Array(values) => {
+                let mut out = Vec::new();
+                let mut idx = 0;
+                while idx < values.len() {
+                    match values[idx] {
+                        Value::String(text) => out.push(text),
+                        _ => {}
+                    }
+                    idx = idx + 1;
+                }
+                return out;
+            }
+            _ => {}
+        }
+    }
+    json_to_value(value)
 }
 
 fn json_to_value(value: Value) -> any {
@@ -248,9 +308,6 @@ fn json_to_value(value: Value) -> any {
         }
         Value::String(text) => text,
         Value::Array(values) => {
-            if array_is_string_list(values) {
-                return join_string_list(values);
-            }
             let mut rendered = Vec::new();
             let mut idx = 0;
             while idx < values.len() {
@@ -265,6 +322,49 @@ fn json_to_value(value: Value) -> any {
             while idx < fields.len() {
                 let field = fields[idx];
                 entries.push((field.key, json_to_value(field.value)));
+                idx = idx + 1;
+            }
+            HashMap::from(entries)
+        }
+    }
+}
+
+fn json_to_fact_value(value: Value) -> any {
+    match value {
+        Value::Null => null,
+        Value::Bool(flag) => flag,
+        Value::Number(number) => {
+            match number.as_i64() {
+                Option::Some(value) => value,
+                Option::None => {
+                    match number.as_u64() {
+                        Option::Some(value) => value,
+                        Option::None => {
+                            match number.as_f64() {
+                                Option::Some(value) => value,
+                                Option::None => panic("unsupported json number"),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Value::String(text) => text,
+        Value::Array(values) => {
+            let mut rendered = Vec::new();
+            let mut idx = 0;
+            while idx < values.len() {
+                rendered.push(json_to_fact_value(values[idx]));
+                idx = idx + 1;
+            }
+            rendered
+        }
+        Value::Object(fields) => {
+            let mut entries = Vec::new();
+            let mut idx = 0;
+            while idx < fields.len() {
+                let field = fields[idx];
+                entries.push((field.key, json_to_fact_value(field.value)));
                 idx = idx + 1;
             }
             HashMap::from(entries)
@@ -419,6 +519,107 @@ fn materialize_dir_map(workspace: &str, value: Value) {
 
 fn join_path(base: &str, child: &str) -> str {
     f"{base}/{child}"
+}
+
+fn install_fact_hooks(fixture: Value) {
+    CURRENT_FACTS = std::json::find_object_field(fixture, "facts");
+
+    let apt_keys = || fact_lookup("apt.AptKeys", "");
+    let apt_sources = || fact_lookup("apt.AptSources", "");
+    let apt_simulate = |command: str| {
+        fact_lookup("apt.SimulateOperationWillChange", f"command={command}")
+    };
+    let deb_packages = || fact_lookup("deb.DebPackages", "");
+    let deb_package = |package: str| fact_lookup("deb.DebPackage", f"package={package}");
+    let gpg_key = |src: str| fact_lookup("gpg.GpgKey", f"src={src}");
+
+    std::facts::apt::keys = apt_keys;
+    std::facts::apt::sources = apt_sources;
+    std::facts::apt::simulate_operation_will_change = apt_simulate;
+    std::facts::deb::packages = deb_packages;
+    std::facts::deb::package = deb_package;
+    std::facts::gpg::key = gpg_key;
+
+    let files_block = |path: str, marker: str, begin: str, end: str| {
+        fact_lookup(
+            "files.Block",
+            f"begin={begin}, end={end}, marker={marker}, path={path}",
+        )
+    };
+    let files_directory = |path: str| fact_lookup("files.Directory", f"path={path}");
+    let files_file = |path: str| fact_lookup("files.File", f"path={path}");
+    let files_link = |path: str| fact_lookup("files.Link", f"path={path}");
+    let files_find_in_file =
+        |path: str, pattern: str, interpolate_variables: bool| {
+            fact_lookup(
+                "files.FindInFile",
+                f"interpolate_variables={interpolate_variables}, path={path}, pattern={pattern}",
+            )
+        };
+
+    let server_date = || fact_lookup("server.Date", "");
+    let server_which = |command: str| fact_lookup("server.Which", f"command={command}");
+
+    std::facts::files::block = files_block;
+    std::facts::files::directory = files_directory;
+    std::facts::files::file = files_file;
+    std::facts::files::link = files_link;
+    std::facts::files::find_in_file = files_find_in_file;
+    std::facts::server::date = server_date;
+    std::facts::server::which = server_which;
+}
+
+fn fact_lookup(name: &str, key: &str) -> any {
+    let facts = CURRENT_FACTS;
+    if std::json::is_null(facts) {
+        return null;
+    }
+    let entry = std::json::find_object_field(facts, name);
+    if std::json::is_null(entry) {
+        return null;
+    }
+    match entry {
+        Value::Object(_) => {
+            if key == "" {
+                return json_to_fact_value(entry);
+            }
+            let value = std::json::find_object_field(entry, key);
+            if std::json::is_null(value) {
+                return null;
+            }
+            if name == "files.Block" {
+                return block_fact_value(value);
+            }
+            json_to_fact_value(value)
+        }
+        _ => {
+            if name == "files.Block" {
+                return block_fact_value(entry);
+            }
+            json_to_fact_value(entry)
+        }
+    }
+}
+
+fn block_fact_value(value: Value) -> any {
+    match value {
+        Value::Array(values) => {
+            if array_is_string_list(values) {
+                let mut out = Vec::new();
+                let mut idx = 0;
+                while idx < values.len() {
+                    match values[idx] {
+                        Value::String(text) => out.push(text),
+                        _ => {}
+                    }
+                    idx = idx + 1;
+                }
+                return out.join("\n");
+            }
+            json_to_fact_value(value)
+        }
+        _ => json_to_fact_value(value),
+    }
 }
 
 fn expects_exception(fixture: Value) -> bool {

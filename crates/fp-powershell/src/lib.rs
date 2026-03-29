@@ -1221,10 +1221,11 @@ fn runtime_requirements(function: &ItemDeclFunction, _target: ScriptTarget) -> V
 }
 
 fn is_runtime_primitive(name: &str) -> bool {
-    matches!(
-        name,
-        "runtime_temp_path" | "runtime_fail" | "runtime_set_changed" | "runtime_last_changed"
-    )
+    name.contains("runtime_host_")
+        || name.ends_with("runtime_temp_path")
+        || name.ends_with("runtime_fail")
+        || name.ends_with("runtime_set_changed")
+        || name.ends_with("runtime_last_changed")
 }
 
 fn extern_command(function: &ItemDeclFunction) -> Option<String> {
@@ -1281,6 +1282,7 @@ mod tests {
         items.push(Item::from(ItemKind::Expr(expr)));
         let node = Node::file(File {
             path: PathBuf::from("test.fp"),
+            attrs: Vec::new(),
             items,
         });
         PowerShellTarget::new()

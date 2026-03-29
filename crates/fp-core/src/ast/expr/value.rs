@@ -1024,7 +1024,36 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         | IntrinsicCallKind::StructSize
         | IntrinsicCallKind::GenerateMethod
         | IntrinsicCallKind::CompileError
-        | IntrinsicCallKind::CompileWarning => None,
+        | IntrinsicCallKind::CompileWarning
+        | IntrinsicCallKind::FsReadDir
+        | IntrinsicCallKind::FsWalkDir
+        | IntrinsicCallKind::FsCreateDirAll
+        | IntrinsicCallKind::FsRemoveFile
+        | IntrinsicCallKind::FsRemoveDirAll
+        | IntrinsicCallKind::FsGlob
+        | IntrinsicCallKind::EnvCurrentDir
+        | IntrinsicCallKind::EnvTempDir
+        | IntrinsicCallKind::EnvHomeDir
+        | IntrinsicCallKind::EnvVar
+        | IntrinsicCallKind::EnvVarExists
+        | IntrinsicCallKind::PathJoin
+        | IntrinsicCallKind::PathParent
+        | IntrinsicCallKind::PathFileName
+        | IntrinsicCallKind::PathExtension
+        | IntrinsicCallKind::PathStem
+        | IntrinsicCallKind::PathIsAbsolute
+        | IntrinsicCallKind::PathNormalize
+        | IntrinsicCallKind::IoReadStdinToString
+        | IntrinsicCallKind::IoWriteStdout
+        | IntrinsicCallKind::IoWriteStderr
+        | IntrinsicCallKind::YamlToJson
+        | IntrinsicCallKind::JsonParse
+        | IntrinsicCallKind::TestCommandMockReset
+        | IntrinsicCallKind::TestCommandMockPush
+        | IntrinsicCallKind::TestCommandMockTakeCalls
+        | IntrinsicCallKind::TestCommandMockPush
+        | IntrinsicCallKind::TestCommandMockTakeCalls
+        | IntrinsicCallKind::TestCommandMockApply => None,
     }
 }
 

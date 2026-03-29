@@ -24,6 +24,11 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn binop_add(&self, lhs: Value, rhs: Value) -> Result<Value> {
         match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value + r.value)),
+            (Value::UInt(l), Value::UInt(r)) => l
+                .value
+                .checked_add(r.value)
+                .map(Value::uint)
+                .ok_or_else(|| interpretation_error("unsigned integer overflow".to_string())),
             (Value::BigInt(l), Value::BigInt(r)) => Ok(Value::big_int(l.value + r.value)),
             (Value::Decimal(l), Value::Decimal(r)) => Ok(Value::decimal(l.value + r.value)),
             (Value::BigDecimal(l), Value::BigDecimal(r)) => {
@@ -49,6 +54,11 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn binop_sub(&self, lhs: Value, rhs: Value) -> Result<Value> {
         match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value - r.value)),
+            (Value::UInt(l), Value::UInt(r)) => l
+                .value
+                .checked_sub(r.value)
+                .map(Value::uint)
+                .ok_or_else(|| interpretation_error("unsigned integer underflow".to_string())),
             (Value::BigInt(l), Value::BigInt(r)) => Ok(Value::big_int(l.value - r.value)),
             (Value::Decimal(l), Value::Decimal(r)) => Ok(Value::decimal(l.value - r.value)),
             (Value::BigDecimal(l), Value::BigDecimal(r)) => {
@@ -71,6 +81,11 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn binop_mul(&self, lhs: Value, rhs: Value) -> Result<Value> {
         match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value * r.value)),
+            (Value::UInt(l), Value::UInt(r)) => l
+                .value
+                .checked_mul(r.value)
+                .map(Value::uint)
+                .ok_or_else(|| interpretation_error("unsigned integer overflow".to_string())),
             (Value::BigInt(l), Value::BigInt(r)) => Ok(Value::big_int(l.value * r.value)),
             (Value::Decimal(l), Value::Decimal(r)) => Ok(Value::decimal(l.value * r.value)),
             (Value::BigDecimal(l), Value::BigDecimal(r)) => {
@@ -89,6 +104,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Err(interpretation_error("division by zero".to_string()))
                 } else if l.value % r.value == 0 {
                     Ok(Value::int(l.value / r.value))
+                } else {
+                    Ok(Value::decimal(l.value as f64 / r.value as f64))
+                }
+            }
+            (Value::UInt(l), Value::UInt(r)) => {
+                if r.value == 0 {
+                    Err(interpretation_error("division by zero".to_string()))
+                } else if l.value % r.value == 0 {
+                    Ok(Value::uint(l.value / r.value))
                 } else {
                     Ok(Value::decimal(l.value as f64 / r.value as f64))
                 }
@@ -123,6 +147,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn binop_mod(&self, lhs: Value, rhs: Value) -> Result<Value> {
         match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value % r.value)),
+            (Value::UInt(l), Value::UInt(r)) => Ok(Value::uint(l.value % r.value)),
             (Value::BigInt(l), Value::BigInt(r)) => Ok(Value::big_int(l.value % r.value)),
             other => Err(interpretation_error(format!(
                 "unsupported operands for '%': {:?}",
@@ -134,6 +159,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         use std::cmp::Ordering;
         let ordering = match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => l.value.cmp(&r.value),
+            (Value::UInt(l), Value::UInt(r)) => l.value.cmp(&r.value),
             (Value::BigInt(l), Value::BigInt(r)) => l.value.cmp(&r.value),
             (Value::Decimal(l), Value::Decimal(r)) => l.value.total_cmp(&r.value),
             (Value::BigDecimal(l), Value::BigDecimal(r)) => l.value.cmp(&r.value),
@@ -155,7 +181,11 @@ impl<'ctx> AstInterpreter<'ctx> {
         Ok(Value::bool(result))
     }
     fn binop_equality(&self, op: BinOpKind, lhs: Value, rhs: Value) -> Result<Value> {
-        let eq = lhs == rhs;
+        let eq = match (&lhs, &rhs) {
+            (Value::Int(l), Value::UInt(r)) if l.value >= 0 => l.value as u64 == r.value,
+            (Value::UInt(l), Value::Int(r)) if r.value >= 0 => l.value == r.value as u64,
+            _ => lhs == rhs,
+        };
         let result = match op {
             BinOpKind::Eq => eq,
             BinOpKind::Ne => !eq,
@@ -190,6 +220,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                     _ => unreachable!(),
                 };
                 Ok(Value::int(result))
+            }
+            (Value::UInt(l), Value::UInt(r)) => {
+                let result = match op {
+                    BinOpKind::BitAnd => l.value & r.value,
+                    BinOpKind::BitOr => l.value | r.value,
+                    BinOpKind::BitXor => l.value ^ r.value,
+                    _ => unreachable!(),
+                };
+                Ok(Value::uint(result))
             }
             (Value::BigInt(l), Value::BigInt(r)) => {
                 let result = match op {

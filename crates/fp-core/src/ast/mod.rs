@@ -42,6 +42,8 @@ pub type TySlot = Option<Ty>;
 common_struct! {
     pub struct File {
         pub path: PathBuf,
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         pub items: ItemChunk,
     }
 }

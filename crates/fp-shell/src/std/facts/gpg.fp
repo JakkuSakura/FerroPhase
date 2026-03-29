@@ -1,4 +1,4 @@
-pub const fn key(src: str) -> str {
+pub const fn key(src: str) -> any {
     std::shell::process::output(
         f"(wget -O - {src} || curl -sSLf {src} || cat {src}) | gpg --with-colons"
     )

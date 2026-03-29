@@ -181,6 +181,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
             }
+            IntrinsicCallKind::FsReadDir => {
+                self.eval_host_intrinsic_runtime(call, "filesystem access", true, super::lang_fs_read_dir)
+            }
+            IntrinsicCallKind::FsWalkDir => {
+                self.eval_host_intrinsic_runtime(call, "filesystem access", true, super::lang_fs_walk_dir)
+            }
             IntrinsicCallKind::FsReadToString => {
                 if !self.require_io_capability("filesystem access") {
                     return RuntimeFlow::Value(Value::undefined());
@@ -366,6 +372,93 @@ impl<'ctx> AstInterpreter<'ctx> {
                     std::path::Path::new(path.as_str()).is_file(),
                 ))
             }
+            IntrinsicCallKind::FsCreateDirAll => {
+                self.eval_host_intrinsic_runtime(call, "filesystem access", true, super::lang_fs_create_dir_all)
+            }
+            IntrinsicCallKind::FsRemoveFile => {
+                self.eval_host_intrinsic_runtime(call, "filesystem access", true, super::lang_fs_remove_file)
+            }
+            IntrinsicCallKind::FsRemoveDirAll => {
+                self.eval_host_intrinsic_runtime(call, "filesystem access", true, super::lang_fs_remove_dir_all)
+            }
+            IntrinsicCallKind::FsGlob => {
+                self.eval_host_intrinsic_runtime(call, "filesystem access", true, super::lang_fs_glob)
+            }
+            IntrinsicCallKind::EnvCurrentDir => {
+                self.eval_host_intrinsic_runtime(call, "environment access", false, super::lang_env_current_dir)
+            }
+            IntrinsicCallKind::EnvTempDir => {
+                self.eval_host_intrinsic_runtime(call, "environment access", false, super::lang_env_temp_dir)
+            }
+            IntrinsicCallKind::EnvHomeDir => {
+                self.eval_host_intrinsic_runtime(call, "environment access", false, super::lang_env_home_dir)
+            }
+            IntrinsicCallKind::EnvVar => {
+                self.eval_host_intrinsic_runtime(call, "environment access", false, super::lang_env_var)
+            }
+            IntrinsicCallKind::EnvVarExists => {
+                self.eval_host_intrinsic_runtime(call, "environment access", false, super::lang_env_var_exists)
+            }
+            IntrinsicCallKind::PathJoin => {
+                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_join)
+            }
+            IntrinsicCallKind::PathParent => {
+                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_parent)
+            }
+            IntrinsicCallKind::PathFileName => {
+                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_file_name)
+            }
+            IntrinsicCallKind::PathExtension => {
+                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_extension)
+            }
+            IntrinsicCallKind::PathStem => {
+                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_stem)
+            }
+            IntrinsicCallKind::PathIsAbsolute => {
+                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_is_absolute)
+            }
+            IntrinsicCallKind::PathNormalize => {
+                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_normalize)
+            }
+            IntrinsicCallKind::IoReadStdinToString => {
+                self.eval_host_intrinsic_runtime(call, "stdio access", true, super::lang_io_read_stdin_to_string)
+            }
+            IntrinsicCallKind::IoWriteStdout => {
+                self.eval_host_intrinsic_runtime(call, "stdio access", true, super::lang_io_write_stdout)
+            }
+            IntrinsicCallKind::IoWriteStderr => {
+                self.eval_host_intrinsic_runtime(call, "stdio access", true, super::lang_io_write_stderr)
+            }
+            IntrinsicCallKind::YamlToJson => {
+                self.eval_host_intrinsic_runtime(call, "yaml conversion", false, super::lang_yaml_to_json)
+            }
+            IntrinsicCallKind::JsonParse => {
+                self.eval_host_intrinsic_runtime(call, "json parsing", false, super::lang_json_parse)
+            }
+            IntrinsicCallKind::TestCommandMockReset => self.eval_host_intrinsic_runtime(
+                call,
+                "test command mock access",
+                false,
+                super::lang_test_command_mock_reset,
+            ),
+            IntrinsicCallKind::TestCommandMockPush => self.eval_host_intrinsic_runtime(
+                call,
+                "test command mock access",
+                false,
+                super::lang_test_command_mock_push,
+            ),
+            IntrinsicCallKind::TestCommandMockTakeCalls => self.eval_host_intrinsic_runtime(
+                call,
+                "test command mock access",
+                false,
+                super::lang_test_command_mock_take_calls,
+            ),
+            IntrinsicCallKind::TestCommandMockApply => self.eval_host_intrinsic_runtime(
+                call,
+                "test command mock access",
+                false,
+                super::lang_test_command_mock_apply,
+            ),
             IntrinsicCallKind::Sleep => {
                 if !call.kwargs.is_empty() {
                     self.emit_error("time::sleep intrinsic does not accept named arguments");
@@ -514,6 +607,44 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
+    fn eval_host_intrinsic_runtime(
+        &mut self,
+        call: &mut ExprIntrinsicCall,
+        capability: &str,
+        require_io: bool,
+        handler: fn(&[Value]) -> std::result::Result<Value, String>,
+    ) -> RuntimeFlow {
+        if require_io && !self.require_io_capability(capability) {
+            return RuntimeFlow::Value(Value::undefined());
+        }
+        if !call.kwargs.is_empty() {
+            self.emit_error(format!(
+                "intrinsic {:?} does not accept named arguments",
+                call.kind
+            ));
+        }
+
+        let mut evaluated = Vec::with_capacity(call.args.len());
+        for arg in call.args.iter_mut() {
+            let flow = self.eval_expr_runtime(arg);
+            let value = match flow {
+                RuntimeFlow::Value(value) => value,
+                other => return other,
+            };
+            evaluated.push(value);
+        }
+
+        let _command_mock_state =
+            super::ScopedCommandMockState::enter(self.command_mock_state.clone());
+        match handler(&evaluated) {
+            Ok(value) => RuntimeFlow::Value(value),
+            Err(err) => {
+                self.emit_error(format!("intrinsic {:?} call failed: {}", call.kind, err));
+                RuntimeFlow::Value(Value::undefined())
+            }
+        }
+    }
+
     pub(super) fn should_replace_intrinsic_with_value(
         &self,
         kind: IntrinsicCallKind,
@@ -641,12 +772,39 @@ impl<'ctx> AstInterpreter<'ctx> {
             IntrinsicCallKind::Panic
             | IntrinsicCallKind::CatchUnwind
             | IntrinsicCallKind::CatchUnwindResult
+            | IntrinsicCallKind::FsReadDir
             | IntrinsicCallKind::FsReadToString
+            | IntrinsicCallKind::FsWalkDir
             | IntrinsicCallKind::FsWriteString
             | IntrinsicCallKind::FsAppendString
             | IntrinsicCallKind::FsExists
             | IntrinsicCallKind::FsIsDir
-            | IntrinsicCallKind::FsIsFile => {
+            | IntrinsicCallKind::FsIsFile
+            | IntrinsicCallKind::FsCreateDirAll
+            | IntrinsicCallKind::FsRemoveFile
+            | IntrinsicCallKind::FsRemoveDirAll
+            | IntrinsicCallKind::FsGlob
+            | IntrinsicCallKind::EnvCurrentDir
+            | IntrinsicCallKind::EnvTempDir
+            | IntrinsicCallKind::EnvHomeDir
+            | IntrinsicCallKind::EnvVar
+            | IntrinsicCallKind::EnvVarExists
+            | IntrinsicCallKind::PathJoin
+            | IntrinsicCallKind::PathParent
+            | IntrinsicCallKind::PathFileName
+            | IntrinsicCallKind::PathExtension
+            | IntrinsicCallKind::PathStem
+            | IntrinsicCallKind::PathIsAbsolute
+            | IntrinsicCallKind::PathNormalize
+            | IntrinsicCallKind::IoReadStdinToString
+            | IntrinsicCallKind::IoWriteStdout
+            | IntrinsicCallKind::IoWriteStderr
+            | IntrinsicCallKind::YamlToJson
+            | IntrinsicCallKind::JsonParse
+            | IntrinsicCallKind::TestCommandMockReset
+            | IntrinsicCallKind::TestCommandMockPush
+            | IntrinsicCallKind::TestCommandMockTakeCalls
+            | IntrinsicCallKind::TestCommandMockApply => {
                 self.emit_error(format!(
                     "intrinsic {:?} is not supported during const evaluation",
                     call.kind

@@ -1,5 +1,5 @@
 use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVarKind};
-use crate::{AstTypeInferencer, EnvEntry, PatternBinding, PatternInfo, TypeVarId};
+use crate::{std_result_inner_types, AstTypeInferencer, EnvEntry, PatternBinding, PatternInfo, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
@@ -577,6 +577,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ExprKind::While(while_expr) => self.infer_while(while_expr)?,
                 ExprKind::Try(try_expr) => {
+                    if try_expr.catches.is_empty()
+                        && try_expr.elze.is_none()
+                        && try_expr.finally.is_none()
+                    {
+                        return self.infer_try_operator(try_expr);
+                    }
                     let result_var = self.infer_expr(try_expr.expr.as_mut())?;
                     for catch in &mut try_expr.catches {
                         self.enter_scope();
@@ -1280,6 +1286,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub(crate) fn infer_closure(&mut self, closure: &mut ExprClosure) -> Result<TypeVarId> {
         self.enter_scope();
+        let exception_policy =
+            self.exception_policy_for_ret(closure.ret_ty.as_ref().map(|ty| ty.as_ref()));
+        let _exception_guard = self.push_exception_context(exception_policy);
         let mut param_vars = Vec::new();
         for param in &mut closure.params {
             let info = self.infer_pattern(param)?;
@@ -1287,7 +1296,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         let body_var = self.infer_expr(closure.body.as_mut())?;
-        let ret_var = if let Some(ret_ty) = &closure.ret_ty {
+        let ret_var = if matches!(exception_policy, super::super::ExceptionReturnPolicy::AutoResult)
+        {
+            let body_ty = self.resolve_to_ty(body_var)?;
+            let result_ty = super::super::make_std_result_ty(body_ty, super::super::std_error_ty());
+            self.type_from_ast_ty(&result_ty)?
+        } else if let Some(ret_ty) = &closure.ret_ty {
             let annot_var = self.type_from_ast_ty(ret_ty)?;
             self.unify(body_var, annot_var)?;
             annot_var
@@ -1306,6 +1320,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }),
         );
         Ok(closure_var)
+    }
+
+    fn infer_try_operator(&mut self, try_expr: &mut ExprTry) -> Result<TypeVarId> {
+        let policy = self.current_exception_policy();
+        if !matches!(
+            policy,
+            super::super::ExceptionReturnPolicy::AutoResult
+                | super::super::ExceptionReturnPolicy::ExplicitResult
+        ) {
+            self.emit_error("`?` is only allowed in exception-enabled functions");
+            return Ok(self.error_type_var());
+        }
+
+        let result_var = self.infer_expr(try_expr.expr.as_mut())?;
+        let result_ty = self.resolve_to_ty(result_var)?;
+        let Some((ok_ty, _err_ty)) = std_result_inner_types(&result_ty) else {
+            self.emit_error("`?` expects a Result value");
+            return Ok(self.error_type_var());
+        };
+        self.type_from_ast_ty(&ok_ty)
     }
 
     pub(crate) fn infer_with(&mut self, expr_with: &mut ExprWith) -> Result<TypeVarId> {
@@ -1462,6 +1496,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         let func_var = match &mut invoke.target {
             ExprInvokeTarget::Function(locator) => {
+                if let Some(ident) = locator.as_ident() {
+                    if ident.as_str() == "panic" {
+                        if invoke.args.len() > 1 {
+                            self.emit_error("panic expects at most one argument");
+                        }
+                        for arg in &mut invoke.args {
+                            let _ = self.infer_expr(arg)?;
+                        }
+                        return Ok(self.nothing_type_var());
+                    }
+                }
                 if let Some(var) = self.lookup_associated_function(locator)? {
                     var
                 } else {
@@ -2141,6 +2186,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.literal_ints.insert(var);
                 self.bind(var, TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
             }
+            Value::UInt(_) => {
+                self.literal_ints.insert(var);
+                self.bind(var, TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)));
+            }
             Value::Bool(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Bool)),
             Value::Decimal(_) => self.bind(
                 var,
@@ -2762,6 +2811,36 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     | Ty::Primitive(TypePrimitive::Decimal(_)) => Ok(Some(result_var)),
                     _ => Ok(None),
                 }
+            }
+            "starts_with" | "ends_with" | "contains" => {
+                if arg_len != 1 {
+                    return Ok(None);
+                }
+                let obj_ty = match self.resolve_to_ty(obj_var) {
+                    Ok(ty) => Self::peel_reference(ty),
+                    Err(_) => return Ok(None),
+                };
+                if matches!(obj_ty, Ty::Primitive(TypePrimitive::String)) {
+                    let result_var = self.fresh_type_var();
+                    self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
+                    return Ok(Some(result_var));
+                }
+                Ok(None)
+            }
+            "replace" => {
+                if arg_len != 2 {
+                    return Ok(None);
+                }
+                let obj_ty = match self.resolve_to_ty(obj_var) {
+                    Ok(ty) => Self::peel_reference(ty),
+                    Err(_) => return Ok(None),
+                };
+                if matches!(obj_ty, Ty::Primitive(TypePrimitive::String)) {
+                    let result_var = self.fresh_type_var();
+                    self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
+                    return Ok(Some(result_var));
+                }
+                Ok(None)
             }
             // Keep iterator methods permissive for now; these are primarily
             // used by examples and desugar into Rust iterator chains.

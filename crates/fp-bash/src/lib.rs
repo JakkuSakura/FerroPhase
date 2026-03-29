@@ -492,11 +492,12 @@ impl<'a> BashRenderer<'a> {
 
     fn render_value(&self, expr: &Expr) -> Result<String, String> {
         if let Ok(values) = self.extract_string_list(expr) {
-            return values
+            let joined = values
                 .iter()
                 .map(|value| self.render_word(value))
                 .collect::<Result<Vec<_>, _>>()
-                .map(|values| values.join(" "));
+                .map(|values| values.join(" "))?;
+            return Ok(shell_arg_quote(&shell_words_to_plain_string(&joined)));
         }
         match expr.kind() {
             ExprKind::Value(value) => match &**value {
@@ -913,9 +914,10 @@ impl<'a> BashRenderer<'a> {
         Ok(match name {
             "runtime_host_transport" => {
                 let host = self.expect_string_arg(args, 0);
+                let host_word = self.render_word(host)?;
                 format!(
-                    "printf '%s\\n' \"${{FP_HOST_TRANSPORT[{}]:-ssh}}\"",
-                    self.render_word(host)?
+                    "if [[ {host} == 'localhost' ]]; then printf '%s\\n' 'local'; else printf '%s\\n' \"${{FP_HOST_TRANSPORT[{host}]:-ssh}}\"; fi",
+                    host = host_word
                 )
             }
             "runtime_host_address" => self.render_host_map_lookup("FP_SSH_ADDRESS", args)?,
@@ -1176,6 +1178,9 @@ fn shell_arg_quote(value: &str) -> String {
 }
 
 fn shell_case_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
     value.chars().fold(String::new(), |mut out, ch| {
         match ch {
             '*' | '?' | '[' | ']' | '\\' | '(' | ')' | '|' => {
@@ -1186,6 +1191,30 @@ fn shell_case_quote(value: &str) -> String {
         }
         out
     })
+}
+
+fn shell_words_to_plain_string(value: &str) -> String {
+    let mut out = String::new();
+    let mut chars = value.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' if !in_double => {
+                in_single = !in_single;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+            }
+            '\\' => {
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 fn escape_double_quotes(value: &str) -> String {
@@ -1323,10 +1352,11 @@ fn runtime_requirements(function: &ItemDeclFunction, target: ScriptTarget) -> Ve
 }
 
 fn is_runtime_primitive(name: &str) -> bool {
-    matches!(
-        name,
-        "runtime_temp_path" | "runtime_fail" | "runtime_set_changed" | "runtime_last_changed"
-    )
+    name.contains("runtime_host_")
+        || name.ends_with("runtime_temp_path")
+        || name.ends_with("runtime_fail")
+        || name.ends_with("runtime_set_changed")
+        || name.ends_with("runtime_last_changed")
 }
 
 fn extern_command(function: &ItemDeclFunction) -> Option<String> {
@@ -1383,6 +1413,7 @@ mod tests {
         items.push(Item::from(ItemKind::Expr(expr)));
         let node = Node::file(File {
             path: PathBuf::from("test.fp"),
+            attrs: Vec::new(),
             items,
         });
         BashTarget::new()

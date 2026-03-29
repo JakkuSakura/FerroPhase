@@ -61,6 +61,9 @@ macro_rules! plain_value {
 plain_value! {
     ValueInt: i64
 }
+plain_value! {
+    ValueUInt: u64
+}
 // TODO(literal semantics): numeric suffix/bit-width metadata is not carried into `ValueInt`
 // (it is still fixed to i64), and there is no overflow checking.
 // If we want full support for suffix semantics like `10i32`/`10u8`, we should preserve raw
@@ -319,6 +322,7 @@ impl ValueMap {
         match value {
             Value::String(s) => Some(s.value.clone()),
             Value::Int(i) => Some(i.value.to_string()),
+            Value::UInt(i) => Some(i.value.to_string()),
             Value::Bool(b) => Some(b.value.to_string()),
             Value::Char(c) => Some(c.value.to_string()),
             _ => None,

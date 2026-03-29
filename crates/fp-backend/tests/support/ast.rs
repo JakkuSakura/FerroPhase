@@ -9,6 +9,7 @@ pub fn literal_expr(value: i64) -> Expr {
 pub fn empty_file() -> File {
     File {
         path: PathBuf::from("<memory>"),
+        attrs: Vec::new(),
         items: Vec::new(),
     }
 }

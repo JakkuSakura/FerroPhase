@@ -16,6 +16,7 @@ pub fn lower_node(node: &Node) -> Result<Node, String> {
     lowerer.lower_node(node)?;
     Ok(Node::file(File {
         path: lowerer.path,
+        attrs: Vec::new(),
         items: lowerer.items,
     }))
 }

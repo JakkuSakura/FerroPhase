@@ -75,6 +75,7 @@ fn serialize_basic_go_ast() {
 
     let file = File {
         path: Default::default(),
+        attrs: Vec::new(),
         items: vec![
             Item::new(ItemKind::DefStruct(user_struct)),
             Item::new(ItemKind::DefConst(const_item)),

@@ -102,6 +102,24 @@ impl<'ctx> AstInterpreter<'ctx> {
         None
     }
 
+    pub(super) fn replace_stored_value(&mut self, name: &str, value: Value) -> bool {
+        let mut alternate = String::new();
+        let alternate = Self::alternate_symbol_name(name, &mut alternate);
+        for scope in self.value_env.iter_mut().rev() {
+            if scope.contains_key(name) {
+                scope.insert(name.to_string(), StoredValue::Plain(value));
+                return true;
+            }
+            if let Some(alt) = alternate {
+                if alt != name && scope.contains_key(alt) {
+                    scope.insert(alt.to_string(), StoredValue::Plain(value));
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     // closures are not stored in value_env; pending_closure holds captures for annotation
     pub(super) fn lookup_closure(&self, _name: &str) -> Option<ConstClosure> {
         None
@@ -110,10 +128,14 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub(super) fn bind_pattern(&mut self, pattern: &Pattern, value: Value) {
         match pattern.kind() {
             PatternKind::Ident(ident) => {
+                let name = ident.ident.as_str();
+                if name == "true" || name == "false" {
+                    return;
+                }
                 if ident.mutability.unwrap_or(false) {
-                    self.insert_mutable_value(ident.ident.as_str(), value);
+                    self.insert_mutable_value(name, value);
                 } else {
-                    self.insert_value(ident.ident.as_str(), value);
+                    self.insert_value(name, value);
                 }
             }
             PatternKind::Bind(bind) => {
@@ -125,6 +147,37 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if let Value::Tuple(items) = value {
                     for (pat, val) in tuple.patterns.iter().zip(items.values.iter().cloned()) {
                         self.bind_pattern(pat, val);
+                    }
+                }
+            }
+            PatternKind::TupleStruct(tuple_struct) => {
+                if let Value::Any(any) = value {
+                    if let Some(enum_value) = any.downcast_ref::<RuntimeEnum>() {
+                        let expected_name = Self::locator_base_name(&tuple_struct.name);
+                        if enum_value.variant_name != expected_name {
+                            return;
+                        }
+                        if tuple_struct.patterns.is_empty() {
+                            return;
+                        }
+                        let Some(payload) = enum_value.payload.as_ref() else {
+                            return;
+                        };
+                        match (tuple_struct.patterns.len(), payload) {
+                            (1, payload) => {
+                                self.bind_pattern(&tuple_struct.patterns[0], payload.clone());
+                            }
+                            (_, Value::Tuple(items))
+                                if items.values.len() == tuple_struct.patterns.len() =>
+                            {
+                                for (pat, val) in
+                                    tuple_struct.patterns.iter().zip(items.values.iter().cloned())
+                                {
+                                    self.bind_pattern(pat, val);
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -205,9 +258,15 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub fn pattern_matches(&mut self, pattern: &Pattern, value: &Value) -> bool {
         match pattern.kind() {
             PatternKind::Wildcard(_) => true,
-            PatternKind::Ident(_) => {
-                self.bind_pattern(pattern, value.clone());
-                true
+            PatternKind::Ident(ident) => {
+                match ident.ident.as_str() {
+                    "true" => matches!(value, Value::Bool(flag) if flag.value),
+                    "false" => matches!(value, Value::Bool(flag) if !flag.value),
+                    _ => {
+                        self.bind_pattern(pattern, value.clone());
+                        true
+                    }
+                }
             }
             PatternKind::Bind(bind) => {
                 if self.pattern_matches(&bind.pattern, value) {
@@ -228,7 +287,49 @@ impl<'ctx> AstInterpreter<'ctx> {
                     .all(|(pat, val)| self.pattern_matches(pat, val)),
                 _ => false,
             },
+            PatternKind::TupleStruct(tuple_struct) => {
+                let Value::Any(any) = value else {
+                    return false;
+                };
+                let Some(enum_value) = any.downcast_ref::<RuntimeEnum>() else {
+                    return false;
+                };
+                let expected_name = Self::locator_base_name(&tuple_struct.name);
+                if enum_value.variant_name != expected_name {
+                    return false;
+                }
+                if tuple_struct.patterns.is_empty() {
+                    return enum_value.payload.is_none();
+                }
+                let Some(payload) = enum_value.payload.as_ref() else {
+                    return false;
+                };
+                match (tuple_struct.patterns.len(), payload) {
+                    (1, payload) => self.pattern_matches(&tuple_struct.patterns[0], payload),
+                    (_, Value::Tuple(items)) if items.values.len() == tuple_struct.patterns.len() => {
+                        tuple_struct
+                            .patterns
+                            .iter()
+                            .zip(items.values.iter())
+                            .all(|(pat, val)| self.pattern_matches(pat, val))
+                    }
+                    _ => false,
+                }
+            }
             PatternKind::Variant(variant) => {
+                if let ExprKind::Name(locator) = variant.name.kind() {
+                    if let Some(ident) = locator.as_ident() {
+                        match ident.as_str() {
+                            "true" if variant.pattern.is_none() => {
+                                return matches!(value, Value::Bool(flag) if flag.value);
+                            }
+                            "false" if variant.pattern.is_none() => {
+                                return matches!(value, Value::Bool(flag) if !flag.value);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 if let Value::Any(any) = value {
                     if let Some(enum_value) = any.downcast_ref::<RuntimeEnum>() {
                         let expected_name = match variant.name.kind() {

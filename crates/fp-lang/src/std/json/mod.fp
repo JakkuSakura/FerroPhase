@@ -25,22 +25,37 @@ pub enum NumberKind {
 pub struct Number {
     raw: &str,
     kind: NumberKind,
-    int: Option<i64>,
-    uint: Option<u64>,
-    float: Option<f64>,
+    int: i64,
+    uint: u64,
+    float: f64,
+    has_int: bool,
+    has_uint: bool,
+    has_float: bool,
 }
 
 impl Number {
     pub fn as_i64(&self) -> Option<i64> {
-        self.int
+        if self.has_int {
+            Option::Some(self.int)
+        } else {
+            Option::None
+        }
     }
 
     pub fn as_u64(&self) -> Option<u64> {
-        self.uint
+        if self.has_uint {
+            Option::Some(self.uint)
+        } else {
+            Option::None
+        }
     }
 
     pub fn as_f64(&self) -> Option<f64> {
-        self.float
+        if self.has_float {
+            Option::Some(self.float)
+        } else {
+            Option::None
+        }
     }
 
     pub fn is_i64(&self) -> bool {

@@ -1,4 +1,4 @@
-pub const fn shell(
+pub fn shell(
     command: str,
     context hosts: str = "localhost",
     only_if: str = "",
@@ -13,7 +13,7 @@ pub const fn shell(
     runtime_last_changed()
 }
 
-pub const fn shell_local(
+pub fn shell_local(
     command: str,
     context hosts: str = "localhost",
     only_if: str = "",
@@ -28,7 +28,7 @@ pub const fn shell_local(
     runtime_last_changed()
 }
 
-pub const fn shell_ssh(
+pub fn shell_ssh(
     command: str,
     context hosts: str = "localhost",
     only_if: str = "",
@@ -43,7 +43,7 @@ pub const fn shell_ssh(
     runtime_last_changed()
 }
 
-pub const fn shell_docker(
+pub fn shell_docker(
     command: str,
     context hosts: str = "localhost",
     only_if: str = "",
@@ -58,7 +58,7 @@ pub const fn shell_docker(
     runtime_last_changed()
 }
 
-pub const fn shell_kubectl(
+pub fn shell_kubectl(
     command: str,
     context hosts: str = "localhost",
     only_if: str = "",
@@ -73,7 +73,7 @@ pub const fn shell_kubectl(
     runtime_last_changed()
 }
 
-pub const fn shell_winrm(
+pub fn shell_winrm(
     command: str,
     context hosts: str = "localhost",
     only_if: str = "",
@@ -88,7 +88,7 @@ pub const fn shell_winrm(
     runtime_last_changed()
 }
 
-pub const fn shell_chroot(
+pub fn shell_chroot(
     command: str,
     context hosts: str = "localhost",
     only_if: str = "",

@@ -204,6 +204,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             self.emit_error("quote functions can only be invoked in const evaluation");
             return RuntimeFlow::Value(Value::undefined());
         }
+        let exception_mode = self.exception_return_mode_for_sig(&function.sig);
         if function.sig.params.len() != args.len() {
             self.emit_error(format!(
                 "function '{}' expected {} arguments, found {}",
@@ -218,7 +219,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             CallFrameKind::Function(function.name.as_str().to_string()),
             function.body.as_ref().span,
         );
-
+        self.exception_stack.push(exception_mode);
         self.function_depth += 1;
         self.push_scope();
         for (param, value) in function.sig.params.iter().zip(args.into_iter()) {
@@ -237,14 +238,31 @@ impl<'ctx> AstInterpreter<'ctx> {
         let flow = self.eval_expr_runtime(&mut body);
         self.pop_scope();
         self.function_depth -= 1;
+        self.exception_stack.pop();
 
         match flow {
-            RuntimeFlow::Return(value) => RuntimeFlow::Value(value.unwrap_or_else(Value::unit)),
+            RuntimeFlow::Return(value) => RuntimeFlow::Value(self.finish_exception_return(
+                value.unwrap_or_else(Value::unit),
+                exception_mode,
+            )),
+            RuntimeFlow::Value(value) => {
+                RuntimeFlow::Value(self.finish_exception_return(value, exception_mode))
+            }
             RuntimeFlow::Break(_) | RuntimeFlow::Continue => {
                 self.emit_error("loop control flow escaped a function");
                 RuntimeFlow::Value(Value::undefined())
             }
-            other => other,
+            RuntimeFlow::Panic(panic) => {
+                if matches!(
+                    exception_mode,
+                    ExceptionReturnMode::AutoResult | ExceptionReturnMode::ExplicitResult
+                ) {
+                    let error = self.make_error_value(self.render_panic_value(&panic));
+                    RuntimeFlow::Value(self.make_result_err(error))
+                } else {
+                    RuntimeFlow::Panic(panic)
+                }
+            }
         }
     }
 
@@ -255,6 +273,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         receiver: ReceiverBinding,
         args: Vec<Value>,
     ) -> RuntimeFlow {
+        let exception_mode = self.exception_return_mode_for_sig(&function.sig);
         if function.sig.params.len() != args.len() {
             self.emit_error(format!(
                 "method '{}' expected {} arguments, found {}",
@@ -269,7 +288,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             CallFrameKind::Method(function.name.as_str().to_string()),
             function.body.as_ref().span,
         );
-
+        self.exception_stack.push(exception_mode);
         let receiver_kind = function
             .sig
             .receiver
@@ -322,14 +341,31 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
         self.pop_scope();
         self.function_depth -= 1;
+        self.exception_stack.pop();
 
         match flow {
-            RuntimeFlow::Return(value) => RuntimeFlow::Value(value.unwrap_or_else(Value::unit)),
+            RuntimeFlow::Return(value) => RuntimeFlow::Value(self.finish_exception_return(
+                value.unwrap_or_else(Value::unit),
+                exception_mode,
+            )),
+            RuntimeFlow::Value(value) => {
+                RuntimeFlow::Value(self.finish_exception_return(value, exception_mode))
+            }
             RuntimeFlow::Break(_) | RuntimeFlow::Continue => {
                 self.emit_error("loop control flow escaped a method");
                 RuntimeFlow::Value(Value::undefined())
             }
-            other => other,
+            RuntimeFlow::Panic(panic) => {
+                if matches!(
+                    exception_mode,
+                    ExceptionReturnMode::AutoResult | ExceptionReturnMode::ExplicitResult
+                ) {
+                    let error = self.make_error_value(self.render_panic_value(&panic));
+                    RuntimeFlow::Value(self.make_result_err(error))
+                } else {
+                    RuntimeFlow::Panic(panic)
+                }
+            }
         }
     }
 
@@ -343,6 +379,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             self.emit_error("quote functions can only be invoked in const evaluation");
             return RuntimeFlow::Value(Value::undefined());
         }
+        let exception_mode = self.exception_return_mode_for_sig(&function.sig);
         if function.sig.params.len() != args.len() {
             self.emit_error(format!(
                 "function literal expected {} arguments, found {}",
@@ -356,7 +393,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             CallFrameKind::ValueFunction,
             function.body.as_ref().span,
         );
-
+        self.exception_stack.push(exception_mode);
         self.function_depth += 1;
         self.push_scope();
         for (param, value) in function.sig.params.iter().zip(args.into_iter()) {
@@ -375,14 +412,31 @@ impl<'ctx> AstInterpreter<'ctx> {
         let flow = self.eval_expr_runtime(&mut body);
         self.pop_scope();
         self.function_depth -= 1;
+        self.exception_stack.pop();
 
         match flow {
-            RuntimeFlow::Return(value) => RuntimeFlow::Value(value.unwrap_or_else(Value::unit)),
+            RuntimeFlow::Return(value) => RuntimeFlow::Value(self.finish_exception_return(
+                value.unwrap_or_else(Value::unit),
+                exception_mode,
+            )),
+            RuntimeFlow::Value(value) => {
+                RuntimeFlow::Value(self.finish_exception_return(value, exception_mode))
+            }
             RuntimeFlow::Break(_) | RuntimeFlow::Continue => {
                 self.emit_error("loop control flow escaped a function value");
                 RuntimeFlow::Value(Value::undefined())
             }
-            other => other,
+            RuntimeFlow::Panic(panic) => {
+                if matches!(
+                    exception_mode,
+                    ExceptionReturnMode::AutoResult | ExceptionReturnMode::ExplicitResult
+                ) {
+                    let error = self.make_error_value(self.render_panic_value(&panic));
+                    RuntimeFlow::Value(self.make_result_err(error))
+                } else {
+                    RuntimeFlow::Panic(panic)
+                }
+            }
         }
     }
 
@@ -392,6 +446,11 @@ impl<'ctx> AstInterpreter<'ctx> {
         closure: &ConstClosure,
         args: Vec<Value>,
     ) -> RuntimeFlow {
+        let exception_mode = if self.exception_mode && closure.ret_ty.is_none() {
+            ExceptionReturnMode::AutoResult
+        } else {
+            ExceptionReturnMode::Disabled
+        };
         if closure.params.len() != args.len() {
             self.emit_error(format!(
                 "closure expected {} arguments, found {}",
@@ -405,7 +464,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             CallFrameKind::ConstClosure,
             closure.body.span,
         );
-
+        self.exception_stack.push(exception_mode);
         let saved_values = std::mem::replace(&mut self.value_env, closure.captured_values.clone());
         let saved_types = std::mem::replace(&mut self.type_env, closure.captured_types.clone());
         let saved_modules = std::mem::replace(&mut self.module_stack, closure.module_stack.clone());
@@ -423,14 +482,31 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.value_env = saved_values;
         self.type_env = saved_types;
         self.module_stack = saved_modules;
+        self.exception_stack.pop();
 
         match flow {
-            RuntimeFlow::Return(value) => RuntimeFlow::Value(value.unwrap_or_else(Value::unit)),
+            RuntimeFlow::Return(value) => RuntimeFlow::Value(self.finish_exception_return(
+                value.unwrap_or_else(Value::unit),
+                exception_mode,
+            )),
+            RuntimeFlow::Value(value) => {
+                RuntimeFlow::Value(self.finish_exception_return(value, exception_mode))
+            }
             RuntimeFlow::Break(_) | RuntimeFlow::Continue => {
                 self.emit_error("loop control flow escaped a closure");
                 RuntimeFlow::Value(Value::undefined())
             }
-            other => other,
+            RuntimeFlow::Panic(panic) => {
+                if matches!(
+                    exception_mode,
+                    ExceptionReturnMode::AutoResult | ExceptionReturnMode::ExplicitResult
+                ) {
+                    let error = self.make_error_value(self.render_panic_value(&panic));
+                    RuntimeFlow::Value(self.make_result_err(error))
+                } else {
+                    RuntimeFlow::Panic(panic)
+                }
+            }
         }
     }
 }

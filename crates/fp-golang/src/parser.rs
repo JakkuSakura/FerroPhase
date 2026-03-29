@@ -7,8 +7,8 @@ use eyre::{eyre, Result};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprKind, ExprReturn, File, Ident, Item,
     ItemDefConst, ItemDefFunction, ItemDefStruct, ItemDefType, ItemImport, ItemImportPath,
-    ItemImportRename, ItemImportTree, ItemKind, StructuralField, Ty, TypeArray, TypeFunction,
-    TypePrimitive, TypeTuple, TypeVec, Value, Visibility,
+    ItemImportRename, ItemImportStyle, ItemImportTree, ItemKind, StructuralField, Ty, TypeArray,
+    TypeFunction, TypePrimitive, TypeTuple, TypeVec, Value, Visibility,
 };
 use fp_core::span::Span;
 use tracing::warn;
@@ -82,6 +82,7 @@ fn parse_file(root: TsNode, source: &str) -> Result<File> {
 
     Ok(File {
         path: Default::default(),
+        attrs: Vec::new(),
         items,
     })
 }
@@ -135,6 +136,7 @@ fn parse_import_spec(node: TsNode, source: &str) -> Result<Option<ItemImport>> {
     Ok(Some(ItemImport {
         attrs: Vec::new(),
         visibility: Visibility::Private,
+        style: ItemImportStyle::Plain,
         tree,
     }))
 }

@@ -8,12 +8,79 @@ common_struct! {
         #[serde(default)]
         pub attrs: Vec<Attribute>,
         pub visibility: Visibility,
+        #[serde(default)]
+        pub style: ItemImportStyle,
         pub tree: ItemImportTree,
     }
 }
 impl ItemImport {
     pub fn span(&self) -> Span {
-        self.tree.span()
+        match &self.style {
+            ItemImportStyle::Plain => self.tree.span(),
+            ItemImportStyle::From(from) => Span::union([from.module.span(), self.tree.span()]),
+        }
+    }
+
+    pub fn plain(visibility: Visibility, tree: ItemImportTree) -> Self {
+        Self {
+            attrs: Vec::new(),
+            visibility,
+            style: ItemImportStyle::Plain,
+            tree,
+        }
+    }
+
+    pub fn from_import(
+        visibility: Visibility,
+        module: ItemImportPath,
+        level: u32,
+        tree: ItemImportTree,
+    ) -> Self {
+        Self {
+            attrs: Vec::new(),
+            visibility,
+            style: ItemImportStyle::From(ItemImportFrom { module, level }),
+            tree,
+        }
+    }
+
+    pub fn module_path(&self) -> Option<&ItemImportPath> {
+        match &self.style {
+            ItemImportStyle::Plain => None,
+            ItemImportStyle::From(from) => Some(&from.module),
+        }
+    }
+
+    pub fn level(&self) -> u32 {
+        match &self.style {
+            ItemImportStyle::Plain => 0,
+            ItemImportStyle::From(from) => from.level,
+        }
+    }
+
+    pub fn is_from_import(&self) -> bool {
+        matches!(self.style, ItemImportStyle::From(_))
+    }
+}
+
+common_struct! {
+    pub struct ItemImportFrom {
+        pub module: ItemImportPath,
+        #[serde(default)]
+        pub level: u32,
+    }
+}
+
+common_enum! {
+    pub enum ItemImportStyle {
+        Plain,
+        From(ItemImportFrom),
+    }
+}
+
+impl Default for ItemImportStyle {
+    fn default() -> Self {
+        Self::Plain
     }
 }
 

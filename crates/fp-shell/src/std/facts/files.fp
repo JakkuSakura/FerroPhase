@@ -106,3 +106,23 @@ pub const fn size(path: str) -> str {
 pub const fn size(path: str) -> str {
     std::shell::process::output(f"(Get-Item -LiteralPath \"{path}\").Length")
 }
+
+pub const fn file(path: str) -> any {
+    null
+}
+
+pub const fn directory(path: str) -> any {
+    null
+}
+
+pub const fn block(path: str, marker: str, begin: str, end: str) -> any {
+    null
+}
+
+pub const fn link(path: str) -> any {
+    false
+}
+
+pub const fn find_in_file(path: str, pattern: str, interpolate_variables: bool) -> any {
+    null
+}

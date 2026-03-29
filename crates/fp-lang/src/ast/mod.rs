@@ -172,6 +172,43 @@ impl FerroPhaseParser {
             eyre::eyre!(err)
         })
     }
+
+    pub fn parse_file_ast_with_file(
+        &self,
+        source: &str,
+        file: FileId,
+        source_path: Option<&Path>,
+        path: PathBuf,
+    ) -> Result<fp_core::ast::File> {
+        let file_id = resolve_file_id(file, source, source_path);
+        let tokens = crate::lexer::tokenizer::lex(source).map_err(|err| {
+            if let Some(span) = err.span() {
+                let span = fp_core::span::Span::new(file_id, span.start as u32, span.end as u32);
+                self.record_error_with_span(format!("failed to lex items: {err}"), span);
+            } else {
+                self.record_error(format!("failed to lex items: {err}"));
+            }
+            eyre::eyre!(err)
+        })?;
+        let tokens = crate::tokens::rewrite::lower_tokens(tokens).map_err(|err| {
+            self.record_error(format!("failed to lower tokens: {err}"));
+            eyre::eyre!(err)
+        })?;
+        let cst = crate::cst::items::parse_items_tokens_to_cst_with_file(&tokens, file_id)
+            .map_err(|err| {
+                if let Some(span) = err.span() {
+                    self.record_error_with_span(format!("failed to parse items CST: {err}"), span);
+                } else {
+                    self.record_error(format!("failed to parse items CST: {err}"));
+                }
+                eyre::eyre!(err)
+            })?;
+        let (attrs, items) = crate::ast::lower_file_from_cst(&cst).map_err(|err| {
+            self.record_error(format!("failed to lower items CST: {err}"));
+            eyre::eyre!(err)
+        })?;
+        Ok(fp_core::ast::File { path, attrs, items })
+    }
 }
 
 pub(crate) mod expr;
@@ -179,7 +216,7 @@ pub(crate) mod items;
 pub(crate) mod macros;
 
 pub(crate) use expr::lower_expr_from_cst;
-pub(crate) use items::lower_items_from_cst;
+pub(crate) use items::{lower_file_from_cst, lower_items_from_cst};
 
 #[cfg(test)]
 mod tests;

@@ -1,6 +1,6 @@
 use super::{RuntimeEnum, RuntimeRef, RuntimeRefTarget};
 use std::collections::HashMap;
-use std::ffi::{c_void, CString};
+use std::ffi::{CStr, CString, c_void};
 use std::sync::MutexGuard;
 
 use fp_core::ast::{
@@ -180,6 +180,15 @@ impl FfiRuntime {
                     ));
                 }
                 let ptr: *mut c_void = cif.call(code, args);
+                if is_cstr_reference(&ret_ty) {
+                    if ptr.is_null() {
+                        return Ok(Value::string(String::new()));
+                    }
+                    let text = unsafe { CStr::from_ptr(ptr as *const i8) }
+                        .to_string_lossy()
+                        .into_owned();
+                    return Ok(Value::string(text));
+                }
                 Ok(Value::Pointer(ValuePointer::new(ptr as i64)))
             }
             _ => Err(Error::from("unsupported extern return type")),

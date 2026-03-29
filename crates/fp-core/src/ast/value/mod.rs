@@ -19,6 +19,7 @@ pub type BValue = Box<Value>;
 common_enum! {
     pub enum Value {
         Int(ValueInt),
+        UInt(ValueUInt),
         BigInt(ValueBigInt),
         Bool(ValueBool),
         Decimal(ValueDecimal),
@@ -66,6 +67,9 @@ impl Value {
     }
     pub fn int(i: i64) -> Value {
         Value::Int(ValueInt::new(i))
+    }
+    pub fn uint(i: u64) -> Value {
+        Value::UInt(ValueUInt::new(i))
     }
     pub fn big_int(i: num_bigint::BigInt) -> Value {
         Value::BigInt(ValueBigInt::new(i))
@@ -142,6 +146,7 @@ impl ToJson for Value {
     fn to_json(&self) -> crate::Result<serde_json::Value> {
         match self {
             Value::Int(i) => i.to_json(),
+            Value::UInt(i) => i.to_json(),
             Value::Bool(b) => b.to_json(),
             Value::Decimal(d) => d.to_json(),
             Value::BigDecimal(d) => d.to_json(),

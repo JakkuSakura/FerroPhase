@@ -17,6 +17,7 @@ fn loop_bottom_allows_i64_return() {
 
     let file = File {
         path: "loop_bottom.fp".into(),
+        attrs: Vec::new(),
         items: vec![Item::from(ItemKind::DefFunction(func))],
     };
 

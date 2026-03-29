@@ -90,6 +90,7 @@ impl Pipeline {
                     let items = loader.resolve_items(&file.items, base_dir)?;
                     std_node = Node::file(File {
                         path: file.path,
+                        attrs: file.attrs,
                         items,
                     });
                 }

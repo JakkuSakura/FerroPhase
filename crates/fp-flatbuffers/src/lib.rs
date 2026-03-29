@@ -43,6 +43,7 @@ impl LanguageFrontend for FlatbuffersFrontend {
             path: path
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| PathBuf::from("<stdin.fbs>")),
+            attrs: Vec::new(),
             items,
         };
 

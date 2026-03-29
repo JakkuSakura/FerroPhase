@@ -5250,6 +5250,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                 RuntimeFlow::Value(Value::undefined())
             }
             ExprKind::Select(select) => {
+                if self.allow_binding_replacement {
+                    if let ExprKind::Name(locator) = select.obj.kind() {
+                        let mut path = locator.to_path();
+                        path.segments.push(select.field.clone());
+                        let name = Name::path(path);
+                        if self.try_replace_declared_binding(&name, value.clone()) {
+                            return RuntimeFlow::Value(value);
+                        }
+                    }
+                }
                 if let ExprKind::Name(locator) = select.obj.kind_mut() {
                     let name = locator
                         .as_ident()
@@ -5370,6 +5380,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             return false;
         }
 
+        self.materialize_binding_candidates(&candidates);
+
         let mut found = false;
         for name in &candidates {
             if self.functions.contains_key(name) {
@@ -5436,6 +5448,14 @@ impl<'ctx> AstInterpreter<'ctx> {
             return true;
         }
 
+        if self.binding_declared_in_ast(&candidates) {
+            for name in &candidates {
+                self.evaluated_constants.insert(name.clone(), value.clone());
+                self.replace_stored_value(name, value.clone());
+            }
+            return true;
+        }
+
         false
     }
 
@@ -5459,9 +5479,93 @@ impl<'ctx> AstInterpreter<'ctx> {
             if !names.contains(&qualified) {
                 names.push(qualified);
             }
+        } else if let Name::Path(path) = locator {
+            if path.prefix != PathPrefix::Plain {
+                let plain = Path::new(PathPrefix::Plain, path.segments.clone());
+                let plain_name = plain.to_string();
+                if !names.contains(&plain_name) {
+                    names.push(plain_name);
+                }
+            }
+            if let Some(last) = path.segments.last() {
+                let simple = last.as_str().to_string();
+                if !names.contains(&simple) {
+                    names.push(simple.clone());
+                }
+                let qualified = self.qualified_name(last.as_str());
+                if !names.contains(&qualified) {
+                    names.push(qualified);
+                }
+            }
+        } else if let Name::ParameterPath(path) = locator {
+            if path.prefix != PathPrefix::Plain {
+                let plain = Path::new(PathPrefix::Plain, path.segments.clone());
+                let plain_name = plain.to_string();
+                if !names.contains(&plain_name) {
+                    names.push(plain_name);
+                }
+            }
+            if let Some(last) = path.segments.last() {
+                let simple = last.ident.as_str().to_string();
+                if !names.contains(&simple) {
+                    names.push(simple.clone());
+                }
+                let qualified = self.qualified_name(last.ident.as_str());
+                if !names.contains(&qualified) {
+                    names.push(qualified);
+                }
+            }
         }
 
         names
+    }
+
+    fn binding_declared_in_ast(&mut self, candidates: &[String]) -> bool {
+        let Some(root) = self.root_items else {
+            return false;
+        };
+        for name in candidates {
+            let Some(path) = self.parse_symbol_path_cached(name) else {
+                continue;
+            };
+            if path.segments.len() < 2 {
+                continue;
+            }
+            let segments = self.path_segments(&path);
+            if let Some(item_ptr) = self.find_item_by_path_mut(root, &segments) {
+                unsafe {
+                    match (*item_ptr).kind() {
+                        ItemKind::DefFunction(_)
+                        | ItemKind::DefConst(_)
+                        | ItemKind::DefStatic(_) => return true,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn materialize_binding_candidates(&mut self, candidates: &[String]) {
+        let Some(root) = self.root_items else {
+            return;
+        };
+        for name in candidates {
+            let Some(path) = self.parse_symbol_path_cached(name) else {
+                continue;
+            };
+            if path.segments.len() < 2 {
+                continue;
+            }
+            let segments = self.path_segments(&path);
+            if let Some(item_ptr) = self.find_item_by_path_mut(root, &segments) {
+                unsafe {
+                    self.evaluate_item(&mut *item_ptr);
+                    self.register_items_with_typer(std::slice::from_ref(&*item_ptr));
+                }
+                self.invalidate_all_types();
+            }
+        }
     }
 
     fn file_has_feature(&self, file: &File, feature: &str) -> bool {
@@ -8319,39 +8423,6 @@ fn resolve_lang_item_handler(name: &str) -> Option<LangItemFn> {
 
 fn resolve_lang_instrinstic_handler(intrinsic: LangInstrinstic) -> Option<LangItemFn> {
     match intrinsic {
-        LangInstrinstic::FsReadDir => Some(lang_fs_read_dir),
-        LangInstrinstic::FsWalkDir => Some(lang_fs_walk_dir),
-        LangInstrinstic::FsReadToString => Some(lang_fs_read_to_string),
-        LangInstrinstic::FsWriteString => Some(lang_fs_write_string),
-        LangInstrinstic::FsAppendString => Some(lang_fs_append_string),
-        LangInstrinstic::FsExists => Some(lang_fs_exists),
-        LangInstrinstic::FsIsDir => Some(lang_fs_is_dir),
-        LangInstrinstic::FsIsFile => Some(lang_fs_is_file),
-        LangInstrinstic::FsCreateDirAll => Some(lang_fs_create_dir_all),
-        LangInstrinstic::FsRemoveFile => Some(lang_fs_remove_file),
-        LangInstrinstic::FsRemoveDirAll => Some(lang_fs_remove_dir_all),
-        LangInstrinstic::FsGlob => Some(lang_fs_glob),
-        LangInstrinstic::EnvCurrentDir => Some(lang_env_current_dir),
-        LangInstrinstic::EnvTempDir => Some(lang_env_temp_dir),
-        LangInstrinstic::EnvHomeDir => Some(lang_env_home_dir),
-        LangInstrinstic::EnvVar => Some(lang_env_var),
-        LangInstrinstic::EnvVarExists => Some(lang_env_var_exists),
-        LangInstrinstic::PathJoin => Some(lang_path_join),
-        LangInstrinstic::PathParent => Some(lang_path_parent),
-        LangInstrinstic::PathFileName => Some(lang_path_file_name),
-        LangInstrinstic::PathExtension => Some(lang_path_extension),
-        LangInstrinstic::PathStem => Some(lang_path_stem),
-        LangInstrinstic::PathIsAbsolute => Some(lang_path_is_absolute),
-        LangInstrinstic::PathNormalize => Some(lang_path_normalize),
-        LangInstrinstic::IoReadStdinToString => Some(lang_io_read_stdin_to_string),
-        LangInstrinstic::IoWriteStdout => Some(lang_io_write_stdout),
-        LangInstrinstic::IoWriteStderr => Some(lang_io_write_stderr),
-        LangInstrinstic::YamlToJson => Some(lang_yaml_to_json),
-        LangInstrinstic::JsonParse => Some(lang_json_parse),
-        LangInstrinstic::TestCommandMockReset => Some(lang_test_command_mock_reset),
-        LangInstrinstic::TestCommandMockPush => Some(lang_test_command_mock_push),
-        LangInstrinstic::TestCommandMockTakeCalls => Some(lang_test_command_mock_take_calls),
-        LangInstrinstic::TestCommandMockApply => Some(lang_test_command_mock_apply),
         LangInstrinstic::TimeNow | LangInstrinstic::CreateStruct | LangInstrinstic::AddField => {
             None
         }

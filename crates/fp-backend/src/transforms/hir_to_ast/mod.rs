@@ -21,7 +21,11 @@ pub fn lift_program(program: &hir::Program, path: PathBuf) -> Result<ast::Node> 
     for item in &program.items {
         items.push(lift_item(item)?);
     }
-    Ok(ast::Node::file(ast::File { path, items }))
+    Ok(ast::Node::file(ast::File {
+        path,
+        attrs: Vec::new(),
+        items,
+    }))
 }
 
 fn lift_item(item: &hir::Item) -> Result<Item> {

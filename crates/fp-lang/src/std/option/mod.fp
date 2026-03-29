@@ -3,6 +3,14 @@ pub enum Option<T> {
     None,
 }
 
+pub fn some<T>(value: T) -> Option<T> {
+    Option::Some(value)
+}
+
+pub fn none<T>() -> Option<T> {
+    Option::None
+}
+
 impl<T> Option<T> {
     pub fn is_some(&self) -> bool {
         match self {

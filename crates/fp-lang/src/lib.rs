@@ -78,13 +78,9 @@ impl LanguageFrontend for FerroFrontend {
             self.ferro.clear_diagnostics();
             return match self
                 .ferro
-                .parse_items_ast_with_file(&cleaned, file_id, Some(&source_path))
+                .parse_file_ast_with_file(&cleaned, file_id, Some(&source_path), source_path.clone())
             {
-                Ok(items) => {
-                    let file = fp_core::ast::File {
-                        path: source_path.clone(),
-                        items,
-                    };
+                Ok(file) => {
                     let diagnostics = self.ferro.diagnostics();
 
                     let last = Node::file(file);
@@ -160,6 +156,7 @@ impl LanguageFrontend for FerroFrontend {
             Ok(items) => {
                 let file = fp_core::ast::File {
                     path: Path::new("<expr>").to_path_buf(),
+                    attrs: Vec::new(),
                     items,
                 };
                 let diagnostics = self.ferro.diagnostics();

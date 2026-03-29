@@ -1,6 +1,7 @@
 pub mod assert;
 pub mod collections;
 pub mod env;
+pub mod error;
 pub mod ffi;
 pub mod fs;
 pub mod future;
@@ -14,6 +15,7 @@ pub mod option;
 pub mod path;
 pub mod process;
 pub mod proc_macro;
+pub mod result;
 pub mod task;
 pub mod test;
 pub mod time;

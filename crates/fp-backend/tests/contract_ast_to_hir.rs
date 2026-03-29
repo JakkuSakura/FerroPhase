@@ -120,6 +120,7 @@ fn lowers_defer_statement_before_hir_conversion() -> OptimizeResult<()> {
     ])));
     let file = fp_core::ast::File {
         path: "<memory>".into(),
+        attrs: Vec::new(),
         items: vec![
             make_fn(
                 "cleanup",
@@ -179,6 +180,7 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
         fp_core::ast::Item::from(fp_core::ast::ItemKind::Import(fp_core::ast::ItemImport {
             attrs: Vec::new(),
             visibility: fp_core::ast::Visibility::Private,
+            style: fp_core::ast::ItemImportStyle::Plain,
             tree: import_tree,
         }));
 
@@ -198,6 +200,7 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
 
     let program = transform_file(fp_core::ast::File {
         path: "<memory>".into(),
+        attrs: Vec::new(),
         items: vec![math_module, import, call_sum],
     })?;
 
@@ -292,6 +295,7 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
         fp_core::ast::Item::from(fp_core::ast::ItemKind::Import(fp_core::ast::ItemImport {
             attrs: Vec::new(),
             visibility: fp_core::ast::Visibility::Public,
+            style: fp_core::ast::ItemImportStyle::Plain,
             tree: reexport_tree,
         }));
 
@@ -319,6 +323,7 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
 
     let program = transform_file(fp_core::ast::File {
         path: "<memory>".into(),
+        attrs: Vec::new(),
         items: vec![math_module, reexport, callers_module],
     })?;
 
@@ -422,6 +427,7 @@ fn lowers_println_macro_into_intrinsic_call() -> OptimizeResult<()> {
     let main_fn = make_fn("main", vec![], fp_core::ast::Ty::unit(), body);
     let program = transform_file(fp_core::ast::File {
         path: "<memory>".into(),
+        attrs: Vec::new(),
         items: vec![main_fn],
     })?;
 
@@ -495,6 +501,7 @@ fn lowers_print_macro_into_intrinsic_call() -> OptimizeResult<()> {
     let main_fn = make_fn("main", vec![], fp_core::ast::Ty::unit(), body);
     let program = transform_file(fp_core::ast::File {
         path: "<memory>".into(),
+        attrs: Vec::new(),
         items: vec![main_fn],
     })?;
 
@@ -584,6 +591,7 @@ fn lowers_sizeof_and_field_count_intrinsics() -> OptimizeResult<()> {
 
     let program = transform_file(fp_core::ast::File {
         path: "<memory>".into(),
+        attrs: Vec::new(),
         items: vec![point, size_const, fields_const],
     })?;
 
