@@ -306,3 +306,102 @@ pub async fn simple_chat(
 
     Ok(response.message.content.unwrap_or_default())
 }
+
+// ---------------------------------------------------------------------------
+// Truth-Based Evidence Tracking
+// ---------------------------------------------------------------------------
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+/// Evidence recorded from a tool execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Evidence {
+    pub tool_name: String,
+    pub parameters: serde_json::Value,
+    pub result_sample: serde_json::Value,
+    pub row_count: usize,
+    pub timestamp: DateTime<Utc>,
+}
+
+impl Evidence {
+    pub fn new(
+        tool_name: impl Into<String>,
+        parameters: serde_json::Value,
+        result_sample: serde_json::Value,
+        row_count: usize,
+    ) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            parameters,
+            result_sample,
+            row_count,
+            timestamp: Utc::now(),
+        }
+    }
+}
+
+/// Trait for recording evidence - implemented by the application
+/// to store evidence in database, file, or any storage backend.
+#[async_trait]
+pub trait EvidenceRecorder: Send + Sync {
+    async fn record(&self, evidence: Evidence) -> Result<(), AgentError>;
+}
+
+/// A tool executor that tracks evidence for every call
+#[derive(Clone)]
+pub struct EvidenceTrackingExecutor<T, E> {
+    inner: T,
+    recorder: E,
+}
+
+impl<T, E> EvidenceTrackingExecutor<T, E>
+where
+    T: ToolExecutor,
+    E: EvidenceRecorder,
+{
+    pub fn new(inner: T, recorder: E) -> Self {
+        Self { inner, recorder }
+    }
+}
+
+#[async_trait]
+impl<T, E> ToolExecutor for EvidenceTrackingExecutor<T, E>
+where
+    T: ToolExecutor + Clone,
+    E: EvidenceRecorder,
+{
+    async fn execute(&self, call: ToolCall) -> Result<String, AgentError> {
+        let tool_name = call.function.name.clone();
+        let params: serde_json::Value = serde_json::from_str(&call.function.arguments)
+            .unwrap_or(serde_json::Value::Null);
+
+        let result = self.inner.execute(call).await?;
+
+        // Try to extract sample from result for evidence
+        let result_sample: serde_json::Value = serde_json::from_str(&result)
+            .map(|v| {
+                // Extract first row if result is {"rows": [...]}
+                v.get("rows")
+                    .and_then(|r| r.as_array())
+                    .and_then(|arr| arr.first())
+                    .cloned()
+                    .unwrap_or(v)
+            })
+            .unwrap_or(serde_json::Value::Null);
+
+        let row_count = serde_json::from_str::<serde_json::Value>(&result)
+            .ok()
+            .and_then(|v| v.get("rowCount").and_then(|c| c.as_i64()))
+            .map(|c| c as usize)
+            .unwrap_or(0);
+
+        let evidence = Evidence::new(&tool_name, params, result_sample, row_count);
+        if let Err(e) = self.recorder.record(evidence).await {
+            tracing::warn!("failed to record evidence: {}", e);
+        }
+
+        Ok(result)
+    }
+}
