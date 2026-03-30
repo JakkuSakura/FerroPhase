@@ -472,6 +472,20 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
             format_expr_inline(base, ctx),
             format_expr_inline(index, ctx)
         ),
+        ExprKind::Slice(slice) => {
+            let start = slice
+                .start
+                .as_ref()
+                .map(|expr| format_expr_inline(expr, ctx))
+                .unwrap_or_default();
+            let end = slice
+                .end
+                .as_ref()
+                .map(|expr| format_expr_inline(expr, ctx))
+                .unwrap_or_default();
+            let dots = if slice.inclusive { "..=" } else { ".." };
+            format!("{}[{}{}{}]", format_expr_inline(&slice.base, ctx), start, dots, end)
+        }
         ExprKind::Struct(path, fields) => {
             let fields = fields
                 .iter()

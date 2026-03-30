@@ -9,6 +9,9 @@ use fp_core::ast::{
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result;
 use fp_core::hir;
+use fp_core::hir_place::{
+    project_hir_assign_target, HirAssignTargetBase, HirAssignTargetProjection,
+};
 
 fn call_arg_values(args: &[hir::CallArg]) -> Vec<&hir::Expr> {
     args.iter().map(|arg| &arg.value).collect()
@@ -9712,6 +9715,7 @@ impl<'a> BodyBuilder<'a> {
                     ty: target_ty,
                 })
             }
+            hir::ExprKind::Slice(slice) => self.lower_slice_operand(slice, expr.span, expected),
             hir::ExprKind::Index(base, index) => {
                 if let hir::ExprKind::Path(path) = &base.kind {
                     if let Some(hir::Res::Def(def_id)) = &path.res {
@@ -10381,6 +10385,163 @@ impl<'a> BodyBuilder<'a> {
                 })
             }
         }
+    }
+
+    fn lower_slice_operand(
+        &mut self,
+        slice: &hir::SliceExpr,
+        span: Span,
+        expected: Option<&Ty>,
+    ) -> Result<OperandInfo> {
+        let base_place = if let Some(place) = self.lower_place(slice.base.as_ref())? {
+            place
+        } else {
+            self.materialize_expr_place(slice.base.as_ref())?
+        };
+        let base_operand = OperandInfo {
+            operand: mir::Operand::copy(base_place.place.clone()),
+            ty: base_place.ty.clone(),
+        };
+
+        let index_ty = Ty {
+            kind: TyKind::Uint(UintTy::Usize),
+        };
+        let start_operand = match slice.start.as_ref() {
+            Some(start) => self.lower_operand(start.as_ref(), Some(&index_ty))?,
+            None => OperandInfo::constant(span, index_ty.clone(), mir::ConstantKind::UInt(0)),
+        };
+
+        let mut end_operand = match slice.end.as_ref() {
+            Some(end) => self.lower_operand(end.as_ref(), Some(&index_ty))?,
+            None => {
+                let mut len_place = base_place.place.clone();
+                let mut len_ty = base_place.ty.clone();
+                loop {
+                    match &len_ty.kind {
+                        TyKind::Ref(_, inner, _) => {
+                            len_place.projection.push(mir::PlaceElem::Deref);
+                            len_ty = inner.as_ref().clone();
+                        }
+                        TyKind::RawPtr(type_and_mut) => {
+                            len_place.projection.push(mir::PlaceElem::Deref);
+                            len_ty = type_and_mut.ty.as_ref().clone();
+                        }
+                        _ => break,
+                    }
+                }
+
+                if !matches!(len_ty.kind, TyKind::Array(_, _) | TyKind::Slice(_)) {
+                    self.lowering.emit_error(
+                        span,
+                        "omitted slice end requires an array or slice base type",
+                    );
+                    OperandInfo::constant(span, index_ty.clone(), mir::ConstantKind::UInt(0))
+                } else {
+                    let len_u64_ty = Ty {
+                        kind: TyKind::Uint(UintTy::U64),
+                    };
+                    let len_local = self.allocate_temp(len_u64_ty.clone(), span);
+                    let len_local_place = mir::Place::from_local(len_local);
+                    self.push_statement(mir::Statement {
+                        source_info: span,
+                        kind: mir::StatementKind::Assign(
+                            len_local_place.clone(),
+                            mir::Rvalue::Len(len_place),
+                        ),
+                    });
+
+                    let cast_local = self.allocate_temp(index_ty.clone(), span);
+                    let cast_place = mir::Place::from_local(cast_local);
+                    self.push_statement(mir::Statement {
+                        source_info: span,
+                        kind: mir::StatementKind::Assign(
+                            cast_place.clone(),
+                            mir::Rvalue::Cast(
+                                mir::CastKind::Misc,
+                                mir::Operand::copy(len_local_place),
+                                index_ty.clone(),
+                            ),
+                        ),
+                    });
+                    OperandInfo {
+                        operand: mir::Operand::copy(cast_place),
+                        ty: index_ty.clone(),
+                    }
+                }
+            }
+        };
+
+        let inclusive = if slice.inclusive && slice.end.is_none() {
+            self.lowering
+                .emit_error(span, "inclusive slice syntax requires an explicit end bound");
+            false
+        } else {
+            slice.inclusive
+        };
+
+        if inclusive {
+            let one = OperandInfo::constant(span, index_ty.clone(), mir::ConstantKind::UInt(1));
+            let temp_local = self.allocate_temp(index_ty.clone(), span);
+            let temp_place = mir::Place::from_local(temp_local);
+            self.push_statement(mir::Statement {
+                source_info: span,
+                kind: mir::StatementKind::Assign(
+                    temp_place.clone(),
+                    mir::Rvalue::BinaryOp(mir::BinOp::Add, end_operand.operand, one.operand),
+                ),
+            });
+            end_operand = OperandInfo {
+                operand: mir::Operand::copy(temp_place),
+                ty: index_ty.clone(),
+            };
+        }
+
+        let slice_ty = expected
+            .cloned()
+            .filter(|ty| matches!(ty.kind, TyKind::Slice(_)))
+            .or_else(|| {
+                let mut ty = base_place.ty.clone();
+                loop {
+                    match &ty.kind {
+                        TyKind::Ref(_, inner, _) => ty = inner.as_ref().clone(),
+                        TyKind::RawPtr(type_and_mut) => ty = type_and_mut.ty.as_ref().clone(),
+                        _ => break,
+                    }
+                }
+                match &ty.kind {
+                    TyKind::Array(elem, _) => Some(Ty {
+                        kind: TyKind::Slice(elem.clone()),
+                    }),
+                    TyKind::Slice(elem) => Some(Ty {
+                        kind: TyKind::Slice(elem.clone()),
+                    }),
+                    _ => None,
+                }
+            })
+            .unwrap_or_else(|| Ty {
+                kind: TyKind::Slice(Box::new(Ty {
+                    kind: TyKind::Int(IntTy::I8),
+                })),
+            });
+
+        let local_id = self.allocate_temp(slice_ty.clone(), span);
+        let local_place = mir::Place::from_local(local_id);
+        let statement = mir::Statement {
+            source_info: span,
+            kind: mir::StatementKind::Assign(
+                local_place.clone(),
+                mir::Rvalue::IntrinsicCall {
+                    kind: IntrinsicCallKind::Slice,
+                    format: String::new(),
+                    args: vec![base_operand.operand, start_operand.operand, end_operand.operand],
+                },
+            ),
+        };
+        self.push_statement(statement);
+        Ok(OperandInfo {
+            operand: mir::Operand::copy(local_place),
+            ty: slice_ty,
+        })
     }
 
     fn lower_reference_operand(
@@ -12021,102 +12182,94 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    fn lower_place(&mut self, expr: &hir::Expr) -> Result<Option<PlaceInfo>> {
-        match &expr.kind {
-            hir::ExprKind::Path(path) => {
-                let fallback_local = path
-                    .segments
-                    .first()
-                    .filter(|_| path.segments.len() == 1)
-                    .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied());
-                match &path.res {
-                    Some(hir::Res::Local(hir_id)) => {
-                        if let Some(local_id) = self.local_map.get(hir_id) {
-                            let local_id = *local_id;
-                            let ty = self.locals[local_id as usize].ty.clone();
-                            let mut struct_def = self.local_structs.get(&local_id).copied();
-                            if struct_def.is_none() {
-                                if let Some(derived) = self.struct_def_from_ty(&ty) {
-                                    self.local_structs.insert(local_id, derived);
-                                    struct_def = Some(derived);
-                                }
-                            }
-                            return Ok(Some(PlaceInfo {
-                                place: mir::Place::from_local(local_id),
-                                ty,
-                                struct_def,
-                            }));
-                        }
-                        if let Some(local_id) = fallback_local {
-                            let ty = self.locals[local_id as usize].ty.clone();
-                            let struct_def = self.struct_def_from_ty(&ty);
-                            return Ok(Some(PlaceInfo {
-                                place: mir::Place::from_local(local_id),
-                                ty,
-                                struct_def,
-                            }));
+    fn lower_place_path_base(&mut self, expr: &hir::Expr, path: &hir::Path) -> Result<Option<PlaceInfo>> {
+        let fallback_local = path
+            .segments
+            .first()
+            .filter(|_| path.segments.len() == 1)
+            .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied());
+        match &path.res {
+            Some(hir::Res::Local(hir_id)) => {
+                if let Some(local_id) = self.local_map.get(hir_id) {
+                    let local_id = *local_id;
+                    let ty = self.locals[local_id as usize].ty.clone();
+                    let mut struct_def = self.local_structs.get(&local_id).copied();
+                    if struct_def.is_none() {
+                        if let Some(derived) = self.struct_def_from_ty(&ty) {
+                            self.local_structs.insert(local_id, derived);
+                            struct_def = Some(derived);
                         }
                     }
-                    Some(hir::Res::Def(def_id)) => {
-                        if let Some(const_item) = self.program.def_map.get(def_id) {
-                            if let hir::ItemKind::Const(konst) = &const_item.kind {
-                                let ty = self.lower_type_expr(&konst.ty);
-                                let local_id = self.allocate_temp(ty.clone(), expr.span);
-                                let place_local = mir::Place::from_local(local_id);
-                                self.lower_expr_into_place(
-                                    &konst.body.value,
-                                    place_local.clone(),
-                                    &ty,
-                                )?;
-                                if let Some(struct_def) = self.struct_def_from_ty(&ty) {
-                                    self.local_structs.insert(local_id, struct_def);
-                                }
-                                return Ok(Some(PlaceInfo {
-                                    place: place_local,
-                                    ty: ty.clone(),
-                                    struct_def: self.struct_def_from_ty(&ty),
-                                }));
-                            }
-                        } else if let Some(konst) = self.const_items.get(def_id).cloned() {
-                            let ty = self.lower_type_expr(&konst.ty);
-                            let local_id = self.allocate_temp(ty.clone(), expr.span);
-                            let place_local = mir::Place::from_local(local_id);
-                            self.lower_expr_into_place(
-                                &konst.body.value,
-                                place_local.clone(),
-                                &ty,
-                            )?;
-                            if let Some(struct_def) = self.struct_def_from_ty(&ty) {
-                                self.local_structs.insert(local_id, struct_def);
-                            }
-                            return Ok(Some(PlaceInfo {
-                                place: place_local,
-                                ty: ty.clone(),
-                                struct_def: self.struct_def_from_ty(&ty),
-                            }));
-                        }
-                    }
-                    _ => {
-                        if let Some(local_id) = fallback_local {
-                            let ty = self.locals[local_id as usize].ty.clone();
-                            let struct_def = self.struct_def_from_ty(&ty);
-                            return Ok(Some(PlaceInfo {
-                                place: mir::Place::from_local(local_id),
-                                ty,
-                                struct_def,
-                            }));
-                        }
-                    }
+                    return Ok(Some(PlaceInfo {
+                        place: mir::Place::from_local(local_id),
+                        ty,
+                        struct_def,
+                    }));
                 }
-                Ok(None)
+                if let Some(local_id) = fallback_local {
+                    let ty = self.locals[local_id as usize].ty.clone();
+                    let struct_def = self.struct_def_from_ty(&ty);
+                    return Ok(Some(PlaceInfo {
+                        place: mir::Place::from_local(local_id),
+                        ty,
+                        struct_def,
+                    }));
+                }
             }
+            Some(hir::Res::Def(def_id)) => {
+                if let Some(const_item) = self.program.def_map.get(def_id) {
+                    if let hir::ItemKind::Const(konst) = &const_item.kind {
+                        let ty = self.lower_type_expr(&konst.ty);
+                        let local_id = self.allocate_temp(ty.clone(), expr.span);
+                        let place_local = mir::Place::from_local(local_id);
+                        self.lower_expr_into_place(&konst.body.value, place_local.clone(), &ty)?;
+                        if let Some(struct_def) = self.struct_def_from_ty(&ty) {
+                            self.local_structs.insert(local_id, struct_def);
+                        }
+                        return Ok(Some(PlaceInfo {
+                            place: place_local,
+                            ty: ty.clone(),
+                            struct_def: self.struct_def_from_ty(&ty),
+                        }));
+                    }
+                } else if let Some(konst) = self.const_items.get(def_id).cloned() {
+                    let ty = self.lower_type_expr(&konst.ty);
+                    let local_id = self.allocate_temp(ty.clone(), expr.span);
+                    let place_local = mir::Place::from_local(local_id);
+                    self.lower_expr_into_place(&konst.body.value, place_local.clone(), &ty)?;
+                    if let Some(struct_def) = self.struct_def_from_ty(&ty) {
+                        self.local_structs.insert(local_id, struct_def);
+                    }
+                    return Ok(Some(PlaceInfo {
+                        place: place_local,
+                        ty: ty.clone(),
+                        struct_def: self.struct_def_from_ty(&ty),
+                    }));
+                }
+            }
+            _ => {
+                if let Some(local_id) = fallback_local {
+                    let ty = self.locals[local_id as usize].ty.clone();
+                    let struct_def = self.struct_def_from_ty(&ty);
+                    return Ok(Some(PlaceInfo {
+                        place: mir::Place::from_local(local_id),
+                        ty,
+                        struct_def,
+                    }));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn lower_place_expr_base(&mut self, expr: &hir::Expr) -> Result<Option<PlaceInfo>> {
+        match &expr.kind {
             hir::ExprKind::Unary(hir::UnOp::Deref, inner) => {
                 let Some(mut place_info) = self.lower_place(inner)? else {
                     self.lowering
                         .emit_error(expr.span, "dereference target is not a place expression");
                     return Ok(None);
                 };
-
                 let mut base_ty = place_info.ty.clone();
                 loop {
                     match &base_ty.kind {
@@ -12136,12 +12289,9 @@ impl<'a> BodyBuilder<'a> {
                                 .expect("checked boxed inner type above");
                             break;
                         }
-                        _ => {
-                            break;
-                        }
+                        _ => break,
                     }
                 }
-
                 place_info.ty = base_ty;
                 place_info.struct_def = self.struct_def_from_ty(&place_info.ty);
                 Ok(Some(place_info))
@@ -12165,130 +12315,220 @@ impl<'a> BodyBuilder<'a> {
                 place_info.struct_def = self.struct_def_from_ty(&cast_ty);
                 Ok(Some(place_info))
             }
-            hir::ExprKind::FieldAccess(base, field) => {
-                let base_place = match self.lower_place(base)? {
-                    Some(info) => info,
-                    None => self.materialize_expr_place(base)?,
-                };
-
-                let mut place = base_place.place.clone();
-                let mut base_ty = base_place.ty.clone();
-                let mut struct_def = base_place.struct_def;
-
-                loop {
-                    match &base_ty.kind {
-                        TyKind::Ref(_, inner, _) => {
-                            place.projection.push(mir::PlaceElem::Deref);
-                            base_ty = inner.as_ref().clone();
-                        }
-                        TyKind::RawPtr(type_and_mut) => {
-                            place.projection.push(mir::PlaceElem::Deref);
-                            base_ty = type_and_mut.ty.as_ref().clone();
-                        }
-                        _ => break,
-                    }
-                }
-
-                if struct_def.is_none() {
-                    struct_def = self.struct_def_from_ty(&base_ty);
-                }
-
-                let struct_def = match struct_def {
-                    Some(def_id) => def_id,
-                    None => {
-                        self.lowering
-                            .emit_error(base.span, "field access on non-struct value");
-                        return Ok(None);
-                    }
-                };
-
-                let (field_index, field_info) = match self.lowering.struct_field(
-                    struct_def,
-                    &base_ty,
-                    field.as_str(),
-                    expr.span,
-                ) {
-                    Some(data) => data,
-                    None => {
-                        self.lowering
-                            .emit_error(expr.span, format!("unknown field `{}`", field));
-                        return Ok(None);
-                    }
-                };
-
-                place
-                    .projection
-                    .push(mir::PlaceElem::Field(field_index, field_info.ty.clone()));
-
-                Ok(Some(PlaceInfo {
-                    place,
-                    ty: field_info.ty.clone(),
-                    struct_def: self.struct_def_from_ty(&field_info.ty),
-                }))
-            }
-            hir::ExprKind::Index(base, index) => {
-                let base_place = match self.lower_place(base)? {
-                    Some(info) => info,
-                    None => self.materialize_expr_place(base)?,
-                };
-
-                let index_ty = Ty {
-                    kind: TyKind::Uint(UintTy::Usize),
-                };
-                let index_operand = self.lower_operand(index, Some(&index_ty))?;
-                let index_local = self.allocate_temp(index_operand.ty.clone(), index.span);
-                let index_place = mir::Place::from_local(index_local);
-                let assign = mir::Statement {
-                    source_info: index.span,
-                    kind: mir::StatementKind::Assign(
-                        index_place.clone(),
-                        mir::Rvalue::Use(index_operand.operand),
-                    ),
-                };
-                self.push_statement(assign);
-
-                let mut place = base_place.place.clone();
-                let mut base_ty = base_place.ty.clone();
-
-                loop {
-                    match &base_ty.kind {
-                        TyKind::Ref(_, inner, _) => {
-                            place.projection.push(mir::PlaceElem::Deref);
-                            base_ty = inner.as_ref().clone();
-                        }
-                        TyKind::RawPtr(type_and_mut) => {
-                            place.projection.push(mir::PlaceElem::Deref);
-                            base_ty = type_and_mut.ty.as_ref().clone();
-                        }
-                        _ => break,
-                    }
-                }
-
-                if self.is_list_container(&base_ty) || self.is_map_container(&base_ty) {
-                    return Ok(None);
-                }
-
-                let element_ty = match &base_ty.kind {
-                    TyKind::Array(elem, _) => *elem.clone(),
-                    TyKind::Slice(elem) => *elem.clone(),
-                    _ => {
-                        self.lowering
-                            .emit_error(base.span, "index access requires array or slice type");
-                        return Ok(None);
-                    }
-                };
-
-                place.projection.push(mir::PlaceElem::Index(index_local));
-                let struct_def = self.struct_def_from_ty(&element_ty);
-
-                Ok(Some(PlaceInfo {
-                    place,
-                    ty: element_ty,
-                    struct_def,
-                }))
-            }
             _ => Ok(None),
         }
+    }
+
+    fn lower_place_from_projected(
+        &mut self,
+        expr: &hir::Expr,
+    ) -> Result<Option<PlaceInfo>> {
+        let Some(projected) = project_hir_assign_target(expr) else {
+            return Ok(None);
+        };
+
+        let mut place_info = match projected.base {
+            HirAssignTargetBase::Name(path) => {
+                let Some(place) = self.lower_place_path_base(expr, &path)? else {
+                    return Ok(None);
+                };
+                place
+            }
+            HirAssignTargetBase::Expr(base_expr) => {
+                let Some(place) = self.lower_place_expr_base(base_expr.as_ref())? else {
+                    return Ok(None);
+                };
+                place
+            }
+        };
+
+        for projection in projected.projections {
+            match projection {
+                HirAssignTargetProjection::Deref => {
+                    let mut base_ty = place_info.ty.clone();
+                    loop {
+                        match &base_ty.kind {
+                            TyKind::Ref(_, inner_ty, _) => {
+                                place_info.place.projection.push(mir::PlaceElem::Deref);
+                                base_ty = inner_ty.as_ref().clone();
+                                break;
+                            }
+                            TyKind::RawPtr(type_and_mut) => {
+                                place_info.place.projection.push(mir::PlaceElem::Deref);
+                                base_ty = type_and_mut.ty.as_ref().clone();
+                                break;
+                            }
+                            _ if self.boxed_inner_ty(&base_ty).is_some() => {
+                                base_ty = self
+                                    .boxed_inner_ty(&base_ty)
+                                    .expect("checked boxed inner type above");
+                                break;
+                            }
+                            _ => return Ok(None),
+                        }
+                    }
+                    place_info.ty = base_ty;
+                    place_info.struct_def = self.struct_def_from_ty(&place_info.ty);
+                }
+                HirAssignTargetProjection::Field(field) => {
+                    let mut base_ty = place_info.ty.clone();
+                    let mut struct_def = place_info.struct_def;
+                    loop {
+                        match &base_ty.kind {
+                            TyKind::Ref(_, inner, _) => {
+                                place_info.place.projection.push(mir::PlaceElem::Deref);
+                                base_ty = inner.as_ref().clone();
+                            }
+                            TyKind::RawPtr(type_and_mut) => {
+                                place_info.place.projection.push(mir::PlaceElem::Deref);
+                                base_ty = type_and_mut.ty.as_ref().clone();
+                            }
+                            _ => break,
+                        }
+                    }
+                    if struct_def.is_none() {
+                        struct_def = self.struct_def_from_ty(&base_ty);
+                    }
+                    let struct_def = match struct_def {
+                        Some(def_id) => def_id,
+                        None => {
+                            self.lowering
+                                .emit_error(expr.span, "field access on non-struct value");
+                            return Ok(None);
+                        }
+                    };
+                    let (field_index, field_info) = match self.lowering.struct_field(
+                        struct_def,
+                        &base_ty,
+                        field.as_str(),
+                        expr.span,
+                    ) {
+                        Some(data) => data,
+                        None => {
+                            self.lowering
+                                .emit_error(expr.span, format!("unknown field `{}`", field));
+                            return Ok(None);
+                        }
+                    };
+                    place_info
+                        .place
+                        .projection
+                        .push(mir::PlaceElem::Field(field_index, field_info.ty.clone()));
+                    place_info.ty = field_info.ty.clone();
+                    place_info.struct_def = self.struct_def_from_ty(&place_info.ty);
+                }
+                HirAssignTargetProjection::Index(index) => {
+                    let index_ty = Ty {
+                        kind: TyKind::Uint(UintTy::Usize),
+                    };
+                    let index_operand = self.lower_operand(index.as_ref(), Some(&index_ty))?;
+                    let index_local = self.allocate_temp(index_operand.ty.clone(), index.span);
+                    let index_place = mir::Place::from_local(index_local);
+                    let assign = mir::Statement {
+                        source_info: index.span,
+                        kind: mir::StatementKind::Assign(
+                            index_place.clone(),
+                            mir::Rvalue::Use(index_operand.operand),
+                        ),
+                    };
+                    self.push_statement(assign);
+
+                    let mut base_ty = place_info.ty.clone();
+                    loop {
+                        match &base_ty.kind {
+                            TyKind::Ref(_, inner, _) => {
+                                place_info.place.projection.push(mir::PlaceElem::Deref);
+                                base_ty = inner.as_ref().clone();
+                            }
+                            TyKind::RawPtr(type_and_mut) => {
+                                place_info.place.projection.push(mir::PlaceElem::Deref);
+                                base_ty = type_and_mut.ty.as_ref().clone();
+                            }
+                            _ => break,
+                        }
+                    }
+                    if self.is_list_container(&base_ty) || self.is_map_container(&base_ty) {
+                        return Ok(None);
+                    }
+                    let element_ty = match &base_ty.kind {
+                        TyKind::Array(elem, _) => *elem.clone(),
+                        TyKind::Slice(elem) => *elem.clone(),
+                        _ => {
+                            self.lowering
+                                .emit_error(expr.span, "index access requires array or slice type");
+                            return Ok(None);
+                        }
+                    };
+                    place_info.place.projection.push(mir::PlaceElem::Index(index_local));
+                    place_info.ty = element_ty;
+                    place_info.struct_def = self.struct_def_from_ty(&place_info.ty);
+                }
+                HirAssignTargetProjection::Slice(slice) => {
+                    let mut base_ty = place_info.ty.clone();
+                    loop {
+                        match &base_ty.kind {
+                            TyKind::Ref(_, inner, _) => {
+                                place_info.place.projection.push(mir::PlaceElem::Deref);
+                                base_ty = inner.as_ref().clone();
+                            }
+                            TyKind::RawPtr(type_and_mut) => {
+                                place_info.place.projection.push(mir::PlaceElem::Deref);
+                                base_ty = type_and_mut.ty.as_ref().clone();
+                            }
+                            _ => break,
+                        }
+                    }
+                    let element_ty = match &base_ty.kind {
+                        TyKind::Array(elem, _) => *elem.clone(),
+                        TyKind::Slice(elem) => *elem.clone(),
+                        _ => {
+                            self.lowering
+                                .emit_error(expr.span, "slice access requires array or slice type");
+                            return Ok(None);
+                        }
+                    };
+                    let Some(from) = slice.start.as_ref().map_or(Some(0), |start| {
+                        self.evaluate_array_length(start.as_ref())
+                    }) else {
+                        return Ok(None);
+                    };
+                    let Some(mut to) = (match slice.end.as_ref() {
+                        Some(end) => self.evaluate_array_length(end.as_ref()),
+                        None => match &base_ty.kind {
+                            TyKind::Array(_, len) => self.const_kind_to_u64(expr.span, len),
+                            _ => None,
+                        },
+                    }) else {
+                        return Ok(None);
+                    };
+                    if slice.inclusive {
+                        to = to.saturating_add(1);
+                    }
+                    if to < from {
+                        self.lowering.emit_error(expr.span, "slice end is before slice start");
+                        return Ok(None);
+                    }
+                    place_info
+                        .place
+                        .projection
+                        .push(mir::PlaceElem::Subslice {
+                            from,
+                            to,
+                            from_end: false,
+                        });
+                    place_info.ty = Ty {
+                        kind: TyKind::Slice(Box::new(element_ty)),
+                    };
+                    place_info.struct_def = None;
+                }
+            }
+        }
+
+        Ok(Some(place_info))
+    }
+
+    fn lower_place(&mut self, expr: &hir::Expr) -> Result<Option<PlaceInfo>> {
+        self.lower_place_from_projected(expr)
     }
 
     fn materialize_expr_place(&mut self, expr: &hir::Expr) -> Result<PlaceInfo> {

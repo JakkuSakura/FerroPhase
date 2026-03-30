@@ -113,6 +113,17 @@ fn expr_has_unresolved_paths(expr: &hir::Expr) -> bool {
         hir::ExprKind::Index(base, index) => {
             expr_has_unresolved_paths(base) || expr_has_unresolved_paths(index)
         }
+        hir::ExprKind::Slice(slice) => {
+            expr_has_unresolved_paths(&slice.base)
+                || slice
+                    .start
+                    .as_ref()
+                    .is_some_and(|expr| expr_has_unresolved_paths(expr))
+                || slice
+                    .end
+                    .as_ref()
+                    .is_some_and(|expr| expr_has_unresolved_paths(expr))
+        }
         hir::ExprKind::Struct(path, fields) => {
             path_has_unresolved_segments(path)
                 || fields
@@ -344,6 +355,15 @@ fn collect_expr_refs(
         hir::ExprKind::Index(base, index) => {
             collect_expr_refs(base, full_map, tail_map, work);
             collect_expr_refs(index, full_map, tail_map, work);
+        }
+        hir::ExprKind::Slice(slice) => {
+            collect_expr_refs(&slice.base, full_map, tail_map, work);
+            if let Some(start) = &slice.start {
+                collect_expr_refs(start.as_ref(), full_map, tail_map, work);
+            }
+            if let Some(end) = &slice.end {
+                collect_expr_refs(end.as_ref(), full_map, tail_map, work);
+            }
         }
         hir::ExprKind::Struct(path, fields) => {
             collect_path_refs(path, full_map, tail_map, work);

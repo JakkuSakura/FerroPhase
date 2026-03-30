@@ -8,34 +8,52 @@ use fp_core::Result;
 use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
 use fp_lang::FerroFrontend;
 
-fn interpret_and_run(source: &str) -> Result<Value> {
-    let frontend = FerroFrontend::new();
-    let result = frontend.parse(source, Some(Path::new("<json-test>")))?;
-    let mut ast = result.ast;
-    inject_core_std(&frontend, &mut ast)?;
+fn interpret_and_run(source: &str) -> Result<i64> {
+    // The interpreter (and JSON lowering) can be stack-intensive; run each test with a larger
+    // stack to avoid platform-default test thread limits.
+    let source = source.to_string();
+    let handle = std::thread::Builder::new()
+        .name("fp-json-api-test".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || -> Result<i64> {
+            let frontend = FerroFrontend::new();
+            let result = frontend.parse(source.as_str(), Some(Path::new("<json-test>")))?;
+            let mut ast = result.ast;
+            inject_core_std(&frontend, &mut ast)?;
 
-    let ctx = SharedScopedContext::new();
-    let options = InterpreterOptions {
-        mode: InterpreterMode::Runtime,
-        macro_parser: result.macro_parser,
-        intrinsic_normalizer: result.intrinsic_normalizer,
-        ..InterpreterOptions::default()
-    };
+            let ctx = SharedScopedContext::new();
+            let options = InterpreterOptions {
+                mode: InterpreterMode::Runtime,
+                macro_parser: result.macro_parser,
+                intrinsic_normalizer: result.intrinsic_normalizer,
+                ..InterpreterOptions::default()
+            };
 
-    let mut interpreter = AstInterpreter::new(&ctx, options);
-    interpreter.interpret(&mut ast);
+            let mut interpreter = AstInterpreter::new(&ctx, options);
+            interpreter.interpret(&mut ast);
 
-    let value = interpreter
-        .execute_main()
-        .expect("expected main to be available");
-    let outcome = interpreter.take_outcome();
-    assert!(
-        !outcome.has_errors,
-        "unexpected interpreter errors: {:#?}",
-        outcome.diagnostics
-    );
+            let value = interpreter
+                .execute_main()
+                .expect("expected main to be available");
+            let outcome = interpreter.take_outcome();
+            assert!(
+                !outcome.has_errors,
+                "unexpected interpreter errors: {:#?}",
+                outcome.diagnostics
+            );
 
-    Ok(value)
+            match value {
+                Value::Int(int_value) => Ok(int_value.value),
+                other => Err(fp_core::error::Error::from(format!(
+                    "expected main to return int, got {other}"
+                ))),
+            }
+        })
+        .map_err(|err| fp_core::error::Error::from(format!("spawn test thread: {err}")))?;
+
+    handle.join().map_err(|_| {
+        fp_core::error::Error::from("json api test thread panicked")
+    })?
 }
 
 fn inject_core_std(frontend: &FerroFrontend, ast: &mut Node) -> Result<()> {
@@ -184,7 +202,7 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }
 
@@ -201,7 +219,7 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }
 
@@ -218,7 +236,7 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }
 
@@ -234,7 +252,7 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }
 
@@ -272,7 +290,7 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }
 
@@ -289,7 +307,7 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }
 
@@ -307,7 +325,7 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }
 
@@ -325,7 +343,7 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }
 
@@ -343,7 +361,7 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }
 
@@ -360,7 +378,7 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }
 
@@ -377,7 +395,7 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }
 
@@ -394,7 +412,7 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }
 
@@ -413,6 +431,6 @@ fn main() {
 "#;
 
     let value = interpret_and_run(source)?;
-    assert_eq!(value, Value::int(1));
+    assert_eq!(value, 1);
     Ok(())
 }

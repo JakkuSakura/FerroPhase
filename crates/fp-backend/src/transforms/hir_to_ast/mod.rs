@@ -248,6 +248,32 @@ fn lift_expr(expr: &hir::Expr) -> Result<Expr> {
             obj: Box::new(lift_expr(base)?),
             index: Box::new(lift_expr(index)?),
         })),
+        hir::ExprKind::Slice(slice) => {
+            let range = Expr::new(ast::ExprKind::Range(ast::ExprRange {
+                span: expr.span,
+                start: slice
+                    .start
+                    .as_ref()
+                    .map(|expr| lift_expr(expr.as_ref()).map(Box::new))
+                    .transpose()?,
+                limit: if slice.inclusive {
+                    ast::ExprRangeLimit::Inclusive
+                } else {
+                    ast::ExprRangeLimit::Exclusive
+                },
+                end: slice
+                    .end
+                    .as_ref()
+                    .map(|expr| lift_expr(expr.as_ref()).map(Box::new))
+                    .transpose()?,
+                step: None,
+            }));
+            Expr::new(ast::ExprKind::Index(ExprIndex {
+                span: expr.span,
+                obj: Box::new(lift_expr(&slice.base)?),
+                index: Box::new(range),
+            }))
+        }
         hir::ExprKind::Cast(value, ty) => Expr::new(ast::ExprKind::Cast(ExprCast {
             span: expr.span,
             expr: Box::new(lift_expr(value)?),

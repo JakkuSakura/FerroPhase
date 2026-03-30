@@ -155,6 +155,7 @@ pub enum ExprKind {
     MethodCall(Box<Expr>, Symbol, Vec<CallArg>),
     FieldAccess(Box<Expr>, Symbol),
     Index(Box<Expr>, Box<Expr>),
+    Slice(SliceExpr),
     Cast(Box<Expr>, Box<TypeExpr>),
     Struct(Path, Vec<StructExprField>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
@@ -203,6 +204,15 @@ pub struct ExprReference {
     pub hir_id: HirId,
     pub mutable: crate::hir::ty::Mutability,
     pub expr: Box<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SliceExpr {
+    pub hir_id: HirId,
+    pub base: Box<Expr>,
+    pub start: Option<Box<Expr>>,
+    pub end: Option<Box<Expr>>,
+    pub inclusive: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -683,6 +693,15 @@ impl ExprKind {
             ),
             ExprKind::FieldAccess(expr, _) => expr.span(),
             ExprKind::Index(expr, index) => Span::union([expr.span(), index.span()]),
+            ExprKind::Slice(slice) => Span::union(
+                [
+                    Some(slice.base.span()),
+                    slice.start.as_ref().map(|expr| expr.span()),
+                    slice.end.as_ref().map(|expr| expr.span()),
+                ]
+                .into_iter()
+                .flatten(),
+            ),
             ExprKind::Cast(expr, ty) => Span::union([expr.span(), ty.span()]),
             ExprKind::Struct(path, fields) => Span::union(
                 Some(path.span())

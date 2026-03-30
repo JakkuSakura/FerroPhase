@@ -164,6 +164,73 @@ fn transform_index_expression_to_hir() -> Result<()> {
     Ok(())
 }
 
+fn range_expr(
+    start: Option<ast::Expr>,
+    limit: ast::ExprRangeLimit,
+    end: Option<ast::Expr>,
+) -> ast::Expr {
+    ast::Expr::from(ast::ExprKind::Range(ast::ExprRange {
+        span: Span::null(),
+        start: start.map(Box::new),
+        limit,
+        end: end.map(Box::new),
+        step: None,
+    }))
+}
+
+#[test]
+fn transform_slice_syntax_to_hir_slice_expr_preserves_bounds() -> Result<()> {
+    let mut generator = HirGenerator::new();
+
+    let base = ast::Expr::ident(ident("values"));
+    let start = ast::Expr::ident(ident("i"));
+    let end = ast::Expr::ident(ident("j"));
+
+    let cases = vec![
+        (None, ast::ExprRangeLimit::Exclusive, None, false, false),
+        (Some(start.clone()), ast::ExprRangeLimit::Exclusive, None, true, false),
+        (None, ast::ExprRangeLimit::Exclusive, Some(end.clone()), false, true),
+        (
+            Some(start.clone()),
+            ast::ExprRangeLimit::Exclusive,
+            Some(end.clone()),
+            true,
+            true,
+        ),
+        (None, ast::ExprRangeLimit::Inclusive, Some(end.clone()), false, true),
+        (
+            Some(start.clone()),
+            ast::ExprRangeLimit::Inclusive,
+            Some(end.clone()),
+            true,
+            true,
+        ),
+    ];
+
+    for (range_start, limit, range_end, expect_start, expect_end) in cases {
+        let inclusive = matches!(limit, ast::ExprRangeLimit::Inclusive);
+        let slice_index = ast::Expr::from(ast::ExprKind::Index(ast::ExprIndex {
+            span: Span::null(),
+            obj: Box::new(base.clone()),
+            index: Box::new(range_expr(range_start, limit, range_end)),
+        }));
+        let lowered = generator.transform_expr_to_hir(&slice_index)?;
+
+        let hir::ExprKind::Slice(slice) = lowered.kind else {
+            return Err(crate::error::optimization_error(format!(
+                "expected HIR slice expr, got {:?}",
+                lowered.kind
+            )));
+        };
+
+        assert_eq!(slice.start.is_some(), expect_start);
+        assert_eq!(slice.end.is_some(), expect_end);
+        assert_eq!(slice.inclusive, inclusive);
+    }
+
+    Ok(())
+}
+
 #[test]
 fn transform_await_expression_to_hir_passthrough() -> Result<()> {
     let mut generator = HirGenerator::new();
@@ -615,6 +682,15 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
             hir::ExprKind::Index(base, index) => {
                 collect_paths(base, out);
                 collect_paths(index, out);
+            }
+            hir::ExprKind::Slice(slice) => {
+                collect_paths(&slice.base, out);
+                if let Some(start) = &slice.start {
+                    collect_paths(start, out);
+                }
+                if let Some(end) = &slice.end {
+                    collect_paths(end, out);
+                }
             }
             hir::ExprKind::FormatString(_) => {}
             hir::ExprKind::Literal(_) | hir::ExprKind::Continue => {}

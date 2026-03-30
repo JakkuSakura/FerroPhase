@@ -38,6 +38,9 @@ use fp_core::module::resolver::{ModuleImport, ResolvedSymbol, ResolverError, Res
 use fp_core::module::{ModuleId, ModuleLanguage, SymbolDescriptor, SymbolKind};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::package::graph::PackageGraph;
+use fp_core::place::{
+    project_assign_target, AssignTargetBase, AssignTargetProjection, ProjectedAssignTarget,
+};
 use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
 use fp_typing::runtime_types::{resolve_type_binding_match, TypeBindingMatch};
@@ -322,18 +325,26 @@ struct RuntimeRef {
 enum RuntimeRefTarget {
     Whole(Arc<Mutex<Value>>),
     Field {
-        shared: Arc<Mutex<Value>>,
+        base: Box<RuntimeRef>,
         field: String,
     },
     Index {
-        shared: Arc<Mutex<Value>>,
+        base: Box<RuntimeRef>,
         index: usize,
     },
     Slice {
-        shared: Arc<Mutex<Value>>,
+        base: Box<RuntimeRef>,
         start: usize,
         end: usize,
     },
+}
+
+#[derive(Debug, Clone)]
+enum RuntimeLValue {
+    Place(RuntimeRef),
+    Binding(Name),
+    NotPlace,
+    Undefined,
 }
 
 impl PartialEq for RuntimeRef {
@@ -342,49 +353,138 @@ impl PartialEq for RuntimeRef {
             (RuntimeRefTarget::Whole(lhs), RuntimeRefTarget::Whole(rhs)) => Arc::ptr_eq(lhs, rhs),
             (
                 RuntimeRefTarget::Field {
-                    shared: lhs,
+                    base: lhs_base,
                     field: lhs_field,
                 },
                 RuntimeRefTarget::Field {
-                    shared: rhs,
+                    base: rhs_base,
                     field: rhs_field,
                 },
-            ) => Arc::ptr_eq(lhs, rhs) && lhs_field == rhs_field,
+            ) => lhs_base == rhs_base && lhs_field == rhs_field,
             (
                 RuntimeRefTarget::Index {
-                    shared: lhs,
+                    base: lhs_base,
                     index: lhs_index,
                 },
                 RuntimeRefTarget::Index {
-                    shared: rhs,
+                    base: rhs_base,
                     index: rhs_index,
                 },
-            ) => Arc::ptr_eq(lhs, rhs) && lhs_index == rhs_index,
+            ) => lhs_base == rhs_base && lhs_index == rhs_index,
             (
                 RuntimeRefTarget::Slice {
-                    shared: lhs,
+                    base: lhs_base,
                     start: lhs_start,
                     end: lhs_end,
                 },
                 RuntimeRefTarget::Slice {
-                    shared: rhs,
+                    base: rhs_base,
                     start: rhs_start,
                     end: rhs_end,
                 },
-            ) => Arc::ptr_eq(lhs, rhs) && lhs_start == rhs_start && lhs_end == rhs_end,
+            ) => lhs_base == rhs_base && lhs_start == rhs_start && lhs_end == rhs_end,
             _ => false,
         }
     }
 }
 
 impl RuntimeRef {
+    fn whole(shared: Arc<Mutex<Value>>) -> Self {
+        Self {
+            target: RuntimeRefTarget::Whole(shared),
+        }
+    }
+
+    fn field(base: RuntimeRef, field: impl Into<String>) -> Self {
+        Self {
+            target: RuntimeRefTarget::Field {
+                base: Box::new(base),
+                field: field.into(),
+            },
+        }
+    }
+
+    fn index(base: RuntimeRef, index: usize) -> Self {
+        Self {
+            target: RuntimeRefTarget::Index {
+                base: Box::new(base),
+                index,
+            },
+        }
+    }
+
+    fn slice(base: RuntimeRef, start: usize, end: usize) -> Self {
+        Self {
+            target: RuntimeRefTarget::Slice {
+                base: Box::new(base),
+                start,
+                end,
+            },
+        }
+    }
+
     fn shared(&self) -> &Arc<Mutex<Value>> {
         match &self.target {
-            RuntimeRefTarget::Whole(shared)
-            | RuntimeRefTarget::Field { shared, .. }
-            | RuntimeRefTarget::Index { shared, .. }
-            | RuntimeRefTarget::Slice { shared, .. } => shared,
+            RuntimeRefTarget::Whole(shared) => shared,
+            RuntimeRefTarget::Field { base, .. }
+            | RuntimeRefTarget::Index { base, .. }
+            | RuntimeRefTarget::Slice { base, .. } => base.shared(),
         }
+    }
+}
+
+fn select_chain_to_path_segments(expr: &Expr, out: &mut Vec<Ident>) -> Option<Name> {
+    match expr.kind() {
+        ExprKind::Name(locator) => {
+            let mut path = locator.to_path();
+            path.segments.extend(out.drain(..));
+            Some(Name::path(path))
+        }
+        ExprKind::Select(select) => {
+            out.insert(0, select.field.clone());
+            select_chain_to_path_segments(select.obj.as_ref(), out)
+        }
+        ExprKind::Paren(paren) => select_chain_to_path_segments(paren.expr.as_ref(), out),
+        _ => None,
+    }
+}
+
+fn runtime_ref_target_value_mut<'a>(
+    target: &RuntimeRefTarget,
+    root: &'a mut Value,
+) -> std::result::Result<Option<&'a mut Value>, String> {
+    match target {
+        RuntimeRefTarget::Whole(_) => Ok(Some(root)),
+        RuntimeRefTarget::Field { base, field } => {
+            let Some(base_value) = runtime_ref_target_value_mut(&base.target, root)? else {
+                return Ok(None);
+            };
+            match base_value {
+                Value::Struct(struct_value) => Ok(struct_value
+                    .structural
+                    .fields
+                    .iter_mut()
+                    .find(|existing| existing.name.as_str() == field.as_str())
+                    .map(|existing| &mut existing.value)),
+                Value::Structural(structural) => Ok(structural
+                    .fields
+                    .iter_mut()
+                    .find(|existing| existing.name.as_str() == field.as_str())
+                    .map(|existing| &mut existing.value)),
+                _ => Err("field reference requires struct value".to_string()),
+            }
+        }
+        RuntimeRefTarget::Index { base, index } => {
+            let Some(base_value) = runtime_ref_target_value_mut(&base.target, root)? else {
+                return Ok(None);
+            };
+            match base_value {
+                Value::List(list) => Ok(list.values.get_mut(*index)),
+                Value::Tuple(tuple) => Ok(tuple.values.get_mut(*index)),
+                _ => Err("index reference requires list or tuple".to_string()),
+            }
+        }
+        RuntimeRefTarget::Slice { .. } => Ok(None),
     }
 }
 
@@ -5224,150 +5324,227 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    // Evaluate assignment with mutation tracking.
+    fn resolve_runtime_lvalue(
+        &mut self,
+        target: &mut Expr,
+    ) -> std::result::Result<RuntimeLValue, RuntimeFlow> {
+        let Some(projected) = project_assign_target(target) else {
+            return Ok(RuntimeLValue::NotPlace);
+        };
+        self.resolve_runtime_lvalue_projected(projected)
+    }
+
+    fn resolve_runtime_lvalue_projected(
+        &mut self,
+        projected: ProjectedAssignTarget,
+    ) -> std::result::Result<RuntimeLValue, RuntimeFlow> {
+        let mut current = match projected.base {
+            AssignTargetBase::Name(name) => {
+                if let Some(ident) = name.as_ident() {
+                    if let Some(stored) = self.lookup_stored_value_mut(ident.as_str()) {
+                        if !projected.projections.is_empty() {
+                            let stored_value = stored.value();
+                            if let Value::Any(any) = stored_value {
+                                if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                                    RuntimeLValue::Place(runtime_ref.clone())
+                                } else if let Some(shared) = stored.shared_handle() {
+                                    RuntimeLValue::Place(RuntimeRef::whole(shared))
+                                } else {
+                                    RuntimeLValue::NotPlace
+                                }
+                            } else if let Some(shared) = stored.shared_handle() {
+                                RuntimeLValue::Place(RuntimeRef::whole(shared))
+                            } else {
+                                RuntimeLValue::NotPlace
+                            }
+                        } else if let Some(shared) = stored.shared_handle() {
+                            RuntimeLValue::Place(RuntimeRef::whole(shared))
+                        } else {
+                            return Ok(RuntimeLValue::Binding(name));
+                        }
+                    } else if projected.projections.is_empty() {
+                        return Ok(RuntimeLValue::Binding(name));
+                    } else {
+                        let mut base_expr = Expr::name(name.clone());
+                        let flow = self.eval_expr_runtime(&mut base_expr);
+                        let value = match flow {
+                            RuntimeFlow::Value(value) => value,
+                            other => return Err(other),
+                        };
+                        if let Value::Any(any) = value {
+                            if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                                RuntimeLValue::Place(runtime_ref.clone())
+                            } else {
+                                RuntimeLValue::Binding(name)
+                            }
+                        } else {
+                            RuntimeLValue::Binding(name)
+                        }
+                    }
+                } else if projected.projections.is_empty() {
+                    return Ok(RuntimeLValue::Binding(name));
+                } else {
+                    let mut base_expr = Expr::name(name.clone());
+                    let flow = self.eval_expr_runtime(&mut base_expr);
+                    let value = match flow {
+                        RuntimeFlow::Value(value) => value,
+                        other => return Err(other),
+                    };
+                    if let Value::Any(any) = value {
+                        if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                            RuntimeLValue::Place(runtime_ref.clone())
+                        } else {
+                            RuntimeLValue::Binding(name)
+                        }
+                    } else {
+                        RuntimeLValue::Binding(name)
+                    }
+                }
+            }
+            AssignTargetBase::Expr(mut expr) => {
+                let flow = self.eval_expr_runtime(expr.as_mut());
+                let value = match flow {
+                    RuntimeFlow::Value(value) => value,
+                    other => return Err(other),
+                };
+                if let Value::Any(any) = value {
+                    if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                        RuntimeLValue::Place(runtime_ref.clone())
+                    } else {
+                        RuntimeLValue::NotPlace
+                    }
+                } else {
+                    RuntimeLValue::NotPlace
+                }
+            }
+        };
+
+        for projection in projected.projections {
+            current = match (current, projection) {
+                (RuntimeLValue::Place(runtime_ref), AssignTargetProjection::Field(field)) => {
+                    RuntimeLValue::Place(RuntimeRef::field(runtime_ref, field.as_str().to_string()))
+                }
+                (RuntimeLValue::Place(runtime_ref), AssignTargetProjection::Index(mut index_expr)) => {
+                    let index_value = match self.eval_expr_runtime(index_expr.as_mut()) {
+                        RuntimeFlow::Value(value) => value,
+                        other => return Err(other),
+                    };
+                    let idx = match self.numeric_to_non_negative_usize(&index_value, "index") {
+                        Some(value) => value,
+                        None => return Ok(RuntimeLValue::Undefined),
+                    };
+                    match &runtime_ref.target {
+                        RuntimeRefTarget::Slice { base, start, end } => {
+                            let actual = start.saturating_add(idx);
+                            if actual >= *end {
+                                self.emit_error("index out of bounds for slice");
+                                return Ok(RuntimeLValue::Undefined);
+                            }
+                            RuntimeLValue::Place(RuntimeRef::index(base.as_ref().clone(), actual))
+                        }
+                        _ => RuntimeLValue::Place(RuntimeRef::index(runtime_ref, idx)),
+                    }
+                }
+                (RuntimeLValue::Place(runtime_ref), AssignTargetProjection::Slice(slice)) => {
+                    let start = match slice.start {
+                        Some(mut expr) => {
+                            let value = match self.eval_expr_runtime(expr.as_mut()) {
+                                RuntimeFlow::Value(value) => value,
+                                other => return Err(other),
+                            };
+                            match self.numeric_to_non_negative_usize(&value, "range start") {
+                                Some(value) => value,
+                                None => return Ok(RuntimeLValue::Undefined),
+                            }
+                        }
+                        None => 0,
+                    };
+                    let end = match slice.end {
+                        Some(mut expr) => {
+                            let value = match self.eval_expr_runtime(expr.as_mut()) {
+                                RuntimeFlow::Value(value) => value,
+                                other => return Err(other),
+                            };
+                            match self.numeric_to_non_negative_usize(&value, "range end") {
+                                Some(value) => {
+                                    if slice.inclusive {
+                                        value.saturating_add(1)
+                                    } else {
+                                        value
+                                    }
+                                }
+                                None => return Ok(RuntimeLValue::Undefined),
+                            }
+                        }
+                        None => {
+                            let base_value = self.runtime_ref_value(&runtime_ref);
+                            match base_value {
+                                Value::List(list) => list.values.len(),
+                                Value::Bytes(bytes) => bytes.value.len(),
+                                Value::Undefined(_) => return Ok(RuntimeLValue::Undefined),
+                                _ => {
+                                    self.emit_error("slice reference requires list or bytes");
+                                    return Ok(RuntimeLValue::Undefined);
+                                }
+                            }
+                        }
+                    };
+                    RuntimeLValue::Place(RuntimeRef::slice(runtime_ref, start, end))
+                }
+                (RuntimeLValue::Place(runtime_ref), AssignTargetProjection::Deref) => {
+                    RuntimeLValue::Place(runtime_ref)
+                }
+                (RuntimeLValue::Binding(name), AssignTargetProjection::Field(field)) => {
+                    let mut segments = vec![field];
+                    if let Some(next) = select_chain_to_path_segments(&Expr::name(name), &mut segments) {
+                        RuntimeLValue::Binding(next)
+                    } else {
+                        RuntimeLValue::NotPlace
+                    }
+                }
+                (RuntimeLValue::Binding(_), _) => RuntimeLValue::NotPlace,
+                (RuntimeLValue::Undefined, _) => RuntimeLValue::Undefined,
+                (RuntimeLValue::NotPlace, _) => RuntimeLValue::NotPlace,
+            };
+        }
+
+        Ok(current)
+    }
+
+    // Evaluate assignment by first resolving the LHS as a runtime lvalue and then storing through it.
     fn eval_assign_runtime(&mut self, assign: &mut fp_core::ast::ExprAssign) -> RuntimeFlow {
         let value = match self.eval_expr_runtime(assign.value.as_mut()) {
             RuntimeFlow::Value(value) => value,
             other => return other,
         };
-        match assign.target.kind_mut() {
-            ExprKind::Name(locator) => {
-                let name = locator
-                    .as_ident()
-                    .map(|ident| ident.as_str().to_string())
-                    .unwrap_or_else(|| locator.to_string());
-                if let Some(stored) = self.lookup_stored_value_mut(&name) {
-                    if stored.assign(value.clone()) {
-                        return RuntimeFlow::Value(value);
-                    }
+
+        let lvalue = match self.resolve_runtime_lvalue(assign.target.as_mut()) {
+            Ok(lvalue) => lvalue,
+            Err(flow) => return flow,
+        };
+
+        match lvalue {
+            RuntimeLValue::Place(runtime_ref) => {
+                if self.assign_runtime_ref(&runtime_ref, value.clone()) {
+                    RuntimeFlow::Value(value)
+                } else {
+                    RuntimeFlow::Value(Value::undefined())
                 }
+            }
+            RuntimeLValue::Binding(locator) => {
                 if self.allow_binding_replacement
-                    && self.try_replace_declared_binding(locator, value.clone())
+                    && self.try_replace_declared_binding(&locator, value.clone())
                 {
                     return RuntimeFlow::Value(value);
                 }
                 self.emit_error(format!("assignment target '{}' is not mutable", locator));
                 RuntimeFlow::Value(Value::undefined())
             }
-            ExprKind::Select(select) => {
-                if self.allow_binding_replacement {
-                    if let ExprKind::Name(locator) = select.obj.kind() {
-                        let mut path = locator.to_path();
-                        path.segments.push(select.field.clone());
-                        let name = Name::path(path);
-                        if self.try_replace_declared_binding(&name, value.clone()) {
-                            return RuntimeFlow::Value(value);
-                        }
-                    }
-                }
-                if let ExprKind::Name(locator) = select.obj.kind_mut() {
-                    let name = locator
-                        .as_ident()
-                        .map(|ident| ident.as_str().to_string())
-                        .unwrap_or_else(|| locator.to_string());
-                    if let Some(stored) = self.lookup_stored_value_mut(&name) {
-                        if let Some(shared) = stored.shared_handle() {
-                            match shared.lock() {
-                                Ok(mut guard) => {
-                                    if self.assign_field_value(
-                                        &mut guard,
-                                        &select.field,
-                                        value.clone(),
-                                    ) {
-                                        return RuntimeFlow::Value(value);
-                                    }
-                                }
-                                Err(err) => {
-                                    let mut guard = err.into_inner();
-                                    if self.assign_field_value(
-                                        &mut guard,
-                                        &select.field,
-                                        value.clone(),
-                                    ) {
-                                        return RuntimeFlow::Value(value);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                self.emit_error("cannot assign to field on non-mutable target");
-                RuntimeFlow::Value(Value::undefined())
-            }
-            ExprKind::Dereference(deref) => {
-                if let ExprKind::Name(locator) = deref.referee.kind() {
-                    if let Some(ident) = locator.as_ident() {
-                        if let Some(stored) = self.lookup_stored_value_mut(ident.as_str()) {
-                            if stored.assign(value.clone()) {
-                                return RuntimeFlow::Value(value);
-                            }
-                        }
-                    }
-                }
-                let target = match self.eval_expr_runtime(deref.referee.as_mut()) {
-                    RuntimeFlow::Value(value) => value,
-                    other => return other,
-                };
-                if let Value::Any(any) = target {
-                    if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
-                        if self.assign_runtime_ref(runtime_ref, value.clone()) {
-                            return RuntimeFlow::Value(value);
-                        }
-                    }
-                }
-                self.emit_error("cannot assign through non-mutable reference");
-                RuntimeFlow::Value(Value::undefined())
-            }
-            ExprKind::Index(index_expr) => {
-                let index_value = match self.eval_expr_runtime(index_expr.index.as_mut()) {
-                    RuntimeFlow::Value(value) => value,
-                    other => return other,
-                };
-                if let ExprKind::Name(locator) = index_expr.obj.kind() {
-                    if self.allow_binding_replacement
-                        && self.try_replace_declared_binding(locator, index_value.clone())
-                    {
-                        return RuntimeFlow::Value(index_value);
-                    }
-                }
-                let idx = match self.numeric_to_non_negative_usize(&index_value, "index") {
-                    Some(value) => value,
-                    None => return RuntimeFlow::Value(Value::undefined()),
-                };
-
-                if let ExprKind::Name(locator) = index_expr.obj.kind() {
-                    if let Some(ident) = locator.as_ident() {
-                        let shared_handle = match self.lookup_stored_value_mut(ident.as_str()) {
-                            Some(StoredValue::Shared(shared)) => Some(Arc::clone(shared)),
-                            _ => None,
-                        };
-                        if let Some(shared) = shared_handle {
-                            if self.assign_index_shared(&shared, idx, value.clone()) {
-                                return RuntimeFlow::Value(value);
-                            }
-                        }
-                    }
-                }
-
-                let target = match self.eval_expr_runtime(index_expr.obj.as_mut()) {
-                    RuntimeFlow::Value(value) => value,
-                    other => return other,
-                };
-                if let Value::Any(any) = target {
-                    if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
-                        if self.assign_runtime_ref_index(runtime_ref, idx, value.clone()) {
-                            return RuntimeFlow::Value(value);
-                        }
-                    }
-                }
-
-                self.emit_error("index assignment requires a mutable list binding");
-                RuntimeFlow::Value(Value::undefined())
-            }
-            _ => {
+            RuntimeLValue::NotPlace => {
                 self.emit_error("unsupported assignment target in runtime mode");
                 RuntimeFlow::Value(Value::undefined())
             }
+            RuntimeLValue::Undefined => RuntimeFlow::Value(Value::undefined()),
         }
     }
 
@@ -5696,40 +5873,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn assign_index_shared(
-        &mut self,
-        shared: &Arc<Mutex<Value>>,
-        idx: usize,
-        value: Value,
-    ) -> bool {
-        let mut guard = match shared.lock() {
-            Ok(guard) => guard,
-            Err(err) => err.into_inner(),
-        };
-        match &mut *guard {
-            Value::List(list) => {
-                if idx >= list.values.len() {
-                    self.emit_error("index out of bounds for list");
-                    return false;
-                }
-                list.values[idx] = value;
-                true
-            }
-            Value::Tuple(tuple) => {
-                if idx >= tuple.values.len() {
-                    self.emit_error("index out of bounds for tuple");
-                    return false;
-                }
-                tuple.values[idx] = value;
-                true
-            }
-            _ => {
-                self.emit_error("index assignment requires list or tuple");
-                false
-            }
-        }
-    }
-
     fn runtime_ref_value(&mut self, runtime_ref: &RuntimeRef) -> Value {
         let guard = match runtime_ref.shared().lock() {
             Ok(guard) => guard,
@@ -5800,50 +5943,22 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn assign_runtime_ref(&mut self, runtime_ref: &RuntimeRef, value: Value) -> bool {
-        match &runtime_ref.target {
-            RuntimeRefTarget::Whole(shared) => {
-                let mut guard = match shared.lock() {
-                    Ok(guard) => guard,
-                    Err(err) => err.into_inner(),
-                };
-                *guard = value;
+        let shared = Arc::clone(runtime_ref.shared());
+        let mut guard = match shared.lock() {
+            Ok(guard) => guard,
+            Err(err) => err.into_inner(),
+        };
+        match runtime_ref_target_value_mut(&runtime_ref.target, &mut guard) {
+            Ok(Some(target)) => {
+                *target = value;
                 true
             }
-            RuntimeRefTarget::Field { shared, field } => {
-                let mut guard = match shared.lock() {
-                    Ok(guard) => guard,
-                    Err(err) => err.into_inner(),
-                };
-                self.assign_field_value(&mut guard, &Ident::new(field.clone()), value)
-            }
-            RuntimeRefTarget::Index { shared, index } => {
-                self.assign_index_shared(shared, *index, value)
-            }
-            RuntimeRefTarget::Slice { .. } => {
+            Ok(None) => {
                 self.emit_error("cannot assign whole value through mutable slice reference");
                 false
             }
-        }
-    }
-
-    fn assign_runtime_ref_index(
-        &mut self,
-        runtime_ref: &RuntimeRef,
-        idx: usize,
-        value: Value,
-    ) -> bool {
-        match &runtime_ref.target {
-            RuntimeRefTarget::Whole(shared) => self.assign_index_shared(shared, idx, value),
-            RuntimeRefTarget::Slice { shared, start, end } => {
-                let actual = start.saturating_add(idx);
-                if actual >= *end {
-                    self.emit_error("index out of bounds for slice");
-                    return false;
-                }
-                self.assign_index_shared(shared, actual, value)
-            }
-            _ => {
-                self.emit_error("index assignment requires list or slice reference");
+            Err(message) => {
+                self.emit_error(message);
                 false
             }
         }
@@ -6352,37 +6467,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::undefined()
             }
         }
-    }
-
-    // Assign into a struct/structural value.
-    fn assign_field_value(&mut self, target: &mut Value, field: &Ident, value: Value) -> bool {
-        match target {
-            Value::Struct(struct_value) => {
-                if let Some(existing) = struct_value
-                    .structural
-                    .fields
-                    .iter_mut()
-                    .find(|f| f.name.as_str() == field.as_str())
-                {
-                    existing.value = value;
-                    return true;
-                }
-            }
-            Value::Structural(structural) => {
-                if let Some(existing) = structural
-                    .fields
-                    .iter_mut()
-                    .find(|f| f.name.as_str() == field.as_str())
-                {
-                    existing.value = value;
-                    return true;
-                }
-            }
-            _ => {}
-        }
-
-        self.emit_error(format!("field '{}' not found on struct", field));
-        false
     }
 
     fn lookup_enum_variant(&self, locator: &Name) -> Option<EnumVariantInfo> {
@@ -8423,9 +8507,41 @@ fn resolve_lang_item_handler(name: &str) -> Option<LangItemFn> {
 
 fn resolve_lang_instrinstic_handler(intrinsic: LangInstrinstic) -> Option<LangItemFn> {
     match intrinsic {
-        LangInstrinstic::TimeNow | LangInstrinstic::CreateStruct | LangInstrinstic::AddField | _ => {
-            None
-        }
+        LangInstrinstic::FsReadDir => Some(lang_fs_read_dir),
+        LangInstrinstic::FsWalkDir => Some(lang_fs_walk_dir),
+        LangInstrinstic::FsReadToString => Some(lang_fs_read_to_string),
+        LangInstrinstic::FsWriteString => Some(lang_fs_write_string),
+        LangInstrinstic::FsAppendString => Some(lang_fs_append_string),
+        LangInstrinstic::FsExists => Some(lang_fs_exists),
+        LangInstrinstic::FsIsDir => Some(lang_fs_is_dir),
+        LangInstrinstic::FsIsFile => Some(lang_fs_is_file),
+        LangInstrinstic::FsCreateDirAll => Some(lang_fs_create_dir_all),
+        LangInstrinstic::FsRemoveFile => Some(lang_fs_remove_file),
+        LangInstrinstic::FsRemoveDirAll => Some(lang_fs_remove_dir_all),
+        LangInstrinstic::FsGlob => Some(lang_fs_glob),
+        LangInstrinstic::EnvCurrentDir => Some(lang_env_current_dir),
+        LangInstrinstic::EnvTempDir => Some(lang_env_temp_dir),
+        LangInstrinstic::EnvHomeDir => Some(lang_env_home_dir),
+        LangInstrinstic::EnvVar => Some(lang_env_var),
+        LangInstrinstic::EnvVarExists => Some(lang_env_var_exists),
+        LangInstrinstic::PathJoin => Some(lang_path_join),
+        LangInstrinstic::PathParent => Some(lang_path_parent),
+        LangInstrinstic::PathFileName => Some(lang_path_file_name),
+        LangInstrinstic::PathExtension => Some(lang_path_extension),
+        LangInstrinstic::PathStem => Some(lang_path_stem),
+        LangInstrinstic::PathIsAbsolute => Some(lang_path_is_absolute),
+        LangInstrinstic::PathNormalize => Some(lang_path_normalize),
+        LangInstrinstic::IoReadStdinToString => Some(lang_io_read_stdin_to_string),
+        LangInstrinstic::IoWriteStdout => Some(lang_io_write_stdout),
+        LangInstrinstic::IoWriteStderr => Some(lang_io_write_stderr),
+        LangInstrinstic::YamlToJson => Some(lang_yaml_to_json),
+        LangInstrinstic::JsonParse => Some(lang_json_parse),
+        LangInstrinstic::TestCommandMockReset => Some(lang_test_command_mock_reset),
+        LangInstrinstic::TestCommandMockPush => Some(lang_test_command_mock_push),
+        LangInstrinstic::TestCommandMockTakeCalls => Some(lang_test_command_mock_take_calls),
+        LangInstrinstic::TestCommandMockApply => Some(lang_test_command_mock_apply),
+
+        LangInstrinstic::TimeNow | LangInstrinstic::CreateStruct | LangInstrinstic::AddField => None,
     }
 }
 

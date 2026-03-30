@@ -1051,8 +1051,6 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         | IntrinsicCallKind::TestCommandMockReset
         | IntrinsicCallKind::TestCommandMockPush
         | IntrinsicCallKind::TestCommandMockTakeCalls
-        | IntrinsicCallKind::TestCommandMockPush
-        | IntrinsicCallKind::TestCommandMockTakeCalls
         | IntrinsicCallKind::TestCommandMockApply => None,
     }
 }

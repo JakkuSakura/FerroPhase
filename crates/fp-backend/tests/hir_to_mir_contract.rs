@@ -1,8 +1,8 @@
 use fp_backend::transformations::MirLowering;
 use fp_core::ast::{TypeInt, TypePrimitive};
 use fp_core::hir::{
-    self, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Lit, Pat, PatKind, Path,
-    PathSegment, Program, Res, Symbol, TypeExpr, TypeExprKind, Visibility,
+    self, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Lit, Pat, PatKind,
+    Path, PathSegment, Program, Res, Symbol, TypeExpr, TypeExprKind, Visibility,
 };
 use fp_core::mir::{
     self,
@@ -73,6 +73,20 @@ fn local_path(hir_id: u32, name: &str, local_id: u32) -> Expr {
                 args: None,
             }],
             res: Some(Res::Local(local_id)),
+        }),
+        span(),
+    )
+}
+
+fn slice_expr(hir_id: u32, base: Expr, start: Expr, end: Expr) -> Expr {
+    Expr::new(
+        hir_id,
+        ExprKind::Slice(hir::SliceExpr {
+            hir_id: hir_id + 10_000,
+            base: Box::new(base),
+            start: Some(Box::new(start)),
+            end: Some(Box::new(end)),
+            inclusive: false,
         }),
         span(),
     )
@@ -413,6 +427,223 @@ fn lowers_index_expression_into_place_projection() {
     });
 
     assert!(has_index_projection, "expected index projection in MIR");
+}
+
+#[test]
+fn lowers_index_on_static_slice_into_subslice_then_index_projection() {
+    let values_pat = Pat {
+        hir_id: 41,
+        kind: PatKind::Binding {
+            name: Symbol::new("values"),
+            mutable: false,
+        },
+    };
+
+    let array_len = Expr::new(42, ExprKind::Literal(Lit::Integer(4)), span());
+    let values_ty = TypeExpr {
+        hir_id: 43,
+        kind: TypeExprKind::Array(
+            Box::new(primitive_type(TypePrimitive::Int(TypeInt::I64))),
+            Some(Box::new(array_len)),
+        ),
+        span: span(),
+    };
+
+    let values_param = hir::Param {
+        hir_id: 44,
+        pat: values_pat.clone(),
+        ty: values_ty,
+        is_context: false,
+        default: None,
+    };
+
+    let values_path = local_path(45, "values", values_pat.hir_id);
+    let start = literal_expr(46, 1);
+    let end = literal_expr(47, 3);
+    let slice = slice_expr(48, values_path, start, end);
+    let body_expr = Expr::new(
+        49,
+        ExprKind::Index(Box::new(slice), Box::new(literal_expr(50, 0))),
+        span(),
+    );
+    let body = hir::Body {
+        hir_id: 51,
+        params: vec![values_param.clone()],
+        value: body_expr,
+    };
+
+    let sig = FunctionSig {
+        name: Symbol::new("slice_pick"),
+        inputs: vec![values_param],
+        output: primitive_type(TypePrimitive::Int(TypeInt::I64)),
+        generics: Generics::default(),
+        abi: hir::Abi::Rust,
+    };
+
+    let function = Function::new(sig, Some(body), false, false);
+    let item = Item {
+        hir_id: 52,
+        def_id: 53,
+        visibility: Visibility::Public,
+        kind: ItemKind::Function(function),
+        span: span(),
+    };
+
+    let mut lowering = mir_lowering();
+    let mir_program = lowering
+        .transform(program_with_items(vec![item]))
+        .expect("HIR→MIR lowering should succeed");
+    let (diagnostics, has_errors) = lowering.take_diagnostics();
+    assert!(diagnostics.is_empty(), "unexpected diagnostics: {diagnostics:?}");
+    assert!(!has_errors);
+
+    let mir_function = match &mir_program.items[0].kind {
+        MirItemKind::Function(func) => func,
+        other => panic!("expected MIR function item, found {other:?}"),
+    };
+    let body = mir_program
+        .bodies
+        .get(&mir_function.body_id)
+        .expect("function body present");
+    let block = &body.basic_blocks[0];
+    let has_subslice_container_get = block.statements.iter().any(|stmt| match &stmt.kind {
+        StatementKind::Assign(
+            _,
+            Rvalue::ContainerGet {
+                container: Operand::Copy(place),
+                ..
+            },
+        ) => matches!(
+            place.projection.last(),
+            Some(mir::PlaceElem::Subslice {
+                from: 1,
+                to: 3,
+                from_end: false,
+            })
+        ),
+        _ => false,
+    });
+
+    assert!(
+        has_subslice_container_get,
+        "expected static slice indexing to preserve MIR subslice projection"
+    );
+}
+
+#[test]
+fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection() {
+    let values_pat = binding_pat(60, "values", false);
+    let start_pat = binding_pat(61, "start", false);
+    let end_pat = binding_pat(62, "end", false);
+
+    let array_len = Expr::new(63, ExprKind::Literal(Lit::Integer(4)), span());
+    let values_ty = TypeExpr {
+        hir_id: 64,
+        kind: TypeExprKind::Array(
+            Box::new(primitive_type(TypePrimitive::Int(TypeInt::I64))),
+            Some(Box::new(array_len)),
+        ),
+        span: span(),
+    };
+
+    let usize_ty = path_type("usize");
+    let values_param = hir::Param {
+        hir_id: 65,
+        pat: values_pat.clone(),
+        ty: values_ty,
+        is_context: false,
+        default: None,
+    };
+    let start_param = hir::Param {
+        hir_id: 66,
+        pat: start_pat.clone(),
+        ty: usize_ty.clone(),
+        is_context: false,
+        default: None,
+    };
+    let end_param = hir::Param {
+        hir_id: 67,
+        pat: end_pat.clone(),
+        ty: usize_ty,
+        is_context: false,
+        default: None,
+    };
+
+    let values_path = local_path(68, "values", values_pat.hir_id);
+    let start_path = local_path(69, "start", start_pat.hir_id);
+    let end_path = local_path(70, "end", end_pat.hir_id);
+    let slice = slice_expr(71, values_path, start_path, end_path);
+    let body_expr = Expr::new(
+        72,
+        ExprKind::Index(Box::new(slice), Box::new(literal_expr(73, 0))),
+        span(),
+    );
+    let body = hir::Body {
+        hir_id: 74,
+        params: vec![values_param.clone(), start_param.clone(), end_param.clone()],
+        value: body_expr,
+    };
+
+    let sig = FunctionSig {
+        name: Symbol::new("slice_pick_dynamic"),
+        inputs: vec![values_param, start_param, end_param],
+        output: primitive_type(TypePrimitive::Int(TypeInt::I64)),
+        generics: Generics::default(),
+        abi: hir::Abi::Rust,
+    };
+
+    let function = Function::new(sig, Some(body), false, false);
+    let item = Item {
+        hir_id: 75,
+        def_id: 76,
+        visibility: Visibility::Public,
+        kind: ItemKind::Function(function),
+        span: span(),
+    };
+
+    let mut lowering = mir_lowering();
+    let mir_program = lowering
+        .transform(program_with_items(vec![item]))
+        .expect("HIR→MIR lowering should succeed");
+    let (diagnostics, has_errors) = lowering.take_diagnostics();
+    assert!(diagnostics.is_empty(), "unexpected diagnostics: {diagnostics:?}");
+    assert!(!has_errors);
+
+    let mir_function = match &mir_program.items[0].kind {
+        MirItemKind::Function(func) => func,
+        other => panic!("expected MIR function item, found {other:?}"),
+    };
+    let body = mir_program
+        .bodies
+        .get(&mir_function.body_id)
+        .expect("function body present");
+    let block = &body.basic_blocks[0];
+
+    let slice_value_local = block.statements.iter().find_map(|stmt| match &stmt.kind {
+        StatementKind::Assign(place, Rvalue::IntrinsicCall { kind, .. })
+            if matches!(kind, fp_core::intrinsics::IntrinsicCallKind::Slice) =>
+        {
+            Some(place.local)
+        }
+        _ => None,
+    });
+    let slice_value_local = slice_value_local.expect("expected MIR slice value intrinsic");
+
+    let has_index_from_slice_value = block.statements.iter().any(|stmt| match &stmt.kind {
+        StatementKind::Assign(
+            _,
+            Rvalue::ContainerGet {
+                container: Operand::Copy(place),
+                ..
+            },
+        ) => place.local == slice_value_local && !place.projection.iter().any(|elem| matches!(elem, mir::PlaceElem::Subslice { .. })),
+        _ => false,
+    });
+
+    assert!(
+        has_index_from_slice_value,
+        "expected dynamic slice to lower via explicit slice value, not a subslice place"
+    );
 }
 
 #[test]

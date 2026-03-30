@@ -90,64 +90,26 @@ impl HirGenerator {
                         );
                     }
                     let base_expr = self.transform_expr_to_hir(index_expr.obj.as_ref())?;
-                    let start_expr = match range.start.as_ref() {
-                        Some(expr) => self.transform_expr_to_hir(expr.as_ref())?,
-                        None => hir::Expr {
-                            hir_id: self.next_id(),
-                            kind: hir::ExprKind::Literal(hir::Lit::Integer(0)),
-                            span: self.create_span(1),
-                        },
-                    };
-                    let mut end_expr = match range.end.as_ref() {
-                        Some(expr) => self.transform_expr_to_hir(expr.as_ref())?,
-                        None => {
-                            let len_call = hir::IntrinsicCallExpr {
-                                kind: IntrinsicCallKind::Len,
-                                callargs: vec![hir::CallArg {
-                                    name: hir::Symbol::new("base"),
-                                    value: base_expr.clone(),
-                                }],
-                            };
-                            hir::Expr {
-                                hir_id: self.next_id(),
-                                kind: hir::ExprKind::IntrinsicCall(len_call),
-                                span: self.create_span(1),
-                            }
-                        }
-                    };
-                    if matches!(range.limit, ast::ExprRangeLimit::Inclusive) {
-                        end_expr = hir::Expr {
-                            hir_id: self.next_id(),
-                            kind: hir::ExprKind::Binary(
-                                hir::BinOp::Add,
-                                Box::new(end_expr),
-                                Box::new(hir::Expr {
-                                    hir_id: self.next_id(),
-                                    kind: hir::ExprKind::Literal(hir::Lit::Integer(1)),
-                                    span: self.create_span(1),
-                                }),
-                            ),
-                            span: self.create_span(1),
-                        };
-                    }
-                    let call = hir::IntrinsicCallExpr {
-                        kind: IntrinsicCallKind::Slice,
-                        callargs: vec![
-                            hir::CallArg {
-                                name: hir::Symbol::new("base"),
-                                value: base_expr,
-                            },
-                            hir::CallArg {
-                                name: hir::Symbol::new("start"),
-                                value: start_expr,
-                            },
-                            hir::CallArg {
-                                name: hir::Symbol::new("end"),
-                                value: end_expr,
-                            },
-                        ],
-                    };
-                    hir::ExprKind::IntrinsicCall(call)
+                    let start_expr = range
+                        .start
+                        .as_ref()
+                        .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+                        .transpose()?
+                        .map(Box::new);
+                    let end_expr = range
+                        .end
+                        .as_ref()
+                        .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+                        .transpose()?
+                        .map(Box::new);
+                    let inclusive = matches!(range.limit, ast::ExprRangeLimit::Inclusive);
+                    hir::ExprKind::Slice(hir::SliceExpr {
+                        hir_id: self.next_id(),
+                        base: Box::new(base_expr),
+                        start: start_expr,
+                        end: end_expr,
+                        inclusive,
+                    })
                 } else {
                     let base = self.transform_expr_to_hir(index_expr.obj.as_ref())?;
                     let index = self.transform_expr_to_hir(index_expr.index.as_ref())?;
