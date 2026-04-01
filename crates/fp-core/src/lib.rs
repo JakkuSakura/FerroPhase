@@ -1,5 +1,3 @@
-#![feature(iterator_try_collect)]
-
 #[macro_use]
 pub mod macros;
 

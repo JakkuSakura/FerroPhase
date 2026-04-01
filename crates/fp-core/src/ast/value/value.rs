@@ -240,7 +240,11 @@ impl ValueList {
 }
 impl ToJson for ValueList {
     fn to_json(&self) -> crate::error::Result<serde_json::Value> {
-        let values: Vec<_> = self.values.iter().map(|x| x.to_json()).try_collect()?;
+        let values: Vec<_> = self
+            .values
+            .iter()
+            .map(|x| x.to_json())
+            .collect::<crate::error::Result<Vec<_>>>()?;
         Ok(json!(values))
     }
 }
@@ -957,7 +961,11 @@ impl ValueTuple {
 
 impl ToJson for ValueTuple {
     fn to_json(&self) -> crate::error::Result<serde_json::Value> {
-        let values: Vec<_> = self.values.iter().map(|x| x.to_json()).try_collect()?;
+        let values: Vec<_> = self
+            .values
+            .iter()
+            .map(|x| x.to_json())
+            .collect::<crate::error::Result<Vec<_>>>()?;
         Ok(json!(values))
     }
 }
