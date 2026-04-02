@@ -62,6 +62,80 @@ The ABI must bridge interpreter `Value` and native code. The initial ABI should:
 - Pass arguments as an array (or pointer + length) of `Value`.
 - Return a single `Value`.
 
+### Proposed C ABI (V0)
+
+The JIT-exposed entry points use a minimal C ABI that allows the interpreter to
+call compiled code without marshaling into a custom calling convention.
+
+```c
+typedef struct FpValue FpValue;
+typedef struct FpJitContext FpJitContext;
+
+typedef struct {
+  const FpValue *args;
+  uint32_t len;
+} FpJitArgs;
+
+typedef FpValue (*FpJitFn)(FpJitContext *ctx, FpJitArgs args);
+```
+
+Notes:
+- `FpValue` must be ABI-stable and identical to the interpreter runtime layout.
+- `FpJitContext` exposes runtime services (allocators, error reporting, string
+  interning, and intrinsic helpers).
+- The call returns an owned `FpValue`. The interpreter owns any cleanup rules.
+
+### Adapter Layer
+
+For functions with a known fixed arity, the JIT may emit a wrapper:
+
+- Wrapper takes `FpJitArgs`, unpacks into fixed slots, and tail-calls the
+  compiled function body.
+- This keeps the internal compiled function signature efficient while keeping
+  the external ABI stable.
+
+## Symbol Registry
+
+The JIT must map a runtime call target to a compiled function entry point.
+We use a stable lookup key derived from the resolved function and a signature
+hash.
+
+### Key Structure
+
+```
+struct JitKey {
+  canonical_name: String,  // fully-qualified path
+  sig_hash: u64,           // stable hash of param/return types
+  abi: u16,                // ABI version (e.g., 1)
+}
+```
+
+### Registry Operations
+
+- `lookup(JitKey) -> Option<FpJitFn>`
+- `insert(JitKey, FpJitFn)`
+- `invalidate(prefix | module)` for hot reload or diagnostics
+
+### Name Canonicalization
+
+The interpreter should register and query using the same canonicalization:
+
+- Fully-qualified module path (e.g., `std::math::sin`).
+- Impl methods: `TypeName::method`.
+- Trait impls: `TraitName::TypeName::method` (if needed).
+
+### Signature Hashing
+
+Compute a stable hash of:
+
+- Parameter types (in order).
+- Return type.
+- Receiver kind (for methods).
+- Any ABI-relevant calling attributes.
+
+Type names should be canonicalized in the same way the interpreter uses for
+type comparisons to avoid hash mismatches.
+
 If needed, a thin wrapper can be generated per function to adapt from the
 interpreter calling convention to the JIT function signature.
 
