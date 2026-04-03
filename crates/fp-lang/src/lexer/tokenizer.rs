@@ -7,6 +7,7 @@ use super::winnow::{
     MULTI_PUNCT, SINGLE_PUNCT,
 };
 use thiserror::Error;
+use unicode_normalization::UnicodeNormalization;
 use winnow::combinator::alt;
 use winnow::error::{ContextError, ErrMode};
 use winnow::token::take_while;
@@ -227,13 +228,16 @@ pub(crate) fn classify_and_normalize_lexeme(lexeme: &str) -> Option<(TokenKind, 
     let mut normalized = lexeme.to_string();
     let kind = match kind {
         TokenKind::Ident => {
-            if let Some(keyword) = Keyword::from_lexeme(&normalized) {
-                TokenKind::Keyword(keyword)
-            } else {
-                if let Some(stripped) = normalized.strip_prefix("r#") {
-                    normalized = stripped.to_string();
-                }
+            if let Some(stripped) = normalized.strip_prefix("r#") {
+                normalized = stripped.nfc().collect::<String>();
                 TokenKind::Ident
+            } else {
+                normalized = normalized.nfc().collect::<String>();
+                if let Some(keyword) = Keyword::from_lexeme(&normalized) {
+                    TokenKind::Keyword(keyword)
+                } else {
+                    TokenKind::Ident
+                }
             }
         }
         TokenKind::Number => TokenKind::Number,

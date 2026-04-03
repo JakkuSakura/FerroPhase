@@ -27,6 +27,7 @@ pub enum CstKind {
     ItemExternCrate,
     ItemExternBlock,
     ItemExternFnDecl,
+    ItemExternStaticDecl,
     ItemConst,
     ItemStatic,
     ItemTypeAlias,
@@ -130,6 +131,14 @@ pub enum CstKind {
     PatternWildcard,
     PatternTuple,
     PatternType,
+    PatternStruct,
+    PatternTupleStruct,
+    PatternBox,
+    PatternSlice,
+    PatternRest,
+    PatternBind,
+    PatternPath,
+    PatternParen,
 
     MatchArm,
     StructField,
@@ -157,6 +166,7 @@ impl CstKind {
             | CstKind::ItemExternCrate
             | CstKind::ItemExternBlock
             | CstKind::ItemExternFnDecl
+            | CstKind::ItemExternStaticDecl
             | CstKind::ItemConst
             | CstKind::ItemStatic
             | CstKind::ItemTypeAlias
@@ -229,7 +239,15 @@ impl CstKind {
             CstKind::PatternIdent
             | CstKind::PatternWildcard
             | CstKind::PatternTuple
-            | CstKind::PatternType => CstCategory::Pattern,
+            | CstKind::PatternType
+            | CstKind::PatternStruct
+            | CstKind::PatternTupleStruct
+            | CstKind::PatternBox
+            | CstKind::PatternSlice
+            | CstKind::PatternRest
+            | CstKind::PatternBind
+            | CstKind::PatternPath
+            | CstKind::PatternParen => CstCategory::Pattern,
 
             CstKind::BlockStmtItem
             | CstKind::BlockStmtLet

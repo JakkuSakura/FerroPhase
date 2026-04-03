@@ -829,6 +829,8 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let mut saw_generic_start = false;
             let mut saw_root = false;
             let mut saw_first_token = false;
+            let mut generic_depth: i32 = 0;
+            let mut generic_segment_index: Option<usize> = None;
             for child in &node.children {
                 let crate::syntax::SyntaxElement::Token(tok) = child else {
                     continue;
@@ -847,17 +849,38 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                     continue;
                 }
                 if tok.text == "<" {
-                    saw_generic_start = true;
-                    break;
+                    if generic_depth == 0 && !segments.is_empty() {
+                        saw_generic_start = true;
+                        if generic_segment_index.is_none() {
+                            generic_segment_index = segments.len().checked_sub(1);
+                        }
+                    }
+                    generic_depth += 1;
+                    continue;
                 }
-                if matches!(tok.text.as_str(), ">" | "," | "=") {
+                if tok.text == ">" {
+                    if generic_depth > 0 {
+                        generic_depth -= 1;
+                    }
+                    continue;
+                }
+                if tok.text == ">>" {
+                    if generic_depth > 0 {
+                        generic_depth = (generic_depth - 2).max(0);
+                    }
+                    continue;
+                }
+                if generic_depth > 0 {
+                    continue;
+                }
+                if matches!(tok.text.as_str(), "," | "=") {
                     continue;
                 }
                 if tok
                     .text
                     .chars()
                     .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                    .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '\'')
                 {
                     segments.push(Ident::new(tok.text.clone()));
                 }
@@ -874,7 +897,11 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                     .into_iter()
                     .map(ParameterPathSegment::from_ident)
                     .collect();
-                if let Some(last) = param_segments.last_mut() {
+                if let Some(idx) = generic_segment_index {
+                    if let Some(seg) = param_segments.get_mut(idx) {
+                        seg.args = args;
+                    }
+                } else if let Some(last) = param_segments.last_mut() {
                     last.args = args;
                 }
                 let ppath = ParameterPath::new(prefix, param_segments);
@@ -1241,6 +1268,7 @@ fn lower_struct_fields(node: &SyntaxNode) -> Result<(Vec<ExprField>, Option<Expr
     }
 
     let mut update: Option<Expr> = None;
+    let mut saw_update = false;
     for (idx, child) in node.children.iter().enumerate() {
         let crate::syntax::SyntaxElement::Token(tok) = child else {
             continue;
@@ -1251,6 +1279,7 @@ fn lower_struct_fields(node: &SyntaxNode) -> Result<(Vec<ExprField>, Option<Expr
         if update.is_some() {
             return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStruct));
         }
+        saw_update = true;
         for next in node.children.iter().skip(idx + 1) {
             match next {
                 crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
@@ -1263,9 +1292,8 @@ fn lower_struct_fields(node: &SyntaxNode) -> Result<(Vec<ExprField>, Option<Expr
                 _ => {}
             }
         }
-        if update.is_none() {
-            return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStruct));
-        }
+        // Allow `..` without an update expression. This is needed for destructuring assignments
+        // and keeps FP permissive in parse-only mode.
     }
 
     Ok((out, update))
@@ -1311,15 +1339,246 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
                                 | SyntaxKind::PatternWildcard
                                 | SyntaxKind::PatternTuple
                                 | SyntaxKind::PatternType
+                                | SyntaxKind::PatternStruct
+                                | SyntaxKind::PatternTupleStruct
+                                | SyntaxKind::PatternBox
+                                | SyntaxKind::PatternSlice
+                                | SyntaxKind::PatternRest
+                                | SyntaxKind::PatternBind
+                                | SyntaxKind::PatternPath
+                                | SyntaxKind::PatternParen
                         ) =>
                     {
                         Some(n.as_ref())
                     }
                     _ => None,
                 })
-                .map(lower_pattern_from_cst)
+                .map(|n| {
+                    if n.kind == SyntaxKind::PatternRest {
+                        Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {})))
+                    } else {
+                        lower_pattern_from_cst(n)
+                    }
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Pattern::new(PatternKind::Tuple(PatternTuple { patterns })))
+        }
+        SyntaxKind::PatternParen => {
+            let inner = node
+                .children
+                .iter()
+                .find_map(|c| match c {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Pattern =>
+                    {
+                        Some(n.as_ref())
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternParen))?;
+            lower_pattern_from_cst(inner)
+        }
+        SyntaxKind::PatternSlice => {
+            let patterns = node
+                .children
+                .iter()
+                .filter_map(|c| match c {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Pattern =>
+                    {
+                        Some(n.as_ref())
+                    }
+                    _ => None,
+                })
+                .map(|n| {
+                    if n.kind == SyntaxKind::PatternRest {
+                        Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {})))
+                    } else {
+                        lower_pattern_from_cst(n)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Pattern::new(PatternKind::Tuple(PatternTuple { patterns })))
+        }
+        SyntaxKind::PatternRest => Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {}))),
+        SyntaxKind::PatternPath => {
+            let name = lower_pattern_path_name(node)?;
+            Ok(Pattern::new(PatternKind::Variant(PatternVariant {
+                name: Expr::name(name),
+                pattern: None,
+            })))
+        }
+        SyntaxKind::PatternBind => {
+            let mut pattern_nodes = node
+                .children
+                .iter()
+                .filter_map(|c| match c {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Pattern =>
+                    {
+                        Some(n.as_ref())
+                    }
+                    _ => None,
+                });
+            let lhs = pattern_nodes
+                .next()
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternBind))?;
+            let rhs = pattern_nodes
+                .next()
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternBind))?;
+            let ident = match lhs.kind {
+                SyntaxKind::PatternIdent => match lower_pattern_from_cst(lhs)?.kind() {
+                    PatternKind::Ident(ident) => ident.clone(),
+                    _ => return Err(LowerError::UnexpectedNode(SyntaxKind::PatternBind)),
+                },
+                SyntaxKind::PatternPath => {
+                    let name = lower_pattern_path_name(lhs)?;
+                    match name {
+                        Name::Ident(ident) => PatternIdent::new(ident),
+                        Name::Path(path)
+                            if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
+                        {
+                            PatternIdent::new(path.segments[0].clone())
+                        }
+                        _ => return Err(LowerError::UnexpectedNode(SyntaxKind::PatternBind)),
+                    }
+                }
+                _ => return Err(LowerError::UnexpectedNode(SyntaxKind::PatternBind)),
+            };
+            let pattern = lower_pattern_from_cst(rhs)?;
+            Ok(Pattern::new(PatternKind::Bind(PatternBind {
+                ident,
+                pattern: Box::new(pattern),
+            })))
+        }
+        SyntaxKind::PatternStruct => {
+            let name_node = node
+                .children
+                .iter()
+                .find_map(|c| match c {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind == SyntaxKind::PatternPath =>
+                    {
+                        Some(n.as_ref())
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternStruct))?;
+            let name = lower_pattern_path_name(name_node)?;
+
+            let mut fields = Vec::new();
+            for child in &node.children {
+                let crate::syntax::SyntaxElement::Node(field) = child else {
+                    continue;
+                };
+                if field.kind != SyntaxKind::StructField {
+                    continue;
+                }
+                let field_name = direct_first_non_trivia_token_text(field)
+                    .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::StructField))?;
+                let mut rename = None;
+                if let Some(value_pat) = field.children.iter().find_map(|c| match c {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Pattern =>
+                    {
+                        Some(n.as_ref())
+                    }
+                    _ => None,
+                }) {
+                    rename = Some(Box::new(lower_pattern_from_cst(value_pat)?));
+                }
+                fields.push(PatternStructField {
+                    name: Ident::new(field_name),
+                    rename,
+                });
+            }
+
+            let has_rest = node.children.iter().any(|c| {
+                matches!(
+                    c,
+                    crate::syntax::SyntaxElement::Node(n) if n.kind == SyntaxKind::PatternRest
+                )
+            });
+
+            match name {
+                Name::Ident(ident) => Ok(Pattern::new(PatternKind::Struct(PatternStruct {
+                    name: ident,
+                    fields,
+                    has_rest,
+                }))),
+                Name::Path(path)
+                    if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
+                {
+                    Ok(Pattern::new(PatternKind::Struct(PatternStruct {
+                        name: path.segments[0].clone(),
+                        fields,
+                        has_rest,
+                    })))
+                }
+                _ => Ok(Pattern::new(PatternKind::Variant(PatternVariant {
+                    name: Expr::name(name),
+                    pattern: Some(Box::new(Pattern::new(PatternKind::Structural(
+                        PatternStructural { fields, has_rest },
+                    )))),
+                }))),
+            }
+        }
+        SyntaxKind::PatternTupleStruct => {
+            let name_node = node
+                .children
+                .iter()
+                .find_map(|c| match c {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind == SyntaxKind::PatternPath =>
+                    {
+                        Some(n.as_ref())
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternTupleStruct))?;
+            let name = lower_pattern_path_name(name_node)?;
+            let patterns = node
+                .children
+                .iter()
+                .filter_map(|c| match c {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Pattern
+                            && n.kind != SyntaxKind::PatternPath =>
+                    {
+                        Some(n.as_ref())
+                    }
+                    _ => None,
+                })
+                .map(|n| {
+                    if n.kind == SyntaxKind::PatternRest {
+                        Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {})))
+                    } else {
+                        lower_pattern_from_cst(n)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
+                name,
+                patterns,
+            })))
+        }
+        SyntaxKind::PatternBox => {
+            let pat_node = node
+                .children
+                .iter()
+                .find_map(|c| match c {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Pattern =>
+                    {
+                        Some(n.as_ref())
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternBox))?;
+            let pattern = lower_pattern_from_cst(pat_node)?;
+            Ok(Pattern::new(PatternKind::Box(PatternBox {
+                pattern: Box::new(pattern),
+            })))
         }
         SyntaxKind::PatternType => {
             let pat_node = node
@@ -1352,6 +1611,66 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
         }
         other => Err(LowerError::UnexpectedNode(other)),
     }
+}
+
+fn lower_pattern_path_name(node: &SyntaxNode) -> Result<Name, LowerError> {
+    let mut segments = Vec::new();
+    let mut saw_root = false;
+    let mut saw_first_token = false;
+    let mut generic_depth: i32 = 0;
+    for child in &node.children {
+        let crate::syntax::SyntaxElement::Token(tok) = child else {
+            continue;
+        };
+        if tok.is_trivia() {
+            continue;
+        }
+        if !saw_first_token {
+            saw_first_token = true;
+            if tok.text == "::" {
+                saw_root = true;
+                continue;
+            }
+        }
+        if tok.text == "::" {
+            continue;
+        }
+        if tok.text == "<" {
+            generic_depth += 1;
+            continue;
+        }
+        if tok.text == ">" {
+            if generic_depth > 0 {
+                generic_depth -= 1;
+            }
+            continue;
+        }
+        if tok.text == ">>" {
+            if generic_depth > 0 {
+                generic_depth = (generic_depth - 2).max(0);
+            }
+            continue;
+        }
+        if generic_depth > 0 {
+            continue;
+        }
+        if matches!(tok.text.as_str(), ">" | "," | "=") {
+            continue;
+        }
+        if tok
+            .text
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '\'')
+        {
+            segments.push(Ident::new(tok.text.clone()));
+        }
+    }
+    let (prefix, segments) = split_path_prefix(segments, saw_root);
+    if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
+        return Err(LowerError::UnexpectedNode(node.kind));
+    }
+    Ok(Name::path(Path::new(prefix, segments)))
 }
 
 fn lower_block_from_cst(node: &SyntaxNode) -> Result<ExprBlock, LowerError> {
@@ -1734,6 +2053,17 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
                 })));
             }
             Err(LowerError::UnexpectedNode(SyntaxKind::ExprBinary))
+        }
+        SyntaxKind::ExprUnary => {
+            let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
+            if op == "box" {
+                let rhs = last_child_expr(node)?;
+                let pattern = lower_match_pattern_from_cst(rhs)?;
+                return Ok(Pattern::new(PatternKind::Box(PatternBox {
+                    pattern: Box::new(pattern),
+                })));
+            }
+            Err(LowerError::UnexpectedNode(SyntaxKind::ExprUnary))
         }
         SyntaxKind::ExprQuote => {
             let quote = quote_block_pattern_from_cst(node)?;
@@ -2193,7 +2523,7 @@ fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
                     .text
                     .chars()
                     .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                    .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '\'')
                 {
                     segments.push(Ident::new(tok.text.clone()));
                 }
@@ -2916,14 +3246,23 @@ fn lower_ty_impl_traits(node: &SyntaxNode) -> Result<Ty, LowerError> {
 
     // Default: keep the representation aligned with the old token-based parser: bounds as a
     // locator path (or a value-wrapped type).
+    let mut bounds = Vec::new();
     let bound_expr = match bound_ty {
         Ty::Expr(expr) => (*expr).clone(),
         other => Expr::value(Value::Type(other)),
     };
+    bounds.push(bound_expr);
+    for ty in trailing_types {
+        let expr = match ty {
+            Ty::Expr(expr) => (*expr).clone(),
+            other => Expr::value(Value::Type(other)),
+        };
+        bounds.push(expr);
+    }
 
     Ok(Ty::ImplTraits(
         ImplTraits {
-            bounds: TypeBounds::new(bound_expr),
+            bounds: TypeBounds { bounds },
         }
         .into(),
     ))

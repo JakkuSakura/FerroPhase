@@ -116,11 +116,11 @@ pub(crate) fn parse_raw_identifier(input: &mut &str) -> ModalResult<String> {
 }
 
 pub(crate) fn is_ident_start(ch: char) -> bool {
-    ch == '_' || ch == '\'' || ch.is_ascii_alphabetic()
+    ch == '_' || ch == '\'' || ch.is_alphabetic()
 }
 
 pub(crate) fn is_ident_continue(ch: char) -> bool {
-    ch == '_' || ch.is_ascii_alphanumeric()
+    ch == '_' || ch.is_alphanumeric()
 }
 
 pub(crate) fn backtrack_err() -> ErrMode<ContextError> {

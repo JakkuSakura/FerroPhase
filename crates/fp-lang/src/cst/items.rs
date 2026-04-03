@@ -216,6 +216,137 @@ fn parse_item_cst(
             expect_symbol(input, ";")?;
             Ok(node(SyntaxKind::ItemUse, children))
         }
+        TokenKind::Keyword(Keyword::Unsafe) => {
+            let unsafe_token = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+            children.push(SyntaxElement::Token(syntax_token_from_token(&unsafe_token)));
+
+            if match_keyword(input, Keyword::Extern) {
+                if match_keyword(input, Keyword::Crate) {
+                    let crate_name = expect_ident_token(input)?;
+                    children.push(SyntaxElement::Token(crate_name.clone()));
+                    if match_keyword(input, Keyword::As) {
+                        let alias = expect_ident_token(input)?;
+                        let rename = node(
+                            SyntaxKind::UseTreeRename,
+                            vec![
+                                SyntaxElement::Token(crate_name),
+                                SyntaxElement::Token(alias),
+                            ],
+                        );
+                        children.push(SyntaxElement::Node(Box::new(rename)));
+                    }
+                    expect_symbol(input, ";")?;
+                    return Ok(node(SyntaxKind::ItemExternCrate, children));
+                }
+
+                let abi = expect_string_literal_token(input)?;
+                children.push(SyntaxElement::Token(abi));
+
+                if match_symbol(input, "{") {
+                    let mut extern_children = Vec::new();
+                    while !matches_symbol(input.first(), "}") {
+                        if input.is_empty() {
+                            return Err(ErrMode::Cut(ContextError::new()));
+                        }
+                        if matches_symbol(input.first(), ";") {
+                            advance(input);
+                            continue;
+                        }
+                        let mut member_children = Vec::new();
+                        let attrs = parse_outer_attrs_cst(input)?;
+                        for attr in attrs {
+                            member_children.push(SyntaxElement::Node(Box::new(attr)));
+                        }
+                        if let Some(vis) = parse_visibility_cst(input)? {
+                            member_children.push(SyntaxElement::Node(Box::new(vis)));
+                        }
+                        loop {
+                            match input.first() {
+                                Some(Token {
+                                    kind: TokenKind::Keyword(Keyword::Unsafe),
+                                    ..
+                                }) => {
+                                    let unsafe_token = advance(input)
+                                        .ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                                    member_children.push(SyntaxElement::Token(
+                                        syntax_token_from_token(&unsafe_token),
+                                    ));
+                                    continue;
+                                }
+                                Some(Token {
+                                    kind: TokenKind::Keyword(Keyword::Async),
+                                    ..
+                                }) => {
+                                    let async_token = advance(input)
+                                        .ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                                    member_children.push(SyntaxElement::Token(
+                                        syntax_token_from_token(&async_token),
+                                    ));
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                            break;
+                        }
+
+                        if match_keyword(input, Keyword::Fn) {
+                            let sig = parse_fn_sig_cst(input)?;
+                            member_children.push(SyntaxElement::Node(Box::new(sig)));
+                            expect_symbol(input, ";")?;
+                            extern_children.push(node(SyntaxKind::ItemExternFnDecl, member_children));
+                            continue;
+                        }
+
+                        if match_keyword(input, Keyword::Static) {
+                            if match_keyword(input, Keyword::Mut) {
+                                member_children.push(SyntaxElement::Token(token_text("mut")));
+                            }
+                            let name = expect_ident_token(input)?;
+                            member_children.push(SyntaxElement::Token(name));
+                            expect_symbol(input, ":")?;
+                            let ty = parse_type_prefix_from_tokens(input, &[";"])?;
+                            member_children.push(SyntaxElement::Node(Box::new(ty)));
+                            expect_symbol(input, ";")?;
+                            extern_children.push(node(
+                                SyntaxKind::ItemExternStaticDecl,
+                                member_children,
+                            ));
+                            continue;
+                        }
+
+                        return Err(ErrMode::Cut(ContextError::new()));
+                    }
+                    expect_symbol(input, "}")?;
+                    children.extend(
+                        extern_children
+                            .into_iter()
+                            .map(|child| SyntaxElement::Node(Box::new(child))),
+                    );
+                    return Ok(node(SyntaxKind::ItemExternBlock, children));
+                }
+
+                expect_keyword(input, Keyword::Fn)?;
+                let sig = parse_fn_sig_cst(input)?;
+                children.push(SyntaxElement::Node(Box::new(sig)));
+                if match_symbol(input, ";") {
+                    return Ok(node(SyntaxKind::ItemExternFnDecl, children));
+                }
+                let body = parse_expr_prefix_from_tokens(input)?;
+                children.push(SyntaxElement::Node(Box::new(body)));
+                return Ok(node(SyntaxKind::ItemFn, children));
+            }
+
+            if match_keyword(input, Keyword::Fn) {
+                let sig = parse_fn_sig_cst(input)?;
+                children.push(SyntaxElement::Node(Box::new(sig)));
+                consume_where_clause(input);
+                let body = parse_expr_prefix_from_tokens(input)?;
+                children.push(SyntaxElement::Node(Box::new(body)));
+                return Ok(node(SyntaxKind::ItemFn, children));
+            }
+
+            Err(ErrMode::Cut(ContextError::new()))
+        }
         TokenKind::Keyword(Keyword::Extern) => {
             advance(input);
             if match_keyword(input, Keyword::Crate) {
@@ -257,23 +388,61 @@ fn parse_item_cst(
                     if let Some(vis) = parse_visibility_cst(input)? {
                         member_children.push(SyntaxElement::Node(Box::new(vis)));
                     }
-                    if matches!(
-                        input.first(),
-                        Some(Token {
-                            kind: TokenKind::Keyword(Keyword::Async),
-                            ..
-                        })
-                    ) {
-                        let async_token =
-                            advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
-                        member_children
-                            .push(SyntaxElement::Token(syntax_token_from_token(&async_token)));
+                    loop {
+                        match input.first() {
+                            Some(Token {
+                                kind: TokenKind::Keyword(Keyword::Unsafe),
+                                ..
+                            }) => {
+                                let unsafe_token =
+                                    advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                                member_children.push(SyntaxElement::Token(syntax_token_from_token(
+                                    &unsafe_token,
+                                )));
+                                continue;
+                            }
+                            Some(Token {
+                                kind: TokenKind::Keyword(Keyword::Async),
+                                ..
+                            }) => {
+                                let async_token =
+                                    advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                                member_children.push(SyntaxElement::Token(syntax_token_from_token(
+                                    &async_token,
+                                )));
+                                continue;
+                            }
+                            _ => {}
+                        }
+                        break;
                     }
-                    expect_keyword(input, Keyword::Fn)?;
-                    let sig = parse_fn_sig_cst(input)?;
-                    member_children.push(SyntaxElement::Node(Box::new(sig)));
-                    expect_symbol(input, ";")?;
-                    extern_children.push(node(SyntaxKind::ItemExternFnDecl, member_children));
+
+                    if match_keyword(input, Keyword::Fn) {
+                        let sig = parse_fn_sig_cst(input)?;
+                        member_children.push(SyntaxElement::Node(Box::new(sig)));
+                        expect_symbol(input, ";")?;
+                        extern_children.push(node(SyntaxKind::ItemExternFnDecl, member_children));
+                        continue;
+                    }
+
+                    if match_keyword(input, Keyword::Static) {
+                        if match_keyword(input, Keyword::Mut) {
+                            member_children.push(SyntaxElement::Token(token_text("mut")));
+                        }
+                        let name = expect_ident_token(input)?;
+                        member_children.push(SyntaxElement::Token(name));
+                        expect_symbol(input, ":")?;
+                        let ty = parse_type_prefix_from_tokens(input, &[";"])?;
+                        member_children.push(SyntaxElement::Node(Box::new(ty)));
+                        expect_symbol(input, ";")?;
+                        extern_children.push(node(
+                            SyntaxKind::ItemExternStaticDecl,
+                            member_children,
+                        ));
+                        continue;
+                    }
+
+                    return Err(ErrMode::Cut(ContextError::new()));
                 }
                 expect_symbol(input, "}")?;
                 children.extend(
@@ -326,6 +495,7 @@ fn parse_item_cst(
                 }
             }
 
+            consume_where_clause(input);
             expect_symbol(input, "{")?;
             while !matches_symbol(input.first(), "}") {
                 if input.is_empty() {
@@ -352,6 +522,7 @@ fn parse_item_cst(
                 children.push(SyntaxElement::Node(Box::new(self_ty)));
             }
 
+            consume_where_clause(input);
             expect_symbol(input, "{")?;
             let inner = parse_items_in_braces_to_item_list(input)?;
             children.push(SyntaxElement::Node(Box::new(inner)));
@@ -369,6 +540,10 @@ fn parse_item_cst(
                 while !matches_symbol(input.first(), "}") {
                     if match_symbol(input, "}") {
                         break;
+                    }
+                    if let Some(vis) = parse_visibility_cst(input)? {
+                        // Field-level visibility is ignored for now, but parsed for compatibility.
+                        children.push(SyntaxElement::Node(Box::new(vis)));
                     }
                     let field_name = expect_ident_token(input)?;
                     let mut field_children = vec![SyntaxElement::Token(field_name)];
@@ -389,6 +564,41 @@ fn parse_item_cst(
                     break;
                 }
                 expect_symbol(input, "}")?;
+            } else if match_symbol(input, "(") {
+                let mut index = 0usize;
+                while !matches_symbol(input.first(), ")") {
+                    if input.is_empty() {
+                        return Err(ErrMode::Cut(ContextError::new()));
+                    }
+                    if let Some(_vis) = parse_visibility_cst(input)? {
+                        // Ignored for now.
+                    }
+                    let ty = parse_type_prefix_from_tokens(input, &[",", ")"])?;
+                    let field_name = SyntaxToken {
+                        kind: SyntaxTokenKind::Token,
+                        text: index.to_string(),
+                        span: fp_core::span::Span::null(),
+                    };
+                    index += 1;
+                    let field = node(
+                        SyntaxKind::StructFieldDecl,
+                        vec![
+                            SyntaxElement::Token(field_name),
+                            SyntaxElement::Node(Box::new(ty)),
+                        ],
+                    );
+                    children.push(SyntaxElement::Node(Box::new(field)));
+                    if match_symbol(input, ",") {
+                        continue;
+                    }
+                    break;
+                }
+                expect_symbol(input, ")")?;
+                if match_symbol(input, ";") {
+                    // optional
+                }
+            } else if match_symbol(input, ";") {
+                // unit struct
             }
             Ok(node(SyntaxKind::ItemStruct, children))
         }
@@ -539,6 +749,9 @@ fn parse_item_cst(
                         if match_symbol(input, "}") {
                             break;
                         }
+                        if let Some(vis) = parse_visibility_cst(input)? {
+                            children.push(SyntaxElement::Node(Box::new(vis)));
+                        }
                         let field_name = expect_ident_token(input)?;
                         expect_symbol(input, ":")?;
                         let ty = parse_type_prefix_from_tokens(input, &[",", "}"])?;
@@ -556,6 +769,41 @@ fn parse_item_cst(
                         break;
                     }
                     expect_symbol(input, "}")?;
+                } else if match_symbol(input, "(") {
+                    let mut index = 0usize;
+                    while !matches_symbol(input.first(), ")") {
+                        if input.is_empty() {
+                            return Err(ErrMode::Cut(ContextError::new()));
+                        }
+                        if let Some(_vis) = parse_visibility_cst(input)? {
+                            // Ignored for now.
+                        }
+                        let ty = parse_type_prefix_from_tokens(input, &[",", ")"])?;
+                        let field_name = SyntaxToken {
+                            kind: SyntaxTokenKind::Token,
+                            text: index.to_string(),
+                            span: fp_core::span::Span::null(),
+                        };
+                        index += 1;
+                        let field = node(
+                            SyntaxKind::StructFieldDecl,
+                            vec![
+                                SyntaxElement::Token(field_name),
+                                SyntaxElement::Node(Box::new(ty)),
+                            ],
+                        );
+                        children.push(SyntaxElement::Node(Box::new(field)));
+                        if match_symbol(input, ",") {
+                            continue;
+                        }
+                        break;
+                    }
+                    expect_symbol(input, ")")?;
+                    if match_symbol(input, ";") {
+                        // optional
+                    }
+                } else if match_symbol(input, ";") {
+                    // unit const struct
                 }
                 return Ok(node(SyntaxKind::ItemStruct, children));
             }
@@ -631,6 +879,9 @@ fn parse_item_cst(
         }
         TokenKind::Keyword(Keyword::Static) => {
             advance(input);
+            if match_keyword(input, Keyword::Mut) {
+                children.push(SyntaxElement::Token(token_text("mut")));
+            }
             let name = expect_ident_token(input)?;
             children.push(SyntaxElement::Token(name));
             expect_symbol(input, ":")?;
@@ -789,6 +1040,18 @@ fn parse_fn_sig_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
         if match_symbol(input, ",") {
             continue;
         }
+        if matches_symbol(input.first(), "...") {
+            let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+            let param = node(
+                SyntaxKind::FnParam,
+                vec![SyntaxElement::Token(syntax_token_from_token(&tok))],
+            );
+            children.push(SyntaxElement::Node(Box::new(param)));
+            if match_symbol(input, ",") {
+                continue;
+            }
+            continue;
+        }
         if match_symbol(input, "/") {
             children.push(SyntaxElement::Token(SyntaxToken {
                 kind: SyntaxTokenKind::Token,
@@ -877,8 +1140,8 @@ fn parse_param_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
             }));
         }
     }
-    let name = expect_ident_token(input)?;
-    children.push(SyntaxElement::Token(name));
+    let pattern = parse_pattern_from_tokens(input)?;
+    children.push(SyntaxElement::Node(Box::new(pattern)));
     expect_symbol(input, ":")?;
     let ty = parse_type_prefix_from_tokens(input, &["=", ",", ")"])?;
     children.push(SyntaxElement::Node(Box::new(ty)));
@@ -939,6 +1202,7 @@ fn parse_trait_member_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
                 SyntaxElement::Token(token_text("fn")),
                 SyntaxElement::Node(Box::new(sig)),
             ];
+            consume_where_clause(input);
             if match_symbol(input, ";") {
                 return Ok(node(SyntaxKind::TraitMember, children));
             }
@@ -957,6 +1221,7 @@ fn parse_trait_member_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
                 SyntaxElement::Token(token_text("fn")),
                 SyntaxElement::Node(Box::new(sig)),
             ];
+            consume_where_clause(input);
             if match_symbol(input, ";") {
                 return Ok(node(SyntaxKind::TraitMember, children));
             }
@@ -1003,7 +1268,26 @@ fn parse_generic_params_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     expect_symbol(input, "<")?;
     let mut children = Vec::new();
     while !matches_symbol(input.first(), ">") {
-        let name = expect_ident_token(input)?;
+        let name = match input.first() {
+            Some(Token {
+                kind: TokenKind::Ident,
+                ..
+            }) => expect_ident_token(input)?,
+            Some(Token {
+                kind: TokenKind::Keyword(_),
+                lexeme,
+                ..
+            }) if lexeme.starts_with('\'') => {
+                let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                syntax_token_from_token(&tok)
+            }
+            Some(Token {
+                kind: TokenKind::Ident,
+                lexeme,
+                ..
+            }) if lexeme.starts_with('\'') => expect_ident_token(input)?,
+            _ => return Err(ErrMode::Cut(ContextError::new())),
+        };
         let mut param_children = vec![SyntaxElement::Token(name)];
         if match_symbol(input, ":") {
             loop {
@@ -1023,6 +1307,9 @@ fn parse_generic_params_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
             param_children,
         ))));
         if match_symbol(input, ",") {
+            if matches_symbol(input.first(), ">") {
+                break;
+            }
             continue;
         }
         break;
@@ -1274,12 +1561,13 @@ fn parse_let_stmt_as_block(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     let_children.push(SyntaxElement::Node(Box::new(pattern)));
 
     if match_symbol(input, ":") {
-        let ty = parse_type_prefix_from_tokens(input, &["="])?;
+        let ty = parse_type_prefix_from_tokens(input, &["=", ";"])?;
         let_children.push(SyntaxElement::Node(Box::new(ty)));
     }
-    expect_symbol(input, "=")?;
-    let expr = parse_expr_prefix_from_tokens(input)?;
-    let_children.push(SyntaxElement::Node(Box::new(expr)));
+    if match_symbol(input, "=") {
+        let expr = parse_expr_prefix_from_tokens(input)?;
+        let_children.push(SyntaxElement::Node(Box::new(expr)));
+    }
     expect_symbol(input, ";")?;
     let let_node = node(SyntaxKind::BlockStmtLet, let_children);
 
@@ -1290,6 +1578,20 @@ fn parse_let_stmt_as_block(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
 }
 
 fn parse_pattern_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
+    let mut pat = parse_pattern_atom_from_tokens(input)?;
+    if matches_symbol(input.first(), "@") {
+        let mut children = vec![SyntaxElement::Node(Box::new(pat))];
+        let at = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        children.push(SyntaxElement::Token(syntax_token_from_token(&at)));
+        let rhs = parse_pattern_from_tokens(input)?;
+        children.push(SyntaxElement::Node(Box::new(rhs)));
+        let span = span_for_children(&children);
+        return Ok(SyntaxNode::new(SyntaxKind::PatternBind, children, span));
+    }
+    Ok(pat)
+}
+
+fn parse_pattern_atom_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     let mut children = Vec::new();
     if matches!(
         input.first(),
@@ -1302,6 +1604,27 @@ fn parse_pattern_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
         children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
     }
 
+    if matches_symbol(input.first(), "..") {
+        let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
+        return Ok(node(SyntaxKind::PatternRest, children));
+    }
+
+    if matches!(
+        input.first(),
+        Some(Token {
+            kind: TokenKind::Ident | TokenKind::Keyword(_),
+            lexeme,
+            ..
+        }) if lexeme == "box"
+    ) {
+        let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
+        let inner = parse_pattern_from_tokens(input)?;
+        children.push(SyntaxElement::Node(Box::new(inner)));
+        return Ok(node(SyntaxKind::PatternBox, children));
+    }
+
     if matches_symbol(input.first(), "(") {
         let open = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
         if open.kind != TokenKind::Symbol || open.lexeme != "(" {
@@ -1309,22 +1632,33 @@ fn parse_pattern_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
         }
         children.push(SyntaxElement::Token(syntax_token_from_token(&open)));
 
-        while !matches_symbol(input.first(), ")") {
-            let pat = parse_pattern_from_tokens(input)?;
-            children.push(SyntaxElement::Node(Box::new(pat)));
+        if matches_symbol(input.first(), ")") {
+            let close = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+            children.push(SyntaxElement::Token(syntax_token_from_token(&close)));
+            return Ok(node(SyntaxKind::PatternTuple, children));
+        }
 
-            if matches_symbol(input.first(), ",") {
-                let comma = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
-                if comma.kind != TokenKind::Symbol || comma.lexeme != "," {
-                    return cut_message(input, "expected ',' in tuple pattern");
+        let first = parse_pattern_from_tokens(input)?;
+        children.push(SyntaxElement::Node(Box::new(first)));
+
+        let mut is_tuple = false;
+        if matches_symbol(input.first(), ",") {
+            is_tuple = true;
+            let comma = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+            children.push(SyntaxElement::Token(syntax_token_from_token(&comma)));
+            while !matches_symbol(input.first(), ")") {
+                let pat = parse_pattern_from_tokens(input)?;
+                children.push(SyntaxElement::Node(Box::new(pat)));
+                if matches_symbol(input.first(), ",") {
+                    let comma = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                    children.push(SyntaxElement::Token(syntax_token_from_token(&comma)));
+                    if matches_symbol(input.first(), ")") {
+                        break;
+                    }
+                    continue;
                 }
-                children.push(SyntaxElement::Token(syntax_token_from_token(&comma)));
-                if matches_symbol(input.first(), ")") {
-                    break;
-                }
-                continue;
+                break;
             }
-            break;
         }
 
         let close = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
@@ -1332,24 +1666,158 @@ fn parse_pattern_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
             return cut_message(input, "expected ')' to close tuple pattern");
         }
         children.push(SyntaxElement::Token(syntax_token_from_token(&close)));
-        return Ok(node(SyntaxKind::PatternTuple, children));
+        return Ok(node(
+            if is_tuple {
+                SyntaxKind::PatternTuple
+            } else {
+                SyntaxKind::PatternParen
+            },
+            children,
+        ));
     }
 
+    if matches_symbol(input.first(), "[") {
+        let open = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        children.push(SyntaxElement::Token(syntax_token_from_token(&open)));
+        while !matches_symbol(input.first(), "]") {
+            if input.is_empty() {
+                return Err(ErrMode::Cut(ContextError::new()));
+            }
+            let pat = parse_pattern_from_tokens(input)?;
+            children.push(SyntaxElement::Node(Box::new(pat)));
+            if matches_symbol(input.first(), ",") {
+                let comma = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                children.push(SyntaxElement::Token(syntax_token_from_token(&comma)));
+                if matches_symbol(input.first(), "]") {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        let close = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        if close.kind != TokenKind::Symbol || close.lexeme != "]" {
+            return cut_message(input, "expected ']' to close slice pattern");
+        }
+        children.push(SyntaxElement::Token(syntax_token_from_token(&close)));
+        return Ok(node(SyntaxKind::PatternSlice, children));
+    }
+
+    let mut path_children = children;
+    let mut saw_colon = false;
+    if matches_symbol(input.first(), "::") {
+        let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        path_children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
+        saw_colon = true;
+    }
     let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
     match tok.kind {
-        TokenKind::Ident if tok.lexeme == "_" => {
-            children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
-            Ok(node(SyntaxKind::PatternWildcard, children))
+        TokenKind::Ident | TokenKind::Keyword(_) => {
+            path_children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
         }
-        TokenKind::Ident => {
-            children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
-            Ok(node(SyntaxKind::PatternIdent, children))
+        _ => return cut_message(input, "expected pattern"),
+    }
+    while matches_symbol(input.first(), "::") {
+        saw_colon = true;
+        let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        path_children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
+        let seg = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        match seg.kind {
+            TokenKind::Ident | TokenKind::Keyword(_) => {
+                path_children.push(SyntaxElement::Token(syntax_token_from_token(&seg)));
+            }
+            _ => return cut_message(input, "expected path segment"),
         }
-        TokenKind::Keyword(_) if tok.lexeme == "_" => {
-            children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
-            Ok(node(SyntaxKind::PatternWildcard, children))
+    }
+
+    let path_span = span_for_children(&path_children);
+    let path_node = SyntaxNode::new(SyntaxKind::PatternPath, path_children, path_span);
+
+    if matches_symbol(input.first(), "{") {
+        let mut struct_children = vec![SyntaxElement::Node(Box::new(path_node))];
+        let open = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        struct_children.push(SyntaxElement::Token(syntax_token_from_token(&open)));
+        while !matches_symbol(input.first(), "}") {
+            if input.is_empty() {
+                return Err(ErrMode::Cut(ContextError::new()));
+            }
+            if matches_symbol(input.first(), "..") {
+                let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                let rest = node(
+                    SyntaxKind::PatternRest,
+                    vec![SyntaxElement::Token(syntax_token_from_token(&tok))],
+                );
+                struct_children.push(SyntaxElement::Node(Box::new(rest)));
+                if matches_symbol(input.first(), ",") {
+                    let comma = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                    struct_children.push(SyntaxElement::Token(syntax_token_from_token(&comma)));
+                }
+                continue;
+            }
+            let name = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+            match name.kind {
+                TokenKind::Ident | TokenKind::Keyword(_) => {}
+                _ => return cut_message(input, "expected field name in struct pattern"),
+            }
+            let mut field_children = vec![SyntaxElement::Token(syntax_token_from_token(&name))];
+            if matches_symbol(input.first(), ":") {
+                let colon = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                field_children.push(SyntaxElement::Token(syntax_token_from_token(&colon)));
+                let pat = parse_pattern_from_tokens(input)?;
+                field_children.push(SyntaxElement::Node(Box::new(pat)));
+            }
+            struct_children.push(SyntaxElement::Node(Box::new(node(
+                SyntaxKind::StructField,
+                field_children,
+            ))));
+            if matches_symbol(input.first(), ",") {
+                let comma = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                struct_children.push(SyntaxElement::Token(syntax_token_from_token(&comma)));
+                if matches_symbol(input.first(), "}") {
+                    break;
+                }
+                continue;
+            }
+            break;
         }
-        _ => cut_message(input, "expected pattern"),
+        let close = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        struct_children.push(SyntaxElement::Token(syntax_token_from_token(&close)));
+        return Ok(node(SyntaxKind::PatternStruct, struct_children));
+    }
+
+    if matches_symbol(input.first(), "(") {
+        let mut tuple_children = vec![SyntaxElement::Node(Box::new(path_node))];
+        let open = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        tuple_children.push(SyntaxElement::Token(syntax_token_from_token(&open)));
+        while !matches_symbol(input.first(), ")") {
+            if input.is_empty() {
+                return Err(ErrMode::Cut(ContextError::new()));
+            }
+            let pat = parse_pattern_from_tokens(input)?;
+            tuple_children.push(SyntaxElement::Node(Box::new(pat)));
+            if matches_symbol(input.first(), ",") {
+                let comma = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                tuple_children.push(SyntaxElement::Token(syntax_token_from_token(&comma)));
+                if matches_symbol(input.first(), ")") {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        let close = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        tuple_children.push(SyntaxElement::Token(syntax_token_from_token(&close)));
+        return Ok(node(SyntaxKind::PatternTupleStruct, tuple_children));
+    }
+
+    if saw_colon {
+        Ok(path_node)
+    } else {
+        Ok(SyntaxNode::new(
+            SyntaxKind::PatternIdent,
+            path_node.children,
+            path_node.span,
+        ))
     }
 }
 
@@ -1357,7 +1825,7 @@ fn consume_where_clause(input: &mut &[Token]) {
     if !match_keyword(input, Keyword::Where) {
         return;
     }
-    while !matches_symbol(input.first(), "{") {
+    while !matches_symbol(input.first(), "{") && !matches_symbol(input.first(), ";") {
         if advance(input).is_none() {
             break;
         }
@@ -1440,9 +1908,13 @@ fn lexemes_from_tokens_for_type(tokens: &[Token]) -> (Vec<Lexeme>, Vec<usize>) {
             && token.lexeme.len() > 1
             && token.lexeme.chars().all(|ch| ch == '>')
         {
-            for _ in 0..token.lexeme.len() {
+            let count = token.lexeme.len();
+            for pos in 0..count {
                 lexemes.push(Lexeme::token(">".to_string(), token.span));
-                lexeme_to_token_end.push(idx + 1);
+                // Allow partial consumption so a trailing `>` from `>>` stays in the token stream.
+                // Only the last split `>` consumes the original token.
+                let end = if pos + 1 == count { idx + 1 } else { idx };
+                lexeme_to_token_end.push(end);
             }
             continue;
         }
@@ -1455,6 +1927,16 @@ fn lexemes_from_tokens_for_type(tokens: &[Token]) -> (Vec<Lexeme>, Vec<usize>) {
 }
 
 fn parse_type_bound_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {
+    if match_symbol(input, "?") {
+        let bound = parse_type_prefix_from_tokens(input, stops)?;
+        return Ok(node(
+            SyntaxKind::TyNot,
+            vec![
+                SyntaxElement::Token(token_text("?")),
+                SyntaxElement::Node(Box::new(bound)),
+            ],
+        ));
+    }
     if match_symbol(input, "!") {
         let bound = parse_type_prefix_from_tokens(input, stops)?;
         return Ok(node(
@@ -1602,11 +2084,19 @@ fn expect_keyword(input: &mut &[Token], keyword: Keyword) -> ModalResult<()> {
 }
 
 fn match_symbol(input: &mut &[Token], sym: &str) -> bool {
-    matches!(input.first(), Some(Token { kind: TokenKind::Symbol, lexeme, .. }) if lexeme == sym)
-        && {
-            *input = &input[1..];
-            true
-        }
+    let Some(tok) = input.first() else {
+        return false;
+    };
+    if tok.kind != TokenKind::Symbol {
+        return false;
+    }
+    if tok.lexeme == sym
+        || (sym == ">" && tok.lexeme.len() > 1 && tok.lexeme.chars().all(|ch| ch == '>'))
+    {
+        *input = &input[1..];
+        return true;
+    }
+    false
 }
 
 fn expect_symbol(input: &mut &[Token], sym: &str) -> ModalResult<()> {
@@ -1618,7 +2108,15 @@ fn expect_symbol(input: &mut &[Token], sym: &str) -> ModalResult<()> {
 }
 
 fn matches_symbol(tok: Option<&Token>, sym: &str) -> bool {
-    matches!(tok, Some(Token { kind: TokenKind::Symbol, lexeme, .. }) if lexeme == sym)
+    match tok {
+        Some(Token { kind: TokenKind::Symbol, lexeme, .. }) if lexeme == sym => true,
+        Some(Token { kind: TokenKind::Symbol, lexeme, .. })
+            if sym == ">" && lexeme.len() > 1 && lexeme.chars().all(|ch| ch == '>') =>
+        {
+            true
+        }
+        _ => false,
+    }
 }
 
 fn expect_symbol_token(input: &mut &[Token]) -> ModalResult<SyntaxToken> {

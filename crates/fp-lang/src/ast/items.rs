@@ -4,8 +4,9 @@ use fp_core::ast::{
     Abi, AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BExpr, EnumTypeVariant,
     Expr, ExprAsync, ExprKind, ExprMacro, ExprUnOp, FunctionParam, FunctionParamReceiver,
     FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType,
-    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
-    ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
+    ItemDeclStatic, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
+    ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath,
+    ItemImportRename,
     ItemImportStyle, ItemImportTree, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter,
     MacroInvocation, Module, Name, Path, QuoteFragmentKind, ReprOptions, StructuralField, Ty,
     TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value, ValueNone,
@@ -107,11 +108,17 @@ fn lower_extern_block(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
         let SyntaxElement::Node(n) = child else {
             continue;
         };
-        if n.kind != SyntaxKind::ItemExternFnDecl {
-            continue;
+        match n.kind {
+            SyntaxKind::ItemExternFnDecl => {
+                let decl = lower_extern_fn_decl(n.as_ref(), Some(abi.clone()))?;
+                items.push(Item::from(ItemKind::DeclFunction(decl)));
+            }
+            SyntaxKind::ItemExternStaticDecl => {
+                let decl = lower_extern_static_decl(n.as_ref())?;
+                items.push(Item::from(ItemKind::DeclStatic(decl)));
+            }
+            _ => {}
         }
-        let decl = lower_extern_fn_decl(n.as_ref(), Some(abi.clone()))?;
-        items.push(Item::from(ItemKind::DeclFunction(decl)));
     }
     Ok(items)
 }
@@ -139,6 +146,22 @@ fn lower_extern_fn_decl(
         ty_annotation: None,
         name,
         sig,
+    })
+}
+
+fn lower_extern_static_decl(node: &SyntaxNode) -> Result<ItemDeclStatic, LowerItemsError> {
+    let name = Ident::new(
+        first_ident_token_text_skipping(node, &["mut"])
+            .ok_or(LowerItemsError::MissingToken("static name"))?,
+    );
+    let ty_node = first_child_by_category(node, CstCategory::Type)
+        .ok_or(LowerItemsError::MissingToken("static type"))?;
+    let ty =
+        lower_type_from_cst(ty_node).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
+    Ok(ItemDeclStatic {
+        ty_annotation: None,
+        name,
+        ty,
     })
 }
 
@@ -301,6 +324,7 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
         .unwrap_or_default();
 
     let mut fields = Vec::new();
+    let mut tuple_index = 0usize;
     for child in &node.children {
         let SyntaxElement::Node(field) = child else {
             continue;
@@ -308,9 +332,17 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
         if field.kind != SyntaxKind::StructFieldDecl {
             continue;
         }
-        let fname = Ident::new(
-            first_ident_token_text(field).ok_or(LowerItemsError::MissingToken("field"))?,
-        );
+        let fname = if let Some(name) = first_ident_token_text(field) {
+            Ident::new(name)
+        } else if let Some(name) = first_token_text(field)
+            .filter(|text| text.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        {
+            Ident::new(name)
+        } else {
+            let name = tuple_index.to_string();
+            tuple_index += 1;
+            Ident::new(name)
+        };
         let ty_node = first_child_by_category(field, CstCategory::Type)
             .ok_or(LowerItemsError::MissingToken("field type"))?;
         let mut fty = lower_type_from_cst(ty_node)
@@ -481,7 +513,8 @@ fn lower_static(node: &SyntaxNode) -> Result<ItemDefStatic, LowerItemsError> {
     let attrs = lower_outer_attrs(node);
     let visibility = lower_visibility(first_visibility(node)?)?;
     let name = Ident::new(
-        first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("static name"))?,
+        first_ident_token_text_skipping(node, &["mut"])
+            .ok_or(LowerItemsError::MissingToken("static name"))?,
     );
     let ty_node = first_child_by_category(node, CstCategory::Type)
         .ok_or(LowerItemsError::MissingToken("static type"))?;
@@ -1189,21 +1222,19 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
                     .collect::<Vec<_>>();
                 let is_const = tokens.iter().any(|token| *token == "const");
                 let is_context = tokens.first() == Some(&"context") && tokens.len() >= 2;
-                let pname_text = tokens
-                    .iter()
-                    .copied()
-                    .enumerate()
-                    .find(|(index, token)| {
-                        if *token == "const" || *token == "mut" {
-                            return false;
-                        }
-                        if *token == "context" && (*index == 0 && is_context) {
-                            return false;
-                        }
-                        true
-                    })
-                    .map(|(_, token)| token.to_string())
-                    .ok_or(LowerItemsError::MissingToken("param"))?;
+                let pname_text = first_ident_token_text_skipping(n, &["const", "mut", "context"])
+                    .or_else(|| {
+                        first_ident_token_text_deep_skipping(
+                            n,
+                            &["const", "mut", "context", "box", "ref"],
+                        )
+                    });
+                if pname_text.is_none()
+                    && tokens.iter().any(|token| *token == "...")
+                {
+                    continue;
+                }
+                let pname_text = pname_text.ok_or(LowerItemsError::MissingToken("param"))?;
                 let pname = Ident::new(pname_text);
                 let ty_node = first_child_by_category(n, CstCategory::Type)
                     .ok_or(LowerItemsError::MissingToken("param type"))?;
@@ -1481,7 +1512,7 @@ fn first_ident_token_text(node: &SyntaxNode) -> Option<String> {
                 && t.text
                     .chars()
                     .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_') =>
+                    .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '\'') =>
         {
             Some(t.text.clone())
         }
@@ -1497,12 +1528,36 @@ fn first_ident_token_text_skipping(node: &SyntaxNode, skip: &[&str]) -> Option<S
                 && t.text
                     .chars()
                     .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_') =>
+                    .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '\'') =>
         {
             Some(t.text.clone())
         }
         _ => None,
     })
+}
+
+fn first_ident_token_text_deep_skipping(node: &SyntaxNode, skip: &[&str]) -> Option<String> {
+    for child in &node.children {
+        match child {
+            SyntaxElement::Token(t)
+                if !t.is_trivia()
+                    && !skip.contains(&t.text.as_str())
+                    && t.text
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '\'') =>
+            {
+                return Some(t.text.clone());
+            }
+            SyntaxElement::Node(n) => {
+                if let Some(found) = first_ident_token_text_deep_skipping(n.as_ref(), skip) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn first_token_text(node: &SyntaxNode) -> Option<String> {
