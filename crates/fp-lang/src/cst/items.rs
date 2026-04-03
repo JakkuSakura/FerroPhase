@@ -697,6 +697,10 @@ fn parse_item_cst(
             advance(input);
             let name = expect_ident_token(input)?;
             children.push(SyntaxElement::Token(name));
+            if matches_symbol(input.first(), "<") {
+                let gen = parse_generic_params_cst(input)?;
+                children.push(SyntaxElement::Node(Box::new(gen)));
+            }
             expect_symbol(input, "=")?;
             let ty = parse_type_prefix_from_tokens(input, &[";"])?;
             children.push(SyntaxElement::Node(Box::new(ty)));
@@ -1143,8 +1147,17 @@ fn parse_param_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     let pattern = parse_pattern_from_tokens(input)?;
     children.push(SyntaxElement::Node(Box::new(pattern)));
     expect_symbol(input, ":")?;
-    let ty = parse_type_prefix_from_tokens(input, &["=", ",", ")"])?;
-    children.push(SyntaxElement::Node(Box::new(ty)));
+    if matches_symbol(input.first(), "...") {
+        let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        let ty = node(
+            SyntaxKind::TyUnknown,
+            vec![SyntaxElement::Token(syntax_token_from_token(&tok))],
+        );
+        children.push(SyntaxElement::Node(Box::new(ty)));
+    } else {
+        let ty = parse_type_prefix_from_tokens(input, &["=", ",", ")"])?;
+        children.push(SyntaxElement::Node(Box::new(ty)));
+    }
     if match_symbol(input, "=") {
         children.push(SyntaxElement::Token(SyntaxToken {
             kind: SyntaxTokenKind::Token,
@@ -1268,38 +1281,53 @@ fn parse_generic_params_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     expect_symbol(input, "<")?;
     let mut children = Vec::new();
     while !matches_symbol(input.first(), ">") {
-        let name = match input.first() {
-            Some(Token {
-                kind: TokenKind::Ident,
-                ..
-            }) => expect_ident_token(input)?,
-            Some(Token {
-                kind: TokenKind::Keyword(_),
-                lexeme,
-                ..
-            }) if lexeme.starts_with('\'') => {
-                let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
-                syntax_token_from_token(&tok)
+        let mut param_children = Vec::new();
+        if matches!(input.first(), Some(Token { kind: TokenKind::Keyword(Keyword::Const), .. })) {
+            let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+            param_children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
+            let name = expect_ident_token(input)?;
+            param_children.push(SyntaxElement::Token(name));
+            expect_symbol(input, ":")?;
+            let ty = parse_type_prefix_from_tokens(input, &["=", ",", ">"])?;
+            param_children.push(SyntaxElement::Node(Box::new(ty)));
+            if match_symbol(input, "=") {
+                let expr = parse_expr_prefix_from_tokens(input)?;
+                param_children.push(SyntaxElement::Node(Box::new(expr)));
             }
-            Some(Token {
-                kind: TokenKind::Ident,
-                lexeme,
-                ..
-            }) if lexeme.starts_with('\'') => expect_ident_token(input)?,
-            _ => return Err(ErrMode::Cut(ContextError::new())),
-        };
-        let mut param_children = vec![SyntaxElement::Token(name)];
-        if match_symbol(input, ":") {
-            loop {
-                let bound = parse_type_bound_from_tokens(input, &["+", ",", ">"])?;
-                param_children.push(SyntaxElement::Node(Box::new(bound)));
-                if match_symbol(input, "+") {
-                    continue;
+        } else {
+            let name = match input.first() {
+                Some(Token {
+                    kind: TokenKind::Ident,
+                    ..
+                }) => expect_ident_token(input)?,
+                Some(Token {
+                    kind: TokenKind::Keyword(_),
+                    lexeme,
+                    ..
+                }) if lexeme.starts_with('\'') => {
+                    let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                    syntax_token_from_token(&tok)
                 }
-                if matches_symbol(input.first(), "!") {
-                    continue;
+                Some(Token {
+                    kind: TokenKind::Ident,
+                    lexeme,
+                    ..
+                }) if lexeme.starts_with('\'') => expect_ident_token(input)?,
+                _ => return Err(ErrMode::Cut(ContextError::new())),
+            };
+            param_children.push(SyntaxElement::Token(name));
+            if match_symbol(input, ":") {
+                loop {
+                    let bound = parse_type_bound_from_tokens(input, &["+", ",", ">"])?;
+                    param_children.push(SyntaxElement::Node(Box::new(bound)));
+                    if match_symbol(input, "+") {
+                        continue;
+                    }
+                    if matches_symbol(input.first(), "!") {
+                        continue;
+                    }
+                    break;
                 }
-                break;
             }
         }
         children.push(SyntaxElement::Node(Box::new(node(
@@ -1919,7 +1947,11 @@ fn lexemes_from_tokens_for_type(tokens: &[Token]) -> (Vec<Lexeme>, Vec<usize>) {
             continue;
         }
 
-        lexemes.push(Lexeme::token(token.lexeme.clone(), token.span));
+        let text = match token.kind {
+            TokenKind::Keyword(keyword) => keyword.as_str().to_string(),
+            _ => token.lexeme.clone(),
+        };
+        lexemes.push(Lexeme::token(text, token.span));
         lexeme_to_token_end.push(idx + 1);
     }
 
@@ -1953,7 +1985,13 @@ fn parse_type_bound_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalRe
 fn lexemes_from_tokens(tokens: &[Token]) -> Vec<Lexeme> {
     tokens
         .iter()
-        .map(|t| Lexeme::token(t.lexeme.clone(), t.span))
+        .map(|t| {
+            let text = match t.kind {
+                TokenKind::Keyword(keyword) => keyword.as_str().to_string(),
+                _ => t.lexeme.clone(),
+            };
+            Lexeme::token(text, t.span)
+        })
         .collect()
 }
 

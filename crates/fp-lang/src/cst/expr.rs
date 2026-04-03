@@ -182,6 +182,11 @@ impl Parser {
         min_bp: u8,
         allow_struct_literal: bool,
     ) -> Result<SyntaxNode, ExprCstParseError> {
+        if min_bp == 0 {
+            if let Some(assign) = self.try_parse_assign_pattern_expr(allow_struct_literal)? {
+                return Ok(assign);
+            }
+        }
         let mut left = self.parse_prefix(allow_struct_literal)?;
         left = self.parse_postfix(left, allow_struct_literal)?;
 
@@ -219,6 +224,42 @@ impl Parser {
         }
 
         Ok(left)
+    }
+
+    fn try_parse_assign_pattern_expr(
+        &mut self,
+        allow_struct_literal: bool,
+    ) -> Result<Option<SyntaxNode>, ExprCstParseError> {
+        let start_idx = self.idx;
+        let pat = match self.parse_pattern() {
+            Ok(pat) => pat,
+            Err(_) => {
+                self.idx = start_idx;
+                return Ok(None);
+            }
+        };
+        let Some(op) = self.peek_non_trivia_raw() else {
+            self.idx = start_idx;
+            return Ok(None);
+        };
+        if !is_assignment_operator(op) {
+            self.idx = start_idx;
+            return Ok(None);
+        }
+        let Some((_, r_bp, kind)) = infix_binding_power(op) else {
+            self.idx = start_idx;
+            return Ok(None);
+        };
+
+        let mut children = Vec::new();
+        children.push(SyntaxElement::Node(Box::new(pat)));
+        self.bump_trivia_into(&mut children);
+        self.bump_token_into(&mut children); // operator
+        self.bump_trivia_into(&mut children);
+        let right = self.parse_expr_bp_inner(r_bp, allow_struct_literal)?;
+        children.push(SyntaxElement::Node(Box::new(right)));
+        let span = span_for_children(&children);
+        Ok(Some(SyntaxNode::new(kind, children, span)))
     }
 
     fn range_end_is_missing(&self) -> bool {
@@ -387,6 +428,7 @@ impl Parser {
 
     fn parse_primary(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         match self.peek_non_trivia_raw() {
+            Some("..") | Some("..=") => self.parse_range_prefix_expr(),
             Some("(") => self.parse_paren_expr(),
             Some("[") => self.parse_array_literal_expr(),
             Some("{") => self.parse_block_expr(),
@@ -1114,7 +1156,7 @@ impl Parser {
             let mut field_children = Vec::new();
             self.bump_trivia_into(&mut field_children);
             match self.peek_non_trivia_token_kind() {
-                Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) => {
+                Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) | Some(TokenKind::Number) => {
                     self.bump_token_into(&mut field_children)
                 }
                 _ => return Err(self.error("expected field name in struct pattern")),
@@ -1455,7 +1497,7 @@ impl Parser {
         }
 
         match self.peek_non_trivia_token_kind() {
-            Some(TokenKind::Ident) | Some(TokenKind::Number) => {
+            Some(TokenKind::Ident) | Some(TokenKind::Number) | Some(TokenKind::Keyword(_)) => {
                 self.bump_token_into(&mut children);
                 let span = span_for_children(&children);
                 Ok(SyntaxNode::new(SyntaxKind::ExprSelect, children, span))
@@ -1619,6 +1661,28 @@ impl Parser {
         Ok(SyntaxNode::new(SyntaxKind::ExprRange, children, span))
     }
 
+    fn parse_range_prefix_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = Vec::new();
+        let _span_start = self
+            .peek_any_span()
+            .unwrap_or_else(|| Span::new(self.file, 0, 0));
+
+        self.bump_trivia_into(&mut children);
+        self.bump_token_into(&mut children); // ".." or "..="
+        self.bump_trivia_into(&mut children);
+
+        if let Some(raw) = self.peek_non_trivia_raw() {
+            if !matches!(raw, "," | ")" | "]" | "}" | ";") {
+                let end = self.parse_expr_bp(0)?;
+                children.push(SyntaxElement::Node(Box::new(end)));
+                self.bump_trivia_into(&mut children);
+            }
+        }
+
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(SyntaxKind::ExprRange, children, span))
+    }
+
     fn parse_macro_call(&mut self, base: SyntaxNode) -> Result<SyntaxNode, ExprCstParseError> {
         // Only support simple `ident!(...)` / `ident!{...}` / `ident![...]` forms for now.
         if !matches!(
@@ -1713,6 +1777,9 @@ impl Parser {
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         let raw = self.peek_non_trivia_raw();
         let normalized = self.peek_non_trivia_normalized();
+        if raw.as_deref() == Some("!") {
+            return self.parse_type_value(start);
+        }
         if raw.as_deref() == Some("...") {
             let mut children = Vec::new();
             self.bump_trivia_into(&mut children);
@@ -2166,63 +2233,7 @@ impl Parser {
         }
 
         if self.peek_non_trivia_raw() == Some("<") {
-            self.bump_token_into(&mut children);
-            self.bump_trivia_into(&mut children);
-            while self.peek_non_trivia_raw() != Some(">") {
-                if self.peek_non_trivia_raw().is_none() {
-                    return Err(self.error("unterminated generic args"));
-                }
-                if self.peek_non_trivia_raw() == Some(">>") {
-                    self.split_right_shift();
-                    break;
-                }
-
-                if self.peek_non_trivia_raw().is_some_and(|raw| raw == "'" || raw.starts_with('\'')) {
-                    let lifetime = self.parse_lifetime_type_arg()?;
-                    children.push(SyntaxElement::Node(Box::new(lifetime)));
-                    self.bump_trivia_into(&mut children);
-                    if self.peek_non_trivia_raw() == Some(",") {
-                        if self.comma_looks_like_outer_field_separator() {
-                            break;
-                        }
-                        self.bump_token_into(&mut children);
-                        self.bump_trivia_into(&mut children);
-                        continue;
-                    }
-                    break;
-                }
-
-                let snapshot = self.idx;
-                if self.peek_non_trivia_token_kind() == Some(TokenKind::Ident) {
-                    self.bump_token_into(&mut children);
-                    self.bump_trivia_into(&mut children);
-                    if self.peek_non_trivia_raw() == Some("=") {
-                        self.bump_token_into(&mut children);
-                        self.bump_trivia_into(&mut children);
-                    } else {
-                        self.idx = snapshot;
-                    }
-                }
-
-                let arg_ty = self.parse_type_bp_until(0, &[",", ">"])?;
-                children.push(SyntaxElement::Node(Box::new(arg_ty)));
-                self.bump_trivia_into(&mut children);
-                if self.peek_non_trivia_raw() == Some(",") {
-                    if self.comma_looks_like_outer_field_separator() {
-                        break;
-                    }
-                    self.bump_token_into(&mut children);
-                    self.bump_trivia_into(&mut children);
-                    continue;
-                }
-                break;
-            }
-            if self.peek_non_trivia_raw() == Some(">>") {
-                self.split_right_shift();
-            }
-            self.expect_token_raw(">")?;
-            self.bump_token_into(&mut children);
-            self.bump_trivia_into(&mut children);
+            self.parse_generic_args_into(&mut children)?;
         }
 
         if self.peek_non_trivia_raw() == Some("(") {
@@ -2523,7 +2534,10 @@ impl Parser {
         self.bump_trivia_into(&mut children);
 
         // name
-        self.expect_ident_token()?;
+        match self.peek_non_trivia_token_kind() {
+            Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) | Some(TokenKind::Number) => {}
+            _ => return Err(self.error("expected identifier")),
+        }
         self.bump_token_into(&mut children);
         self.bump_trivia_into(&mut children);
 
@@ -2574,38 +2588,7 @@ impl Parser {
             {
                 self.bump_token_into(&mut children);
                 self.bump_trivia_into(&mut children);
-                self.expect_token_raw("<")?;
-                self.bump_token_into(&mut children);
-                self.bump_trivia_into(&mut children);
-
-                while self.peek_non_trivia_raw() != Some(">") {
-                    if self.peek_non_trivia_raw().is_none() {
-                        return Err(self.error("unterminated generic args"));
-                    }
-                    if self.peek_non_trivia_raw() == Some(">>") {
-                        self.split_right_shift();
-                        break;
-                    }
-
-                    let arg_ty = self.parse_type_bp_until(0, &[",", ">"])?;
-                    children.push(SyntaxElement::Node(Box::new(arg_ty)));
-                    self.bump_trivia_into(&mut children);
-                    if self.peek_non_trivia_raw() == Some(",") {
-                        if self.comma_looks_like_outer_field_separator() {
-                            break;
-                        }
-                        self.bump_token_into(&mut children);
-                        self.bump_trivia_into(&mut children);
-                        continue;
-                    }
-                    break;
-                }
-                if self.peek_non_trivia_raw() == Some(">>") {
-                    self.split_right_shift();
-                }
-                self.expect_token_raw(">")?;
-                self.bump_token_into(&mut children);
-                self.bump_trivia_into(&mut children);
+                self.parse_generic_args_into(&mut children)?;
                 continue;
             }
 
@@ -2667,38 +2650,7 @@ impl Parser {
             self.bump_trivia_into(&mut children);
 
             if self.peek_non_trivia_raw() == Some("<") {
-                self.expect_token_raw("<")?;
-                self.bump_token_into(&mut children);
-                self.bump_trivia_into(&mut children);
-
-                while self.peek_non_trivia_raw() != Some(">") {
-                    if self.peek_non_trivia_raw().is_none() {
-                        return Err(self.error("unterminated generic args"));
-                    }
-                    if self.peek_non_trivia_raw() == Some(">>") {
-                        self.split_right_shift();
-                        break;
-                    }
-
-                    let arg_ty = self.parse_type_bp_until(0, &[",", ">"])?;
-                    children.push(SyntaxElement::Node(Box::new(arg_ty)));
-                    self.bump_trivia_into(&mut children);
-                    if self.peek_non_trivia_raw() == Some(",") {
-                        if self.comma_looks_like_outer_field_separator() {
-                            break;
-                        }
-                        self.bump_token_into(&mut children);
-                        self.bump_trivia_into(&mut children);
-                        continue;
-                    }
-                    break;
-                }
-                if self.peek_non_trivia_raw() == Some(">>") {
-                    self.split_right_shift();
-                }
-                self.expect_token_raw(">")?;
-                self.bump_token_into(&mut children);
-                self.bump_trivia_into(&mut children);
+                self.parse_generic_args_into(&mut children)?;
                 continue;
             }
 
@@ -2718,9 +2670,7 @@ impl Parser {
     fn parse_lifetime_type_arg(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
         self.bump_trivia_into(&mut children);
-        let raw = self
-            .peek_non_trivia_raw()
-            .unwrap_or_else(|| "".to_string());
+        let raw = self.peek_non_trivia_raw().unwrap_or("").to_string();
         self.bump_token_into(&mut children);
         self.bump_trivia_into(&mut children);
         if raw == "'" {
@@ -2732,6 +2682,117 @@ impl Parser {
                 self.bump_trivia_into(&mut children);
             }
         }
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(SyntaxKind::TyUnknown, children, span))
+    }
+
+    fn parse_generic_args_into(
+        &mut self,
+        out: &mut Vec<SyntaxElement>,
+    ) -> Result<(), ExprCstParseError> {
+        self.expect_token_raw("<")?;
+        self.bump_token_into(out);
+        self.bump_trivia_into(out);
+
+        while self.peek_non_trivia_raw() != Some(">") {
+            if self.peek_non_trivia_raw().is_none() {
+                return Err(self.error("unterminated generic args"));
+            }
+            if self.peek_non_trivia_raw() == Some(">>") {
+                self.split_right_shift();
+                break;
+            }
+
+            if self
+                .peek_non_trivia_raw()
+                .is_some_and(|raw| raw == "'" || raw.starts_with('\''))
+            {
+                let lifetime = self.parse_lifetime_type_arg()?;
+                out.push(SyntaxElement::Node(Box::new(lifetime)));
+                self.bump_trivia_into(out);
+                if self.peek_non_trivia_raw() == Some(",") {
+                    if self.comma_looks_like_outer_field_separator() {
+                        break;
+                    }
+                    self.bump_token_into(out);
+                    self.bump_trivia_into(out);
+                    continue;
+                }
+                break;
+            }
+
+            if self.peek_non_trivia_normalized() == Some("const") || self.peek_non_trivia_raw() == Some("{") {
+                let arg = self.parse_unknown_generic_arg()?;
+                out.push(SyntaxElement::Node(Box::new(arg)));
+                self.bump_trivia_into(out);
+                if self.peek_non_trivia_raw() == Some(",") {
+                    if self.comma_looks_like_outer_field_separator() {
+                        break;
+                    }
+                    self.bump_token_into(out);
+                    self.bump_trivia_into(out);
+                    continue;
+                }
+                break;
+            }
+
+            let snapshot = self.idx;
+            if self.peek_non_trivia_token_kind() == Some(TokenKind::Ident) {
+                self.bump_token_into(out);
+                self.bump_trivia_into(out);
+                if self.peek_non_trivia_raw() == Some("=") {
+                    self.bump_token_into(out);
+                    self.bump_trivia_into(out);
+                } else {
+                    self.idx = snapshot;
+                }
+            }
+
+            let arg_ty = self.parse_type_bp_until(0, &[",", ">"])?;
+            out.push(SyntaxElement::Node(Box::new(arg_ty)));
+            self.bump_trivia_into(out);
+            if self.peek_non_trivia_raw() == Some(",") {
+                if self.comma_looks_like_outer_field_separator() {
+                    break;
+                }
+                self.bump_token_into(out);
+                self.bump_trivia_into(out);
+                continue;
+            }
+            break;
+        }
+        if self.peek_non_trivia_raw() == Some(">>") {
+            self.split_right_shift();
+        }
+        self.expect_token_raw(">")?;
+        self.bump_token_into(out);
+        self.bump_trivia_into(out);
+        Ok(())
+    }
+
+    fn parse_unknown_generic_arg(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = Vec::new();
+        self.bump_trivia_into(&mut children);
+
+        loop {
+            let Some(raw) = self.peek_non_trivia_raw() else {
+                return Err(self.error("unterminated generic arg"));
+            };
+            if raw == "," || raw == ">" {
+                break;
+            }
+            if raw == ">>" {
+                self.split_right_shift();
+                break;
+            }
+            match raw {
+                "(" => self.parse_balanced_group_into("(", ")", &mut children)?,
+                "[" => self.parse_balanced_group_into("[", "]", &mut children)?,
+                "{" => self.parse_balanced_group_into("{", "}", &mut children)?,
+                _ => self.bump_token_into(&mut children),
+            }
+        }
+
         let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::TyUnknown, children, span))
     }
@@ -2771,56 +2832,7 @@ impl Parser {
             self.bump_trivia_into(&mut children);
 
             if self.peek_non_trivia_raw() == Some("<") {
-                self.expect_token_raw("<")?;
-                self.bump_token_into(&mut children);
-                self.bump_trivia_into(&mut children);
-
-                while self.peek_non_trivia_raw() != Some(">") {
-                    if self.peek_non_trivia_raw().is_none() {
-                        return Err(self.error("unterminated generic args"));
-                    }
-                    if self.peek_non_trivia_raw() == Some(">>") {
-                        self.split_right_shift();
-                        break;
-                    }
-
-                    if self
-                        .peek_non_trivia_raw()
-                        .is_some_and(|raw| raw == "'" || raw.starts_with('\''))
-                    {
-                        let lifetime = self.parse_lifetime_type_arg()?;
-                        children.push(SyntaxElement::Node(Box::new(lifetime)));
-                        self.bump_trivia_into(&mut children);
-                        if self.peek_non_trivia_raw() == Some(",") {
-                            if self.comma_looks_like_outer_field_separator() {
-                                break;
-                            }
-                            self.bump_token_into(&mut children);
-                            self.bump_trivia_into(&mut children);
-                            continue;
-                        }
-                        break;
-                    }
-
-                    let arg_ty = self.parse_type_bp_until(0, &[",", ">"])?;
-                    children.push(SyntaxElement::Node(Box::new(arg_ty)));
-                    self.bump_trivia_into(&mut children);
-                    if self.peek_non_trivia_raw() == Some(",") {
-                        if self.comma_looks_like_outer_field_separator() {
-                            break;
-                        }
-                        self.bump_token_into(&mut children);
-                        self.bump_trivia_into(&mut children);
-                        continue;
-                    }
-                    break;
-                }
-                if self.peek_non_trivia_raw() == Some(">>") {
-                    self.split_right_shift();
-                }
-                self.expect_token_raw(">")?;
-                self.bump_token_into(&mut children);
-                self.bump_trivia_into(&mut children);
+                self.parse_generic_args_into(&mut children)?;
                 continue;
             }
 
@@ -3053,6 +3065,13 @@ fn infix_binding_power(op: &str) -> Option<(u8, u8, SyntaxKind)> {
         _ => return None,
     };
     Some((l, r, kind))
+}
+
+fn is_assignment_operator(op: &str) -> bool {
+    matches!(
+        op,
+        "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "<<=" | ">>=" | "&=" | "|=" | "^="
+    )
 }
 
 fn is_type_boundary_token(tok: &str) -> bool {

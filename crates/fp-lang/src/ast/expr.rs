@@ -15,8 +15,9 @@ use fp_core::ast::{
     ExprTry, ExprTryCatch, ExprTuple, ExprWhile, ExprWith, FormatArgRef, FormatPlaceholder,
     FormatSpec, FormatTemplatePart, Ident, ImplTraits, MacroDelimiter, MacroInvocation,
     MacroTokenTree, Name, ParameterPath, ParameterPathSegment, Path, Pattern, PatternBind,
-    PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternStruct, PatternStructField,
-    PatternStructural, PatternTuple, PatternTupleStruct, PatternType, PatternVariant,
+    PatternBox, PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternStruct,
+    PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
+    PatternVariant,
     PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtDefer, StmtLet, StructuralField, Ty,
     TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeInt, TypePrimitive,
     TypeQuote, TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeType, TypeVec, Value,
@@ -1044,11 +1045,26 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             .into())
         }
         SyntaxKind::ExprBinary => {
-            let lhs = first_child_expr(node)?;
-            let rhs = last_child_expr(node)?;
+            let mut expr_nodes = node.children.iter().filter_map(|c| match c {
+                crate::syntax::SyntaxElement::Node(n) => Some(n.as_ref()),
+                _ => None,
+            });
+            let lhs_node = expr_nodes
+                .next()
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprBinary))?;
+            let rhs_node = expr_nodes
+                .next()
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprBinary))?;
             let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
-            let lhs = lower_expr_from_cst(lhs)?;
-            let rhs = lower_expr_from_cst(rhs)?;
+
+            if lhs_node.kind.category() == CstCategory::Pattern {
+                let pattern = lower_pattern_from_cst(lhs_node)?;
+                let rhs = lower_expr_from_cst(rhs_node)?;
+                return lower_assign_pattern_expr(pattern, rhs, &op, node.span);
+            }
+
+            let lhs = lower_expr_from_cst(lhs_node)?;
+            let rhs = lower_expr_from_cst(rhs_node)?;
 
             if op == "=" {
                 return Ok(ExprKind::Assign(fp_core::ast::ExprAssign {
@@ -1611,6 +1627,195 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
         }
         other => Err(LowerError::UnexpectedNode(other)),
     }
+}
+
+fn lower_assign_pattern_expr(
+    pattern: Pattern,
+    rhs: Expr,
+    op: &str,
+    span: fp_core::span::Span,
+) -> Result<Expr, LowerError> {
+    if op != "=" {
+        return Err(LowerError::Unsupported(format!(
+            "pattern assignment operator '{op}'"
+        )));
+    }
+
+    let mut counter = 0usize;
+    let mut assignments = Vec::new();
+    let rewritten_pattern = rewrite_assign_pattern(pattern, &mut counter, &mut assignments);
+    let rhs_ident = Ident::new(format!("__fp_assign_rhs{counter}"));
+
+    let mut block = ExprBlock::new();
+    block.push_stmt(BlockStmt::Let(StmtLet::new_simple(rhs_ident.clone(), rhs)));
+    let match_expr = build_assign_pattern_match(rhs_ident, rewritten_pattern, assignments, span);
+    block.push_expr(match_expr);
+    Ok(ExprKind::Block(block).into())
+}
+
+fn rewrite_assign_pattern(
+    pattern: Pattern,
+    counter: &mut usize,
+    assignments: &mut Vec<(Ident, Ident)>,
+) -> Pattern {
+    let (ty, kind) = pattern.into_parts();
+    let kind = match kind {
+        PatternKind::Ident(ident) => {
+            let temp = next_assign_temp_ident(counter);
+            assignments.push((ident.ident.clone(), temp.clone()));
+            let mut rewritten = PatternIdent::new(temp);
+            rewritten.mutability = ident.mutability;
+            PatternKind::Ident(rewritten)
+        }
+        PatternKind::Bind(bind) => {
+            let temp = next_assign_temp_ident(counter);
+            assignments.push((bind.ident.ident.clone(), temp.clone()));
+            let mut rewritten_ident = PatternIdent::new(temp);
+            rewritten_ident.mutability = bind.ident.mutability;
+            let inner = rewrite_assign_pattern(*bind.pattern, counter, assignments);
+            PatternKind::Bind(PatternBind {
+                ident: rewritten_ident,
+                pattern: Box::new(inner),
+            })
+        }
+        PatternKind::Type(pattern_type) => {
+            let inner = rewrite_assign_pattern(*pattern_type.pat, counter, assignments);
+            PatternKind::Type(PatternType::new(inner, pattern_type.ty))
+        }
+        PatternKind::Tuple(tuple) => {
+            let patterns = tuple
+                .patterns
+                .into_iter()
+                .map(|pat| rewrite_assign_pattern(pat, counter, assignments))
+                .collect();
+            PatternKind::Tuple(PatternTuple { patterns })
+        }
+        PatternKind::TupleStruct(tuple_struct) => {
+            let patterns = tuple_struct
+                .patterns
+                .into_iter()
+                .map(|pat| rewrite_assign_pattern(pat, counter, assignments))
+                .collect();
+            PatternKind::TupleStruct(PatternTupleStruct {
+                name: tuple_struct.name,
+                patterns,
+            })
+        }
+        PatternKind::Struct(pattern_struct) => {
+            let fields = rewrite_assign_struct_fields(pattern_struct.fields, counter, assignments);
+            PatternKind::Struct(PatternStruct {
+                name: pattern_struct.name,
+                fields,
+                has_rest: pattern_struct.has_rest,
+            })
+        }
+        PatternKind::Structural(pattern_struct) => {
+            let fields = rewrite_assign_struct_fields(pattern_struct.fields, counter, assignments);
+            PatternKind::Structural(PatternStructural {
+                fields,
+                has_rest: pattern_struct.has_rest,
+            })
+        }
+        PatternKind::Box(pattern_box) => {
+            let inner = rewrite_assign_pattern(*pattern_box.pattern, counter, assignments);
+            PatternKind::Box(PatternBox {
+                pattern: Box::new(inner),
+            })
+        }
+        PatternKind::Variant(variant) => {
+            let pattern = variant
+                .pattern
+                .map(|pat| Box::new(rewrite_assign_pattern(*pat, counter, assignments)));
+            PatternKind::Variant(PatternVariant {
+                name: variant.name,
+                pattern,
+            })
+        }
+        PatternKind::Quote(quote) => PatternKind::Quote(quote),
+        PatternKind::QuotePlural(quote) => PatternKind::QuotePlural(quote),
+        PatternKind::Wildcard(wildcard) => PatternKind::Wildcard(wildcard),
+    };
+    Pattern::from_parts(ty, kind)
+}
+
+fn rewrite_assign_struct_fields(
+    fields: Vec<PatternStructField>,
+    counter: &mut usize,
+    assignments: &mut Vec<(Ident, Ident)>,
+) -> Vec<PatternStructField> {
+    fields
+        .into_iter()
+        .map(|field| {
+            let rename = match field.rename {
+                Some(rename) => Some(Box::new(rewrite_assign_pattern(
+                    *rename,
+                    counter,
+                    assignments,
+                ))),
+                None => {
+                    let temp = next_assign_temp_ident(counter);
+                    assignments.push((field.name.clone(), temp.clone()));
+                    Some(Box::new(Pattern::new(PatternKind::Ident(
+                        PatternIdent::new(temp),
+                    ))))
+                }
+            };
+            PatternStructField {
+                name: field.name,
+                rename,
+            }
+        })
+        .collect()
+}
+
+fn build_assign_pattern_match(
+    rhs_ident: Ident,
+    pattern: Pattern,
+    assignments: Vec<(Ident, Ident)>,
+    span: fp_core::span::Span,
+) -> Expr {
+    let mut arm_block = ExprBlock::new();
+    for (target, source) in assignments {
+        let assign_expr = Expr::new(ExprKind::Assign(fp_core::ast::ExprAssign {
+            span,
+            target: Box::new(Expr::ident(target)),
+            value: Box::new(Expr::ident(source)),
+        }));
+        arm_block.push_stmt(BlockStmt::Expr(
+            BlockStmtExpr::new(assign_expr).with_semicolon(true),
+        ));
+    }
+    arm_block.push_expr(Expr::ident(rhs_ident.clone()));
+    let arm_expr = ExprKind::Block(arm_block).into();
+
+    let match_case = ExprMatchCase {
+        span,
+        pat: Some(Box::new(pattern)),
+        cond: Box::new(Expr::value(Value::bool(true))),
+        guard: None,
+        body: Box::new(arm_expr),
+    };
+    let wildcard_case = ExprMatchCase {
+        span,
+        pat: Some(Box::new(Pattern::new(PatternKind::Wildcard(
+            PatternWildcard {},
+        )))),
+        cond: Box::new(Expr::value(Value::bool(true))),
+        guard: None,
+        body: Box::new(Expr::ident(rhs_ident.clone())),
+    };
+    ExprKind::Match(ExprMatch {
+        span,
+        scrutinee: Some(Box::new(Expr::ident(rhs_ident))),
+        cases: vec![match_case, wildcard_case],
+    })
+    .into()
+}
+
+fn next_assign_temp_ident(counter: &mut usize) -> Ident {
+    let name = format!("__fp_assign_pat{counter}");
+    *counter += 1;
+    Ident::new(name)
 }
 
 fn lower_pattern_path_name(node: &SyntaxNode) -> Result<Name, LowerError> {
@@ -2466,6 +2671,7 @@ fn lower_ty_value(node: &SyntaxNode) -> Result<Ty, LowerError> {
     let raw = direct_first_non_trivia_token_text(node)
         .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::TyValue))?;
     let value = match raw.as_str() {
+        "!" => return Ok(Ty::Nothing(fp_core::ast::TypeNothing)),
         "true" => Value::bool(true),
         "false" => Value::bool(false),
         "null" => Value::null(),
