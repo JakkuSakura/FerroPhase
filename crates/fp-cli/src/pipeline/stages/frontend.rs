@@ -30,6 +30,9 @@ impl PipelineStage for FrontendStage {
             Some(path) => HirGenerator::with_file(path),
             None => HirGenerator::new(),
         };
+        if let Some(module_resolution) = context.options.module_resolution.as_ref() {
+            generator = generator.with_module_resolution(module_resolution.clone());
+        }
         generator.set_target_triple(context.options.target_triple.as_deref());
 
         if matches!(

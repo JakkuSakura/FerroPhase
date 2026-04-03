@@ -51,7 +51,7 @@ fn base_compile_args(input: PathBuf, output: PathBuf) -> CompileArgs {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output),
-        package_graph: None,
+        graph: None,
         opt_level: 0,
         debug: false,
         release: false,

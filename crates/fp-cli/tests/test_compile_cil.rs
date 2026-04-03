@@ -39,7 +39,7 @@ fn main() -> i64 {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        package_graph: None,
+        graph: None,
         opt_level: 0,
         debug: false,
         release: false,

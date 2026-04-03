@@ -2176,6 +2176,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                     );
                     return self.eval_intrinsic(&mut call);
                 }
+                if ident.as_str() == "import" {
+                    self.emit_error("dynamic import is only supported in interpret mode");
+                    return Value::undefined();
+                }
             }
         }
         if !invoke.kwargs.is_empty() {
@@ -2741,6 +2745,63 @@ impl<'ctx> AstInterpreter<'ctx> {
                             other => Value::Type(self.type_from_value(&other)),
                         };
                         return RuntimeFlow::Value(output);
+                    }
+                    if ident.as_str() == "import" {
+                        if !invoke.kwargs.is_empty() {
+                            self.emit_error("import does not accept keyword arguments");
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                        if invoke.args.len() != 1 {
+                            self.emit_error("import expects exactly one argument");
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                        let value = match self.eval_expr_runtime(&mut invoke.args[0]) {
+                            RuntimeFlow::Value(value) => value,
+                            other => return other,
+                        };
+                        let Value::String(spec) = value else {
+                            self.emit_error("import expects a string argument");
+                            return RuntimeFlow::Value(Value::undefined());
+                        };
+                        let context = match self.module_resolution.as_ref() {
+                            Some(context) => context,
+                            None => {
+                                self.emit_error("import requires a workspace graph");
+                                return RuntimeFlow::Value(Value::undefined());
+                            }
+                        };
+                        let current_module = context
+                            .current_module
+                            .as_ref()
+                            .and_then(|module_id| context.graph.module(module_id));
+                        let language = current_module
+                            .map(|module| module.language.clone())
+                            .unwrap_or(ModuleLanguage::Ferro);
+                        let resolver = match context.resolvers.resolver_for(&language) {
+                            Some(resolver) => resolver,
+                            None => {
+                                self.emit_error(format!(
+                                    "no resolver registered for module language {:?}",
+                                    language
+                                ));
+                                return RuntimeFlow::Value(Value::undefined());
+                            }
+                        };
+                        let module_import = ModuleImport::new(spec.value.clone());
+                        let module_id = match resolver.resolve_module(
+                            &module_import,
+                            current_module,
+                            &context.graph,
+                        ) {
+                            Ok(module_id) => module_id,
+                            Err(err) => {
+                                self.emit_error(format!("import resolution failed: {}", err));
+                                return RuntimeFlow::Value(Value::undefined());
+                            }
+                        };
+                        return RuntimeFlow::Value(Value::Any(AnyBox::new(ImportedModule {
+                            module: module_id,
+                        })));
                     }
                 }
                 if let Some(info) = self.lookup_enum_variant(&locator) {

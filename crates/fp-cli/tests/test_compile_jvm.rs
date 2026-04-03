@@ -19,7 +19,7 @@ fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileAr
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output),
-        package_graph: None,
+        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
