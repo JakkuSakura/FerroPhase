@@ -1,6 +1,6 @@
 use super::{RuntimeEnum, RuntimeRef, RuntimeRefTarget};
 use std::collections::HashMap;
-use std::ffi::{CStr, CString, c_void};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::MutexGuard;
 
 use fp_core::ast::{
@@ -184,7 +184,7 @@ impl FfiRuntime {
                     if ptr.is_null() {
                         return Ok(Value::string(String::new()));
                     }
-                    let text = unsafe { CStr::from_ptr(ptr as *const i8) }
+                    let text = unsafe { CStr::from_ptr(ptr as *const c_char) }
                         .to_string_lossy()
                         .into_owned();
                     return Ok(Value::string(text));
