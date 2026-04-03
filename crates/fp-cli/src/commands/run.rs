@@ -22,6 +22,9 @@ pub struct RunArgs {
     /// Execution mode (compile or interpret)
     #[arg(long, default_value = "compile")]
     pub mode: RunMode,
+    /// Path to a workspace graph (JSON) for dependency resolution
+    #[arg(long = "graph")]
+    pub graph: Option<PathBuf>,
     /// Backend to use in compile mode
     #[arg(long, default_value = "binary")]
     pub backend: BackendKind,
@@ -59,6 +62,7 @@ pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
     if matches!(args.mode, RunMode::Interpret) {
         let interpret_args = InterpretArgs {
             input: args.file,
+            graph: args.graph,
             jit: args.jit,
             jit_hot_threshold: args.jit_hot_threshold,
         };
@@ -78,7 +82,7 @@ pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
         linker: "clang".to_string(),
         target_linker: None,
         output: args.output,
-        graph: None,
+        graph: args.graph,
         opt_level: args.opt_level,
         debug: args.debug,
         release: args.release,

@@ -1230,6 +1230,14 @@ fn build_module_resolution_state(graph_path: &Path) -> Result<ModuleResolutionSt
     })
 }
 
+pub(crate) fn build_module_resolution_context(
+    graph_path: &Path,
+    input: &Path,
+) -> Result<ModuleResolutionContext> {
+    let state = build_module_resolution_state(graph_path)?;
+    state.context_for_input(input)
+}
+
 fn load_workspace_document(path: &Path) -> Result<WorkspaceDocument> {
     let payload = std::fs::read(path).map_err(CliError::Io)?;
     serde_json::from_slice(&payload).map_err(|err| {

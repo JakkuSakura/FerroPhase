@@ -166,7 +166,7 @@ fp resolves modules and symbols via a language-specific strategy:
   Rust visibility rules.
 - **Python**: dotted module paths, `from x import y`, optional `*` imports, and
   runtime-only dynamic imports (for example `import("pkg::mod")` in interpret
-  mode).
+  mode, with `fp interpret --graph workspace-graph.json`).
 - **TypeScript**: module specifiers (package/path) mapped to `module_path` by
   Magnet, with default/named exports.
 

@@ -1,5 +1,6 @@
 //! Interpret FerroPhase source or bytecode files.
 
+use crate::commands::compile::build_module_resolution_context;
 use crate::pipeline::{BackendKind, PipelineOptions};
 use crate::{
     CliError, Result,
@@ -16,6 +17,9 @@ pub struct InterpretArgs {
     /// Input file to interpret (.fp, .ftbc, .fbc)
     #[arg(required = true)]
     pub input: PathBuf,
+    /// Path to a workspace graph (JSON) for dependency resolution
+    #[arg(long = "graph")]
+    pub graph: Option<PathBuf>,
     /// Enable the JIT for interpreter execution
     #[arg(long)]
     pub jit: bool,
@@ -25,6 +29,10 @@ pub struct InterpretArgs {
 }
 
 pub async fn interpret_command(args: InterpretArgs, _config: &CliConfig) -> Result<()> {
+    crate::commands::validate_paths_exist(&[args.input.clone()], true, "interpret")?;
+    if let Some(graph) = args.graph.as_ref() {
+        crate::commands::validate_paths_exist(&[graph.clone()], true, "interpret")?;
+    }
     let path = &args.input;
     let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
     match ext {
@@ -43,6 +51,9 @@ async fn interpret_source(path: &Path, args: &InterpretArgs) -> Result<()> {
     options.target = BackendKind::Interpret;
     options.save_intermediates = false;
     options.optimization_level = 0;
+    if let Some(graph) = args.graph.as_ref() {
+        options.module_resolution = Some(build_module_resolution_context(graph, path)?);
+    }
     if args.jit {
         let mut jit_options = JitOptions::default();
         jit_options.enabled = true;
