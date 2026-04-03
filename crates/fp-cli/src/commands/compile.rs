@@ -12,6 +12,17 @@ use crate::{
 use console::style;
 use fp_core::ast::{AstTarget, AstTargetOutput, Node};
 use fp_core::config;
+use fp_core::module::resolution::ModuleResolutionContext;
+use fp_core::module::resolver::ResolverRegistry;
+use fp_core::module::resolvers::{AstTargetResolver, FerroResolver};
+use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
+use fp_core::package::graph::PackageGraph;
+use fp_core::package::{
+    DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata,
+    TargetFilter,
+};
+use fp_core::vfs::VirtualPath;
+use fp_core::workspace::WorkspaceDocument;
 use fp_csharp::CSharpSerializer;
 use fp_godot::GdscriptSerializer;
 use fp_golang::GoSerializer;
@@ -25,8 +36,11 @@ use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
 use fp_wit::{WitOptions, WitSerializer, WorldMode};
 use fp_zig::ZigSerializer;
 use object::Object as _;
+use semver::Version;
+use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::{fs as async_fs, process::Command};
 use tracing::{info, warn};
 
@@ -88,9 +102,9 @@ pub struct CompileArgs {
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 
-    /// Path to a precomputed package graph (JSON) for dependency resolution
-    #[arg(long = "package-graph")]
-    pub package_graph: Option<PathBuf>,
+    /// Path to a workspace graph (JSON) for dependency resolution
+    #[arg(long = "graph")]
+    pub graph: Option<PathBuf>,
 
     /// Optimization level (0, 1, 2, 3)
     #[arg(short = 'O', long, default_value_t = 2)]
@@ -203,6 +217,34 @@ impl EmitterKind {
     }
 }
 
+#[derive(Clone)]
+struct ModuleResolutionState {
+    graph: Arc<PackageGraph>,
+    resolvers: Arc<ResolverRegistry>,
+    module_paths: Vec<(VirtualPath, ModuleId)>,
+}
+
+impl ModuleResolutionState {
+    fn context_for_input(&self, input: &Path) -> Result<ModuleResolutionContext> {
+        let input_path = if input.is_absolute() {
+            input.to_path_buf()
+        } else {
+            std::env::current_dir().map_err(CliError::Io)?.join(input)
+        };
+        let input_path = VirtualPath::from_path(&input_path);
+        let current_module = self
+            .module_paths
+            .iter()
+            .find(|(path, _)| *path == input_path)
+            .map(|(_, module_id)| module_id.clone());
+        Ok(ModuleResolutionContext {
+            graph: self.graph.clone(),
+            resolvers: self.resolvers.clone(),
+            current_module,
+        })
+    }
+}
+
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let target = resolve_compile_target(&args)?;
@@ -242,6 +284,10 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let emit_text_bytecode = is_text_backend;
 
     let container_registry = crate::container::ContainerRegistry::new();
+    let module_resolution_state = match args.graph.as_ref() {
+        Some(graph) => Some(build_module_resolution_state(graph)?),
+        None => None,
+    };
 
     let output_is_dir = args
         .output
@@ -282,9 +328,14 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             args.exec,
         )?;
 
+        let module_resolution = match module_resolution_state.as_ref() {
+            Some(state) => Some(state.context_for_input(input_file)?),
+            None => None,
+        };
+
         // Compile single file
         if let Some(artifact_path) =
-            compile_file(input_file, &output_file, &args, target, config).await?
+            compile_file(input_file, &output_file, &args, target, module_resolution, config).await?
         {
             compiled_files.push(artifact_path);
         }
@@ -398,6 +449,7 @@ async fn compile_file(
     output: &Path,
     args: &CompileArgs,
     target: CompileTarget,
+    module_resolution: Option<ModuleResolutionContext>,
     _config: &CliConfig,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
@@ -475,6 +527,7 @@ async fn compile_file(
         release: args.release,
         execute_main: execute_const_main,
         disabled_stages,
+        module_resolution,
     };
 
     // Execute pipeline with new options
@@ -1139,7 +1192,7 @@ fn exec_compiled_bytecode(path: &Path) -> Result<()> {
 
 fn validate_inputs(args: &CompileArgs) -> Result<()> {
     validate_paths_exist(&args.input, true, "compile")?;
-    if let Some(graph) = args.package_graph.as_ref() {
+    if let Some(graph) = args.graph.as_ref() {
         validate_paths_exist(&[graph.clone()], true, "compile")?;
     }
 
@@ -1151,6 +1204,172 @@ fn validate_inputs(args: &CompileArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn build_module_resolution_state(graph_path: &Path) -> Result<ModuleResolutionState> {
+    let workspace = load_workspace_document(graph_path)?;
+    let (graph, module_paths, languages) =
+        build_package_graph_from_workspace(&workspace, graph_path)?;
+
+    let mut registry = ResolverRegistry::new();
+    let ferro_resolver = Arc::new(FerroResolver::default());
+    registry.register(ModuleLanguage::Ferro, ferro_resolver.clone());
+    registry.register(ModuleLanguage::Rust, ferro_resolver);
+    for language in languages {
+        if matches!(language, ModuleLanguage::Ferro | ModuleLanguage::Rust) {
+            continue;
+        }
+        registry.register(language.clone(), Arc::new(AstTargetResolver::new(language)));
+    }
+
+    Ok(ModuleResolutionState {
+        graph: Arc::new(graph),
+        resolvers: Arc::new(registry),
+        module_paths,
+    })
+}
+
+fn load_workspace_document(path: &Path) -> Result<WorkspaceDocument> {
+    let payload = std::fs::read(path).map_err(CliError::Io)?;
+    serde_json::from_slice(&payload).map_err(|err| {
+        CliError::InvalidInput(format!(
+            "Failed to parse workspace graph {}: {}",
+            path.display(),
+            err
+        ))
+    })
+}
+
+fn build_package_graph_from_workspace(
+    workspace: &WorkspaceDocument,
+    graph_path: &Path,
+) -> Result<(PackageGraph, Vec<(VirtualPath, ModuleId)>, HashSet<ModuleLanguage>)> {
+    let graph_root = graph_path.parent().unwrap_or_else(|| Path::new("."));
+    let manifest_path = resolve_workspace_path(graph_root, &workspace.manifest);
+    let workspace_root = manifest_path.parent().unwrap_or(graph_root);
+
+    let mut graph = PackageGraph::new(Vec::new());
+    let mut module_paths = Vec::new();
+    let mut languages = HashSet::new();
+
+    for package in &workspace.packages {
+        let package_id = PackageId::new(package.name.clone());
+        let package_root = resolve_workspace_path(workspace_root, &package.root);
+        let package_manifest = resolve_workspace_path(workspace_root, &package.manifest_path);
+        let version = match package.version.as_deref() {
+            Some(raw) => {
+                let parsed = Version::parse(raw).map_err(|err| {
+                    CliError::InvalidInput(format!(
+                        "Invalid version '{}' in workspace graph: {}",
+                        raw, err
+                    ))
+                })?;
+                Some(parsed)
+            }
+            None => None,
+        };
+
+        let mut module_ids = Vec::new();
+        for module in &package.modules {
+            let module_id = ModuleId::new(module.id.clone());
+            module_ids.push(module_id.clone());
+
+            let language = parse_module_language(module.language.as_deref());
+            languages.insert(language.clone());
+
+            let module_source =
+                resolve_module_source_path(module.path.as_str(), &package_root, workspace_root);
+            let module_source = VirtualPath::from_path(&module_source);
+            module_paths.push((module_source.clone(), module_id.clone()));
+
+            let module_desc = ModuleDescriptor {
+                id: module_id,
+                package: package_id.clone(),
+                language,
+                module_path: module.module_path.clone(),
+                source: module_source,
+                exports: Vec::new(),
+                requires_features: module.required_features.clone(),
+            };
+            graph.insert_module(module_desc);
+        }
+
+        let mut dependencies = Vec::new();
+        for dep in &package.dependencies {
+            let kind = parse_dependency_kind(dep.kind.as_deref())?;
+            dependencies.push(DependencyDescriptor {
+                package: dep.name.clone(),
+                constraint: None,
+                kind,
+                features: Vec::new(),
+                optional: false,
+                target: TargetFilter::default(),
+            });
+        }
+
+        let metadata = PackageMetadata {
+            dependencies,
+            ..PackageMetadata::default()
+        };
+
+        let package_desc = PackageDescriptor {
+            id: package_id.clone(),
+            name: package.name.clone(),
+            version,
+            manifest_path: VirtualPath::from_path(&package_manifest),
+            root: VirtualPath::from_path(&package_root),
+            metadata,
+            modules: module_ids,
+        };
+        graph.insert_package(package_desc);
+    }
+
+    Ok((graph, module_paths, languages))
+}
+
+fn resolve_workspace_path(base: &Path, raw: &str) -> PathBuf {
+    let path = PathBuf::from(raw);
+    if path.is_absolute() {
+        path
+    } else {
+        base.join(path)
+    }
+}
+
+fn resolve_module_source_path(path: &str, package_root: &Path, workspace_root: &Path) -> PathBuf {
+    let raw_path = PathBuf::from(path);
+    if raw_path.is_absolute() {
+        return raw_path;
+    }
+    let package_candidate = package_root.join(&raw_path);
+    if package_candidate.exists() {
+        return package_candidate;
+    }
+    workspace_root.join(raw_path)
+}
+
+fn parse_module_language(raw: Option<&str>) -> ModuleLanguage {
+    let raw = raw.unwrap_or("ferro");
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "ferro" | "fp" => ModuleLanguage::Ferro,
+        "rust" => ModuleLanguage::Rust,
+        "typescript" | "ts" | "javascript" | "js" => ModuleLanguage::TypeScript,
+        "python" | "py" => ModuleLanguage::Python,
+        other => ModuleLanguage::Other(other.to_string()),
+    }
+}
+
+fn parse_dependency_kind(raw: Option<&str>) -> Result<DependencyKind> {
+    match raw.map(|value| value.trim()) {
+        None | Some("") | Some("normal") => Ok(DependencyKind::Normal),
+        Some("dev") | Some("development") => Ok(DependencyKind::Development),
+        Some("build") => Ok(DependencyKind::Build),
+        Some(other) => Err(CliError::InvalidInput(format!(
+            "Unsupported dependency kind '{}' in workspace graph",
+            other
+        ))),
+    }
 }
 
 fn determine_output_path(
@@ -1403,6 +1622,87 @@ fn determine_output_path(
         };
 
         Ok(input.with_extension(extension))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fp_core::workspace::{WorkspaceDependency, WorkspaceModule, WorkspacePackage};
+    use tempfile::tempdir;
+
+    #[test]
+    fn build_module_resolution_state_from_workspace_graph() -> Result<()> {
+        let temp = tempdir()?;
+        let root = temp.path();
+        let manifest_path = root.join("Magnet.toml");
+        std::fs::write(&manifest_path, "[workspace]\n")?;
+
+        let package_root = root.join("demo");
+        let package_manifest = package_root.join("Magnet.toml");
+        std::fs::create_dir_all(package_root.join("src"))?;
+        std::fs::write(&package_manifest, "[package]\nname = \"demo\"\n")?;
+        let module_path = package_root.join("src").join("mod.fp");
+        std::fs::write(&module_path, "fn main() {}\n")?;
+
+        let workspace = WorkspaceDocument::new(manifest_path.to_string_lossy()).with_packages(
+            vec![WorkspacePackage::new(
+                "demo",
+                package_manifest.to_string_lossy(),
+                package_root.to_string_lossy(),
+            )
+            .with_modules(vec![
+                WorkspaceModule::new("demo", module_path.to_string_lossy())
+                    .with_module_path(Vec::new())
+                    .with_language(Some("ferro".to_string())),
+            ])],
+        );
+
+        let graph_path = root.join("workspace-graph.json");
+        let payload = serde_json::to_string_pretty(&workspace)
+            .map_err(|err| CliError::InvalidInput(err.to_string()))?;
+        std::fs::write(&graph_path, payload)?;
+
+        let state = build_module_resolution_state(&graph_path)?;
+        assert_eq!(state.module_paths.len(), 1);
+        assert_eq!(state.graph.packages().count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn reject_unknown_dependency_kind_in_workspace_graph() -> Result<()> {
+        let temp = tempdir()?;
+        let root = temp.path();
+        let manifest_path = root.join("Magnet.toml");
+        std::fs::write(&manifest_path, "[workspace]\n")?;
+
+        let package_root = root.join("demo");
+        let package_manifest = package_root.join("Magnet.toml");
+        std::fs::create_dir_all(package_root.join("src"))?;
+        std::fs::write(&package_manifest, "[package]\nname = \"demo\"\n")?;
+
+        let workspace = WorkspaceDocument::new(manifest_path.to_string_lossy()).with_packages(
+            vec![WorkspacePackage::new(
+                "demo",
+                package_manifest.to_string_lossy(),
+                package_root.to_string_lossy(),
+            )
+            .with_dependencies(vec![WorkspaceDependency::new(
+                "dep",
+                Some("invalid".to_string()),
+            )])],
+        );
+
+        let graph_path = root.join("workspace-graph.json");
+        let payload = serde_json::to_string_pretty(&workspace)
+            .map_err(|err| CliError::InvalidInput(err.to_string()))?;
+        std::fs::write(&graph_path, payload)?;
+
+        let err = build_package_graph_from_workspace(&workspace, &graph_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Unsupported dependency kind"));
+        Ok(())
     }
 }
 

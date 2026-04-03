@@ -166,7 +166,7 @@ fn compile_only(
     args.push("binary".to_string());
     args.push("--output".to_string());
     args.push(output_dir.display().to_string());
-    args.push("--package-graph".to_string());
+    args.push("--graph".to_string());
     args.push(graph_path.display().to_string());
     for option in build_options {
         args.push("--build-option".to_string());
@@ -1066,11 +1066,8 @@ fn write_workspace_graph(
             output_dir.display()
         )
     })?;
-    let graph_path = output_dir.join("package-graph.json");
-    let payload =
-        serde_json::to_string_pretty(&graph).context("Failed to serialize package graph")?;
-    fs::write(&graph_path, payload)
-        .with_context(|| format!("Failed to write {}", graph_path.display()))?;
+    let graph_path = output_dir.join("workspace-graph.json");
+    crate::workspace_graph::write_workspace_graph(&graph, &graph_path)?;
     Ok((graph, graph_path))
 }
 

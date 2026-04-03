@@ -1,9 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::fs;
 
-use fp_core::formats::json;
-
 use crate::resolver::project::resolve_graph;
+use crate::utils::find_furthest_manifest;
 
 pub fn run(args: &[String]) -> crate::Result<()> {
     let mut path: Option<PathBuf> = None;
@@ -38,12 +37,15 @@ pub fn run(args: &[String]) -> crate::Result<()> {
     }
 
     let root = path.unwrap_or_else(|| PathBuf::from("."));
+    let (_, manifest) = find_furthest_manifest(&root)?;
     let graph = resolve_graph(&root)?;
     let output = output.unwrap_or_else(|| root.join("export"));
     fs::create_dir_all(&output)?;
-    let graph_value = crate::commands::graph::graph_to_value(&graph);
-    let payload = json::to_string_pretty(&graph_value)?;
-    fs::write(output.join("package-graph.json"), payload)?;
+    crate::workspace_graph::write_workspace_graph(
+        &graph,
+        &manifest,
+        &output.join("workspace-graph.json"),
+    )?;
 
     if let Some(crates_dir) = crates_dir {
         fs::create_dir_all(&crates_dir)?;

@@ -1,8 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use fp_core::formats::json;
-
 use crate::configs::ManifestConfig;
 use crate::resolver::project::{resolve_graph, resolve_workspace};
 use crate::utils::{collect_sources, find_furthest_manifest};
@@ -121,17 +119,15 @@ impl BuildOptions {
 pub fn build(options: &BuildOptions) -> crate::Result<()> {
     let run_path = resolve_run_path(&options.path);
     let start_dir = resolve_start_dir(&run_path);
-    let (root, _manifest) = find_furthest_manifest(&start_dir)?;
+    let (root, manifest) = find_furthest_manifest(&start_dir)?;
     let workspace = resolve_workspace(&root)?;
     let graph = resolve_graph(&root)?;
 
     let profile = resolve_profile(options.release, options.profile.as_deref());
     let output_root = root.join("target").join(&profile).join("magnet").join("build");
     std::fs::create_dir_all(&output_root)?;
-    let graph_path = output_root.join("package-graph.json");
-    let graph_value = crate::commands::graph::graph_to_value(&graph);
-    let payload = json::to_string_pretty(&graph_value)?;
-    std::fs::write(&graph_path, payload)?;
+    let graph_path = output_root.join("workspace-graph.json");
+    crate::workspace_graph::write_workspace_graph(&graph, &manifest, &graph_path)?;
 
     let fp_bin = resolve_fp_binary(options.fp_bin.as_deref())?;
     let mut build_options = build_option_args(&root)?;
@@ -271,7 +267,7 @@ fn build_entry(
     }
     command.arg("--backend").arg("binary");
     command.arg("--output").arg(&output_dir);
-    command.arg("--package-graph").arg(graph_path);
+    command.arg("--graph").arg(graph_path);
     if profile == "release" {
         command.arg("--release");
     }

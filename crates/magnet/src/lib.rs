@@ -37,6 +37,7 @@ pub mod models;
 pub mod registry;
 pub mod resolver;
 pub mod utils;
+pub mod workspace_graph;
 
 // Export version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -28,7 +28,7 @@ awesome-lib/
 
 - `Ferrophase.toml` – package manifest (see below).
 - `src/` – FerroPhase modules (see `Modules.md`). The fp compiler does not scan
-  the filesystem directly; module discovery is provided by the package graph
+  the filesystem directly; module discovery is provided by the workspace graph
   produced by Magnet.
 - `bindings/` – generated or hand-authored language bindings.
 - `tests/` – language-aware tests; subdirectories mirror `targets`.
@@ -106,7 +106,7 @@ publish = true
 ### In-Memory Package Model
 
 Internally the toolchain represents each package with an immutable snapshot.
-Magnet provides this package graph to fp; fp does not load manifests or scan
+Magnet provides this workspace graph to fp; fp does not load manifests or scan
 files directly:
 
 ```rust
@@ -133,7 +133,7 @@ pub struct PackageMetadata {
 ```
 
 - `manifest_path` and `root` live inside the virtual filesystem layer so the
-  package graph can be generated from overlays or build outputs.
+  workspace graph can be generated from overlays or build outputs.
 - `modules` stores module descriptors collected by Magnet. fp treats this as
   authoritative input and never enumerates the filesystem.
 - `dependencies` captures the normalized dependency graph, including feature
@@ -141,14 +141,18 @@ pub struct PackageMetadata {
 
 Magnet is responsible for producing this graph; fp only consumes it.
 
-### Package Graph Contract
+### Workspace Graph Contract
 
-Magnet emits a package graph that fp consumes at runtime:
+Magnet emits a workspace graph that fp consumes at runtime:
 
 - Package identity (name, version, features, dependencies) is resolved by
   Magnet.
 - Module descriptors include `module_path`, `language`, and `source`. The
   `module_path` is canonical and language-agnostic.
+- The workspace graph JSON schema is `fp_core::workspace::WorkspaceDocument`,
+  rooted at a `manifest` path with a list of `packages`.
+- Magnet writes the workspace graph to `workspace-graph.json` in the output
+  directory it shares with fp.
 - The graph is immutable for a compilation run; fp caches it for resolution.
 
 fp does not attempt to infer module trees or read manifests. It relies entirely
@@ -161,7 +165,8 @@ fp resolves modules and symbols via a language-specific strategy:
 - **Rust-like (FerroPhase)**: `crate::`, `self::`, `super::`, `use` trees, and
   Rust visibility rules.
 - **Python**: dotted module paths, `from x import y`, optional `*` imports, and
-  runtime-only dynamic imports.
+  runtime-only dynamic imports (for example `import("pkg::mod")` in interpret
+  mode).
 - **TypeScript**: module specifiers (package/path) mapped to `module_path` by
   Magnet, with default/named exports.
 
@@ -189,12 +194,12 @@ toolchain = "nightly-2024-08-15"
 
 ### Magnet Integration
 
-Magnet owns nexus/workspace/package management and emits the package graph that
-fp consumes:
+Magnet owns nexus/workspace/package management and emits the workspace graph
+that fp consumes:
 
 1. Magnet owns the outer workspace definition (`Magnet.toml`) and package
    manifests (including cross-language bindings).
-2. Magnet emits the normalized package graph (packages, modules, dependencies).
+2. Magnet emits the normalized workspace graph (packages, modules, dependencies).
 3. fp consumes the graph and performs language-specific module resolution at
    runtime. It does not scan files or interpret manifests itself.
 4. Keep lockfiles (`Ferrophase.lock`) alongside Magnet metadata for
@@ -202,7 +207,7 @@ fp consumes:
 
 ## Dependency Resolution & Lockfiles
 
-- Dependencies are resolved by Magnet and serialized into the package graph.
+- Dependencies are resolved by Magnet and serialized into the workspace graph.
 - `Ferrophase.lock` records exact versions, checksums, and supported targets per
   dependency, as produced by Magnet.
 - Target-specific builds prune dependencies via target filters already captured

@@ -75,7 +75,7 @@ pub fn run(options: &RunOptions) -> Result<()> {
         target: None,
     };
     let graph_path =
-        write_package_graph(&root, &package, &output_dir, build_options, &graph_options)?;
+        write_workspace_graph(&root, &package, &output_dir, build_options, &graph_options)?;
 
     match options.mode {
         RunMode::Compile => run_compile(
@@ -110,7 +110,7 @@ fn run_compile(
     }
     command.arg("--target").arg("binary");
     command.arg("--output").arg(&output_dir);
-    command.arg("--package-graph").arg(graph_path);
+    command.arg("--graph").arg(graph_path);
     command.arg("--resolver").arg(resolver);
     for option in build_options {
         command.arg("--build-option").arg(option);
@@ -282,7 +282,7 @@ pub(crate) fn output_path_for_entry(entry: &Path, output_dir: &Path) -> PathBuf 
     output_dir.join(format!("{}.{}", stem, ext))
 }
 
-fn write_package_graph(
+fn write_workspace_graph(
     manifest_root: &Path,
     package: &PackageModel,
     output_dir: &Path,
@@ -298,11 +298,8 @@ fn write_package_graph(
             output_dir.display()
         )
     })?;
-    let graph_path = output_dir.join("package-graph.json");
-    let payload =
-        serde_json::to_string_pretty(&graph).context("Failed to serialize package graph")?;
-    fs::write(&graph_path, payload)
-        .with_context(|| format!("Failed to write {}", graph_path.display()))?;
+    let graph_path = output_dir.join("workspace-graph.json");
+    crate::workspace_graph::write_workspace_graph(&graph, &graph_path)?;
     Ok(graph_path)
 }
 

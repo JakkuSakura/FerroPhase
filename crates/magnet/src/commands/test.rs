@@ -45,7 +45,7 @@ fn run_fp_tests(options: &TestOptions, root: &Path, package: &PackageModel) -> R
     fs::write(&runner_path, runner_contents)?;
 
     let sources = collect_test_sources(options, package, &runner_path)?;
-    let graph_path = write_package_graph(root, package, &output_dir)?;
+    let graph_path = write_workspace_graph(root, package, &output_dir)?;
 
     compile_and_run(
         package,
@@ -149,7 +149,11 @@ fn resolve_named_source(root: &Path, name: &str) -> Result<PathBuf> {
     bail!("Entry '{}' not found at {}", name, base.display());
 }
 
-fn write_package_graph(root: &Path, package: &PackageModel, output_dir: &Path) -> Result<PathBuf> {
+fn write_workspace_graph(
+    root: &Path,
+    package: &PackageModel,
+    output_dir: &Path,
+) -> Result<PathBuf> {
     let offline = env_flag_enabled("MAGNET_OFFLINE");
     let graph_options = PackageGraphOptions {
         offline,
@@ -174,11 +178,8 @@ fn write_package_graph(root: &Path, package: &PackageModel, output_dir: &Path) -
             output_dir.display()
         )
     })?;
-    let graph_path = output_dir.join("package-graph.json");
-    let payload =
-        serde_json::to_string_pretty(&graph).context("Failed to serialize package graph")?;
-    fs::write(&graph_path, payload)
-        .with_context(|| format!("Failed to write {}", graph_path.display()))?;
+    let graph_path = output_dir.join("workspace-graph.json");
+    crate::workspace_graph::write_workspace_graph(&graph, &graph_path)?;
     Ok(graph_path)
 }
 
@@ -200,7 +201,7 @@ fn compile_and_run(
     }
     command.arg("--target").arg("binary");
     command.arg("--output").arg(output_dir);
-    command.arg("--package-graph").arg(graph_path);
+    command.arg("--graph").arg(graph_path);
     command.arg("--resolver").arg("ferrophase");
     command.current_dir(&package.root_path);
     command.stdin(Stdio::inherit());
