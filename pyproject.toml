@@ -1,0 +1,15 @@
+[project]
+name = "ferrophase-tests"
+version = "0.1.0"
+description = "Pytest-based end-to-end tests for FerroPhase binaries"
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "Proprietary" }
+authors = [{ name = "Jakku" }]
+dependencies = [
+  "pytest>=8.0",
+]
+
+[build-system]
+requires = ["uv-build>=0.0.0,<0.12"]
+build-backend = "uv_build"

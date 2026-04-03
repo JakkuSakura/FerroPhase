@@ -138,6 +138,8 @@ fn eval_pipeline_options(args: &EvalArgs) -> PipelineOptions {
         release: false,
         execute_main: false,
         disabled_stages: Vec::new(),
+        module_resolution: None,
+        jit: None,
     }
 }
 

@@ -528,6 +528,7 @@ async fn compile_file(
         execute_main: execute_const_main,
         disabled_stages,
         module_resolution,
+        jit: None,
     };
 
     // Execute pipeline with new options

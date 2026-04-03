@@ -7,6 +7,7 @@ use crate::{
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use clap::Args;
+use fp_jit::JitOptions;
 use std::path::{Path, PathBuf};
 
 /// Arguments for bytecode interpretation.
@@ -15,13 +16,19 @@ pub struct InterpretArgs {
     /// Input file to interpret (.fp, .ftbc, .fbc)
     #[arg(required = true)]
     pub input: PathBuf,
+    /// Enable the JIT for interpreter execution
+    #[arg(long)]
+    pub jit: bool,
+    /// Hot call threshold before JIT compilation
+    #[arg(long, requires = "jit")]
+    pub jit_hot_threshold: Option<u32>,
 }
 
 pub async fn interpret_command(args: InterpretArgs, _config: &CliConfig) -> Result<()> {
     let path = &args.input;
     let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
     match ext {
-        "fp" => interpret_source(path).await,
+        "fp" => interpret_source(path, &args).await,
         "ftbc" => interpret_text_bytecode(path),
         "fbc" => interpret_binary_bytecode(path),
         _ => Err(CliError::InvalidInput(format!(
@@ -31,11 +38,19 @@ pub async fn interpret_command(args: InterpretArgs, _config: &CliConfig) -> Resu
     }
 }
 
-async fn interpret_source(path: &Path) -> Result<()> {
+async fn interpret_source(path: &Path, args: &InterpretArgs) -> Result<()> {
     let mut options = PipelineOptions::default();
     options.target = BackendKind::Interpret;
     options.save_intermediates = false;
     options.optimization_level = 0;
+    if args.jit {
+        let mut jit_options = JitOptions::default();
+        jit_options.enabled = true;
+        if let Some(threshold) = args.jit_hot_threshold {
+            jit_options.hot_threshold = threshold;
+        }
+        options.jit = Some(jit_options);
+    }
 
     let mut pipeline = Pipeline::new();
     let output = pipeline

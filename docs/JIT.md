@@ -13,6 +13,20 @@
 - Aggressive speculative optimization.
 - On-disk caching across runs.
 
+## CLI Usage
+
+Enable the JIT in interpreter mode:
+
+```bash
+fp interpret --jit path/to/main.fp
+```
+
+Override the hot call threshold:
+
+```bash
+fp interpret --jit --jit-hot-threshold 64 path/to/main.fp
+```
+
 ## High-Level Approach
 
 We add a new crate, `fp-jit`, that provides an in-process JIT backend. The JIT

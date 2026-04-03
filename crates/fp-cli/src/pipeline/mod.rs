@@ -286,7 +286,9 @@ impl Pipeline {
             self.parse_with_frontend(&frontend, source, input_path.map(|p| p.as_path()), options)?;
         if language == languages::FERROPHASE {
             if let Some(path) = input_path {
-                return self.resolve_file_modules(options, &frontend, ast, path);
+                if options.module_resolution.is_none() {
+                    return self.resolve_file_modules(options, &frontend, ast, path);
+                }
             }
         }
         Ok(ast)
@@ -1146,19 +1148,30 @@ impl Pipeline {
         } else {
             fp_interpret::engine::StdoutMode::Capture
         };
+        let jit_session = options
+            .jit
+            .as_ref()
+            .map(|jit| Arc::new(fp_jit::JitSession::new(jit.clone())));
         let interpreter_opts = InterpreterOptions {
             mode,
             capability: InterpreterCapability::default(),
             debug_assertions: !options.release,
             diagnostics: None,
             diagnostic_context: STAGE_AST_INTERPRET,
-            module_resolution: None,
+            module_resolution: options.module_resolution.as_ref().map(|ctx| {
+                fp_interpret::engine::ModuleResolutionContext {
+                    graph: ctx.graph.clone(),
+                    resolvers: ctx.resolvers.clone(),
+                    current_module: ctx.current_module.clone(),
+                }
+            }),
             macro_parser: self.macro_parser.clone(),
             intrinsic_normalizer: self.intrinsic_normalizer.clone(),
             stdout_mode,
             target_env: TargetEnv::from_triple(options.target_triple.as_deref()),
             command_mock_state: None,
             runtime_extern_hook: None,
+            jit: jit_session,
         };
         let mut interpreter = AstInterpreter::new(&ctx, interpreter_opts);
         interpreter.enable_incremental_typing(&working_ast);

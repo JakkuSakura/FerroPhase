@@ -43,6 +43,12 @@ pub struct RunArgs {
     /// Build with release settings in compile mode
     #[arg(long)]
     pub release: bool,
+    /// Enable the JIT when running in interpret mode
+    #[arg(long)]
+    pub jit: bool,
+    /// Hot call threshold before JIT compilation (interpret mode only)
+    #[arg(long, requires = "jit")]
+    pub jit_hot_threshold: Option<u32>,
 }
 
 pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
@@ -53,6 +59,8 @@ pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
     if matches!(args.mode, RunMode::Interpret) {
         let interpret_args = InterpretArgs {
             input: args.file,
+            jit: args.jit,
+            jit_hot_threshold: args.jit_hot_threshold,
         };
         return interpret_command(interpret_args, config).await;
     }
@@ -70,7 +78,7 @@ pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
         linker: "clang".to_string(),
         target_linker: None,
         output: args.output,
-        package_graph: None,
+        graph: None,
         opt_level: args.opt_level,
         debug: args.debug,
         release: args.release,

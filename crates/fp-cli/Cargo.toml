@@ -11,6 +11,7 @@ path = "src/bin/fp.rs"
 # Core FerroPhase crates
 fp-core = { path = "../fp-core" }
 fp-interpret = { path = "../fp-interpret" }
+fp-jit = { path = "../fp-jit" }
 fp-backend = { path = "../fp-backend" }
 fp-typing = { path = "../fp-typing" }
 fp-typescript = { path = "../fp-typescript" }
@@ -80,6 +81,7 @@ tempfile = "3.8"
 quote = "1.0"
 libc = "0.2"
 object = { version = "0.37.3", features = ["write"] }
+semver = "1"
 
 # Performance and profiling
 

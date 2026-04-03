@@ -1,4 +1,5 @@
 use clap::ValueEnum;
+use fp_jit::JitOptions;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -43,6 +44,10 @@ pub struct PipelineOptions {
     pub execute_main: bool,
     /// Disable specific pipeline stages by name (best-effort; mainly for debugging).
     pub disabled_stages: Vec<String>,
+    /// Optional module resolution context for workspace-aware imports.
+    pub module_resolution: Option<fp_core::module::resolution::ModuleResolutionContext>,
+    /// Optional JIT configuration for interpreter execution.
+    pub jit: Option<JitOptions>,
 }
 
 /// Compilation targets
@@ -162,6 +167,8 @@ impl Default for PipelineOptions {
             release: false,
             execute_main: false,
             disabled_stages: Vec::new(),
+            module_resolution: None,
+            jit: None,
         }
     }
 }
