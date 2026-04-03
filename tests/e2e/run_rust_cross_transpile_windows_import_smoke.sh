@@ -23,14 +23,14 @@ say "Building fp CLI"
 obj_in="${work_dir}/exit0.linux-x86_64.o"
 exe_out="${work_dir}/exit0.windows-x86_64.exe"
 
-say "rustc -> object: tools/e2e/linux_x86_64_exit42.rs"
+say "rustc -> object: tests/e2e/linux_x86_64_exit42.rs"
 rustc \
   --crate-type=lib \
   --target x86_64-unknown-linux-gnu \
   -C opt-level=0 \
   --emit=obj \
   -o "${obj_in}" \
-  "${root_dir}/tools/e2e/linux_x86_64_exit42.rs"
+  "${root_dir}/tests/e2e/linux_x86_64_exit42.rs"
 
 say "fp compile (object->windows exe): ${exe_out}"
 (

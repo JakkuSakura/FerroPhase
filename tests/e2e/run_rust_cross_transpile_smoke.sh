@@ -63,7 +63,7 @@ compile_and_run() {
   fi
 }
 
-compile_and_run "exit0" "tools/e2e/linux_x86_64_exit42.rs" 0
-compile_and_run "getpid_exit0" "tools/e2e/linux_x86_64_getpid_exit0.rs" 0
+compile_and_run "exit0" "tests/e2e/linux_x86_64_exit42.rs" 0
+compile_and_run "getpid_exit0" "tests/e2e/linux_x86_64_getpid_exit0.rs" 0
 
 say "OK"
