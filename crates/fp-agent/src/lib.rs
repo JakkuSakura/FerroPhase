@@ -312,7 +312,6 @@ pub async fn simple_chat(
 // ---------------------------------------------------------------------------
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 /// Evidence recorded from a tool execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -380,12 +379,12 @@ where
         let result = self.inner.execute(call).await?;
 
         // Try to extract sample from result for evidence
-        let result_sample: serde_json::Value = serde_json::from_str(&result)
-            .map(|v| {
+        let result_sample: serde_json::Value = serde_json::from_str::<serde_json::Value>(&result)
+            .map(|v: serde_json::Value| {
                 // Extract first row if result is {"rows": [...]}
                 v.get("rows")
-                    .and_then(|r| r.as_array())
-                    .and_then(|arr| arr.first())
+                    .and_then(|r: &serde_json::Value| r.as_array())
+                    .and_then(|arr: &Vec<serde_json::Value>| arr.first())
                     .cloned()
                     .unwrap_or(v)
             })
