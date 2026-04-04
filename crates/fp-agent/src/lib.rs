@@ -118,12 +118,8 @@ pub struct AgentRequest {
     pub messages: Vec<AgentMessage>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub tools: Vec<ToolDefinition>,
-    #[serde(default = "default_tool_choice")]
+    #[serde(default)]
     pub tool_choice: String,
-}
-
-fn default_tool_choice() -> String {
-    "auto".to_owned()
 }
 
 #[derive(Debug, Clone, Deserialize)]
