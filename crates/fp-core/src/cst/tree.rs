@@ -20,6 +20,7 @@ pub enum CstKind {
     ItemFn,
     ItemStruct,
     ItemEnum,
+    ItemUnion,
     ItemTrait,
     ItemImpl,
     ItemMod,
@@ -79,6 +80,7 @@ pub enum CstKind {
     ExprSplatDict,
     ExprKwArg,
     ExprMacroCall,
+    ExprAttr,
     ExprBlock,
     ExprIf,
     ExprLoop,
@@ -86,6 +88,7 @@ pub enum CstKind {
     ExprWith,
     ExprFor,
     ExprMatch,
+    ExprLet,
     ExprClosure,
     ExprQuote,
     ExprQuoteToken,
@@ -95,6 +98,7 @@ pub enum CstKind {
     ExprReturn,
     ExprBreak,
     ExprContinue,
+    ExprYield,
     ExprUnit,
     ExprTuple,
     ExprArray,
@@ -126,6 +130,7 @@ pub enum CstKind {
     TyImplTraits,
     TyMacroCall,
     TyNot,
+    TyUnsafeBinder,
 
     PatternIdent,
     PatternWildcard,
@@ -159,6 +164,7 @@ impl CstKind {
             | CstKind::ItemFn
             | CstKind::ItemStruct
             | CstKind::ItemEnum
+            | CstKind::ItemUnion
             | CstKind::ItemTrait
             | CstKind::ItemImpl
             | CstKind::ItemMod
@@ -188,6 +194,7 @@ impl CstKind {
             | CstKind::ExprSplatDict
             | CstKind::ExprKwArg
             | CstKind::ExprMacroCall
+            | CstKind::ExprAttr
             | CstKind::ExprBlock
             | CstKind::ExprIf
             | CstKind::ExprLoop
@@ -195,6 +202,7 @@ impl CstKind {
             | CstKind::ExprWith
             | CstKind::ExprFor
             | CstKind::ExprMatch
+            | CstKind::ExprLet
             | CstKind::ExprClosure
             | CstKind::ExprQuote
             | CstKind::ExprQuoteToken
@@ -204,6 +212,7 @@ impl CstKind {
             | CstKind::ExprReturn
             | CstKind::ExprBreak
             | CstKind::ExprContinue
+            | CstKind::ExprYield
             | CstKind::ExprUnit
             | CstKind::ExprTuple
             | CstKind::ExprArray
@@ -234,7 +243,8 @@ impl CstKind {
             | CstKind::TyExpr
             | CstKind::TyImplTraits
             | CstKind::TyMacroCall
-            | CstKind::TyNot => CstCategory::Type,
+            | CstKind::TyNot
+            | CstKind::TyUnsafeBinder => CstCategory::Type,
 
             CstKind::PatternIdent
             | CstKind::PatternWildcard

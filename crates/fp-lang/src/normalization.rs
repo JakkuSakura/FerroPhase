@@ -28,9 +28,14 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         if let Some(name) = macro_expr.invocation.path.segments.last() {
             let macro_name = name.as_str().trim_end_matches('!');
             if macro_name == "t" {
-                let ty = parse_type_macro_tokens(&macro_expr.invocation.token_trees)?;
-                let replacement = Expr::value(Value::Type(ty)).with_ty_slot(ty_slot);
-                return Ok(NormalizeOutcome::Normalized(replacement));
+                if let Ok(ty) = parse_type_macro_tokens(&macro_expr.invocation.token_trees) {
+                    let replacement = Expr::value(Value::Type(ty)).with_ty_slot(ty_slot);
+                    return Ok(NormalizeOutcome::Normalized(replacement));
+                }
+                return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                    ty_slot,
+                    ExprKind::Macro(macro_expr),
+                )));
             }
             if macro_name == "vec" {
                 let expr =
@@ -40,14 +45,19 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             }
             if macro_name == "assert" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
-                if args.len() != 1 {
+                if args.is_empty() {
                     return Err(fp_core::error::Error::from(
-                        "assert! requires exactly one argument",
+                        "assert! requires at least one argument",
                     ));
                 }
-                let replacement =
-                    assert_macro(args.into_iter().next().unwrap(), "assertion failed")
-                        .with_ty_slot(ty_slot);
+                let mut iter = args.into_iter();
+                let cond = iter.next().unwrap();
+                let panic_expr = if iter.len() == 0 {
+                    panic_call_with_message("assertion failed")
+                } else {
+                    panic_call_from_args(iter.collect())
+                };
+                let replacement = assert_macro_with_panic(cond, panic_expr).with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "assert_eq" {
@@ -84,11 +94,6 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             }
             if macro_name == "panic" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
-                if args.len() > 1 {
-                    return Err(fp_core::error::Error::from(
-                        "panic! accepts at most one argument",
-                    ));
-                }
                 let replacement = panic_macro(args).with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
@@ -622,6 +627,10 @@ fn parse_placeholder_content(content: &str) -> Result<FormatPlaceholder> {
 
 fn assert_macro(cond: Expr, message: &str) -> Expr {
     let panic_expr = panic_call_with_message(message);
+    assert_macro_with_panic(cond, panic_expr)
+}
+
+fn assert_macro_with_panic(cond: Expr, panic_expr: Expr) -> Expr {
     let negated = Expr::new(ExprKind::UnOp(ExprUnOp {
         span: fp_core::span::Span::null(),
         op: UnOpKind::Not,
@@ -684,7 +693,17 @@ fn assert_compare_macro(left: Expr, right: Expr, op: BinOpKind, message: &str) -
 }
 
 fn panic_macro(args: Vec<Expr>) -> Expr {
-    let message = if args.is_empty() {
+    let message = panic_call_from_args(args);
+    Expr::block(ExprBlock::new_stmts_expr(
+        vec![BlockStmt::Expr(
+            BlockStmtExpr::new(message).with_semicolon(true),
+        )],
+        Expr::unit(),
+    ))
+}
+
+fn panic_call_from_args(args: Vec<Expr>) -> Expr {
+    if args.is_empty() {
         panic_call_with_message("panic! macro triggered")
     } else {
         Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
@@ -692,13 +711,7 @@ fn panic_macro(args: Vec<Expr>) -> Expr {
             args,
             Vec::new(),
         )))
-    };
-    Expr::block(ExprBlock::new_stmts_expr(
-        vec![BlockStmt::Expr(
-            BlockStmtExpr::new(message).with_semicolon(true),
-        )],
-        Expr::unit(),
-    ))
+    }
 }
 
 fn panic_call_with_message(message: &str) -> Expr {

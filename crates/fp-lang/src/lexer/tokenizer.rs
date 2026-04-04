@@ -3,8 +3,8 @@ use super::lexeme::Lexeme;
 use super::lexeme::LexemeKind;
 use super::winnow::{
     backtrack_err, block_comment, is_ident_continue, is_ident_start, line_comment,
-    parse_cooked_string_literal, parse_raw_identifier, parse_raw_string_literal, whitespace, ws,
-    MULTI_PUNCT, SINGLE_PUNCT,
+    parse_char_literal, parse_cooked_string_literal, parse_lifetime, parse_raw_identifier,
+    parse_raw_string_literal, whitespace, ws, MULTI_PUNCT, SINGLE_PUNCT,
 };
 use thiserror::Error;
 use unicode_normalization::UnicodeNormalization;
@@ -21,6 +21,7 @@ pub enum Keyword {
     Emit,
     Let,
     Fn,
+    Gen,
     If,
     Else,
     With,
@@ -35,12 +36,14 @@ pub enum Keyword {
     Mut,
     Await,
     Async,
+    Unsafe,
     Return,
     Break,
     Continue,
     Move,
     Struct,
     Enum,
+    Union,
     Type,
     Static,
     Opaque,
@@ -66,6 +69,7 @@ impl Keyword {
             "emit" => Some(Self::Emit),
             "let" => Some(Self::Let),
             "fn" => Some(Self::Fn),
+            "gen" => Some(Self::Gen),
             "if" => Some(Self::If),
             "else" => Some(Self::Else),
             "with" => Some(Self::With),
@@ -80,12 +84,14 @@ impl Keyword {
             "mut" => Some(Self::Mut),
             "await" => Some(Self::Await),
             "async" => Some(Self::Async),
+            "unsafe" => Some(Self::Unsafe),
             "return" => Some(Self::Return),
             "break" => Some(Self::Break),
             "continue" => Some(Self::Continue),
             "move" => Some(Self::Move),
             "struct" => Some(Self::Struct),
             "enum" => Some(Self::Enum),
+            "union" => Some(Self::Union),
             "type" => Some(Self::Type),
             "static" => Some(Self::Static),
             "opaque" => Some(Self::Opaque),
@@ -101,6 +107,54 @@ impl Keyword {
             "pub" => Some(Self::Pub),
             "defer" => Some(Self::Defer),
             _ => None,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Quote => "quote",
+            Self::Splice => "splice",
+            Self::Const => "const",
+            Self::Emit => "emit",
+            Self::Let => "let",
+            Self::Fn => "fn",
+            Self::Gen => "gen",
+            Self::If => "if",
+            Self::Else => "else",
+            Self::With => "with",
+            Self::Try => "try",
+            Self::Catch => "catch",
+            Self::Finally => "finally",
+            Self::Loop => "loop",
+            Self::While => "while",
+            Self::For => "for",
+            Self::In => "in",
+            Self::Match => "match",
+            Self::Mut => "mut",
+            Self::Await => "await",
+            Self::Async => "async",
+            Self::Unsafe => "unsafe",
+            Self::Return => "return",
+            Self::Break => "break",
+            Self::Continue => "continue",
+            Self::Move => "move",
+            Self::Struct => "struct",
+            Self::Enum => "enum",
+            Self::Union => "union",
+            Self::Type => "type",
+            Self::Static => "static",
+            Self::Opaque => "opaque",
+            Self::Mod => "mod",
+            Self::Trait => "trait",
+            Self::Impl => "impl",
+            Self::Where => "where",
+            Self::Use => "use",
+            Self::Extern => "extern",
+            Self::Super => "super",
+            Self::Crate => "crate",
+            Self::As => "as",
+            Self::Pub => "pub",
+            Self::Defer => "defer",
         }
     }
 }
@@ -365,7 +419,10 @@ fn token_parser<'a>() -> impl Parser<&'a str, TokenKind, ContextError> {
         byte_string_token,
         f_string_token,
         t_string_token,
+        c_string_token,
         string_token,
+        lifetime_token,
+        char_literal_token,
         raw_identifier_token,
         number_token,
         ident_token,
@@ -389,6 +446,10 @@ fn t_string_token(input: &mut &str) -> ModalResult<TokenKind> {
     parse_cooked_string_literal(input, "t").map(|_| TokenKind::StringLiteral)
 }
 
+fn c_string_token(input: &mut &str) -> ModalResult<TokenKind> {
+    parse_cooked_string_literal(input, "c").map(|_| TokenKind::StringLiteral)
+}
+
 fn raw_string_token(input: &mut &str) -> ModalResult<TokenKind> {
     parse_raw_string_literal(input, false).map(|_| TokenKind::StringLiteral)
 }
@@ -399,6 +460,14 @@ fn raw_byte_string_token(input: &mut &str) -> ModalResult<TokenKind> {
 
 fn raw_identifier_token(input: &mut &str) -> ModalResult<TokenKind> {
     parse_raw_identifier(input).map(|_| TokenKind::Ident)
+}
+
+fn char_literal_token(input: &mut &str) -> ModalResult<TokenKind> {
+    parse_char_literal(input).map(|_| TokenKind::StringLiteral)
+}
+
+fn lifetime_token(input: &mut &str) -> ModalResult<TokenKind> {
+    parse_lifetime(input).map(|_| TokenKind::Ident)
 }
 
 fn number_token(input: &mut &str) -> ModalResult<TokenKind> {

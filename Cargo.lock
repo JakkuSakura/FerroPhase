@@ -1344,6 +1344,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -1428,6 +1429,7 @@ dependencies = [
  "fp-golang",
  "fp-hcl",
  "fp-interpret",
+ "fp-jit",
  "fp-json",
  "fp-jsonschema",
  "fp-jvm",
@@ -1456,6 +1458,7 @@ dependencies = [
  "pathdiff",
  "predicates",
  "quote",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",
@@ -1592,6 +1595,7 @@ dependencies = [
  "compio",
  "eyre",
  "fp-core",
+ "fp-jit",
  "fp-lang",
  "fp-native",
  "fp-pipeline",
@@ -1610,6 +1614,13 @@ dependencies = [
  "serde_yaml",
  "syn 2.0.114",
  "tracing",
+]
+
+[[package]]
+name = "fp-jit"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
 ]
 
 [[package]]
@@ -1649,6 +1660,7 @@ dependencies = [
  "num-bigint",
  "thiserror 2.0.17",
  "tracing",
+ "unicode-normalization",
  "winnow 0.6.26",
 ]
 
@@ -5368,6 +5380,15 @@ name = "unicode-linebreak"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-segmentation"

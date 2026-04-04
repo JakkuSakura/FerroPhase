@@ -10,7 +10,7 @@ use fp_core::ast::{
     BlockStmt, BlockStmtExpr, DecimalType, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait,
     ExprBinOp, ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor,
     ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprKwArg,
-    ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn,
+    ExprLet, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn,
     ExprSelect, ExprSelectType, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural,
     ExprTry, ExprTryCatch, ExprTuple, ExprWhile, ExprWith, FormatArgRef, FormatPlaceholder,
     FormatSpec, FormatTemplatePart, Ident, ImplTraits, MacroDelimiter, MacroInvocation,
@@ -779,6 +779,54 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             })
             .into())
         }
+        SyntaxKind::ExprLet => {
+            let mut pattern: Option<Pattern> = None;
+            let mut ty: Option<Ty> = None;
+            let mut init_expr: Option<Expr> = None;
+
+            for child in &node.children {
+                match child {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Pattern =>
+                    {
+                        if pattern.is_none() {
+                            pattern = Some(lower_pattern_from_cst(n)?);
+                        }
+                    }
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Type =>
+                    {
+                        ty = Some(lower_type_from_cst(n)?);
+                    }
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Expr =>
+                    {
+                        init_expr = Some(lower_expr_from_cst(n)?);
+                    }
+                    _ => {}
+                }
+            }
+
+            let Some(pat) = pattern else {
+                return Err(LowerError::UnexpectedNode(SyntaxKind::ExprLet));
+            };
+            let Some(init) = init_expr else {
+                return Err(LowerError::UnexpectedNode(SyntaxKind::ExprLet));
+            };
+
+            let pat = if let Some(ty) = ty {
+                Pattern::from(PatternKind::Type(PatternType::new(pat, ty)))
+            } else {
+                pat
+            };
+
+            Ok(ExprKind::Let(ExprLet {
+                span: node.span,
+                pat: Box::new(pat),
+                expr: Box::new(init),
+            })
+            .into())
+        }
         SyntaxKind::ExprClosure => {
             let (params, body) = lower_closure_from_cst(node)?;
             Ok(ExprKind::Closure(ExprClosure {
@@ -788,6 +836,19 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 movability: None,
                 body: Box::new(body),
             })
+            .into())
+        }
+        SyntaxKind::ExprYield => {
+            let value = node_children_exprs(node)
+                .next()
+                .map(lower_expr_from_cst)
+                .transpose()?
+                .unwrap_or_else(Expr::unit);
+            Ok(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                IntrinsicCallKind::Yield,
+                vec![value],
+                Vec::new(),
+            ))
             .into())
         }
         SyntaxKind::ExprReturn => {
@@ -1034,6 +1095,22 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 finally,
             })
             .into())
+        }
+        SyntaxKind::ExprAttr => {
+            let inner = node
+                .children
+                .iter()
+                .rev()
+                .find_map(|c| match c {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Expr =>
+                    {
+                        Some(n.as_ref())
+                    }
+                    _ => None,
+                })
+                .ok_or(LowerError::UnexpectedNode(SyntaxKind::ExprAttr))?;
+            lower_expr_from_cst(inner)
         }
         SyntaxKind::ExprAwait => {
             let base = first_child_expr(node)?;
@@ -1934,7 +2011,7 @@ fn lower_block_from_cst(node: &SyntaxNode) -> Result<ExprBlock, LowerError> {
 fn lower_let_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
     let mut pattern: Option<Pattern> = None;
     let mut ty: Option<Ty> = None;
-    let mut init_expr: Option<Expr> = None;
+    let mut expr_nodes: Vec<&SyntaxNode> = Vec::new();
 
     for child in &node.children {
         match child {
@@ -1947,28 +2024,26 @@ fn lower_let_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
                 ty = Some(lower_type_from_cst(n)?);
             }
             crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
-                init_expr = Some(lower_expr_from_cst(n)?);
+                expr_nodes.push(n);
             }
-            crate::syntax::SyntaxElement::Node(n) => {
-                if matches!(
-                    n.kind,
-                    SyntaxKind::ExprName
-                        | SyntaxKind::ExprNumber
-                        | SyntaxKind::ExprBinary
-                        | SyntaxKind::ExprCall
-                        | SyntaxKind::ExprIndex
-                        | SyntaxKind::ExprSelect
-                        | SyntaxKind::ExprCast
-                        | SyntaxKind::ExprRange
-                        | SyntaxKind::ExprTry
-                        | SyntaxKind::ExprAwait
-                        | SyntaxKind::ExprUnary
-                        | SyntaxKind::ExprMacroCall
-                        | SyntaxKind::ExprParen
-                        | SyntaxKind::ExprBlock
-                ) {
-                    init_expr = Some(lower_expr_from_cst(n)?);
-                }
+            crate::syntax::SyntaxElement::Node(n) if matches!(
+                n.kind,
+                SyntaxKind::ExprName
+                    | SyntaxKind::ExprNumber
+                    | SyntaxKind::ExprBinary
+                    | SyntaxKind::ExprCall
+                    | SyntaxKind::ExprIndex
+                    | SyntaxKind::ExprSelect
+                    | SyntaxKind::ExprCast
+                    | SyntaxKind::ExprRange
+                    | SyntaxKind::ExprTry
+                    | SyntaxKind::ExprAwait
+                    | SyntaxKind::ExprUnary
+                    | SyntaxKind::ExprMacroCall
+                    | SyntaxKind::ExprParen
+                    | SyntaxKind::ExprBlock
+            ) => {
+                expr_nodes.push(n);
             }
             _ => {}
         }
@@ -1978,13 +2053,25 @@ fn lower_let_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
         return Err(LowerError::UnexpectedNode(SyntaxKind::BlockStmtLet));
     };
 
+    let mut init_expr = None;
+    let mut diverge_expr = None;
+    if let Some(first) = expr_nodes.get(0) {
+        init_expr = Some(lower_expr_from_cst(first)?);
+    }
+    if let Some(second) = expr_nodes.get(1) {
+        diverge_expr = Some(lower_expr_from_cst(second)?);
+    }
+    if init_expr.is_none() {
+        diverge_expr = None;
+    }
+
     let stmt = match (ty, init_expr) {
         (Some(ty), Some(init)) => {
             let typed_pat = Pattern::from(PatternKind::Type(PatternType::new(pat, ty)));
-            StmtLet::new(typed_pat, Some(init), None)
+            StmtLet::new(typed_pat, Some(init), diverge_expr)
         }
         (Some(_ty), None) => StmtLet::new(pat, None, None),
-        (None, init) => StmtLet::new(pat, init, None),
+        (None, init) => StmtLet::new(pat, init, diverge_expr),
     };
     Ok(BlockStmt::Let(stmt))
 }
@@ -2024,20 +2111,45 @@ fn lower_try_catch_from_cst(node: &SyntaxNode) -> Result<ExprTryCatch, LowerErro
 fn split_match_arm<'a>(
     arm: &'a SyntaxNode,
 ) -> Result<(&'a SyntaxNode, Option<&'a SyntaxNode>, &'a SyntaxNode), LowerError> {
-    let mut exprs = node_children_exprs(arm);
-    let pat = exprs
-        .next()
-        .ok_or(LowerError::UnexpectedNode(SyntaxKind::MatchArm))?;
-    let second = exprs.next();
-    let third = exprs.next();
-    match (second, third) {
-        (Some(guard), Some(body)) => Ok((pat, Some(guard), body)),
-        (Some(body), None) => Ok((pat, None, body)),
+    let mut pat: Option<&SyntaxNode> = None;
+    let mut exprs: Vec<&SyntaxNode> = Vec::new();
+
+    for child in &arm.children {
+        let crate::syntax::SyntaxElement::Node(n) = child else {
+            continue;
+        };
+        if n.kind.category() == CstCategory::Pattern && pat.is_none() {
+            pat = Some(n.as_ref());
+            continue;
+        }
+        if n.kind.category() == CstCategory::Expr {
+            exprs.push(n.as_ref());
+        }
+    }
+
+    let pat = match pat {
+        Some(pat) => pat,
+        None => {
+            let first = exprs
+                .first()
+                .copied()
+                .ok_or(LowerError::UnexpectedNode(SyntaxKind::MatchArm))?;
+            exprs.remove(0);
+            first
+        }
+    };
+
+    match exprs.as_slice() {
+        [body] => Ok((pat, None, *body)),
+        [guard, body] => Ok((pat, Some(*guard), *body)),
         _ => Err(LowerError::UnexpectedNode(SyntaxKind::MatchArm)),
     }
 }
 
 fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
+    if node.kind.category() == CstCategory::Pattern {
+        return lower_pattern_from_cst(node);
+    }
     // Patterns are currently parsed as expression CST nodes in match arms.
     // We lower a small subset of expressions into `Pattern` so that the typer
     // can bind names for match bodies.
@@ -2065,6 +2177,7 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
                 pattern: None,
             })))
         }
+        SyntaxKind::ExprRange => Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {}))),
         SyntaxKind::ExprPath => {
             let expr = lower_expr_from_cst(node)?;
             if let ExprKind::Name(name) = expr.kind() {
@@ -2308,6 +2421,8 @@ fn decode_string_literal(raw: &str) -> Option<String> {
         }
         Some(out)
     }
+
+    let raw = raw.strip_prefix('c').unwrap_or(raw);
 
     // Cooked string literals: "..." and b"..."
     if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
@@ -2663,6 +2778,21 @@ pub(crate) fn lower_type_from_cst(node: &SyntaxNode) -> Result<fp_core::ast::Ty,
         SyntaxKind::TyExpr => lower_ty_expr(node),
         SyntaxKind::TyImplTraits => lower_ty_impl_traits(node),
         SyntaxKind::TyMacroCall => lower_ty_macro_call(node),
+        SyntaxKind::TyUnsafeBinder => {
+            let inner = node
+                .children
+                .iter()
+                .find_map(|child| match child {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Type =>
+                    {
+                        Some(n.as_ref())
+                    }
+                    _ => None,
+                })
+                .ok_or(LowerError::UnexpectedNode(SyntaxKind::TyUnsafeBinder))?;
+            lower_type_from_cst(inner)
+        }
         other => Err(LowerError::UnexpectedNode(other)),
     }
 }
@@ -3640,14 +3770,19 @@ fn macro_callee_path(node: &SyntaxNode) -> Result<Path, LowerError> {
 
 fn direct_last_ident_token_text(node: &SyntaxNode) -> Option<String> {
     node.children.iter().rev().find_map(|child| match child {
-        crate::syntax::SyntaxElement::Token(t)
-            if !t.is_trivia()
-                && t.text
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_') =>
-        {
-            Some(t.text.clone())
+        crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() => {
+            let text = t.text.as_str();
+            if text
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            {
+                return Some(t.text.clone());
+            }
+            if text.chars().all(|c| c.is_ascii_digit()) {
+                return Some(t.text.clone());
+            }
+            None
         }
         _ => None,
     })

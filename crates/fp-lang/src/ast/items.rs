@@ -961,81 +961,61 @@ fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {
 
 fn lower_trait_member(node: &SyntaxNode) -> Result<Item, LowerItemsError> {
     let head = first_token_text(node).ok_or(LowerItemsError::MissingToken("trait member"))?;
-    match head.as_str() {
-        "async" => {
-            let sig_node = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    SyntaxElement::Node(n) if n.kind == SyntaxKind::FnSig => Some(n.as_ref()),
-                    _ => None,
-                })
-                .ok_or(LowerItemsError::MissingToken("fn sig"))?;
-            let sig = lower_fn_sig(sig_node)?;
-            let name = sig
-                .name
-                .clone()
-                .ok_or(LowerItemsError::MissingToken("fn name"))?;
+    let sig_node = node.children.iter().find_map(|c| match c {
+        SyntaxElement::Node(n) if n.kind == SyntaxKind::FnSig => Some(n.as_ref()),
+        _ => None,
+    });
+    if let Some(sig_node) = sig_node {
+        let mut sig = lower_fn_sig(sig_node)?;
+        if node.children.iter().any(|c| {
+            matches!(
+                c,
+                SyntaxElement::Token(t) if !t.is_trivia() && t.text == "const"
+            )
+        }) {
+            sig.is_const = true;
+        }
+        sig.abi = lower_extern_abi(node)?;
+        let name = sig
+            .name
+            .clone()
+            .ok_or(LowerItemsError::MissingToken("fn name"))?;
 
-            if let Some(body_node) = first_child_by_category(node, CstCategory::Expr) {
-                let body = lower_expr_from_cst(body_node)
-                    .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-                let body = Expr::new(ExprKind::Async(ExprAsync {
+        if let Some(body_node) = first_child_by_category(node, CstCategory::Expr) {
+            let body = lower_expr_from_cst(body_node)
+                .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
+            let is_async = node.children.iter().any(|c| {
+                matches!(
+                    c,
+                    SyntaxElement::Token(t) if !t.is_trivia() && t.text == "async"
+                )
+            });
+            let body = if is_async {
+                Expr::new(ExprKind::Async(ExprAsync {
                     span: body.span(),
                     expr: Box::new(body),
-                }));
-                return Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
-                    ty_annotation: None,
-                    attrs: Vec::new(),
-                    name: name.clone(),
-                    ty: None,
-                    sig,
-                    body: Box::new(body),
-                    visibility: Visibility::Inherited,
-                })));
-            }
-            Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
-                attrs: Vec::new(),
+                }))
+            } else {
+                body
+            };
+            return Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
                 ty_annotation: None,
-                name,
-                sig,
-            })))
-        }
-        "fn" => {
-            let sig_node = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    SyntaxElement::Node(n) if n.kind == SyntaxKind::FnSig => Some(n.as_ref()),
-                    _ => None,
-                })
-                .ok_or(LowerItemsError::MissingToken("fn sig"))?;
-            let sig = lower_fn_sig(sig_node)?;
-            let name = sig
-                .name
-                .clone()
-                .ok_or(LowerItemsError::MissingToken("fn name"))?;
-
-            if let Some(body_node) = first_child_by_category(node, CstCategory::Expr) {
-                let body = lower_expr_from_cst(body_node)
-                    .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-                return Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
-                    ty_annotation: None,
-                    attrs: Vec::new(),
-                    name: name.clone(),
-                    ty: None,
-                    sig,
-                    body: Box::new(body),
-                    visibility: Visibility::Inherited,
-                })));
-            }
-            Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
                 attrs: Vec::new(),
-                ty_annotation: None,
-                name,
+                name: name.clone(),
+                ty: None,
                 sig,
-            })))
+                body: Box::new(body),
+                visibility: Visibility::Inherited,
+            })));
         }
+        return Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
+            attrs: Vec::new(),
+            ty_annotation: None,
+            name,
+            sig,
+        })));
+    }
+    match head.as_str() {
         "const" => {
             let name = Ident::new(
                 first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("const name"))?,
@@ -1100,12 +1080,33 @@ fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
         return Err(LowerItemsError::MissingToken("impl type"));
     }
 
+    let mut is_negative = false;
+    let unwrap_not = |node: &SyntaxNode| -> Result<&SyntaxNode, LowerItemsError> {
+        if node.kind != SyntaxKind::TyNot {
+            return Ok(node);
+        }
+        let inner = node
+            .children
+            .iter()
+            .find_map(|c| match c {
+                SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => {
+                    Some(n.as_ref())
+                }
+                _ => None,
+            })
+            .ok_or(LowerItemsError::UnexpectedNode(node.kind))?;
+        is_negative = true;
+        Ok(inner)
+    };
+
     let (trait_ty, self_ty_node) = if type_nodes.len() >= 2 {
+        let trait_node = unwrap_not(type_nodes[0])?;
         let trait_path =
-            path_from_ty_node(type_nodes[0]).ok_or(LowerItemsError::MissingToken("trait path"))?;
+            path_from_ty_node(trait_node).ok_or(LowerItemsError::MissingToken("trait path"))?;
         (Some(Name::path(trait_path)), type_nodes[1])
     } else {
-        (None, type_nodes[0])
+        let self_ty_node = unwrap_not(type_nodes[0])?;
+        (None, self_ty_node)
     };
 
     let self_ty = if let Some(path) = path_from_ty_node(self_ty_node) {
@@ -1121,6 +1122,7 @@ fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
 
     Ok(ItemImpl {
         attrs,
+        is_negative,
         trait_ty,
         self_ty,
         generics_params: generics,

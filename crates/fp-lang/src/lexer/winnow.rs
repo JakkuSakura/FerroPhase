@@ -64,6 +64,80 @@ pub(crate) fn parse_cooked_string_literal(input: &mut &str, prefix: &str) -> Mod
     Err(ErrMode::Cut(ContextError::new()))
 }
 
+pub(crate) fn parse_char_literal(input: &mut &str) -> ModalResult<String> {
+    let slice = *input;
+    if !slice.starts_with('\'') {
+        return Err(backtrack_err());
+    }
+    let bytes = slice.as_bytes();
+    let mut idx = 1;
+    let mut escape = false;
+    while idx < bytes.len() {
+        let b = bytes[idx];
+        idx += 1;
+        if b == b'\\' && !escape {
+            escape = true;
+            continue;
+        }
+        if b == b'\'' && !escape {
+            let literal = slice[..idx].to_string();
+            *input = &slice[idx..];
+            return Ok(literal);
+        }
+        escape = false;
+    }
+    Err(backtrack_err())
+}
+
+pub(crate) fn parse_lifetime(input: &mut &str) -> ModalResult<String> {
+    let slice = *input;
+    if !slice.starts_with('\'') {
+        return Err(backtrack_err());
+    }
+    let mut idx = 1;
+    let rest = &slice[idx..];
+    if let Some(after) = rest.strip_prefix("r#") {
+        idx += 2;
+        let mut chars = after.char_indices();
+        let Some((off, ch)) = chars.next() else {
+            return Err(backtrack_err());
+        };
+        if !is_lifetime_start(ch) {
+            return Err(backtrack_err());
+        }
+        idx += off + ch.len_utf8();
+        for (off, ch) in chars {
+            if is_ident_continue(ch) {
+                idx = 1 + 2 + off + ch.len_utf8();
+                continue;
+            }
+            break;
+        }
+        let literal = slice[..idx].to_string();
+        *input = &slice[idx..];
+        return Ok(literal);
+    }
+
+    let mut chars = rest.char_indices();
+    let Some((off, ch)) = chars.next() else {
+        return Err(backtrack_err());
+    };
+    if !is_lifetime_start(ch) {
+        return Err(backtrack_err());
+    }
+    idx += off + ch.len_utf8();
+    for (off, ch) in chars {
+        if is_ident_continue(ch) {
+            idx = 1 + off + ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+    let literal = slice[..idx].to_string();
+    *input = &slice[idx..];
+    Ok(literal)
+}
+
 pub(crate) fn parse_raw_string_literal(input: &mut &str, byte: bool) -> ModalResult<String> {
     let slice = *input;
     if slice.is_empty() {
@@ -116,7 +190,11 @@ pub(crate) fn parse_raw_identifier(input: &mut &str) -> ModalResult<String> {
 }
 
 pub(crate) fn is_ident_start(ch: char) -> bool {
-    ch == '_' || ch == '\'' || ch.is_alphabetic()
+    ch == '_' || ch.is_alphabetic()
+}
+
+fn is_lifetime_start(ch: char) -> bool {
+    ch == '_' || ch.is_alphabetic()
 }
 
 pub(crate) fn is_ident_continue(ch: char) -> bool {

@@ -1009,6 +1009,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         | IntrinsicCallKind::Input
         | IntrinsicCallKind::Panic
         | IntrinsicCallKind::Slice
+        | IntrinsicCallKind::Yield
         | IntrinsicCallKind::SizeOf
         | IntrinsicCallKind::ReflectFields
         | IntrinsicCallKind::HasMethod

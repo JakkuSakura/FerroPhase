@@ -692,6 +692,7 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
         IntrinsicCallKind::Spawn => "spawn",
         IntrinsicCallKind::Join => "join",
         IntrinsicCallKind::Select => "select",
+        IntrinsicCallKind::Yield => "yield",
         IntrinsicCallKind::SizeOf => "size_of",
         IntrinsicCallKind::ReflectFields => "reflect_fields",
         IntrinsicCallKind::HasMethod => "has_method",

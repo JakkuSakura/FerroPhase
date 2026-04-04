@@ -331,6 +331,8 @@ common_struct! {
     pub struct ItemImpl {
         #[serde(default)]
         pub attrs: Vec<Attribute>,
+        #[serde(default)]
+        pub is_negative: bool,
         pub trait_ty: Option<Name>,
         pub self_ty: Expr,
         #[serde(default)]
@@ -343,6 +345,7 @@ impl ItemImpl {
     pub fn new_ident(self_ty: Ident, items: ItemChunk) -> Self {
         Self {
             attrs: Vec::new(),
+            is_negative: false,
             trait_ty: None,
             self_ty: Expr::ident(self_ty).into(),
             generics_params: Vec::new(),
@@ -352,6 +355,7 @@ impl ItemImpl {
     pub fn new(trait_ty: Option<Name>, self_ty: Expr, items: ItemChunk) -> Self {
         Self {
             attrs: Vec::new(),
+            is_negative: false,
             trait_ty,
             self_ty,
             generics_params: Vec::new(),

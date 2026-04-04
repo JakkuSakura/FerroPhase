@@ -586,6 +586,14 @@ impl HirGenerator {
                 ))
             }
             ast::ExprInvokeTarget::Function(locator) => {
+                if let Some(ident) = locator.as_ident() {
+                    if ident.as_str() == "import" {
+                        return Ok(self.error_expr_kind(
+                            "dynamic import is only supported in interpret mode".to_string(),
+                            invoke.span(),
+                        ));
+                    }
+                }
                 if let Some(intrinsic_call) = ast::intrinsic_call_from_invoke(invoke) {
                     return self.transform_intrinsic_call_to_hir(&intrinsic_call);
                 }

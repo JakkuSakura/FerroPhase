@@ -70,6 +70,8 @@ pub enum IntrinsicCallKind {
     Join,
     /// Select the first completed task.
     Select,
+    /// Coroutine yield expression.
+    Yield,
 
     // Metaprogramming intrinsics
     /// `sizeof!` - get size of a type in bytes
