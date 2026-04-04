@@ -144,6 +144,7 @@ fn expands_function_like_proc_macro() -> Result<()> {
         target_env: fp_core::cfg::TargetEnv::host(),
         command_mock_state: None,
         runtime_extern_hook: None,
+        jit: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     let mut node = fp_core::ast::Node::file(file);

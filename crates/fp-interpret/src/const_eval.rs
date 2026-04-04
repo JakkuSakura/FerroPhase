@@ -85,6 +85,7 @@ impl ConstEvaluationOrchestrator {
             target_env: TargetEnv::host(),
             command_mock_state: None,
             runtime_extern_hook: None,
+            jit: None,
         };
 
         let mut interpreter = AstInterpreter::new(ctx, options);

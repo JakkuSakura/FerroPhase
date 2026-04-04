@@ -1,0 +1,7 @@
+[package]
+name = "fp-jit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fp-core = { path = "../fp-core" }

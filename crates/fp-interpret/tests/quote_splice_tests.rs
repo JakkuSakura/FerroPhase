@@ -58,6 +58,7 @@ fn quote_fn_structural_pattern_binds_name() -> Result<()> {
         target_env: fp_core::cfg::TargetEnv::host(),
         command_mock_state: None,
         runtime_extern_hook: None,
+        jit: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
 
@@ -105,6 +106,7 @@ fn quote_items_plural_pattern_binds_list() -> Result<()> {
         target_env: fp_core::cfg::TargetEnv::host(),
         command_mock_state: None,
         runtime_extern_hook: None,
+        jit: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
 
@@ -176,6 +178,7 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
         target_env: fp_core::cfg::TargetEnv::host(),
         command_mock_state: None,
         runtime_extern_hook: None,
+        jit: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);
@@ -416,6 +419,7 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
         target_env: fp_core::cfg::TargetEnv::host(),
         command_mock_state: None,
         runtime_extern_hook: None,
+        jit: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);
@@ -485,6 +489,7 @@ fn splice_executes_expr_outside_const_block() -> Result<()> {
         target_env: fp_core::cfg::TargetEnv::host(),
         command_mock_state: None,
         runtime_extern_hook: None,
+        jit: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);
@@ -570,6 +575,7 @@ fn splice_allows_items_inside_function_bodies() -> Result<()> {
         target_env: fp_core::cfg::TargetEnv::host(),
         command_mock_state: None,
         runtime_extern_hook: None,
+        jit: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);

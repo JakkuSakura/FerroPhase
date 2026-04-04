@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 fp-core = { path = "../fp-core" }
+fp-jit = { path = "../fp-jit" }
 fp-native = { path = "../fp-native" }
 fp-pipeline = { path = "../fp-pipeline" }
 fp-typing = { path = "../fp-typing" }
