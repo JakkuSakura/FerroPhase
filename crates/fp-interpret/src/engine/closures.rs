@@ -269,33 +269,16 @@ impl<'ctx> AstInterpreter<'ctx> {
     // Execute a runtime method call with receiver binding.
     pub(super) fn call_method_runtime(
         &mut self,
-        function: ItemDefFunction,
+        mut function: ItemDefFunction,
         receiver: ReceiverBinding,
         args: Vec<Value>,
     ) -> RuntimeFlow {
         let exception_mode = self.exception_return_mode_for_sig(&function.sig);
-        if function.sig.params.len() != args.len() {
-            self.emit_error(format!(
-                "method '{}' expected {} arguments, found {}",
-                function.name.as_str(),
-                function.sig.params.len(),
-                args.len()
-            ));
-            return RuntimeFlow::Value(Value::undefined());
-        }
-        let _call_guard = self.push_call_frame(
-            EvalMode::Runtime,
-            CallFrameKind::Method(function.name.as_str().to_string()),
-            function.body.as_ref().span,
-        );
-        self.exception_stack.push(exception_mode);
         let receiver_kind = function
             .sig
             .receiver
+            .clone()
             .unwrap_or(fp_core::ast::FunctionParamReceiver::Value);
-
-        self.function_depth += 1;
-        self.push_scope();
 
         let impl_context = self
             .value_type_name(&receiver.value)
@@ -306,6 +289,78 @@ impl<'ctx> AstInterpreter<'ctx> {
         if let Some(context) = impl_context.clone() {
             self.impl_stack.push(context);
         }
+
+        let receiver_ty = self
+            .current_impl_self_ty()
+            .map(|ty| self.receiver_ffi_ty(&function.sig, &ty));
+        let jit_key = self
+            .jit
+            .as_ref()
+            .and_then(|_| self.jit_key_for_function(&function));
+        if self.jit.is_some() {
+            self.ensure_expr_typed(function.body.as_mut());
+        }
+
+        if function.sig.params.len() != args.len() {
+            self.emit_error(format!(
+                "method '{}' expected {} arguments, found {}",
+                function.name.as_str(),
+                function.sig.params.len(),
+                args.len()
+            ));
+            if impl_context.is_some() {
+                self.impl_stack.pop();
+            }
+            return RuntimeFlow::Value(Value::undefined());
+        }
+        let _call_guard = self.push_call_frame(
+            EvalMode::Runtime,
+            CallFrameKind::Method(function.name.as_str().to_string()),
+            function.body.as_ref().span,
+        );
+        self.exception_stack.push(exception_mode);
+
+        self.function_depth += 1;
+
+        if let (Some(key), Some(receiver_ty)) = (jit_key.as_ref(), receiver_ty.clone()) {
+            let receiver_value = match receiver_kind {
+                fp_core::ast::FunctionParamReceiver::Ref
+                | fp_core::ast::FunctionParamReceiver::RefStatic
+                | fp_core::ast::FunctionParamReceiver::RefMut
+                | fp_core::ast::FunctionParamReceiver::RefMutStatic => {
+                    receiver.shared.as_ref().map(|shared| {
+                        Value::Any(AnyBox::new(RuntimeRef::whole(Arc::clone(shared))))
+                    })
+                }
+                _ => Some(receiver.value.clone()),
+            };
+
+            if let Some(receiver_value) = receiver_value {
+                let mut jit_sig = function.sig.clone();
+                jit_sig.receiver = None;
+                let mut params = Vec::with_capacity(function.sig.params.len() + 1);
+                params.push(FunctionParam::new(Ident::new("self"), receiver_ty));
+                params.extend(function.sig.params.clone());
+                jit_sig.params = params;
+
+                let mut jit_args = Vec::with_capacity(args.len() + 1);
+                jit_args.push(receiver_value);
+                jit_args.extend(args.iter().cloned());
+
+                if let Some(value) = self.try_call_jit(&jit_sig, key, &jit_args) {
+                    self.function_depth -= 1;
+                    self.exception_stack.pop();
+                    if impl_context.is_some() {
+                        self.impl_stack.pop();
+                    }
+                    return RuntimeFlow::Value(self.finish_exception_return(value, exception_mode));
+                }
+            } else {
+                self.emit_warning("method receiver is not addressable for JIT; falling back");
+            }
+        }
+
+        self.push_scope();
 
         let receiver_name = "#self";
         let plain_self_name = "self";
@@ -342,6 +397,18 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.pop_scope();
         self.function_depth -= 1;
         self.exception_stack.pop();
+        if let (Some(jit), Some(key)) = (self.jit.as_ref(), jit_key.clone()) {
+            if jit.record_hotness(&key) {
+                if let Some(input) = self.jit_compile_input(key.clone()) {
+                    if let Err(err) = jit.compile(input) {
+                        self.emit_warning(format!(
+                            "JIT compile failed for {}: {}",
+                            key.canonical_name, err
+                        ));
+                    }
+                }
+            }
+        }
 
         match flow {
             RuntimeFlow::Return(value) => RuntimeFlow::Value(self.finish_exception_return(

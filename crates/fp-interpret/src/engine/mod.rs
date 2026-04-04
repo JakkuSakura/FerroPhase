@@ -7,11 +7,14 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::engine::ffi::FfiRuntime;
+use crate::engine::ffi::{
+    validate_ffi_signature, validate_ffi_signature_with_receiver, FfiRuntime,
+};
 use crate::engine::macro_rules::{expand_macro, parse_macro_rules, MacroRulesDefinition};
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicFunction;
 use crate::intrinsics::IntrinsicsRegistry;
+use fp_jit::{jit_snapshot_from_items, JitCompileInput, JitKey};
 use fp_core::ast::DecimalType;
 use fp_core::ast::{
     AttrMeta, AttrMetaList, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure,
@@ -156,6 +159,7 @@ pub struct InterpreterOptions {
     pub stdout_mode: StdoutMode,
     pub command_mock_state: Option<Arc<Mutex<CommandMockState>>>,
     pub runtime_extern_hook: Option<Arc<dyn RuntimeExternHook>>,
+    pub jit: Option<Arc<fp_jit::JitSession>>,
 }
 
 impl Default for InterpreterOptions {
@@ -173,6 +177,7 @@ impl Default for InterpreterOptions {
             stdout_mode: StdoutMode::Capture,
             command_mock_state: None,
             runtime_extern_hook: None,
+            jit: None,
         }
     }
 }
@@ -914,6 +919,7 @@ pub struct AstInterpreter<'ctx> {
     stdout_mode: StdoutMode,
     command_mock_state: Option<Arc<Mutex<CommandMockState>>>,
     runtime_extern_hook: Option<Arc<dyn RuntimeExternHook>>,
+    jit: Option<Arc<fp_jit::JitSession>>,
     allow_binding_replacement: bool,
     exception_mode: bool,
     exception_stack: Vec<ExceptionReturnMode>,
@@ -1029,6 +1035,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             stdout_mode: options.stdout_mode,
             command_mock_state: options.command_mock_state.clone(),
             runtime_extern_hook: options.runtime_extern_hook.clone(),
+            jit: options.jit.clone(),
             allow_binding_replacement: false,
             exception_mode: false,
             exception_stack: Vec::new(),
@@ -8023,6 +8030,122 @@ impl<'ctx> AstInterpreter<'ctx> {
             qualified.push_str("::");
             qualified.push_str(name);
             qualified
+        }
+    }
+
+    fn jit_key_for_function(&self, function: &ItemDefFunction) -> Option<JitKey> {
+        if !function.sig.generics_params.is_empty() || function.sig.quote_kind.is_some() {
+            return None;
+        }
+        let receiver_ty = function
+            .sig
+            .receiver
+            .as_ref()
+            .and_then(|_| self.current_impl_self_ty());
+        if !self.jit_signature_supported(&function.sig, receiver_ty.as_ref()) {
+            return None;
+        }
+        let canonical = self.qualified_name(function.name.as_str());
+        Some(JitKey::for_function(canonical, &function.sig))
+    }
+
+    fn jit_key_for_value_function(&self, function: &ValueFunction) -> Option<JitKey> {
+        if function.sig.receiver.is_some()
+            || !function.sig.generics_params.is_empty()
+            || function.sig.quote_kind.is_some()
+        {
+            return None;
+        }
+        if !self.jit_signature_supported(&function.sig, None) {
+            return None;
+        }
+        let name = function.sig.name.as_ref()?.as_str();
+        let canonical = self.qualified_name(name);
+        Some(JitKey::for_function(canonical, &function.sig))
+    }
+
+    fn jit_compile_input(&self, key: JitKey) -> Option<JitCompileInput> {
+        let items_ptr = self.root_items?;
+        let items = unsafe { (*items_ptr).clone() };
+        Some(JitCompileInput {
+            key,
+            file: jit_snapshot_from_items(items),
+            target_env: self.target_env.clone(),
+            module_resolution: self.module_resolution.as_ref().map(|ctx| ctx.to_core()),
+        })
+    }
+
+    fn jit_signature_supported(&self, sig: &FunctionSignature, receiver_ty: Option<&Ty>) -> bool {
+        if !matches!(sig.abi, fp_core::ast::Abi::Rust) && !sig.abi.is_c() {
+            return false;
+        }
+        match receiver_ty {
+            Some(ty) => {
+                let receiver_ty = self.receiver_ffi_ty(sig, ty);
+                validate_ffi_signature_with_receiver(sig, &receiver_ty).is_ok()
+            }
+            None => validate_ffi_signature(sig).is_ok(),
+        }
+    }
+
+    fn receiver_ffi_ty(&self, sig: &FunctionSignature, receiver_ty: &Ty) -> Ty {
+        match sig.receiver {
+            Some(
+                fp_core::ast::FunctionParamReceiver::Ref
+                | fp_core::ast::FunctionParamReceiver::RefStatic,
+            ) => Ty::Reference(
+                TypeReference {
+                    ty: Box::new(receiver_ty.clone()),
+                    mutability: Some(false),
+                    lifetime: None,
+                }
+                .into(),
+            ),
+            Some(
+                fp_core::ast::FunctionParamReceiver::RefMut
+                | fp_core::ast::FunctionParamReceiver::RefMutStatic,
+            ) => Ty::Reference(
+                TypeReference {
+                    ty: Box::new(receiver_ty.clone()),
+                    mutability: Some(true),
+                    lifetime: None,
+                }
+                .into(),
+            ),
+            _ => receiver_ty.clone(),
+        }
+    }
+
+    fn current_impl_self_ty(&self) -> Option<Ty> {
+        let context = self.impl_stack.last()?;
+        let self_ty = context.self_ty.as_ref()?;
+        Some(Ty::locator(Name::from_ident(Ident::new(self_ty.clone()))))
+    }
+
+    fn try_call_jit(
+        &mut self,
+        sig: &FunctionSignature,
+        key: &JitKey,
+        args: &[Value],
+    ) -> Option<Value> {
+        let jit = self.jit.as_ref()?;
+        let entry = jit.lookup(key)?;
+        let ffi = match self.ensure_ffi_runtime() {
+            Ok(ffi) => ffi,
+            Err(err) => {
+                self.emit_warning(format!("jit runtime unavailable: {}", err));
+                return None;
+            }
+        };
+        match ffi.call_ptr(sig, entry.entry, args) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                self.emit_warning(format!(
+                    "jit call failed for {}: {}",
+                    key.canonical_name, err
+                ));
+                None
+            }
         }
     }
 
