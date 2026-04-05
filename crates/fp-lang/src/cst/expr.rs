@@ -460,7 +460,7 @@ impl Parser {
                 }
                 Some("::") => {
                     if self
-                        .peek_nth_non_trivia(2)
+                        .peek_nth_non_trivia(1)
                         .is_some_and(|tok| tok.raw.as_str() == "<")
                         && matches!(
                             base.kind,
@@ -602,7 +602,7 @@ impl Parser {
             Some("const") => {
                 // Disambiguate `const { ... }` (expression) vs `const NAME: Ty = ...;` (item).
                 matches!(
-                    self.peek_nth_non_trivia_token_kind(2),
+                    self.peek_nth_non_trivia_token_kind(1),
                     Some(TokenKind::Ident)
                 )
             }
@@ -619,10 +619,20 @@ impl Parser {
 
         let mut toks: Vec<Token> = Vec::new();
         let mut idx_map: Vec<usize> = Vec::new();
+        let mut brace_depth = 0usize;
+        let mut saw_brace = false;
         for (rel, t) in self.tokens[self.idx..].iter().enumerate() {
             if t.is_trivia() {
                 continue;
             }
+            let raw = t.raw.as_str();
+            if raw == "{" {
+                brace_depth = brace_depth.saturating_add(1);
+                saw_brace = true;
+            } else if raw == "}" {
+                brace_depth = brace_depth.saturating_sub(1);
+            }
+
             let span = TokSpan {
                 start: t.span.lo as usize,
                 end: t.span.hi as usize,
@@ -633,12 +643,19 @@ impl Parser {
                 span,
             });
             idx_map.push(self.idx + rel);
+
+            if brace_depth == 0 && (raw == ";" || (raw == "}" && saw_brace)) {
+                break;
+            }
+        }
+        if toks.is_empty() || idx_map.is_empty() {
+            return Err(self.error("failed to parse item statement"));
         }
 
         let (item, consumed) =
             crate::cst::items::parse_item_tokens_prefix_to_cst_with_file(&toks, self.file)
                 .map_err(|err| self.error(&format!("failed to parse item statement: {err}")))?;
-        if consumed == 0 {
+        if consumed == 0 || consumed != toks.len() {
             return Err(self.error("failed to parse item statement"));
         }
         let last_idx = idx_map
@@ -992,7 +1009,11 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children); // `while`
         self.bump_trivia_into(&mut children);
-        let cond = self.parse_expr_before_block()?;
+        let cond = if self.peek_non_trivia_normalized() == Some("let") {
+            self.parse_let_expr()?
+        } else {
+            self.parse_expr_before_block()?
+        };
         children.push(SyntaxElement::Node(Box::new(cond)));
         self.bump_trivia_into(&mut children);
         let block = self.parse_block_expr()?;
@@ -1073,6 +1094,19 @@ impl Parser {
     fn parse_pattern_atom(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
         self.bump_trivia_into(&mut children);
+
+        if self.peek_non_trivia_raw() == Some("&") {
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+            if self.peek_non_trivia_normalized() == Some("mut") {
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+            }
+            let inner = self.parse_pattern()?;
+            children.push(SyntaxElement::Node(Box::new(inner)));
+            let span = span_for_children(&children);
+            return Ok(SyntaxNode::new(SyntaxKind::PatternRef, children, span));
+        }
 
         if self.peek_non_trivia_normalized() == Some("ref") {
             self.bump_token_into(&mut children);
@@ -1539,7 +1573,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         if !matches!(
             self.peek_non_trivia_raw(),
-            Some(";") | Some("}") | Some(")") | Some(",")
+            Some(";") | Some("}") | Some(")") | Some(",") | Some("=>")
         ) {
             let expr = self.parse_expr_bp(0)?;
             children.push(SyntaxElement::Node(Box::new(expr)));
@@ -1558,7 +1592,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         if !matches!(
             self.peek_non_trivia_raw(),
-            Some(";") | Some("}") | Some(")") | Some(",")
+            Some(";") | Some("}") | Some(")") | Some(",") | Some("=>")
         ) {
             let expr = self.parse_expr_bp(0)?;
             children.push(SyntaxElement::Node(Box::new(expr)));
@@ -1577,7 +1611,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         if !matches!(
             self.peek_non_trivia_raw(),
-            Some(";") | Some("}") | Some(")") | Some(",")
+            Some(";") | Some("}") | Some(")") | Some(",") | Some("=>")
         ) {
             let expr = self.parse_expr_bp(0)?;
             children.push(SyntaxElement::Node(Box::new(expr)));
@@ -1636,7 +1670,7 @@ impl Parser {
                 self.bump_trivia_into(&mut children);
                 if self.peek_non_trivia_raw() == Some("::")
                     && self
-                        .peek_nth_non_trivia(2)
+                        .peek_nth_non_trivia(1)
                         .is_some_and(|tok| tok.raw.as_str() == "<")
                 {
                     let turbofish = self.parse_turbofish_args_node()?;
@@ -1918,7 +1952,7 @@ impl Parser {
             if op == "::"
                 && matches!(left.kind, SyntaxKind::TyPath)
                 && self
-                    .peek_nth_non_trivia(2)
+                    .peek_nth_non_trivia(1)
                     .is_some_and(|tok| tok.raw.as_str() == "<")
             {
                 let mut children = left.children.clone();
@@ -2456,7 +2490,7 @@ impl Parser {
 
         if self.peek_non_trivia_raw() == Some("::")
             && self
-                .peek_nth_non_trivia(2)
+                .peek_nth_non_trivia(1)
                 .is_some_and(|tok| tok.raw.as_str() == "<")
         {
             self.bump_token_into(&mut children);
@@ -2832,7 +2866,7 @@ impl Parser {
         while self.peek_non_trivia_raw() == Some("::") {
             is_path = true;
             if self
-                .peek_nth_non_trivia(2)
+                .peek_nth_non_trivia(1)
                 .is_some_and(|tok| tok.raw.as_str() == "<")
             {
                 self.bump_token_into(&mut children);
@@ -3416,8 +3450,6 @@ fn is_type_boundary_token(tok: &str) -> bool {
             | "!"
             | "<<"
             | ">>"
-            | "<"
-            | ">"
             | "<="
             | ">="
             | "=="
