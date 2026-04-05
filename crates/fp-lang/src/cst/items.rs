@@ -1594,6 +1594,10 @@ fn parse_generic_params_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
             .get(consumed_split - 1)
             .ok_or_else(|| ErrMode::Cut(ContextError::new()))?
     };
+    let input_len = input.len();
+    if consumed_tokens > input_len {
+        return Err(ErrMode::Cut(ContextError::new()));
+    }
     *input = &input[consumed_tokens..];
     Ok(node(SyntaxKind::GenericParams, children))
 }
