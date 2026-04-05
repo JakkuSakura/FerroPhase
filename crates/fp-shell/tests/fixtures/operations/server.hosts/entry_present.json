@@ -1,0 +1,19 @@
+{
+    "args": [
+        "1.2.3.4",
+        "example.local example"
+    ],
+    "kwargs": {
+        "path": "/tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_hosts__entry_present_json/hosts",
+        "present": true
+    },
+    "local_files": {
+        "files": {
+            "hosts": "127.0.0.1 localhost\n1.2.3.4 old.local\n"
+        }
+    },
+    "commands": [
+        "awk -v ip='1.2.3.4' '$1 != ip' /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_hosts__entry_present_json/hosts > /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_hosts__entry_present_json/hosts.fp.tmp && mv /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_hosts__entry_present_json/hosts.fp.tmp /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_hosts__entry_present_json/hosts",
+        "printf '%s\\n' \"1.2.3.4 example.local example\" >> /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_hosts__entry_present_json/hosts"
+    ]
+}

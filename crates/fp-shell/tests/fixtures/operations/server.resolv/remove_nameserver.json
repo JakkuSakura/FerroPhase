@@ -1,0 +1,17 @@
+{
+    "args": [
+        "8.8.8.8"
+    ],
+    "kwargs": {
+        "path": "/tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_resolv__remove_nameserver_json/resolv.conf",
+        "present": false
+    },
+    "local_files": {
+        "files": {
+            "resolv.conf": "nameserver 8.8.8.8\nnameserver 1.1.1.1\n"
+        }
+    },
+    "commands": [
+        "awk -v line='nameserver 8.8.8.8' '$0 != line' /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_resolv__remove_nameserver_json/resolv.conf > /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_resolv__remove_nameserver_json/resolv.conf.fp.tmp && mv /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_resolv__remove_nameserver_json/resolv.conf.fp.tmp /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_resolv__remove_nameserver_json/resolv.conf"
+    ]
+}

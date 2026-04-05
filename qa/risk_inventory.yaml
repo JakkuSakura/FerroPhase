@@ -1,0 +1,119 @@
+# Risk inventory for runtime, backend, and FFI surfaces.
+# Each entry should be updated as code and tests mature.
+risks:
+  - id: RISK-UNSAFE-CORE-001
+    area: unsafe
+    crate: fp-core
+    entry: core memory/layout helpers
+    risk: Unsafe blocks could violate aliasing/overflow invariants under edge inputs.
+    tests: TODO add targeted miri/loom + property tests
+    owner: TBD
+    status: open
+
+  - id: RISK-FFI-CLANG-001
+    area: ffi
+    crate: fp-clang
+    entry: clang/LLVM C API bindings
+    risk: ABI mismatch or lifetime misuse across C boundary could cause UB or crashes.
+    tests: TODO add FFI boundary tests + sanitizers (ASAN/UBSAN)
+    owner: TBD
+    status: open
+
+  - id: RISK-FFI-DOTNET-001
+    area: ffi
+    crate: fp-dotnet
+    entry: .NET hosting / interop
+    risk: Managed/unmanaged boundary errors or GC pinning issues.
+    tests: TODO add integration tests with .NET runtime
+    owner: TBD
+    status: open
+
+  - id: RISK-FFI-JVM-001
+    area: ffi
+    crate: fp-jvm
+    entry: JNI bindings
+    risk: JNI local/global ref leaks or signature mismatch.
+    tests: TODO add JVM integration tests (JNI smoke + leak checks)
+    owner: TBD
+    status: open
+
+  - id: RISK-FFI-PY-001
+    area: ffi
+    crate: fp-python
+    entry: Python/C-API bridge
+    risk: Refcount misuse or GIL handling bugs.
+    tests: TODO add CPython ABI tests + refcount checks
+    owner: TBD
+    status: open
+
+  - id: RISK-JIT-LLVM-001
+    area: jit
+    crate: fp-llvm
+    entry: LLVM JIT pipeline
+    risk: Incorrect codegen or missing relocations across targets.
+    tests: TODO add JIT conformance tests + golden outputs
+    owner: TBD
+    status: open
+
+  - id: RISK-JIT-CRANELIFT-001
+    area: jit
+    crate: fp-cranelift
+    entry: Cranelift JIT backend
+    risk: Backend-specific codegen divergence or undefined behavior on edge IR.
+    tests: TODO add backend parity tests vs interpreter
+    owner: TBD
+    status: open
+
+  - id: RISK-BACKEND-WASM-001
+    area: backend
+    crate: fp-wasm
+    entry: wasm codegen/loader
+    risk: Feature flag mismatch (SIMD, bulk memory) across runtimes.
+    tests: TODO add wasm feature matrix tests
+    owner: TBD
+    status: open
+
+  - id: RISK-BACKEND-EBPF-001
+    area: backend
+    crate: fp-ebpf
+    entry: eBPF verifier constraints
+    risk: Generated programs rejected by verifier on different kernels.
+    tests: TODO add kernel-version matrix tests
+    owner: TBD
+    status: open
+
+  - id: RISK-BACKEND-SYCL-001
+    area: backend
+    crate: fp-sycl
+    entry: SYCL backend selection
+    risk: Divergent behavior between CPU/GPU devices and drivers.
+    tests: TODO add device-matrix tests
+    owner: TBD
+    status: open
+
+  - id: RISK-BACKEND-NATIVE-001
+    area: backend
+    crate: fp-native
+    entry: native codegen + platform ABI
+    risk: Platform-specific calling convention mismatches.
+    tests: TODO add cross-platform ABI tests
+    owner: TBD
+    status: open
+
+  - id: RISK-BACKEND-STACKVM-001
+    area: backend
+    crate: fp-stackvm
+    entry: stack VM execution
+    risk: Interpreter semantics drift vs other backends.
+    tests: TODO add semantics parity tests across backends
+    owner: TBD
+    status: open
+
+  - id: RISK-PIPELINE-MULTI-001
+    area: backend
+    crate: fp-pipeline
+    entry: multi-backend dispatch
+    risk: Backend selection logic diverges or silently falls back.
+    tests: TODO add routing/selection tests per backend
+    owner: TBD
+    status: open

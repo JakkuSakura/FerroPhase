@@ -1,0 +1,18 @@
+{
+    "args": [
+        "1.1.1.1"
+    ],
+    "kwargs": {
+        "path": "/tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_resolv__set_nameserver_json/resolv.conf",
+        "present": true
+    },
+    "local_files": {
+        "files": {
+            "resolv.conf": "nameserver 8.8.8.8\nsearch example.com\n"
+        }
+    },
+    "commands": [
+        "awk -v key='nameserver' '$1 != key' /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_resolv__set_nameserver_json/resolv.conf > /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_resolv__set_nameserver_json/resolv.conf.fp.tmp && mv /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_resolv__set_nameserver_json/resolv.conf.fp.tmp /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_resolv__set_nameserver_json/resolv.conf",
+        "printf '%s\\n' \"nameserver 1.1.1.1\" >> /tmp/fp-shell-fixtures/__Users__jakku__Dev__FerroPhase__crates__fp-shell__tests__fixtures__operations__server_resolv__set_nameserver_json/resolv.conf"
+    ]
+}
