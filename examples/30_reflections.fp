@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 struct S { a: i32, b: f64 }
 
 fn count_fields_plus_n(_s: &S, i: i32) -> usize {

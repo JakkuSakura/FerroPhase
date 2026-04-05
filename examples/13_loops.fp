@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Loop constructs: while, for, and loop.
 //! Demonstrates iteration, break, continue, and loop expressions.
 

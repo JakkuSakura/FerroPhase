@@ -47,7 +47,7 @@ Every capability below is designed to uphold that contract.
 3. Compile and run:
    ```bash
    # Quick iteration (interpreter; same semantics as compiled)
-   fp run src/main.fp
+   fp interpret src/main.fp
 
    # Or generate Rust via the backend pipeline (same semantics)
    fp compile src/main.fp --backend rust --output src/main.rs
@@ -91,7 +91,7 @@ Every capability below is designed to uphold that contract.
 fp parse examples/05_struct_generation.fp
 
 # Interpret
-fp run examples/09_metaprogramming_patterns.fp
+fp interpret examples/09_metaprogramming_patterns.fp
 
 # Compile to Rust backend source (preserves language-level semantics)
 fp compile src/service.fp --backend rust --output service.rs

@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Control flow: if/else expressions with const and runtime evaluation
 //!
 //! Demonstrates:

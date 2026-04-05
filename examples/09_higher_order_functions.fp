@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Higher-order functions: passing functions as arguments and closures
 
 use std::fmt::Display;

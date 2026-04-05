@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! UDP echo server using libc sockets (compiled-mode friendly).
 
 mod libc {

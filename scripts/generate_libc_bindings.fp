@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Generate `crates/fp-lang/src/std/libc/generated.fp` from bindgen output.
 //!
 //! This FerroPhase script is intended to become the source of truth for libc binding

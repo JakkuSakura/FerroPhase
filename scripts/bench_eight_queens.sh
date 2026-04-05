@@ -121,4 +121,4 @@ WASM_FILE="${WASM_OUT}.wasm"
 if [[ ! -f "${WASM_FILE}" ]]; then
   WASM_FILE="${WASM_OUT}"
 fi
-bench_cmd "fp run (wasm)" "bash -c '$(declare -f run_wasm); run_wasm ${WASM_FILE}'"
+bench_cmd "fp wasm run" "bash -c '$(declare -f run_wasm); run_wasm ${WASM_FILE}'"

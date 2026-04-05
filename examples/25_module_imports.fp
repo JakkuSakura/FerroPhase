@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Module definitions and `use` imports within a single file
 
 mod helpers {

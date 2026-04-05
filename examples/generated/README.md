@@ -13,7 +13,7 @@ chmod +x examples/01_const_eval_basics.fp
 ./examples/01_const_eval_basics.fp
 
 # Or via the CLI
-fp run examples/01_const_eval_basics.fp
+fp interpret examples/01_const_eval_basics.fp
 ```
 
 ## Catalog Overview

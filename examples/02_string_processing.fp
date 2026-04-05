@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Compile-time string operations and intrinsics
 
 fn main() {

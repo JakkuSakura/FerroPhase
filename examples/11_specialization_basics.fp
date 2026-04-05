@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Function specialization via generic monomorphization
 
 use std::fmt::Display;

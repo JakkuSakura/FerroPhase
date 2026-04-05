@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Runtime exercise for all std::collections modules.
 
 use std::collections::binary_heap::BinaryHeap;

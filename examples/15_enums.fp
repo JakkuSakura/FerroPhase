@@ -1,4 +1,4 @@
-#!/usr:bin/env fp run
+#!/usr/bin/env fp interpret
 //! Enum variants: unit, tuple, struct variants and discriminants
 
 enum Shape {

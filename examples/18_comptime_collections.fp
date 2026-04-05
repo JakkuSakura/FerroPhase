@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Showcase compile-time Vec and HashMap construction.
 //! Demonstrates literal, repeat, and const-block usage with real data.
 

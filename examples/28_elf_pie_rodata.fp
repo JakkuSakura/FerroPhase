@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Minimal rodata + external call coverage for ELF PIE output.
 
 fn sum(values: &[i64; 4]) -> i64 {

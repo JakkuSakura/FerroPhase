@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Benchmark-style run for the 8-queens solver.
 
 fn solve(

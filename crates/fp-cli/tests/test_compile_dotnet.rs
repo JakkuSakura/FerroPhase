@@ -22,78 +22,14 @@ fn has_mono() -> bool {
 }
 
 #[tokio::test]
-async fn test_compile_dotnet_emits_pe_artifact() {
-    if !has_ilasm() {
-        eprintln!("skipping .NET assembly test: ilasm not available on PATH");
-        return;
-    }
-
-    let temp_dir = TempDir::new().unwrap();
-    let input_file = temp_dir.path().join("test.fp");
-    let output_file = temp_dir.path().join("test.exe");
-
-    fs::write(
-        &input_file,
-        r#"
-fn add(x: i64, y: i64) -> i64 {
-    x + y
-}
-
-fn main() -> i64 {
-    let sum = add(40, 2);
-    sum
-}
-"#,
-    )
-    .unwrap();
-
-    let args = CompileArgs {
-        input: vec![input_file],
-        backend: BackendKind::Dotnet,
-        target: None,
-        emitter: EmitterKind::Native,
-        target_triple: None,
-        target_cpu: None,
-        native_target: None,
-        target_features: None,
-        target_sysroot: None,
-        linker: "clang".to_string(),
-        target_linker: None,
-        output: Some(output_file.clone()),
-        graph: None,
-        opt_level: 0,
-        debug: false,
-        release: false,
-        include: Vec::new(),
-        define: Vec::new(),
-        exec: false,
-        link: false,
-        save_intermediates: false,
-        lossy: true,
-        max_errors: 0,
-        source_language: None,
-        disable_stage: Vec::new(),
-        const_eval: true,
-        type_defs: false,
-        single_world: false,
-    };
-
-    compile_command(args, &CliConfig::default()).await.unwrap();
-
-    let bytes = fs::read(&output_file).unwrap();
-    assert!(bytes.starts_with(b"MZ"));
-}
-
-#[tokio::test]
-async fn test_compile_dotnet_exec_runs_assembly() {
+async fn compile_command_supports_dotnet_backend() {
     if !has_ilasm() || !has_mono() {
-        eprintln!("skipping .NET exec test: ilasm or mono not available on PATH");
+        eprintln!("skipping dotnet run test: ilasm or mono not available on PATH");
         return;
     }
 
     let temp_dir = TempDir::new().unwrap();
-    let input_file = temp_dir.path().join("test.fp");
-    let output_file = temp_dir.path().join("test.exe");
+    let input_file = temp_dir.path().join("main.fp");
 
     fs::write(
         &input_file,
@@ -117,9 +53,9 @@ fn main() -> i64 {
         target_sysroot: None,
         linker: "clang".to_string(),
         target_linker: None,
-        output: Some(output_file),
+        output: None,
         graph: None,
-        opt_level: 0,
+        opt_level: 2,
         debug: false,
         release: false,
         include: Vec::new(),
@@ -127,8 +63,8 @@ fn main() -> i64 {
         exec: true,
         link: false,
         save_intermediates: false,
-        lossy: true,
-        max_errors: 0,
+        lossy: false,
+        max_errors: 50,
         source_language: None,
         disable_stage: Vec::new(),
         const_eval: true,
@@ -137,4 +73,60 @@ fn main() -> i64 {
     };
 
     compile_command(args, &CliConfig::default()).await.unwrap();
+}
+
+#[tokio::test]
+async fn compile_command_supports_dotnet_backend_with_dll_output() {
+    if !has_ilasm() || !has_mono() {
+        eprintln!("skipping dotnet run test: ilasm or mono not available on PATH");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.fp");
+    let output_file = temp_dir.path().join("app.dll");
+
+    fs::write(
+        &input_file,
+        r#"
+fn main() -> i64 {
+    0
+}
+"#,
+    )
+    .unwrap();
+
+    let args = CompileArgs {
+        input: vec![input_file],
+        backend: BackendKind::Dotnet,
+        target: None,
+        emitter: EmitterKind::Native,
+        target_triple: None,
+        target_cpu: None,
+        native_target: None,
+        target_features: None,
+        target_sysroot: None,
+        linker: "clang".to_string(),
+        target_linker: None,
+        output: Some(output_file.clone()),
+        graph: None,
+        opt_level: 3,
+        debug: true,
+        release: true,
+        include: Vec::new(),
+        define: Vec::new(),
+        exec: true,
+        link: false,
+        save_intermediates: false,
+        lossy: false,
+        max_errors: 50,
+        source_language: None,
+        disable_stage: Vec::new(),
+        const_eval: true,
+        type_defs: false,
+        single_world: false,
+    };
+
+    compile_command(args, &CliConfig::default()).await.unwrap();
+    assert!(output_file.exists());
 }

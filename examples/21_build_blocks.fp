@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Build blocks with typed quote tokens and expression-driven splice.
 
 const fn build_items(flag: bool) -> item {

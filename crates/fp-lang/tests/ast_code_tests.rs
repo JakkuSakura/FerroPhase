@@ -27,7 +27,7 @@ fn unwrap_expr_splice<'a>(expr: &'a Expr) -> &'a ExprSplice {
     }
 }
 
-const EXAMPLE_CONST_EVAL: &str = r#"#!/usr/bin/env fp run
+const EXAMPLE_CONST_EVAL: &str = r#"#!/usr/bin/env fp interpret
 //! Basic const evaluation with compile-time arithmetic and const blocks
 
 fn main() {
@@ -72,7 +72,7 @@ fn main() {
 }
 "#;
 
-const EXAMPLE_QUOTE_SPLICE: &str = r#"#!/usr/bin/env fp run
+const EXAMPLE_QUOTE_SPLICE: &str = r#"#!/usr/bin/env fp interpret
 //! Quote and splice demonstration (parser support TBD)
 //! This file documents intended surface usage; the AST-level support exists.
 

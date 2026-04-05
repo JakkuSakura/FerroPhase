@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Type arithmetic examples: combining and relating types with operators.
 //! These operators are type-level, not value-level.
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Parse JSON into a value and print it back.
 
 use std::json;

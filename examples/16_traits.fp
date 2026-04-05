@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Traits: defining shared behavior with default methods
 
 trait Shape {

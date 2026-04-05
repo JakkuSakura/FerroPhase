@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Classic 8-queens solver using recursive backtracking.
 
 fn solve(

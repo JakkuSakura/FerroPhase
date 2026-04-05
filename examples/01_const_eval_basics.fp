@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Basic const evaluation with compile-time arithmetic and const blocks
 
 fn main() {

@@ -16,7 +16,7 @@ if ! (cd "$ROOT_DIR" && LLVM_SYS_210_PREFIX="${LLVM_SYS_210_PREFIX:-}" cargo bui
   exit 0
 fi
 
-RUN_CMD=(cargo run -p fp-cli --bin fp -- run)
+RUN_CMD=(cargo run -p fp-cli --bin fp -- interpret)
 FAILED=0
 
 for file in "$ROOT_DIR"/examples/*.fp; do
@@ -25,7 +25,7 @@ for file in "$ROOT_DIR"/examples/*.fp; do
   tmp=$(mktemp)
 
   if ! (cd "$ROOT_DIR" && RUST_LOG=error NO_COLOR=1 "${RUN_CMD[@]}" "$file" >"$tmp" 2>&1); then
-    echo "Snapshot check failed: fp run failed for $file" >&2
+    echo "Snapshot check failed: fp interpret failed for $file" >&2
     cat "$tmp" >&2
     FAILED=1
     rm -f "$tmp"

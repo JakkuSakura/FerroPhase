@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Minimal TCP HTTP server using libc sockets.
 //!
 //! Linux (glibc) and macOS only, intended for `fp interpret`.

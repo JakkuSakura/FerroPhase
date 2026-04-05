@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Comprehensive println!/print showcase covering variadic arguments and runtime formatting
 
 const fn main() {

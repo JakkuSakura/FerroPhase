@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Named arguments and call-site reordering for functions.
 
 fn summarize(label: str, count: i64, active: bool) -> str {

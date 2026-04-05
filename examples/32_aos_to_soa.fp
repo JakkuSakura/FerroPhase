@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! AoS -> SoA conversion using const-eval type generation and intrinsics.
 
 use std::meta::TypeBuilder;

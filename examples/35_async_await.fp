@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Async runtime basics: sleep, spawn, join, and select
 
 async fn worker(label: string, delay: f64, value: i64) -> i64 {

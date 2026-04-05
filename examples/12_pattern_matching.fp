@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Pattern matching: match expressions with guards and destructuring
 
 enum Color {

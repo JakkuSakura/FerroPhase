@@ -50,7 +50,6 @@ Workspace example:
 Then run:
 
 - `fp compile -b ebpf --exec input.fp`
-- `fp run --backend ebpf input.fp`
 
 ## Next steps
 

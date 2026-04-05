@@ -64,9 +64,9 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 RUN_OUTPUT="$WORK_DIR/run.out"
 EXEC_OUTPUT="$WORK_DIR/exec.out"
 
-echo "→ Running interpreter (fp run)"
-if ! fp run "$FP_FILE" >"$RUN_OUTPUT" 2>"$WORK_DIR/run.err"; then
-    echo "fp run failed; see $WORK_DIR/run.err" >&2
+echo "→ Running interpreter (fp interpret)"
+if ! fp interpret "$FP_FILE" >"$RUN_OUTPUT" 2>"$WORK_DIR/run.err"; then
+    echo "fp interpret failed; see $WORK_DIR/run.err" >&2
     exit 1
 fi
 
@@ -90,17 +90,17 @@ RUST_OUT="$WORK_DIR/$(basename "$FP_FILE" .fp).rs"
 CS_OUT="$WORK_DIR/$(basename "$FP_FILE" .fp).cs"
 TS_OUT="$WORK_DIR/$(basename "$FP_FILE" .fp).ts"
 
-if ! fp compile "$FP_FILE" --target rust --output "$RUST_OUT" >/"$WORK_DIR/rust.log" 2>&1; then
+if ! fp compile "$FP_FILE" --target rust --output "$RUST_OUT" >"$WORK_DIR/rust.log" 2>&1; then
     echo "fp compile --target rust failed; see $WORK_DIR/rust.log" >&2
     exit 1
 fi
 
-if ! fp compile "$FP_FILE" --target csharp --output "$CS_OUT" >/"$WORK_DIR/csharp.log" 2>&1; then
+if ! fp compile "$FP_FILE" --target csharp --output "$CS_OUT" >"$WORK_DIR/csharp.log" 2>&1; then
     echo "fp compile --target csharp failed; see $WORK_DIR/csharp.log" >&2
     exit 1
 fi
 
-if ! fp compile "$FP_FILE" --target typescript --output "$TS_OUT" >/"$WORK_DIR/ts.log" 2>&1; then
+if ! fp compile "$FP_FILE" --target typescript --output "$TS_OUT" >"$WORK_DIR/ts.log" 2>&1; then
     echo "fp compile --target typescript failed; see $WORK_DIR/ts.log" >&2
     exit 1
 fi
@@ -120,7 +120,7 @@ if command -v codex >/dev/null 2>&1; then
     CODex_OUTPUT="$WORK_DIR/codex.json"
 
     if [[ -z "$CUSTOM_PROMPT" ]]; then
-        CUSTOM_PROMPT="Assess whether the FerroPhase program and derived artifacts are semantically consistent.\nRespond strictly as JSON with the following schema:\n{\n  \"meaningConsistent\": boolean,\n  \"notes\": string,\n  \"issues\": [\n    {\"type\": \"error\" | \"warning\", \"message\": string, \"artifact\": \"source\" | \"output\" | \"rust\" | \"csharp\" | \"typescript\"}\n  ]\n}\nFor each problem, add an entry to issues and prefix every error message with [error]. If there are no issues, return an empty array. Do not include any non-JSON text.\n\nContext:\nSource (.fp):\n$SOURCE_SNIPPET\n\nfp run output:\n$RUN_SNIPPET\n\nGenerated Rust (.rs):\n$RUST_SNIPPET\n\nGenerated C# (.cs):\n$CS_SNIPPET\n\nGenerated TypeScript (.ts):\n$TS_SNIPPET"
+    CUSTOM_PROMPT="Assess whether the FerroPhase program and derived artifacts are semantically consistent.\nRespond strictly as JSON with the following schema:\n{\n  \"meaningConsistent\": boolean,\n  \"notes\": string,\n  \"issues\": [\n    {\"type\": \"error\" | \"warning\", \"message\": string, \"artifact\": \"source\" | \"output\" | \"rust\" | \"csharp\" | \"typescript\"}\n  ]\n}\nFor each problem, add an entry to issues and prefix every error message with [error]. If there are no issues, return an empty array. Do not include any non-JSON text.\n\nContext:\nSource (.fp):\n$SOURCE_SNIPPET\n\nfp interpret output:\n$RUN_SNIPPET\n\nGenerated Rust (.rs):\n$RUST_SNIPPET\n\nGenerated C# (.cs):\n$CS_SNIPPET\n\nGenerated TypeScript (.ts):\n$TS_SNIPPET"
     fi
 
     if ! codex exec "$CUSTOM_PROMPT" >"$CODex_OUTPUT" 2>"$WORK_DIR/codex.err"; then

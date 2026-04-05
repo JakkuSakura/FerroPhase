@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Struct generation with compile-time conditionals
 
 use std::meta::TypeBuilder;

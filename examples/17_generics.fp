@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Generics: type parameters and monomorphization
 
 struct Pair<T, U> {

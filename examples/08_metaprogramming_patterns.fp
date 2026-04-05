@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Metaprogramming: const metadata + quote/splice execution
 
 use std::meta::TypeBuilder;

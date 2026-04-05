@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Showcase runtime Vec/HashMap access without a runtime std.
 //! Demonstrates list indexing, map lookup, and len() in runtime code.
 

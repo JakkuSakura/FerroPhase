@@ -31,7 +31,7 @@ use fp_cli::{
     cli::CliConfig,
     commands::{
         self, check::CheckArgs, compile::CompileArgs, completions::CompletionsArgs, eval::EvalArgs,
-        inspect::InspectArgs, interpret::InterpretArgs, parse::ParseArgs, run::RunArgs,
+        inspect::InspectArgs, interpret::InterpretArgs, parse::ParseArgs,
     },
     diagnostics::setup_error_reporting,
 };
@@ -48,7 +48,7 @@ FerroPhase is a unified compilation infrastructure that extends Rust's capabilit
 while supporting multi-language interoperability and advanced compile-time computation.
 
 EXAMPLES:
-    fp run hello.fp                       # Run a FerroPhase file
+    fp interpret hello.fp                 # Interpret a FerroPhase file
     fp eval --expr "1 + 2 * 3"           # Evaluate expression
     fp compile hello.fp --emitter rust    # Compile to Rust
     magnet init my-project                # Create new project
@@ -109,9 +109,6 @@ enum Commands {
     /// Parse and display AST for FerroPhase code
     Parse(ParseArgs),
 
-    /// Run a FerroPhase file
-    Run(RunArgs),
-
     /// Interpret bytecode produced by `compile --emitter bytecode`
     Interpret(InterpretArgs),
 
@@ -148,7 +145,6 @@ async fn main() -> Result<()> {
         Commands::Compile(args) => commands::compile_command(args, &config).await,
         Commands::Eval(args) => commands::eval_command(args, &config).await,
         Commands::Parse(args) => commands::parse_command(args, &config).await,
-        Commands::Run(args) => commands::run_command(args, &config).await,
         Commands::Interpret(args) => commands::interpret_command(args, &config).await,
         Commands::Inspect(args) => commands::inspect_command(args, &config).await,
         Commands::Check(args) => commands::check_command(args, &config).await,

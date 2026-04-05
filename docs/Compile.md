@@ -142,19 +142,19 @@ $ fp compile src/main.fp --backend dotnet -o main.exe
 
 ## Running with .NET Backend
 
-The `run` command can also target the .NET backend directly:
+Use `fp compile` with `--backend dotnet --exec` to compile and run immediately:
 
 ```bash
-$ fp run src/main.fp --backend dotnet
-$ fp run src/main.fp --backend dotnet --output app.exe
-$ fp run src/main.fp --backend dotnet --output app.dll
-$ fp run src/main.fp --backend dotnet --release -O3
+$ fp compile src/main.fp --backend dotnet --exec
+$ fp compile src/main.fp --backend dotnet --exec --output app.exe
+$ fp compile src/main.fp --backend dotnet --exec --output app.dll
+$ fp compile src/main.fp --backend dotnet --exec --release -O3
 ```
 
-- `--backend dotnet` compiles to a .NET assembly and executes it immediately.
+- `--backend dotnet --exec` compiles to a .NET assembly and executes it immediately.
 - `--output app.exe` keeps the executable artifact on disk before running it.
 - `--output app.dll` keeps a library-style assembly on disk; on Unix-like systems FerroPhase runs it via `mono`.
-- `fp run` also accepts core compile-mode knobs such as `--emitter`, `--native-target`, `--debug`, `--release`, and `-O/--opt-level`.
+- `fp compile --exec` also accepts core compile-mode knobs such as `--emitter`, `--native-target`, `--debug`, `--release`, and `-O/--opt-level`.
 
 ## Troubleshooting
 

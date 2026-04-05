@@ -1,4 +1,4 @@
-#!/usr/bin/env fp run
+#!/usr/bin/env fp interpret
 //! Quote, splice, and emit: staged code generation with runtime output.
 
 fn apply_ops(const ops: [i32], mut x: i32, limit: i32) -> i32 {
