@@ -898,7 +898,11 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children); // `if`
         self.bump_trivia_into(&mut children);
-        let cond = self.parse_expr_before_block()?;
+        let cond = if self.peek_non_trivia_normalized() == Some("let") {
+            self.parse_let_expr()?
+        } else {
+            self.parse_expr_before_block()?
+        };
         children.push(SyntaxElement::Node(Box::new(cond)));
         self.bump_trivia_into(&mut children);
         let then_block = self.parse_block_expr()?;
