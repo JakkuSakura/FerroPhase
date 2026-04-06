@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = [pytest.mark.e2e, pytest.mark.risk_high]
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]

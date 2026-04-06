@@ -21,8 +21,12 @@ Applies to:
 
 1) Classify risk: `low | medium | high`
 2) Select gates based on impacted compiler stages.
-3) Run gates, collect evidence.
-4) Auto-decision: pass → accept; fail → fix and repeat.
+3) Run gates via the unified entrypoint: `scripts/qa_local.sh <risk>`
+4) Collect evidence under `qa/evidence/` and finalize the decision.
+
+Notes:
+- `scripts/qa_local.sh` is the primary local gate runner. It orchestrates stage-appropriate checks and is the default path for both CI and local verification.
+- Evidence is mandatory: if an applicable gate is missing or evidence is missing, the change is blocked.
 
 ## Risk Levels
 
@@ -32,7 +36,7 @@ Applies to:
 | Medium | Low + integration + stage-specific gates |
 | High | Medium + runtime fixtures + bootstrap + perf |
 
-If risk is unknown, treat as High.
+If risk is unknown, treat as High. Evidence must reflect the chosen risk level and its required gates.
 
 ## Stage-Specific Gates (Compiler)
 
@@ -50,7 +54,16 @@ Select only the gates that match the change:
 
 If a gate is applicable but missing, the agent must add tests or block.
 
-## Evidence Format (Machine‑Readable)
+## Evidence (Required)
+
+Each change produces a single evidence record. Use the template and generator:
+
+- Template: `qa/evidence/template.md`
+- Generator: `scripts/qa_evidence.sh`
+
+The evidence file must align with the selected risk level and the gates actually executed by `scripts/qa_local.sh`.
+
+### Evidence Format (Machine‑Readable)
 
 Each change produces a single file:
 

@@ -2,6 +2,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import pytest
+
+pytestmark = [pytest.mark.e2e, pytest.mark.risk_high]
+
 _BUILT = False
 
 
