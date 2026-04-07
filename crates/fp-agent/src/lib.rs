@@ -253,27 +253,23 @@ impl OpenRouterClient {
 #[async_trait]
 impl ModelClient for OpenRouterClient {
     async fn chat(&self, request: AgentRequest) -> Result<AgentResponse, AgentError> {
+        let response_format = if request.json_mode && request.tools.is_empty() {
+            Some(serde_json::json!({"type": "json_object"}))
+        } else {
+            None
+        };
         let response = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
             .bearer_auth(&self.api_key)
-            let response_format = if request.json_mode && request.tools.is_empty() {
-                Some(serde_json::json!({"type": "json_object"}))
-            } else {
-                None
-            };
-            let response = self
-                .client
-                .post(format!("{}/chat/completions", self.base_url))
-                .bearer_auth(&self.api_key)
-                .json(&OpenRouterPayload {
-                    model: request.model,
-                    messages: request.messages,
-                    tools: request.tools,
-                    tool_choice: request.tool_choice,
-                    max_tokens: request.max_tokens,
-                    response_format,
-                })
+            .json(&OpenRouterPayload {
+                model: request.model,
+                messages: request.messages,
+                tools: request.tools,
+                tool_choice: request.tool_choice,
+                max_tokens: request.max_tokens,
+                response_format,
+            })
             .send()
             .await
             .map_err(|err| AgentError::new(err.to_string()))?;
