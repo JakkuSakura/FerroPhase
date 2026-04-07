@@ -120,6 +120,8 @@ pub struct AgentRequest {
     pub tools: Vec<ToolDefinition>,
     #[serde(default)]
     pub tool_choice: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -170,6 +172,7 @@ where
                 messages: messages.clone(),
                 tools: request.tools.clone(),
                 tool_choice: request.tool_choice.clone(),
+                max_tokens: request.max_tokens,
             }).await?;
 
             let msg = response.message;
@@ -225,6 +228,7 @@ impl ModelClient for OpenRouterClient {
                 messages: request.messages,
                 tools: request.tools,
                 tool_choice: request.tool_choice,
+                max_tokens: request.max_tokens,
             })
             .send()
             .await
@@ -260,6 +264,8 @@ struct OpenRouterPayload {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<ToolDefinition>,
     tool_choice: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -298,6 +304,7 @@ pub async fn simple_chat(
         messages,
         tools: Vec::new(),
         tool_choice: "none".to_owned(),
+        max_tokens: None,
     }).await?;
 
     Ok(response.message.content.unwrap_or_default())
