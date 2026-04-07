@@ -17,6 +17,17 @@ work captured in `specs/003-compile/tasks.md` (T027).
   - Human-readable console output (`tracing_subscriber::fmt`)
   - Optional JSON output controlled by `FP_LOG_FORMAT=json` (planned)
 
+## Build Records (Release Evidence)
+
+Release builds must emit a build record that captures the same inputs required by
+`docs/ReleaseArtifacts.md`:
+
+- Toolchain version and backend selection.
+- Build options and feature flags.
+- Snapshot/hash references produced by semantic gates.
+
+These records can be stored alongside QA evidence for auditability.
+
 ### Key Instrumentation Points
 
 | Stage            | Location                                             | Notes                                     |

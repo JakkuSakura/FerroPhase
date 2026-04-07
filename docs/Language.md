@@ -13,6 +13,16 @@ FerroPhase must preserve identical observable semantics across all representatio
 (CST/LAST/AST/HIR/MIR/LIR) and across all execution modes (interpreter, bytecode
 VM, compiled backends). Any semantic divergence is a correctness bug.
 
+Observable semantics includes:
+- User-visible outputs and side effects.
+- Error/panic categories and propagation behavior.
+- Resource release ordering when it is defined by the language contract.
+- ABI/FFI-visible behavior that is part of the published contract.
+
+Undefined behavior is not an escape hatch. If a frontend cannot preserve a
+semantic point, it must declare a degradation rule and emit diagnostics that
+explain the substitution.
+
 `FERROPHASE_LOSSY` is explicitly outside this guarantee and must remain disabled
 for correctness validation.
 
@@ -38,6 +48,7 @@ Mode entry points:
 ## 4. Semantic Contract Levels
 
 The contract is organized by constraint strength rather than by domain.
+Each semantic point is assigned a level; frontends map that point explicitly.
 
 - L0 Critical Requirement: mandatory, no opt-out.
 - L1 Preferred Requirement: enabled by default, explicit opt-out required.
@@ -51,7 +62,10 @@ The contract is organized by constraint strength rather than by domain.
 - Observable behavior must be identical: outputs, error/panic categories, and any
   defined resource-release sequencing.
 - Allowed differences are restricted to performance, diagnostics detail, and
-  debug UX.
+  debug UX. Observable semantics must remain identical.
+- Ownership/borrowing/lifetime and zero-cost abstraction rules must remain
+  consistent across IRs/modes. If a frontend cannot fully preserve them, it must
+  declare explicit degradation rules and emit explanatory diagnostics.
 
 ## 6. Frontend Semantic Mapping Matrix
 
@@ -68,6 +82,16 @@ Minimum matrix fields:
 - DegradationRule (required when not fully preserved)
 - IRModeVariance (allowed or forbidden)
 - BaselineTestId
+- OwnershipBorrowingModel (full / conservative / degraded)
+- LifetimeRuleSource (inferred / explicit / degraded)
+
+If OwnershipBorrowingModel or LifetimeRuleSource is degraded, DegradationRule
+and diagnostics requirements are mandatory.
+
+Matrix location and update rules:
+- Canonical template: `docs/semantic/Matrix.md`
+- Frontend-specific matrices: `docs/semantic/matrix/<frontend>.md`
+- Any new frontend or semantic point must update the matrix in the same change.
 
 Example template:
 
@@ -90,6 +114,14 @@ Required coverage:
 - L1: coverage for frontends that opt in by default or do not opt out.
 - L2/L3: coverage only for explicit opt-in targets.
 
+Matrix-to-suite mapping is mandatory:
+- Each SemanticPointId must map to one or more BaselineTestId entries.
+- Baseline tests must reference the semantic point they validate.
+
+Baseline suite specification:
+- Definition: `docs/semantic/BaselineSuite.md`
+- Evidence and gate mapping: `docs/QualityAssurance.md`
+
 ## 8. Standard Library Layering
 
 - Stable: public APIs with compatibility guarantees.
@@ -103,6 +135,10 @@ Compatibility rules:
 - Experimental layer changes must be documented as breaking or unstable.
 - Internal layer changes are unconstrained but must not leak into public
   contracts.
+
+High-level stdlib abstractions must preserve zero-cost semantics where claimed.
+If a zero-cost claim cannot be honored, the library must document the cost and
+provide a diagnostic or alternative path.
 
 ## 9. Release Gates
 

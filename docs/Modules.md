@@ -192,6 +192,20 @@ crates/
   intrinsic helpers are normalized to canonical `std` symbols by the frontend
   and resolved through the shared registry.
 
+## Stdlib Layering and Deprecation
+
+The standard library is layered to keep semantics stable across frontends:
+
+- **core**: mandatory primitives and invariants required by the semantic
+  contract.
+- **extended**: portable helpers with stable semantics but optional inclusion.
+- **experimental**: feature-gated APIs that may change without long stability
+  windows.
+
+Deprecation windows and compatibility guarantees follow
+`docs/VersionGovernance.md`. Module owners must mark deprecations explicitly and
+provide migration guidance before removal.
+
 ## Best Practices
 
 - Keep module boundaries small and cohesive; they become re-exportable units for

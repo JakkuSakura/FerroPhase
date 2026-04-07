@@ -156,6 +156,17 @@ $ fp compile src/main.fp --backend dotnet --exec --release -O3
 - `--output app.dll` keeps a library-style assembly on disk; on Unix-like systems FerroPhase runs it via `mono`.
 - `fp compile --exec` also accepts core compile-mode knobs such as `--emitter`, `--native-target`, `--debug`, `--release`, and `-O/--opt-level`.
 
+## Release Artifacts
+
+Production builds must emit the release artifacts defined in
+`docs/ReleaseArtifacts.md`. When `--release` is enabled, record:
+
+- Toolchain and build options (see `docs/BuildOptions.md`).
+- Output paths (`target/` or `--output` overrides).
+- Backend-specific intermediates saved with `--save-intermediates`.
+
+The release record is required for reproducibility audits.
+
 ## Troubleshooting
 
 - **Missing LLVM tools**: `fp compile` reports if `llc`/`clang` are unavailable. Install via your package manager or set

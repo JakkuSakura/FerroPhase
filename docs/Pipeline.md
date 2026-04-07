@@ -57,6 +57,9 @@ lowerings consume the already-typed structures.
      type-aware HIR (`HIRᵗ`). Because the AST already carries principal types,
      this step focuses on structural desugaring and borrow checking hooks while
      preserving the attached type metadata.
+   - This is the primary mapping point for ownership/borrowing/lifetime rules.
+     Frontends that cannot fully preserve the model must apply explicit
+     degradation rules and emit explanatory diagnostics.
 
 6. **Backend Lowering**
    - `hir_to_mir` lowers typed HIR into MIR while surfacing diagnostics for
@@ -67,6 +70,12 @@ Each step updates the shared `DiagnosticManager`, returning either the produced
 artefact (or a placeholder when tolerance is enabled) or a stage failure. The
 pipeline maintains its cached serializer/language metadata in place, printing
 diagnostics after each stage while also retaining them for aggregate reporting.
+
+Semantic contract validation points:
+- The pipeline must be able to map stage outputs to baseline suite checks.
+- Any change that affects semantic points must update the semantic matrix and
+  baseline suite definitions (see `docs/semantic/Matrix.md` and
+  `docs/semantic/BaselineSuite.md`).
 
 7. **Binary Emission**
    - The LLVM bridge writes `*.ll` artefacts and invokes `clang` to link final
@@ -104,6 +113,11 @@ IR (when `ErrorToleranceOptions` allows). `emit_diagnostics` honours verbose
 flags for informational entries but always surfaces warnings and errors.
 
 ## Multi-Language Frontends
+
+Multi-frontend semantic mapping:
+- Each frontend must declare its semantic mapping and any degradation rules in
+  `docs/semantic/matrix/<frontend>.md`.
+- New frontends must update the matrix in the same change as the frontend code.
 
 - Frontends are wired through `crates/fp-cli/src/languages/frontend.rs` and simple
   file-extension detection (e.g. `detect_language_source_by_path`). The CLI re-exports

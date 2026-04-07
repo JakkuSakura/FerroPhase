@@ -267,6 +267,10 @@ commands.
 - Transpiled bindings inherit the same version as the FerroPhase package.
 - `Ferrophase.lock` pins exact versions; CI pipelines should check it in to
   guarantee reproducible builds.
+- Version governance, deprecation windows, and semantic freeze policies are
+  defined in `docs/VersionGovernance.md` and apply to every published package.
+- Release artifacts and attestations required for publishing are defined in
+  `docs/ReleaseArtifacts.md`.
 
 ## Developer Workflow
 

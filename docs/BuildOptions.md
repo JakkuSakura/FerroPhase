@@ -75,3 +75,14 @@ only; item fragments must be emitted at module scope.
 - `quote<expr>` is intended for expression splicing inside const blocks.
 - `splice` evaluates its token expression during const evaluation, so normal
   control flow (`if`/`else`, loops) is supported.
+
+## Reproducibility Signals
+
+Build options that affect code generation must be recorded in build metadata and
+release artifacts:
+
+- `opt_level` / `-O` changes.
+- Feature toggles (including `[features]` and `[build.options].features`).
+- Toolchain pinning and target backends.
+
+See `docs/ReleaseArtifacts.md` for the required build record fields.

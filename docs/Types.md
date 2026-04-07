@@ -86,6 +86,13 @@ SOURCE → LAST → AST → ASTᵗ → ASTᵗ′ → HIRᵗ → MIR → LIR → 
 - **Span fidelity**: Type annotations and diagnostics reuse original AST spans.
 - **Backend isolation**: Consumers never access raw type tokens; they receive
   shaped representations (`ConcreteType`, typed annotations) via stable APIs.
+- **Cross-IR consistency**: For semantic points defined in the Semantic
+  Contract (`docs/semantic/Matrix.md`), the typed AST → HIRᵗ → MIR → LIR flow
+  preserves observable type behavior unless the matrix declares an explicit
+  frontend/mode-specific deviation with evidence.
+- **Cross-mode consistency**: Interpret/bytecode/native backends must agree on
+  type observable behavior for covered semantic points. Deviations require a
+  declared matrix entry and a baseline test mapping (`docs/semantic/BaselineSuite.md`).
 
 ## Shared Solver
 

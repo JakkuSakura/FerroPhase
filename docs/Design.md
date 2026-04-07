@@ -31,6 +31,12 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
 | **Typed Projection** | Converts evaluated AST into `HIRᵗ`, handling desugaring, ownership bookkeeping, and preparing for optimisation passes. |
 | **Optimisation & Codegen** | Lowers `HIRᵗ` → `MIR` → `LIR` → target backends (`AsmIR`/native, LLVM, bytecode). |
 
+Ownership/borrowing/lifetime embedding point:
+- Ownership and borrowing rules are mapped during `ASTᵗ → HIRᵗ`. Lifecycle
+  constraints are attached to HIR reference and binding nodes. If a frontend
+  cannot preserve the full model, it must apply explicit degradation rules and
+  emit diagnostics that explain the substitution and impact.
+
 ## Bounded Contexts (at a glance)
 
 - **Frontend Context**: parsing + LAST + canonical AST + provenance.
@@ -73,6 +79,10 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
     typing.
   - **Type-eval bridge**: evaluates type-level expressions/functions that
     require execution, while keeping type inference as the authority.
+- **Zero-cost abstraction boundary**: inferred type information must enable
+  lowering and optimization to erase high-level abstractions without altering
+  observable semantics. Any frontend feature that cannot preserve this must
+  document the degradation and emit diagnostics.
 
 ## Multi-Mode Support
 
@@ -82,6 +92,11 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
 | **Run (Interpreter)** | AST → ASTᵗ → Interpreter (runtime) | Shares evaluator with const mode; no MIR generation. |
 | **Bytecode** | AST → ASTᵗ → ASTᵗ′ → HIRᵗ → MIR → LIR → VM bytecode | Bytecode generator reuses the same typed IR pipeline. |
 | **AST Target Emit** | AST → ASTᵗ → ASTᵗ′ → HIRᵗ → target AST | Typed metadata is preserved for optional annotation in the output language. |
+
+Cross-mode consistency:
+- Modes must preserve identical observable semantics; differences are limited to
+  performance and diagnostics detail. See `docs/Language.md` for the semantic
+  contract and baseline suite mapping.
 
 ## `AsmIR` Boundary
 
