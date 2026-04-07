@@ -195,15 +195,15 @@ where
         // If json_mode is requested and the answer is not valid JSON,
         // send a follow-up request with response_format to force JSON output.
         if request.json_mode {
-            if let Ok(_) = serde_json::from_str::<serde_json::Value>(&final_answer) {
-                // Already valid JSON
-            } else {
-                messages.push(AgentMessage::user(
+            let is_json = serde_json::from_str::<serde_json::Value>(&final_answer).is_ok();
+            if !is_json {
+                let mut followup_messages = messages;
+                followup_messages.push(AgentMessage::user(
                     "Convert your previous answer into a valid JSON object. Return ONLY the JSON, no explanation.".to_owned(),
                 ));
                 let response = self.client.chat(AgentRequest {
                     model: request.model.clone(),
-                    messages,
+                    messages: followup_messages,
                     tools: Vec::new(),
                     tool_choice: "none".to_owned(),
                     max_tokens: request.max_tokens,
