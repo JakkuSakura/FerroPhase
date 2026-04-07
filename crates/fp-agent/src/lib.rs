@@ -122,6 +122,8 @@ pub struct AgentRequest {
     pub tool_choice: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub json_mode: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -173,6 +175,7 @@ where
                 tools: request.tools.clone(),
                 tool_choice: request.tool_choice.clone(),
                 max_tokens: request.max_tokens,
+                json_mode: false,
             }).await?;
 
             let msg = response.message;
@@ -186,6 +189,37 @@ where
             for call in msg.tool_calls {
                 let result = self.tools.execute(call.clone()).await?;
                 messages.push(AgentMessage::tool(call.id, call.function.name, result));
+            }
+        }
+
+        // If json_mode is requested and the answer is not valid JSON,
+        // send a follow-up request with response_format to force JSON output.
+        if request.json_mode {
+            if let Ok(_) = serde_json::from_str::<serde_json::Value>(&final_answer) {
+                // Already valid JSON
+            } else {
+                messages.push(AgentMessage::user(
+                    "Convert your previous answer into a valid JSON object. Return ONLY the JSON, no explanation.".to_owned(),
+                ));
+                let response = self.client.chat(AgentRequest {
+                    model: request.model.clone(),
+                    messages,
+                    tools: Vec::new(),
+                    tool_choice: "none".to_owned(),
+                    max_tokens: request.max_tokens,
+                    json_mode: true,
+                }).await?;
+                if let Some(content) = response.message.content {
+                    if serde_json::from_str::<serde_json::Value>(&content).is_ok() {
+                        final_answer = content;
+                    } else if let Some(start) = content.find('{') {
+                        if let Some(end) = content.rfind('}') {
+                            if start < end {
+                                final_answer = content[start..=end].to_owned();
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -229,6 +263,11 @@ impl ModelClient for OpenRouterClient {
                 tools: request.tools,
                 tool_choice: request.tool_choice,
                 max_tokens: request.max_tokens,
+                response_format: if request.json_mode && request.tools.is_empty() {
+                    Some(serde_json::json!({"type": "json_object"}))
+                } else {
+                    None
+                },
             })
             .send()
             .await
@@ -266,6 +305,8 @@ struct OpenRouterPayload {
     tool_choice: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -305,6 +346,7 @@ pub async fn simple_chat(
         tools: Vec::new(),
         tool_choice: "none".to_owned(),
         max_tokens: None,
+        json_mode: false,
     }).await?;
 
     Ok(response.message.content.unwrap_or_default())
