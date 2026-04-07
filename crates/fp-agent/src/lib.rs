@@ -197,7 +197,7 @@ where
         if request.json_mode {
             let is_json = serde_json::from_str::<serde_json::Value>(&final_answer).is_ok();
             if !is_json {
-                let mut followup_messages = messages;
+                let mut followup_messages = messages.clone();
                 followup_messages.push(AgentMessage::user(
                     "Convert your previous answer into a valid JSON object. Return ONLY the JSON, no explanation.".to_owned(),
                 ));
@@ -257,18 +257,23 @@ impl ModelClient for OpenRouterClient {
             .client
             .post(format!("{}/chat/completions", self.base_url))
             .bearer_auth(&self.api_key)
-            .json(&OpenRouterPayload {
-                model: request.model,
-                messages: request.messages,
-                tools: request.tools,
-                tool_choice: request.tool_choice,
-                max_tokens: request.max_tokens,
-                response_format: if request.json_mode && request.tools.is_empty() {
-                    Some(serde_json::json!({"type": "json_object"}))
-                } else {
-                    None
-                },
-            })
+            let response_format = if request.json_mode && request.tools.is_empty() {
+                Some(serde_json::json!({"type": "json_object"}))
+            } else {
+                None
+            };
+            let response = self
+                .client
+                .post(format!("{}/chat/completions", self.base_url))
+                .bearer_auth(&self.api_key)
+                .json(&OpenRouterPayload {
+                    model: request.model,
+                    messages: request.messages,
+                    tools: request.tools,
+                    tool_choice: request.tool_choice,
+                    max_tokens: request.max_tokens,
+                    response_format,
+                })
             .send()
             .await
             .map_err(|err| AgentError::new(err.to_string()))?;
