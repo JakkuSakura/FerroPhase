@@ -1,4 +1,4 @@
-use std::path::Path;
+use super::path::Path;
 
 pub enum ErrorKind {
     NotFound,
@@ -209,7 +209,7 @@ impl File {
     }
 
     pub fn flush(&mut self) -> std::result::Result<(), IoError> {
-        Result::Ok(())
+        std::result::Result::Ok(())
     }
 
     pub fn sync_all(&mut self) -> std::result::Result<(), IoError> {

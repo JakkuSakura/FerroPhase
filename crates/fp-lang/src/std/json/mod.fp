@@ -176,10 +176,10 @@ impl Value {
                 if index < 0 {
                     return Option::None;
                 }
-                let idx = index as usize;
-                if idx >= values.len() {
+                if index >= values.len() {
                     return Option::None;
                 }
+                let idx = index as usize;
                 Option::Some(values[idx])
             }
             _ => Option::None,
@@ -244,13 +244,13 @@ fn print_value(value: &Value) {
         }
         Value::Array(items) => {
             print("[");
-            let mut idx = 0usize;
-            let items_len = items.len();
+            let mut idx: i64 = 0;
+            let items_len: i64 = items.len();
             while idx < items_len {
                 if idx > 0 {
                     print(",");
                 }
-                let item = items[idx];
+                let item = items[idx as usize];
                 print_value(&item);
                 idx = idx + 1;
             }
@@ -259,13 +259,13 @@ fn print_value(value: &Value) {
         }
         Value::Object(fields) => {
             print("{");
-            let mut idx = 0usize;
-            let fields_len = fields.len();
+            let mut idx: i64 = 0;
+            let fields_len: i64 = fields.len();
             while idx < fields_len {
                 if idx > 0 {
                     print(",");
                 }
-                let field = fields[idx];
+                let field = fields[idx as usize];
                 print("\"");
                 print(field.key);
                 print("\":");

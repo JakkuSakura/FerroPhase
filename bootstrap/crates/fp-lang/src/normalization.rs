@@ -40,55 +40,71 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             }
             if macro_name == "assert" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
-                if args.len() != 1 {
+                if args.is_empty() {
                     return Err(fp_core::error::Error::from(
-                        "assert! requires exactly one argument",
+                        "assert! requires at least one argument",
                     ));
                 }
-                let replacement =
-                    assert_macro(args.into_iter().next().unwrap(), "assertion failed")
-                        .with_ty_slot(ty_slot);
+                let mut iter = args.into_iter();
+                let cond = iter.next().unwrap();
+                let panic_expr = if iter.len() == 0 {
+                    panic_call_with_message("assertion failed")
+                } else {
+                    panic_call_from_args(iter.collect())
+                };
+                let replacement = assert_macro_with_panic(cond, panic_expr).with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "assert_eq" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
-                if args.len() != 2 {
+                if args.len() < 2 {
                     return Err(fp_core::error::Error::from(
-                        "assert_eq! requires exactly two arguments",
+                        "assert_eq! requires at least two arguments",
                     ));
                 }
-                let replacement = assert_compare_macro(
-                    args[0].clone(),
-                    args[1].clone(),
-                    BinOpKind::Eq,
-                    "assertion failed: left != right",
-                )
+                let mut iter = args.into_iter();
+                let left = iter.next().unwrap();
+                let right = iter.next().unwrap();
+                let replacement = if iter.len() == 0 {
+                    assert_compare_macro(
+                        left,
+                        right,
+                        BinOpKind::Eq,
+                        "assertion failed: left != right",
+                    )
+                } else {
+                    let panic_expr = panic_call_from_args(iter.collect());
+                    assert_compare_macro_with_panic(left, right, BinOpKind::Eq, panic_expr)
+                }
                 .with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "assert_ne" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
-                if args.len() != 2 {
+                if args.len() < 2 {
                     return Err(fp_core::error::Error::from(
-                        "assert_ne! requires exactly two arguments",
+                        "assert_ne! requires at least two arguments",
                     ));
                 }
-                let replacement = assert_compare_macro(
-                    args[0].clone(),
-                    args[1].clone(),
-                    BinOpKind::Ne,
-                    "assertion failed: left == right",
-                )
+                let mut iter = args.into_iter();
+                let left = iter.next().unwrap();
+                let right = iter.next().unwrap();
+                let replacement = if iter.len() == 0 {
+                    assert_compare_macro(
+                        left,
+                        right,
+                        BinOpKind::Ne,
+                        "assertion failed: left == right",
+                    )
+                } else {
+                    let panic_expr = panic_call_from_args(iter.collect());
+                    assert_compare_macro_with_panic(left, right, BinOpKind::Ne, panic_expr)
+                }
                 .with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "panic" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
-                if args.len() > 1 {
-                    return Err(fp_core::error::Error::from(
-                        "panic! accepts at most one argument",
-                    ));
-                }
                 let replacement = panic_macro(args).with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
@@ -661,6 +677,48 @@ fn assert_compare_macro(left: Expr, right: Expr, op: BinOpKind, message: &str) -
         val: comparison.into(),
     }));
     let panic_expr = panic_call_with_message(message);
+    let if_expr = Expr::new(ExprKind::If(ExprIf {
+        span: fp_core::span::Span::null(),
+        cond: negated.into(),
+        then: Expr::block(ExprBlock::new_stmts(vec![BlockStmt::Expr(
+            BlockStmtExpr::new(panic_expr).with_semicolon(true),
+        )]))
+        .into(),
+        elze: None,
+    }));
+
+    Expr::block(ExprBlock::new_stmts_expr(
+        vec![
+            left_binding,
+            right_binding,
+            BlockStmt::Expr(BlockStmtExpr::new(if_expr).with_semicolon(true)),
+        ],
+        Expr::unit(),
+    ))
+}
+
+fn assert_compare_macro_with_panic(
+    left: Expr,
+    right: Expr,
+    op: BinOpKind,
+    panic_expr: Expr,
+) -> Expr {
+    let left_ident = Ident::new("__fp_assert_left");
+    let right_ident = Ident::new("__fp_assert_right");
+    let left_binding = BlockStmt::Let(StmtLet::new_simple(left_ident.clone(), left));
+    let right_binding = BlockStmt::Let(StmtLet::new_simple(right_ident.clone(), right));
+
+    let comparison = Expr::new(ExprKind::BinOp(ExprBinOp {
+        span: fp_core::span::Span::null(),
+        kind: op,
+        lhs: Expr::ident(left_ident).into(),
+        rhs: Expr::ident(right_ident).into(),
+    }));
+    let negated = Expr::new(ExprKind::UnOp(ExprUnOp {
+        span: fp_core::span::Span::null(),
+        op: UnOpKind::Not,
+        val: comparison.into(),
+    }));
     let if_expr = Expr::new(ExprKind::If(ExprIf {
         span: fp_core::span::Span::null(),
         cond: negated.into(),

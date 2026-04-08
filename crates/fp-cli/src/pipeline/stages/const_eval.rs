@@ -1,9 +1,10 @@
 use super::super::*;
-use fp_core::ast::{ItemKind, Node, NodeKind};
+use fp_core::ast::{File, ItemKind, Node, NodeKind};
 use fp_interpret::const_eval::{
     ConstEvalContext, ConstEvalOptions, ConstEvalOutcome, ConstEvalResult, ConstEvalStage,
 };
 use fp_lang::embedded_std;
+use std::path::Path;
 
 impl Pipeline {
     pub(crate) fn stage_const_eval(
@@ -29,16 +30,55 @@ impl Pipeline {
                         ));
                     }
                 };
-                let std_node = match self.parse_input_source(options, &source, Some(&std_path)) {
-                    Ok(node) => node,
-                    Err(err) => {
+                let language = self.resolve_language(options, Some(&std_path));
+                let frontend = match self.frontends.get(&language).cloned() {
+                    Some(frontend) => frontend,
+                    None => {
                         return Err(Pipeline::emit_stage_error(
                             STAGE_CONST_EVAL,
                             options,
-                            format!("failed to parse std module {}: {}", std_path.display(), err),
+                            format!("unsupported source language: {}", language),
                         ));
                     }
                 };
+                let mut std_node =
+                    match self.parse_with_frontend(&frontend, &source, Some(&std_path), options) {
+                        Ok(node) => node,
+                        Err(err) => {
+                            return Err(Pipeline::emit_stage_error(
+                                STAGE_CONST_EVAL,
+                                options,
+                                format!(
+                                    "failed to parse std module {}: {}",
+                                    std_path.display(),
+                                    err
+                                ),
+                            ));
+                        }
+                    };
+                if let NodeKind::File(file) = std_node.kind().clone() {
+                    let base_dir = std_path.parent().unwrap_or_else(|| Path::new("."));
+                    let mut loader = FileModuleLoader::new(self, options, &frontend);
+                    let items = match loader.resolve_items(&file.items, base_dir) {
+                        Ok(items) => items,
+                        Err(err) => {
+                            return Err(Pipeline::emit_stage_error(
+                                STAGE_CONST_EVAL,
+                                options,
+                                format!(
+                                    "failed to resolve std module {}: {}",
+                                    std_path.display(),
+                                    err
+                                ),
+                            ));
+                        }
+                    };
+                    std_node = Node::file(File {
+                        path: file.path,
+                        attrs: file.attrs,
+                        items,
+                    });
+                }
                 std_modules.push(std_node);
             }
         }

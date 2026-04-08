@@ -89,6 +89,11 @@ impl HirGenerator {
                 let inner = self.transform_pattern(box_pat.pattern.as_ref())?;
                 Ok((inner, None, false))
             }
+            PatternKind::Ref(reference) => {
+                let (inner, ty, mutable) =
+                    self.transform_pattern_with_metadata(reference.pattern.as_ref())?;
+                Ok((inner, ty, mutable))
+            }
             PatternKind::Struct(struct_pat) => {
                 let path = self.locator_to_hir_path_with_scope(
                     &Name::Ident(struct_pat.name.clone()),

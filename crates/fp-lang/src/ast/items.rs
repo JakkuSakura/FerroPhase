@@ -8,9 +8,9 @@ use fp_core::ast::{
     ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath,
     ItemImportRename,
     ItemImportStyle, ItemImportTree, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter,
-    MacroInvocation, Module, Name, Path, QuoteFragmentKind, ReprOptions, StructuralField, Ty,
-    TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value, ValueNone,
-    Visibility,
+    MacroInvocation, Module, Name, Path, QuoteFragmentKind, ReprFlags, ReprOptions,
+    StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeQuote,
+    TypeStruct, Value, ValueNone, Visibility,
 };
 use fp_core::cst::CstCategory;
 use fp_core::module::path::PathPrefix;
@@ -25,6 +25,13 @@ pub enum LowerItemsError {
 }
 
 pub fn lower_items_from_cst(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
+    if node.kind == SyntaxKind::Root {
+        if let Some(list) = first_child_by_kind(node, SyntaxKind::ItemList) {
+            return lower_items_from_cst(list);
+        }
+        return lower_items_from_cst_children(node);
+    }
+
     if node.kind != SyntaxKind::ItemList {
         // Be forgiving: some callers may pass a single item node directly.
         if node.kind.category() == CstCategory::Item {
@@ -36,26 +43,28 @@ pub fn lower_items_from_cst(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsEr
         return Err(LowerItemsError::UnexpectedNode(node.kind));
     }
 
-    let mut out = Vec::new();
-    for child in &node.children {
-        let SyntaxElement::Node(n) = child else {
-            continue;
-        };
-        if n.kind.category() != CstCategory::Item {
-            continue;
-        }
-        if n.kind == SyntaxKind::ItemExternBlock {
-            out.extend(lower_extern_block(n.as_ref())?);
-            continue;
-        }
-        out.push(lower_item_from_cst(n.as_ref())?);
-    }
-    Ok(out)
+    lower_items_from_cst_children(node)
 }
 
 pub fn lower_file_from_cst(node: &SyntaxNode) -> Result<(Vec<Attribute>, Vec<Item>), LowerItemsError> {
+    if node.kind == SyntaxKind::Root {
+        if let Some(list) = first_child_by_kind(node, SyntaxKind::ItemList) {
+            let mut attrs = lower_inner_attrs(node);
+            attrs.extend(lower_inner_attrs(list));
+            let items = lower_items_from_cst(list)?;
+            return Ok((attrs, items));
+        }
+        let attrs = lower_inner_attrs(node);
+        let items = lower_items_from_cst(node)?;
+        return Ok((attrs, items));
+    }
+
     if node.kind != SyntaxKind::ItemList {
         if node.kind.category() == CstCategory::Item {
+            if node.kind == SyntaxKind::ItemExternBlock {
+                let items = lower_extern_block(node)?;
+                return Ok((Vec::new(), items));
+            }
             let item = lower_item_from_cst(node)?;
             return Ok((Vec::new(), vec![item]));
         }
@@ -73,6 +82,7 @@ pub(crate) fn lower_item_from_cst(node: &SyntaxNode) -> Result<Item, LowerItemsE
         SyntaxKind::ItemExternCrate => Ok(Item::from(ItemKind::Import(lower_extern_crate(node)?))),
         SyntaxKind::ItemMod => Ok(Item::from(ItemKind::Module(lower_mod(node)?))),
         SyntaxKind::ItemStruct => Ok(Item::from(ItemKind::DefStruct(lower_struct(node)?))),
+        SyntaxKind::ItemUnion => Ok(Item::from(ItemKind::DefStruct(lower_union(node)?))),
         SyntaxKind::ItemEnum => Ok(Item::from(ItemKind::DefEnum(lower_enum(node)?))),
         SyntaxKind::ItemTrait => Ok(Item::from(ItemKind::DefTrait(lower_trait(node)?))),
         SyntaxKind::ItemImpl => Ok(Item::from(ItemKind::Impl(lower_impl(node)?))),
@@ -86,6 +96,9 @@ pub(crate) fn lower_item_from_cst(node: &SyntaxNode) -> Result<Item, LowerItemsE
         SyntaxKind::ItemExternFnDecl => Ok(Item::from(ItemKind::DeclFunction(
             lower_extern_fn_decl(node, None)?,
         ))),
+        SyntaxKind::ItemExternStaticDecl => {
+            Ok(Item::from(ItemKind::DeclStatic(lower_extern_static_decl(node)?)))
+        }
         SyntaxKind::ItemMacro => Ok(Item::from(ItemKind::Macro(lower_item_macro(node)?))),
         SyntaxKind::ItemExpr => {
             let expr_node = first_child_by_category(node, CstCategory::Expr)
@@ -101,7 +114,7 @@ pub(crate) fn lower_item_from_cst(node: &SyntaxNode) -> Result<Item, LowerItemsE
     Ok(item)
 }
 
-fn lower_extern_block(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
+pub(crate) fn lower_extern_block(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
     let abi = lower_extern_abi(node)?;
     let mut items = Vec::new();
     for child in &node.children {
@@ -373,6 +386,82 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
             name,
             generics_params: generics,
             repr: ReprOptions::default(),
+            fields,
+        },
+    })
+}
+
+fn lower_union(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
+    let attrs = lower_outer_attrs(node);
+    let visibility = lower_visibility(first_visibility(node)?)?;
+    let name = Ident::new(
+        first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("union name"))?,
+    );
+
+    let generics = node
+        .children
+        .iter()
+        .find_map(|c| match c {
+            SyntaxElement::Node(n) if n.kind == SyntaxKind::GenericParams => Some(n.as_ref()),
+            _ => None,
+        })
+        .map(lower_generic_params)
+        .transpose()?
+        .unwrap_or_default();
+
+    let mut fields = Vec::new();
+    let mut tuple_index = 0usize;
+    for child in &node.children {
+        let SyntaxElement::Node(field) = child else {
+            continue;
+        };
+        if field.kind != SyntaxKind::StructFieldDecl {
+            continue;
+        }
+        let fname = if let Some(name) = first_ident_token_text(field) {
+            Ident::new(name)
+        } else if let Some(name) = first_token_text(field)
+            .filter(|text| text.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        {
+            Ident::new(name)
+        } else {
+            let name = tuple_index.to_string();
+            tuple_index += 1;
+            Ident::new(name)
+        };
+        let ty_node = first_child_by_category(field, CstCategory::Type)
+            .ok_or(LowerItemsError::MissingToken("field type"))?;
+        let mut fty = lower_type_from_cst(ty_node)
+            .map_err(|_| LowerItemsError::UnexpectedNode(field.kind))?;
+        let is_optional = field.children.iter().any(|c| {
+            matches!(
+                c,
+                SyntaxElement::Token(t) if !t.is_trivia() && t.text == "?"
+            )
+        });
+        if is_optional {
+            fty = Ty::TypeBinaryOp(
+                TypeBinaryOp {
+                    kind: TypeBinaryOpKind::Union,
+                    lhs: Box::new(fty),
+                    rhs: Box::new(Ty::value(Value::None(ValueNone))),
+                }
+                .into(),
+            );
+        }
+        fields.push(StructuralField::new(fname, fty));
+    }
+
+    let mut repr = ReprOptions::default();
+    repr.flags.insert(ReprFlags::IS_C);
+    Ok(ItemDefStruct {
+        attrs,
+        visibility,
+        name: name.clone(),
+        value: TypeStruct {
+            name,
+            generics_params: generics,
+            repr,
             fields,
         },
     })
@@ -922,6 +1011,11 @@ fn parse_include_str_macro_expr(tokens: &[&str]) -> Option<BExpr> {
 }
 
 fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {
+    fn is_type_bound_node(node: &SyntaxNode) -> bool {
+        node.kind.category() == CstCategory::Type
+            && node.kind != SyntaxKind::GenericParam
+            && node.kind != SyntaxKind::GenericParams
+    }
     let attrs = lower_outer_attrs(node);
     let visibility = lower_visibility(first_visibility(node)?)?;
     let name = Ident::new(
@@ -931,12 +1025,15 @@ fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {
         .children
         .iter()
         .filter_map(|c| match c {
-            SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => Some(n.as_ref()),
+            SyntaxElement::Node(n) if is_type_bound_node(n.as_ref()) => Some(n.as_ref()),
             _ => None,
         })
         .map(lower_bound_expr_from_cst)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
+        .map_err(|err| match err {
+            LowerItemsError::UnexpectedNode(kind) => LowerItemsError::UnexpectedNode(kind),
+            _ => LowerItemsError::UnexpectedNode(node.kind),
+        })?;
     let bounds = TypeBounds { bounds };
 
     let mut items = Vec::new();
@@ -982,8 +1079,12 @@ fn lower_trait_member(node: &SyntaxNode) -> Result<Item, LowerItemsError> {
             .ok_or(LowerItemsError::MissingToken("fn name"))?;
 
         if let Some(body_node) = first_child_by_category(node, CstCategory::Expr) {
-            let body = lower_expr_from_cst(body_node)
-                .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
+            let body = lower_expr_from_cst(body_node).map_err(|err| match err {
+                crate::ast::expr::LowerError::UnexpectedNode(kind) => {
+                    LowerItemsError::UnexpectedNode(kind)
+                }
+                _ => LowerItemsError::UnexpectedNode(node.kind),
+            })?;
             let is_async = node.children.iter().any(|c| {
                 matches!(
                     c,
@@ -1045,6 +1146,11 @@ fn lower_trait_member(node: &SyntaxNode) -> Result<Item, LowerItemsError> {
 }
 
 fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
+    fn is_impl_type_node(node: &SyntaxNode) -> bool {
+        node.kind.category() == CstCategory::Type
+            && node.kind != SyntaxKind::GenericParam
+            && node.kind != SyntaxKind::GenericParams
+    }
     let attrs = lower_outer_attrs(node);
     let generics = node
         .children
@@ -1061,7 +1167,7 @@ fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
         .children
         .iter()
         .filter_map(|c| match c {
-            SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => Some(n.as_ref()),
+            SyntaxElement::Node(n) if is_impl_type_node(n.as_ref()) => Some(n.as_ref()),
             _ => None,
         })
         .collect();
@@ -1080,8 +1186,10 @@ fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
         return Err(LowerItemsError::MissingToken("impl type"));
     }
 
-    let mut is_negative = false;
-    let unwrap_not = |node: &SyntaxNode| -> Result<&SyntaxNode, LowerItemsError> {
+    fn unwrap_not<'a>(
+        node: &'a SyntaxNode,
+        is_negative: &mut bool,
+    ) -> Result<&'a SyntaxNode, LowerItemsError> {
         if node.kind != SyntaxKind::TyNot {
             return Ok(node);
         }
@@ -1095,22 +1203,24 @@ fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
                 _ => None,
             })
             .ok_or(LowerItemsError::UnexpectedNode(node.kind))?;
-        is_negative = true;
+        *is_negative = true;
         Ok(inner)
-    };
+    }
+
+    let mut is_negative = false;
 
     let (trait_ty, self_ty_node) = if type_nodes.len() >= 2 {
-        let trait_node = unwrap_not(type_nodes[0])?;
-        let trait_path =
-            path_from_ty_node(trait_node).ok_or(LowerItemsError::MissingToken("trait path"))?;
-        (Some(Name::path(trait_path)), type_nodes[1])
+        let trait_node = unwrap_not(type_nodes[0], &mut is_negative)?;
+        let trait_name =
+            name_from_ty_node(trait_node).ok_or(LowerItemsError::MissingToken("trait path"))?;
+        (Some(trait_name), type_nodes[1])
     } else {
-        let self_ty_node = unwrap_not(type_nodes[0])?;
+        let self_ty_node = unwrap_not(type_nodes[0], &mut is_negative)?;
         (None, self_ty_node)
     };
 
-    let self_ty = if let Some(path) = path_from_ty_node(self_ty_node) {
-        Expr::path(path)
+    let self_ty = if let Some(name) = name_from_ty_node(self_ty_node) {
+        Expr::name(name)
     } else {
         let ty = lower_type_from_cst(self_ty_node)
             .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
@@ -1236,8 +1346,13 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
                 {
                     continue;
                 }
-                let pname_text = pname_text.ok_or(LowerItemsError::MissingToken("param"))?;
-                let pname = Ident::new(pname_text);
+                let pname = if let Some(pname_text) = pname_text {
+                    Ident::new(pname_text)
+                } else if first_child_by_category(n, CstCategory::Type).is_some() {
+                    Ident::new("_".to_string())
+                } else {
+                    return Err(LowerItemsError::MissingToken("param"));
+                };
                 let ty_node = first_child_by_category(n, CstCategory::Type)
                     .ok_or(LowerItemsError::MissingToken("param type"))?;
                 let ty = lower_type_from_cst(ty_node)
@@ -1308,6 +1423,11 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
 }
 
 fn lower_generic_params(node: &SyntaxNode) -> Result<Vec<GenericParam>, LowerItemsError> {
+    fn is_bound_node(node: &SyntaxNode) -> bool {
+        node.kind.category() == CstCategory::Type
+            && node.kind != SyntaxKind::GenericParam
+            && node.kind != SyntaxKind::GenericParams
+    }
     let mut out = Vec::new();
     for child in &node.children {
         let SyntaxElement::Node(n) = child else {
@@ -1322,9 +1442,7 @@ fn lower_generic_params(node: &SyntaxNode) -> Result<Vec<GenericParam>, LowerIte
             .children
             .iter()
             .filter_map(|c| match c {
-                SyntaxElement::Node(t) if t.kind.category() == CstCategory::Type => {
-                    Some(t.as_ref())
-                }
+                SyntaxElement::Node(t) if is_bound_node(t.as_ref()) => Some(t.as_ref()),
                 _ => None,
             })
             .map(lower_bound_expr_from_cst)
@@ -1350,8 +1468,12 @@ fn lower_bound_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerItemsError>
                 _ => None,
             })
             .ok_or(LowerItemsError::UnexpectedNode(node.kind))?;
-        let ty =
-            lower_type_from_cst(inner).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
+        let ty = lower_type_from_cst(inner).map_err(|err| match err {
+            crate::ast::expr::LowerError::UnexpectedNode(kind) => {
+                LowerItemsError::UnexpectedNode(kind)
+            }
+            _ => LowerItemsError::UnexpectedNode(node.kind),
+        })?;
         let inner_expr = Expr::value(Value::Type(ty));
         let expr = ExprKind::UnOp(ExprUnOp {
             span: fp_core::span::Span::null(),
@@ -1363,7 +1485,12 @@ fn lower_bound_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerItemsError>
 
     lower_type_from_cst(node)
         .map(|ty| Expr::value(Value::Type(ty)))
-        .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))
+        .map_err(|err| match err {
+            crate::ast::expr::LowerError::UnexpectedNode(kind) => {
+                LowerItemsError::UnexpectedNode(kind)
+            }
+            _ => LowerItemsError::UnexpectedNode(node.kind),
+        })
 }
 
 fn lower_use_tree(node: &SyntaxNode) -> Result<ItemImportTree, LowerItemsError> {
@@ -1429,56 +1556,14 @@ fn lower_use_path_as_import_path(node: &SyntaxNode) -> Result<ItemImportPath, Lo
     Ok(path)
 }
 
-fn path_from_ty_node(node: &SyntaxNode) -> Option<Path> {
-    if node.kind != SyntaxKind::TyPath {
-        return None;
-    }
-    let mut segments = Vec::new();
-    let mut saw_generic_start = false;
-    let mut saw_root = false;
-    let mut saw_first_token = false;
-    for child in &node.children {
-        let SyntaxElement::Token(t) = child else {
-            continue;
-        };
-        if t.is_trivia() {
-            continue;
-        }
-        if !saw_first_token && t.text == "::" {
-            saw_root = true;
-            saw_first_token = true;
-            continue;
-        }
-        match t.text.as_str() {
-            "::" => {}
-            "<" => {
-                saw_generic_start = true;
-                break;
-            }
-            ">" | "," | "=" => {}
-            _ => {
-                if t.text
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-                {
-                    segments.push(Ident::new(t.text.clone()));
-                }
-            }
-        }
-        saw_first_token = true;
-    }
-    if saw_generic_start {
-        return None;
-    }
-    if segments.is_empty() {
-        None
-    } else {
-        let (prefix, segments) = split_path_prefix(segments, saw_root);
-        if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
-            return None;
-        }
-        Some(Path::new(prefix, segments))
+fn name_from_ty_node(node: &SyntaxNode) -> Option<Name> {
+    let ty = lower_type_from_cst(node).ok()?;
+    match ty {
+        Ty::Expr(expr) => match expr.kind() {
+            ExprKind::Name(name) => Some(name.clone()),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -1505,6 +1590,31 @@ fn first_child_by_category<'a>(node: &'a SyntaxNode, cat: CstCategory) -> Option
         SyntaxElement::Node(n) if n.kind.category() == cat => Some(n.as_ref()),
         _ => None,
     })
+}
+
+fn first_child_by_kind<'a>(node: &'a SyntaxNode, kind: SyntaxKind) -> Option<&'a SyntaxNode> {
+    node.children.iter().find_map(|c| match c {
+        SyntaxElement::Node(n) if n.kind == kind => Some(n.as_ref()),
+        _ => None,
+    })
+}
+
+fn lower_items_from_cst_children(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
+    let mut out = Vec::new();
+    for child in &node.children {
+        let SyntaxElement::Node(n) = child else {
+            continue;
+        };
+        if n.kind.category() != CstCategory::Item {
+            continue;
+        }
+        if n.kind == SyntaxKind::ItemExternBlock {
+            out.extend(lower_extern_block(n.as_ref())?);
+            continue;
+        }
+        out.push(lower_item_from_cst(n.as_ref())?);
+    }
+    Ok(out)
 }
 
 fn first_ident_token_text(node: &SyntaxNode) -> Option<String> {

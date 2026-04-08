@@ -229,6 +229,71 @@ fn expr_contains_return(expr: &Expr) -> bool {
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
+    fn normalize_signature_module_path(&self, module: QualifiedPath) -> QualifiedPath {
+        if module.is_empty() {
+            return module;
+        }
+        if self.module_defs.contains(&module) {
+            return module;
+        }
+        let has_root = module
+            .head()
+            .map(|head| self.root_modules.contains(head))
+            .unwrap_or(false);
+        if has_root {
+            return module;
+        }
+        for root in &self.root_modules {
+            let mut segments = Vec::with_capacity(module.segments.len() + 1);
+            segments.push(root.to_string());
+            segments.extend(module.segments.iter().cloned());
+            let candidate = QualifiedPath::new(segments);
+            if self.module_defs.contains(&candidate) {
+                return candidate;
+            }
+        }
+        module
+    }
+
+    fn signature_module_path(
+        &self,
+        locator: &Name,
+        sig_path: &QualifiedPath,
+    ) -> QualifiedPath {
+        let sig_module = sig_path
+            .parent_n(1)
+            .unwrap_or_else(|| QualifiedPath::new(Vec::new()));
+        let sig_module = self.normalize_signature_module_path(sig_module);
+        let locator_module = self
+            .resolve_locator_key(locator)
+            .or_else(|| self.fallback_locator_key(locator))
+            .and_then(|path| path.parent_n(1))
+            .map(|path| self.normalize_signature_module_path(path));
+
+        let Some(locator_module) = locator_module else {
+            return sig_module;
+        };
+
+        if sig_module.is_empty() {
+            return locator_module;
+        }
+
+        let sig_head = sig_path
+            .head()
+            .map(|head| self.root_modules.contains(head))
+            .unwrap_or(false);
+        let locator_head = locator_module
+            .head()
+            .map(|head| self.root_modules.contains(head))
+            .unwrap_or(false);
+
+        if !sig_head && locator_head {
+            return locator_module;
+        }
+
+        sig_module
+    }
+
     pub(crate) fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypeVarId> {
         let span = expr.span();
         let previous = self.current_span;
@@ -399,7 +464,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     let target = self.infer_expr(assign.target.as_mut())?;
                     let value = self.infer_expr(assign.value.as_mut())?;
                     self.unify(target, value)?;
-                    value
+                    self.unit_type_var()
                 }
                 ExprKind::Cast(cast) => {
                     let _ = self.infer_expr(cast.expr.as_mut())?;
@@ -1383,8 +1448,21 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         }
 
-        if let ExprInvokeTarget::Function(locator) = &invoke.target {
-            if let Some(sig) = self.lookup_extern_function_signature(locator) {
+        if matches!(invoke.target, ExprInvokeTarget::Function(_)) {
+            if let Some((sig_path, sig)) = {
+                let locator = match &invoke.target {
+                    ExprInvokeTarget::Function(locator) => locator,
+                    _ => unreachable!(),
+                };
+                self.lookup_extern_function_signature_with_path(locator)
+            } {
+                let sig_module = {
+                    let locator = match &invoke.target {
+                        ExprInvokeTarget::Function(locator) => locator,
+                        _ => unreachable!(),
+                    };
+                    self.signature_module_path(locator, &sig_path)
+                };
                 if !self.apply_kwargs_to_invoke(invoke, &sig) {
                     return Ok(self.error_type_var());
                 }
@@ -1394,7 +1472,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
                     let arg_var = self.infer_expr(arg_expr)?;
-                    let param_var = self.type_from_ast_ty(&param.ty)?;
+                    let param_var =
+                        self.type_from_ast_ty_in_module(&param.ty, &sig_module)?;
                     let expects_cstr = self
                         .resolve_to_ty(param_var)
                         .ok()
@@ -1429,7 +1508,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.unify(arg_var, param_var)?;
                 }
                 let ret_var = if let Some(ret_ty) = &sig.ret_ty {
-                    self.type_from_ast_ty(ret_ty)?
+                    self.type_from_ast_ty_in_module(ret_ty, &sig_module)?
                 } else {
                     let unit = self.fresh_type_var();
                     self.bind(unit, TypeTerm::Unit);
@@ -1437,9 +1516,57 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 };
                 return Ok(ret_var);
             }
-            if let Some(sig) = self.lookup_function_signature(locator) {
+            if let Some((sig_path, sig)) = {
+                let locator = match &invoke.target {
+                    ExprInvokeTarget::Function(locator) => locator,
+                    _ => unreachable!(),
+                };
+                self.lookup_function_signature_with_path(locator)
+                    .or_else(|| {
+                        let sig = self.lookup_function_signature(locator)?;
+                        let sig_path = self
+                            .resolve_locator_key(locator)
+                            .or_else(|| self.fallback_locator_key(locator))
+                            .unwrap_or_else(|| QualifiedPath::new(Vec::new()));
+                        Some((sig_path, sig))
+                    })
+            } {
+                let sig_module = {
+                    let locator = match &invoke.target {
+                        ExprInvokeTarget::Function(locator) => locator,
+                        _ => unreachable!(),
+                    };
+                    self.signature_module_path(locator, &sig_path)
+                };
                 if !self.apply_kwargs_to_invoke(invoke, &sig) {
                     return Ok(self.error_type_var());
+                }
+                let generic_args = {
+                    let locator = match &invoke.target {
+                        ExprInvokeTarget::Function(locator) => locator,
+                        _ => unreachable!(),
+                    };
+                    Self::locator_generic_args(locator).map(|args| args.to_vec())
+                };
+                if generic_args.is_some() && sig.receiver.is_some() {
+                    self.emit_error(
+                        "explicit generic arguments are only supported on function calls",
+                    );
+                    return Ok(self.error_type_var());
+                }
+                if sig.receiver.is_none() && !sig.generics_params.is_empty() {
+                    if let Some(explicit_args) = generic_args.as_ref() {
+                        if sig.generics_params.len() != explicit_args.len() {
+                            self.emit_error("generic argument count mismatch");
+                            return Ok(self.error_type_var());
+                        }
+                    }
+                    return self.infer_generic_function_call(
+                        invoke,
+                        &sig,
+                        &sig_module,
+                        generic_args.as_deref(),
+                    );
                 }
                 if sig.abi.is_c() && sig.generics_params.is_empty() && sig.receiver.is_none() {
                     if invoke.args.len() != sig.params.len() {
@@ -1448,7 +1575,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
                         let arg_var = self.infer_expr(arg_expr)?;
-                        let param_var = self.type_from_ast_ty(&param.ty)?;
+                        let param_var =
+                            self.type_from_ast_ty_in_module(&param.ty, &sig_module)?;
                         let expects_cstr = self
                             .resolve_to_ty(param_var)
                             .ok()
@@ -1483,7 +1611,27 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.unify(arg_var, param_var)?;
                     }
                     let ret_var = if let Some(ret_ty) = &sig.ret_ty {
-                        self.type_from_ast_ty(ret_ty)?
+                        self.type_from_ast_ty_in_module(ret_ty, &sig_module)?
+                    } else {
+                        let unit = self.fresh_type_var();
+                        self.bind(unit, TypeTerm::Unit);
+                        unit
+                    };
+                    return Ok(ret_var);
+                }
+                if sig.generics_params.is_empty() && sig.receiver.is_none() {
+                    if invoke.args.len() != sig.params.len() {
+                        self.emit_error("call arity mismatch");
+                        return Ok(self.error_type_var());
+                    }
+                    for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
+                        let arg_var = self.infer_expr(arg_expr)?;
+                        let param_var =
+                            self.type_from_ast_ty_in_module(&param.ty, &sig_module)?;
+                        self.unify(arg_var, param_var)?;
+                    }
+                    let ret_var = if let Some(ret_ty) = &sig.ret_ty {
+                        self.type_from_ast_ty_in_module(ret_ty, &sig_module)?
                     } else {
                         let unit = self.fresh_type_var();
                         self.bind(unit, TypeTerm::Unit);
@@ -1493,6 +1641,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
         }
+
+        let enum_ctor = if let ExprInvokeTarget::Function(locator) = &invoke.target {
+            self.enum_variant_from_locator(locator)
+        } else {
+            None
+        };
 
         let func_var = match &mut invoke.target {
             ExprInvokeTarget::Function(locator) => {
@@ -1598,7 +1752,30 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             ExprInvokeTarget::Type(ty) => self.type_from_ast_ty(ty)?,
             ExprInvokeTarget::Method(select) => {
-                let obj_var = self.infer_expr(select.obj.as_mut())?;
+                if std::env::var("FP_DEBUG_UNWRAP").is_ok()
+                    && select.field.name.as_str() == "unwrap"
+                {
+                    eprintln!("debug unwrap invoke: method field=unwrap");
+                }
+                let obj_var = match self.infer_expr(select.obj.as_mut()) {
+                    Ok(var) => var,
+                    Err(err) => {
+                        if std::env::var("FP_DEBUG_UNWRAP").is_ok()
+                            && select.field.name.as_str() == "unwrap"
+                        {
+                            eprintln!("debug unwrap invoke: obj infer error: {:?}", err);
+                        }
+                        return Err(err);
+                    }
+                };
+                if std::env::var("FP_DEBUG_UNWRAP").is_ok()
+                    && select.field.name.as_str() == "unwrap"
+                {
+                    eprintln!("debug unwrap invoke: after infer_expr");
+                    if let Ok(obj_ty) = self.resolve_to_ty(obj_var) {
+                        eprintln!("debug unwrap invoke: obj_ty={:?}", obj_ty);
+                    }
+                }
                 if let Some(result) =
                     self.try_infer_primitive_method(obj_var, &select.field, invoke.args.len())?
                 {
@@ -1746,11 +1923,28 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
 
-                if let Some(field_var) =
-                    self.try_infer_field_function_call(obj_var, &select.field)?
+                if std::env::var("FP_DEBUG_UNWRAP").is_ok()
+                    && select.field.name.as_str() == "unwrap"
                 {
+                    eprintln!("debug unwrap invoke: before try_infer_field_function_call");
+                }
+                let field_call = self.try_infer_field_function_call(obj_var, &select.field)?;
+                if std::env::var("FP_DEBUG_UNWRAP").is_ok()
+                    && select.field.name.as_str() == "unwrap"
+                {
+                    eprintln!(
+                        "debug unwrap invoke: try_infer_field_function_call result={}",
+                        field_call.is_some()
+                    );
+                }
+                if let Some(field_var) = field_call {
                     field_var
                 } else {
+                    if std::env::var("FP_DEBUG_UNWRAP").is_ok()
+                        && select.field.name.as_str() == "unwrap"
+                    {
+                        eprintln!("debug unwrap invoke: before lookup_struct_method");
+                    }
                     self.lookup_struct_method(obj_var, &select.field)?
                 }
             }
@@ -1767,11 +1961,86 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         let func_info = self.ensure_function(func_var, invoke.args.len())?;
+        let mut arg_vars = Vec::with_capacity(invoke.args.len());
         for (arg_expr, param_var) in invoke.args.iter_mut().zip(func_info.params.iter()) {
             let arg_var = self.infer_expr(arg_expr)?;
+            arg_vars.push(arg_var);
             self.unify(*param_var, arg_var)?;
         }
+        if let Some((enum_def, variant)) = enum_ctor {
+            self.bind_enum_constructor_return(&enum_def, &variant, &arg_vars, func_info.ret)?;
+        }
         Ok(func_info.ret)
+    }
+
+    fn enum_variant_from_locator(&mut self, locator: &Name) -> Option<(TypeEnum, EnumTypeVariant)> {
+        let Name::Path(path) = locator else {
+            return None;
+        };
+        if path.segments.len() < 2 {
+            return None;
+        }
+        let variant_name = path.segments.last().map(|seg| seg.as_str())?;
+        let enum_segments = path
+            .segments
+            .iter()
+            .take(path.segments.len() - 1)
+            .map(|seg| seg.as_str().to_string())
+            .collect::<Vec<_>>();
+        let enum_key = self.resolve_segments_key(path.prefix, &enum_segments)?;
+        let enum_def = self.enum_defs.get(&enum_key).cloned()?;
+        let variant = enum_def
+            .variants
+            .iter()
+            .find(|v| v.name.as_str() == variant_name)
+            .cloned()?;
+        Some((enum_def, variant))
+    }
+
+    fn enum_variant_param_types(variant: &EnumTypeVariant) -> Vec<Ty> {
+        match &variant.value {
+            Ty::Unit(_) => Vec::new(),
+            Ty::Tuple(tuple_ty) => tuple_ty.types.clone(),
+            other => vec![other.clone()],
+        }
+    }
+
+    fn bind_enum_constructor_return(
+        &mut self,
+        enum_def: &TypeEnum,
+        variant: &EnumTypeVariant,
+        arg_vars: &[TypeVarId],
+        ret_var: TypeVarId,
+    ) -> Result<()> {
+        let param_types = Self::enum_variant_param_types(variant);
+        if param_types.len() != arg_vars.len() {
+            return Ok(());
+        }
+        self.enter_scope();
+        let mut generic_vars: Vec<(String, TypeVarId)> = Vec::new();
+        for param in &enum_def.generics_params {
+            let var = self.register_generic_param(param.name.as_str());
+            generic_vars.push((param.name.as_str().to_string(), var));
+            let bounds = Self::extract_trait_bounds(&param.bounds);
+            if !bounds.is_empty() {
+                self.generic_trait_bounds.insert(var, bounds);
+            }
+        }
+
+        for (param_ty, arg_var) in param_types.iter().zip(arg_vars.iter()) {
+            let param_var = self.type_from_ast_ty(param_ty)?;
+            self.unify(param_var, *arg_var)?;
+        }
+
+        let mut args = Vec::with_capacity(generic_vars.len());
+        for (_, var) in &generic_vars {
+            let ty = self.resolve_to_ty(*var).unwrap_or(Ty::Unknown(TypeUnknown));
+            args.push(ty);
+        }
+        let concrete = self.apply_generic_args_to_enum(enum_def, &args);
+        self.exit_scope();
+        self.bind(ret_var, TypeTerm::Enum(concrete));
+        Ok(())
     }
 
     fn apply_kwargs_to_invoke(&mut self, invoke: &mut ExprInvoke, sig: &FunctionSignature) -> bool {
@@ -1828,6 +2097,65 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         true
     }
 
+    fn infer_generic_function_call(
+        &mut self,
+        invoke: &mut ExprInvoke,
+        sig: &FunctionSignature,
+        sig_module: &QualifiedPath,
+        explicit_generic_args: Option<&[Ty]>,
+    ) -> Result<TypeVarId> {
+        if invoke.args.len() != sig.params.len() {
+            self.emit_error("call arity mismatch");
+            return Ok(self.error_type_var());
+        }
+
+        self.enter_scope();
+        let result = (|| -> Result<TypeVarId> {
+            let mut generic_vars = Vec::with_capacity(sig.generics_params.len());
+            for param in &sig.generics_params {
+                let var = self.register_generic_param(param.name.as_str());
+                generic_vars.push(var);
+                let bounds = Self::extract_trait_bounds(&param.bounds);
+                if !bounds.is_empty() {
+                    self.generic_trait_bounds.insert(var, bounds);
+                }
+            }
+
+            if let Some(explicit_args) = explicit_generic_args {
+                for (idx, arg_ty) in explicit_args.iter().enumerate() {
+                    if Self::is_inferred_generic_placeholder(arg_ty) {
+                        continue;
+                    }
+                    let param_var = generic_vars[idx];
+                    let arg_var = self.type_from_ast_ty_in_module(arg_ty, sig_module)?;
+                    self.unify(arg_var, param_var)?;
+                }
+            }
+
+            for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
+                let arg_var = self.infer_expr(arg_expr)?;
+                let param_var = self.type_from_ast_ty_in_module(&param.ty, sig_module)?;
+                self.unify(arg_var, param_var)?;
+            }
+
+            let ret_var = if let Some(ret_ty) = &sig.ret_ty {
+                self.type_from_ast_ty_in_module(ret_ty, sig_module)?
+            } else {
+                let unit = self.fresh_type_var();
+                self.bind(unit, TypeTerm::Unit);
+                unit
+            };
+            Ok(ret_var)
+        })();
+        self.exit_scope();
+        result
+    }
+
+    fn is_inferred_generic_placeholder(arg_ty: &Ty) -> bool {
+        // `_` generic placeholders are parsed as `Ty::Unknown`.
+        matches!(arg_ty, Ty::Unknown(_))
+    }
+
     fn try_infer_field_function_call(
         &mut self,
         obj_var: TypeVarId,
@@ -1835,6 +2163,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     ) -> Result<Option<TypeVarId>> {
         let ty = self.resolve_to_ty(obj_var)?;
         let resolved_ty = Self::peel_reference(ty);
+        if std::env::var("FP_DEBUG_UNWRAP").is_ok() && field.name.as_str() == "unwrap" {
+            eprintln!(
+                "debug unwrap invoke: try_infer_field_function_call resolved_ty={:?}",
+                resolved_ty
+            );
+        }
         let field_ty = match resolved_ty {
             Ty::Struct(struct_ty) => struct_ty
                 .fields
@@ -1851,6 +2185,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let Some(field_ty) = field_ty else {
             return Ok(None);
         };
+        if std::env::var("FP_DEBUG_UNWRAP").is_ok() && field.name.as_str() == "unwrap" {
+            eprintln!(
+                "debug unwrap invoke: try_infer_field_function_call field_ty={:?}",
+                field_ty
+            );
+        }
         if !matches!(field_ty, Ty::Function(_)) {
             return Ok(None);
         }
@@ -2090,6 +2430,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 .map(|seg| seg.ident.as_str().to_string())
                 .collect(),
         }
+    }
+
+    fn locator_generic_args(locator: &Name) -> Option<&[Ty]> {
+        let Name::ParameterPath(path) = locator else {
+            return None;
+        };
+        let segment = path.segments.iter().rev().find(|seg| !seg.args.is_empty())?;
+        Some(segment.args.as_slice())
     }
 
     fn is_collection_with_len(ty: &Ty) -> bool {
@@ -2435,16 +2783,38 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .take(path.segments.len() - 1)
                             .map(|seg| seg.as_str().to_string())
                             .collect::<Vec<_>>();
+                        let mut enum_def = None;
                         if let Some(enum_key) =
                             self.resolve_segments_key(path.prefix, &enum_segments)
                         {
-                            if let Some(enum_def) = self.enum_defs.get(&enum_key).cloned() {
-                                if let Some(variant) = enum_def
-                                    .variants
-                                    .iter()
-                                    .find(|v| v.name.as_str() == variant_name)
-                                {
-                                    if let Ty::Tuple(tuple_ty) = &variant.value {
+                            enum_def = self.enum_defs.get(&enum_key).cloned();
+                        }
+                        if enum_def.is_none() {
+                            let enum_name = enum_segments.join("::");
+                            enum_def = self
+                                .lookup_enum_def_by_name(&enum_name)
+                                .map(|(_, def)| def);
+                        }
+                        if let Some(enum_def) = enum_def {
+                            if let Some(variant) = enum_def
+                                .variants
+                                .iter()
+                                .find(|v| v.name.as_str() == variant_name)
+                            {
+                                self.enter_scope();
+                                let mut generic_vars: Vec<(String, TypeVarId)> = Vec::new();
+                                for param in &enum_def.generics_params {
+                                    let var =
+                                        self.register_generic_param(param.name.as_str());
+                                    generic_vars
+                                        .push((param.name.as_str().to_string(), var));
+                                    let bounds = Self::extract_trait_bounds(&param.bounds);
+                                    if !bounds.is_empty() {
+                                        self.generic_trait_bounds.insert(var, bounds);
+                                    }
+                                }
+                                match &variant.value {
+                                    Ty::Tuple(tuple_ty) => {
                                         for (idx, expected_ty) in tuple_ty
                                             .types
                                             .iter()
@@ -2456,14 +2826,30 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                             self.unify(element_vars[idx], expected_var)?;
                                         }
                                     }
-
-                                    let enum_var = self.fresh_type_var();
-                                    self.bind(enum_var, TypeTerm::Enum(enum_def));
-                                    return Ok(PatternInfo {
-                                        var: enum_var,
-                                        bindings,
-                                    });
+                                    _ if element_vars.len() == 1 => {
+                                        let expected_var =
+                                            self.type_from_ast_ty(&variant.value)?;
+                                        self.unify(element_vars[0], expected_var)?;
+                                    }
+                                    _ => {}
                                 }
+
+                                let mut args = Vec::with_capacity(generic_vars.len());
+                                for (_, var) in &generic_vars {
+                                    let ty = self
+                                        .resolve_to_ty(*var)
+                                        .unwrap_or(Ty::Unknown(TypeUnknown));
+                                    args.push(ty);
+                                }
+                                let concrete =
+                                    self.apply_generic_args_to_enum(&enum_def, &args);
+                                self.exit_scope();
+                                let enum_var = self.fresh_type_var();
+                                self.bind(enum_var, TypeTerm::Enum(concrete));
+                                return Ok(PatternInfo {
+                                    var: enum_var,
+                                    bindings,
+                                });
                             }
                         }
                     }
@@ -2488,73 +2874,116 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     .take(path.segments.len() - 1)
                                     .map(|seg| seg.as_str().to_string())
                                     .collect::<Vec<_>>();
+                                let mut enum_def = None;
                                 if let Some(enum_key) =
                                     self.resolve_segments_key(path.prefix, &enum_segments)
                                 {
-                                    if let Some(enum_def) = self.enum_defs.get(&enum_key).cloned() {
-                                        let enum_var = self.fresh_type_var();
-                                        self.bind(enum_var, TypeTerm::Enum(enum_def.clone()));
+                                    enum_def = self.enum_defs.get(&enum_key).cloned();
+                                }
+                                if enum_def.is_none() {
+                                    let enum_name = enum_segments.join("::");
+                                    enum_def = self
+                                        .lookup_enum_def_by_name(&enum_name)
+                                        .map(|(_, def)| def);
+                                }
+                                if let Some(enum_def) = enum_def {
+                                    let enum_var = self.fresh_type_var();
 
-                                        if let Some(inner) = variant.pattern.as_mut() {
-                                            if let Some(def_variant) = enum_def
-                                                .variants
-                                                .iter()
-                                                .find(|v| v.name.as_str() == variant_name)
+                                    if let Some(inner) = variant.pattern.as_mut() {
+                                        if let Some(def_variant) = enum_def
+                                            .variants
+                                            .iter()
+                                            .find(|v| v.name.as_str() == variant_name)
+                                        {
+                                            // Struct-like enum variant patterns: `Enum::Variant { ... }`.
+                                            if let (
+                                                Ty::Structural(structural),
+                                                PatternKind::Structural(pat),
+                                            ) = (&def_variant.value, inner.kind_mut())
                                             {
-                                                // Struct-like enum variant patterns: `Enum::Variant { ... }`.
-                                                if let (
-                                                    Ty::Structural(structural),
-                                                    PatternKind::Structural(pat),
-                                                ) = (&def_variant.value, inner.kind_mut())
-                                                {
-                                                    let mut bindings = Vec::new();
-                                                    for field in &mut pat.fields {
-                                                        if let Some(expected_field) = structural
-                                                            .fields
-                                                            .iter()
-                                                            .find(|f| f.name == field.name)
+                                                let mut bindings = Vec::new();
+                                                self.enter_scope();
+                                                let mut generic_vars: Vec<(String, TypeVarId)> =
+                                                    Vec::new();
+                                                for param in &enum_def.generics_params {
+                                                    let var =
+                                                        self.register_generic_param(
+                                                            param.name.as_str(),
+                                                        );
+                                                    generic_vars.push((
+                                                        param.name.as_str().to_string(),
+                                                        var,
+                                                    ));
+                                                    let bounds = Self::extract_trait_bounds(
+                                                        &param.bounds,
+                                                    );
+                                                    if !bounds.is_empty() {
+                                                        self.generic_trait_bounds
+                                                            .insert(var, bounds);
+                                                    }
+                                                }
+                                                for field in &mut pat.fields {
+                                                    if let Some(expected_field) = structural
+                                                        .fields
+                                                        .iter()
+                                                        .find(|f| f.name == field.name)
+                                                    {
+                                                        let expected_var = self
+                                                            .type_from_ast_ty(
+                                                                &expected_field.value,
+                                                            )?;
+                                                        if let Some(rename) =
+                                                            field.rename.as_mut()
                                                         {
-                                                            let expected_var = self
-                                                                .type_from_ast_ty(
-                                                                    &expected_field.value,
-                                                                )?;
-                                                            if let Some(rename) =
-                                                                field.rename.as_mut()
-                                                            {
-                                                                let child =
-                                                                    self.infer_pattern(rename)?;
-                                                                bindings.extend(child.bindings);
-                                                                self.unify(
-                                                                    child.var,
-                                                                    expected_var,
-                                                                )?;
-                                                            } else {
-                                                                let var = self.fresh_type_var();
-                                                                self.insert_env(
-                                                                    field.name.as_str().to_string(),
-                                                                    EnvEntry::Mono(var),
-                                                                );
-                                                                self.unify(var, expected_var)?;
-                                                                bindings.push(PatternBinding {
-                                                                    name: field
-                                                                        .name
-                                                                        .as_str()
-                                                                        .to_string(),
-                                                                    var,
-                                                                });
-                                                            }
+                                                            let child =
+                                                                self.infer_pattern(rename)?;
+                                                            bindings.extend(child.bindings);
+                                                            self.unify(
+                                                                child.var,
+                                                                expected_var,
+                                                            )?;
+                                                        } else {
+                                                            let var = self.fresh_type_var();
+                                                            self.insert_env(
+                                                                field.name.as_str().to_string(),
+                                                                EnvEntry::Mono(var),
+                                                            );
+                                                            self.unify(var, expected_var)?;
+                                                            bindings.push(PatternBinding {
+                                                                name: field
+                                                                    .name
+                                                                    .as_str()
+                                                                    .to_string(),
+                                                                var,
+                                                            });
                                                         }
                                                     }
-                                                    return Ok(PatternInfo {
-                                                        var: enum_var,
-                                                        bindings,
-                                                    });
                                                 }
+                                                let mut args =
+                                                    Vec::with_capacity(generic_vars.len());
+                                                for (_, var) in &generic_vars {
+                                                    let ty = self
+                                                        .resolve_to_ty(*var)
+                                                        .unwrap_or(Ty::Unknown(TypeUnknown));
+                                                    args.push(ty);
+                                                }
+                                                let concrete = self
+                                                    .apply_generic_args_to_enum(
+                                                        &enum_def,
+                                                        &args,
+                                                    );
+                                                self.exit_scope();
+                                                self.bind(enum_var, TypeTerm::Enum(concrete));
+                                                return Ok(PatternInfo {
+                                                    var: enum_var,
+                                                    bindings,
+                                                });
                                             }
                                         }
-
-                                        return Ok(PatternInfo::new(enum_var));
                                     }
+
+                                    self.bind(enum_var, TypeTerm::Enum(enum_def.clone()));
+                                    return Ok(PatternInfo::new(enum_var));
                                 }
                             }
                         }
@@ -2644,14 +3073,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn lookup_struct_method(&mut self, obj_var: TypeVarId, field: &Ident) -> Result<TypeVarId> {
         let ty = self.resolve_to_ty(obj_var)?;
         let resolved_ty = Self::peel_reference(ty.clone());
-        let struct_path = match resolved_ty {
-            Ty::Struct(struct_ty) => QualifiedPath::new(vec![struct_ty.name.as_str().to_string()]),
-            Ty::Enum(enum_ty) => QualifiedPath::new(vec![enum_ty.name.as_str().to_string()]),
-            other => {
+        let (type_name, struct_path) = match &resolved_ty {
+            Ty::Struct(struct_ty) => {
+                let name = struct_ty.name.as_str().to_string();
+                (name.clone(), QualifiedPath::new(vec![name]))
+            }
+            Ty::Enum(enum_ty) => {
+                let name = enum_ty.name.as_str().to_string();
+                (name.clone(), QualifiedPath::new(vec![name]))
+            }
+            _ => {
                 if let Some(var) = self.lookup_trait_method_for_receiver(obj_var, field)? {
                     return Ok(var);
                 }
-                if matches!(other, Ty::Any(_) | Ty::Unknown(_)) {
+                if matches!(resolved_ty, Ty::Any(_) | Ty::Unknown(_)) {
                     if let Some(var) = self.lookup_unique_trait_method(field)? {
                         return Ok(var);
                     }
@@ -2663,12 +3098,43 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 self.emit_error(format!(
                     "cannot call method {} on value of type {}",
-                    field, other
+                    field, resolved_ty
                 ));
                 return Ok(self.error_type_var());
             }
         };
-        let candidates = self.struct_name_variants_for_path(&struct_path, true);
+        if std::env::var("FP_DEBUG_UNWRAP").is_ok() && field.as_str() == "unwrap" {
+            eprintln!(
+                "debug unwrap pre: resolved_ty={:?} type_name={}",
+                resolved_ty, type_name
+            );
+        }
+        let is_result_like = match &resolved_ty {
+            Ty::Enum(enum_ty) => {
+                let mut has_ok = false;
+                let mut has_err = false;
+                for variant in &enum_ty.variants {
+                    match variant.name.as_str() {
+                        "Ok" => has_ok = true,
+                        "Err" => has_err = true,
+                        _ => {}
+                    }
+                }
+                has_ok && has_err
+            }
+            _ => false,
+        };
+        let mut candidates = self.struct_name_variants_for_path(&struct_path, true);
+        if let Some(resolved) = self.resolve_segments_key(PathPrefix::Plain, &struct_path.segments)
+        {
+            for candidate in
+                self.struct_name_variants_for_path(&resolved, resolved.segments.len() == 1)
+            {
+                if !candidates.contains(&candidate) {
+                    candidates.push(candidate);
+                }
+            }
+        }
         let mut struct_key = None;
         let mut record = None;
         for candidate in &candidates {
@@ -2689,8 +3155,80 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.unify(obj_var, receiver_var)?;
                 }
             }
-            if let Some(scheme) = record.scheme.as_ref() {
-                return Ok(self.instantiate_scheme(scheme));
+            let skip_scheme = field.as_str() == "unwrap" && (type_name == "Result" || is_result_like);
+            if !skip_scheme {
+                if let Some(scheme) = record.scheme.as_ref() {
+                    return Ok(self.instantiate_scheme(scheme));
+                }
+            }
+        }
+
+        if type_name == "Result" || is_result_like {
+            match field.as_str() {
+                "is_ok" | "is_err" => {
+                    let result_var = self.fresh_type_var();
+                    self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
+                    let fn_var = self.fresh_type_var();
+                    self.bind(
+                        fn_var,
+                        TypeTerm::Function(FunctionTerm {
+                            params: Vec::new(),
+                            ret: result_var,
+                        }),
+                    );
+                    return Ok(fn_var);
+                }
+                "unwrap" => {
+                    if std::env::var("FP_DEBUG_UNWRAP").is_ok() {
+                        eprintln!("debug unwrap: resolved_ty={:?}", resolved_ty);
+                    }
+                    let ret_var = if let Ty::Enum(enum_ty) = &resolved_ty {
+                        let expected = self
+                            .resolve_enum_variant_expected_value(enum_ty, "Ok")?
+                            .or_else(|| {
+                                enum_ty
+                                    .variants
+                                    .iter()
+                                    .find(|variant| variant.name.as_str() == "Ok")
+                                    .map(|variant| variant.value.clone())
+                            });
+                        if let Some(expected) = expected {
+                            if enum_ty.generics_params.is_empty() {
+                                self.type_from_ast_ty(&expected)?
+                            } else {
+                                self.enter_scope();
+                                for param in &enum_ty.generics_params {
+                                    let var = self.register_generic_param(param.name.as_str());
+                                    let bounds = Self::extract_trait_bounds(&param.bounds);
+                                    if !bounds.is_empty() {
+                                        self.generic_trait_bounds.insert(var, bounds);
+                                    }
+                                }
+                                let ret = self.type_from_ast_ty(&expected);
+                                self.exit_scope();
+                                ret?
+                            }
+                        } else {
+                            let fallback = self.fresh_type_var();
+                            self.bind(fallback, TypeTerm::Any);
+                            fallback
+                        }
+                    } else {
+                        let fallback = self.fresh_type_var();
+                        self.bind(fallback, TypeTerm::Any);
+                        fallback
+                    };
+                    let fn_var = self.fresh_type_var();
+                    self.bind(
+                        fn_var,
+                        TypeTerm::Function(FunctionTerm {
+                            params: Vec::new(),
+                            ret: ret_var,
+                        }),
+                    );
+                    return Ok(fn_var);
+                }
+                _ => {}
             }
         }
 
@@ -2708,6 +3246,86 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
         if let Some(var) = self.lookup_env_var(field.as_str()) {
             return Ok(var);
+        }
+        if type_name == "Option" {
+            match field.as_str() {
+                "is_some" | "is_none" => {
+                    let result_var = self.fresh_type_var();
+                    self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
+                    let fn_var = self.fresh_type_var();
+                    self.bind(
+                        fn_var,
+                        TypeTerm::Function(FunctionTerm {
+                            params: Vec::new(),
+                            ret: result_var,
+                        }),
+                    );
+                    return Ok(fn_var);
+                }
+                _ => {}
+            }
+        }
+        if type_name == "ProcessResult" {
+            match field.as_str() {
+                "success" => {
+                    let result_var = self.fresh_type_var();
+                    self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
+                    let fn_var = self.fresh_type_var();
+                    self.bind(
+                        fn_var,
+                        TypeTerm::Function(FunctionTerm {
+                            params: Vec::new(),
+                            ret: result_var,
+                        }),
+                    );
+                    return Ok(fn_var);
+                }
+                "status" => {
+                    let result_var = self.fresh_type_var();
+                    self.bind(
+                        result_var,
+                        TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                    );
+                    let fn_var = self.fresh_type_var();
+                    self.bind(
+                        fn_var,
+                        TypeTerm::Function(FunctionTerm {
+                            params: Vec::new(),
+                            ret: result_var,
+                        }),
+                    );
+                    return Ok(fn_var);
+                }
+                "stdout" | "stderr" => {
+                    let string_var = self.fresh_type_var();
+                    self.bind(string_var, TypeTerm::Primitive(TypePrimitive::String));
+                    let ref_var = self.fresh_type_var();
+                    self.bind(ref_var, TypeTerm::Reference(string_var));
+                    let fn_var = self.fresh_type_var();
+                    self.bind(
+                        fn_var,
+                        TypeTerm::Function(FunctionTerm {
+                            params: Vec::new(),
+                            ret: ref_var,
+                        }),
+                    );
+                    return Ok(fn_var);
+                }
+                "into_stdout" | "into_stderr" => {
+                    let result_var = self.fresh_type_var();
+                    self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
+                    let fn_var = self.fresh_type_var();
+                    self.bind(
+                        fn_var,
+                        TypeTerm::Function(FunctionTerm {
+                            params: Vec::new(),
+                            ret: result_var,
+                        }),
+                    );
+                    return Ok(fn_var);
+                }
+                _ => {}
+            }
         }
         self.emit_error(format!(
             "unknown method {} on struct {}",
@@ -2732,6 +3350,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         };
         let scheme = self.scheme_from_method_signature(&sig)?;
         Ok(Some(self.instantiate_scheme(&scheme)))
+    }
+
+    fn trait_name_candidates(&self, trait_name: &str) -> Vec<String> {
+        let mut candidates = Vec::new();
+        candidates.push(trait_name.to_string());
+        if let Some(last) = trait_name.rsplit("::").next() {
+            if last != trait_name {
+                candidates.push(last.to_string());
+            }
+        }
+        candidates
     }
 
     fn lookup_trait_method_for_receiver(
@@ -2761,14 +3390,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         };
 
         for trait_name in traits {
-            let Some(methods) = self.trait_method_sigs.get(&trait_name) else {
-                continue;
-            };
-            let Some(sig) = methods.get(field.as_str()).cloned() else {
-                continue;
-            };
-            let scheme = self.scheme_from_method_signature(&sig)?;
-            return Ok(Some(self.instantiate_scheme(&scheme)));
+            for candidate in self.trait_name_candidates(&trait_name) {
+                let Some(methods) = self.trait_method_sigs.get(&candidate) else {
+                    continue;
+                };
+                let Some(sig) = methods.get(field.as_str()).cloned() else {
+                    continue;
+                };
+                let scheme = self.scheme_from_method_signature(&sig)?;
+                return Ok(Some(self.instantiate_scheme(&scheme)));
+            }
         }
         Ok(None)
     }
@@ -2841,6 +3472,23 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     return Ok(Some(result_var));
                 }
                 Ok(None)
+            }
+            "join" => {
+                if arg_len != 1 {
+                    return Ok(None);
+                }
+                let obj_ty = match self.resolve_to_ty(obj_var) {
+                    Ok(ty) => Self::peel_reference(ty),
+                    Err(_) => return Ok(None),
+                };
+                match obj_ty {
+                    Ty::Vec(_) | Ty::Slice(_) => {
+                        let result_var = self.fresh_type_var();
+                        self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
+                        Ok(Some(result_var))
+                    }
+                    _ => Ok(None),
+                }
             }
             // Keep iterator methods permissive for now; these are primarily
             // used by examples and desugar into Rust iterator chains.

@@ -4699,6 +4699,7 @@ impl LirGenerator {
 
     fn is_zero_sized(ty: &Ty) -> bool {
         matches!(ty.kind, TyKind::Tuple(ref elements) if elements.is_empty())
+            || matches!(ty.kind, TyKind::Never)
     }
 
     fn lir_type_from_ty(&self, ty: &Ty) -> lir::LirType {

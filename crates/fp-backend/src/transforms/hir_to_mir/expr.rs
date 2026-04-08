@@ -84,6 +84,8 @@ struct FunctionSpecializationInfo {
 
 #[derive(Clone, Debug)]
 struct EnumLayout {
+    def_id: hir::DefId,
+    args: Vec<Ty>,
     tag_ty: Ty,
     payload_tys: Vec<Ty>,
     enum_ty: Ty,
@@ -1049,6 +1051,7 @@ impl MirLowering {
         function: &hir::Function,
         explicit_args: &[Ty],
         arg_types: &[Ty],
+        expected_return: Option<&Ty>,
         span: Span,
     ) -> Result<FunctionSpecializationInfo> {
         let generics = function
@@ -1060,9 +1063,13 @@ impl MirLowering {
             .collect::<Vec<_>>();
         let substs = self.build_substs_from_args(
             &generics,
+            None,
+            None,
             &function.sig.inputs,
+            Some(&function.sig.output),
             explicit_args,
             arg_types,
+            expected_return,
             span,
         )?;
         let args_in_order = generics
@@ -1159,6 +1166,7 @@ impl MirLowering {
         def: &MethodDefinition,
         explicit_args: &[Ty],
         arg_types: &[Ty],
+        expected_return: Option<&Ty>,
         span: Span,
     ) -> Result<MethodLoweringInfo> {
         let impl_generics = def
@@ -1177,9 +1185,13 @@ impl MirLowering {
 
         let substs = self.build_substs_from_args(
             &generics,
+            Some(&def.self_ty),
+            arg_types.first(),
             &def.function.sig.inputs,
+            Some(&def.function.sig.output),
             explicit_args,
             arg_types,
+            expected_return,
             span,
         )?;
         let args_in_order = generics
@@ -1505,9 +1517,13 @@ impl MirLowering {
     fn build_substs_from_args(
         &mut self,
         generics: &[String],
+        self_ty: Option<&hir::TypeExpr>,
+        self_arg_ty: Option<&Ty>,
         params: &[hir::Param],
+        return_ty: Option<&hir::TypeExpr>,
         explicit_args: &[Ty],
         arg_types: &[Ty],
+        expected_return: Option<&Ty>,
         span: Span,
     ) -> Result<HashMap<String, Ty>> {
         if params.len() != arg_types.len() {
@@ -1539,11 +1555,27 @@ impl MirLowering {
 
         let mut substs = HashMap::new();
         for (name, ty) in generics.iter().zip(explicit_args.iter().cloned()) {
+            if matches!(ty.kind, TyKind::Error(_) | TyKind::Infer(_)) {
+                continue;
+            }
             substs.insert(name.clone(), ty);
+        }
+
+        if let (Some(self_ty), Some(self_arg_ty)) = (self_ty, self_arg_ty) {
+            self.infer_generic_from_type_expr(self_ty, self_arg_ty, generics, &mut substs, span)?;
         }
 
         for (param, actual_ty) in params.iter().zip(arg_types.iter()) {
             self.infer_generic_from_type_expr(&param.ty, actual_ty, generics, &mut substs, span)?;
+        }
+        if let (Some(return_ty), Some(expected_return)) = (return_ty, expected_return) {
+            self.infer_generic_from_type_expr(
+                return_ty,
+                expected_return,
+                generics,
+                &mut substs,
+                span,
+            )?;
         }
 
         for name in generics {
@@ -1599,6 +1631,9 @@ impl MirLowering {
         substs: &mut HashMap<String, Ty>,
         span: Span,
     ) -> Result<()> {
+        if matches!(actual_ty.kind, TyKind::Error(_) | TyKind::Infer(_)) {
+            return Ok(());
+        }
         // Keep inference conservative: only bind direct generic parameters.
         match &ty_expr.kind {
             hir::TypeExprKind::Path(path) => {
@@ -1613,6 +1648,10 @@ impl MirLowering {
                     let actual_is_opaque = self.is_opaque_ty(actual_ty);
                     if let Some(existing) = substs.get(name) {
                         if existing != actual_ty {
+                            if matches!(existing.kind, TyKind::Error(_) | TyKind::Infer(_)) {
+                                substs.insert(name.to_string(), actual_ty.clone());
+                                return Ok(());
+                            }
                             let existing_is_opaque = self.is_opaque_ty(existing);
                             if existing_is_opaque && !actual_is_opaque {
                                 substs.insert(name.to_string(), actual_ty.clone());
@@ -1642,13 +1681,99 @@ impl MirLowering {
                     return Ok(());
                 }
 
-                if let Some(path_args) = path.segments.last().and_then(|seg| seg.args.as_ref()) {
+                let path_args = path.segments.last().and_then(|seg| seg.args.as_ref());
+                if let Some(path_args) = path_args {
                     if let TyKind::Adt(_, adt_substs) = &actual_ty.kind {
                         for (arg, subst) in path_args.args.iter().zip(adt_substs.iter()) {
                             let mir::ty::GenericArg::Type(actual_arg_ty) = subst else {
                                 continue;
                             };
                             if let hir::GenericArg::Type(type_arg) = arg {
+                                self.infer_generic_from_type_expr(
+                                    type_arg.as_ref(),
+                                    actual_arg_ty,
+                                    generics,
+                                    substs,
+                                    span,
+                                )?;
+                            }
+                        }
+                    }
+                }
+
+                if let (Some(path_args), Some(hir::Res::Def(def_id))) =
+                    (path_args, path.res.as_ref())
+                {
+                    if self.enum_defs.contains_key(def_id) {
+                        let mut candidates: Vec<&EnumLayout> = self
+                            .enum_layouts
+                            .values()
+                            .filter(|layout| layout.def_id == *def_id)
+                            .collect();
+                        if !candidates.is_empty() {
+                            let exact: Vec<&EnumLayout> = candidates
+                                .iter()
+                                .copied()
+                                .filter(|layout| layout.enum_ty == *actual_ty)
+                                .collect();
+                            if !exact.is_empty() {
+                                candidates = exact;
+                            }
+                        }
+                        if !candidates.is_empty() {
+                            let mut scored: Vec<(&EnumLayout, usize, usize, String)> = candidates
+                                .into_iter()
+                                .map(|layout| {
+                                    let mut mismatch = 0;
+                                    let mut actual_iter = layout.args.iter();
+                                    for arg in &path_args.args {
+                                        let hir::GenericArg::Type(type_arg) = arg else {
+                                            continue;
+                                        };
+                                        let Some(actual_arg_ty) = actual_iter.next() else {
+                                            break;
+                                        };
+                                        if let hir::TypeExprKind::Path(type_path) =
+                                            &type_arg.kind
+                                        {
+                                            if type_path.segments.len() == 1
+                                                && type_path.segments[0].args.is_none()
+                                            {
+                                                let name = type_path.segments[0].name.as_str();
+                                                if let Some(existing) = substs.get(name) {
+                                                    if existing != actual_arg_ty
+                                                        && !matches!(
+                                                            existing.kind,
+                                                            TyKind::Error(_) | TyKind::Infer(_)
+                                                        )
+                                                    {
+                                                        mismatch = mismatch.saturating_add(1);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    let unresolved = layout
+                                        .args
+                                        .iter()
+                                        .filter(|ty| self.has_unresolved_ty(ty))
+                                        .count();
+                                    let repr = format!("{:?}", layout.args);
+                                    (layout, mismatch, unresolved, repr)
+                                })
+                                .collect();
+                            scored.sort_by(|a, b| {
+                                (a.1, a.2, &a.3).cmp(&(b.1, b.2, &b.3))
+                            });
+                            let layout = scored[0].0;
+                            let mut actual_iter = layout.args.iter();
+                            for arg in &path_args.args {
+                                let hir::GenericArg::Type(type_arg) = arg else {
+                                    continue;
+                                };
+                                let Some(actual_arg_ty) = actual_iter.next() else {
+                                    break;
+                                };
                                 self.infer_generic_from_type_expr(
                                     type_arg.as_ref(),
                                     actual_arg_ty,
@@ -2559,6 +2684,13 @@ impl MirLowering {
             self.enum_variant_names
                 .entry(variant.name.clone())
                 .or_insert(variant.def_id);
+            let enum_tail = terminal_segment(&name);
+            if enum_tail != name {
+                let short_name = format!("{}::{}", enum_tail, variant.name);
+                self.enum_variant_names
+                    .entry(short_name)
+                    .or_insert(variant.def_id);
+            }
         }
 
         self.enum_defs.insert(
@@ -3120,6 +3252,13 @@ impl MirLowering {
             self.enum_variant_names
                 .entry(variant.name.as_str().to_string())
                 .or_insert(variant.def_id);
+            let enum_tail = terminal_segment(enm.name.as_str());
+            if enum_tail != enm.name.as_str() {
+                let short_name = format!("{}::{}", enum_tail, variant.name.as_str());
+                self.enum_variant_names
+                    .entry(short_name)
+                    .or_insert(variant.def_id);
+            }
         }
 
         self.enum_defs.insert(
@@ -3230,6 +3369,38 @@ impl MirLowering {
         }
     }
 
+    fn enum_variant_payloads_for_args(
+        &mut self,
+        variant: &EnumVariantInfo,
+        args: &[Ty],
+        span: Span,
+    ) -> Option<Vec<Ty>> {
+        let enum_def = self.enum_defs.get(&variant.enum_def)?.clone();
+        if enum_def.generics.len() != args.len() {
+            self.emit_error(
+                span,
+                format!(
+                    "enum `{}` expects {} generic arguments, got {}",
+                    enum_def.name,
+                    enum_def.generics.len(),
+                    args.len()
+                ),
+            );
+            return None;
+        }
+
+        let mut substs = HashMap::new();
+        for (name, ty) in enum_def.generics.iter().zip(args.iter().cloned()) {
+            substs.insert(name.clone(), ty);
+        }
+        let variant_def = enum_def
+            .variants
+            .iter()
+            .find(|def| def.def_id == variant.def_id)?
+            .clone();
+        Some(self.enum_payload_types(&variant_def.payload, &substs))
+    }
+
     fn enum_layout_for_instance(
         &mut self,
         def_id: hir::DefId,
@@ -3252,6 +3423,8 @@ impl MirLowering {
         if self.enum_layouts_in_progress.contains(&key) {
             let opaque = self.opaque_ty(&enum_def.name);
             return Some(EnumLayout {
+                def_id,
+                args: args.to_vec(),
                 tag_ty: Ty {
                     kind: TyKind::Int(IntTy::Isize),
                 },
@@ -3345,6 +3518,8 @@ impl MirLowering {
         };
 
         let layout = EnumLayout {
+            def_id,
+            args: args.to_vec(),
             tag_ty: tag_ty.clone(),
             payload_tys: payload_layout.clone(),
             enum_ty: enum_ty.clone(),
@@ -3700,16 +3875,7 @@ impl MirLowering {
                 }
             };
 
-        let struct_name = match self.struct_name_from_type(&impl_block.self_ty) {
-            Some(name) => name,
-            None => {
-                self.emit_error(
-                    item.span,
-                    "impl self type could not be resolved to a struct",
-                );
-                return Ok(());
-            }
-        };
+        let struct_name = self.struct_name_from_type(&impl_block.self_ty);
 
         let method_context = self.make_method_context(&impl_block.self_ty);
         let impl_is_generic = !impl_block.generics.params.is_empty();
@@ -3718,7 +3884,10 @@ impl MirLowering {
             match &impl_item.kind {
                 hir::ImplItemKind::Method(function) => {
                     let method_name = function.sig.name.as_str();
-                    let is_hashmap_impl = struct_name.ends_with("HashMap");
+                    let is_hashmap_impl = struct_name
+                        .as_deref()
+                        .map(|name| name.ends_with("HashMap"))
+                        .unwrap_or(false);
                     let is_hashmap_method = matches!(method_name, "from" | "len" | "get_unchecked")
                         || method_name.ends_with("::from")
                         || method_name.ends_with("::len")
@@ -3727,7 +3896,10 @@ impl MirLowering {
                         continue;
                     }
                     if impl_is_generic || !function.sig.generics.params.is_empty() {
-                        let qualified_name = format!("{}::{}", struct_name, function.sig.name);
+                        let qualified_name = match struct_name.as_deref() {
+                            Some(name) => format!("{}::{}", name, function.sig.name),
+                            None => function.sig.name.as_str().to_string(),
+                        };
                         let def = MethodDefinition {
                             function: function.clone(),
                             impl_generics: impl_block.generics.clone(),
@@ -3743,43 +3915,45 @@ impl MirLowering {
                         self.lower_method(program, function, item.span, method_context.as_ref())?;
                     emit_function(self, mir_item, body_id, body);
 
-                    let struct_prefix = method_context
-                        .as_ref()
-                        .and_then(|ctx| {
-                            if ctx.path.is_empty() {
-                                None
-                            } else {
-                                Some(
-                                    ctx.path
-                                        .iter()
-                                        .map(|seg| seg.name.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join("::"),
-                                )
-                            }
-                        })
-                        .unwrap_or_else(|| struct_name.clone());
-                    let fn_name = format!("{}::{}", struct_prefix, function.sig.name.as_str());
-                    let fn_ty = self.function_pointer_ty(&sig);
-                    let struct_def = method_context.as_ref().and_then(|ctx| ctx.def_id);
-                    let method_tail = terminal_segment(function.sig.name.as_str()).to_string();
-                    let impl_item_tail = terminal_segment(impl_item.name.as_str()).to_string();
-                    let info = MethodLoweringInfo {
-                        sig: sig.clone(),
-                        fn_name: fn_name.clone(),
-                        fn_ty: fn_ty.clone(),
-                        struct_def,
-                    };
+                    if let Some(struct_name) = struct_name.as_deref() {
+                        let struct_prefix = method_context
+                            .as_ref()
+                            .and_then(|ctx| {
+                                if ctx.path.is_empty() {
+                                    None
+                                } else {
+                                    Some(
+                                        ctx.path
+                                            .iter()
+                                            .map(|seg| seg.name.as_str())
+                                            .collect::<Vec<_>>()
+                                            .join("::"),
+                                    )
+                                }
+                            })
+                            .unwrap_or_else(|| struct_name.to_string());
+                        let fn_name = format!("{}::{}", struct_prefix, function.sig.name.as_str());
+                        let fn_ty = self.function_pointer_ty(&sig);
+                        let struct_def = method_context.as_ref().and_then(|ctx| ctx.def_id);
+                        let method_tail = terminal_segment(function.sig.name.as_str()).to_string();
+                        let impl_item_tail = terminal_segment(impl_item.name.as_str()).to_string();
+                        let info = MethodLoweringInfo {
+                            sig: sig.clone(),
+                            fn_name: fn_name.clone(),
+                            fn_ty: fn_ty.clone(),
+                            struct_def,
+                        };
 
-                    self.method_lookup.insert(fn_name.clone(), info.clone());
-                    self.method_lookup
-                        .insert(format!("{}::{}", struct_name, method_tail), info.clone());
-                    self.method_lookup
-                        .insert(format!("{}::{}", struct_name, impl_item_tail), info.clone());
-                    self.struct_methods
-                        .entry(struct_name.clone())
-                        .or_default()
-                        .insert(method_tail, info);
+                        self.method_lookup.insert(fn_name.clone(), info.clone());
+                        self.method_lookup
+                            .insert(format!("{}::{}", struct_name, method_tail), info.clone());
+                        self.method_lookup
+                            .insert(format!("{}::{}", struct_name, impl_item_tail), info.clone());
+                        self.struct_methods
+                            .entry(struct_name.to_string())
+                            .or_default()
+                            .insert(method_tail, info);
+                    }
                 }
                 hir::ImplItemKind::AssocConst(_const_item) => {
                     // TODO: lower associated constants when needed
@@ -4765,6 +4939,28 @@ impl MirLowering {
         }
     }
 
+    fn enum_layout_for_concrete_ty(&mut self, ty: &Ty, span: Span) -> Option<EnumLayout> {
+        match &ty.kind {
+            TyKind::Ref(_, inner, _) => self.enum_layout_for_concrete_ty(inner, span),
+            TyKind::RawPtr(type_and_mut) => {
+                self.enum_layout_for_concrete_ty(&type_and_mut.ty, span)
+            }
+            TyKind::Adt(adt, substs) => {
+                if !self.enum_defs.contains_key(&adt.did) {
+                    return None;
+                }
+                let mut args = Vec::new();
+                for arg in substs {
+                    if let mir::ty::GenericArg::Type(inner) = arg {
+                        args.push(inner.clone());
+                    }
+                }
+                self.enum_layout_for_instance(adt.did, &args, span)
+            }
+            _ => None,
+        }
+    }
+
     pub fn take_diagnostics(&mut self) -> (Vec<Diagnostic>, bool) {
         let diagnostics = std::mem::take(&mut self.diagnostics);
         let has_errors = std::mem::replace(&mut self.has_errors, false);
@@ -5087,6 +5283,179 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
+    fn enum_layout_for_ty(&mut self, ty: &Ty, span: Span) -> Option<EnumLayout> {
+        self.lowering
+            .enum_layout_for_concrete_ty(ty, span)
+            .or_else(|| self.lowering.enum_layout_for_ty(ty).cloned())
+    }
+
+    fn enum_layout_for_variant(
+        &mut self,
+        variant: &EnumVariantInfo,
+        ty_hint: Option<&Ty>,
+        span: Span,
+    ) -> Option<EnumLayout> {
+        let Some(ty_hint) = ty_hint else {
+            return None;
+        };
+        self.enum_layout_for_variant_ty(variant, ty_hint, span)
+    }
+
+    fn enum_layout_for_variant_ty(
+        &mut self,
+        variant: &EnumVariantInfo,
+        ty_hint: &Ty,
+        span: Span,
+    ) -> Option<EnumLayout> {
+        match &ty_hint.kind {
+            TyKind::Ref(_, inner, _) => self.enum_layout_for_variant_ty(variant, inner, span),
+            TyKind::RawPtr(type_and_mut) => {
+                self.enum_layout_for_variant_ty(variant, &type_and_mut.ty, span)
+            }
+            TyKind::Adt(adt, substs) => {
+                if adt.did != variant.enum_def {
+                    return None;
+                }
+                let mut args = Vec::new();
+                for arg in substs {
+                    if let mir::ty::GenericArg::Type(inner) = arg {
+                        args.push(inner.clone());
+                    }
+                }
+                let mut layout = self.lowering.enum_layout_for_instance(adt.did, &args, span)?;
+                if !layout.variant_payloads.contains_key(&variant.def_id) {
+                    if let Some(payloads) =
+                        self.lowering.enum_variant_payloads_for_args(variant, &args, span)
+                    {
+                        layout.variant_payloads.insert(variant.def_id, payloads);
+                    }
+                }
+                Some(layout)
+            }
+            _ => None,
+        }
+    }
+
+    fn infer_enum_args_from_expected_ty(
+        &self,
+        enum_def: hir::DefId,
+        expected_ty: &Ty,
+    ) -> Option<Vec<Ty>> {
+        match &expected_ty.kind {
+            TyKind::Ref(_, inner, _) => {
+                self.infer_enum_args_from_expected_ty(enum_def, inner)
+            }
+            TyKind::RawPtr(type_and_mut) => {
+                self.infer_enum_args_from_expected_ty(enum_def, &type_and_mut.ty)
+            }
+            TyKind::Adt(adt, substs) => {
+                if adt.did != enum_def {
+                    return None;
+                }
+                let mut args = Vec::new();
+                for arg in substs {
+                    if let mir::ty::GenericArg::Type(inner) = arg {
+                        args.push(inner.clone());
+                    }
+                }
+                if args.is_empty() {
+                    None
+                } else {
+                    Some(args)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn variant_payloads_from_layout_or_ty(
+        &mut self,
+        layout: &EnumLayout,
+        variant: &EnumVariantInfo,
+        scrutinee_ty: &Ty,
+        span: Span,
+    ) -> Vec<Ty> {
+        if let Some(payloads) = layout.variant_payloads.get(&variant.def_id) {
+            return payloads.clone();
+        }
+        if layout.def_id == variant.enum_def {
+            if let Some(payloads) =
+                self.lowering
+                    .enum_variant_payloads_for_args(variant, &layout.args, span)
+            {
+                return payloads;
+            }
+        }
+
+        let mut ty = scrutinee_ty;
+        if let TyKind::Ref(_, inner, _) = &ty.kind {
+            ty = inner.as_ref();
+        }
+        if let TyKind::RawPtr(type_and_mut) = &ty.kind {
+            ty = type_and_mut.ty.as_ref();
+        }
+        if layout.def_id != variant.enum_def {
+            let matching_layout = self
+                .lowering
+                .enum_layouts
+                .iter()
+                .find(|(key, layout)| {
+                    key.def_id == variant.enum_def
+                        && self.ty_matches_with_opaque(&layout.enum_ty, ty)
+                })
+                .map(|(_, layout)| layout.clone());
+            if let Some(matching_layout) = matching_layout {
+                if let Some(payloads) = matching_layout.variant_payloads.get(&variant.def_id) {
+                    return payloads.clone();
+                }
+                if let Some(payloads) = self.lowering.enum_variant_payloads_for_args(
+                    variant,
+                    &matching_layout.args,
+                    span,
+                ) {
+                    return payloads;
+                }
+            }
+        }
+        if let TyKind::Adt(adt, substs) = &ty.kind {
+            if adt.did == variant.enum_def {
+                let mut args = Vec::new();
+                for arg in substs {
+                    if let mir::ty::GenericArg::Type(inner) = arg {
+                        args.push(inner.clone());
+                    }
+                }
+                if let Some(payloads) =
+                    self.lowering
+                        .enum_variant_payloads_for_args(variant, &args, span)
+                {
+                    return payloads;
+                }
+            }
+        }
+        if let TyKind::Tuple(fields) = &ty.kind {
+            if fields.len() >= 1 {
+                return fields
+                    .iter()
+                    .skip(1)
+                    .map(|field| (**field).clone())
+                    .collect();
+            }
+        }
+
+        self.lowering.emit_error(
+            span,
+            format!(
+                "enum variant payload layout not registered (variant={:?}, enum_def={:?}, layout_def={:?}, scrutinee_ty={:?})",
+                variant.def_id,
+                variant.enum_def,
+                layout.def_id,
+                scrutinee_ty.kind,
+            ),
+        );
+        Vec::new()
+    }
+
     fn ty_matches(&self, lhs: &Ty, rhs: &Ty) -> bool {
         fn strip_refs<'a>(ty: &'a Ty) -> &'a Ty {
             match &ty.kind {
@@ -5097,6 +5466,46 @@ impl<'a> BodyBuilder<'a> {
         }
 
         strip_refs(lhs) == strip_refs(rhs)
+    }
+
+    fn ty_matches_with_opaque(&self, lhs: &Ty, rhs: &Ty) -> bool {
+        fn strip_refs<'a>(ty: &'a Ty) -> &'a Ty {
+            match &ty.kind {
+                TyKind::Ref(_, inner, _) => strip_refs(inner.as_ref()),
+                TyKind::RawPtr(type_and_mut) => strip_refs(type_and_mut.ty.as_ref()),
+                _ => ty,
+            }
+        }
+
+        fn matches<F>(lhs: &Ty, rhs: &Ty, is_opaque: &F) -> bool
+        where
+            F: Fn(&Ty) -> bool,
+        {
+            let lhs = strip_refs(lhs);
+            let rhs = strip_refs(rhs);
+
+            if is_opaque(lhs) || is_opaque(rhs) {
+                return true;
+            }
+
+            match (&lhs.kind, &rhs.kind) {
+                (TyKind::Tuple(left), TyKind::Tuple(right)) => {
+                    if left.len() != right.len() {
+                        return false;
+                    }
+                    left.iter()
+                        .zip(right.iter())
+                        .all(|(l, r)| matches(l, r, is_opaque))
+                }
+                (TyKind::Array(left, left_len), TyKind::Array(right, right_len)) => {
+                    left_len == right_len && matches(left, right, is_opaque)
+                }
+                (TyKind::Slice(left), TyKind::Slice(right)) => matches(left, right, is_opaque),
+                _ => lhs == rhs,
+            }
+        }
+
+        matches(lhs, rhs, &|ty| self.lowering.is_opaque_ty(ty))
     }
 
     fn lower(mut self) -> Result<mir::Body> {
@@ -5152,7 +5561,18 @@ impl<'a> BodyBuilder<'a> {
             deferred: Vec::new(),
         });
 
-        for stmt in &block.stmts {
+        let mut tail_expr = block.expr.as_deref();
+        let mut stmt_slice = block.stmts.as_slice();
+        if tail_expr.is_none() {
+            if let Some(last) = block.stmts.last() {
+                if let hir::StmtKind::Expr(expr) = &last.kind {
+                    tail_expr = Some(expr);
+                    stmt_slice = &block.stmts[..block.stmts.len().saturating_sub(1)];
+                }
+            }
+        }
+
+        for stmt in stmt_slice {
             self.lower_stmt(stmt)?;
             if self.control_flow_emitted {
                 break;
@@ -5160,7 +5580,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if !self.control_flow_emitted {
-            if let Some(expr) = &block.expr {
+            if let Some(expr) = tail_expr {
                 if let hir::ExprKind::Block(inner) = &expr.kind {
                     self.lower_block(inner)?;
                 } else {
@@ -6021,9 +6441,8 @@ impl<'a> BodyBuilder<'a> {
         if let hir::PatKind::Struct(path, fields, _) = &pat.kind {
             if let Some(variant) = self.enum_variant_info_from_path(path) {
                 let layout = self
-                    .lowering
-                    .enum_layout_for_def(variant.enum_def, span)
-                    .or_else(|| self.lowering.enum_layout_for_ty(scrutinee_ty).cloned());
+                    .enum_layout_for_variant(&variant, Some(scrutinee_ty), span)
+                    .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span));
                 if let Some(layout) = layout {
                     let mut base_place = scrutinee_place.clone();
                     if matches!(scrutinee_ty.kind, TyKind::Ref(_, _, _) | TyKind::RawPtr(_)) {
@@ -6053,11 +6472,12 @@ impl<'a> BodyBuilder<'a> {
                     });
                     let mut combined = mir::Operand::Copy(tag_place_out);
 
-                    let payload_tys = layout
-                        .variant_payloads
-                        .get(&variant.def_id)
-                        .cloned()
-                        .unwrap_or_default();
+                    let payload_tys = self.variant_payloads_from_layout_or_ty(
+                        &layout,
+                        &variant,
+                        scrutinee_ty,
+                        span,
+                    );
                     for (idx, field) in fields.iter().enumerate() {
                         if idx >= payload_tys.len() {
                             break;
@@ -6222,9 +6642,8 @@ impl<'a> BodyBuilder<'a> {
         if let hir::PatKind::TupleStruct(path, parts) = &pat.kind {
             if let Some(variant) = self.enum_variant_info_from_path(path) {
                 let layout = self
-                    .lowering
-                    .enum_layout_for_def(variant.enum_def, span)
-                    .or_else(|| self.lowering.enum_layout_for_ty(scrutinee_ty).cloned());
+                    .enum_layout_for_variant(&variant, Some(scrutinee_ty), span)
+                    .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span));
                 if let Some(layout) = layout {
                     let mut base_place = scrutinee_place.clone();
                     if matches!(scrutinee_ty.kind, TyKind::Ref(_, _, _) | TyKind::RawPtr(_)) {
@@ -6254,11 +6673,12 @@ impl<'a> BodyBuilder<'a> {
                     });
                     let mut combined = mir::Operand::Copy(tag_place_out);
 
-                    let payload_tys = layout
-                        .variant_payloads
-                        .get(&variant.def_id)
-                        .cloned()
-                        .unwrap_or_default();
+                    let payload_tys = self.variant_payloads_from_layout_or_ty(
+                        &layout,
+                        &variant,
+                        scrutinee_ty,
+                        span,
+                    );
                     for (idx, part) in parts.iter().enumerate() {
                         if idx >= payload_tys.len() {
                             break;
@@ -6370,11 +6790,12 @@ impl<'a> BodyBuilder<'a> {
                 | hir::PatKind::Struct(path, _, _)
                 | hir::PatKind::TupleStruct(path, _) => self
                     .enum_variant_info_from_path(path)
-                    // Prefer the enum definition for this variant to avoid matching on a
-                    // structurally identical enum layout from another type.
-                    .and_then(|variant| self.lowering.enum_layout_for_def(variant.enum_def, span))
-                    .or_else(|| self.lowering.enum_layout_for_ty(scrutinee_ty).cloned()),
-                _ => self.lowering.enum_layout_for_ty(scrutinee_ty).cloned(),
+                    .and_then(|variant| {
+                        self.enum_layout_for_variant(&variant, Some(scrutinee_ty), span)
+                            .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span))
+                    })
+                    .or_else(|| self.enum_layout_for_ty(scrutinee_ty, span)),
+                _ => self.enum_layout_for_ty(scrutinee_ty, span),
             };
             if let Some(layout) = layout {
                 let mut tag_place = scrutinee_place.clone();
@@ -6472,9 +6893,12 @@ impl<'a> BodyBuilder<'a> {
             | hir::PatKind::Struct(path, _, _)
             | hir::PatKind::TupleStruct(path, _) => self
                 .enum_variant_info_from_path(path)
-                .and_then(|variant| self.lowering.enum_layout_for_def(variant.enum_def, span))
-                .or_else(|| self.lowering.enum_layout_for_ty(scrutinee_ty).cloned()),
-            _ => self.lowering.enum_layout_for_ty(scrutinee_ty).cloned(),
+                .and_then(|variant| {
+                    self.enum_layout_for_variant(&variant, Some(scrutinee_ty), span)
+                        .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span))
+                })
+                .or_else(|| self.enum_layout_for_ty(scrutinee_ty, span)),
+            _ => self.enum_layout_for_ty(scrutinee_ty, span),
         };
         if let Some(layout) = layout {
             let mut scrutinee_place = scrutinee_place.clone();
@@ -6489,15 +6913,8 @@ impl<'a> BodyBuilder<'a> {
                 }
                 hir::PatKind::TupleStruct(path, parts) => {
                     if let Some(variant) = self.enum_variant_info_from_path(path) {
-                        let payload_tys = layout
-                            .variant_payloads
-                            .get(&variant.def_id)
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                self.lowering
-                                    .emit_error(span, "enum variant payload layout not registered");
-                                Vec::new()
-                            });
+                        let payload_tys =
+                            self.variant_payloads_from_layout_or_ty(&layout, &variant, scrutinee_ty, span);
                         for (idx, part) in parts.iter().enumerate() {
                             if idx >= payload_tys.len() {
                                 break;
@@ -6514,15 +6931,8 @@ impl<'a> BodyBuilder<'a> {
                 }
                 hir::PatKind::Struct(path, fields, _) => {
                     if let Some(variant) = self.enum_variant_info_from_path(path) {
-                        let payload_tys = layout
-                            .variant_payloads
-                            .get(&variant.def_id)
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                self.lowering
-                                    .emit_error(span, "enum variant payload layout not registered");
-                                Vec::new()
-                            });
+                        let payload_tys =
+                            self.variant_payloads_from_layout_or_ty(&layout, &variant, scrutinee_ty, span);
                         for (idx, field) in fields.iter().enumerate() {
                             if idx >= payload_tys.len() {
                                 break;
@@ -6871,6 +7281,7 @@ impl<'a> BodyBuilder<'a> {
                             mir::Place::from_local(local_id),
                             &variant,
                             &layout,
+                            Some(&layout.enum_ty),
                             place_info.place,
                             expr.span,
                         )?;
@@ -6889,6 +7300,7 @@ impl<'a> BodyBuilder<'a> {
                         mir::Place::from_local(local_id),
                         &variant,
                         &layout,
+                        Some(expected_ty),
                         place_info.place,
                         expr.span,
                     )?;
@@ -6898,7 +7310,7 @@ impl<'a> BodyBuilder<'a> {
             }
         }
         if let Some(expected_ty) = annotated_ty {
-            if self.lowering.enum_layout_for_ty(expected_ty).is_some()
+            if self.enum_layout_for_ty(expected_ty, expr.span).is_some()
                 && matches!(
                     expr.kind,
                     hir::ExprKind::Literal(_)
@@ -6924,6 +7336,7 @@ impl<'a> BodyBuilder<'a> {
                         mir::Place::from_local(local_id),
                         &variant,
                         &layout,
+                        Some(expected_ty),
                         payload_place,
                         expr.span,
                     )?;
@@ -7005,6 +7418,10 @@ impl<'a> BodyBuilder<'a> {
             if let Some(info) = self.lowering.enum_variants.get(def_id) {
                 return Some(info.clone());
             }
+            return None;
+        }
+        if path.res.is_some() {
+            return None;
         }
 
         let name = path
@@ -7020,13 +7437,55 @@ impl<'a> BodyBuilder<'a> {
             .cloned()
     }
 
+    fn enum_variant_info_from_expected(
+        &self,
+        path: &hir::Path,
+        expected_ty: Option<&Ty>,
+    ) -> Option<EnumVariantInfo> {
+        let expected_ty = expected_ty?;
+        let enum_def = match &expected_ty.kind {
+            TyKind::Ref(_, inner, _) => {
+                return self.enum_variant_info_from_expected(path, Some(inner.as_ref()))
+            }
+            TyKind::RawPtr(type_and_mut) => {
+                return self.enum_variant_info_from_expected(path, Some(type_and_mut.ty.as_ref()))
+            }
+            TyKind::Adt(adt, _) => adt.did,
+            _ => return None,
+        };
+
+        let name = path
+            .segments
+            .iter()
+            .map(|seg| seg.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        let def_id = self
+            .lowering
+            .enum_variant_names
+            .get(&name)
+            .copied()
+            .or_else(|| {
+                path.segments
+                    .last()
+                    .and_then(|seg| self.lowering.enum_variant_names.get(seg.name.as_str()))
+                    .copied()
+            })?;
+        let info = self.lowering.enum_variants.get(&def_id)?.clone();
+        if info.enum_def == enum_def {
+            Some(info)
+        } else {
+            None
+        }
+    }
+
     fn enum_variant_for_payload(
         &mut self,
         expected_ty: &Ty,
         payload_ty: &Ty,
         payload_def: Option<hir::DefId>,
     ) -> Option<(EnumVariantInfo, EnumLayout)> {
-        let layout = self.lowering.enum_layout_for_ty(expected_ty)?.clone();
+        let layout = self.enum_layout_for_ty(expected_ty, self.span)?;
         let enum_def = self.enum_def_from_ty(expected_ty);
         for (def_id, payloads) in &layout.variant_payloads {
             let matches = if payloads.is_empty() {
@@ -7101,18 +7560,16 @@ impl<'a> BodyBuilder<'a> {
         place: mir::Place,
         variant: &EnumVariantInfo,
         layout: &EnumLayout,
+        scrutinee_ty: Option<&Ty>,
         args: &[hir::CallArg],
         span: Span,
     ) -> Result<()> {
-        let payload_tys = layout
-            .variant_payloads
-            .get(&variant.def_id)
-            .cloned()
-            .unwrap_or_else(|| {
-                self.lowering
-                    .emit_error(span, "enum variant payload layout not registered");
-                Vec::new()
-            });
+        let payload_tys = self.enum_variant_payloads_for_layout(
+            layout,
+            variant,
+            scrutinee_ty.unwrap_or(&layout.enum_ty),
+            span,
+        );
 
         if args.len() != payload_tys.len() {
             self.lowering.emit_error(
@@ -7156,23 +7613,31 @@ impl<'a> BodyBuilder<'a> {
         Ok(())
     }
 
+    fn enum_variant_payloads_for_layout(
+        &mut self,
+        layout: &EnumLayout,
+        variant: &EnumVariantInfo,
+        scrutinee_ty: &Ty,
+        span: Span,
+    ) -> Vec<Ty> {
+        self.variant_payloads_from_layout_or_ty(layout, variant, scrutinee_ty, span)
+    }
+
     fn assign_enum_variant_from_place(
         &mut self,
         place: mir::Place,
         variant: &EnumVariantInfo,
         layout: &EnumLayout,
+        scrutinee_ty: Option<&Ty>,
         payload_place: mir::Place,
         span: Span,
     ) -> Result<()> {
-        let payload_tys = layout
-            .variant_payloads
-            .get(&variant.def_id)
-            .cloned()
-            .unwrap_or_else(|| {
-                self.lowering
-                    .emit_error(span, "enum variant payload layout not registered");
-                Vec::new()
-            });
+        let payload_tys = self.enum_variant_payloads_for_layout(
+            layout,
+            variant,
+            scrutinee_ty.unwrap_or(&layout.enum_ty),
+            span,
+        );
 
         let mut operands = Vec::with_capacity(1 + layout.payload_tys.len());
         operands.push(mir::Operand::Constant(mir::Constant {
@@ -7211,12 +7676,13 @@ impl<'a> BodyBuilder<'a> {
         &mut self,
         variant: &EnumVariantInfo,
         layout: &EnumLayout,
+        expected_ty: Option<&Ty>,
         args: &[hir::CallArg],
         span: Span,
     ) -> Result<OperandInfo> {
         let local_id = self.allocate_temp(layout.enum_ty.clone(), span);
         let place = mir::Place::from_local(local_id);
-        self.assign_enum_variant(place.clone(), variant, layout, args, span)?;
+        self.assign_enum_variant(place.clone(), variant, layout, expected_ty, args, span)?;
         Ok(OperandInfo {
             operand: mir::Operand::copy(place),
             ty: layout.enum_ty.clone(),
@@ -7245,7 +7711,10 @@ impl<'a> BodyBuilder<'a> {
             annotated_ty,
             self.enum_variant_info_from_path(&resolved_path),
         ) {
-            if let Some(layout) = self.lowering.enum_layout_for_def(variant.enum_def, span) {
+            if let Some(layout) = self
+                .enum_layout_for_variant(&variant, Some(expected_ty), span)
+                .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span))
+            {
                 if layout.enum_ty == *expected_ty {
                     let payload_args: Vec<hir::CallArg> = fields
                         .iter()
@@ -7258,6 +7727,7 @@ impl<'a> BodyBuilder<'a> {
                         mir::Place::from_local(local_id),
                         &variant,
                         &layout,
+                        Some(expected_ty),
                         &payload_args,
                         span,
                     )?;
@@ -7294,7 +7764,7 @@ impl<'a> BodyBuilder<'a> {
 
             if let Some(variant) = self.lowering.enum_variants.get(&def_id).cloned() {
                 let layout = annotated_ty
-                    .and_then(|ty| self.lowering.enum_layout_for_ty(ty).cloned())
+                    .and_then(|ty| self.enum_layout_for_ty(ty, span))
                     .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span));
                 if let Some(layout) = layout {
                     let payload_args: Vec<hir::CallArg> = fields
@@ -7308,6 +7778,7 @@ impl<'a> BodyBuilder<'a> {
                         mir::Place::from_local(local_id),
                         &variant,
                         &layout,
+                        annotated_ty,
                         &payload_args,
                         span,
                     )?;
@@ -7343,7 +7814,7 @@ impl<'a> BodyBuilder<'a> {
 
         if let Some(variant) = self.enum_variant_info_from_path(&resolved_path) {
             let layout = annotated_ty
-                .and_then(|ty| self.lowering.enum_layout_for_ty(ty).cloned())
+                .and_then(|ty| self.enum_layout_for_variant(&variant, Some(ty), span))
                 .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span));
             if let Some(layout) = layout {
                 let payload_args: Vec<hir::CallArg> = fields
@@ -7357,6 +7828,7 @@ impl<'a> BodyBuilder<'a> {
                     mir::Place::from_local(local_id),
                     &variant,
                     &layout,
+                    annotated_ty,
                     &payload_args,
                     span,
                 )?;
@@ -7605,6 +8077,69 @@ impl<'a> BodyBuilder<'a> {
         }
 
         Ok(())
+    }
+
+    fn infer_explicit_args_from_expected_return(
+        &mut self,
+        function: &hir::Function,
+        expected_return: Option<&Ty>,
+    ) -> Option<Vec<Ty>> {
+        if function.sig.generics.params.is_empty() {
+            return None;
+        }
+        let expected_return = expected_return?;
+        let hir::TypeExprKind::Path(path) = &function.sig.output.kind else {
+            return None;
+        };
+        let path_args = path.segments.last().and_then(|seg| seg.args.as_ref())?;
+        let TyKind::Adt(adt, substs) = &expected_return.kind else {
+            return None;
+        };
+        if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+            if *def_id != adt.did {
+                return None;
+            }
+        }
+
+        let mut inferred = Vec::new();
+        let mut actual_iter = substs.iter();
+        for arg in &path_args.args {
+            let hir::GenericArg::Type(type_arg) = arg else {
+                continue;
+            };
+            let Some(actual_arg) = actual_iter.next() else {
+                return None;
+            };
+            let mir::ty::GenericArg::Type(actual_ty) = actual_arg else {
+                return None;
+            };
+            let hir::TypeExprKind::Path(type_path) = &type_arg.kind else {
+                return None;
+            };
+            if type_path.segments.len() != 1 || type_path.segments[0].args.is_some() {
+                return None;
+            }
+            let name = type_path.segments[0].name.as_str();
+            if !function
+                .sig
+                .generics
+                .params
+                .iter()
+                .any(|param| param.name.as_str() == name)
+            {
+                return None;
+            }
+            if matches!(actual_ty.kind, TyKind::Error(_) | TyKind::Infer(_)) {
+                return None;
+            }
+            inferred.push(actual_ty.clone());
+        }
+
+        if inferred.len() != function.sig.generics.params.len() {
+            return None;
+        }
+
+        Some(inferred)
     }
 
     fn lower_call(
@@ -8046,27 +8581,41 @@ impl<'a> BodyBuilder<'a> {
             }
         }
         if let hir::ExprKind::Path(path) = &callee.kind {
-            if let Some(variant) = self.enum_variant_info_from_path(path) {
+            let variant = self
+                .enum_variant_info_from_path(path)
+                .or_else(|| self.enum_variant_info_from_expected(path, destination.as_ref().map(|(_, ty)| ty)));
+            if let Some(variant) = variant {
+                let explicit_enum_args = path
+                    .segments
+                    .last()
+                    .and_then(|segment| segment.args.as_ref())
+                    .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
+                    .unwrap_or_default();
                 let mut layout = destination
                     .as_ref()
-                    .and_then(|(_, ty)| self.lowering.enum_layout_for_ty(ty).cloned());
+                    .and_then(|(_, ty)| self.enum_layout_for_variant(&variant, Some(ty), expr.span));
                 if layout.is_none() {
-                    let args = path
-                        .segments
-                        .last()
-                        .and_then(|segment| segment.args.as_ref())
-                        .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
-                        .unwrap_or_default();
-                    if !args.is_empty() {
+                    if !explicit_enum_args.is_empty() {
                         layout = self.lowering.enum_layout_for_instance(
                             variant.enum_def,
-                            &args,
+                            &explicit_enum_args,
                             expr.span,
                         );
-                    } else {
-                        layout = self
-                            .lowering
-                            .enum_layout_for_def(variant.enum_def, expr.span);
+                    } else if let Some((_, expected_ty)) = destination.as_ref() {
+                        if let Some(inferred_args) = self.infer_enum_args_from_expected_ty(
+                            variant.enum_def,
+                            expected_ty,
+                        ) {
+                            layout = self.lowering.enum_layout_for_instance(
+                                variant.enum_def,
+                                &inferred_args,
+                                expr.span,
+                            );
+                        }
+                    }
+                    if layout.is_none() {
+                        layout =
+                            self.lowering.enum_layout_for_def(variant.enum_def, expr.span);
                     }
                 }
 
@@ -8078,7 +8627,15 @@ impl<'a> BodyBuilder<'a> {
                             let local_id = self.allocate_temp(layout.enum_ty.clone(), expr.span);
                             mir::Place::from_local(local_id)
                         });
-                    self.assign_enum_variant(place.clone(), &variant, &layout, args, expr.span)?;
+                    let expected_ty = destination.as_ref().map(|(_, ty)| ty);
+                    self.assign_enum_variant(
+                        place.clone(),
+                        &variant,
+                        &layout,
+                        expected_ty,
+                        args,
+                        expr.span,
+                    )?;
                     if (place.local as usize) < self.locals.len() {
                         self.locals[place.local as usize].ty = layout.enum_ty.clone();
                     }
@@ -8607,12 +9164,21 @@ impl<'a> BodyBuilder<'a> {
 
         if let Some(def_id) = generic_def_id {
             if let Some(function) = self.lowering.generic_function_defs.get(&def_id).cloned() {
+                if explicit_args.is_empty() {
+                    if let Some(inferred) = self.infer_explicit_args_from_expected_return(
+                        &function,
+                        destination.as_ref().map(|(_, ty)| ty),
+                    ) {
+                        explicit_args = inferred;
+                    }
+                }
                 let info = self.lowering.ensure_function_specialization(
                     self.program,
                     def_id,
                     &function,
                     &explicit_args,
                     &arg_types,
+                    destination.as_ref().map(|(_, ty)| ty),
                     expr.span,
                 )?;
                 func_operand = mir::Operand::Constant(mir::Constant {
@@ -8646,6 +9212,7 @@ impl<'a> BodyBuilder<'a> {
                 &def,
                 &explicit_args,
                 &arg_types,
+                destination.as_ref().map(|(_, ty)| ty),
                 expr.span,
             )?;
             func_operand = mir::Operand::Constant(mir::Constant {
@@ -8734,7 +9301,7 @@ impl<'a> BodyBuilder<'a> {
             let Some(expected_ty) = sig.inputs.get(idx) else {
                 continue;
             };
-            if self.lowering.enum_layout_for_ty(expected_ty).is_none() {
+            if self.enum_layout_for_ty(expected_ty, expr.span).is_none() {
                 continue;
             }
 
@@ -8759,6 +9326,7 @@ impl<'a> BodyBuilder<'a> {
                     enum_place.clone(),
                     &variant,
                     &layout,
+                    Some(expected_ty),
                     place,
                     expr.span,
                 )?;
@@ -9233,6 +9801,7 @@ impl<'a> BodyBuilder<'a> {
                         enum_place.clone(),
                         &variant,
                         &layout,
+                        Some(expected_ty),
                         place.place.clone(),
                         expr.span,
                     )?;
@@ -9407,6 +9976,7 @@ impl<'a> BodyBuilder<'a> {
                                 &function,
                                 &[],
                                 &expected_sig.inputs,
+                                Some(&expected_sig.output),
                                 expr.span,
                             )?;
                             return Ok(OperandInfo {
@@ -9424,7 +9994,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                     if let Some(variant) = self.lowering.enum_variants.get(def_id).cloned() {
                         let mut layout =
-                            expected.and_then(|ty| self.lowering.enum_layout_for_ty(ty).cloned());
+                            expected.and_then(|ty| self.enum_layout_for_variant(&variant, Some(ty), expr.span));
                         if layout.is_none() {
                             let args = resolved_path
                                 .segments
@@ -9448,6 +10018,7 @@ impl<'a> BodyBuilder<'a> {
                             return self.lower_enum_variant_value(
                                 &variant,
                                 &layout,
+                                expected,
                                 &[],
                                 expr.span,
                             );
@@ -9525,6 +10096,47 @@ impl<'a> BodyBuilder<'a> {
                             operand: mir::Operand::copy(place),
                             ty,
                         });
+                    }
+                }
+
+                if resolved_path.res.is_none() {
+                    if let Some(variant) = self.enum_variant_info_from_path(&resolved_path) {
+                        let mut layout = expected
+                            .and_then(|ty| self.enum_layout_for_variant(&variant, Some(ty), expr.span));
+                        if layout.is_none() {
+                            let args = resolved_path
+                                .segments
+                                .last()
+                                .and_then(|segment| segment.args.as_ref())
+                                .map(|args| {
+                                    self.lowering.lower_generic_args(Some(args), expr.span)
+                                })
+                                .unwrap_or_default();
+                            if !args.is_empty() {
+                                layout = self.lowering.enum_layout_for_instance(
+                                    variant.enum_def,
+                                    &args,
+                                    expr.span,
+                                );
+                            } else {
+                                layout = self
+                                    .lowering
+                                    .enum_layout_for_def(variant.enum_def, expr.span);
+                            }
+                        }
+                        if let Some(layout) = layout {
+                            return self.lower_enum_variant_value(
+                                &variant,
+                                &layout,
+                                expected,
+                                &[],
+                                expr.span,
+                            );
+                        }
+                        self.lowering.emit_error(
+                            expr.span,
+                            "unable to resolve enum layout for variant value",
+                        );
                     }
                 }
 
@@ -13596,6 +14208,7 @@ impl<'a> BodyBuilder<'a> {
                                     &def,
                                     &[],
                                     &arg_types,
+                                    Some(&place_info.ty),
                                     expr.span,
                                 )?;
 
@@ -13680,6 +14293,7 @@ impl<'a> BodyBuilder<'a> {
                                     &def,
                                     &[],
                                     &arg_types,
+                                    Some(&place_info.ty),
                                     expr.span,
                                 )?;
 

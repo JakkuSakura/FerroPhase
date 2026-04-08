@@ -1524,6 +1524,14 @@ fn render_pattern(pattern: &Pattern) -> String {
             format!("{{ {} }}", fields)
         }
         PatternKind::Box(bx) => format!("box {}", render_pattern(&bx.pattern)),
+        PatternKind::Ref(reference) => {
+            let mut out = "&".to_string();
+            if reference.mutability.unwrap_or(false) {
+                out.push_str("mut ");
+            }
+            out.push_str(&render_pattern(&reference.pattern));
+            out
+        }
         PatternKind::Variant(variant) => {
             let mut out = render_expr_inline(&variant.name);
             if let Some(inner) = &variant.pattern {

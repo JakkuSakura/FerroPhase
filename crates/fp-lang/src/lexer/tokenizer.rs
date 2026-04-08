@@ -3,8 +3,8 @@ use super::lexeme::Lexeme;
 use super::lexeme::LexemeKind;
 use super::winnow::{
     backtrack_err, block_comment, is_ident_continue, is_ident_start, line_comment,
-    parse_char_literal, parse_cooked_string_literal, parse_lifetime, parse_raw_identifier,
-    parse_raw_string_literal, whitespace, ws, MULTI_PUNCT, SINGLE_PUNCT,
+    parse_byte_char_literal, parse_char_literal, parse_cooked_string_literal, parse_lifetime,
+    parse_raw_identifier, parse_raw_string_literal, whitespace, ws, MULTI_PUNCT, SINGLE_PUNCT,
 };
 use thiserror::Error;
 use unicode_normalization::UnicodeNormalization;
@@ -323,6 +323,9 @@ impl From<ErrMode<ContextError>> for LexerError {
 
 pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
     let mut input = source;
+    if let Some(offset) = frontmatter_end_offset(source) {
+        input = &source[offset..];
+    }
     let mut tokens = Vec::new();
     while !input.is_empty() {
         ws.parse_next(&mut input).map_err(LexerError::from)?;
@@ -366,6 +369,9 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
 
 pub fn lex_lexemes(source: &str) -> Result<Vec<Lexeme>, LexerError> {
     let mut input = source;
+    if let Some(offset) = frontmatter_end_offset(source) {
+        input = &source[offset..];
+    }
     let mut out = Vec::new();
     while !input.is_empty() {
         let before = input;
@@ -412,6 +418,32 @@ pub fn lex_lexemes(source: &str) -> Result<Vec<Lexeme>, LexerError> {
     Ok(out)
 }
 
+fn frontmatter_end_offset(source: &str) -> Option<usize> {
+    let mut pos = 0usize;
+    let first_line_end = source.find('\n').unwrap_or(source.len());
+    let first_line = source[..first_line_end].trim_end_matches('\r');
+    if first_line != "---" {
+        return None;
+    }
+    pos = if first_line_end < source.len() {
+        first_line_end + 1
+    } else {
+        first_line_end
+    };
+    while pos <= source.len() {
+        let line_end = source[pos..].find('\n').map(|i| pos + i).unwrap_or(source.len());
+        let line = source[pos..line_end].trim_end_matches('\r');
+        if line == "---" {
+            return Some(if line_end < source.len() { line_end + 1 } else { line_end });
+        }
+        if line_end >= source.len() {
+            break;
+        }
+        pos = line_end + 1;
+    }
+    None
+}
+
 fn token_parser<'a>() -> impl Parser<&'a str, TokenKind, ContextError> {
     alt((
         raw_byte_string_token,
@@ -421,8 +453,9 @@ fn token_parser<'a>() -> impl Parser<&'a str, TokenKind, ContextError> {
         t_string_token,
         c_string_token,
         string_token,
-        lifetime_token,
+        byte_char_literal_token,
         char_literal_token,
+        lifetime_token,
         raw_identifier_token,
         number_token,
         ident_token,
@@ -460,6 +493,10 @@ fn raw_byte_string_token(input: &mut &str) -> ModalResult<TokenKind> {
 
 fn raw_identifier_token(input: &mut &str) -> ModalResult<TokenKind> {
     parse_raw_identifier(input).map(|_| TokenKind::Ident)
+}
+
+fn byte_char_literal_token(input: &mut &str) -> ModalResult<TokenKind> {
+    parse_byte_char_literal(input).map(|_| TokenKind::StringLiteral)
 }
 
 fn char_literal_token(input: &mut &str) -> ModalResult<TokenKind> {

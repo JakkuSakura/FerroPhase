@@ -79,6 +79,68 @@ impl HirGenerator {
             }
         }
 
+        if resolved.is_none() && path_prefix == PathPrefix::Plain && segments.len() == 1 {
+            let name = segments[0].name.as_str();
+            let canonical = match scope {
+                PathResolutionScope::Value => match name {
+                    "Ok" => Some(QualifiedPath::new(vec![
+                        "std".to_string(),
+                        "result".to_string(),
+                        "Ok".to_string(),
+                    ])),
+                    "Err" => Some(QualifiedPath::new(vec![
+                        "std".to_string(),
+                        "result".to_string(),
+                        "Err".to_string(),
+                    ])),
+                    "Some" => Some(QualifiedPath::new(vec![
+                        "std".to_string(),
+                        "option".to_string(),
+                        "Some".to_string(),
+                    ])),
+                    "None" => Some(QualifiedPath::new(vec![
+                        "std".to_string(),
+                        "option".to_string(),
+                        "None".to_string(),
+                    ])),
+                    _ => None,
+                },
+                PathResolutionScope::Type => match name {
+                    "Result" => Some(QualifiedPath::new(vec![
+                        "std".to_string(),
+                        "result".to_string(),
+                        "Result".to_string(),
+                    ])),
+                    "Option" => Some(QualifiedPath::new(vec![
+                        "std".to_string(),
+                        "option".to_string(),
+                        "Option".to_string(),
+                    ])),
+                    _ => None,
+                },
+            };
+            if let Some(canonical) = canonical {
+                let mut canonical_segments = Vec::with_capacity(canonical.segments.len());
+                let offset = canonical.segments.len().saturating_sub(segments.len());
+                for (idx, seg) in canonical.segments.iter().enumerate() {
+                    let args = if idx >= offset {
+                        segments[idx - offset].args.clone()
+                    } else {
+                        None
+                    };
+                    canonical_segments.push(self.make_path_segment(seg, args));
+                }
+                let mut canonical_res = self.lookup_global_res(&canonical, scope);
+                if canonical_res.is_none() && self.module_defs.contains(&canonical) {
+                    canonical_res = Some(hir::Res::Module(canonical.segments.clone()));
+                }
+                return Ok(hir::Path {
+                    segments: canonical_segments,
+                    res: canonical_res,
+                });
+            }
+        }
+
         if segments.len() > 1 && path_prefix == PathPrefix::Plain {
             if let Some(first) = segments.first() {
                 if let Some(hir::Res::Module(module_path)) =
@@ -132,7 +194,10 @@ impl HirGenerator {
                     }
                 }
             }
-            let extern_prelude = HashSet::new();
+            let extern_prelude: HashSet<String> = ["std", "core", "alloc"]
+                .into_iter()
+                .map(|name| name.to_string())
+                .collect();
             let segment_names = segments
                 .iter()
                 .map(|seg| seg.name.as_str().to_string())

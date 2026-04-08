@@ -322,7 +322,7 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         self.function_depth += 1;
 
-        if let (Some(key), Some(receiver_ty)) = (jit_key.as_ref(), receiver_ty.clone()) {
+        if let (Some(key), Some(_receiver_ty)) = (jit_key.as_ref(), receiver_ty.clone()) {
             let receiver_value = match receiver_kind {
                 fp_core::ast::FunctionParamReceiver::Ref
                 | fp_core::ast::FunctionParamReceiver::RefStatic
@@ -336,18 +336,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             };
 
             if let Some(receiver_value) = receiver_value {
-                let mut jit_sig = function.sig.clone();
-                jit_sig.receiver = None;
-                let mut params = Vec::with_capacity(function.sig.params.len() + 1);
-                params.push(FunctionParam::new(Ident::new("self"), receiver_ty));
-                params.extend(function.sig.params.clone());
-                jit_sig.params = params;
-
                 let mut jit_args = Vec::with_capacity(args.len() + 1);
                 jit_args.push(receiver_value);
                 jit_args.extend(args.iter().cloned());
 
-                if let Some(value) = self.try_call_jit(&jit_sig, key, &jit_args) {
+                if let Some(value) = self.try_call_jit(key, &jit_args) {
                     self.function_depth -= 1;
                     self.exception_stack.pop();
                     if impl_context.is_some() {
@@ -398,16 +391,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.function_depth -= 1;
         self.exception_stack.pop();
         if let (Some(jit), Some(key)) = (self.jit.as_ref(), jit_key.clone()) {
-            if jit.record_hotness(&key) {
-                if let Some(input) = self.jit_compile_input(key.clone()) {
-                    if let Err(err) = jit.compile(input) {
-                        self.emit_warning(format!(
-                            "JIT compile failed for {}: {}",
-                            key.canonical_name, err
-                        ));
-                    }
-                }
-            }
+            let _ = jit.record_call(key);
         }
 
         match flow {

@@ -14,7 +14,7 @@ use crate::engine::macro_rules::{expand_macro, parse_macro_rules, MacroRulesDefi
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicFunction;
 use crate::intrinsics::IntrinsicsRegistry;
-use fp_jit::{jit_snapshot_from_items, JitCompileInput, JitKey};
+use fp_jit::{JitCallOutcome, JitKey};
 use fp_core::ast::DecimalType;
 use fp_core::ast::{
     AttrMeta, AttrMetaList, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure,
@@ -2395,6 +2395,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             PatternKind::Box(boxed) => {
                 self.clear_pattern_types(boxed.pattern.as_mut());
+            }
+            PatternKind::Ref(reference) => {
+                self.clear_pattern_types(reference.pattern.as_mut());
             }
             PatternKind::Variant(variant) => {
                 self.clear_expr_types(&mut variant.name);
@@ -8046,7 +8049,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             return None;
         }
         let canonical = self.qualified_name(function.name.as_str());
-        Some(JitKey::for_function(canonical, &function.sig))
+        Some(JitKey::from_signature(canonical, &function.sig))
     }
 
     fn jit_key_for_value_function(&self, function: &ValueFunction) -> Option<JitKey> {
@@ -8061,18 +8064,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
         let name = function.sig.name.as_ref()?.as_str();
         let canonical = self.qualified_name(name);
-        Some(JitKey::for_function(canonical, &function.sig))
-    }
-
-    fn jit_compile_input(&self, key: JitKey) -> Option<JitCompileInput> {
-        let items_ptr = self.root_items?;
-        let items = unsafe { (*items_ptr).clone() };
-        Some(JitCompileInput {
-            key,
-            file: jit_snapshot_from_items(items),
-            target_env: self.target_env.clone(),
-            module_resolution: self.module_resolution.as_ref().map(|ctx| ctx.to_core()),
-        })
+        Some(JitKey::from_signature(canonical, &function.sig))
     }
 
     fn jit_signature_supported(&self, sig: &FunctionSignature, receiver_ty: Option<&Ty>) -> bool {
@@ -8122,27 +8114,15 @@ impl<'ctx> AstInterpreter<'ctx> {
         Some(Ty::locator(Name::from_ident(Ident::new(self_ty.clone()))))
     }
 
-    fn try_call_jit(
-        &mut self,
-        sig: &FunctionSignature,
-        key: &JitKey,
-        args: &[Value],
-    ) -> Option<Value> {
+    fn try_call_jit(&mut self, key: &JitKey, args: &[Value]) -> Option<Value> {
         let jit = self.jit.as_ref()?;
-        let entry = jit.lookup(key)?;
-        let ffi = match self.ensure_ffi_runtime() {
-            Ok(ffi) => ffi,
-            Err(err) => {
-                self.emit_warning(format!("jit runtime unavailable: {}", err));
-                return None;
-            }
-        };
-        match ffi.call_ptr(sig, entry.entry, args) {
-            Ok(value) => Some(value),
-            Err(err) => {
+        match jit.try_call(key, args) {
+            JitCallOutcome::Hit(value) => Some(value),
+            JitCallOutcome::Miss | JitCallOutcome::Disabled => None,
+            JitCallOutcome::Fault(err) => {
                 self.emit_warning(format!(
                     "jit call failed for {}: {}",
-                    key.canonical_name, err
+                    key.canonical_name, err.message
                 ));
                 None
             }

@@ -97,6 +97,13 @@ fn std_result_inner_types(ty: &Ty) -> Option<(Ty, Ty)> {
     let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
         return None;
     };
+    if path.segments.len() == 1 {
+        let result_seg = &path.segments[0];
+        if result_seg.ident.as_str() != "Result" || result_seg.args.len() != 2 {
+            return None;
+        }
+        return Some((result_seg.args[0].clone(), result_seg.args[1].clone()));
+    }
     if path.segments.len() < 3 {
         return None;
     }
@@ -106,8 +113,10 @@ fn std_result_inner_types(ty: &Ty) -> Option<(Ty, Ty)> {
         path.segments[n - 2].ident.as_str(),
         &path.segments[n - 1],
     );
-    let is_std_result = prefix_a == "std" && prefix_b == "result" && result_seg.ident.as_str() == "Result";
-    let is_fs_result = prefix_a == "std" && prefix_b == "fs" && result_seg.ident.as_str() == "Result";
+    let is_std_result =
+        prefix_a == "std" && prefix_b == "result" && result_seg.ident.as_str() == "Result";
+    let is_fs_result =
+        prefix_a == "std" && prefix_b == "fs" && result_seg.ident.as_str() == "Result";
     if !is_std_result && !is_fs_result {
         return None;
     }
@@ -283,6 +292,7 @@ pub struct AstTypeInferencer<'ctx> {
     trait_method_sigs: HashMap<String, HashMap<String, FunctionSignature>>,
     function_signatures: HashMap<QualifiedPath, FunctionSignature>,
     extern_function_signatures: HashMap<QualifiedPath, FunctionSignature>,
+    trait_defs: HashSet<QualifiedPath>,
     impl_traits: HashMap<QualifiedPath, HashSet<String>>,
     generic_trait_bounds: HashMap<TypeVarId, Vec<String>>,
     impl_stack: Vec<Option<ImplContext>>,
@@ -324,17 +334,35 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             match item.kind() {
                 ItemKind::Module(module) => {
                     let next = prefix.with_segment(module.name.as_str().to_string());
+                    self.module_defs.insert(next.clone());
+                    if prefix.is_empty() {
+                        self.root_modules.insert(module.name.as_str().to_string());
+                    }
                     self.register_qualified_items(&module.items, &next);
                 }
                 ItemKind::DefFunction(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
+                    self.function_signatures
+                        .insert(name.clone(), def.sig.clone());
                     let var = self.register_qualified_symbol(&name);
+                    let saved = self.module_path.clone();
+                    self.module_path = prefix.clone();
                     self.prebind_function_signature(def, var);
+                    self.module_path = saved;
                 }
                 ItemKind::DeclFunction(decl) => {
                     let name = prefix.with_segment(decl.name.as_str().to_string());
+                    self.function_signatures
+                        .insert(name.clone(), decl.sig.clone());
+                    if decl.sig.abi.is_c() {
+                        self.extern_function_signatures
+                            .insert(name.clone(), decl.sig.clone());
+                    }
                     let var = self.register_qualified_symbol(&name);
+                    let saved = self.module_path.clone();
+                    self.module_path = prefix.clone();
                     self.prebind_decl_function_signature(decl, var);
+                    self.module_path = saved;
                 }
                 ItemKind::DefConst(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
@@ -344,13 +372,40 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     let name = prefix.with_segment(def.name.as_str().to_string());
                     self.register_qualified_symbol(&name);
                 }
+                ItemKind::DefStruct(def) => {
+                    let name = prefix.with_segment(def.name.as_str().to_string());
+                    self.struct_defs.insert(name.clone(), def.value.clone());
+                    self.register_qualified_symbol(&name);
+                }
+                ItemKind::DefStructural(def) => {
+                    let name = prefix.with_segment(def.name.as_str().to_string());
+                    self.register_qualified_symbol(&name);
+                }
+                ItemKind::DefEnum(def) => {
+                    let name = prefix.with_segment(def.name.as_str().to_string());
+                    self.enum_defs.insert(name.clone(), def.value.clone());
+                    self.register_qualified_symbol(&name);
+                }
+                ItemKind::DefType(def) => {
+                    let name = prefix.with_segment(def.name.as_str().to_string());
+                    self.register_qualified_symbol(&name);
+                }
+                ItemKind::OpaqueType(def) => {
+                    let name = prefix.with_segment(def.name.as_str().to_string());
+                    self.register_qualified_symbol(&name);
+                }
+                ItemKind::DefTrait(def) => {
+                    let name = prefix.with_segment(def.name.as_str().to_string());
+                    self.trait_defs.insert(name.clone());
+                    self.register_qualified_symbol(&name);
+                }
                 _ => {}
             }
         }
     }
 
     pub fn new() -> Self {
-        Self {
+        let mut inferencer = Self {
             ctx: None,
             type_vars: Vec::new(),
             env: vec![HashMap::new()],
@@ -362,6 +417,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             trait_method_sigs: HashMap::new(),
             function_signatures: HashMap::new(),
             extern_function_signatures: HashMap::new(),
+            trait_defs: HashSet::new(),
             impl_traits: HashMap::new(),
             generic_trait_bounds: HashMap::new(),
             impl_stack: Vec::new(),
@@ -385,7 +441,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             current_span: None,
             resolution_hook: None,
             unimplemented_symbols: HashSet::new(),
-        }
+        };
+        inferencer.insert_default_prelude_aliases();
+        inferencer
     }
 
     pub fn with_context(mut self, ctx: &'ctx SharedScopedContext) -> Self {
@@ -410,6 +468,25 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.extern_prelude.clear();
         for name in names {
             self.extern_prelude.insert(name.into());
+        }
+    }
+
+    fn insert_default_prelude_aliases(&mut self) {
+        if !self.extern_prelude.contains("std") {
+            return;
+        }
+        self.insert_prelude_symbol_alias("Result", &["std", "result", "Result"]);
+        self.insert_prelude_symbol_alias("Option", &["std", "option", "Option"]);
+        self.insert_prelude_symbol_alias("Ok", &["std", "result", "Ok"]);
+        self.insert_prelude_symbol_alias("Err", &["std", "result", "Err"]);
+        self.insert_prelude_symbol_alias("Some", &["std", "option", "Option", "Some"]);
+        self.insert_prelude_symbol_alias("None", &["std", "option", "Option", "None"]);
+    }
+
+    fn insert_prelude_symbol_alias(&mut self, alias: &str, segments: &[&str]) {
+        if let Some(scope) = self.symbol_aliases.first_mut() {
+            let path = QualifiedPath::new(segments.iter().map(|seg| (*seg).to_string()).collect());
+            scope.insert(alias.to_string(), path);
         }
     }
 
@@ -488,6 +565,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             NodeKind::File(file) => {
                 let previous_exception = self.exception_mode;
                 self.exception_mode = attrs_has_feature(&file.attrs, "exception");
+                self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new()));
                 for item in &file.items {
                     self.predeclare_item(item);
                 }
@@ -518,6 +596,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub fn initialize_from_node(&mut self, node: &Node) {
         match node.kind() {
             NodeKind::File(file) => {
+                self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new()));
                 for item in &file.items {
                     self.predeclare_item(item);
                 }
@@ -821,6 +900,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     &mut names,
                     &mut seen,
                 );
+                if let Some(module_head) = self.module_path.head() {
+                    if self.root_modules.contains(module_head) {
+                        if self.module_path.segments.len() > 1 {
+                            let mut segments = Vec::with_capacity(self.module_path.segments.len());
+                            segments.extend(self.module_path.segments.iter().skip(1).cloned());
+                            segments.push(head.to_string());
+                            push(QualifiedPath::new(segments), &mut names, &mut seen);
+                        }
+                    } else {
+                        for root in &self.root_modules {
+                            let mut segments = Vec::with_capacity(
+                                self.module_path.segments.len() + 2,
+                            );
+                            segments.push(root.to_string());
+                            segments.extend(self.module_path.segments.iter().cloned());
+                            segments.push(head.to_string());
+                            push(QualifiedPath::new(segments), &mut names, &mut seen);
+                        }
+                    }
+                }
             }
         }
         push(name_path.clone(), &mut names, &mut seen);
@@ -859,6 +958,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         if let Some(def) = self.struct_defs.get(&name_path).cloned() {
             return Some((name_path, def));
+        }
+        if let Some(stripped) = Self::strip_std_prefix(&name_path) {
+            if let Some(def) = self.struct_defs.get(&stripped).cloned() {
+                return Some((stripped, def));
+            }
         }
         if !self.module_path.is_empty() && segments.len() == 1 {
             let qualified = self.module_path.with_segment(segments[0].clone());
@@ -1008,6 +1112,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             || self.enum_defs.contains_key(path)
             || self.function_signatures.contains_key(path)
             || self.extern_function_signatures.contains_key(path)
+            || self.trait_defs.contains(path)
             || self.unimplemented_symbols.contains(path)
             || self.env_contains(&key)
     }
@@ -1098,19 +1203,244 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn lookup_function_signature(&self, locator: &Name) -> Option<FunctionSignature> {
-        let candidate = self.resolve_locator_key(locator)?;
+        let candidate = self
+            .resolve_locator_key(locator)
+            .or_else(|| self.fallback_locator_key(locator))?;
         if let Some(sig) = self.extern_function_signatures.get(&candidate) {
             return Some(sig.clone());
         }
-        self.function_signatures.get(&candidate).cloned()
+        if let Some(sig) = self.function_signatures.get(&candidate) {
+            return Some(sig.clone());
+        }
+        self.lookup_stripped_function_signature(&candidate)
+            .or_else(|| self.lookup_prefixed_function_signature(&candidate))
+            .or_else(|| {
+                self.locator_tail_name(locator)
+                    .and_then(|name| self.lookup_function_signature_by_name(&name))
+            })
+    }
+
+    fn lookup_function_signature_with_path(
+        &self,
+        locator: &Name,
+    ) -> Option<(QualifiedPath, FunctionSignature)> {
+        let candidate = self
+            .resolve_locator_key(locator)
+            .or_else(|| self.fallback_locator_key(locator))?;
+        if let Some(sig) = self.extern_function_signatures.get(&candidate) {
+            return Some((candidate, sig.clone()));
+        }
+        if let Some(sig) = self.function_signatures.get(&candidate) {
+            return Some((candidate, sig.clone()));
+        }
+        if let Some(stripped) = Self::strip_std_prefix(&candidate) {
+            if let Some(sig) = self.function_signatures.get(&stripped) {
+                return Some((stripped, sig.clone()));
+            }
+        }
+        if let Some((path, sig)) =
+            self.lookup_prefixed_signature_with_path(&candidate, false)
+        {
+            return Some((path, sig));
+        }
+        self.locator_tail_name(locator)
+            .and_then(|name| self.lookup_function_signature_by_name_with_path(&name))
     }
 
     fn lookup_extern_function_signature(&self, locator: &Name) -> Option<FunctionSignature> {
-        let candidate = self.resolve_locator_key(locator)?;
-        self.extern_function_signatures.get(&candidate).cloned()
+        let candidate = self
+            .resolve_locator_key(locator)
+            .or_else(|| self.fallback_locator_key(locator))?;
+        if let Some(sig) = self.extern_function_signatures.get(&candidate) {
+            return Some(sig.clone());
+        }
+        self.lookup_stripped_extern_function_signature(&candidate)
+            .or_else(|| self.lookup_prefixed_extern_function_signature(&candidate))
+    }
+
+    fn lookup_extern_function_signature_with_path(
+        &self,
+        locator: &Name,
+    ) -> Option<(QualifiedPath, FunctionSignature)> {
+        let candidate = self
+            .resolve_locator_key(locator)
+            .or_else(|| self.fallback_locator_key(locator))?;
+        if let Some(sig) = self.extern_function_signatures.get(&candidate) {
+            return Some((candidate, sig.clone()));
+        }
+        if let Some(stripped) = Self::strip_std_prefix(&candidate) {
+            if let Some(sig) = self.extern_function_signatures.get(&stripped) {
+                return Some((stripped, sig.clone()));
+            }
+        }
+        self.lookup_prefixed_signature_with_path(&candidate, true)
+    }
+
+    fn lookup_stripped_function_signature(
+        &self,
+        candidate: &QualifiedPath,
+    ) -> Option<FunctionSignature> {
+        let stripped = Self::strip_std_prefix(candidate)?;
+        self.function_signatures.get(&stripped).cloned()
+    }
+
+    fn lookup_stripped_extern_function_signature(
+        &self,
+        candidate: &QualifiedPath,
+    ) -> Option<FunctionSignature> {
+        let stripped = Self::strip_std_prefix(candidate)?;
+        self.extern_function_signatures.get(&stripped).cloned()
+    }
+
+    fn strip_std_prefix(candidate: &QualifiedPath) -> Option<QualifiedPath> {
+        let first = candidate.segments.first()?;
+        if (first == "std" || first == "core" || first == "alloc")
+            && candidate.segments.len() > 1
+        {
+            Some(QualifiedPath::new(
+                candidate.segments.iter().skip(1).cloned().collect(),
+            ))
+        } else {
+            None
+        }
+    }
+
+    fn lookup_prefixed_function_signature(
+        &self,
+        candidate: &QualifiedPath,
+    ) -> Option<FunctionSignature> {
+        self.lookup_prefixed_signature(candidate, false)
+    }
+
+    fn lookup_prefixed_extern_function_signature(
+        &self,
+        candidate: &QualifiedPath,
+    ) -> Option<FunctionSignature> {
+        self.lookup_prefixed_signature(candidate, true)
+    }
+
+    fn fallback_locator_key(&self, locator: &Name) -> Option<QualifiedPath> {
+        let (prefix, segments) = match locator {
+            Name::Path(path) => (
+                path.prefix,
+                path.segments
+                    .iter()
+                    .map(|seg| seg.as_str().to_string())
+                    .collect::<Vec<_>>(),
+            ),
+            Name::ParameterPath(path) => (
+                path.prefix,
+                path.segments
+                    .iter()
+                    .map(|seg| seg.ident.as_str().to_string())
+                    .collect::<Vec<_>>(),
+            ),
+            _ => return None,
+        };
+        if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
+            return None;
+        }
+        match prefix {
+            PathPrefix::Plain | PathPrefix::Root | PathPrefix::Crate => {
+                Some(QualifiedPath::new(segments))
+            }
+            _ => None,
+        }
+    }
+
+    fn lookup_function_signature_by_name(&self, name: &str) -> Option<FunctionSignature> {
+        let mut found: Option<FunctionSignature> = None;
+        for (key, sig) in &self.function_signatures {
+            if key.tail() == Some(name) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(sig.clone());
+            }
+        }
+        found
+    }
+
+    fn lookup_function_signature_by_name_with_path(
+        &self,
+        name: &str,
+    ) -> Option<(QualifiedPath, FunctionSignature)> {
+        let mut found: Option<(QualifiedPath, FunctionSignature)> = None;
+        for (key, sig) in &self.function_signatures {
+            if key.tail() == Some(name) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some((key.clone(), sig.clone()));
+            }
+        }
+        found
+    }
+
+    fn lookup_prefixed_signature(
+        &self,
+        candidate: &QualifiedPath,
+        extern_only: bool,
+    ) -> Option<FunctionSignature> {
+        let first = candidate.segments.first()?;
+        if first == "std" || first == "core" || first == "alloc" {
+            return None;
+        }
+        for prefix in ["std", "core", "alloc"] {
+            if !self.root_modules.contains(prefix) {
+                continue;
+            }
+            let base = QualifiedPath::new(vec![prefix.to_string()]);
+            let qualified = base.join(&candidate.segments);
+            if let Some(sig) = self.extern_function_signatures.get(&qualified) {
+                return Some(sig.clone());
+            }
+            if !extern_only {
+                if let Some(sig) = self.function_signatures.get(&qualified) {
+                    return Some(sig.clone());
+                }
+            }
+        }
+        None
+    }
+
+    fn lookup_prefixed_signature_with_path(
+        &self,
+        candidate: &QualifiedPath,
+        extern_only: bool,
+    ) -> Option<(QualifiedPath, FunctionSignature)> {
+        let first = candidate.segments.first()?;
+        if first == "std" || first == "core" || first == "alloc" {
+            return None;
+        }
+        for prefix in ["std", "core", "alloc"] {
+            if !self.root_modules.contains(prefix) {
+                continue;
+            }
+            let base = QualifiedPath::new(vec![prefix.to_string()]);
+            let qualified = base.join(&candidate.segments);
+            if let Some(sig) = self.extern_function_signatures.get(&qualified) {
+                return Some((qualified, sig.clone()));
+            }
+            if !extern_only {
+                if let Some(sig) = self.function_signatures.get(&qualified) {
+                    return Some((qualified, sig.clone()));
+                }
+            }
+        }
+        None
     }
 
     fn resolve_impl_context(&mut self, self_ty: &Expr) -> Option<ImplContext> {
+        if let ExprKind::Value(value) = self_ty.kind() {
+            if let Value::Type(ty) = value.as_ref() {
+                let name = format!("<impl:{}>", ty);
+                return Some(ImplContext {
+                    struct_name: QualifiedPath::new(vec![name]),
+                    self_ty: ty.clone(),
+                });
+            }
+        }
         let resolved_name = match self_ty.kind() {
             ExprKind::Name(locator) => self.resolve_locator_key(locator),
             _ => None,
@@ -1250,6 +1580,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             .receiver
             .as_ref()
             .map(|receiver| self.ty_for_receiver(ctx, receiver));
+        let scheme = self.scheme_from_method_signature(&func.sig).ok();
         for candidate in self
             .struct_name_variants_for_path(&ctx.struct_name, ctx.struct_name.segments.len() == 1)
         {
@@ -1258,7 +1589,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 .entry(func.name.as_str().to_string())
                 .or_insert(MethodRecord {
                     receiver_ty: receiver_ty.clone(),
-                    scheme: None,
+                    scheme: scheme.clone(),
                 });
         }
     }
@@ -1355,6 +1686,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.enum_variants.insert(enum_name, variant_keys);
             }
             ItemKind::DefTrait(def) => {
+                let trait_name = self
+                    .qualified_name(def.name.as_str())
+                    .unwrap_or_else(|| QualifiedPath::new(vec![def.name.as_str().to_string()]));
+                self.trait_defs.insert(trait_name);
+                self.record_unimplemented_symbol(&def.name, &def.attrs);
                 self.register_symbol(&def.name);
                 let entry = self
                     .trait_method_sigs
@@ -1508,7 +1844,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.exit_scope();
                 self.module_scope_depths.pop();
                 self.pop_module_path();
-                let prefix = QualifiedPath::new(vec![module.name.as_str().to_string()]);
+                let prefix = if self.module_path.is_empty() {
+                    QualifiedPath::new(vec![module.name.as_str().to_string()])
+                } else {
+                    self.module_path
+                        .with_segment(module.name.as_str().to_string())
+                };
                 self.register_qualified_items(&module.items, &prefix);
             }
             ItemKind::Impl(impl_block) => {
@@ -1629,22 +1970,55 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         };
 
         for (path_segments, alias) in entries {
-            if let Some(first) = path_segments.first() {
-                if first == "std" || first == "core" || first == "alloc" {
-                    continue;
-                }
-            }
             if path_segments.is_empty() {
                 continue;
             }
-            let qualified = QualifiedPath::new(path_segments);
-            let key = qualified.to_key();
+            let mut qualified = QualifiedPath::new(path_segments);
+            let parsed = ParsedPath {
+                prefix: PathPrefix::Plain,
+                segments: qualified.segments.clone(),
+            };
+            if let Some(resolved) = resolve_item_path(
+                &parsed,
+                &self.module_path,
+                &self.root_modules,
+                &self.extern_prelude,
+                &self.module_defs,
+                |candidate| self.item_exists_path(candidate),
+                |name| self.scope_contains_non_module(name),
+            ) {
+                qualified = resolved;
+            }
+            let mut key = qualified.to_key();
+            if self.lookup_env_var(&key).is_none() && !self.module_defs.contains(&qualified) {
+                if let Some(first) = qualified.segments.first() {
+                    if (first == "std" || first == "core" || first == "alloc")
+                        && qualified.segments.len() > 1
+                    {
+                        let stripped = QualifiedPath::new(
+                            qualified.segments.iter().skip(1).cloned().collect(),
+                        );
+                        let stripped_key = stripped.to_key();
+                        if self.lookup_env_var(&stripped_key).is_some()
+                            || self.module_defs.contains(&stripped)
+                            || self.item_exists_path(&stripped)
+                        {
+                            qualified = stripped;
+                            key = stripped_key;
+                        }
+                    }
+                }
+            }
             if self.lookup_env_var(&key).is_some() {
                 self.insert_symbol_alias(&alias, qualified);
                 continue;
             }
             if self.module_defs.contains(&qualified) {
                 self.insert_module_alias(&alias, qualified);
+                continue;
+            }
+            if self.item_exists_path(&qualified) {
+                self.insert_symbol_alias(&alias, qualified);
                 continue;
             }
             if self.lossy_mode {
@@ -1809,9 +2183,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return;
         }
 
+        let module_path = self.module_path.clone();
         let mut param_vars = Vec::new();
         for param in &func.sig.params {
-            match self.type_from_ast_ty(&param.ty) {
+            match self.type_from_ast_ty_in_module(&param.ty, &module_path) {
                 Ok(var) => param_vars.push(var),
                 Err(err) => {
                     self.emit_error(format!(
@@ -1824,7 +2199,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         let ret_var = if let Some(ret_ty) = &func.sig.ret_ty {
-            match self.type_from_ast_ty(ret_ty) {
+            match self.type_from_ast_ty_in_module(ret_ty, &module_path) {
                 Ok(var) => var,
                 Err(err) => {
                     self.emit_error(format!(
@@ -1862,9 +2237,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return;
         }
 
+        let module_path = self.module_path.clone();
         let mut param_vars = Vec::new();
         for param in &decl.sig.params {
-            match self.type_from_ast_ty(&param.ty) {
+            match self.type_from_ast_ty_in_module(&param.ty, &module_path) {
                 Ok(var) => param_vars.push(var),
                 Err(err) => {
                     self.emit_error(format!(
@@ -1877,7 +2253,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         let ret_var = if let Some(ret_ty) = &decl.sig.ret_ty {
-            match self.type_from_ast_ty(ret_ty) {
+            match self.type_from_ast_ty_in_module(ret_ty, &module_path) {
                 Ok(var) => var,
                 Err(err) => {
                     self.emit_error(format!(
@@ -2654,7 +3030,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.generalize(fn_var)
     }
 
-    fn extract_trait_bounds(bounds: &TypeBounds) -> Vec<String> {
+    pub(crate) fn extract_trait_bounds(bounds: &TypeBounds) -> Vec<String> {
         bounds
             .bounds
             .iter()

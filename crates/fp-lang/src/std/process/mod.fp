@@ -121,7 +121,9 @@ impl Process {
 
     pub fn output_result(self) -> ProcessResult {
         let rendered_command = render_process_command(self);
-        match std::test::apply_command_mock(&rendered_command) {
+        let mocked: Option<std::test::CommandMockMatch> =
+            std::test::apply_command_mock(&rendered_command);
+        match mocked {
             Option::Some(mocked) => ProcessResult {
                 stdout: mocked.stdout,
                 stderr: mocked.stderr,
@@ -192,8 +194,8 @@ impl Command {
     }
 }
 
-fn exec_command(command: Command) -> ProcessResult {
-    command.inner.output_result()
+fn exec_command(process: Process) -> ProcessResult {
+    process.output_result()
 }
 
 pub fn run(command: str) {

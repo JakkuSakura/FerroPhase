@@ -4587,6 +4587,79 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
+    fn collect_hashmap_kwargs_from_structural(
+        &mut self,
+        structural: &ValueStructural,
+    ) -> std::result::Result<Vec<(String, Value)>, ()> {
+        let keys_field = structural.get_field(&Ident::new("keys"));
+        let values_field = structural.get_field(&Ident::new("values"));
+        let Some(keys_value) = keys_field.map(|field| &field.value) else {
+            self.emit_error("splat dict expects HashMap keys field");
+            return Err(());
+        };
+        let Some(values_value) = values_field.map(|field| &field.value) else {
+            self.emit_error("splat dict expects HashMap values field");
+            return Err(());
+        };
+
+        let keys = match keys_value {
+            Value::List(list) => list.values.clone(),
+            Value::Tuple(tuple) => tuple.values.clone(),
+            other => {
+                self.emit_error(format!(
+                    "splat dict expects HashMap keys list, found {:?}",
+                    other
+                ));
+                return Err(());
+            }
+        };
+        let values = match values_value {
+            Value::List(list) => list.values.clone(),
+            Value::Tuple(tuple) => tuple.values.clone(),
+            other => {
+                self.emit_error(format!(
+                    "splat dict expects HashMap values list, found {:?}",
+                    other
+                ));
+                return Err(());
+            }
+        };
+
+        if keys.len() != values.len() {
+            self.emit_error("splat dict expects HashMap keys/values length match");
+            return Err(());
+        }
+
+        let mut kwargs = Vec::with_capacity(keys.len());
+        for (idx, key) in keys.into_iter().enumerate() {
+            let Value::String(text) = key else {
+                self.emit_error("splat dict expects string keys for keyword arguments");
+                return Err(());
+            };
+            let value = values
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(Value::undefined);
+            kwargs.push((text.value.clone(), value));
+        }
+        Ok(kwargs)
+    }
+
+    fn try_collect_hashmap_kwargs_from_structural(
+        &mut self,
+        structural: &ValueStructural,
+    ) -> std::result::Result<Option<Vec<(String, Value)>>, ()> {
+        let keys_field = structural.get_field(&Ident::new("keys"));
+        let values_field = structural.get_field(&Ident::new("values"));
+
+        if keys_field.is_none() || values_field.is_none() {
+            return Ok(None);
+        }
+
+        let kwargs = self.collect_hashmap_kwargs_from_structural(structural)?;
+        Ok(Some(kwargs))
+    }
+
     fn runtime_buffer_capacity_hint(&mut self, value: &Value) -> usize {
         match value {
             Value::List(list) => list.values.len().max(1),
@@ -4990,11 +5063,42 @@ impl<'ctx> AstInterpreter<'ctx> {
                             }
                         }
                         Value::Structural(structural) => {
-                            for field in structural.fields {
-                                kwargs.push((field.name.as_str().to_string(), field.value));
+                            match self.try_collect_hashmap_kwargs_from_structural(&structural) {
+                                Ok(Some(pairs)) => {
+                                    kwargs.extend(pairs);
+                                }
+                                Ok(None) => {
+                                    for field in structural.fields {
+                                        kwargs.push((field.name.as_str().to_string(), field.value));
+                                    }
+                                }
+                                Err(()) => {
+                                    return Err(RuntimeFlow::Value(Value::undefined()));
+                                }
                             }
                         }
                         Value::Struct(struct_value) => {
+                            let type_name = struct_value.ty.name.as_str();
+                            let base_name = type_name
+                                .rsplit("::")
+                                .next()
+                                .unwrap_or(type_name)
+                                .split('<')
+                                .next()
+                                .unwrap_or(type_name);
+                            let is_hashmap = base_name == "HashMap";
+                            if is_hashmap {
+                                let pairs = match self
+                                    .collect_hashmap_kwargs_from_structural(&struct_value.structural)
+                                {
+                                    Ok(pairs) => pairs,
+                                    Err(()) => {
+                                        return Err(RuntimeFlow::Value(Value::undefined()));
+                                    }
+                                };
+                                kwargs.extend(pairs);
+                                continue;
+                            }
                             for field in struct_value.structural.fields {
                                 kwargs.push((field.name.as_str().to_string(), field.value));
                             }
@@ -5070,11 +5174,40 @@ impl<'ctx> AstInterpreter<'ctx> {
                             }
                         }
                         Value::Structural(structural) => {
-                            for field in structural.fields {
-                                kwargs.push((field.name.as_str().to_string(), field.value));
+                            match self.try_collect_hashmap_kwargs_from_structural(&structural) {
+                                Ok(Some(pairs)) => {
+                                    kwargs.extend(pairs);
+                                }
+                                Ok(None) => {
+                                    for field in structural.fields {
+                                        kwargs.push((field.name.as_str().to_string(), field.value));
+                                    }
+                                }
+                                Err(()) => {
+                                    return None;
+                                }
                             }
                         }
                         Value::Struct(struct_value) => {
+                            let type_name = struct_value.ty.name.as_str();
+                            let base_name = type_name
+                                .rsplit("::")
+                                .next()
+                                .unwrap_or(type_name)
+                                .split('<')
+                                .next()
+                                .unwrap_or(type_name);
+                            let is_hashmap = base_name == "HashMap";
+                            if is_hashmap {
+                                let pairs = match self
+                                    .collect_hashmap_kwargs_from_structural(&struct_value.structural)
+                                {
+                                    Ok(pairs) => pairs,
+                                    Err(()) => return None,
+                                };
+                                kwargs.extend(pairs);
+                                continue;
+                            }
                             for field in struct_value.structural.fields {
                                 kwargs.push((field.name.as_str().to_string(), field.value));
                             }
@@ -5476,9 +5609,22 @@ impl<'ctx> AstInterpreter<'ctx> {
                                         return Some(Value::undefined());
                                     }
                                 }
-                                Value::Struct(struct_value)
-                                    if struct_value.ty.name.as_str() == "HashMapEntry" =>
-                                {
+                                Value::Struct(struct_value) => {
+                                    let type_name = struct_value.ty.name.as_str();
+                                    let base_name = type_name
+                                        .rsplit("::")
+                                        .next()
+                                        .unwrap_or(type_name)
+                                        .split('<')
+                                        .next()
+                                        .unwrap_or(type_name);
+                                    if base_name != "HashMapEntry" {
+                                        self.emit_error(format!(
+                                            "HashMap::from expects entries to be HashMapEntry, tuples, or 2-element lists, found {:?}",
+                                            Value::Struct(struct_value)
+                                        ));
+                                        return Some(Value::undefined());
+                                    }
                                     let key = struct_value
                                         .structural
                                         .get_field(&Ident::new("key".to_string()))

@@ -155,10 +155,7 @@ fn lower_extern_abi(node: &SyntaxNode) -> Result<Abi, LowerItemsError> {
     } else {
         raw.clone()
     };
-    match cleaned.as_str() {
-        "C" | "c" => Ok(Abi::C),
-        other => Err(LowerItemsError::UnsupportedAbi(other.to_string())),
-    }
+    Ok(Abi::Named(cleaned))
 }
 
 fn lower_visibility(node: Option<&SyntaxNode>) -> Result<Visibility, LowerItemsError> {

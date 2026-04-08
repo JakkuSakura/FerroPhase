@@ -110,13 +110,64 @@ impl PipelineStage for LinkNativeStage {
             cfg = cfg.with_asm_dump(Some(dump_path));
         }
         let emitter = fp_native::NativeEmitter::new(cfg);
-        emitter.emit(context.lir_program, None).map_err(|e| {
-            diagnostics.push(
-                Diagnostic::error(format!("fp-native failed: {}", e))
+        if let Err(err) = emitter.emit(context.lir_program.clone(), None) {
+            if is_apple_target(context.options.target_triple.as_deref()) {
+                diagnostics.push(
+                    Diagnostic::warning(format!(
+                        "fp-native executable emission failed; falling back to external linker: {}",
+                        err
+                    ))
                     .with_source_context(STAGE_LINK_BINARY),
-            );
-            PipelineError::new(STAGE_LINK_BINARY, "fp-native failed")
-        })?;
+                );
+                let object_path = object_output_path(&context.base_path, &context.options);
+                let mut obj_cfg = fp_native::config::NativeConfig::object(&object_path)
+                    .with_target_triple(context.options.target_triple.clone())
+                    .with_target_cpu(context.options.target_cpu.clone())
+                    .with_native_target(native_target)
+                    .with_target_features(context.options.target_features.clone())
+                    .with_sysroot(context.options.target_sysroot.clone())
+                    .with_fuse_ld(context.options.target_linker.clone())
+                    .with_linker_driver(context.options.linker.clone())
+                    .with_release(context.options.release);
+                if context.options.save_intermediates {
+                    let dump_path = context.base_path.with_extension("asm");
+                    obj_cfg = obj_cfg.with_asm_dump(Some(dump_path));
+                }
+                let obj_emitter = fp_native::NativeEmitter::new(obj_cfg);
+                if let Err(obj_err) = obj_emitter.emit(context.lir_program, None) {
+                    diagnostics.push(
+                        Diagnostic::error(format!("fp-native object emission failed: {}", obj_err))
+                            .with_source_context(STAGE_LINK_BINARY),
+                    );
+                    return Err(PipelineError::new(
+                        STAGE_LINK_BINARY,
+                        "fp-native object emission failed",
+                    ));
+                }
+                link_object_with_clang(
+                    &object_path,
+                    &binary_path,
+                    &context.options,
+                    diagnostics,
+                    &[],
+                )?;
+                if !context.options.save_intermediates {
+                    if let Err(err) = fs::remove_file(&object_path) {
+                        debug!(
+                            error = %err,
+                            path = %object_path.display(),
+                            "failed to remove intermediate native object file after linking"
+                        );
+                    }
+                }
+            } else {
+                diagnostics.push(
+                    Diagnostic::error(format!("fp-native failed: {}", err))
+                        .with_source_context(STAGE_LINK_BINARY),
+                );
+                return Err(PipelineError::new(STAGE_LINK_BINARY, "fp-native failed"));
+            }
+        }
 
         Ok(binary_path)
     }

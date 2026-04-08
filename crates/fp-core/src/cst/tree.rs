@@ -144,6 +144,7 @@ pub enum CstKind {
     PatternBind,
     PatternPath,
     PatternParen,
+    PatternRef,
 
     MatchArm,
     StructField,
@@ -257,7 +258,8 @@ impl CstKind {
             | CstKind::PatternRest
             | CstKind::PatternBind
             | CstKind::PatternPath
-            | CstKind::PatternParen => CstCategory::Pattern,
+            | CstKind::PatternParen
+            | CstKind::PatternRef => CstCategory::Pattern,
 
             CstKind::BlockStmtItem
             | CstKind::BlockStmtLet

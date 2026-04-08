@@ -45,6 +45,7 @@ pub struct HirGenerator {
     module_defs: HashSet<fp_core::module::path::QualifiedPath>,
     program_def_map: HashMap<hir::DefId, hir::Item>,
     unimplemented_type_def_ids: HashSet<hir::DefId>,
+    resolving_type_aliases: HashSet<String>,
     module_resolution: Option<fp_core::module::resolution::ModuleResolutionContext>,
     target_env: TargetEnv,
     respect_cfg: bool,
@@ -300,6 +301,7 @@ impl HirGenerator {
             module_defs: HashSet::new(),
             program_def_map: HashMap::new(),
             unimplemented_type_def_ids: HashSet::new(),
+            resolving_type_aliases: HashSet::new(),
             module_resolution: None,
             target_env: TargetEnv::host(),
             respect_cfg: true,
@@ -341,6 +343,7 @@ impl HirGenerator {
         self.struct_field_defs.clear();
         self.module_defs.clear();
         self.unimplemented_type_def_ids.clear();
+        self.resolving_type_aliases.clear();
     }
 
     fn current_type_scope(&mut self) -> &mut HashMap<String, hir::Res> {
@@ -470,6 +473,55 @@ impl HirGenerator {
         self.synthetic_items.clear();
         self.module_defs.clear();
         // Keep predeclared struct fields available for struct update lowering.
+    }
+
+    fn insert_default_prelude_aliases(&mut self) {
+        self.insert_prelude_type_alias("Result", &["std", "result", "Result"]);
+        self.insert_prelude_type_alias("Option", &["std", "option", "Option"]);
+        self.insert_prelude_value_alias("Ok", &["std", "result", "Result", "Ok"]);
+        self.insert_prelude_value_alias("Err", &["std", "result", "Result", "Err"]);
+        self.insert_prelude_value_alias("Some", &["std", "option", "Option", "Some"]);
+        self.insert_prelude_value_alias("None", &["std", "option", "Option", "None"]);
+    }
+
+    fn insert_prelude_type_alias(&mut self, alias: &str, segments: &[&str]) {
+        if self
+            .type_scopes
+            .first()
+            .map(|scope| scope.contains_key(alias))
+            .unwrap_or(false)
+        {
+            return;
+        }
+        let path = fp_core::module::path::QualifiedPath::new(
+            segments.iter().map(|seg| (*seg).to_string()).collect(),
+        );
+        let key = path.to_key();
+        if let Some(res) = self.lookup_symbol(&key, &self.global_type_defs) {
+            if let Some(scope) = self.type_scopes.first_mut() {
+                scope.insert(alias.to_string(), res);
+            }
+        }
+    }
+
+    fn insert_prelude_value_alias(&mut self, alias: &str, segments: &[&str]) {
+        if self
+            .value_scopes
+            .first()
+            .map(|scope| scope.contains_key(alias))
+            .unwrap_or(false)
+        {
+            return;
+        }
+        let path = fp_core::module::path::QualifiedPath::new(
+            segments.iter().map(|seg| (*seg).to_string()).collect(),
+        );
+        let key = path.to_key();
+        if let Some(res) = self.lookup_symbol(&key, &self.global_value_defs) {
+            if let Some(scope) = self.value_scopes.first_mut() {
+                scope.insert(alias.to_string(), res);
+            }
+        }
     }
 
     fn predeclare_items(&mut self, items: &[ast::Item]) -> Result<()> {
@@ -678,6 +730,16 @@ impl HirGenerator {
     }
 
     fn resolve_value_symbol(&self, name: &str) -> Option<hir::Res> {
+        let prelude_override = match name {
+            "Ok" => self.lookup_symbol("std::result::Ok", &self.global_value_defs),
+            "Err" => self.lookup_symbol("std::result::Err", &self.global_value_defs),
+            "Some" => self.lookup_symbol("std::option::Some", &self.global_value_defs),
+            "None" => self.lookup_symbol("std::option::None", &self.global_value_defs),
+            _ => None,
+        };
+        if prelude_override.is_some() {
+            return prelude_override;
+        }
         self.value_scopes
             .iter()
             .rev()
@@ -732,6 +794,7 @@ impl HirGenerator {
         self.reset_file_context("<expr>");
         self.prepare_lowering_state();
         self.predeclare_items(&generated_items)?;
+        self.insert_default_prelude_aliases();
 
         let mut hir_program = hir::Program::new();
         self.program_def_map = HashMap::new();
@@ -771,6 +834,7 @@ impl HirGenerator {
         self.reset_file_context(&file.path);
         self.prepare_lowering_state();
         self.predeclare_items(&file.items)?;
+        self.insert_default_prelude_aliases();
         let mut program = hir::Program::new();
         self.program_def_map = HashMap::new();
         for item in &self.synthetic_items {
@@ -1311,9 +1375,17 @@ impl HirGenerator {
         match ty {
             ast::Ty::Primitive(prim) => Ok(self.primitive_type_to_hir(*prim)),
             ast::Ty::Struct(struct_ty) => {
-                if let Some(alias) = self.lookup_type_alias(&[struct_ty.name.name.to_string()]) {
-                    let alias = alias.clone();
-                    return self.transform_type_to_hir(&alias);
+                let alias_info = self
+                    .lookup_type_alias_with_key(&[struct_ty.name.name.to_string()])
+                    .map(|(key, alias)| (key, alias.clone()));
+                if let Some((key, alias)) = alias_info {
+                    let span = self.normalize_span(ty.span());
+                    if !self.enter_type_alias(&key, span) {
+                        return Ok(self.error_type_expr(span));
+                    }
+                    let result = self.transform_type_to_hir(&alias);
+                    self.exit_type_alias(&key);
+                    return result;
                 }
                 let path = self.locator_to_hir_path_with_scope(
                     &Name::Ident(struct_ty.name.clone()),
@@ -1344,6 +1416,11 @@ impl HirGenerator {
             ast::Ty::Unit(_) => Ok(self.create_unit_type()),
             ast::Ty::Nothing(_) => Ok(self.create_null_type()),
             ast::Ty::Any(_) => Ok(hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Infer,
+                Span::new(self.current_file, 0, 0),
+            )),
+            ast::Ty::TypeBounds(_) => Ok(hir::TypeExpr::new(
                 self.next_id(),
                 hir::TypeExprKind::Infer,
                 Span::new(self.current_file, 0, 0),
@@ -1508,9 +1585,17 @@ impl HirGenerator {
                         .iter()
                         .map(|seg| seg.name.as_str().to_string())
                         .collect::<Vec<_>>();
-                    if let Some(alias) = self.lookup_type_alias(&segments) {
-                        let alias = alias.clone();
-                        return self.transform_type_to_hir(&alias);
+                    let alias_info = self
+                        .lookup_type_alias_with_key(&segments)
+                        .map(|(key, alias)| (key, alias.clone()));
+                    if let Some((key, alias)) = alias_info {
+                        let span = self.normalize_span(ty.span());
+                        if !self.enter_type_alias(&key, span) {
+                            return Ok(self.error_type_expr(span));
+                        }
+                        let result = self.transform_type_to_hir(&alias);
+                        self.exit_type_alias(&key);
+                        return result;
                     }
                     return Ok(hir::TypeExpr::new(
                         self.next_id(),
@@ -1524,11 +1609,22 @@ impl HirGenerator {
                     Span::new(self.current_file, 0, 0),
                 ))
             }
-            ast::Ty::ImplTraits(_) => Ok(hir::TypeExpr::new(
-                self.next_id(),
-                hir::TypeExprKind::Infer,
-                Span::new(self.current_file, 0, 0),
-            )),
+            ast::Ty::ImplTraits(impl_traits) => {
+                if let Some(bound) = impl_traits.bounds.bounds.first() {
+                    if let Ok(path) = self.ast_expr_to_hir_path(bound, PathResolutionScope::Type) {
+                        return Ok(hir::TypeExpr::new(
+                            self.next_id(),
+                            hir::TypeExprKind::Path(path),
+                            self.normalize_span(ty.span()),
+                        ));
+                    }
+                }
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Infer,
+                    self.normalize_span(ty.span()),
+                ))
+            }
             ast::Ty::Function(fn_ty) => {
                 let inputs = fn_ty
                     .params
@@ -1588,6 +1684,10 @@ impl HirGenerator {
             }),
             Span::new(0, 0, 0),
         )
+    }
+
+    fn error_type_expr(&mut self, span: Span) -> hir::TypeExpr {
+        hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Error, span)
     }
 
     fn create_unit_type(&mut self) -> hir::TypeExpr {
@@ -1965,6 +2065,97 @@ impl HirGenerator {
         self.type_aliases
             .get(&qualified)
             .or_else(|| segments.get(0).and_then(|name| self.type_aliases.get(name)))
+    }
+
+    fn lookup_type_alias_with_key(&self, segments: &[String]) -> Option<(String, &ast::Ty)> {
+        let qualified = if segments.len() == 1 {
+            self.qualify_name(&segments[0])
+        } else {
+            fp_core::module::path::QualifiedPath::new(segments.to_vec()).to_key()
+        };
+        if let Some(alias) = self.type_aliases.get(&qualified) {
+            if self.ty_is_simple_path(alias, segments) {
+                return None;
+            }
+            return Some((qualified, alias));
+        }
+        if let Some(name) = segments.get(0) {
+            if let Some(alias) = self.type_aliases.get(name) {
+                if self.ty_is_simple_path(alias, segments) {
+                    return None;
+                }
+                return Some((name.clone(), alias));
+            }
+        }
+        None
+    }
+
+    fn ty_is_simple_path(&self, ty: &ast::Ty, segments: &[String]) -> bool {
+        match ty {
+            ast::Ty::Expr(expr) => self.expr_is_simple_path(expr, segments),
+            ast::Ty::Value(type_value) => match type_value.value.as_ref() {
+                ast::Value::Type(inner) => self.ty_is_simple_path(inner, segments),
+                ast::Value::Expr(inner) => self.expr_is_simple_path(inner, segments),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn expr_is_simple_path(&self, expr: &ast::Expr, segments: &[String]) -> bool {
+        match expr.kind() {
+            ast::ExprKind::Name(name) => self.name_matches_segments(name, segments),
+            ast::ExprKind::Value(value) => match value.as_ref() {
+                ast::Value::Expr(inner) => self.expr_is_simple_path(inner, segments),
+                ast::Value::Type(ty) => self.ty_is_simple_path(ty, segments),
+                _ => false,
+            },
+            ast::ExprKind::Paren(paren) => self.expr_is_simple_path(&paren.expr, segments),
+            _ => false,
+        }
+    }
+
+    fn name_matches_segments(&self, name: &Name, segments: &[String]) -> bool {
+        match name {
+            Name::Ident(ident) => segments.len() == 1 && ident.name == segments[0],
+            Name::Path(path) => self.path_matches_segments(path, segments),
+            Name::ParameterPath(path) => {
+                if path.segments.len() != segments.len() {
+                    return false;
+                }
+                path.segments
+                    .iter()
+                    .zip(segments.iter())
+                    .all(|(seg, expected)| seg.ident.name == *expected)
+            }
+        }
+    }
+
+    fn path_matches_segments(&self, path: &ast::Path, segments: &[String]) -> bool {
+        if path.segments.len() != segments.len() {
+            return false;
+        }
+        path.segments
+            .iter()
+            .zip(segments.iter())
+            .all(|(seg, expected)| seg.name == *expected)
+    }
+
+    fn enter_type_alias(&mut self, key: &str, span: Span) -> bool {
+        if self.resolving_type_aliases.contains(key) {
+            self.add_error(
+                Diagnostic::error(format!("type alias cycle detected: {}", key))
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(span),
+            );
+            return false;
+        }
+        self.resolving_type_aliases.insert(key.to_string());
+        true
+    }
+
+    fn exit_type_alias(&mut self, key: &str) {
+        self.resolving_type_aliases.remove(key);
     }
 
     fn materialized_type_alias(

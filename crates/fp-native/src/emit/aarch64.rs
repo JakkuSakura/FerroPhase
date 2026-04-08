@@ -2020,10 +2020,14 @@ fn load_value(
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
+    let ty = value_type(value, reg_types, local_types)?;
+    if matches!(ty, AsmType::Void) {
+        emit_mov_imm16(asm, dst, 0);
+        return Ok(());
+    }
     match value {
         AsmValue::Register(id) => {
             let offset = vreg_offset(layout, *id)?;
-            let ty = value_type(value, reg_types, local_types)?;
             if is_aggregate_type(&ty) && size_of(&ty) > 8 {
                 emit_load_from_sp(asm, dst, offset);
                 return Ok(());
@@ -2053,7 +2057,6 @@ fn load_value(
         }
         AsmValue::Local(id) => {
             let offset = local_offset(layout, *id)?;
-            let ty = value_type(value, reg_types, local_types)?;
             if is_aggregate_type(&ty) && size_of(&ty) > 8 {
                 emit_mov_reg(asm, dst, Reg::X31);
                 add_immediate_offset(asm, dst, offset as i64)?;
@@ -2083,11 +2086,11 @@ fn load_value(
             Ok(())
         }
         AsmValue::Constant(constant) => {
-            if size_of(&constant_type(constant)) == 0 {
+            if size_of(&ty) == 0 {
                 emit_mov_imm16(asm, dst, 0);
                 return Ok(());
             }
-            if matches!(constant_type(constant), AsmType::I128) {
+            if matches!(ty, AsmType::I128) {
                 return Err(Error::from("use i128 helper to load 128-bit values"));
             }
             if let AsmConstant::GlobalRef(name, _, indices) = constant {

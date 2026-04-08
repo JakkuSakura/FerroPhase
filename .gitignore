@@ -14,3 +14,7 @@ project/project
 *.o
 *.fbc
 *.wasm
+.venv/
+.pytest_cache/
+__pycache__/
+screenlog.0

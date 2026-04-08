@@ -143,6 +143,35 @@ impl Parser {
         self.tokens.insert(self.idx + 1, second);
     }
 
+    fn split_turbofish(&mut self) {
+        self.split_turbofish_at(self.idx);
+    }
+
+    fn split_turbofish_at(&mut self, idx: usize) {
+        let Some(token) = self.tokens.get(idx).cloned() else {
+            return;
+        };
+        if token.raw != "::<" {
+            return;
+        }
+        let colon_colon = Classified {
+            raw: "::".to_string(),
+            normalized: "::".to_string(),
+            kind: TokenKind::Symbol,
+            lexeme_kind: token.lexeme_kind,
+            span: token.span,
+        };
+        let lt = Classified {
+            raw: "<".to_string(),
+            normalized: "<".to_string(),
+            kind: TokenKind::Symbol,
+            lexeme_kind: token.lexeme_kind,
+            span: token.span,
+        };
+        self.tokens[idx] = colon_colon;
+        self.tokens.insert(idx + 1, lt);
+    }
+
     fn parse_root_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let lo = self.tokens.first().map(|t| t.span.lo).unwrap_or(0);
         let hi = self.tokens.last().map(|t| t.span.hi).unwrap_or(0);
@@ -1617,6 +1646,11 @@ impl Parser {
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
 
+        if self.peek_non_trivia_raw() == Some("::") {
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+        }
+
         match self.peek_non_trivia_token_kind() {
             Some(TokenKind::Ident) => self.bump_token_into(&mut children),
             Some(TokenKind::Keyword(_)) => self.bump_token_into(&mut children),
@@ -1624,57 +1658,65 @@ impl Parser {
         }
         self.bump_trivia_into(&mut children);
 
-        while self.peek_non_trivia_raw() == Some("::") {
+        if self.peek_non_trivia_raw() == Some("::<") {
+            self.split_turbofish();
+        }
+        if self.peek_non_trivia_raw() == Some("::")
+            && self
+                .peek_nth_non_trivia(1)
+                .is_some_and(|tok| tok.raw.as_str() == "<")
+        {
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
+            self.parse_generic_args_into(&mut children)?;
+            self.bump_trivia_into(&mut children);
+        }
+        if self.peek_non_trivia_raw() == Some("<") {
+            self.parse_generic_args_into(&mut children)?;
+            self.bump_trivia_into(&mut children);
+        }
+
+        loop {
+            if self.peek_non_trivia_raw() == Some("::<") {
+                self.split_turbofish();
+            }
+            if self.peek_non_trivia_raw() != Some("::") {
+                break;
+            }
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+            if self.peek_non_trivia_raw() == Some("::<") {
+                self.split_turbofish();
+            }
+            if self.peek_non_trivia_raw() == Some("<") {
+                self.parse_generic_args_into(&mut children)?;
+                continue;
+            }
             match self.peek_non_trivia_token_kind() {
                 Some(TokenKind::Ident) => self.bump_token_into(&mut children),
                 Some(TokenKind::Keyword(_)) => self.bump_token_into(&mut children),
                 _ => return Err(self.error("expected path segment")),
             }
             self.bump_trivia_into(&mut children);
+            if self.peek_non_trivia_raw() == Some("::<") {
+                self.split_turbofish();
+            }
         }
 
+        if self.peek_non_trivia_raw() == Some("::<") {
+            self.split_turbofish();
+        }
+        if self.peek_non_trivia_raw() == Some("::")
+            && self
+                .peek_nth_non_trivia(1)
+                .is_some_and(|tok| tok.raw.as_str() == "<")
+        {
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+            self.parse_generic_args_into(&mut children)?;
+        }
         if self.peek_non_trivia_raw() == Some("<") {
-            self.bump_token_into(&mut children);
-            self.bump_trivia_into(&mut children);
-            while self.peek_non_trivia_raw() != Some(">") {
-                if self.peek_non_trivia_raw().is_none() {
-                    return Err(self.error("unterminated generic args"));
-                }
-                if self.peek_non_trivia_raw() == Some(">>") {
-                    self.split_right_shift();
-                    break;
-                }
-
-                let snapshot = self.idx;
-                if self.peek_non_trivia_token_kind() == Some(TokenKind::Ident) {
-                    self.bump_token_into(&mut children);
-                    self.bump_trivia_into(&mut children);
-                    if self.peek_non_trivia_raw() == Some("=") {
-                        self.bump_token_into(&mut children);
-                        self.bump_trivia_into(&mut children);
-                    } else {
-                        self.idx = snapshot;
-                    }
-                }
-
-                let arg_ty = self.parse_type_bp_until(0, &[",", ">"])?;
-                children.push(SyntaxElement::Node(Box::new(arg_ty)));
-                self.bump_trivia_into(&mut children);
-                if self.peek_non_trivia_raw() == Some(",") {
-                    self.bump_token_into(&mut children);
-                    self.bump_trivia_into(&mut children);
-                    continue;
-                }
-                break;
-            }
-            if self.peek_non_trivia_raw() == Some(">>") {
-                self.split_right_shift();
-            }
-            self.expect_token_raw(">")?;
-            self.bump_token_into(&mut children);
-            self.bump_trivia_into(&mut children);
+            self.parse_generic_args_into(&mut children)?;
         }
 
         if self.peek_non_trivia_raw() == Some("!") {
@@ -1963,6 +2005,13 @@ impl Parser {
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
 
+        let mut is_path = false;
+        if self.peek_non_trivia_raw() == Some("::") {
+            is_path = true;
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+        }
+
         match self.peek_non_trivia_token_kind() {
             Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) => {
                 self.bump_token_into(&mut children)
@@ -1971,11 +2020,27 @@ impl Parser {
         }
         self.bump_trivia_into(&mut children);
 
-        let mut is_path = false;
-        while self.peek_non_trivia_raw() == Some("::") {
+        if self.peek_non_trivia_raw() == Some("::<") {
+            self.split_turbofish();
+        }
+
+        loop {
+            if self.peek_non_trivia_raw() == Some("::<") {
+                self.split_turbofish();
+            }
+            if self.peek_non_trivia_raw() != Some("::") {
+                break;
+            }
             is_path = true;
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
+            if self.peek_non_trivia_raw() == Some("::<") {
+                self.split_turbofish();
+            }
+            if self.peek_non_trivia_raw() == Some("<") {
+                self.parse_generic_args_into(&mut children)?;
+                continue;
+            }
             match self.peek_non_trivia_token_kind() {
                 Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) => {
                     self.bump_token_into(&mut children)
@@ -1995,6 +2060,57 @@ impl Parser {
             children,
             span,
         ))
+    }
+
+    fn parse_generic_args_into(
+        &mut self,
+        out: &mut Vec<SyntaxElement>,
+    ) -> Result<(), ExprCstParseError> {
+        if self.peek_non_trivia_raw() == Some("::<") {
+            self.split_turbofish();
+        }
+        self.expect_token_raw("<")?;
+        self.bump_token_into(out);
+        self.bump_trivia_into(out);
+
+        while self.peek_non_trivia_raw() != Some(">") {
+            if self.peek_non_trivia_raw().is_none() {
+                return Err(self.error("unterminated generic args"));
+            }
+            if self.peek_non_trivia_raw() == Some(">>") {
+                self.split_right_shift();
+                break;
+            }
+
+            let snapshot = self.idx;
+            if self.peek_non_trivia_token_kind() == Some(TokenKind::Ident) {
+                self.bump_token_into(out);
+                self.bump_trivia_into(out);
+                if self.peek_non_trivia_raw() == Some("=") {
+                    self.bump_token_into(out);
+                    self.bump_trivia_into(out);
+                } else {
+                    self.idx = snapshot;
+                }
+            }
+
+            let arg_ty = self.parse_type_bp_until(0, &[",", ">"])?;
+            out.push(SyntaxElement::Node(Box::new(arg_ty)));
+            self.bump_trivia_into(out);
+            if self.peek_non_trivia_raw() == Some(",") {
+                self.bump_token_into(out);
+                self.bump_trivia_into(out);
+                continue;
+            }
+            break;
+        }
+        if self.peek_non_trivia_raw() == Some(">>") {
+            self.split_right_shift();
+        }
+        self.expect_token_raw(">")?;
+        self.bump_token_into(out);
+        self.bump_trivia_into(out);
+        Ok(())
     }
 
     fn parse_number(&mut self) -> Result<SyntaxNode, ExprCstParseError> {

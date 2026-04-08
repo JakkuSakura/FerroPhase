@@ -11,6 +11,7 @@ common_enum! {
         Struct(PatternStruct),
         Structural(PatternStructural),
         Box(PatternBox),
+        Ref(PatternRef),
         Variant(PatternVariant),
         Quote(PatternQuote),
         QuotePlural(PatternQuotePlural),
@@ -179,6 +180,18 @@ impl PatternBox {
     }
 }
 common_struct! {
+    pub struct PatternRef {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub mutability: Option<bool>,
+        pub pattern: Box<Pattern>,
+    }
+}
+impl PatternRef {
+    pub fn span(&self) -> Span {
+        self.pattern.span()
+    }
+}
+common_struct! {
     pub struct PatternVariant {
         pub name: Expr, // TypeExpr
         pub pattern: Option<Box<Pattern>>,
@@ -295,6 +308,7 @@ impl PatternKind {
             PatternKind::Struct(pattern) => pattern.span(),
             PatternKind::Structural(pattern) => pattern.span(),
             PatternKind::Box(pattern) => pattern.span(),
+            PatternKind::Ref(pattern) => pattern.span(),
             PatternKind::Variant(pattern) => pattern.span(),
             PatternKind::Quote(pattern) => pattern.span(),
             PatternKind::QuotePlural(pattern) => pattern.span(),

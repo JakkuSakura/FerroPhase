@@ -81,7 +81,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }));
                 Ok(super::super::FunctionTypeInfo { params, ret })
             }
-            TypeVarKind::Bound(TypeTerm::Any) => {
+            TypeVarKind::Bound(TypeTerm::Any) | TypeVarKind::Bound(TypeTerm::Unknown) => {
                 let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
                 let ret = self.fresh_type_var();
                 self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {

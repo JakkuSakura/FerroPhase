@@ -65,28 +65,84 @@ pub(crate) fn parse_cooked_string_literal(input: &mut &str, prefix: &str) -> Mod
 }
 
 pub(crate) fn parse_char_literal(input: &mut &str) -> ModalResult<String> {
+    parse_char_literal_with_prefix(input, "'")
+}
+
+pub(crate) fn parse_byte_char_literal(input: &mut &str) -> ModalResult<String> {
+    parse_char_literal_with_prefix(input, "b'")
+}
+
+fn parse_char_literal_with_prefix(input: &mut &str, prefix: &str) -> ModalResult<String> {
     let slice = *input;
-    if !slice.starts_with('\'') {
+    if !slice.starts_with(prefix) {
         return Err(backtrack_err());
     }
     let bytes = slice.as_bytes();
-    let mut idx = 1;
-    let mut escape = false;
-    while idx < bytes.len() {
-        let b = bytes[idx];
-        idx += 1;
-        if b == b'\\' && !escape {
-            escape = true;
-            continue;
-        }
-        if b == b'\'' && !escape {
-            let literal = slice[..idx].to_string();
-            *input = &slice[idx..];
-            return Ok(literal);
-        }
-        escape = false;
+    let mut idx = prefix.len();
+    if idx >= bytes.len() {
+        return Err(backtrack_err());
     }
-    Err(backtrack_err())
+
+    if bytes[idx] == b'\\' {
+        idx += 1;
+        if idx >= bytes.len() {
+            return Err(backtrack_err());
+        }
+        match bytes[idx] {
+            b'x' => {
+                idx += 1;
+                if idx + 1 >= bytes.len() {
+                    return Err(backtrack_err());
+                }
+                if !is_hex(bytes[idx]) || !is_hex(bytes[idx + 1]) {
+                    return Err(backtrack_err());
+                }
+                idx += 2;
+            }
+            b'u' => {
+                idx += 1;
+                if idx >= bytes.len() || bytes[idx] != b'{' {
+                    return Err(backtrack_err());
+                }
+                idx += 1;
+                let start = idx;
+                while idx < bytes.len() && bytes[idx] != b'}' {
+                    if !is_hex(bytes[idx]) {
+                        return Err(backtrack_err());
+                    }
+                    idx += 1;
+                }
+                if idx == start || idx >= bytes.len() {
+                    return Err(backtrack_err());
+                }
+                idx += 1;
+            }
+            _ => {
+                idx += 1;
+            }
+        }
+    } else {
+        let rest = &slice[idx..];
+        let mut chars = rest.char_indices();
+        let Some((off, ch)) = chars.next() else {
+            return Err(backtrack_err());
+        };
+        if off != 0 {
+            return Err(backtrack_err());
+        }
+        if ch == '\'' || ch == '\\' || ch == '\n' || ch == '\r' {
+            return Err(backtrack_err());
+        }
+        idx += ch.len_utf8();
+    }
+
+    if idx >= bytes.len() || bytes[idx] != b'\'' {
+        return Err(backtrack_err());
+    }
+    idx += 1;
+    let literal = slice[..idx].to_string();
+    *input = &slice[idx..];
+    Ok(literal)
 }
 
 pub(crate) fn parse_lifetime(input: &mut &str) -> ModalResult<String> {
@@ -113,6 +169,9 @@ pub(crate) fn parse_lifetime(input: &mut &str) -> ModalResult<String> {
             }
             break;
         }
+        if slice[idx..].starts_with('\'') {
+            return Err(backtrack_err());
+        }
         let literal = slice[..idx].to_string();
         *input = &slice[idx..];
         return Ok(literal);
@@ -132,6 +191,9 @@ pub(crate) fn parse_lifetime(input: &mut &str) -> ModalResult<String> {
             continue;
         }
         break;
+    }
+    if slice[idx..].starts_with('\'') {
+        return Err(backtrack_err());
     }
     let literal = slice[..idx].to_string();
     *input = &slice[idx..];
@@ -203,6 +265,10 @@ pub(crate) fn is_ident_continue(ch: char) -> bool {
 
 pub(crate) fn backtrack_err() -> ErrMode<ContextError> {
     ErrMode::Backtrack(ContextError::new())
+}
+
+fn is_hex(byte: u8) -> bool {
+    matches!(byte, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')
 }
 
 fn matches_hashes(bytes: &[u8], start: usize, count: usize) -> bool {

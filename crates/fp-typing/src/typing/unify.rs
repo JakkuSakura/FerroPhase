@@ -2,7 +2,7 @@ use crate::typing::scheme::{SchemeType, TypeScheme};
 use crate::{AstTypeInferencer, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::{Error, Result};
-use fp_core::module::path::PathPrefix;
+use fp_core::module::path::{PathPrefix, QualifiedPath};
 
 fn is_std_task_future_ty(ty: &Ty) -> bool {
     let Ty::Expr(expr) = ty else {
@@ -89,6 +89,196 @@ pub(crate) enum TypeTerm {
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
+    fn build_generic_arg_map(
+        &self,
+        params: &[GenericParam],
+        args: &[Ty],
+    ) -> std::collections::HashMap<String, Ty> {
+        let mut mapping = std::collections::HashMap::new();
+        for (param, arg) in params.iter().zip(args.iter()) {
+            mapping.insert(param.name.as_str().to_string(), arg.clone());
+        }
+        mapping
+    }
+
+    fn ty_contains_generic_param(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Expr(expr) => match expr.kind() {
+                ExprKind::Name(name) => {
+                    if let Some(key) = self.generic_name_from_locator(name) {
+                        return self
+                            .generic_scopes
+                            .iter()
+                            .rev()
+                            .any(|scope| scope.contains(key));
+                    }
+                    false
+                }
+                _ => false,
+            },
+            Ty::Reference(reference) => self.ty_contains_generic_param(&reference.ty),
+            Ty::RawPtr(ptr) => self.ty_contains_generic_param(&ptr.ty),
+            Ty::Slice(slice) => self.ty_contains_generic_param(&slice.elem),
+            Ty::Vec(vec) => self.ty_contains_generic_param(&vec.ty),
+            Ty::Array(array) => self.ty_contains_generic_param(&array.elem),
+            Ty::Tuple(tuple) => tuple
+                .types
+                .iter()
+                .any(|elem| self.ty_contains_generic_param(elem)),
+            Ty::TypeBinaryOp(op) => {
+                self.ty_contains_generic_param(&op.lhs) || self.ty_contains_generic_param(&op.rhs)
+            }
+            Ty::Function(func) => func
+                .params
+                .iter()
+                .any(|param| self.ty_contains_generic_param(param))
+                || func
+                    .ret_ty
+                    .as_ref()
+                    .map(|ret| self.ty_contains_generic_param(ret))
+                    .unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn generic_name_from_locator<'a>(&self, name: &'a Name) -> Option<&'a str> {
+        match name {
+            Name::Ident(ident) => Some(ident.as_str()),
+            Name::Path(path) if path.segments.len() == 1 => {
+                Some(path.segments[0].as_str())
+            }
+            Name::ParameterPath(path)
+                if path.segments.len() == 1 && path.segments[0].args.is_empty() =>
+            {
+                Some(path.segments[0].ident.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn substitute_generic_ty(
+        &self,
+        ty: &Ty,
+        mapping: &std::collections::HashMap<String, Ty>,
+    ) -> Ty {
+        match ty {
+            Ty::Expr(expr) => {
+                if let ExprKind::Name(name) = expr.kind() {
+                    if let Some(key) = self.generic_name_from_locator(name) {
+                        if let Some(replacement) = mapping.get(key) {
+                            return replacement.clone();
+                        }
+                    }
+                }
+                ty.clone()
+            }
+            Ty::Reference(reference) => Ty::Reference(TypeReference {
+                ty: Box::new(self.substitute_generic_ty(&reference.ty, mapping)),
+                mutability: reference.mutability,
+                lifetime: reference.lifetime.clone(),
+            }),
+            Ty::RawPtr(ptr) => Ty::RawPtr(TypeRawPtr {
+                ty: Box::new(self.substitute_generic_ty(&ptr.ty, mapping)),
+                mutability: ptr.mutability,
+            }),
+            Ty::Slice(slice) => Ty::Slice(TypeSlice {
+                elem: Box::new(self.substitute_generic_ty(&slice.elem, mapping)),
+            }),
+            Ty::Vec(vec) => Ty::Vec(TypeVec {
+                ty: Box::new(self.substitute_generic_ty(&vec.ty, mapping)),
+            }),
+            Ty::Array(array) => Ty::Array(TypeArray {
+                elem: Box::new(self.substitute_generic_ty(&array.elem, mapping)),
+                len: array.len.clone(),
+            }),
+            Ty::Tuple(tuple) => Ty::Tuple(TypeTuple {
+                types: tuple
+                    .types
+                    .iter()
+                    .map(|elem| self.substitute_generic_ty(elem, mapping))
+                    .collect(),
+            }),
+            Ty::Struct(struct_ty) => {
+                let mut cloned = struct_ty.clone();
+                cloned.fields = cloned
+                    .fields
+                    .iter()
+                    .map(|field| StructuralField {
+                        name: field.name.clone(),
+                        value: self.substitute_generic_ty(&field.value, mapping),
+                    })
+                    .collect();
+                Ty::Struct(cloned)
+            }
+            Ty::Structural(structural) => Ty::Structural(TypeStructural {
+                fields: structural
+                    .fields
+                    .iter()
+                    .map(|field| StructuralField {
+                        name: field.name.clone(),
+                        value: self.substitute_generic_ty(&field.value, mapping),
+                    })
+                    .collect(),
+            }),
+            Ty::Enum(enum_ty) => {
+                let mut cloned = enum_ty.clone();
+                cloned.variants = cloned
+                    .variants
+                    .iter()
+                    .map(|variant| EnumTypeVariant {
+                        name: variant.name.clone(),
+                        value: self.substitute_generic_ty(&variant.value, mapping),
+                        discriminant: variant.discriminant.clone(),
+                    })
+                    .collect();
+                Ty::Enum(cloned)
+            }
+            Ty::Function(func) => Ty::Function(TypeFunction {
+                params: func
+                    .params
+                    .iter()
+                    .map(|param| self.substitute_generic_ty(param, mapping))
+                    .collect(),
+                generics_params: func.generics_params.clone(),
+                ret_ty: func
+                    .ret_ty
+                    .as_ref()
+                    .map(|ret| Box::new(self.substitute_generic_ty(ret, mapping))),
+            }),
+            Ty::TypeBinaryOp(op) => Ty::TypeBinaryOp(Box::new(TypeBinaryOp {
+                kind: op.kind,
+                lhs: Box::new(self.substitute_generic_ty(&op.lhs, mapping)),
+                rhs: Box::new(self.substitute_generic_ty(&op.rhs, mapping)),
+            })),
+            Ty::Quote(quote) => Ty::Quote(TypeQuote {
+                span: quote.span,
+                kind: quote.kind,
+                item: quote.item,
+                inner: quote
+                    .inner
+                    .as_ref()
+                    .map(|inner| Box::new(self.substitute_generic_ty(inner, mapping))),
+            }),
+            _ => ty.clone(),
+        }
+    }
+
+    pub(crate) fn apply_generic_args_to_enum(&self, enum_ty: &TypeEnum, args: &[Ty]) -> TypeEnum {
+        let mapping = self.build_generic_arg_map(&enum_ty.generics_params, args);
+        match self.substitute_generic_ty(&Ty::Enum(enum_ty.clone()), &mapping) {
+            Ty::Enum(concrete) => concrete,
+            _ => enum_ty.clone(),
+        }
+    }
+
+    fn apply_generic_args_to_struct(&self, struct_ty: &TypeStruct, args: &[Ty]) -> TypeStruct {
+        let mapping = self.build_generic_arg_map(&struct_ty.generics_params, args);
+        match self.substitute_generic_ty(&Ty::Struct(struct_ty.clone()), &mapping) {
+            Ty::Struct(concrete) => concrete,
+            _ => struct_ty.clone(),
+        }
+    }
+
     pub(crate) fn generalize(&mut self, var: TypeVarId) -> Result<TypeScheme> {
         let mut mapping = std::collections::HashMap::new();
         let mut next = 0u32;
@@ -371,14 +561,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         ) {
             (TypeVarKind::Bound(TypeTerm::Unknown), _) => {
                 self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
+                self.merge_trait_bounds_into(b_root, a_root, true);
                 Ok(())
             }
             (_, TypeVarKind::Bound(TypeTerm::Unknown)) => {
                 self.type_vars[b_root].kind = TypeVarKind::Link(a_root);
+                self.merge_trait_bounds_into(a_root, b_root, true);
                 Ok(())
             }
             (TypeVarKind::Unbound { .. }, TypeVarKind::Unbound { .. }) => {
                 self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
+                self.merge_trait_bounds_into(b_root, a_root, true);
                 Ok(())
             }
             (TypeVarKind::Unbound { .. }, TypeVarKind::Bound(term)) => {
@@ -386,6 +579,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     return Err(self.error_with_current_span("occurs check failed"));
                 }
                 self.type_vars[a_root].kind = TypeVarKind::Bound(term);
+                self.merge_trait_bounds_into(a_root, b_root, false);
                 Ok(())
             }
             (TypeVarKind::Bound(term), TypeVarKind::Unbound { .. }) => {
@@ -393,6 +587,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     return Err(self.error_with_current_span("occurs check failed"));
                 }
                 self.type_vars[b_root].kind = TypeVarKind::Bound(term);
+                self.merge_trait_bounds_into(b_root, a_root, false);
                 Ok(())
             }
             (
@@ -419,6 +614,31 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             (TypeVarKind::Link(next), _) => self.unify(next, b_root),
             (_, TypeVarKind::Link(next)) => self.unify(a_root, next),
+        }
+    }
+
+    fn merge_trait_bounds_into(
+        &mut self,
+        target: TypeVarId,
+        source: TypeVarId,
+        remove_source: bool,
+    ) {
+        let bounds = if remove_source {
+            self.generic_trait_bounds.remove(&source)
+        } else {
+            self.generic_trait_bounds.get(&source).cloned()
+        };
+        let Some(bounds) = bounds else {
+            return;
+        };
+        if let Some(existing) = self.generic_trait_bounds.get_mut(&target) {
+            for bound in bounds {
+                if !existing.contains(&bound) {
+                    existing.push(bound);
+                }
+            }
+        } else {
+            self.generic_trait_bounds.insert(target, bounds);
         }
     }
 
@@ -503,6 +723,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             (TypeTerm::Struct(sa), TypeTerm::Struct(sb)) => {
                 if sa == sb {
                     Ok(())
+                } else if sa.name == sb.name {
+                    self.unify_struct_fields(&sa, &sb)
                 } else {
                     Err(self.error_with_current_span(format!(
                         "struct type mismatch: {} vs {}",
@@ -518,8 +740,46 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             (TypeTerm::Enum(ae), TypeTerm::Enum(be)) => {
+                let ae_name = ae.name.as_str();
+                let be_name = be.name.as_str();
+                let ae_tail = ae_name.rsplit("::").next().unwrap_or(ae_name);
+                let be_tail = be_name.rsplit("::").next().unwrap_or(be_name);
                 if ae == be {
                     Ok(())
+                } else if ae_tail == be_tail {
+                    match self.unify_enum_variants(&ae, &be) {
+                        Ok(()) => Ok(()),
+                        Err(err) => {
+                            let mut resolved = false;
+                            let mut resolved_a = ae.clone();
+                            let mut resolved_b = be.clone();
+                            if (resolved_a.variants.is_empty() || resolved_b.variants.is_empty())
+                                && self.lookup_enum_def_by_name(ae_tail).is_some()
+                            {
+                                if let Some((_, def)) =
+                                    self.lookup_enum_def_by_name(ae_tail)
+                                {
+                                    if resolved_a.variants.is_empty() {
+                                        resolved_a = def.clone();
+                                        resolved = true;
+                                    }
+                                    if resolved_b.variants.is_empty() {
+                                        resolved_b = def;
+                                        resolved = true;
+                                    }
+                                }
+                            }
+                            if resolved {
+                                self.unify_enum_variants(&resolved_a, &resolved_b)
+                            } else if !ae.generics_params.is_empty()
+                                || !be.generics_params.is_empty()
+                            {
+                                Ok(())
+                            } else {
+                                Err(err)
+                            }
+                        }
+                    }
                 } else {
                     Err(self.error_with_current_span("enum type mismatch"))
                 }
@@ -678,6 +938,27 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Err(self.error_with_current_span("union type mismatch"))
     }
 
+    fn unify_struct_fields(&mut self, sa: &TypeStruct, sb: &TypeStruct) -> Result<()> {
+        if sa.fields.len() != sb.fields.len() {
+            return Err(self.error_with_current_span(format!(
+                "struct type mismatch: {} vs {}",
+                sa.name, sb.name
+            )));
+        }
+        for field in &sa.fields {
+            let Some(other) = sb.fields.iter().find(|f| f.name == field.name) else {
+                return Err(self.error_with_current_span(format!(
+                    "struct type mismatch: {} vs {}",
+                    sa.name, sb.name
+                )));
+            };
+            let a_var = self.type_from_ast_ty(&field.value)?;
+            let b_var = self.type_from_ast_ty(&other.value)?;
+            self.unify(a_var, b_var)?;
+        }
+        Ok(())
+    }
+
     fn unify_union_pair(
         &mut self,
         a_lhs: TypeVarId,
@@ -695,6 +976,45 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return Ok(());
         }
         Err(self.error_with_current_span("union type mismatch"))
+    }
+
+    fn unify_enum_variants(&mut self, ae: &TypeEnum, be: &TypeEnum) -> Result<()> {
+        if ae.variants.len() != be.variants.len() {
+            return Err(self.error_with_current_span("enum type mismatch"));
+        }
+        self.enter_scope();
+        let mut registered: Vec<(String, TypeVarId)> = Vec::new();
+        for param in ae.generics_params.iter().chain(be.generics_params.iter()) {
+            let name = param.name.as_str();
+            let var = if let Some((_, var)) = registered.iter().find(|(n, _)| n == name) {
+                *var
+            } else {
+                let var = self.register_generic_param(name);
+                registered.push((name.to_string(), var));
+                var
+            };
+            let bounds = Self::extract_trait_bounds(&param.bounds);
+            if !bounds.is_empty() {
+                if let Some(existing) = self.generic_trait_bounds.get_mut(&var) {
+                    existing.extend(bounds);
+                } else {
+                    self.generic_trait_bounds.insert(var, bounds);
+                }
+            }
+        }
+        let result = (|| {
+            for variant in &ae.variants {
+                let Some(other) = be.variants.iter().find(|v| v.name == variant.name) else {
+                    return Err(self.error_with_current_span("enum type mismatch"));
+                };
+                let a_var = self.type_from_ast_ty(&variant.value)?;
+                let b_var = self.type_from_ast_ty(&other.value)?;
+                self.unify(a_var, b_var)?;
+            }
+            Ok(())
+        })();
+        self.exit_scope();
+        result
     }
 
     pub(crate) fn resolve_to_ty(&mut self, var: TypeVarId) -> Result<Ty> {
@@ -956,7 +1276,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     Value::String(_) => TypeTerm::Primitive(TypePrimitive::String),
                     Value::Char(_) => TypeTerm::Primitive(TypePrimitive::Char),
-                    Value::Unit(_) => TypeTerm::Unit,
+                    Value::Unit(_) => TypeTerm::Unknown,
                     Value::Null(_) | Value::None(_) => TypeTerm::Nothing,
                     _ => TypeTerm::Custom(ty.clone()),
                 };
@@ -965,8 +1285,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Type(_) => {
                 self.bind(var, TypeTerm::Custom(ty.clone()));
             }
+            Ty::TypeBounds(_) => {
+                // Higher-ranked or bounded types are treated as opaque for now.
+                self.bind(var, TypeTerm::Any);
+            }
             // No Ty::Custom in current AST types; treat all remaining cases via fallback below
-            Ty::Unknown(_) => {}
+            Ty::Unknown(_) => self.bind(var, TypeTerm::Unknown),
             Ty::Tuple(tuple) => {
                 let mut vars = Vec::new();
                 for elem in &tuple.types {
@@ -1002,6 +1326,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 if let ExprKind::Value(value) = expr.kind() {
                     if let Value::Type(ty) = value.as_ref() {
                         return self.type_from_ast_ty(ty);
+                    }
+                    if matches!(value.as_ref(), Value::Unit(_)) {
+                        return Ok(var);
                     }
                 }
                 // Handle path-like type expressions (e.g., i64, bool, usize, str).
@@ -1046,6 +1373,143 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 self.bind(var, TypeTerm::Custom(ty.clone()));
                                 return Ok(var);
                             }
+                            if !segment.args.is_empty() {
+                                let name = segment.ident.as_str();
+                                let mut concrete_args = Vec::with_capacity(segment.args.len());
+                                for arg in &segment.args {
+                                    let arg_var = self.type_from_ast_ty(arg)?;
+                                    let concrete = match self.resolve_to_ty(arg_var) {
+                                        Ok(resolved)
+                                            if matches!(arg, Ty::ImplTraits(_))
+                                                && matches!(
+                                                    resolved,
+                                                    Ty::Any(_) | Ty::Unknown(_)
+                                                ) =>
+                                        {
+                                            arg.clone()
+                                        }
+                                        Ok(resolved)
+                                            if matches!(resolved, Ty::Any(_) | Ty::Unknown(_))
+                                                && self.ty_contains_generic_param(arg) =>
+                                        {
+                                            arg.clone()
+                                        }
+                                        Ok(resolved) => resolved,
+                                        Err(_) => arg.clone(),
+                                    };
+                                    concrete_args.push(concrete);
+                                }
+                                let mut handled = false;
+                                if let Some(key) = self.resolve_locator_key(loc) {
+                                    if let Some(enum_ty) = self.enum_defs.get(&key) {
+                                        if enum_ty.generics_params.len() == concrete_args.len() {
+                                            let concrete =
+                                                self.apply_generic_args_to_enum(enum_ty, &concrete_args);
+                                            self.bind(var, TypeTerm::Enum(concrete));
+                                            handled = true;
+                                        }
+                                    }
+                                    if !handled {
+                                        if let Some(struct_ty) = self.struct_defs.get(&key) {
+                                            if struct_ty.generics_params.len() == concrete_args.len() {
+                                                let concrete = self.apply_generic_args_to_struct(
+                                                    struct_ty,
+                                                    &concrete_args,
+                                                );
+                                                self.bind(var, TypeTerm::Struct(concrete));
+                                                handled = true;
+                                            }
+                                        }
+                                    }
+                                }
+                                if handled {
+                                    return Ok(var);
+                                }
+                                if let Some((_, enum_ty)) = self.lookup_enum_def_by_name(name) {
+                                    if enum_ty.generics_params.len() == concrete_args.len() {
+                                        let concrete = self
+                                            .apply_generic_args_to_enum(&enum_ty, &concrete_args);
+                                        self.bind(var, TypeTerm::Enum(concrete));
+                                        return Ok(var);
+                                    }
+                                }
+                                if name == "Option" && concrete_args.len() == 1 {
+                                    let std_option = QualifiedPath::new(vec![
+                                        "std".to_string(),
+                                        "option".to_string(),
+                                        "Option".to_string(),
+                                    ]);
+                                    if let Some(enum_ty) = self.enum_defs.get(&std_option) {
+                                        let concrete =
+                                            self.apply_generic_args_to_enum(enum_ty, &concrete_args);
+                                        self.bind(var, TypeTerm::Enum(concrete));
+                                        return Ok(var);
+                                    }
+                                }
+                                if name == "Result" && concrete_args.len() == 2 {
+                                    let std_result = QualifiedPath::new(vec![
+                                        "std".to_string(),
+                                        "result".to_string(),
+                                        "Result".to_string(),
+                                    ]);
+                                    if let Some(enum_ty) = self.enum_defs.get(&std_result) {
+                                        let concrete =
+                                            self.apply_generic_args_to_enum(enum_ty, &concrete_args);
+                                        self.bind(var, TypeTerm::Enum(concrete));
+                                        return Ok(var);
+                                    }
+                                }
+                                if let Some((_, struct_ty)) = self.lookup_struct_def_by_name(name) {
+                                    if struct_ty.generics_params.len() == concrete_args.len() {
+                                        let concrete = self
+                                            .apply_generic_args_to_struct(&struct_ty, &concrete_args);
+                                        self.bind(var, TypeTerm::Struct(concrete));
+                                        return Ok(var);
+                                    }
+                                }
+                                if name == "Option" && concrete_args.len() == 1 {
+                                    let enum_ty = TypeEnum {
+                                        name: Ident::new("Option"),
+                                        generics_params: Vec::new(),
+                                        repr: ReprOptions::default(),
+                                        variants: vec![
+                                            EnumTypeVariant {
+                                                name: Ident::new("Some"),
+                                                value: concrete_args[0].clone(),
+                                                discriminant: None,
+                                            },
+                                            EnumTypeVariant {
+                                                name: Ident::new("None"),
+                                                value: Ty::Unit(TypeUnit),
+                                                discriminant: None,
+                                            },
+                                        ],
+                                    };
+                                    self.bind(var, TypeTerm::Enum(enum_ty));
+                                    return Ok(var);
+                                }
+                                if name == "Result" && concrete_args.len() == 2 {
+                                    let enum_ty = TypeEnum {
+                                        name: Ident::new("Result"),
+                                        generics_params: Vec::new(),
+                                        repr: ReprOptions::default(),
+                                        variants: vec![
+                                            EnumTypeVariant {
+                                                name: Ident::new("Ok"),
+                                                value: concrete_args[0].clone(),
+                                                discriminant: None,
+                                            },
+                                            EnumTypeVariant {
+                                                name: Ident::new("Err"),
+                                                value: concrete_args[1].clone(),
+                                                discriminant: None,
+                                            },
+                                        ],
+                                    };
+                                    self.bind(var, TypeTerm::Enum(enum_ty));
+                                    return Ok(var);
+                                }
+                            }
                         }
                     }
                     let name = match loc {
@@ -1054,7 +1518,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .last()
                             .map(|seg| seg.ident.as_str().to_string())
                             .unwrap_or_default(),
-                        other => other.to_string(),
+                        Name::Path(path) => path
+                            .segments
+                            .last()
+                            .map(|seg| seg.as_str().to_string())
+                            .unwrap_or_default(),
+                        Name::Ident(ident) => ident.as_str().to_string(),
                     };
                     let resolved = self.resolve_locator_key(loc);
                     if is_token_stream_name(&name) {
@@ -1100,6 +1569,40 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             self.bind(var, TypeTerm::Enum(enum_ty.clone()));
                             return Ok(var);
                         }
+                        if let Some(stripped) = Self::strip_std_prefix(&key) {
+                            if let Some(struct_ty) = self.struct_defs.get(&stripped) {
+                                self.bind(var, TypeTerm::Struct(struct_ty.clone()));
+                                return Ok(var);
+                            }
+                            if let Some(enum_ty) = self.enum_defs.get(&stripped) {
+                                self.bind(var, TypeTerm::Enum(enum_ty.clone()));
+                                return Ok(var);
+                            }
+                        }
+                    }
+                    if let Some(parsed) = self.resolution_parsed_path(loc) {
+                        let name_path = QualifiedPath::new(parsed.segments);
+                        let is_unqualified = parsed.prefix == PathPrefix::Plain
+                            && name_path.segments.len() == 1;
+                        let mut candidates =
+                            self.struct_name_variants_for_path(&name_path, is_unqualified);
+                        if let Some(stripped) = Self::strip_std_prefix(&name_path) {
+                            if !candidates.contains(&stripped) {
+                                candidates.push(stripped);
+                            }
+                        }
+                        for candidate in &candidates {
+                            if let Some(struct_ty) = self.struct_defs.get(candidate) {
+                                self.bind(var, TypeTerm::Struct(struct_ty.clone()));
+                                return Ok(var);
+                            }
+                        }
+                        for candidate in &candidates {
+                            if let Some(enum_ty) = self.enum_defs.get(candidate) {
+                                self.bind(var, TypeTerm::Enum(enum_ty.clone()));
+                                return Ok(var);
+                            }
+                        }
                     }
                     if let Some((_, struct_ty)) = self.lookup_struct_def_by_name(&name) {
                         self.bind(var, TypeTerm::Struct(struct_ty));
@@ -1144,9 +1647,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }?;
                 self.bind(var, TypeTerm::Function(FunctionTerm { params, ret }));
             }
-            Ty::ImplTraits(_traits) => {
-                // `impl Trait` is currently treated as an opaque/unknown type.
-                // This keeps typing permissive for higher-level experiments and transpilation.
+            Ty::ImplTraits(traits) => {
+                // `impl Trait` / `dyn Trait` are currently treated as opaque, but we still
+                // record trait bounds so method lookup on dyn traits can succeed.
+                let bounds = Self::extract_trait_bounds(&traits.bounds);
+                if !bounds.is_empty() {
+                    self.generic_trait_bounds.insert(var, bounds);
+                }
                 self.bind(var, TypeTerm::Any);
             }
             other => {
@@ -1158,6 +1665,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         }
         Ok(var)
+    }
+
+    pub(crate) fn type_from_ast_ty_in_module(
+        &mut self,
+        ty: &Ty,
+        module_path: &QualifiedPath,
+    ) -> Result<TypeVarId> {
+        let saved = self.module_path.clone();
+        self.module_path = module_path.clone();
+        let result = self.type_from_ast_ty(ty);
+        self.module_path = saved;
+        result
     }
 
     fn hashmap_args_from_locator(
