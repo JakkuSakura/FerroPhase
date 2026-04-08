@@ -28,6 +28,8 @@ if [[ "${FP_BIN}" != "fp" && ! -x "${FP_BIN}" ]]; then
   exit 1
 fi
 
+export FP_BIN
+
 if command -v uv >/dev/null 2>&1; then
   PYTEST_RUNNER=(uv run pytest)
 elif command -v pytest >/dev/null 2>&1; then
@@ -38,6 +40,8 @@ else
   qa_err "pytest runner not found (uv/pytest/python3)"
   exit 1
 fi
+
+qa_require_script "risk-min" "${ROOT_DIR}/scripts/run_risk_min.sh"
 
 RUST_UI_LIMIT="${FP_RUST_UI_LIMIT:-50}"
 RUST_UI_ARGS=(both --fp "${FP_BIN}")

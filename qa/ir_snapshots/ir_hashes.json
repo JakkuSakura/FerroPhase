@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "generated_at": "1970-01-01T00:00:00Z",
+  "snapshots_root": "qa/ir_snapshots",
+  "extensions": [
+    ".ast",
+    ".ast-typed",
+    ".ast-eval",
+    ".hir",
+    ".mir",
+    ".lir"
+  ],
+  "backends": {
+    "bytecode": {
+      "hashes": {}
+    }
+  }
+}

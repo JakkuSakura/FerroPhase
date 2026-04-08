@@ -12,6 +12,12 @@ qa-medium:
 qa-high:
     scripts/qa_local.sh --risk high
 
+devx-min:
+    scripts/check_devx_min.sh
+
+risk-min:
+    scripts/run_risk_min.sh
+
 verify-semantics:
     scripts/verify_semantics_matrix.sh
 

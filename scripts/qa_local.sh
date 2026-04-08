@@ -42,6 +42,45 @@ case "$RISK" in
     ;;
  esac
 
+EVIDENCE_PATH=""
+
+create_evidence() {
+  local label="local-risk-${RISK}"
+  local evidence_out
+  if ! evidence_out="$(bash "${SCRIPT_DIR}/qa_evidence.sh" "${label}" 2>/dev/null)" ; then
+    qa_warn "qa_evidence failed (label=${label})"
+    return 0
+  fi
+  qa_log "${evidence_out}"
+  if [[ "${evidence_out}" =~ created:\ (.*)$ ]]; then
+    EVIDENCE_PATH="${BASH_REMATCH[1]}"
+  fi
+}
+
+update_evidence_line() {
+  local path="$1"
+  local needle="$2"
+  local replacement="$3"
+  if [[ -z "${path}" || ! -f "${path}" ]]; then
+    return 0
+  fi
+  python -X utf8 - "${path}" "${needle}" "${replacement}" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+needle = sys.argv[2]
+replacement = sys.argv[3]
+text = path.read_text(encoding="utf-8")
+if needle not in text:
+    sys.exit(0)
+path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
+PY
+}
+
+create_evidence
+update_evidence_line "${EVIDENCE_PATH}" "Risk level: unknown" "Risk level: ${RISK}"
+
 pick_fp_file() {
   local preferred="examples/01_const_eval_basics.fp"
   if [[ -f "$preferred" ]]; then
@@ -122,6 +161,7 @@ fi
 qa_require_script "examples_exec" "scripts/run_examples_exec.sh"
 qa_require_script "examples_bytecode" "scripts/run_examples_bytecode.sh"
 qa_require_script "example_snapshots" "scripts/run_example_snapshots.sh"
+qa_require_script "risk_min" "scripts/run_risk_min.sh"
 
 run_pytest_optional_marker "pytest_risk_low" "risk_low"
 

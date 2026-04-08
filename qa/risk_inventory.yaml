@@ -7,6 +7,9 @@ risks:
     entry: core memory/layout helpers
     risk: Unsafe blocks could violate aliasing/overflow invariants under edge inputs.
     tests: TODO add targeted miri/loom + property tests
+    marker: risk_unsafe
+    test_path: tests/risk/unsafe
+    gate_level: min
     owner: TBD
     status: open
 
@@ -16,6 +19,9 @@ risks:
     entry: clang/LLVM C API bindings
     risk: ABI mismatch or lifetime misuse across C boundary could cause UB or crashes.
     tests: TODO add FFI boundary tests + sanitizers (ASAN/UBSAN)
+    marker: risk_ffi
+    test_path: tests/risk/ffi
+    gate_level: min
     owner: TBD
     status: open
 
@@ -25,6 +31,9 @@ risks:
     entry: .NET hosting / interop
     risk: Managed/unmanaged boundary errors or GC pinning issues.
     tests: TODO add integration tests with .NET runtime
+    marker: risk_ffi
+    test_path: tests/risk/ffi
+    gate_level: min
     owner: TBD
     status: open
 
@@ -34,6 +43,9 @@ risks:
     entry: JNI bindings
     risk: JNI local/global ref leaks or signature mismatch.
     tests: TODO add JVM integration tests (JNI smoke + leak checks)
+    marker: risk_ffi
+    test_path: tests/risk/ffi
+    gate_level: min
     owner: TBD
     status: open
 
@@ -43,6 +55,9 @@ risks:
     entry: Python/C-API bridge
     risk: Refcount misuse or GIL handling bugs.
     tests: TODO add CPython ABI tests + refcount checks
+    marker: risk_ffi
+    test_path: tests/risk/ffi
+    gate_level: min
     owner: TBD
     status: open
 
@@ -52,6 +67,9 @@ risks:
     entry: LLVM JIT pipeline
     risk: Incorrect codegen or missing relocations across targets.
     tests: TODO add JIT conformance tests + golden outputs
+    marker: risk_jit
+    test_path: tests/risk/jit
+    gate_level: min
     owner: TBD
     status: open
 
@@ -61,6 +79,9 @@ risks:
     entry: Cranelift JIT backend
     risk: Backend-specific codegen divergence or undefined behavior on edge IR.
     tests: TODO add backend parity tests vs interpreter
+    marker: risk_jit
+    test_path: tests/risk/jit
+    gate_level: min
     owner: TBD
     status: open
 
@@ -70,6 +91,9 @@ risks:
     entry: wasm codegen/loader
     risk: Feature flag mismatch (SIMD, bulk memory) across runtimes.
     tests: TODO add wasm feature matrix tests
+    marker: risk_backend
+    test_path: tests/risk/backend
+    gate_level: min
     owner: TBD
     status: open
 
@@ -79,6 +103,9 @@ risks:
     entry: eBPF verifier constraints
     risk: Generated programs rejected by verifier on different kernels.
     tests: TODO add kernel-version matrix tests
+    marker: risk_backend
+    test_path: tests/risk/backend
+    gate_level: min
     owner: TBD
     status: open
 
@@ -88,6 +115,9 @@ risks:
     entry: SYCL backend selection
     risk: Divergent behavior between CPU/GPU devices and drivers.
     tests: TODO add device-matrix tests
+    marker: risk_backend
+    test_path: tests/risk/backend
+    gate_level: min
     owner: TBD
     status: open
 
@@ -97,6 +127,9 @@ risks:
     entry: native codegen + platform ABI
     risk: Platform-specific calling convention mismatches.
     tests: TODO add cross-platform ABI tests
+    marker: risk_backend
+    test_path: tests/risk/backend
+    gate_level: min
     owner: TBD
     status: open
 
@@ -106,6 +139,9 @@ risks:
     entry: stack VM execution
     risk: Interpreter semantics drift vs other backends.
     tests: TODO add semantics parity tests across backends
+    marker: risk_backend
+    test_path: tests/risk/backend
+    gate_level: min
     owner: TBD
     status: open
 
@@ -115,5 +151,8 @@ risks:
     entry: multi-backend dispatch
     risk: Backend selection logic diverges or silently falls back.
     tests: TODO add routing/selection tests per backend
+    marker: risk_pipeline
+    test_path: tests/risk/pipeline
+    gate_level: min
     owner: TBD
     status: open
