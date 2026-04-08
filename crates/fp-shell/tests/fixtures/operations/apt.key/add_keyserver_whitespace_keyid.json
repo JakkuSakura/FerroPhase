@@ -1,0 +1,13 @@
+{
+    "kwargs": {
+        "keyserver": "key-server.net",
+        "keyid": "   "
+    },
+    "facts": {
+        "apt.AptKeys": {}
+    },
+    "exception": {
+        "name": "OperationError",
+        "message": "`keyid` must be provided with `keyserver`"
+    }
+}

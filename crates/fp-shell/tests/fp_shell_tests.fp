@@ -1,13 +1,12 @@
 #![feature(replace-bindings)]
 #![feature(exception)]
 use std::assert;
-use std::env;
 use std::fs;
 use std::json::Value;
 use std::path::Path;
 use std::yaml;
-use std::shell::backend;
 use std::collections::hash_map::HashMap;
+use std::collections::hash_map::HashMapEntry;
 use std::option::Option;
 
 struct FixtureSummary {
@@ -16,52 +15,10 @@ struct FixtureSummary {
     failed: i64,
 }
 
-const mut COMMAND_CALLS: Vec<str> = Vec::new();
 const mut CURRENT_FACTS: Value = Value::Null;
 
-fn reset_command_calls() {
-    COMMAND_CALLS = Vec::new();
-}
-
-fn record_command(command: str) {
-    COMMAND_CALLS.push(command);
-}
-
-fn invoke_shell_handler(
-    command: str,
-    _host: str,
-    _only_if: str,
-    _unless: str,
-    _creates: str,
-    _removes: str,
-    _sudo: bool,
-    _cwd: str,
-) -> bool {
-    record_command(command);
-    std::shell::backend::runtime_set_changed(true);
-    true
-}
-
-fn take_command_calls() -> Vec<str> {
-    let calls = COMMAND_CALLS;
-    COMMAND_CALLS = Vec::new();
-    calls
-}
-
-fn install_shell_hooks() {
-    std::ops::server::shell = invoke_shell_handler;
-    std::ops::server::shell_local = invoke_shell_handler;
-    std::ops::server::shell_ssh = invoke_shell_handler;
-    std::ops::server::shell_docker = invoke_shell_handler;
-    std::ops::server::shell_kubectl = invoke_shell_handler;
-    std::ops::server::shell_winrm = invoke_shell_handler;
-    std::ops::server::shell_chroot = invoke_shell_handler;
-}
-
 fn main() {
-    install_shell_hooks();
-    let repo_root = env::current_dir();
-    let fixture_root = join_path(&repo_root, "crates/fp-shell/tests/fixtures/operations");
+    let fixture_root = "crates/fp-shell/tests/fixtures/operations";
 
     let summary = run_fixture_suite(&fixture_root);
     println(
@@ -114,10 +71,10 @@ fn run_case(path: &str) -> bool {
     reset_workspace(&workspace);
     materialize_fixture_workspace(&workspace, fixture);
     install_fact_hooks(fixture);
-    reset_command_calls();
+    std::test::reset_command_mocks();
 
     let error = run_shell_case(path, family, fixture);
-    let calls = take_command_calls();
+    let calls = std::test::take_command_calls();
     let rendered = calls.join("\n");
     let expects_failure = expects_exception(fixture);
 
@@ -177,7 +134,7 @@ fn run_shell_case(path: &str, family: &str, fixture: Value) -> str {
     try {
         let operation = op_path[op_name];
         operation(*args, **kwargs);
-    } catch err {
+    } catch (err) {
         error = err;
     }
 
@@ -223,7 +180,10 @@ fn json_kwargs(value: Value) -> any {
             let mut idx = 0;
             while idx < fields.len() {
                 let field = fields[idx];
-                entries.push((field.key, json_to_value_with_key(field.key, field.value)));
+                entries.push(HashMapEntry {
+                    key: field.key,
+                    value: json_to_value_with_key(field.key, field.value),
+                });
                 idx = idx + 1;
             }
             HashMap::from(entries)
@@ -321,7 +281,10 @@ fn json_to_value(value: Value) -> any {
             let mut idx = 0;
             while idx < fields.len() {
                 let field = fields[idx];
-                entries.push((field.key, json_to_value(field.value)));
+                entries.push(HashMapEntry {
+                    key: field.key,
+                    value: json_to_value(field.value),
+                });
                 idx = idx + 1;
             }
             HashMap::from(entries)
@@ -364,7 +327,10 @@ fn json_to_fact_value(value: Value) -> any {
             let mut idx = 0;
             while idx < fields.len() {
                 let field = fields[idx];
-                entries.push((field.key, json_to_fact_value(field.value)));
+                entries.push(HashMapEntry {
+                    key: field.key,
+                    value: json_to_fact_value(field.value),
+                });
                 idx = idx + 1;
             }
             HashMap::from(entries)
@@ -493,6 +459,14 @@ fn materialize_file_map(workspace: &str, value: Value) {
                 match field.value {
                     Value::Null => fs::write_string(Path::new(&file_path), ""),
                     Value::String(content) => fs::write_string(Path::new(&file_path), content),
+                    Value::Object(_) => {
+                        let content = std::json::find_object_field(field.value, "content");
+                        match content {
+                            Value::Null => fs::write_string(Path::new(&file_path), ""),
+                            Value::String(text) => fs::write_string(Path::new(&file_path), text),
+                            _ => panic("expected local file content to be string or null"),
+                        }
+                    }
                     _ => panic("expected local file content to be string or null"),
                 }
                 idx = idx + 1;

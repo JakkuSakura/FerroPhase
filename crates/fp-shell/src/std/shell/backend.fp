@@ -215,6 +215,21 @@ extern "bash" fn runtime_last_changed() -> bool;
 extern "pwsh" fn runtime_last_changed() -> bool;
 
 #[cfg(target_lang = "bash")]
+extern "bash" fn runtime_record_change(op: str, target: str, summary: str, changed: bool);
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_record_change(op: str, target: str, summary: str, changed: bool);
+
+#[cfg(target_lang = "bash")]
+extern "bash" fn runtime_change_summary() -> str;
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_change_summary() -> str;
+
+#[cfg(target_lang = "bash")]
+extern "bash" fn runtime_clear_change_summary();
+#[cfg(target_lang = "pwsh")]
+extern "pwsh" fn runtime_clear_change_summary();
+
+#[cfg(target_lang = "bash")]
 const fn run_local_host(cmd: str) {
     bash(cmd)
 }

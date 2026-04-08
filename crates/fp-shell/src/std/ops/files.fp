@@ -280,8 +280,141 @@ const fn block_real_out(path: str, include_mode: bool) -> str {
     }
 }
 
+const fn record_change(op: str, target: str, summary: str, changed: bool) -> bool {
+    runtime_record_change(op, target, summary, changed);
+    changed
+}
+
+const fn line_regex_exact(line: str, escape: bool) -> str {
+    let rendered = match escape {
+        true => escape_regex(line),
+        false => line,
+    };
+    f"^{rendered}$"
+}
+
+#[cfg(target_lang = "bash")]
+const fn regex_present(path: str, regex: str) -> bool {
+    std::shell::process::ok(f"grep -Eq \"{regex}\" \"{path}\"")
+}
+
+#[cfg(target_lang = "pwsh")]
+const fn regex_present(path: str, regex: str) -> bool {
+    std::shell::process::ok(f"Select-String -Quiet -Pattern \"{regex}\" -LiteralPath \"{path}\"")
+}
+
+#[cfg(target_lang = "bash")]
+const fn file_write_command(path: str, content: str) -> str {
+    let marker = "PYINFRAHERE";
+    f"cat <<'{marker}' > \"{path}\"\n{content}\n{marker}\n"
+}
+
+#[cfg(target_lang = "pwsh")]
+const fn file_write_command(path: str, content: str) -> str {
+    f"$content = @'\n{content}\n'@; Set-Content -LiteralPath \"{path}\" -Value $content"
+}
+
+#[cfg(target_lang = "bash")]
+const fn file_append_command(path: str, content: str) -> str {
+    let marker = "PYINFRAHERE";
+    f"cat <<'{marker}' >> \"{path}\"\n{content}\n{marker}\n"
+}
+
+#[cfg(target_lang = "pwsh")]
+const fn file_append_command(path: str, content: str) -> str {
+    f"Add-Content -LiteralPath \"{path}\" -Value @'\n{content}\n'@"
+}
+
+#[cfg(target_lang = "bash")]
+const fn file_touch_command(path: str) -> str {
+    f"touch \"{path}\""
+}
+
+#[cfg(target_lang = "pwsh")]
+const fn file_touch_command(path: str) -> str {
+    f"New-Item -ItemType File -Path \"{path}\" -Force | Out-Null"
+}
+
+#[cfg(target_lang = "bash")]
+const fn file_remove_command(path: str) -> str {
+    f"rm -f \"{path}\""
+}
+
+#[cfg(target_lang = "pwsh")]
+const fn file_remove_command(path: str) -> str {
+    f"Remove-Item -LiteralPath \"{path}\" -Force -ErrorAction SilentlyContinue"
+}
+
+#[cfg(target_lang = "bash")]
+const fn replace_command(path: str, regex: str, replacement: str) -> str {
+    f"TMPFILE=\"$(mktemp)\" && sed -E 's/{regex}/{replacement}/g' \"{path}\" > \"$TMPFILE\" && mv \"$TMPFILE\" \"{path}\""
+}
+
+#[cfg(target_lang = "pwsh")]
+const fn replace_command(path: str, regex: str, replacement: str) -> str {
+    f"$content = Get-Content -Raw -LiteralPath \"{path}\"; $content = $content -replace \"{regex}\", \"{replacement}\"; Set-Content -LiteralPath \"{path}\" -Value $content"
+}
+
+#[cfg(target_lang = "bash")]
+const fn replace_remove_command(path: str, regex: str) -> str {
+    f"TMPFILE=\"$(mktemp)\" && sed -E '/{regex}/d' \"{path}\" > \"$TMPFILE\" && mv \"$TMPFILE\" \"{path}\""
+}
+
+#[cfg(target_lang = "pwsh")]
+const fn replace_remove_command(path: str, regex: str) -> str {
+    f"$content = Get-Content -Raw -LiteralPath \"{path}\"; $content = $content -replace \"{regex}\", \"\"; Set-Content -LiteralPath \"{path}\" -Value $content"
+}
+
+#[cfg(target_lang = "bash")]
+const fn line_remove_command(path: str, regex: str) -> str {
+    f"TMPFILE=\"$(mktemp)\" && sed -E '/{regex}/d' \"{path}\" > \"$TMPFILE\" && mv \"$TMPFILE\" \"{path}\""
+}
+
+#[cfg(target_lang = "pwsh")]
+const fn line_remove_command(path: str, regex: str) -> str {
+    f"$content = Get-Content -Raw -LiteralPath \"{path}\"; $content = $content -replace \"(?m)^.*{regex}.*\\\\r?\\\\n?\", \"\"; Set-Content -LiteralPath \"{path}\" -Value $content"
+}
+
+#[cfg(target_lang = "bash")]
+const fn link_create_command(path: str, target: str) -> str {
+    f"ln -sfn \"{target}\" \"{path}\""
+}
+
+#[cfg(target_lang = "pwsh")]
+const fn link_create_command(path: str, target: str) -> str {
+    f"New-Item -ItemType SymbolicLink -Path \"{path}\" -Target \"{target}\" -Force | Out-Null"
+}
+
+#[cfg(target_lang = "bash")]
+const fn download_command(url: str, dest: str) -> str {
+    f"command -v curl >/dev/null 2>&1 && curl -fsSL -o \"{dest}\" \"{url}\" || wget -O \"{dest}\" \"{url}\""
+}
+
+#[cfg(target_lang = "pwsh")]
+const fn download_command(url: str, dest: str) -> str {
+    f"$ProgressPreference = \"SilentlyContinue\"; Invoke-WebRequest -Uri \"{url}\" -OutFile \"{dest}\""
+}
+
+const fn assert_path_like(path: any, label: str) {
+    if type_name!(path) != "String" {
+        panic(f"`{label}` must be a string or `os.PathLike` object");
+    }
+}
+
+const fn path_basename(path: str) -> str {
+    let parts = path.split("/");
+    if parts.len() == 0 {
+        return path;
+    }
+    let mut idx = parts.len() - 1;
+    while idx > 0 && parts[idx] == "" {
+        idx = idx - 1;
+    }
+    parts[idx]
+}
+
 pub const fn directory(
-    path: str,
+    path: any,
     context hosts: str = "localhost",
     present: bool = true,
     user: str = "",
@@ -295,6 +428,7 @@ pub const fn directory(
     _no_fail_on_link: bool = false,
     sudo: bool = true,
 ) -> bool {
+    assert_path_like(path, "path");
     let mut info = std::facts::files::directory(path);
     if info == false {
         if _no_fail_on_link && std::facts::files::link(path) == true {
@@ -398,7 +532,7 @@ pub const fn block(
     context hosts: str = "localhost",
     content: str = "",
     present: bool = true,
-    line: str = "",
+    line: any = "",
     backup: bool = false,
     escape_regex_characters: bool = false,
     try_prevent_shell_expansion: bool = false,
@@ -420,6 +554,11 @@ pub const fn block(
     );
 
     if present {
+        let line_type = type_name!(line);
+        let line_has_regex = line_type.replace("Regex", "") != line_type;
+        if line_type != "String" && !line_has_regex {
+            panic("'line' must be a regex or a string");
+        }
         if content == "" {
             panic("'content' must be supplied when 'present' == True");
         }
@@ -489,4 +628,327 @@ pub const fn block(
     let real_out = block_real_out(path, true);
     let command = f"{out_prep} awk '/{mark_1}/,/{mark_2}/ {{next}} 1' {path} > $OUT {real_out}";
     std::ops::server::shell(command, hosts=hosts, sudo=sudo)
+}
+
+pub const fn file(
+    path: any,
+    context hosts: str = "localhost",
+    present: bool = true,
+    content: str = "",
+    only_if: str = "",
+    unless: str = "",
+    creates: str = "",
+    removes: str = "",
+    sudo: bool = true,
+) -> bool {
+    assert_path_like(path, "path");
+    let mut changed = false;
+    if present {
+        let info = std::facts::files::file(path);
+        if info == false {
+            panic(f"{path} exists and is not a file");
+        }
+    }
+    if !present {
+        if std::facts::files::is_file(path) {
+            std::ops::server::shell(
+                file_remove_command(path),
+                hosts=hosts,
+                sudo=sudo,
+                only_if=only_if,
+                unless=unless,
+                creates=creates,
+                removes=removes,
+            );
+            changed = runtime_last_changed();
+        }
+        return record_change("file", path, "absent", changed);
+    }
+
+    if content != "" {
+        let mut matches = false;
+        if std::facts::files::is_file(path) {
+            let current = std::facts::files::read_file(path);
+            matches = current == content;
+        }
+        if !matches {
+            std::ops::server::shell(
+                file_write_command(path, content),
+                hosts=hosts,
+                sudo=sudo,
+                only_if=only_if,
+                unless=unless,
+                creates=creates,
+                removes=removes,
+            );
+            changed = runtime_last_changed();
+        }
+        return record_change("file", path, "content", changed);
+    }
+
+    if !std::facts::files::is_file(path) {
+        std::ops::server::shell(
+            file_touch_command(path),
+            hosts=hosts,
+            sudo=sudo,
+            only_if=only_if,
+            unless=unless,
+            creates=creates,
+            removes=removes,
+        );
+        changed = runtime_last_changed();
+    }
+    record_change("file", path, "present", changed)
+}
+
+pub const fn line(
+    path: str,
+    line: str,
+    context hosts: str = "localhost",
+    present: bool = true,
+    replace: str = "",
+    append: bool = true,
+    escape_regex_characters: bool = false,
+    only_if: str = "",
+    unless: str = "",
+    creates: str = "",
+    removes: str = "",
+    sudo: bool = true,
+) -> bool {
+    let mut changed = false;
+    let match_regex = match replace {
+        "" => line_regex_exact(line, escape_regex_characters),
+        _ => replace,
+    };
+
+    if present {
+        if std::facts::files::is_file(path) {
+            let found = regex_present(path, match_regex);
+            if found {
+                if replace != "" {
+                    std::ops::server::shell(
+                        replace_command(path, replace, line),
+                        hosts=hosts,
+                        sudo=sudo,
+                        only_if=only_if,
+                        unless=unless,
+                        creates=creates,
+                        removes=removes,
+                    );
+                    changed = runtime_last_changed();
+                }
+            } else if append {
+                std::ops::server::shell(
+                    file_append_command(path, line),
+                    hosts=hosts,
+                    sudo=sudo,
+                    only_if=only_if,
+                    unless=unless,
+                    creates=creates,
+                    removes=removes,
+                );
+                changed = runtime_last_changed();
+            }
+        } else if append {
+            std::ops::server::shell(
+                file_write_command(path, line),
+                hosts=hosts,
+                sudo=sudo,
+                only_if=only_if,
+                unless=unless,
+                creates=creates,
+                removes=removes,
+            );
+            changed = runtime_last_changed();
+        }
+        let summary = match replace != "" {
+            true => "replace",
+            false => "append",
+        };
+        return record_change("line", path, summary, changed);
+    }
+
+    if std::facts::files::is_file(path) && regex_present(path, match_regex) {
+        std::ops::server::shell(
+            line_remove_command(path, match_regex),
+            hosts=hosts,
+            sudo=sudo,
+            only_if=only_if,
+            unless=unless,
+            creates=creates,
+            removes=removes,
+        );
+        changed = runtime_last_changed();
+    }
+    record_change("line", path, "absent", changed)
+}
+
+pub const fn replace(
+    path: str,
+    regex: str,
+    replace: str = "",
+    context hosts: str = "localhost",
+    only_if: str = "",
+    unless: str = "",
+    creates: str = "",
+    removes: str = "",
+    sudo: bool = true,
+) -> bool {
+    let mut changed = false;
+    if std::facts::files::is_file(path) && regex_present(path, regex) {
+        let command = match replace {
+            "" => replace_remove_command(path, regex),
+            _ => replace_command(path, regex, replace),
+        };
+        std::ops::server::shell(
+            command,
+            hosts=hosts,
+            sudo=sudo,
+            only_if=only_if,
+            unless=unless,
+            creates=creates,
+            removes=removes,
+        );
+        changed = runtime_last_changed();
+    }
+    let summary = match replace {
+        "" => "remove",
+        _ => "replace",
+    };
+    record_change("replace", path, summary, changed)
+}
+
+pub const fn move(
+    src: any,
+    dest: any,
+    context hosts: str = "localhost",
+    overwrite: bool = false,
+    only_if: str = "",
+    unless: str = "",
+    creates: str = "",
+    removes: str = "",
+    sudo: bool = true,
+) -> bool {
+    assert_path_like(src, "src");
+    assert_path_like(dest, "dest");
+
+    let file_info = std::facts::files::file(src);
+    let dir_info = std::facts::files::directory(src);
+    let link_info = std::facts::files::link(src);
+    if file_info == null && dir_info == null && link_info == null {
+        panic(f"src {src} does not exist");
+    }
+
+    let dest_info = std::facts::files::directory(dest);
+    if dest_info == null || dest_info == false {
+        panic(f"dest {dest} is not an existing directory");
+    }
+
+    let dest_path = f"{dest}/{path_basename(src)}";
+    let dest_file = std::facts::files::file(dest_path);
+    if dest_file != null && dest_file != false {
+        if !overwrite {
+            panic(f"dest {dest_path} already exists and `overwrite` is unset");
+        }
+        std::ops::server::shell(
+            f"rm -rf {dest_path}",
+            hosts=hosts,
+            sudo=sudo,
+            only_if=only_if,
+            unless=unless,
+            creates=creates,
+            removes=removes,
+        );
+    }
+
+    std::ops::server::shell(
+        f"mv {src} {dest}",
+        hosts=hosts,
+        sudo=sudo,
+        only_if=only_if,
+        unless=unless,
+        creates=creates,
+        removes=removes,
+    );
+    let changed = runtime_last_changed();
+    record_change("move", src, "moved", changed)
+}
+
+pub const fn link(
+    path: any,
+    target: any = "",
+    context hosts: str = "localhost",
+    present: bool = true,
+    only_if: str = "",
+    unless: str = "",
+    creates: str = "",
+    removes: str = "",
+    sudo: bool = true,
+) -> bool {
+    assert_path_like(path, "path");
+    let info = std::facts::files::link(path);
+    let mut changed = false;
+    if present {
+        if target == "" {
+            panic("If present is True target must be provided");
+        }
+        assert_path_like(target, "target");
+        if info == false {
+            panic(f"{path} exists and is not a link");
+        }
+        if info == null {
+            std::ops::server::shell(
+                link_create_command(path, target),
+                hosts=hosts,
+                sudo=sudo,
+                only_if=only_if,
+                unless=unless,
+                creates=creates,
+                removes=removes,
+            );
+            changed = runtime_last_changed();
+        }
+        return record_change("link", path, "present", changed);
+    }
+
+    if info != null && info != false {
+        std::ops::server::shell(
+            file_remove_command(path),
+            hosts=hosts,
+            sudo=sudo,
+            only_if=only_if,
+            unless=unless,
+            creates=creates,
+            removes=removes,
+        );
+        changed = runtime_last_changed();
+    }
+    record_change("link", path, "absent", changed)
+}
+
+pub const fn download(
+    url: str,
+    dest: any,
+    context hosts: str = "localhost",
+    only_if: str = "",
+    unless: str = "",
+    creates: str = "",
+    removes: str = "",
+    sudo: bool = false,
+) -> bool {
+    assert_path_like(dest, "dest");
+    if std::facts::files::file(dest) == false {
+        panic(f"Destination {dest} already exists and is not a file");
+    }
+    std::ops::server::shell(
+        download_command(url, dest),
+        hosts=hosts,
+        sudo=sudo,
+        only_if=only_if,
+        unless=unless,
+        creates=creates,
+        removes=removes,
+    );
+    let changed = runtime_last_changed();
+    record_change("download", dest, "fetched", changed)
 }

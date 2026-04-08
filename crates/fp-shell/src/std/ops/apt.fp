@@ -30,6 +30,15 @@ const fn escape_regex(value: str) -> str {
     out
 }
 
+const fn is_blank(value: str) -> bool {
+    let mut normalized = value;
+    normalized = normalized.replace(" ", "");
+    normalized = normalized.replace("\t", "");
+    normalized = normalized.replace("\n", "");
+    normalized = normalized.replace("\r", "");
+    normalized == ""
+}
+
 const fn parse_apt_repo(src: str) -> HashMap<str, any> {
     let mut result = HashMap::new();
     let parts = src.split(" ");
@@ -172,10 +181,60 @@ const fn join_packages(packages: Vec<str>) -> str {
 pub const fn key(
     src: str = "",
     context hosts: str = "localhost",
-    keyserver: str = "",
-    keyid: Vec<str> = Vec::new(),
+    keyserver: any = null,
+    keyid: any = null,
     sudo: bool = true,
 ) -> bool {
+    let mut resolved_keyserver = "";
+    let mut keyserver_is_set = false;
+    if keyserver != null {
+        if type_name!(keyserver) != "String" {
+            panic("`keyserver` must be a string");
+        }
+        let trimmed_keyserver = keyserver.trim();
+        if trimmed_keyserver.len() > 0 {
+            resolved_keyserver = trimmed_keyserver;
+        }
+        keyserver_is_set = true;
+    }
+    let mut resolved_keyid = Vec::new();
+    let mut has_keyid = false;
+    if keyid != null {
+        let keyid_type = type_name!(keyid);
+        let is_vec = keyid_type.replace("Vec", "") != keyid_type;
+        if keyid_type == "String" {
+            if !is_blank(keyid) {
+                let trimmed = keyid.trim();
+                if trimmed != "" {
+                    resolved_keyid.push(trimmed);
+                    has_keyid = true;
+                }
+            }
+        } else if is_vec {
+            let mut keyid_idx = 0;
+            while keyid_idx < keyid.len() {
+                let key = keyid[keyid_idx];
+                if type_name!(key) == "String" {
+                    if !is_blank(key) {
+                        let trimmed = key.trim();
+                        if trimmed != "" {
+                            resolved_keyid.push(trimmed);
+                            has_keyid = true;
+                        }
+                    }
+                }
+                keyid_idx = keyid_idx + 1;
+            }
+        } else {
+            panic("`keyid` must be a string or list of strings");
+        }
+    }
+    if src == "" && !has_keyid && keyserver == null {
+        panic("`keyid` must be provided with `keyserver`");
+    }
+    if keyserver_is_set && !has_keyid {
+        panic("`keyid` must be provided with `keyserver`");
+    }
     let mut existing_keys = std::facts::apt::keys();
     if existing_keys == null {
         existing_keys = HashMap::new();
@@ -186,7 +245,7 @@ pub const fn key(
         if key_data != null && key_data.len() > 0 {
             resolved = key_data.keys;
         } else {
-            resolved = keyid;
+            resolved = resolved_keyid;
         }
         let mut missing = false;
         if resolved.len() == 0 {
@@ -212,14 +271,11 @@ pub const fn key(
         }
     }
 
-    if keyserver != "" {
-        if keyid.len() == 0 {
-            panic("`keyid` must be provided with `keyserver`");
-        }
+    if resolved_keyserver != "" {
         let mut needed = Vec::new();
         let mut idx = 0;
-        while idx < keyid.len() {
-            let key = keyid[idx];
+        while idx < resolved_keyid.len() {
+            let key = resolved_keyid[idx];
             if !existing_keys.contains_key(key) {
                 needed.push(key);
             }
@@ -228,7 +284,7 @@ pub const fn key(
         if needed.len() > 0 {
             let joined = needed.join(" ");
             std::ops::server::shell(
-                f"apt-key adv --keyserver {keyserver} --recv-keys {joined}",
+                f"apt-key adv --keyserver {resolved_keyserver} --recv-keys {joined}",
                 hosts=hosts,
                 sudo=sudo,
             )

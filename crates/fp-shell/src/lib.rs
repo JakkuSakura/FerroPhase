@@ -134,6 +134,41 @@ pub fn compile_source_with_options(
 #[derive(Default)]
 struct ShellRuntimeState {
     changed: bool,
+    change_log: Vec<RuntimeChange>,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeChange {
+    op: String,
+    target: String,
+    summary: String,
+    changed: bool,
+}
+
+impl ShellRuntimeState {
+    fn record_change(&mut self, change: RuntimeChange) {
+        self.change_log.push(change);
+    }
+
+    fn clear_changes(&mut self) {
+        self.change_log.clear();
+    }
+
+    fn change_summary(&self) -> Value {
+        let entries = self
+            .change_log
+            .iter()
+            .map(runtime_change_to_value)
+            .collect::<Vec<_>>();
+        let changed_any = self.change_log.iter().any(|change| change.changed);
+        Value::map([
+            (Value::string("changed_any".to_string()), Value::bool(changed_any)),
+            (
+                Value::string("entries".to_string()),
+                Value::List(fp_core::ast::ValueList::new(entries)),
+            ),
+        ])
+    }
 }
 
 struct ShellRuntimeHook {
@@ -163,6 +198,35 @@ impl RuntimeExternHook for ShellRuntimeHook {
                 let guard = lock_mutex(&self.state);
                 Some(Ok(Value::bool(guard.changed)))
             }
+            "runtime_record_change" => Some(
+                string_arg(args, 0)
+                    .and_then(|op| {
+                        string_arg(args, 1).and_then(|target| {
+                            string_arg(args, 2).and_then(|summary| {
+                                bool_arg(args, 3).map(|changed| RuntimeChange {
+                                    op,
+                                    target,
+                                    summary,
+                                    changed,
+                                })
+                            })
+                        })
+                    })
+                    .map(|change| {
+                        let mut guard = lock_mutex(&self.state);
+                        guard.record_change(change);
+                        Value::unit()
+                    }),
+            ),
+            "runtime_change_summary" => {
+                let guard = lock_mutex(&self.state);
+                Some(Ok(guard.change_summary()))
+            }
+            "runtime_clear_change_summary" => Some(Ok({
+                let mut guard = lock_mutex(&self.state);
+                guard.clear_changes();
+                Value::unit()
+            })),
             _ => None,
         }
     }
@@ -936,6 +1000,27 @@ fn is_runtime_primitive(name: &str) -> bool {
         || name.ends_with("runtime_fail")
         || name.ends_with("runtime_set_changed")
         || name.ends_with("runtime_last_changed")
+        || name.ends_with("runtime_record_change")
+        || name.ends_with("runtime_change_summary")
+        || name.ends_with("runtime_clear_change_summary")
+}
+
+fn runtime_change_to_value(change: &RuntimeChange) -> Value {
+    Value::map([
+        (Value::string("op".to_string()), Value::string(change.op.clone())),
+        (
+            Value::string("target".to_string()),
+            Value::string(change.target.clone()),
+        ),
+        (
+            Value::string("summary".to_string()),
+            Value::string(change.summary.clone()),
+        ),
+        (
+            Value::string("changed".to_string()),
+            Value::bool(change.changed),
+        ),
+    ])
 }
 
 fn extern_command(function: &ItemDeclFunction) -> Option<String> {
