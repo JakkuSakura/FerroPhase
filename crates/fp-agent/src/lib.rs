@@ -3,6 +3,12 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod common;
+pub mod normalize;
+pub mod providers;
+pub mod schema;
+pub mod validate;
+
 // ---------------------------------------------------------------------------
 // Error
 // ---------------------------------------------------------------------------
@@ -169,14 +175,17 @@ where
         let mut final_answer = String::new();
 
         for _ in 0..self.max_rounds {
-            let response = self.client.chat(AgentRequest {
-                model: request.model.clone(),
-                messages: messages.clone(),
-                tools: request.tools.clone(),
-                tool_choice: request.tool_choice.clone(),
-                max_tokens: request.max_tokens,
-                json_mode: false,
-            }).await?;
+            let response = self
+                .client
+                .chat(AgentRequest {
+                    model: request.model.clone(),
+                    messages: messages.clone(),
+                    tools: request.tools.clone(),
+                    tool_choice: request.tool_choice.clone(),
+                    max_tokens: request.max_tokens,
+                    json_mode: false,
+                })
+                .await?;
 
             let msg = response.message;
             if msg.tool_calls.is_empty() {
@@ -201,14 +210,17 @@ where
                 followup_messages.push(AgentMessage::user(
                     "Convert your previous answer into a valid JSON object. Return ONLY the JSON, no explanation.".to_owned(),
                 ));
-                let response = self.client.chat(AgentRequest {
-                    model: request.model.clone(),
-                    messages: followup_messages,
-                    tools: Vec::new(),
-                    tool_choice: "none".to_owned(),
-                    max_tokens: request.max_tokens,
-                    json_mode: true,
-                }).await?;
+                let response = self
+                    .client
+                    .chat(AgentRequest {
+                        model: request.model.clone(),
+                        messages: followup_messages,
+                        tools: Vec::new(),
+                        tool_choice: "none".to_owned(),
+                        max_tokens: request.max_tokens,
+                        json_mode: true,
+                    })
+                    .await?;
                 if let Some(content) = response.message.content {
                     if serde_json::from_str::<serde_json::Value>(&content).is_ok() {
                         final_answer = content;
@@ -341,14 +353,16 @@ pub async fn simple_chat(
     }
     messages.push(AgentMessage::user(user.to_owned()));
 
-    let response = client.chat(AgentRequest {
-        model: model.to_owned(),
-        messages,
-        tools: Vec::new(),
-        tool_choice: "none".to_owned(),
-        max_tokens: None,
-        json_mode: false,
-    }).await?;
+    let response = client
+        .chat(AgentRequest {
+            model: model.to_owned(),
+            messages,
+            tools: Vec::new(),
+            tool_choice: "none".to_owned(),
+            max_tokens: None,
+            json_mode: false,
+        })
+        .await?;
 
     Ok(response.message.content.unwrap_or_default())
 }
@@ -419,8 +433,8 @@ where
 {
     async fn execute(&self, call: ToolCall) -> Result<String, AgentError> {
         let tool_name = call.function.name.clone();
-        let params: serde_json::Value = serde_json::from_str(&call.function.arguments)
-            .unwrap_or(serde_json::Value::Null);
+        let params: serde_json::Value =
+            serde_json::from_str(&call.function.arguments).unwrap_or(serde_json::Value::Null);
 
         let result = self.inner.execute(call).await?;
 
