@@ -16,6 +16,13 @@ pub fn build_openrouter_payload(
     let mut payload =
         build_openai_payload(request, model, reasoning, Some(default_max_output_tokens));
     coerce_input_and_instructions_to_text(&mut payload);
+    if payload.max_tokens.is_none() {
+        payload.max_tokens = Some(
+            payload
+                .max_output_tokens
+                .unwrap_or(default_max_output_tokens),
+        );
+    }
     payload
 }
 

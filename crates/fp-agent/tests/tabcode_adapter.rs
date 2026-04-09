@@ -1,13 +1,13 @@
 use fp_agent::providers::openai::OpenAiReasoning;
-use fp_agent::providers::openrouter::{build_openrouter_compact_payload, build_openrouter_payload};
+use fp_agent::providers::tabcode::{build_tabcode_compact_payload, build_tabcode_payload};
 use fp_agent::schema::openai::{
     CompactRequest, Content, InputItem, Instructions, ResponsesInput, ResponsesRequest, TextPart,
 };
 
 #[test]
-fn openrouter_payload_coerces_items_and_instructions_to_text() {
+fn tabcode_payload_preserves_items_and_instructions() {
     let request = ResponsesRequest {
-        model: "glm-5.2-turbo".into(),
+        model: "gpt-5.2".into(),
         input: Some(ResponsesInput::Items(vec![InputItem {
             item_type: "message".into(),
             id: None,
@@ -45,28 +45,26 @@ fn openrouter_payload_coerces_items_and_instructions_to_text() {
         include: None,
     };
 
-    let payload = build_openrouter_payload(
+    let payload = build_tabcode_payload(
         &request,
-        "z-ai/glm-5.2-turbo",
+        "gpt-5.2",
         Some(OpenAiReasoning { effort: "low" }),
-        4096,
+        None,
     );
 
     match payload.input {
-        Some(ResponsesInput::Text(_)) => {}
-        other => panic!("expected input to be coerced to text, got {other:?}"),
+        Some(ResponsesInput::Items(_)) => {}
+        other => panic!("expected tabcode input to preserve items, got {other:?}"),
     }
 
     match payload.instructions {
-        Some(Instructions::Text(_)) => {}
-        other => panic!("expected instructions to be coerced to text, got {other:?}"),
+        Some(Instructions::Parts(_)) => {}
+        other => panic!("expected tabcode instructions to preserve parts, got {other:?}"),
     }
-
-    assert_eq!(payload.max_tokens, Some(4096));
 }
 
 #[test]
-fn openrouter_compact_payload_coerces_items_and_instructions_to_text() {
+fn tabcode_compact_payload_preserves_items_and_instructions() {
     let request = CompactRequest {
         input: ResponsesInput::Items(vec![InputItem {
             item_type: "message".into(),
@@ -93,9 +91,9 @@ fn openrouter_compact_payload_coerces_items_and_instructions_to_text() {
         instructions: Instructions::Parts(vec![TextPart::Text("sys".into())]),
     };
 
-    let payload = build_openrouter_compact_payload(
+    let payload = build_tabcode_compact_payload(
         &request,
-        "z-ai/glm-5.2-turbo",
+        "gpt-5.2",
         Some(OpenAiReasoning { effort: "low" }),
         Some(64),
         Some(64),
@@ -103,12 +101,12 @@ fn openrouter_compact_payload_coerces_items_and_instructions_to_text() {
     );
 
     match payload.input {
-        ResponsesInput::Text(_) => {}
-        other => panic!("expected compact input to be coerced to text, got {other:?}"),
+        ResponsesInput::Items(_) => {}
+        other => panic!("expected tabcode compact input to preserve items, got {other:?}"),
     }
 
     match payload.instructions {
-        Instructions::Text(_) => {}
-        other => panic!("expected compact instructions to be coerced to text, got {other:?}"),
+        Instructions::Parts(_) => {}
+        other => panic!("expected tabcode compact instructions to preserve parts, got {other:?}"),
     }
 }
