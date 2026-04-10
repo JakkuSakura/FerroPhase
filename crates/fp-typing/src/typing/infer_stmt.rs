@@ -517,7 +517,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(Some(self.substitute_generic_ty(&def_variant.value, &mapping)))
     }
 
-    fn collect_enum_generic_mapping(
+    pub(crate) fn collect_enum_generic_mapping(
         &self,
         def_value: &Ty,
         concrete_value: &Ty,

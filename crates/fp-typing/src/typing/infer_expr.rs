@@ -6,6 +6,7 @@ use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::path::{PathPrefix, QualifiedPath};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
+use std::collections::{HashMap, HashSet};
 
 /// Infer the fragment kind for an unkinded quote based on its block shape.
 /// - Single trailing expression and no statements => Expr
@@ -2032,14 +2033,57 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.unify(param_var, *arg_var)?;
         }
 
+        if let Ok(Ty::Enum(expected_enum)) = self.resolve_to_ty(ret_var) {
+            if expected_enum.name.as_str() == enum_def.name.as_str()
+                && !enum_def.generics_params.is_empty()
+            {
+                let generic_names: HashSet<String> = enum_def
+                    .generics_params
+                    .iter()
+                    .map(|param| param.name.as_str().to_string())
+                    .collect();
+                let mut mapping: HashMap<String, Ty> = HashMap::new();
+                for def_variant in &enum_def.variants {
+                    if let Some(concrete_variant) = expected_enum
+                        .variants
+                        .iter()
+                        .find(|variant| variant.name == def_variant.name)
+                    {
+                        self.collect_enum_generic_mapping(
+                            &def_variant.value,
+                            &concrete_variant.value,
+                            &generic_names,
+                            &mut mapping,
+                        );
+                    }
+                }
+                for (name, var) in &generic_vars {
+                    if let Some(expected_ty) = mapping.get(name) {
+                        let resolved =
+                            self.resolve_to_ty(*var).unwrap_or(Ty::Unknown(TypeUnknown));
+                        if matches!(resolved, Ty::Unknown(_) | Ty::Any(_)) {
+                            let expected_var = self.type_from_ast_ty(expected_ty)?;
+                            self.unify(expected_var, *var)?;
+                        }
+                    }
+                }
+            }
+        }
+
         let mut args = Vec::with_capacity(generic_vars.len());
-        for (_, var) in &generic_vars {
-            let ty = self.resolve_to_ty(*var).unwrap_or(Ty::Unknown(TypeUnknown));
+        for (name, var) in &generic_vars {
+            let resolved = self.resolve_to_ty(*var).unwrap_or(Ty::Unknown(TypeUnknown));
+            let ty = match resolved {
+                Ty::Unknown(_) | Ty::Any(_) => Ty::ident(Ident::new(name)),
+                other => other,
+            };
             args.push(ty);
         }
         let concrete = self.apply_generic_args_to_enum(enum_def, &args);
         self.exit_scope();
-        self.bind(ret_var, TypeTerm::Enum(concrete));
+        let enum_var = self.fresh_type_var();
+        self.bind(enum_var, TypeTerm::Enum(concrete));
+        self.unify(enum_var, ret_var)?;
         Ok(())
     }
 

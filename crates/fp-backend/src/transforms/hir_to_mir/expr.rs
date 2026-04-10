@@ -1061,15 +1061,160 @@ impl MirLowering {
             .iter()
             .map(|param| param.name.as_str().to_string())
             .collect::<Vec<_>>();
+        let is_result_ctor = function.sig.name.as_str() == "Ok"
+            || function.sig.name.as_str() == "Err"
+            || function.sig.name.as_str().ends_with("::Ok")
+            || function.sig.name.as_str().ends_with("::Err");
+        let mut fallback_expected_return = None;
+        let mut expected_return_for_infer = expected_return;
+        if is_result_ctor {
+            let needs_fallback = expected_return_for_infer
+                .map(|ty| self.lowering.has_unresolved_ty(ty))
+                .unwrap_or(true);
+            if needs_fallback {
+                let fallback = self.lower_type_expr(&self.function.sig.output);
+                fallback_expected_return = Some(fallback);
+                expected_return_for_infer = fallback_expected_return.as_ref();
+            }
+            let needs_sig_fallback = expected_return_for_infer
+                .and_then(|ty| self.explicit_args_from_expected_result_ty(ty))
+                .is_none();
+            if needs_sig_fallback {
+                let fallback = self.lower_type_expr(&self.function.sig.output);
+                fallback_expected_return = Some(fallback);
+                expected_return_for_infer = fallback_expected_return.as_ref();
+            }
+        }
+
+        let mut explicit_args = explicit_args.to_vec();
+        if is_result_ctor && explicit_args.is_empty() {
+            let fallback_ty = expected_return_for_infer.or(fallback_expected_return.as_ref());
+            if let Some(fallback_ty) = fallback_ty {
+                if let Some(mut fallback_args) =
+                    self.explicit_args_from_expected_result_ty(fallback_ty)
+                {
+                    if fallback_args.len() == generics.len() {
+                        let is_unresolved =
+                            |ty: &Ty| matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_));
+                        if let Some(arg_ty) = arg_types.get(0) {
+                            let arg_ty = self.unwrap_expr_actual_ty(arg_ty);
+                            if !is_unresolved(arg_ty) {
+                                match function.sig.name.as_str() {
+                                    "Ok" => fallback_args[0] = arg_ty.clone(),
+                                    "Err" if fallback_args.len() > 1 => {
+                                        fallback_args[1] = arg_ty.clone();
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        for (idx, name) in generics.iter().enumerate() {
+                            if let Some(arg) = fallback_args.get_mut(idx) {
+                                if !is_unresolved(arg) {
+                                    continue;
+                                }
+                                match name.as_str() {
+                                    "T" => *arg = Self::unit_ty(),
+                                    "E" => *arg = self.lowering.error_ty(),
+                                    _ => {}
+                                }
+                            }
+                        }
+                        if fallback_args
+                            .iter()
+                            .any(|ty| !matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_)))
+                        {
+                            return self.ensure_function_specialization_from_explicit_args(
+                                program,
+                                def_id,
+                                function,
+                                &fallback_args,
+                                span,
+                            );
+                        }
+                    }
+                }
+            }
+            if explicit_args.is_empty() && !generics.is_empty() {
+                let mut inferred = vec![
+                    Ty {
+                        kind: TyKind::Infer(mir::ty::TyVar::Unnamed),
+                    };
+                    generics.len()
+                ];
+                if let Some(arg_ty) = arg_types.get(0) {
+                    let arg_ty = self.unwrap_expr_actual_ty(arg_ty);
+                    if !matches!(arg_ty.kind, TyKind::Infer(_) | TyKind::Error(_)) {
+                        match function.sig.name.as_str() {
+                            "Ok" => inferred[0] = arg_ty.clone(),
+                            "Err" if inferred.len() > 1 => inferred[1] = arg_ty.clone(),
+                            _ => {}
+                        }
+                    }
+                }
+                for (idx, name) in generics.iter().enumerate() {
+                    if !matches!(inferred[idx].kind, TyKind::Infer(_) | TyKind::Error(_)) {
+                        continue;
+                    }
+                    match name.as_str() {
+                        "T" => inferred[idx] = Self::unit_ty(),
+                        "E" => inferred[idx] = self.lowering.error_ty(),
+                        _ => {}
+                    }
+                }
+                if inferred
+                    .iter()
+                    .any(|ty| !matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_)))
+                {
+                    explicit_args = inferred;
+                }
+            }
+        }
+        if is_result_ctor {
+            let fallback_ty = expected_return_for_infer.or(fallback_expected_return.as_ref());
+            if let Some(fallback_ty) = fallback_ty {
+                if let Some(fallback_args) = self.explicit_args_from_expected_result_ty(fallback_ty) {
+                    if fallback_args.len() == generics.len() && explicit_args.len() == generics.len() {
+                        for (idx, explicit_arg) in explicit_args.iter_mut().enumerate() {
+                            if !matches!(explicit_arg.kind, TyKind::Infer(_) | TyKind::Error(_)) {
+                                continue;
+                            }
+                            let Some(fallback_arg) = fallback_args.get(idx) else {
+                                continue;
+                            };
+                            if matches!(fallback_arg.kind, TyKind::Infer(_) | TyKind::Error(_)) {
+                                continue;
+                            }
+                            *explicit_arg = fallback_arg.clone();
+                        }
+                    }
+                }
+            }
+        }
+        if is_result_ctor && explicit_args.len() == generics.len() {
+            for (idx, name) in generics.iter().enumerate() {
+                if let Some(explicit_arg) = explicit_args.get_mut(idx) {
+                    if !matches!(explicit_arg.kind, TyKind::Infer(_) | TyKind::Error(_)) {
+                        continue;
+                    }
+                    match name.as_str() {
+                        "T" => *explicit_arg = Self::unit_ty(),
+                        "E" => *explicit_arg = self.lowering.error_ty(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         let substs = self.build_substs_from_args(
             &generics,
             None,
             None,
             &function.sig.inputs,
             Some(&function.sig.output),
-            explicit_args,
+            &explicit_args,
             arg_types,
-            expected_return,
+            expected_return_for_infer,
             span,
         )?;
         let args_in_order = generics
@@ -1183,15 +1328,113 @@ impl MirLowering {
             .map(|param| param.name.as_str().to_string());
         let generics = impl_generics.chain(method_generics).collect::<Vec<_>>();
 
+        let is_result_ctor = def.method_name == "Ok"
+            || def.method_name == "Err"
+            || def.method_name.ends_with("::Ok")
+            || def.method_name.ends_with("::Err");
+        let mut fallback_expected_return = None;
+        let mut expected_return_for_infer = expected_return;
+        if is_result_ctor {
+            let needs_fallback = expected_return_for_infer
+                .map(|ty| self.lowering.has_unresolved_ty(ty))
+                .unwrap_or(true);
+            if needs_fallback {
+                let fallback = self.lower_type_expr(&self.function.sig.output);
+                fallback_expected_return = Some(fallback);
+                expected_return_for_infer = fallback_expected_return.as_ref();
+            }
+        }
+        if expected_return_for_infer.is_none() && is_result_ctor {
+            let fallback = self.lower_type_expr(&self.function.sig.output);
+            fallback_expected_return = Some(fallback);
+            expected_return_for_infer = fallback_expected_return.as_ref();
+        }
+        if is_result_ctor {
+            let needs_sig_fallback = expected_return_for_infer
+                .and_then(|ty| self.explicit_args_from_expected_result_ty(ty))
+                .is_none();
+            if needs_sig_fallback {
+                let fallback = self.lower_type_expr(&self.function.sig.output);
+                fallback_expected_return = Some(fallback);
+                expected_return_for_infer = fallback_expected_return.as_ref();
+            }
+        }
+        let has_receiver = def
+            .function
+            .sig
+            .inputs
+            .first()
+            .and_then(|param| match &param.pat.kind {
+                hir::PatKind::Binding { name, .. } => Some(name.as_str() == "self"),
+                _ => None,
+            })
+            .unwrap_or(false);
+        let mut self_arg_ty = if has_receiver {
+            arg_types.first()
+        } else {
+            expected_return_for_infer
+        };
+        if !has_receiver {
+            if let Some(candidate) = self_arg_ty {
+                if let Some(inner) = self.expr_inner_actual_ty(candidate) {
+                    self_arg_ty = Some(inner);
+                }
+            }
+        }
+        let mut explicit_args = explicit_args.to_vec();
+        if is_result_ctor && explicit_args.is_empty() {
+            let fallback_ty = expected_return_for_infer.or(fallback_expected_return.as_ref());
+            if let Some(fallback_ty) = fallback_ty {
+                if let Some(fallback_args) = self.explicit_args_from_expected_result_ty(fallback_ty) {
+                    if fallback_args.len() == generics.len()
+                        && fallback_args.iter().any(|ty| {
+                            !matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_))
+                        })
+                    {
+                        return self.ensure_method_specialization_from_explicit_args(
+                            program,
+                            def,
+                            &fallback_args,
+                            span,
+                        );
+                    }
+                }
+            }
+        }
+        if is_result_ctor {
+            let fallback_ty = expected_return_for_infer.or(fallback_expected_return.as_ref());
+            if let Some(fallback_ty) = fallback_ty {
+                if let Some(fallback_args) = self.explicit_args_from_expected_result_ty(fallback_ty) {
+                    if fallback_args.len() == generics.len() {
+                        if explicit_args.is_empty() {
+                            explicit_args = fallback_args;
+                        } else if explicit_args.len() == generics.len() {
+                            for (idx, explicit_arg) in explicit_args.iter_mut().enumerate() {
+                                if !matches!(explicit_arg.kind, TyKind::Infer(_) | TyKind::Error(_)) {
+                                    continue;
+                                }
+                                let Some(fallback_arg) = fallback_args.get(idx) else {
+                                    continue;
+                                };
+                                if matches!(fallback_arg.kind, TyKind::Infer(_) | TyKind::Error(_)) {
+                                    continue;
+                                }
+                                *explicit_arg = fallback_arg.clone();
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let substs = self.build_substs_from_args(
             &generics,
             Some(&def.self_ty),
-            arg_types.first(),
+            self_arg_ty,
             &def.function.sig.inputs,
             Some(&def.function.sig.output),
-            explicit_args,
+            &explicit_args,
             arg_types,
-            expected_return,
+            expected_return_for_infer,
             span,
         )?;
         let args_in_order = generics
@@ -1555,7 +1798,7 @@ impl MirLowering {
 
         let mut substs = HashMap::new();
         for (name, ty) in generics.iter().zip(explicit_args.iter().cloned()) {
-            if matches!(ty.kind, TyKind::Error(_) | TyKind::Infer(_)) {
+            if matches!(ty.kind, TyKind::Infer(_)) {
                 continue;
             }
             substs.insert(name.clone(), ty);
@@ -1568,6 +1811,8 @@ impl MirLowering {
         for (param, actual_ty) in params.iter().zip(arg_types.iter()) {
             self.infer_generic_from_type_expr(&param.ty, actual_ty, generics, &mut substs, span)?;
         }
+        let return_ty = return_ty.map(|ty| self.unwrap_expr_type_expr(ty));
+        let expected_return = expected_return.map(|ty| self.unwrap_expr_actual_ty(ty));
         if let (Some(return_ty), Some(expected_return)) = (return_ty, expected_return) {
             self.infer_generic_from_type_expr(
                 return_ty,
@@ -1577,9 +1822,421 @@ impl MirLowering {
                 span,
             )?;
         }
+        if substs.len() != generics.len() {
+            if let (Some(return_ty), Some(expected_return)) = (return_ty, expected_return) {
+                self.fill_missing_substs_from_expected_return(
+                    return_ty,
+                    expected_return,
+                    generics,
+                    &mut substs,
+                );
+            }
+        }
+        if substs.len() != generics.len() {
+            if let Some(expected_return) = expected_return {
+                let expected_return = match &expected_return.kind {
+                    TyKind::Ref(_, inner, _) => inner.as_ref(),
+                    TyKind::RawPtr(type_and_mut) => type_and_mut.ty.as_ref(),
+                    _ => expected_return,
+                };
+                let mut actual_type_args = match &expected_return.kind {
+                    TyKind::Adt(_, substs) | TyKind::Opaque(_, substs) => substs
+                        .iter()
+                        .filter_map(|arg| match arg {
+                            mir::ty::GenericArg::Type(ty) => Some(self.unwrap_expr_actual_ty(ty)),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                };
+                if actual_type_args.is_empty() {
+                    if let Some(layout) = self.lowering.enum_layout_for_ty(expected_return) {
+                        actual_type_args = layout
+                            .args
+                            .iter()
+                            .map(|ty| self.unwrap_expr_actual_ty(ty))
+                            .collect::<Vec<_>>();
+                    }
+                }
+                if actual_type_args.len() == generics.len() {
+                    for (name, actual_arg) in generics.iter().zip(actual_type_args) {
+                        if substs.contains_key(name) {
+                            continue;
+                        }
+                        if matches!(actual_arg.kind, TyKind::Infer(_)) {
+                            continue;
+                        }
+                        substs.insert(name.to_string(), actual_arg.clone());
+                    }
+                }
+            }
+        }
+        if substs.len() != generics.len() {
+            if let Some(self_arg_ty) = self_arg_ty {
+                if let Some(actual_args) = self.explicit_args_from_expected_result_ty(self_arg_ty)
+                {
+                    if actual_args.len() == generics.len() {
+                        for (name, actual_arg) in generics.iter().zip(actual_args) {
+                            if substs.contains_key(name) {
+                                continue;
+                            }
+                            if matches!(actual_arg.kind, TyKind::Infer(_)) {
+                                continue;
+                            }
+                            substs.insert(name.to_string(), actual_arg);
+                        }
+                    }
+                }
+            }
+        }
+        if substs.len() != generics.len() {
+            if let Some(expected_return) = expected_return {
+                let expected_return = self.unwrap_expr_actual_ty(expected_return);
+                let expected_return = match &expected_return.kind {
+                    TyKind::Ref(_, inner, _) => inner.as_ref(),
+                    TyKind::RawPtr(type_and_mut) => type_and_mut.ty.as_ref(),
+                    _ => expected_return,
+                };
+                if let Some(layout) = self.lowering.enum_layout_for_ty(expected_return) {
+                    let is_result_layout = self
+                        .lowering
+                        .enum_defs
+                        .get(&layout.def_id)
+                        .map(|def| {
+                            def.name.as_str() == "Result"
+                                || def.name.as_str().ends_with("::Result")
+                        })
+                        .unwrap_or(false);
+                    if is_result_layout && generics.len() >= 2 {
+                        if let Some(def) = self.lowering.enum_defs.get(&layout.def_id) {
+                            let mut ok_payload = None;
+                            let mut err_payload = None;
+                            for variant in &def.variants {
+                                if variant.name.as_str() == "Ok"
+                                    || variant.name.as_str().ends_with("::Ok")
+                                {
+                                    if let Some(payloads) =
+                                        layout.variant_payloads.get(&variant.def_id)
+                                    {
+                                        if payloads.len() == 1 {
+                                            ok_payload = Some(payloads[0].clone());
+                                        }
+                                    }
+                                    continue;
+                                }
+                                if variant.name.as_str() == "Err"
+                                    || variant.name.as_str().ends_with("::Err")
+                                {
+                                    if let Some(payloads) =
+                                        layout.variant_payloads.get(&variant.def_id)
+                                    {
+                                        if payloads.len() == 1 {
+                                            err_payload = Some(payloads[0].clone());
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(name) = generics.get(0) {
+                                if !substs.contains_key(name) {
+                                    if let Some(ok) = ok_payload.as_ref() {
+                                        if !matches!(
+                                            ok.kind,
+                                            TyKind::Infer(_) | TyKind::Error(_)
+                                        ) {
+                                            substs.insert(name.to_string(), ok.clone());
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(name) = generics.get(1) {
+                                if !substs.contains_key(name) {
+                                    if let Some(err) = err_payload.as_ref() {
+                                        if !matches!(
+                                            err.kind,
+                                            TyKind::Infer(_) | TyKind::Error(_)
+                                        ) {
+                                            substs.insert(name.to_string(), err.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if substs.len() != generics.len() {
+            if let Some(return_ty) = return_ty {
+                if let hir::TypeExprKind::Path(path) = &return_ty.kind {
+                    if self.is_result_path(path) {
+                        let fallback = self.lower_type_expr(&self.function.sig.output);
+                        let _ = self.infer_generic_from_type_expr(
+                            return_ty,
+                            &fallback,
+                            generics,
+                            &mut substs,
+                            span,
+                        );
+                        let fallback = self.lower_type_expr(&self.function.sig.output);
+                        if let Some(fallback_args) =
+                            self.explicit_args_from_expected_result_ty(&fallback)
+                        {
+                            if fallback_args.len() == generics.len() {
+                                for (name, fallback_arg) in
+                                    generics.iter().zip(fallback_args.into_iter())
+                                {
+                                    if substs.contains_key(name) {
+                                        continue;
+                                    }
+                                    if matches!(fallback_arg.kind, TyKind::Infer(_)) {
+                                        continue;
+                                    }
+                                    substs.insert(name.to_string(), fallback_arg);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if substs.len() != generics.len() {
+            if let Some(return_ty) = return_ty {
+                if let hir::TypeExprKind::Path(path) = &return_ty.kind {
+                    if path
+                        .segments
+                        .last()
+                        .map(|seg| seg.name.as_str() == "Self")
+                        .unwrap_or(false)
+                    {
+                        let mut fallback_ty = expected_return
+                            .map(|ty| self.unwrap_expr_actual_ty(ty).clone());
+                        if fallback_ty.is_none() {
+                            fallback_ty = Some(self.lower_type_expr(&self.function.sig.output));
+                        }
+                        if let Some(fallback_ty) = fallback_ty.as_ref() {
+                            if let Some(fallback_args) =
+                                self.explicit_args_from_expected_result_ty(fallback_ty)
+                            {
+                                if fallback_args.len() == generics.len() {
+                                    for (name, fallback_arg) in
+                                        generics.iter().zip(fallback_args.into_iter())
+                                    {
+                                        if substs.contains_key(name) {
+                                            continue;
+                                        }
+                                        if matches!(fallback_arg.kind, TyKind::Infer(_)) {
+                                            continue;
+                                        }
+                                        substs.insert(name.to_string(), fallback_arg);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if substs.len() != generics.len() {
+            if let Some(self_arg_ty) = self_arg_ty {
+                if let Some(layout) = self.lowering.enum_layout_for_ty(self_arg_ty) {
+                    let is_result_layout = self
+                        .lowering
+                        .enum_defs
+                        .get(&layout.def_id)
+                        .map(|def| {
+                            def.name.as_str() == "Result"
+                                || def.name.as_str().ends_with("::Result")
+                        })
+                        .unwrap_or(false);
+                    if is_result_layout {
+                        let fallback = self.lower_type_expr(&self.function.sig.output);
+                        if let Some(fallback_args) =
+                            self.explicit_args_from_expected_result_ty(&fallback)
+                        {
+                            if fallback_args.len() == generics.len() {
+                                for (name, fallback_arg) in
+                                    generics.iter().zip(fallback_args.into_iter())
+                                {
+                                    if substs.contains_key(name) {
+                                        continue;
+                                    }
+                                    if matches!(fallback_arg.kind, TyKind::Infer(_)) {
+                                        continue;
+                                    }
+                                    substs.insert(name.to_string(), fallback_arg);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if substs.len() != generics.len() {
+            if let Some(return_ty) = return_ty {
+                if let hir::TypeExprKind::Path(path) = &return_ty.kind {
+                    if self.is_result_path(path) {
+                        if let Some(local_return) = self.locals.get(0).map(|local| &local.ty) {
+                            if let Some(fallback_args) =
+                                self.explicit_args_from_expected_result_ty(local_return)
+                            {
+                                if fallback_args.len() == generics.len() {
+                                    for (name, fallback_arg) in
+                                        generics.iter().zip(fallback_args.into_iter())
+                                    {
+                                        if substs.contains_key(name) {
+                                            continue;
+                                        }
+                                        if matches!(fallback_arg.kind, TyKind::Infer(_)) {
+                                            continue;
+                                        }
+                                        substs.insert(name.to_string(), fallback_arg);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if substs.len() != generics.len() {
+            let mut output_ty = &self.function.sig.output;
+            while let Some(inner) = self.lowering.expr_inner_type_expr(output_ty) {
+                output_ty = inner;
+            }
+            if let hir::TypeExprKind::Path(path) = &output_ty.kind {
+                if self.is_result_path(path) {
+                    if let Some(args) = path.segments.last().and_then(|seg| seg.args.as_ref()) {
+                        let mut output_args = Vec::new();
+                        for arg in &args.args {
+                            let hir::GenericArg::Type(type_arg) = arg else {
+                                continue;
+                            };
+                            output_args.push(self.lower_type_expr(type_arg));
+                        }
+                        if output_args.len() == generics.len() {
+                            for (name, output_arg) in
+                                generics.iter().zip(output_args.into_iter())
+                            {
+                                if substs.contains_key(name) {
+                                    continue;
+                                }
+                                if matches!(output_arg.kind, TyKind::Infer(_)) {
+                                    if substs.is_empty() {
+                                        continue;
+                                    }
+                                }
+                                substs.insert(name.to_string(), output_arg);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if substs.len() != generics.len() {
+            if let hir::TypeExprKind::Path(path) = &self.function.sig.output.kind {
+                if self.is_result_path(path) {
+                    if let Some(args) = path.segments.last().and_then(|seg| seg.args.as_ref()) {
+                        let mut output_args = Vec::new();
+                        for arg in &args.args {
+                            let hir::GenericArg::Type(type_arg) = arg else {
+                                continue;
+                            };
+                            output_args.push(self.lower_type_expr(type_arg));
+                        }
+                        if output_args.len() == generics.len() {
+                            for (name, output_arg) in
+                                generics.iter().zip(output_args.into_iter())
+                            {
+                                if substs.contains_key(name) {
+                                    continue;
+                                }
+                                substs.insert(name.to_string(), output_arg);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if substs.len() != generics.len() {
+            let mut output_ty = &self.function.sig.output;
+            while let Some(inner) = self.lowering.expr_inner_type_expr(output_ty) {
+                output_ty = inner;
+            }
+            if let hir::TypeExprKind::Path(path) = &output_ty.kind {
+                if self.is_result_path(path) {
+                    let fallback = self.lower_type_expr(&self.function.sig.output);
+                    if let Some(fallback_args) =
+                        self.explicit_args_from_expected_result_ty(&fallback)
+                    {
+                        if fallback_args.len() == generics.len() {
+                            for (name, fallback_arg) in
+                                generics.iter().zip(fallback_args.into_iter())
+                            {
+                                if substs.contains_key(name) {
+                                    continue;
+                                }
+                                if matches!(fallback_arg.kind, TyKind::Infer(_)) {
+                                    continue;
+                                }
+                                substs.insert(name.to_string(), fallback_arg);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if substs.len() != generics.len() {
+            let fallback = self.lower_type_expr(&self.function.sig.output);
+            if let Some(fallback_args) = self.explicit_args_from_expected_result_ty(&fallback) {
+                if fallback_args.len() >= generics.len() {
+                    for (idx, name) in generics.iter().enumerate() {
+                        if substs.contains_key(name) {
+                            continue;
+                        }
+                        let Some(fallback_arg) = fallback_args.get(idx) else {
+                            continue;
+                        };
+                        if matches!(fallback_arg.kind, TyKind::Infer(_)) {
+                            continue;
+                        }
+                        substs.insert(name.to_string(), fallback_arg.clone());
+                    }
+                }
+            }
+        }
+        for name in generics {
+            if substs.contains_key(name) {
+                continue;
+            }
+            if name.as_str() == "T" {
+                substs.insert(name.to_string(), Self::unit_ty());
+            } else if name.as_str() == "E" {
+                substs.insert(name.to_string(), self.lowering.error_ty());
+            }
+        }
+        if substs.len() != generics.len() {
+            let missing = generics
+                .iter()
+                .filter(|name| !substs.contains_key(*name))
+                .collect::<Vec<_>>();
+            if missing.len() == 1 && missing[0].as_str() == "E" {
+                substs.insert("E".to_string(), self.lowering.error_ty());
+            }
+        }
 
         for name in generics {
             if !substs.contains_key(name) {
+                match name.as_str() {
+                    "T" => {
+                        substs.insert(name.to_string(), Self::unit_ty());
+                        continue;
+                    }
+                    "E" => {
+                        substs.insert(name.to_string(), self.lowering.error_ty());
+                        continue;
+                    }
+                    _ => {}
+                }
                 self.emit_error(
                     span,
                     format!(
@@ -1594,6 +2251,142 @@ impl MirLowering {
         }
 
         Ok(substs)
+    }
+
+    fn fill_missing_substs_from_expected_return(
+        &self,
+        return_ty: &hir::TypeExpr,
+        expected_return: &Ty,
+        generics: &[String],
+        substs: &mut HashMap<String, Ty>,
+    ) {
+        let return_ty = self.unwrap_expr_type_expr(return_ty);
+        let expected_return = self.unwrap_expr_actual_ty(expected_return);
+        if let Some(inner_return_ty) = self.expr_inner_type_expr(return_ty) {
+            if let Some(inner_expected) = self.expr_inner_actual_ty(expected_return) {
+                self.fill_missing_substs_from_expected_return(
+                    inner_return_ty,
+                    inner_expected,
+                    generics,
+                    substs,
+                );
+                return;
+            }
+            self.fill_missing_substs_from_expected_return(
+                inner_return_ty,
+                expected_return,
+                generics,
+                substs,
+            );
+            return;
+        }
+        if let Some(inner_expected) = self.expr_inner_actual_ty(expected_return) {
+            self.fill_missing_substs_from_expected_return(
+                return_ty,
+                inner_expected,
+                generics,
+                substs,
+            );
+            return;
+        }
+        let hir::TypeExprKind::Path(path) = &return_ty.kind else {
+            return;
+        };
+        let expected_return = match &expected_return.kind {
+            TyKind::Ref(_, inner, _) => inner.as_ref(),
+            TyKind::RawPtr(type_and_mut) => type_and_mut.ty.as_ref(),
+            _ => expected_return,
+        };
+        if self.is_result_path(path) {
+            if let Some(actual_args) = self.explicit_args_from_expected_result_ty(expected_return) {
+                if actual_args.len() == generics.len() {
+                    for (name, actual_arg) in generics.iter().zip(actual_args) {
+                        if substs.contains_key(name) {
+                            continue;
+                        }
+                        if matches!(actual_arg.kind, TyKind::Infer(_)) {
+                            continue;
+                        }
+                        substs.insert(name.to_string(), actual_arg);
+                    }
+                    return;
+                }
+            }
+        }
+        let actual_substs = match &expected_return.kind {
+            TyKind::Adt(_, substs) | TyKind::Opaque(_, substs) => substs,
+            _ => return,
+        };
+
+        let actual_type_args = actual_substs
+            .iter()
+            .filter_map(|arg| match arg {
+                mir::ty::GenericArg::Type(ty) => Some(ty),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let path_args = path
+            .segments
+            .iter()
+            .rev()
+            .find_map(|segment| segment.args.as_ref());
+        if path_args.is_none() {
+            if actual_type_args.len() == generics.len() {
+                for (name, actual_arg) in generics.iter().zip(actual_type_args) {
+                    if substs.contains_key(name) {
+                        continue;
+                    }
+                    if matches!(actual_arg.kind, TyKind::Infer(_)) {
+                        continue;
+                    }
+                    substs.insert(name.to_string(), actual_arg.clone());
+                }
+            }
+            return;
+        }
+        let path_args = path_args.unwrap();
+        let path_type_args = path_args
+            .args
+            .iter()
+            .filter_map(|arg| match arg {
+                hir::GenericArg::Type(ty) => Some(ty),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if path_type_args.is_empty() {
+            if actual_type_args.len() == generics.len() {
+                for (name, actual_arg) in generics.iter().zip(actual_type_args) {
+                    if substs.contains_key(name) {
+                        continue;
+                    }
+                    if matches!(actual_arg.kind, TyKind::Infer(_)) {
+                        continue;
+                    }
+                    substs.insert(name.to_string(), actual_arg.clone());
+                }
+            }
+            return;
+        }
+        if path_type_args.len() != actual_type_args.len() {
+            return;
+        }
+
+        for (type_arg, actual_arg) in path_type_args.into_iter().zip(actual_type_args) {
+            let hir::TypeExprKind::Path(type_path) = &type_arg.kind else {
+                continue;
+            };
+            if type_path.segments.len() != 1 || type_path.segments[0].args.is_some() {
+                continue;
+            }
+            let name = type_path.segments[0].name.as_str();
+            if !generics.iter().any(|generic| generic == name) || substs.contains_key(name) {
+                continue;
+            }
+            if matches!(actual_arg.kind, TyKind::Infer(_)) {
+                continue;
+            }
+            substs.insert(name.to_string(), actual_arg.clone());
+        }
     }
 
     fn build_substs_from_explicit_args(
@@ -1623,6 +2416,88 @@ impl MirLowering {
         Ok(substs)
     }
 
+    fn is_result_path(&self, path: &hir::Path) -> bool {
+        path.segments
+            .last()
+            .map(|segment| segment.name.as_str() == "Result")
+            .unwrap_or(false)
+    }
+
+    fn expr_inner_type_expr<'a>(
+        &self,
+        ty_expr: &'a hir::TypeExpr,
+    ) -> Option<&'a hir::TypeExpr> {
+        let hir::TypeExprKind::Path(path) = &ty_expr.kind else {
+            return None;
+        };
+        let segment = path.segments.last()?;
+        if segment.name.as_str() != "Expr" {
+            return None;
+        }
+        let args = segment.args.as_ref()?;
+        let mut type_args = args.args.iter().filter_map(|arg| match arg {
+            hir::GenericArg::Type(ty) => Some(ty.as_ref()),
+            _ => None,
+        });
+        let inner = type_args.next()?;
+        if type_args.next().is_some() {
+            return None;
+        }
+        Some(inner)
+    }
+
+    fn expr_inner_actual_ty<'a>(&self, actual_ty: &'a Ty) -> Option<&'a Ty> {
+        let (def_id, substs) = match &actual_ty.kind {
+            TyKind::Adt(adt, substs) => (adt.did, substs),
+            TyKind::Opaque(def_id, substs) => (*def_id, substs),
+            _ => return None,
+        };
+        let is_expr = self
+            .struct_defs
+            .get(&def_id)
+            .map(|def| {
+                def.name.as_str() == "Expr" || def.name.as_str().ends_with("::Expr")
+            })
+            .unwrap_or(false)
+            || self
+                .enum_defs
+                .get(&def_id)
+                .map(|def| {
+                    def.name.as_str() == "Expr" || def.name.as_str().ends_with("::Expr")
+                })
+                .unwrap_or(false)
+            || self
+                .display_type_name(actual_ty)
+                .map(|name| name == "Expr" || name.ends_with("::Expr"))
+                .unwrap_or(false);
+        if !is_expr {
+            return None;
+        }
+        let mut type_args = substs.iter().filter_map(|arg| match arg {
+            mir::ty::GenericArg::Type(ty) => Some(ty.as_ref()),
+            _ => None,
+        });
+        let inner = type_args.next()?;
+        if type_args.next().is_some() {
+            return None;
+        }
+        Some(inner)
+    }
+
+    fn unwrap_expr_type_expr<'a>(&self, mut ty_expr: &'a hir::TypeExpr) -> &'a hir::TypeExpr {
+        while let Some(inner) = self.expr_inner_type_expr(ty_expr) {
+            ty_expr = inner;
+        }
+        ty_expr
+    }
+
+    fn unwrap_expr_actual_ty<'a>(&self, mut actual_ty: &'a Ty) -> &'a Ty {
+        while let Some(inner) = self.expr_inner_actual_ty(actual_ty) {
+            actual_ty = inner;
+        }
+        actual_ty
+    }
+
     fn infer_generic_from_type_expr(
         &mut self,
         ty_expr: &hir::TypeExpr,
@@ -1634,9 +2509,215 @@ impl MirLowering {
         if matches!(actual_ty.kind, TyKind::Error(_) | TyKind::Infer(_)) {
             return Ok(());
         }
+        if let Some(inner_actual) = self.expr_inner_actual_ty(actual_ty) {
+            if let Some(inner_ty_expr) = self.expr_inner_type_expr(ty_expr) {
+                return self.infer_generic_from_type_expr(
+                    inner_ty_expr,
+                    inner_actual,
+                    generics,
+                    substs,
+                    span,
+                );
+            }
+            return self.infer_generic_from_type_expr(
+                ty_expr,
+                inner_actual,
+                generics,
+                substs,
+                span,
+            );
+        }
+        if let Some(inner_ty_expr) = self.expr_inner_type_expr(ty_expr) {
+            return self.infer_generic_from_type_expr(
+                inner_ty_expr,
+                actual_ty,
+                generics,
+                substs,
+                span,
+            );
+        }
         // Keep inference conservative: only bind direct generic parameters.
         match &ty_expr.kind {
             hir::TypeExprKind::Path(path) => {
+                let variant_enum_def = self
+                    .enum_variant_info_from_path(path)
+                    .map(|variant| variant.enum_def);
+                if let Some((actual_def_id, actual_substs, actual_is_opaque)) =
+                    match &actual_ty.kind
+                    {
+                        TyKind::Adt(adt, substs) => Some((Some(adt.did), substs, false)),
+                        TyKind::Opaque(def_id, substs) => Some((Some(*def_id), substs, true)),
+                        _ => None,
+                    }
+                {
+                    let mut matches_def = false;
+                    if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+                        if let Some(actual_def_id) = actual_def_id {
+                            matches_def = *def_id == actual_def_id
+                                || variant_enum_def == Some(actual_def_id);
+                        }
+                        if !matches_def {
+                            if let Some(name) = path.segments.last().map(|seg| seg.name.as_str()) {
+                                if let Some(actual_def_id) = actual_def_id {
+                                    matches_def = self
+                                        .enum_defs
+                                        .get(&actual_def_id)
+                                        .map(|def| {
+                                            def.name.as_str() == name
+                                                || def.name.as_str()
+                                                    .ends_with(&format!("::{}", name))
+                                        })
+                                        .unwrap_or(false)
+                                        || self
+                                            .struct_defs
+                                            .get(&actual_def_id)
+                                            .map(|def| {
+                                                def.name.as_str() == name
+                                                    || def.name.as_str()
+                                                        .ends_with(&format!("::{}", name))
+                                            })
+                                            .unwrap_or(false);
+                                }
+                            }
+                        }
+                    } else if let Some(name) = path.segments.last().map(|seg| seg.name.as_str()) {
+                        if let Some(actual_def_id) = actual_def_id {
+                            matches_def = self
+                                .enum_defs
+                                .get(&actual_def_id)
+                                .map(|def| {
+                                    def.name.as_str() == name
+                                        || def.name.as_str().ends_with(&format!("::{}", name))
+                                })
+                                .unwrap_or(false)
+                                || self
+                                    .struct_defs
+                                    .get(&actual_def_id)
+                                    .map(|def| {
+                                        def.name.as_str() == name
+                                            || def.name.as_str().ends_with(&format!("::{}", name))
+                                    })
+                                    .unwrap_or(false);
+                        }
+                    }
+
+                    if matches_def {
+                        if let Some(path_args) =
+                            path.segments.iter().rev().find_map(|seg| seg.args.as_ref())
+                        {
+                            let path_type_args = path_args
+                                .args
+                                .iter()
+                                .filter_map(|arg| match arg {
+                                    hir::GenericArg::Type(ty) => Some(ty),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>();
+                            let actual_type_args = actual_substs
+                                .iter()
+                                .filter_map(|arg| match arg {
+                                    mir::ty::GenericArg::Type(ty) => Some(ty),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>();
+                            if !path_type_args.is_empty()
+                                && path_type_args.len() == actual_type_args.len()
+                            {
+                                for (type_arg, actual_arg) in
+                                    path_type_args.into_iter().zip(actual_type_args)
+                                {
+                                    self.infer_generic_from_type_expr(
+                                        type_arg,
+                                        actual_arg,
+                                        generics,
+                                        substs,
+                                        span,
+                                    )?;
+                                }
+                                return Ok(());
+                            }
+                        }
+                    } else if actual_is_opaque {
+                        if let Some(path_args) =
+                            path.segments.iter().rev().find_map(|seg| seg.args.as_ref())
+                        {
+                            let path_type_args = path_args
+                                .args
+                                .iter()
+                                .filter_map(|arg| match arg {
+                                    hir::GenericArg::Type(ty) => Some(ty),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>();
+                            let actual_type_args = actual_substs
+                                .iter()
+                                .filter_map(|arg| match arg {
+                                    mir::ty::GenericArg::Type(ty) => Some(ty),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>();
+                            if !path_type_args.is_empty()
+                                && path_type_args.len() == actual_type_args.len()
+                            {
+                                for (type_arg, actual_arg) in
+                                    path_type_args.into_iter().zip(actual_type_args)
+                                {
+                                    self.infer_generic_from_type_expr(
+                                        type_arg,
+                                        actual_arg,
+                                        generics,
+                                        substs,
+                                        span,
+                                    )?;
+                                }
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+                if let Some(path_args) =
+                    path.segments.iter().rev().find_map(|seg| seg.args.as_ref())
+                {
+                    let def_id = path
+                        .res
+                        .as_ref()
+                        .and_then(|res| match res {
+                            hir::Res::Def(def_id) => Some(*def_id),
+                            _ => None,
+                        })
+                        .or_else(|| self.resolve_path_def_id(path));
+                    if let Some(def_id) = def_id {
+                        if let Some(layout) = self.enum_layout_for_ty(actual_ty) {
+                            let enum_def_id = variant_enum_def.unwrap_or(def_id);
+                            if layout.def_id == enum_def_id {
+                                let path_type_args = path_args
+                                    .args
+                                    .iter()
+                                    .filter_map(|arg| match arg {
+                                        hir::GenericArg::Type(ty) => Some(ty),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>();
+                                if !path_type_args.is_empty()
+                                    && path_type_args.len() == layout.args.len()
+                                {
+                                    for (type_arg, actual_arg) in
+                                        path_type_args.into_iter().zip(layout.args.iter())
+                                    {
+                                        self.infer_generic_from_type_expr(
+                                            type_arg,
+                                            actual_arg,
+                                            generics,
+                                            substs,
+                                            span,
+                                        )?;
+                                    }
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                }
                 let name = path
                     .segments
                     .last()
@@ -1658,6 +2739,9 @@ impl MirLowering {
                                 return Ok(());
                             }
                             if actual_is_opaque {
+                                if !existing_is_opaque {
+                                    substs.insert(name.to_string(), actual_ty.clone());
+                                }
                                 return Ok(());
                             }
                             self.emit_error(
@@ -1672,10 +2756,6 @@ impl MirLowering {
                             ));
                         }
                     } else {
-                        if actual_is_opaque {
-                            substs.insert(name.to_string(), actual_ty.clone());
-                            return Ok(());
-                        }
                         substs.insert(name.to_string(), actual_ty.clone());
                     }
                     return Ok(());
@@ -1683,7 +2763,10 @@ impl MirLowering {
 
                 let path_args = path.segments.last().and_then(|seg| seg.args.as_ref());
                 if let Some(path_args) = path_args {
-                    if let TyKind::Adt(_, adt_substs) = &actual_ty.kind {
+                    if let Some(adt_substs) = match &actual_ty.kind {
+                        TyKind::Adt(_, substs) | TyKind::Opaque(_, substs) => Some(substs),
+                        _ => None,
+                    } {
                         for (arg, subst) in path_args.args.iter().zip(adt_substs.iter()) {
                             let mir::ty::GenericArg::Type(actual_arg_ty) = subst else {
                                 continue;
@@ -1704,11 +2787,16 @@ impl MirLowering {
                 if let (Some(path_args), Some(hir::Res::Def(def_id))) =
                     (path_args, path.res.as_ref())
                 {
-                    if self.enum_defs.contains_key(def_id) {
+                    let enum_def_id = if self.enum_defs.contains_key(def_id) {
+                        Some(*def_id)
+                    } else {
+                        variant_enum_def
+                    };
+                    if let Some(enum_def_id) = enum_def_id {
                         let mut candidates: Vec<&EnumLayout> = self
                             .enum_layouts
                             .values()
-                            .filter(|layout| layout.def_id == *def_id)
+                            .filter(|layout| layout.def_id == enum_def_id)
                             .collect();
                         if !candidates.is_empty() {
                             let exact: Vec<&EnumLayout> = candidates
@@ -3138,6 +4226,26 @@ impl MirLowering {
             .map(|seg| seg.name.as_str())
             .collect::<Vec<_>>()
             .join("::");
+        let args = path
+            .segments
+            .last()
+            .and_then(|segment| segment.args.as_ref())
+            .map(|args| self.lower_generic_args(Some(args), span))
+            .unwrap_or_default();
+        if !args.is_empty() {
+            let opaque = self.opaque_ty(&display);
+            if let TyKind::Adt(adt, _) = opaque.kind {
+                return Ty {
+                    kind: TyKind::Adt(
+                        adt,
+                        args.into_iter()
+                            .map(mir::ty::GenericArg::Type)
+                            .collect(),
+                    ),
+                };
+            }
+            return opaque;
+        }
         self.opaque_ty(&display)
     }
 
@@ -5312,8 +6420,8 @@ impl<'a> BodyBuilder<'a> {
             TyKind::RawPtr(type_and_mut) => {
                 self.enum_layout_for_variant_ty(variant, &type_and_mut.ty, span)
             }
-            TyKind::Adt(adt, substs) => {
-                if adt.did != variant.enum_def {
+            TyKind::Adt(adt, substs) | TyKind::Opaque(adt, substs) => {
+                if *adt != variant.enum_def {
                     return None;
                 }
                 let mut args = Vec::new();
@@ -5322,7 +6430,7 @@ impl<'a> BodyBuilder<'a> {
                         args.push(inner.clone());
                     }
                 }
-                let mut layout = self.lowering.enum_layout_for_instance(adt.did, &args, span)?;
+                let mut layout = self.lowering.enum_layout_for_instance(*adt, &args, span)?;
                 if !layout.variant_payloads.contains_key(&variant.def_id) {
                     if let Some(payloads) =
                         self.lowering.enum_variant_payloads_for_args(variant, &args, span)
@@ -5341,6 +6449,7 @@ impl<'a> BodyBuilder<'a> {
         enum_def: hir::DefId,
         expected_ty: &Ty,
     ) -> Option<Vec<Ty>> {
+        let expected_ty = self.unwrap_expr_actual_ty(expected_ty);
         match &expected_ty.kind {
             TyKind::Ref(_, inner, _) => {
                 self.infer_enum_args_from_expected_ty(enum_def, inner)
@@ -5348,21 +6457,28 @@ impl<'a> BodyBuilder<'a> {
             TyKind::RawPtr(type_and_mut) => {
                 self.infer_enum_args_from_expected_ty(enum_def, &type_and_mut.ty)
             }
-            TyKind::Adt(adt, substs) => {
-                if adt.did != enum_def {
-                    return None;
-                }
-                let mut args = Vec::new();
-                for arg in substs {
-                    if let mir::ty::GenericArg::Type(inner) = arg {
-                        args.push(inner.clone());
+            TyKind::Adt(adt, substs) | TyKind::Opaque(adt, substs) => {
+                if *adt == enum_def {
+                    let mut args = Vec::new();
+                    for arg in substs {
+                        if let mir::ty::GenericArg::Type(inner) = arg {
+                            args.push(inner.clone());
+                        }
+                    }
+                    if args.is_empty() {
+                        None
+                    } else {
+                        Some(args)
                     }
                 }
-                if args.is_empty() {
-                    None
-                } else {
-                    Some(args)
+                for arg in substs {
+                    if let mir::ty::GenericArg::Type(inner) = arg {
+                        if let Some(args) = self.infer_enum_args_from_expected_ty(enum_def, inner) {
+                            return Some(args);
+                        }
+                    }
                 }
+                None
             }
             _ => None,
         }
@@ -7418,9 +8534,11 @@ impl<'a> BodyBuilder<'a> {
             if let Some(info) = self.lowering.enum_variants.get(def_id) {
                 return Some(info.clone());
             }
-            return None;
+            if self.lowering.generic_function_defs.contains_key(def_id) {
+                return None;
+            }
         }
-        if path.res.is_some() {
+        if matches!(path.res, Some(hir::Res::Local(_)) | Some(hir::Res::SelfTy)) {
             return None;
         }
 
@@ -7433,6 +8551,11 @@ impl<'a> BodyBuilder<'a> {
         self.lowering
             .enum_variant_names
             .get(&name)
+            .or_else(|| {
+                path.segments
+                    .last()
+                    .and_then(|seg| self.lowering.enum_variant_names.get(seg.name.as_str()))
+            })
             .and_then(|def_id| self.lowering.enum_variants.get(def_id))
             .cloned()
     }
@@ -7442,17 +8565,7 @@ impl<'a> BodyBuilder<'a> {
         path: &hir::Path,
         expected_ty: Option<&Ty>,
     ) -> Option<EnumVariantInfo> {
-        let expected_ty = expected_ty?;
-        let enum_def = match &expected_ty.kind {
-            TyKind::Ref(_, inner, _) => {
-                return self.enum_variant_info_from_expected(path, Some(inner.as_ref()))
-            }
-            TyKind::RawPtr(type_and_mut) => {
-                return self.enum_variant_info_from_expected(path, Some(type_and_mut.ty.as_ref()))
-            }
-            TyKind::Adt(adt, _) => adt.did,
-            _ => return None,
-        };
+        let expected_ty = self.unwrap_expr_actual_ty(expected_ty?);
 
         let name = path
             .segments
@@ -7470,13 +8583,307 @@ impl<'a> BodyBuilder<'a> {
                     .last()
                     .and_then(|seg| self.lowering.enum_variant_names.get(seg.name.as_str()))
                     .copied()
-            })?;
-        let info = self.lowering.enum_variants.get(&def_id)?.clone();
-        if info.enum_def == enum_def {
-            Some(info)
-        } else {
-            None
+            });
+
+        fn expected_contains_enum(enum_def: hir::DefId, expected_ty: &Ty) -> bool {
+            match &expected_ty.kind {
+                TyKind::Ref(_, inner, _) => expected_contains_enum(enum_def, inner.as_ref()),
+                TyKind::RawPtr(type_and_mut) => {
+                    expected_contains_enum(enum_def, type_and_mut.ty.as_ref())
+                }
+                TyKind::Adt(adt, substs) | TyKind::Opaque(adt, substs) => {
+                    if *adt == enum_def {
+                        return true;
+                    }
+                    for arg in substs {
+                        if let mir::ty::GenericArg::Type(inner) = arg {
+                            if expected_contains_enum(enum_def, inner) {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                }
+                _ => false,
+            }
         }
+
+        if let Some(def_id) = def_id {
+            if let Some(info) = self.lowering.enum_variants.get(&def_id).cloned() {
+                if expected_contains_enum(info.enum_def, expected_ty) {
+                    return Some(info);
+                }
+            }
+        }
+        let tail = path.segments.last()?.name.as_str();
+
+        self.enum_variant_from_expected_ty_by_name(expected_ty, tail)
+    }
+
+    fn enum_variant_from_enum_def(
+        &self,
+        enum_def: hir::DefId,
+        variant_name: &str,
+    ) -> Option<EnumVariantInfo> {
+        let def = self.lowering.enum_defs.get(&enum_def)?;
+        let variant = def
+            .variants
+            .iter()
+            .find(|variant| variant.name == variant_name)?;
+        self.lowering.enum_variants.get(&variant.def_id).cloned()
+    }
+
+    fn enum_variant_from_expected_ty_by_name(
+        &self,
+        expected_ty: &Ty,
+        variant_name: &str,
+    ) -> Option<EnumVariantInfo> {
+        let expected_ty = self.unwrap_expr_actual_ty(expected_ty);
+        match &expected_ty.kind {
+            TyKind::Ref(_, inner, _) => {
+                self.enum_variant_from_expected_ty_by_name(inner.as_ref(), variant_name)
+            }
+            TyKind::RawPtr(type_and_mut) => self
+                .enum_variant_from_expected_ty_by_name(type_and_mut.ty.as_ref(), variant_name),
+            TyKind::Adt(adt, substs) | TyKind::Opaque(adt, substs) => {
+                if let Some(info) = self.enum_variant_from_enum_def(*adt, variant_name) {
+                    return Some(info);
+                }
+                for arg in substs {
+                    if let mir::ty::GenericArg::Type(inner) = arg {
+                        if let Some(info) =
+                            self.enum_variant_from_expected_ty_by_name(inner, variant_name)
+                        {
+                            return Some(info);
+                        }
+                    }
+                }
+                None
+            }
+            _ => self
+                .enum_def_from_ty(expected_ty)
+                .and_then(|enum_def| self.enum_variant_from_enum_def(enum_def, variant_name)),
+        }
+    }
+
+    fn result_variant_from_expected(
+        &self,
+        expected_ty: &Ty,
+        variant_name: &str,
+    ) -> Option<EnumVariantInfo> {
+        if variant_name != "Ok" && variant_name != "Err" {
+            return None;
+        }
+        let expected_ty = self.unwrap_expr_actual_ty(expected_ty);
+
+        fn find_result_def(lowering: &MirLowering, ty: &Ty) -> Option<hir::DefId> {
+            match &ty.kind {
+                TyKind::Ref(_, inner, _) => find_result_def(lowering, inner.as_ref()),
+                TyKind::RawPtr(type_and_mut) => find_result_def(lowering, type_and_mut.ty.as_ref()),
+                TyKind::Adt(adt, substs) | TyKind::Opaque(adt, substs) => {
+                    let is_result = lowering
+                        .enum_defs
+                        .get(adt)
+                        .map(|def| {
+                            def.name.as_str() == "Result"
+                                || def.name.as_str().ends_with("::Result")
+                        })
+                        .unwrap_or(false);
+                    if is_result {
+                        return Some(*adt);
+                    }
+                    for arg in substs {
+                        if let mir::ty::GenericArg::Type(inner) = arg {
+                            if let Some(found) = find_result_def(lowering, inner) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                    None
+                }
+                _ => lowering
+                    .enum_layout_for_ty(ty)
+                    .and_then(|layout| {
+                        lowering.enum_defs.get(&layout.def_id).and_then(|def| {
+                            let is_result =
+                                def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result");
+                            is_result.then_some(layout.def_id)
+                        })
+                    }),
+            }
+        }
+
+        let result_def = find_result_def(&self.lowering, expected_ty)?;
+        self.enum_variant_from_enum_def(result_def, variant_name)
+    }
+
+    fn explicit_args_from_expected_result_ty(&self, expected_ty: &Ty) -> Option<Vec<Ty>> {
+        let expected_ty = self.unwrap_expr_actual_ty(expected_ty);
+        let expected_ty = match &expected_ty.kind {
+            TyKind::Ref(_, inner, _) => inner.as_ref(),
+            TyKind::RawPtr(type_and_mut) => type_and_mut.ty.as_ref(),
+            _ => expected_ty,
+        };
+        let (adt, substs) = match &expected_ty.kind {
+            TyKind::Adt(adt, substs) | TyKind::Opaque(adt, substs) => (adt, substs),
+            _ => {
+                let layout = self.lowering.enum_layout_for_ty(expected_ty)?;
+                let is_result = self
+                    .lowering
+                    .enum_defs
+                    .get(&layout.def_id)
+                    .map(|def| def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result"))
+                    .unwrap_or(false);
+                if !is_result {
+                    return None;
+                }
+                let mut args = Vec::new();
+                for ty in &layout.args {
+                    args.push(ty.clone());
+                }
+                if args.is_empty() {
+                    return None;
+                }
+                return Some(args);
+            }
+        };
+        let is_result = self
+            .lowering
+            .enum_defs
+            .get(adt)
+            .map(|def| def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result"))
+            .or_else(|| {
+                self.lowering.struct_defs.get(adt).map(|def| {
+                    def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
+                })
+            })
+            .unwrap_or(false);
+        if !is_result {
+            if let Some(layout) = self.lowering.enum_layout_for_ty(expected_ty) {
+                let is_result_layout = self
+                    .lowering
+                    .enum_defs
+                    .get(&layout.def_id)
+                    .map(|def| {
+                        def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
+                    })
+                    .unwrap_or(false);
+                if !is_result_layout {
+                    return None;
+                }
+                let mut args = Vec::new();
+                for ty in &layout.args {
+                    let ty = self.unwrap_expr_actual_ty(ty);
+                    args.push(ty.clone());
+                }
+                if args.is_empty() {
+                    return None;
+                }
+                return Some(args);
+            }
+            return None;
+        }
+        let mut args = Vec::new();
+        for arg in substs {
+            let mir::ty::GenericArg::Type(ty) = arg else {
+                continue;
+            };
+            let ty = self.unwrap_expr_actual_ty(ty);
+            args.push(ty.clone());
+        }
+        if args.len() < 2 {
+            if let Some(layout) = self.lowering.enum_layout_for_ty(expected_ty) {
+                let is_result_layout = self
+                    .lowering
+                    .enum_defs
+                    .get(&layout.def_id)
+                    .map(|def| def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result"))
+                    .unwrap_or(false);
+                if is_result_layout {
+                    let layout_args = layout
+                        .args
+                        .iter()
+                        .map(|ty| self.unwrap_expr_actual_ty(ty).clone())
+                        .collect::<Vec<_>>();
+                    for (idx, layout_ty) in layout_args.iter().enumerate() {
+                        if args.len() <= idx {
+                            args.push(layout_ty.clone());
+                            continue;
+                        }
+                        if matches!(args[idx].kind, TyKind::Infer(_) | TyKind::Error(_))
+                            && !matches!(layout_ty.kind, TyKind::Infer(_) | TyKind::Error(_))
+                        {
+                            args[idx] = layout_ty.clone();
+                        }
+                    }
+                    if args.len() < 2 {
+                        if let Some(def) = self.lowering.enum_defs.get(&layout.def_id) {
+                            let mut ok_payload = None;
+                            let mut err_payload = None;
+                            for variant in &def.variants {
+                                if variant.name.as_str() == "Ok"
+                                    || variant.name.as_str().ends_with("::Ok")
+                                {
+                                    if let Some(payloads) =
+                                        layout.variant_payloads.get(&variant.def_id)
+                                    {
+                                        if payloads.len() == 1 {
+                                            ok_payload = Some(payloads[0].clone());
+                                        }
+                                    }
+                                    continue;
+                                }
+                                if variant.name.as_str() == "Err"
+                                    || variant.name.as_str().ends_with("::Err")
+                                {
+                                    if let Some(payloads) =
+                                        layout.variant_payloads.get(&variant.def_id)
+                                    {
+                                        if payloads.len() == 1 {
+                                            err_payload = Some(payloads[0].clone());
+                                        }
+                                    }
+                                }
+                            }
+                            if args.is_empty() {
+                                if let Some(ok) = ok_payload {
+                                    args.push(ok);
+                                }
+                                if let Some(err) = err_payload {
+                                    args.push(err);
+                                }
+                            } else if args.len() == 1 {
+                                if let Some(err) = err_payload {
+                                    args.push(err);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if args.is_empty() {
+            if let Some(layout) = self.lowering.enum_layout_for_ty(expected_ty) {
+                let is_result_layout = self
+                    .lowering
+                    .enum_defs
+                    .get(&layout.def_id)
+                    .map(|def| {
+                        def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
+                    })
+                    .unwrap_or(false);
+                if is_result_layout {
+                    for ty in &layout.args {
+                        let ty = self.unwrap_expr_actual_ty(ty);
+                        args.push(ty.clone());
+                    }
+                }
+            }
+        }
+        if args.is_empty() {
+            return None;
+        }
+        Some(args)
     }
 
     fn enum_variant_for_payload(
@@ -8088,57 +9495,194 @@ impl<'a> BodyBuilder<'a> {
             return None;
         }
         let expected_return = expected_return?;
-        let hir::TypeExprKind::Path(path) = &function.sig.output.kind else {
-            return None;
+        let expected_return = self.unwrap_expr_actual_ty(expected_return);
+        let expected_return = match &expected_return.kind {
+            TyKind::Ref(_, inner, _) => inner.as_ref(),
+            TyKind::RawPtr(type_and_mut) => type_and_mut.ty.as_ref(),
+            _ => expected_return,
         };
-        let path_args = path.segments.last().and_then(|seg| seg.args.as_ref())?;
-        let TyKind::Adt(adt, substs) = &expected_return.kind else {
-            return None;
+        let mut expected_type_args = match &expected_return.kind {
+            TyKind::Adt(_, substs) | TyKind::Opaque(_, substs) => substs
+                .iter()
+                .filter_map(|arg| match arg {
+                    mir::ty::GenericArg::Type(ty) => Some(self.unwrap_expr_actual_ty(ty).clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
         };
-        if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
-            if *def_id != adt.did {
-                return None;
+        if expected_type_args.is_empty() {
+            if let Some(layout) = self.lowering.enum_layout_for_ty(expected_return) {
+                expected_type_args = layout
+                    .args
+                    .iter()
+                    .map(|ty| self.unwrap_expr_actual_ty(ty).clone())
+                    .collect::<Vec<_>>();
+            }
+        }
+        let mut output_ty = &function.sig.output;
+        while let Some(inner) = self.lowering.expr_inner_type_expr(output_ty) {
+            output_ty = inner;
+        }
+        if let hir::TypeExprKind::Path(path) = &output_ty.kind {
+            let (expected_def_id, substs) = match &expected_return.kind {
+                TyKind::Adt(adt, substs) => (Some(adt.did), substs),
+                TyKind::Opaque(_, substs) => (None, substs),
+                _ => return None,
+            };
+            if let (Some(hir::Res::Def(def_id)), Some(expected_def_id)) =
+                (path.res.as_ref(), expected_def_id)
+            {
+                if *def_id != expected_def_id {
+                    let matches_name = path
+                        .segments
+                        .last()
+                        .map(|seg| seg.name.as_str())
+                        .map(|name| {
+                            self.lowering
+                                .enum_defs
+                                .get(&expected_def_id)
+                                .map(|def| {
+                                    def.name.as_str() == name
+                                        || def.name.as_str().ends_with(&format!("::{}", name))
+                                })
+                                .unwrap_or(false)
+                                || self
+                                    .lowering
+                                    .struct_defs
+                                    .get(&expected_def_id)
+                                    .map(|def| {
+                                        def.name.as_str() == name
+                                            || def.name.as_str().ends_with(&format!("::{}", name))
+                                    })
+                                    .unwrap_or(false)
+                        })
+                        .unwrap_or(false);
+                    if !matches_name {
+                        return None;
+                    }
+                }
+            }
+
+            let path_args = path.segments.last().and_then(|seg| seg.args.as_ref());
+            if path_args.map(|args| args.args.is_empty()).unwrap_or(true) {
+                if expected_type_args.len() != function.sig.generics.params.len() {
+                    return None;
+                }
+                let mut inferred = Vec::with_capacity(expected_type_args.len());
+                for actual_ty in expected_type_args {
+                    if matches!(actual_ty.kind, TyKind::Infer(_)) {
+                        return None;
+                    }
+                    inferred.push(actual_ty.clone());
+                }
+                return Some(inferred);
+            }
+            let path_args = path_args?;
+
+            let mut inferred = Vec::new();
+            let mut actual_iter = substs.iter().filter_map(|arg| match arg {
+                mir::ty::GenericArg::Type(ty) => Some(self.unwrap_expr_actual_ty(ty)),
+                _ => None,
+            });
+            for arg in &path_args.args {
+                let hir::GenericArg::Type(type_arg) = arg else {
+                    continue;
+                };
+                let Some(actual_ty) = actual_iter.next() else {
+                    return None;
+                };
+                let mut type_arg = type_arg.as_ref();
+                while let Some(inner) = self.lowering.expr_inner_type_expr(type_arg) {
+                    type_arg = inner;
+                }
+                let hir::TypeExprKind::Path(type_path) = &type_arg.kind else {
+                    return None;
+                };
+                if type_path.segments.len() != 1 || type_path.segments[0].args.is_some() {
+                    return None;
+                }
+                let name = type_path.segments[0].name.as_str();
+                if !function
+                    .sig
+                    .generics
+                    .params
+                    .iter()
+                    .any(|param| param.name.as_str() == name)
+                {
+                    return None;
+                }
+                if matches!(actual_ty.kind, TyKind::Infer(_)) {
+                    return None;
+                }
+                inferred.push(actual_ty.clone());
+            }
+
+            if inferred.len() != function.sig.generics.params.len() {
+                if expected_type_args.len() != function.sig.generics.params.len() {
+                    return None;
+                }
+                let mut fallback = Vec::with_capacity(expected_type_args.len());
+                for actual_ty in expected_type_args {
+                    if matches!(actual_ty.kind, TyKind::Error(_) | TyKind::Infer(_)) {
+                        return None;
+                    }
+                    fallback.push(actual_ty.clone());
+                }
+                return Some(fallback);
+            }
+
+            return Some(inferred);
+        }
+
+        let is_result_constructor = function.sig.name.as_str() == "Ok"
+            || function.sig.name.as_str() == "Err"
+            || function.sig.name.as_str().ends_with("::Ok")
+            || function.sig.name.as_str().ends_with("::Err");
+        if is_result_constructor {
+            let is_result_ty = match &expected_return.kind {
+                TyKind::Adt(adt, _) => self
+                    .lowering
+                    .enum_defs
+                    .get(&adt.did)
+                    .map(|def| {
+                        def.name.as_str() == "Result"
+                            || def.name.as_str().ends_with("::Result")
+                    })
+                    .unwrap_or(false),
+                TyKind::Opaque(def_id, _) => self
+                    .lowering
+                    .enum_defs
+                    .get(def_id)
+                    .map(|def| {
+                        def.name.as_str() == "Result"
+                            || def.name.as_str().ends_with("::Result")
+                    })
+                    .unwrap_or(false),
+                _ => false,
+            };
+            if is_result_ty && expected_type_args.len() == function.sig.generics.params.len() {
+                let mut inferred = Vec::with_capacity(expected_type_args.len());
+                for actual_ty in &expected_type_args {
+                    if matches!(actual_ty.kind, TyKind::Error(_) | TyKind::Infer(_)) {
+                        return None;
+                    }
+                    inferred.push(actual_ty.clone());
+                }
+                return Some(inferred);
             }
         }
 
-        let mut inferred = Vec::new();
-        let mut actual_iter = substs.iter();
-        for arg in &path_args.args {
-            let hir::GenericArg::Type(type_arg) = arg else {
-                continue;
-            };
-            let Some(actual_arg) = actual_iter.next() else {
-                return None;
-            };
-            let mir::ty::GenericArg::Type(actual_ty) = actual_arg else {
-                return None;
-            };
-            let hir::TypeExprKind::Path(type_path) = &type_arg.kind else {
-                return None;
-            };
-            if type_path.segments.len() != 1 || type_path.segments[0].args.is_some() {
-                return None;
-            }
-            let name = type_path.segments[0].name.as_str();
-            if !function
-                .sig
-                .generics
-                .params
-                .iter()
-                .any(|param| param.name.as_str() == name)
-            {
-                return None;
-            }
-            if matches!(actual_ty.kind, TyKind::Error(_) | TyKind::Infer(_)) {
+        if expected_type_args.len() != function.sig.generics.params.len() {
+            return None;
+        }
+        let mut inferred = Vec::with_capacity(expected_type_args.len());
+        for actual_ty in expected_type_args {
+            if matches!(actual_ty.kind, TyKind::Infer(_)) {
                 return None;
             }
             inferred.push(actual_ty.clone());
         }
-
-        if inferred.len() != function.sig.generics.params.len() {
-            return None;
-        }
-
         Some(inferred)
     }
 
@@ -8581,9 +10125,16 @@ impl<'a> BodyBuilder<'a> {
             }
         }
         if let hir::ExprKind::Path(path) = &callee.kind {
+            let expected_ty = destination.as_ref().map(|(_, ty)| ty);
+            let tail = path.segments.last().map(|seg| seg.name.as_str());
             let variant = self
                 .enum_variant_info_from_path(path)
-                .or_else(|| self.enum_variant_info_from_expected(path, destination.as_ref().map(|(_, ty)| ty)));
+                .or_else(|| self.enum_variant_info_from_expected(path, expected_ty))
+                .or_else(|| {
+                    tail.and_then(|name| {
+                        expected_ty.and_then(|ty| self.result_variant_from_expected(ty, name))
+                    })
+                });
             if let Some(variant) = variant {
                 let explicit_enum_args = path
                     .segments
@@ -8611,6 +10162,17 @@ impl<'a> BodyBuilder<'a> {
                                 &inferred_args,
                                 expr.span,
                             );
+                        }
+                    }
+                    if layout.is_none() {
+                        if let Some((_, expected_ty)) = destination.as_ref() {
+                            if let Some(layout_from_ty) =
+                                self.enum_layout_for_ty(expected_ty, expr.span)
+                            {
+                                if layout_from_ty.def_id == variant.enum_def {
+                                    layout = Some(layout_from_ty);
+                                }
+                            }
                         }
                     }
                     if layout.is_none() {
@@ -8744,6 +10306,11 @@ impl<'a> BodyBuilder<'a> {
             .as_ref()
             .and_then(|name| self.lowering.method_lookup.get(name))
             .and_then(|info| info.struct_def);
+        let callee_tail = if let hir::ExprKind::Path(path) = &callee.kind {
+            path.segments.last().map(|seg| seg.name.as_str())
+        } else {
+            None
+        };
         let mut callee_abi = None;
         let mut callee_is_extern = false;
         if let hir::ExprKind::Path(path) = &callee.kind {
@@ -9162,8 +10729,9 @@ impl<'a> BodyBuilder<'a> {
             arg_types.push(inferred_ty);
         }
 
-        if let Some(def_id) = generic_def_id {
+                if let Some(def_id) = generic_def_id {
             if let Some(function) = self.lowering.generic_function_defs.get(&def_id).cloned() {
+                let is_result_ctor = matches!(callee_tail, Some("Ok" | "Err"));
                 if explicit_args.is_empty() {
                     if let Some(inferred) = self.infer_explicit_args_from_expected_return(
                         &function,
@@ -9172,13 +10740,341 @@ impl<'a> BodyBuilder<'a> {
                         explicit_args = inferred;
                     }
                 }
+                let is_unresolved =
+                    |ty: &Ty| matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_));
+                let needs_result_ctor_infer = is_result_ctor
+                    && (explicit_args.is_empty()
+                        || explicit_args.iter().any(|ty| is_unresolved(ty)));
+                if needs_result_ctor_infer {
+                    let expected_for_infer = destination.as_ref().map(|(_, ty)| ty);
+                    let mut inferred_args = if explicit_args.is_empty() {
+                        expected_for_infer
+                            .and_then(|expected_ty| {
+                                self.explicit_args_from_expected_result_ty(expected_ty)
+                            })
+                    } else {
+                        Some(explicit_args.clone())
+                    };
+                    if inferred_args.is_none() {
+                        let needs_fallback = match expected_for_infer {
+                            Some(expected_ty) => self.lowering.has_unresolved_ty(expected_ty),
+                            None => true,
+                        };
+                        if needs_fallback {
+                            let fallback = self.lower_type_expr(&self.function.sig.output);
+                            let fallback_args =
+                                self.explicit_args_from_expected_result_ty(&fallback);
+                            let fallback_usable = fallback_args
+                                .as_ref()
+                                .map(|args| args.iter().any(|ty| !is_unresolved(ty)))
+                                .unwrap_or(false);
+                            if fallback_usable || !self.lowering.has_unresolved_ty(&fallback) {
+                                inferred_args = fallback_args;
+                            }
+                        }
+                    }
+                    if inferred_args.is_none() {
+                        let fallback = self.lower_type_expr(&self.function.sig.output);
+                        let fallback_args =
+                            self.explicit_args_from_expected_result_ty(&fallback);
+                        let fallback_usable = fallback_args
+                            .as_ref()
+                            .map(|args| args.iter().any(|ty| !is_unresolved(ty)))
+                            .unwrap_or(false);
+                        if fallback_usable || !self.lowering.has_unresolved_ty(&fallback) {
+                            inferred_args = fallback_args;
+                        }
+                    }
+                    if inferred_args.is_none() {
+                        if let hir::TypeExprKind::Path(path) = &self.function.sig.output.kind {
+                            if self.is_result_path(path) {
+                                if let Some(args) =
+                                    path.segments.last().and_then(|seg| seg.args.as_ref())
+                                {
+                                    let mut output_args = Vec::new();
+                                    for arg in &args.args {
+                                        let hir::GenericArg::Type(type_arg) = arg else {
+                                            continue;
+                                        };
+                                        output_args.push(self.lower_type_expr(type_arg));
+                                    }
+                                    if output_args.len() == function.sig.generics.params.len() {
+                                        inferred_args = Some(output_args);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(mut inferred) = inferred_args {
+                        if inferred.len() == function.sig.generics.params.len() {
+                            if inferred.iter().any(|ty| is_unresolved(ty)) {
+                                let fallback = self.lower_type_expr(&self.function.sig.output);
+                                if !self.lowering.has_unresolved_ty(&fallback) {
+                                    if let Some(fallback_args) =
+                                        self.explicit_args_from_expected_result_ty(&fallback)
+                                    {
+                                        for (idx, inferred_ty) in inferred.iter_mut().enumerate()
+                                        {
+                                            if !is_unresolved(inferred_ty) {
+                                                continue;
+                                            }
+                                            let Some(fallback_ty) = fallback_args.get(idx) else {
+                                                continue;
+                                            };
+                                            if is_unresolved(fallback_ty) {
+                                                continue;
+                                            }
+                                            *inferred_ty = fallback_ty.clone();
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(arg_ty) = arg_types.get(0) {
+                                let arg_ty = self.unwrap_expr_actual_ty(arg_ty);
+                                let usable_arg = !is_unresolved(arg_ty);
+                                if usable_arg {
+                                    match callee_tail {
+                                        Some("Ok") => inferred[0] = arg_ty.clone(),
+                                        Some("Err") => inferred[1] = arg_ty.clone(),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            if inferred.iter().all(|ty| !is_unresolved(ty)) {
+                                explicit_args = inferred;
+                            } else {
+                                explicit_args = inferred;
+                            }
+                        }
+                    }
+                    let needs_local_fill = explicit_args.len()
+                        == function.sig.generics.params.len()
+                        && explicit_args.iter().any(|ty| is_unresolved(ty));
+                    if explicit_args.is_empty() || needs_local_fill {
+                        if let Some(local_return) = self.locals.get(0).map(|local| &local.ty) {
+                            if let Some(local_args) =
+                                self.explicit_args_from_expected_result_ty(local_return)
+                            {
+                                if local_args.len() == function.sig.generics.params.len() {
+                                    if explicit_args.is_empty() {
+                                        explicit_args = local_args;
+                                    } else {
+                                        for (idx, local_ty) in local_args.into_iter().enumerate()
+                                        {
+                                            if let Some(explicit_ty) =
+                                                explicit_args.get_mut(idx)
+                                            {
+                                                if is_unresolved(explicit_ty)
+                                                    && !is_unresolved(&local_ty)
+                                                {
+                                                    *explicit_ty = local_ty;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if explicit_args.is_empty() {
+                        let mut output_ty = &self.function.sig.output;
+                        while let Some(inner) = self.lowering.expr_inner_type_expr(output_ty) {
+                            output_ty = inner;
+                        }
+                        if let hir::TypeExprKind::Path(path) = &output_ty.kind {
+                            if self.is_result_path(path) {
+                                if let Some(args) =
+                                    path.segments.last().and_then(|seg| seg.args.as_ref())
+                                {
+                                    let mut output_args = Vec::new();
+                                    for arg in &args.args {
+                                        let hir::GenericArg::Type(type_arg) = arg else {
+                                            continue;
+                                        };
+                                        output_args.push(self.lower_type_expr(type_arg));
+                                    }
+                                    if output_args.len() == function.sig.generics.params.len()
+                                        && output_args.iter().all(|ty| !is_unresolved(ty))
+                                    {
+                                        explicit_args = output_args;
+                                    } else if output_args.len() >= 2 {
+                                        let mut stitched = Vec::new();
+                                        if let Some(arg_ty) = arg_types.get(0) {
+                                            let arg_ty = self.unwrap_expr_actual_ty(arg_ty);
+                                            if matches!(
+                                                arg_ty.kind,
+                                                TyKind::Infer(_) | TyKind::Error(_)
+                                            ) {
+                                                stitched.push(output_args[0].clone());
+                                            } else {
+                                                stitched.push(arg_ty.clone());
+                                            }
+                                        } else {
+                                            stitched.push(output_args[0].clone());
+                                        }
+                                        stitched.push(output_args[1].clone());
+                                        if stitched.len() == function.sig.generics.params.len()
+                                            && stitched.iter().all(|ty| !is_unresolved(ty))
+                                        {
+                                            explicit_args = stitched;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if is_result_ctor
+                    && explicit_args.len() == function.sig.generics.params.len()
+                    && explicit_args
+                        .iter()
+                        .any(|ty| matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_)))
+                {
+                    let fallback = self.lower_type_expr(&self.function.sig.output);
+                    if let Some(fallback_args) =
+                        self.explicit_args_from_expected_result_ty(&fallback)
+                    {
+                        for (idx, fallback_arg) in fallback_args.into_iter().enumerate() {
+                            let Some(explicit_ty) = explicit_args.get_mut(idx) else {
+                                continue;
+                            };
+                            if matches!(explicit_ty.kind, TyKind::Infer(_) | TyKind::Error(_))
+                                && !matches!(
+                                    fallback_arg.kind,
+                                    TyKind::Infer(_) | TyKind::Error(_)
+                                )
+                            {
+                                *explicit_ty = fallback_arg;
+                            }
+                        }
+                    }
+                }
+                if is_result_ctor && explicit_args.len() == function.sig.generics.params.len() {
+                    let is_unresolved =
+                        |ty: &Ty| matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_));
+                    if explicit_args.iter().any(|ty| is_unresolved(ty)) {
+                        if let Some(arg_ty) = arg_types.get(0) {
+                            let arg_ty = self.unwrap_expr_actual_ty(arg_ty);
+                            if !is_unresolved(arg_ty) {
+                                match callee_tail {
+                                    Some("Ok") => explicit_args[0] = arg_ty.clone(),
+                                    Some("Err") if explicit_args.len() > 1 => {
+                                        explicit_args[1] = arg_ty.clone();
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        if explicit_args.len() >= 1
+                            && is_unresolved(&explicit_args[0])
+                            && matches!(callee_tail, Some("Err"))
+                        {
+                            explicit_args[0] = Self::unit_ty();
+                        }
+                        if explicit_args.len() >= 2 && is_unresolved(&explicit_args[1]) {
+                            explicit_args[1] = self.lowering.error_ty();
+                        }
+                    }
+                }
+                let mut fallback_expected_return = None;
+                let mut expected_return_for_specialization =
+                    match destination.as_ref().map(|(_, ty)| ty) {
+                        Some(expected_ty) => {
+                            let mut needs_fallback =
+                                self.lowering.has_unresolved_ty(expected_ty);
+                            if is_result_ctor {
+                                if let Some(args) =
+                                    self.explicit_args_from_expected_result_ty(expected_ty)
+                                {
+                                    let is_unresolved =
+                                        |ty: &Ty| matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_));
+                                    let generics_len = function.sig.generics.params.len();
+                                    if args.len() == generics_len
+                                        && args.iter().all(|ty| !is_unresolved(ty))
+                                    {
+                                        needs_fallback = false;
+                                    }
+                                }
+                            } else if !needs_fallback {
+                                if let Some(args) =
+                                    self.explicit_args_from_expected_result_ty(expected_ty)
+                                {
+                                    needs_fallback = args.iter().any(|ty| {
+                                        matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_))
+                                    });
+                                }
+                            }
+                            if needs_fallback {
+                                let fallback = self.lower_type_expr(&self.function.sig.output);
+                                if !self.lowering.has_unresolved_ty(&fallback) {
+                                    fallback_expected_return = Some(fallback);
+                                    fallback_expected_return.as_ref()
+                                } else {
+                                    Some(expected_ty)
+                                }
+                            } else {
+                                Some(expected_ty)
+                            }
+                        }
+                        None => {
+                            if is_result_ctor {
+                                let fallback = self.lower_type_expr(&self.function.sig.output);
+                                fallback_expected_return = Some(fallback);
+                                fallback_expected_return.as_ref()
+                            } else {
+                                None
+                            }
+                        }
+                    };
+                if is_result_ctor {
+                    let sig_expected = self.lower_type_expr(&self.function.sig.output);
+                    if let Some(args) = self.explicit_args_from_expected_result_ty(&sig_expected) {
+                        if args.len() == function.sig.generics.params.len() {
+                            fallback_expected_return = Some(sig_expected);
+                            expected_return_for_specialization = fallback_expected_return.as_ref();
+                        }
+                    }
+                    let is_unresolved =
+                        |ty: &Ty| matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_));
+                    let needs_sig_fallback = explicit_args.is_empty()
+                        || explicit_args.iter().any(|ty| is_unresolved(ty));
+                    if needs_sig_fallback {
+                        if fallback_expected_return.is_none() {
+                            let fallback = self.lower_type_expr(&self.function.sig.output);
+                            let fallback_args =
+                                self.explicit_args_from_expected_result_ty(&fallback);
+                            let fallback_usable = fallback_args
+                                .as_ref()
+                                .map(|args| args.iter().any(|ty| !is_unresolved(ty)))
+                                .unwrap_or(false);
+                            if fallback_usable || !self.lowering.has_unresolved_ty(&fallback) {
+                                fallback_expected_return = Some(fallback);
+                            }
+                        }
+                        if fallback_expected_return.is_some() {
+                            expected_return_for_specialization = fallback_expected_return.as_ref();
+                        }
+                    }
+                }
+                if is_result_ctor {
+                    let needs_forced = expected_return_for_specialization
+                        .map(|ty| self.lowering.has_unresolved_ty(ty))
+                        .unwrap_or(true);
+                    if needs_forced {
+                        if fallback_expected_return.is_none() {
+                            let fallback = self.lower_type_expr(&self.function.sig.output);
+                            fallback_expected_return = Some(fallback);
+                        }
+                        expected_return_for_specialization = fallback_expected_return.as_ref();
+                    }
+                }
                 let info = self.lowering.ensure_function_specialization(
                     self.program,
                     def_id,
                     &function,
                     &explicit_args,
                     &arg_types,
-                    destination.as_ref().map(|(_, ty)| ty),
+                    expected_return_for_specialization,
                     expr.span,
                 )?;
                 func_operand = mir::Operand::Constant(mir::Constant {

@@ -89,4 +89,3 @@ semver = "1"
 tempfile = "3.8"
 assert_cmd = "2.0"
 predicates = "3.0"
-criterion = { version = "0.7.0" }
