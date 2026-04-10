@@ -1,11 +1,8 @@
 use crate::ast::items::LowerItemsError;
-use crate::cst::parse_expr_lexemes_prefix_to_cst;
-use crate::lexer::lexeme::{Lexeme, LexemeKind};
-use crate::lexer::tokenizer::lex_lexemes;
-use crate::lexer::tokenizer::strip_number_suffix;
-use crate::lexer::tokenizer::Span as LexSpan;
+use crate::ast::lower_common::{
+    collect_path_tokens_with_generics, decode_string_literal, split_path_prefix,
+};
 use crate::syntax::{SyntaxKind, SyntaxNode};
-use bigdecimal::BigDecimal;
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, DecimalType, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait,
     ExprBinOp, ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor,
@@ -13,8 +10,8 @@ use fp_core::ast::{
     ExprLet, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn,
     ExprSelect, ExprSelectType, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural,
     ExprTry, ExprTryCatch, ExprTuple, ExprWhile, ExprWith, FormatArgRef, FormatPlaceholder,
-    FormatSpec, FormatTemplatePart, Ident, ImplTraits, MacroDelimiter, MacroInvocation,
-    MacroTokenTree, Name, ParameterPath, ParameterPathSegment, Path, Pattern, PatternBind,
+    FormatSpec, FormatTemplatePart, Ident, MacroInvocation, Name, ParameterPath,
+    ParameterPathSegment, Path, Pattern, PatternBind,
     PatternBox, PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternRef,
     PatternStruct, PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct,
     PatternType, PatternVariant,
@@ -27,7 +24,18 @@ use fp_core::cst::CstCategory;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::path::PathPrefix;
 use fp_core::ops::{BinOpKind, UnOpKind};
-use num_bigint::BigInt;
+
+mod literals;
+mod quote;
+mod types;
+
+use self::literals::{parse_f_string_literal, parse_numeric_literal};
+use self::quote::{
+    quote_block_pattern_from_cst, quote_kind_from_cst, quote_pattern_from_cst,
+    quote_pattern_kind_from_cst,
+};
+pub(crate) use self::types::lower_type_from_cst;
+use self::types::node_children_types;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LowerError {
@@ -41,440 +49,6 @@ pub enum LowerError {
     Unsupported(String),
     #[error("failed to lower item: {0}")]
     Item(#[from] LowerItemsError),
-}
-
-fn quote_kind_from_cst(node: &SyntaxNode) -> Result<Option<QuoteFragmentKind>, LowerError> {
-    let mut tokens = Vec::new();
-    crate::syntax::collect_tokens(node, &mut tokens);
-    let mut iter = tokens.iter().filter(|t| !t.is_trivia());
-
-    while let Some(tok) = iter.next() {
-        if tok.text != "quote" {
-            continue;
-        }
-        let Some(next) = iter.next() else {
-            return Ok(None);
-        };
-        if next.text != "<" {
-            return Ok(None);
-        }
-        let Some(kind_tok) = iter.next() else {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        };
-        if kind_tok.text == "[" {
-            let Some(inner_tok) = iter.next() else {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            };
-            let Some(close_bracket) = iter.next() else {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            };
-            if close_bracket.text != "]" {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            }
-            let Some(close_tok) = iter.next() else {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            };
-            if close_tok.text != ">" {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            }
-            let kind = match inner_tok.text.as_str() {
-                "item" | "fn" | "struct" | "enum" | "trait" | "impl" | "const" | "static"
-                | "mod" | "use" | "macro" => QuoteFragmentKind::Item,
-                _ => return Err(LowerError::UnexpectedNode(node.kind)),
-            };
-            return Ok(Some(kind));
-        }
-        let Some(close_tok) = iter.next() else {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        };
-        if close_tok.text != ">" {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        }
-        let kind = match kind_tok.text.as_str() {
-            "expr" => QuoteFragmentKind::Expr,
-            "stmt" => QuoteFragmentKind::Stmt,
-            "item" => QuoteFragmentKind::Item,
-            "type" => QuoteFragmentKind::Type,
-            "items" | "fns" | "structs" | "enums" | "traits" | "impls" | "consts" | "statics"
-            | "mods" | "uses" | "macros" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                QuoteFragmentKind::Item
-            }
-            "exprs" | "stmts" | "types" => {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            }
-            "fn" | "struct" | "enum" | "trait" | "impl" | "const" | "static" | "mod" | "use"
-            | "macro" => QuoteFragmentKind::Item,
-            _ => return Err(LowerError::UnexpectedNode(node.kind)),
-        };
-        return Ok(Some(kind));
-    }
-
-    Ok(None)
-}
-
-fn quote_pattern_from_cst(node: &SyntaxNode) -> Result<PatternQuote, LowerError> {
-    let mut tokens = Vec::new();
-    crate::syntax::collect_tokens(node, &mut tokens);
-    let mut iter = tokens.iter().filter(|t| !t.is_trivia());
-
-    while let Some(tok) = iter.next() {
-        if tok.text != "quote" {
-            continue;
-        }
-        let Some(next) = iter.next() else {
-            return Ok(PatternQuote {
-                fragment: QuoteFragmentKind::Item,
-                item: None,
-                fields: Vec::new(),
-                has_rest: false,
-            });
-        };
-        if next.text != "<" {
-            return Ok(PatternQuote {
-                fragment: QuoteFragmentKind::Item,
-                item: None,
-                fields: Vec::new(),
-                has_rest: false,
-            });
-        }
-        let Some(kind_tok) = iter.next() else {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        };
-        if kind_tok.text == "[" {
-            let Some(inner_tok) = iter.next() else {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            };
-            let Some(close_bracket) = iter.next() else {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            };
-            if close_bracket.text != "]" {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            }
-            let Some(close_tok) = iter.next() else {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            };
-            if close_tok.text != ">" {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            }
-            let (fragment, item) = match inner_tok.text.as_str() {
-                "item" => (QuoteFragmentKind::Item, None),
-                "fn" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Function)),
-                "struct" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Struct)),
-                "enum" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Enum)),
-                "trait" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Trait)),
-                "impl" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Impl)),
-                "const" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Const)),
-                "static" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Static)),
-                "mod" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Module)),
-                "use" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Use)),
-                "macro" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Macro)),
-                _ => return Err(LowerError::UnexpectedNode(node.kind)),
-            };
-            return Ok(PatternQuote {
-                fragment,
-                item,
-                fields: Vec::new(),
-                has_rest: false,
-            });
-        }
-        let Some(close_tok) = iter.next() else {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        };
-        if close_tok.text != ">" {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        }
-        let (fragment, item) = match kind_tok.text.as_str() {
-            "expr" => (QuoteFragmentKind::Expr, None),
-            "stmt" => (QuoteFragmentKind::Stmt, None),
-            "item" => (QuoteFragmentKind::Item, None),
-            "type" => (QuoteFragmentKind::Type, None),
-            "fn" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Function)),
-            "struct" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Struct)),
-            "enum" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Enum)),
-            "trait" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Trait)),
-            "impl" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Impl)),
-            "const" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Const)),
-            "static" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Static)),
-            "mod" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Module)),
-            "use" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Use)),
-            "macro" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Macro)),
-            "items" | "fns" | "structs" | "enums" | "traits" | "impls" | "consts" | "statics"
-            | "mods" | "uses" | "macros" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                (QuoteFragmentKind::Item, None)
-            }
-            "exprs" | "stmts" | "types" => {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            }
-            _ => return Err(LowerError::UnexpectedNode(node.kind)),
-        };
-        return Ok(PatternQuote {
-            fragment,
-            item,
-            fields: Vec::new(),
-            has_rest: false,
-        });
-    }
-
-    Err(LowerError::UnexpectedNode(node.kind))
-}
-
-fn quote_block_pattern_from_cst(node: &SyntaxNode) -> Result<PatternQuote, LowerError> {
-    let mut tokens = Vec::new();
-    crate::syntax::collect_tokens(node, &mut tokens);
-    let tokens: Vec<&crate::syntax::SyntaxToken> =
-        tokens.into_iter().filter(|t| !t.is_trivia()).collect();
-
-    let mut idx = 0;
-    while idx < tokens.len() && tokens[idx].text != "quote" {
-        idx += 1;
-    }
-    if idx >= tokens.len() {
-        return Err(LowerError::UnexpectedNode(node.kind));
-    }
-    idx += 1;
-
-    if tokens.get(idx).is_some_and(|t| t.text == "<") {
-        idx += 1;
-        let (kind_tok, has_brackets) = if tokens.get(idx).is_some_and(|t| t.text == "[") {
-            idx += 1;
-            let kind = tokens
-                .get(idx)
-                .ok_or(LowerError::UnexpectedNode(node.kind))?;
-            idx += 1;
-            if !tokens.get(idx).is_some_and(|t| t.text == "]") {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            }
-            idx += 1;
-            (kind, true)
-        } else {
-            let kind = tokens
-                .get(idx)
-                .ok_or(LowerError::UnexpectedNode(node.kind))?;
-            idx += 1;
-            (kind, false)
-        };
-        if !tokens.get(idx).is_some_and(|t| t.text == ">") {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        }
-        idx += 1;
-
-        let kind_text = kind_tok.text.as_str();
-        let _ = kind_text;
-        let _ = has_brackets;
-    }
-
-    while idx < tokens.len() && tokens[idx].text != "{" {
-        idx += 1;
-    }
-    if idx >= tokens.len() {
-        return Err(LowerError::UnexpectedNode(node.kind));
-    }
-    idx += 1;
-
-    let mut depth = 1;
-    let mut fn_idx = None;
-    let mut cursor = idx;
-    while cursor < tokens.len() {
-        let text = tokens[cursor].text.as_str();
-        if text == "{" {
-            depth += 1;
-        } else if text == "}" {
-            depth -= 1;
-            if depth == 0 {
-                break;
-            }
-        } else if depth == 1 && text == "fn" {
-            fn_idx = Some(cursor);
-            break;
-        }
-        cursor += 1;
-    }
-    let fn_idx = fn_idx.ok_or(LowerError::UnexpectedNode(node.kind))?;
-
-    let mut fields = Vec::new();
-    let mut name_idx = fn_idx + 1;
-    if tokens.get(name_idx).is_some_and(|t| t.text == "splice") {
-        if !tokens.get(name_idx + 1).is_some_and(|t| t.text == "(") {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        }
-        let bind_tok = tokens
-            .get(name_idx + 2)
-            .ok_or(LowerError::UnexpectedNode(node.kind))?;
-        if !tokens.get(name_idx + 3).is_some_and(|t| t.text == ")") {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        }
-        let binder = Ident::new(bind_tok.text.clone());
-        fields.push(PatternStructField {
-            name: Ident::new("name"),
-            rename: Some(Box::new(Pattern::new(PatternKind::Ident(
-                PatternIdent::new(binder),
-            )))),
-        });
-        name_idx += 4;
-    } else {
-        name_idx += 1;
-    }
-
-    if !tokens.get(name_idx).is_some_and(|t| t.text == "(") {
-        return Err(LowerError::UnexpectedNode(node.kind));
-    }
-    let mut paren_depth = 0;
-    while name_idx < tokens.len() {
-        let text = tokens[name_idx].text.as_str();
-        if text == "(" {
-            paren_depth += 1;
-        } else if text == ")" {
-            paren_depth -= 1;
-            if paren_depth == 0 {
-                break;
-            }
-        }
-        name_idx += 1;
-    }
-    if paren_depth != 0 {
-        return Err(LowerError::UnexpectedNode(node.kind));
-    }
-
-    Ok(PatternQuote {
-        fragment: QuoteFragmentKind::Item,
-        item: Some(QuoteItemKind::Function),
-        fields,
-        has_rest: false,
-    })
-}
-
-fn quote_pattern_kind_from_cst(
-    node: &SyntaxNode,
-) -> Result<(QuoteFragmentKind, Option<QuoteItemKind>, bool), LowerError> {
-    let mut tokens = Vec::new();
-    crate::syntax::collect_tokens(node, &mut tokens);
-    let mut iter = tokens.iter().filter(|t| !t.is_trivia());
-
-    while let Some(tok) = iter.next() {
-        if tok.text != "quote" {
-            continue;
-        }
-        let Some(next) = iter.next() else {
-            return Ok((QuoteFragmentKind::Item, None, false));
-        };
-        if next.text != "<" {
-            return Ok((QuoteFragmentKind::Item, None, false));
-        }
-        let Some(kind_tok) = iter.next() else {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        };
-        if kind_tok.text == "[" {
-            let Some(inner_tok) = iter.next() else {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            };
-            let Some(close_bracket) = iter.next() else {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            };
-            if close_bracket.text != "]" {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            }
-            let Some(close_tok) = iter.next() else {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            };
-            if close_tok.text != ">" {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            }
-            let (fragment, item) = match inner_tok.text.as_str() {
-                "item" => (QuoteFragmentKind::Item, None),
-                "fn" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Function)),
-                "struct" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Struct)),
-                "enum" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Enum)),
-                "trait" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Trait)),
-                "impl" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Impl)),
-                "const" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Const)),
-                "static" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Static)),
-                "mod" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Module)),
-                "use" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Use)),
-                "macro" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Macro)),
-                _ => return Err(LowerError::UnexpectedNode(node.kind)),
-            };
-            return Ok((fragment, item, true));
-        }
-        let Some(close_tok) = iter.next() else {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        };
-        if close_tok.text != ">" {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        }
-        let (fragment, item, plural) = match kind_tok.text.as_str() {
-            "expr" => (QuoteFragmentKind::Expr, None, false),
-            "stmt" => (QuoteFragmentKind::Stmt, None, false),
-            "item" => (QuoteFragmentKind::Item, None, false),
-            "type" => (QuoteFragmentKind::Type, None, false),
-            "fn" => (
-                QuoteFragmentKind::Item,
-                Some(QuoteItemKind::Function),
-                false,
-            ),
-            "struct" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Struct), false),
-            "enum" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Enum), false),
-            "trait" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Trait), false),
-            "impl" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Impl), false),
-            "const" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Const), false),
-            "static" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Static), false),
-            "mod" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Module), false),
-            "use" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Use), false),
-            "macro" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Macro), false),
-            "items" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                (QuoteFragmentKind::Item, None, true)
-            }
-            "fns" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                (QuoteFragmentKind::Item, Some(QuoteItemKind::Function), true)
-            }
-            "structs" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                (QuoteFragmentKind::Item, Some(QuoteItemKind::Struct), true)
-            }
-            "enums" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                (QuoteFragmentKind::Item, Some(QuoteItemKind::Enum), true)
-            }
-            "traits" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                (QuoteFragmentKind::Item, Some(QuoteItemKind::Trait), true)
-            }
-            "impls" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                (QuoteFragmentKind::Item, Some(QuoteItemKind::Impl), true)
-            }
-            "consts" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                (QuoteFragmentKind::Item, Some(QuoteItemKind::Const), true)
-            }
-            "statics" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                (QuoteFragmentKind::Item, Some(QuoteItemKind::Static), true)
-            }
-            "mods" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                (QuoteFragmentKind::Item, Some(QuoteItemKind::Module), true)
-            }
-            "uses" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                (QuoteFragmentKind::Item, Some(QuoteItemKind::Use), true)
-            }
-            "macros" => {
-                tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
-                (QuoteFragmentKind::Item, Some(QuoteItemKind::Macro), true)
-            }
-            "exprs" | "stmts" | "types" => {
-                return Err(LowerError::UnexpectedNode(node.kind));
-            }
-            _ => return Err(LowerError::UnexpectedNode(node.kind)),
-        };
-        return Ok((fragment, item, plural));
-    }
-
-    Err(LowerError::UnexpectedNode(node.kind))
 }
 
 pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
@@ -583,14 +157,11 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             .into())
         }
         SyntaxKind::ExprBlock => {
-            let block = lower_block_from_cst(node)?;
-            Ok(ExprKind::Block(block).into())
+            let expr = lower_block_expr_from_cst(node)?;
+            Ok(expr)
         }
         SyntaxKind::ExprQuote => {
-            let block_node = node_children_exprs(node)
-                .find(|n| n.kind == SyntaxKind::ExprBlock)
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprQuote))?;
-            let block = lower_block_from_cst(block_node)?;
+            let block = lower_block_from_expr_parent(node, SyntaxKind::ExprQuote)?;
             let kind = quote_kind_from_cst(node)?;
             Ok(ExprKind::Quote(ExprQuote {
                 span: node.span,
@@ -610,10 +181,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             .into())
         }
         SyntaxKind::ExprAsync => {
-            let block_node = node_children_exprs(node)
-                .find(|n| n.kind == SyntaxKind::ExprBlock)
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprAsync))?;
-            let block = lower_block_from_cst(block_node)?;
+            let block = lower_block_from_expr_parent(node, SyntaxKind::ExprAsync)?;
             Ok(ExprKind::Async(ExprAsync {
                 span: node.span,
                 expr: Box::new(ExprKind::Block(block).into()),
@@ -621,10 +189,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             .into())
         }
         SyntaxKind::ExprConstBlock => {
-            let block_node = node_children_exprs(node)
-                .find(|n| n.kind == SyntaxKind::ExprBlock)
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprConstBlock))?;
-            let block = lower_block_from_cst(block_node)?;
+            let block = lower_block_from_expr_parent(node, SyntaxKind::ExprConstBlock)?;
             Ok(ExprKind::ConstBlock(ExprConstBlock {
                 span: node.span,
                 expr: Box::new(ExprKind::Block(block).into()),
@@ -642,12 +207,10 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let else_block = expr_nodes.next();
 
             let cond = lower_expr_from_cst(cond)?;
-            let then_block = lower_block_from_cst(then_block)?;
-            let then_expr: Expr = ExprKind::Block(then_block).into();
+            let then_expr = lower_block_expr_from_cst(then_block)?;
             let else_expr = if let Some(else_node) = else_block {
                 if else_node.kind == SyntaxKind::ExprBlock {
-                    let b = lower_block_from_cst(else_node)?;
-                    Some(Box::new(ExprKind::Block(b).into()))
+                    Some(Box::new(lower_block_expr_from_cst(else_node)?))
                 } else {
                     Some(Box::new(lower_expr_from_cst(else_node)?))
                 }
@@ -664,10 +227,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             .into())
         }
         SyntaxKind::ExprLoop => {
-            let block_node = node_children_exprs(node)
-                .find(|n| n.kind == SyntaxKind::ExprBlock)
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprLoop))?;
-            let block = lower_block_from_cst(block_node)?;
+            let block = lower_block_from_expr_parent(node, SyntaxKind::ExprLoop)?;
             Ok(ExprKind::Loop(ExprLoop {
                 span: node.span,
                 label: None,
@@ -684,11 +244,11 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .next()
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprWhile))?;
             let cond = lower_expr_from_cst(cond)?;
-            let body_block = lower_block_from_cst(body)?;
+            let body_expr = lower_block_expr_from_cst(body)?;
             Ok(ExprKind::While(ExprWhile {
                 span: node.span,
                 cond: Box::new(cond),
-                body: Box::new(ExprKind::Block(body_block).into()),
+                body: Box::new(body_expr),
             })
             .into())
         }
@@ -701,28 +261,17 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .next()
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprWith))?;
             let context = lower_expr_from_cst(context)?;
-            let body = lower_block_from_cst(body)?;
+            let body = lower_block_expr_from_cst(body)?;
             Ok(ExprKind::With(ExprWith {
                 span: node.span,
                 context: Box::new(context),
-                body: Box::new(ExprKind::Block(body).into()),
+                body: Box::new(body),
             })
             .into())
         }
 
         SyntaxKind::ExprFor => {
-            let pat_node = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Pattern =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprFor))?;
+            let pat_node = first_child_in_category(node, CstCategory::Pattern, SyntaxKind::ExprFor)?;
             let pat = lower_pattern_from_cst(pat_node)?;
 
             let mut expr_nodes = node_children_exprs(node);
@@ -733,12 +282,12 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .next()
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprFor))?;
             let iter = lower_expr_from_cst(iter)?;
-            let body_block = lower_block_from_cst(body)?;
+            let body_block = lower_block_expr_from_cst(body)?;
             Ok(ExprKind::For(ExprFor {
                 span: node.span,
                 pat: Box::new(pat),
                 iter: Box::new(iter),
-                body: Box::new(ExprKind::Block(body_block).into()),
+                body: Box::new(body_block),
             })
             .into())
         }
@@ -889,67 +438,11 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             }
         }
         SyntaxKind::ExprPath => {
-            let mut segments = Vec::new();
-            let mut saw_generic_start = false;
-            let mut saw_root = false;
-            let mut saw_first_token = false;
-            let mut generic_depth: i32 = 0;
-            let mut generic_segment_index: Option<usize> = None;
-            for child in &node.children {
-                let crate::syntax::SyntaxElement::Token(tok) = child else {
-                    continue;
-                };
-                if tok.is_trivia() {
-                    continue;
-                }
-                if !saw_first_token {
-                    saw_first_token = true;
-                    if tok.text == "::" {
-                        saw_root = true;
-                        continue;
-                    }
-                }
-                if tok.text == "::" {
-                    continue;
-                }
-                if tok.text == "<" {
-                    if generic_depth == 0 && !segments.is_empty() {
-                        saw_generic_start = true;
-                        if generic_segment_index.is_none() {
-                            generic_segment_index = segments.len().checked_sub(1);
-                        }
-                    }
-                    generic_depth += 1;
-                    continue;
-                }
-                if tok.text == ">" {
-                    if generic_depth > 0 {
-                        generic_depth -= 1;
-                    }
-                    continue;
-                }
-                if tok.text == ">>" {
-                    if generic_depth > 0 {
-                        generic_depth = (generic_depth - 2).max(0);
-                    }
-                    continue;
-                }
-                if generic_depth > 0 {
-                    continue;
-                }
-                if matches!(tok.text.as_str(), "," | "=") {
-                    continue;
-                }
-                if tok
-                    .text
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '\'')
-                {
-                    segments.push(Ident::new(tok.text.clone()));
-                }
-            }
-            let (prefix, segments) = split_path_prefix(segments, saw_root);
+            let path_tokens = collect_path_tokens_with_generics(node);
+            let saw_generic_start = path_tokens.saw_generic_start;
+            let generic_segment_index = path_tokens.generic_segment_index;
+            let (prefix, segments) =
+                split_path_prefix(path_tokens.segments, path_tokens.saw_root);
             if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
                 return Err(LowerError::UnexpectedNode(SyntaxKind::ExprPath));
             }
@@ -1460,18 +953,8 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
             Ok(Pattern::new(PatternKind::Tuple(PatternTuple { patterns })))
         }
         SyntaxKind::PatternParen => {
-            let inner = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Pattern =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternParen))?;
+            let inner =
+                first_child_in_category(node, CstCategory::Pattern, SyntaxKind::PatternParen)?;
             lower_pattern_from_cst(inner)
         }
         SyntaxKind::PatternSlice => {
@@ -1659,18 +1142,8 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
             })))
         }
         SyntaxKind::PatternBox => {
-            let pat_node = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Pattern =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternBox))?;
+            let pat_node =
+                first_child_in_category(node, CstCategory::Pattern, SyntaxKind::PatternBox)?;
             let pattern = lower_pattern_from_cst(pat_node)?;
             Ok(Pattern::new(PatternKind::Box(PatternBox {
                 pattern: Box::new(pattern),
@@ -1703,30 +1176,9 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
             })))
         }
         SyntaxKind::PatternType => {
-            let pat_node = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Pattern =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternType))?;
-            let ty_node = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Type =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternType))?;
+            let pat_node =
+                first_child_in_category(node, CstCategory::Pattern, SyntaxKind::PatternType)?;
+            let ty_node = first_child_in_category(node, CstCategory::Type, SyntaxKind::PatternType)?;
             let pat = lower_pattern_from_cst(pat_node)?;
             let ty = lower_type_from_cst(ty_node)?;
             Ok(Pattern::new(PatternKind::Type(PatternType::new(pat, ty))))
@@ -1957,60 +1409,40 @@ fn next_assign_temp_ident(counter: &mut usize) -> Ident {
     Ident::new(name)
 }
 
+fn lower_block_from_expr_parent(
+    node: &SyntaxNode,
+    expected_kind: SyntaxKind,
+) -> Result<ExprBlock, LowerError> {
+    let block_node = node_children_exprs(node)
+        .find(|n| n.kind == SyntaxKind::ExprBlock)
+        .ok_or_else(|| LowerError::UnexpectedNode(expected_kind))?;
+    lower_block_from_cst(block_node)
+}
+
+fn lower_block_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
+    let block = lower_block_from_cst(node)?;
+    Ok(ExprKind::Block(block).into())
+}
+
+fn first_child_in_category<'a>(
+    node: &'a SyntaxNode,
+    category: CstCategory,
+    expected_kind: SyntaxKind,
+) -> Result<&'a SyntaxNode, LowerError> {
+    node.children
+        .iter()
+        .find_map(|c| match c {
+            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == category => {
+                Some(n.as_ref())
+            }
+            _ => None,
+        })
+        .ok_or_else(|| LowerError::UnexpectedNode(expected_kind))
+}
+
 fn lower_pattern_path_name(node: &SyntaxNode) -> Result<Name, LowerError> {
-    let mut segments = Vec::new();
-    let mut saw_root = false;
-    let mut saw_first_token = false;
-    let mut generic_depth: i32 = 0;
-    for child in &node.children {
-        let crate::syntax::SyntaxElement::Token(tok) = child else {
-            continue;
-        };
-        if tok.is_trivia() {
-            continue;
-        }
-        if !saw_first_token {
-            saw_first_token = true;
-            if tok.text == "::" {
-                saw_root = true;
-                continue;
-            }
-        }
-        if tok.text == "::" {
-            continue;
-        }
-        if tok.text == "<" {
-            generic_depth += 1;
-            continue;
-        }
-        if tok.text == ">" {
-            if generic_depth > 0 {
-                generic_depth -= 1;
-            }
-            continue;
-        }
-        if tok.text == ">>" {
-            if generic_depth > 0 {
-                generic_depth = (generic_depth - 2).max(0);
-            }
-            continue;
-        }
-        if generic_depth > 0 {
-            continue;
-        }
-        if matches!(tok.text.as_str(), ">" | "," | "=") {
-            continue;
-        }
-        if tok
-            .text
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '\'')
-        {
-            segments.push(Ident::new(tok.text.clone()));
-        }
-    }
-    let (prefix, segments) = split_path_prefix(segments, saw_root);
+    let path_tokens = collect_path_tokens_with_generics(node);
+    let (prefix, segments) = split_path_prefix(path_tokens.segments, path_tokens.saw_root);
     if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
         return Err(LowerError::UnexpectedNode(node.kind));
     }
@@ -2464,348 +1896,6 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
     }
 }
 
-fn decode_string_literal(raw: &str) -> Option<String> {
-    fn unescape_cooked(s: &str) -> Option<String> {
-        let mut out = String::with_capacity(s.len());
-        let mut chars = s.chars();
-        while let Some(c) = chars.next() {
-            if c != '\\' {
-                out.push(c);
-                continue;
-            }
-            let esc = chars.next()?;
-            match esc {
-                'n' => out.push('\n'),
-                'r' => out.push('\r'),
-                't' => out.push('\t'),
-                '0' => out.push('\0'),
-                '\\' => out.push('\\'),
-                '"' => out.push('"'),
-                other => {
-                    // Conservative fallback: keep the escape as-is.
-                    out.push('\\');
-                    out.push(other);
-                }
-            }
-        }
-        Some(out)
-    }
-
-    let raw = raw.strip_prefix('c').unwrap_or(raw);
-
-    // Cooked string literals: "..." and b"..."
-    if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
-        let inner = &raw[1..raw.len() - 1];
-        return unescape_cooked(inner);
-    }
-    if let Some(rest) = raw.strip_prefix('b') {
-        if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
-            let inner = &rest[1..rest.len() - 1];
-            return unescape_cooked(inner);
-        }
-    }
-
-    // Raw string literals: r"...", r#"..."#, br"...", br#"..."#
-    let (prefix, rest) = if let Some(r) = raw.strip_prefix("br") {
-        ("br", r)
-    } else if let Some(r) = raw.strip_prefix('r') {
-        ("r", r)
-    } else {
-        return None;
-    };
-    let hash_count = rest.chars().take_while(|c| *c == '#').count();
-    let after_hashes = &rest[hash_count..];
-    let Some(after_quote) = after_hashes.strip_prefix('"') else {
-        return None;
-    };
-
-    let closing = format!("\"{}", "#".repeat(hash_count));
-    let Some(end_idx) = after_quote.rfind(&closing) else {
-        return None;
-    };
-    if end_idx + closing.len() != after_quote.len() {
-        return None;
-    }
-    let inner = &after_quote[..end_idx];
-
-    // `br"..."` is a byte string in Rust; FerroPhase currently models strings as UTF-8 `&str`.
-    // Keep the contents as-is.
-    let _ = prefix;
-    Some(inner.to_string())
-}
-
-fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
-    let stripped = strip_number_suffix(raw);
-    let normalized = stripped.replace('_', "");
-    let suffix = &raw[stripped.len()..];
-
-    match suffix {
-        "ib" => {
-            if normalized.contains('.') {
-                return Err(LowerError::InvalidNumber(raw.to_string()));
-            }
-            let value = parse_big_int_literal(&normalized)
-                .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
-            Ok((
-                Value::big_int(value),
-                Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
-            ))
-        }
-        "fb" => {
-            let value = normalized
-                .parse::<BigDecimal>()
-                .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
-            Ok((
-                Value::big_decimal(value),
-                Some(Ty::Primitive(TypePrimitive::Decimal(
-                    DecimalType::BigDecimal,
-                ))),
-            ))
-        }
-        "i8" | "i16" | "i32" | "i64" | "isize" => {
-            if normalized.contains('.') {
-                return Err(LowerError::InvalidNumber(raw.to_string()));
-            }
-            let value = parse_i64_literal(&normalized)
-                .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
-            let ty = match suffix {
-                "i8" => TypeInt::I8,
-                "i16" => TypeInt::I16,
-                "i32" => TypeInt::I32,
-                "i64" => TypeInt::I64,
-                "isize" => TypeInt::I64,
-                _ => TypeInt::I64,
-            };
-            Ok((
-                Value::int(value),
-                Some(Ty::Primitive(TypePrimitive::Int(ty))),
-            ))
-        }
-        "i128" => {
-            if normalized.contains('.') {
-                return Err(LowerError::InvalidNumber(raw.to_string()));
-            }
-            let value = parse_big_int_literal(&normalized)
-                .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
-            Ok((
-                Value::big_int(value),
-                Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I128))),
-            ))
-        }
-        "u8" | "u16" | "u32" | "u64" | "usize" => {
-            if normalized.contains('.') {
-                return Err(LowerError::InvalidNumber(raw.to_string()));
-            }
-            let value = parse_u64_literal(&normalized)
-                .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
-            let ty = match suffix {
-                "u8" => TypeInt::U8,
-                "u16" => TypeInt::U16,
-                "u32" => TypeInt::U32,
-                "u64" => TypeInt::U64,
-                "usize" => TypeInt::U64,
-                _ => TypeInt::U64,
-            };
-            Ok((
-                Value::uint(value),
-                Some(Ty::Primitive(TypePrimitive::Int(ty))),
-            ))
-        }
-        "u128" => {
-            if normalized.contains('.') {
-                return Err(LowerError::InvalidNumber(raw.to_string()));
-            }
-            let value = parse_big_int_literal(&normalized)
-                .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
-            Ok((
-                Value::big_int(value),
-                Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U128))),
-            ))
-        }
-        "f32" | "f64" => {
-            let value = normalized
-                .parse::<f64>()
-                .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
-            let ty = match suffix {
-                "f32" => DecimalType::F32,
-                _ => DecimalType::F64,
-            };
-            Ok((
-                Value::decimal(value),
-                Some(Ty::Primitive(TypePrimitive::Decimal(ty))),
-            ))
-        }
-        _ => {
-            if normalized.contains('.') {
-                let d = normalized
-                    .parse::<f64>()
-                    .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
-                Ok((Value::decimal(d), None))
-            } else {
-                let i = parse_i64_literal(&normalized)
-                    .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
-                Ok((Value::int(i), None))
-            }
-        }
-    }
-}
-
-fn parse_i64_literal(raw: &str) -> Option<i64> {
-    let (digits, radix) = integer_digits_and_radix(raw)?;
-    i64::from_str_radix(digits, radix).ok()
-}
-
-fn parse_u64_literal(raw: &str) -> Option<u64> {
-    let (digits, radix) = integer_digits_and_radix(raw)?;
-    u64::from_str_radix(digits, radix).ok()
-}
-
-fn parse_big_int_literal(raw: &str) -> Option<BigInt> {
-    let (digits, radix) = integer_digits_and_radix(raw)?;
-    BigInt::parse_bytes(digits.as_bytes(), radix)
-}
-
-fn integer_digits_and_radix(raw: &str) -> Option<(&str, u32)> {
-    if raw.is_empty() {
-        return None;
-    }
-    if let Some(digits) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
-        return Some((digits, 16));
-    }
-    if let Some(digits) = raw.strip_prefix("0o").or_else(|| raw.strip_prefix("0O")) {
-        return Some((digits, 8));
-    }
-    if let Some(digits) = raw.strip_prefix("0b").or_else(|| raw.strip_prefix("0B")) {
-        return Some((digits, 2));
-    }
-    Some((raw, 10))
-}
-
-fn parse_f_string_literal(raw: &str, file: fp_core::span::FileId) -> Result<Expr, LowerError> {
-    let Some(decoded) = strip_string_prefix(raw, "f") else {
-        return Err(LowerError::Unsupported(
-            "invalid f-string literal".to_string(),
-        ));
-    };
-    let (template, args) = parse_f_string_template(&decoded, file)?;
-    let mut call_args = Vec::with_capacity(1 + args.len());
-    call_args.push(Expr::new(ExprKind::FormatString(template)));
-    call_args.extend(args);
-    Ok(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-        IntrinsicCallKind::Format,
-        call_args,
-        Vec::new(),
-    ))
-    .into())
-}
-
-fn strip_string_prefix(raw: &str, prefix: &str) -> Option<String> {
-    if !raw.starts_with(prefix) {
-        return None;
-    }
-    let rest = &raw[prefix.len()..];
-    decode_string_literal(rest)
-}
-
-fn parse_f_string_template(
-    input: &str,
-    file: fp_core::span::FileId,
-) -> Result<(ExprStringTemplate, Vec<Expr>), LowerError> {
-    let mut parts = Vec::new();
-    let mut args = Vec::new();
-    let mut current_literal = String::new();
-    let mut chars = input.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '{' {
-            if matches!(chars.peek(), Some('{')) {
-                chars.next();
-                current_literal.push('{');
-                continue;
-            }
-
-            if !current_literal.is_empty() {
-                parts.push(FormatTemplatePart::Literal(current_literal.clone()));
-                current_literal.clear();
-            }
-
-            let mut placeholder = String::new();
-            let mut found_end = false;
-            while let Some(inner) = chars.next() {
-                if inner == '}' {
-                    found_end = true;
-                    break;
-                }
-                placeholder.push(inner);
-            }
-            if !found_end {
-                return Err(LowerError::Unsupported(
-                    "unterminated f-string placeholder".to_string(),
-                ));
-            }
-            let trimmed = placeholder.trim();
-            if trimmed.is_empty() {
-                return Err(LowerError::Unsupported(
-                    "empty f-string placeholder".to_string(),
-                ));
-            }
-            let (expr_src, format_spec) = match trimmed.split_once(':') {
-                Some((expr_part, spec_part)) => (expr_part.trim(), Some(spec_part.trim())),
-                None => (trimmed, None),
-            };
-            let expr = parse_f_string_expr(expr_src, file)?;
-            args.push(expr);
-            parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
-                arg_ref: FormatArgRef::Implicit,
-                format_spec: format_spec
-                    .filter(|s| !s.is_empty())
-                    .map(|s| FormatSpec::parse(s))
-                    .transpose()
-                    .map_err(|err| {
-                        LowerError::Unsupported(format!("invalid format spec: {err}"))
-                    })?,
-            }));
-            continue;
-        }
-
-        if ch == '}' {
-            if matches!(chars.peek(), Some('}')) {
-                chars.next();
-                current_literal.push('}');
-                continue;
-            }
-            current_literal.push('}');
-            continue;
-        }
-
-        current_literal.push(ch);
-    }
-
-    if !current_literal.is_empty() {
-        parts.push(FormatTemplatePart::Literal(current_literal));
-    }
-
-    Ok((ExprStringTemplate { parts }, args))
-}
-
-fn parse_f_string_expr(src: &str, file: fp_core::span::FileId) -> Result<Expr, LowerError> {
-    let lexemes = lex_lexemes(src).map_err(|err| {
-        LowerError::Unsupported(format!("failed to tokenize f-string expression: {err}"))
-    })?;
-    let (cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes, file).map_err(|err| {
-        LowerError::Unsupported(format!("failed to parse f-string expression: {}", err))
-    })?;
-    if lexemes[consumed..]
-        .iter()
-        .any(|lex| lex.kind == LexemeKind::Token)
-    {
-        return Err(LowerError::Unsupported(
-            "f-string expression contains trailing tokens".to_string(),
-        ));
-    }
-    lower_expr_from_cst(&cst)
-}
-
 fn lower_closure_from_cst(node: &SyntaxNode) -> Result<(Vec<Pattern>, Expr), LowerError> {
     let params = node
         .children
@@ -2823,860 +1913,6 @@ fn lower_closure_from_cst(node: &SyntaxNode) -> Result<(Vec<Pattern>, Expr), Low
     let body_node = last_child_expr(node)?;
     let body = lower_expr_from_cst(body_node)?;
     Ok((params, body))
-}
-
-pub(crate) fn lower_type_from_cst(node: &SyntaxNode) -> Result<fp_core::ast::Ty, LowerError> {
-    if matches!(
-        node.kind,
-        SyntaxKind::GenericParam | SyntaxKind::GenericParams
-    ) {
-        return Ok(Ty::unknown());
-    }
-    if node.kind.category() != CstCategory::Type {
-        return Err(LowerError::UnexpectedNode(node.kind));
-    }
-
-    match node.kind {
-        SyntaxKind::TyUnit => Ok(Ty::unit()),
-        SyntaxKind::TyUnknown => Ok(Ty::unknown()),
-        SyntaxKind::TyPath => lower_ty_path(node),
-        SyntaxKind::TyRef => lower_ty_ref(node),
-        SyntaxKind::TyPtr => lower_ty_ptr(node),
-        SyntaxKind::TySlice => lower_ty_slice(node),
-        SyntaxKind::TyArray => lower_ty_array(node),
-        SyntaxKind::TyFn => lower_ty_fn(node),
-        SyntaxKind::TyTuple => lower_ty_tuple(node),
-        SyntaxKind::TyStructural => lower_ty_structural(node),
-        SyntaxKind::TyBinary => lower_ty_binary(node),
-        SyntaxKind::TyOptional => lower_ty_optional(node),
-        SyntaxKind::TyValue => lower_ty_value(node),
-        SyntaxKind::TyExpr => lower_ty_expr(node),
-        SyntaxKind::TyImplTraits => lower_ty_impl_traits(node),
-        SyntaxKind::TyMacroCall => lower_ty_macro_call(node),
-        SyntaxKind::TyUnsafeBinder => {
-            let inner = node
-                .children
-                .iter()
-                .find_map(|child| match child {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Type =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or(LowerError::UnexpectedNode(SyntaxKind::TyUnsafeBinder))?;
-            lower_type_from_cst(inner)
-        }
-        other => Err(LowerError::UnexpectedNode(other)),
-    }
-}
-
-fn lower_ty_value(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let raw = direct_first_non_trivia_token_text(node)
-        .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::TyValue))?;
-    let value = match raw.as_str() {
-        "!" => return Ok(Ty::Nothing(fp_core::ast::TypeNothing)),
-        "true" => Value::bool(true),
-        "false" => Value::bool(false),
-        "null" => Value::null(),
-        _ => {
-            if raw.starts_with('"') || raw.starts_with('\'') {
-                let decoded = decode_string_literal(&raw).unwrap_or(raw);
-                Value::String(ValueString::new_ref(decoded))
-            } else {
-                parse_numeric_literal(&raw)?.0
-            }
-        }
-    };
-    Ok(Ty::value(value))
-}
-
-fn lower_ty_expr(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let expr_node = node
-        .children
-        .iter()
-        .find_map(|child| match child {
-            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
-                Some(n.as_ref())
-            }
-            _ => None,
-        })
-        .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::TyExpr))?;
-    let expr = lower_expr_from_cst(expr_node)?;
-    Ok(Ty::expr(expr))
-}
-
-fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let span = node.span;
-    let mut segments: Vec<Ident> = Vec::new();
-    let mut saw_root = false;
-    let mut saw_first_token = false;
-    for child in &node.children {
-        let crate::syntax::SyntaxElement::Token(tok) = child else {
-            continue;
-        };
-        if tok.is_trivia() {
-            continue;
-        }
-        if tok.text == "!" {
-            break;
-        }
-        if !saw_first_token && tok.text == "::" {
-            saw_root = true;
-            saw_first_token = true;
-            continue;
-        }
-        match tok.text.as_str() {
-            "::" | "<" | ">" | "," | "=" => {}
-            _ => {
-                if tok
-                    .text
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '\'')
-                {
-                    segments.push(Ident::new(tok.text.clone()));
-                }
-            }
-        }
-        saw_first_token = true;
-    }
-    if segments.is_empty() {
-        return Err(LowerError::UnexpectedNode(SyntaxKind::TyMacroCall));
-    }
-    let macro_tokens = crate::ast::macros::macro_group_tokens(node)
-        .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::TyMacroCall))?;
-
-    // `t! { ... }` is used as a type-level quoting wrapper in existing examples; lower it by
-    // parsing the inner token stream as a type expression.
-    if segments.len() == 1 && segments[0].as_str() == "t" {
-        let lexemes = macro_token_trees_to_lexemes(&macro_tokens.token_trees);
-        let file_id = macro_tokens_file_id(&macro_tokens.token_trees);
-        let (ty_cst, consumed) =
-            crate::cst::parse_type_lexemes_prefix_to_cst(&lexemes, file_id, &[])
-                .map_err(|_| LowerError::UnexpectedNode(SyntaxKind::TyMacroCall))?;
-        if lexemes[consumed..]
-            .iter()
-            .any(|l| l.kind == crate::lexer::LexemeKind::Token)
-        {
-            return Err(LowerError::UnexpectedNode(SyntaxKind::TyMacroCall));
-        }
-        return lower_type_from_cst(&ty_cst);
-    }
-
-    let (prefix, segments) = split_path_prefix(segments, saw_root);
-    if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
-        return Err(LowerError::UnexpectedNode(SyntaxKind::TyMacroCall));
-    }
-    let path = Path::new(prefix, segments);
-    let expr: Expr = ExprKind::Macro(fp_core::ast::ExprMacro::new(
-        MacroInvocation::new(path, macro_tokens.delimiter, macro_tokens.text)
-            .with_token_trees(macro_tokens.token_trees)
-            .with_span(span),
-    ))
-    .into();
-    Ok(Ty::expr(expr))
-}
-
-fn macro_token_trees_to_lexemes(tokens: &[MacroTokenTree]) -> Vec<Lexeme> {
-    let mut out = Vec::new();
-    append_macro_lexemes(tokens, &mut out);
-    out
-}
-
-fn append_macro_lexemes(tokens: &[MacroTokenTree], out: &mut Vec<Lexeme>) {
-    for token in tokens {
-        match token {
-            MacroTokenTree::Token(tok) => {
-                out.push(Lexeme::token(
-                    tok.text.clone(),
-                    lex_span_from_span(tok.span),
-                ));
-            }
-            MacroTokenTree::Group(group) => {
-                let (open, close) = match group.delimiter {
-                    MacroDelimiter::Parenthesis => ("(", ")"),
-                    MacroDelimiter::Bracket => ("[", "]"),
-                    MacroDelimiter::Brace => ("{", "}"),
-                };
-                let (open_span, close_span) = lex_spans_for_group(group.span);
-                out.push(Lexeme::token(open.to_string(), open_span));
-                append_macro_lexemes(&group.tokens, out);
-                out.push(Lexeme::token(close.to_string(), close_span));
-            }
-        }
-    }
-}
-
-fn macro_tokens_file_id(tokens: &[MacroTokenTree]) -> u64 {
-    for tree in tokens {
-        if let Some(file) = token_tree_file(tree) {
-            return file;
-        }
-    }
-    0
-}
-
-fn token_tree_file(tree: &MacroTokenTree) -> Option<u64> {
-    match tree {
-        MacroTokenTree::Token(tok) => Some(tok.span.file),
-        MacroTokenTree::Group(group) => {
-            if group.span.file != 0 {
-                return Some(group.span.file);
-            }
-            for inner in &group.tokens {
-                if let Some(file) = token_tree_file(inner) {
-                    return Some(file);
-                }
-            }
-            None
-        }
-    }
-}
-
-fn lex_span_from_span(span: fp_core::span::Span) -> LexSpan {
-    LexSpan {
-        start: span.lo as usize,
-        end: span.hi as usize,
-    }
-}
-
-fn lex_spans_for_group(span: fp_core::span::Span) -> (LexSpan, LexSpan) {
-    let open_start = span.lo;
-    let open_end = if span.hi > span.lo {
-        span.lo.saturating_add(1)
-    } else {
-        span.lo
-    };
-    let close_start = span.hi.saturating_sub(1);
-    let close_end = span.hi;
-    (
-        LexSpan {
-            start: open_start as usize,
-            end: open_end as usize,
-        },
-        LexSpan {
-            start: close_start as usize,
-            end: close_end as usize,
-        },
-    )
-}
-
-fn node_children_types<'a>(node: &'a SyntaxNode) -> impl Iterator<Item = &'a SyntaxNode> {
-    node.children.iter().filter_map(|c| match c {
-        crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => {
-            Some(n.as_ref())
-        }
-        _ => None,
-    })
-}
-
-fn quote_type_from_ident(name: &str, args: &[Ty], span: fp_core::span::Span) -> Option<Ty> {
-    match name {
-        "expr" => {
-            if args.len() > 1 {
-                return None;
-            }
-            let inner = args.get(0).cloned().map(Box::new);
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Expr,
-                item: None,
-                inner,
-            }))
-        }
-        "stmt" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Stmt,
-                item: None,
-                inner: None,
-            }))
-        }
-        "item" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Item,
-                item: None,
-                inner: None,
-            }))
-        }
-        "type" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Type(TypeType::new(span)))
-        }
-        "fn" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Item,
-                item: Some(QuoteItemKind::Function),
-                inner: None,
-            }))
-        }
-        "struct" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Item,
-                item: Some(QuoteItemKind::Struct),
-                inner: None,
-            }))
-        }
-        "enum" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Item,
-                item: Some(QuoteItemKind::Enum),
-                inner: None,
-            }))
-        }
-        "trait" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Item,
-                item: Some(QuoteItemKind::Trait),
-                inner: None,
-            }))
-        }
-        "impl" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Item,
-                item: Some(QuoteItemKind::Impl),
-                inner: None,
-            }))
-        }
-        "const" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Item,
-                item: Some(QuoteItemKind::Const),
-                inner: None,
-            }))
-        }
-        "static" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Item,
-                item: Some(QuoteItemKind::Static),
-                inner: None,
-            }))
-        }
-        "mod" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Item,
-                item: Some(QuoteItemKind::Module),
-                inner: None,
-            }))
-        }
-        "use" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Item,
-                item: Some(QuoteItemKind::Use),
-                inner: None,
-            }))
-        }
-        "macro" => {
-            if !args.is_empty() {
-                return None;
-            }
-            Some(Ty::Quote(TypeQuote {
-                span,
-                kind: QuoteFragmentKind::Item,
-                item: Some(QuoteItemKind::Macro),
-                inner: None,
-            }))
-        }
-        _ => None,
-    }
-}
-
-fn quote_type_from_type_arg(arg: &Ty) -> Option<Ty> {
-    match arg {
-        Ty::Quote(_) => Some(arg.clone()),
-        Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(locator) => {
-                let ident = locator.as_ident()?.as_str().to_string();
-                if ident == "type" {
-                    return Some(Ty::Quote(TypeQuote {
-                        span: expr.span(),
-                        kind: QuoteFragmentKind::Type,
-                        item: None,
-                        inner: None,
-                    }));
-                }
-                quote_type_from_ident(&ident, &[], expr.span())
-            }
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn split_path_prefix(mut segments: Vec<Ident>, saw_root: bool) -> (PathPrefix, Vec<Ident>) {
-    if saw_root {
-        return (PathPrefix::Root, segments);
-    }
-    let Some(first) = segments.first().map(|ident| ident.as_str()) else {
-        return (PathPrefix::Plain, segments);
-    };
-    match first {
-        "crate" => {
-            segments.remove(0);
-            (PathPrefix::Crate, segments)
-        }
-        "self" => {
-            segments.remove(0);
-            (PathPrefix::SelfMod, segments)
-        }
-        "super" => {
-            let mut depth = 0;
-            while segments
-                .first()
-                .is_some_and(|ident| ident.as_str() == "super")
-            {
-                segments.remove(0);
-                depth += 1;
-            }
-            (PathPrefix::Super(depth), segments)
-        }
-        _ => (PathPrefix::Plain, segments),
-    }
-}
-
-fn lower_ty_path(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let span = node.span;
-    let mut segments: Vec<Ident> = Vec::new();
-    let mut saw_generic_start = false;
-    let mut saw_root = false;
-    let mut saw_first_token = false;
-    for child in &node.children {
-        let crate::syntax::SyntaxElement::Token(tok) = child else {
-            continue;
-        };
-        if tok.is_trivia() {
-            continue;
-        }
-        match tok.text.as_str() {
-            "::" if !saw_first_token => {
-                saw_root = true;
-                saw_first_token = true;
-                continue;
-            }
-            "::" => continue,
-            "<" => {
-                saw_generic_start = true;
-                break;
-            }
-            _ => {
-                // Accept keyword segments like `crate`/`super` as well.
-                if tok
-                    .text
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '\'')
-                {
-                    segments.push(Ident::new(tok.text.clone()));
-                }
-            }
-        }
-        saw_first_token = true;
-    }
-    let (prefix, segments) = split_path_prefix(segments, saw_root);
-    if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
-        return Err(LowerError::UnexpectedNode(node.kind));
-    }
-
-    let args = node_children_types(node)
-        .map(lower_type_from_cst)
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let path = Path::new(prefix, segments.clone());
-    if segments.len() == 1 && segments[0].as_str() == "quote" && args.len() == 1 {
-        let Some(quote_ty) = quote_type_from_type_arg(&args[0]) else {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        };
-        return Ok(quote_ty);
-    }
-
-    if segments.len() == 1 {
-        if let Some(quote_ty) = quote_type_from_ident(segments[0].as_str(), &args, span) {
-            return Ok(quote_ty);
-        }
-    }
-
-    if segments.last().map(|seg| seg.as_str()) == Some("Vec") && args.len() == 1 {
-        return Ok(Ty::Vec(TypeVec {
-            ty: Box::new(args[0].clone()),
-        }));
-    }
-
-    if !saw_generic_start || args.is_empty() {
-        return Ok(Ty::expr(Expr::path(path).with_span(span)));
-    }
-
-    let mut param_segments: Vec<ParameterPathSegment> = segments
-        .into_iter()
-        .map(ParameterPathSegment::from_ident)
-        .collect();
-    if let Some(last) = param_segments.last_mut() {
-        last.args = args;
-    }
-    let ppath = ParameterPath::new(prefix, param_segments);
-    Ok(Ty::expr(
-        Expr::name(Name::parameter_path(ppath)).with_span(node.span),
-    ))
-}
-
-fn lower_ty_ref(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let mut is_mut = false;
-    let mut lifetime: Option<Ident> = None;
-    for child in &node.children {
-        let crate::syntax::SyntaxElement::Token(tok) = child else {
-            continue;
-        };
-        if tok.is_trivia() {
-            continue;
-        }
-        if tok.text == "mut" {
-            is_mut = true;
-        }
-        if tok.text.starts_with('\'') {
-            lifetime = Some(Ident::new(tok.text.clone()));
-        }
-    }
-
-    let inner = node_children_types(node)
-        .next()
-        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
-    let inner = lower_type_from_cst(inner)?;
-    Ok(Ty::Reference(
-        TypeReference {
-            ty: Box::new(inner),
-            mutability: is_mut.then_some(true),
-            lifetime,
-        }
-        .into(),
-    ))
-}
-
-fn lower_ty_ptr(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let mut mutability: Option<bool> = None;
-    for child in &node.children {
-        let crate::syntax::SyntaxElement::Token(tok) = child else {
-            continue;
-        };
-        if tok.is_trivia() {
-            continue;
-        }
-        if tok.text == "mut" {
-            mutability = Some(true);
-        } else if tok.text == "const" {
-            mutability = Some(false);
-        }
-    }
-
-    let inner = node_children_types(node)
-        .next()
-        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
-    let inner = lower_type_from_cst(inner)?;
-    Ok(Ty::raw_ptr(inner, mutability))
-}
-
-fn lower_ty_slice(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let elem = node_children_types(node)
-        .next()
-        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
-    let elem = lower_type_from_cst(elem)?;
-    Ok(Ty::Slice(
-        TypeSlice {
-            elem: Box::new(elem),
-        }
-        .into(),
-    ))
-}
-
-fn lower_ty_array(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let elem = node_children_types(node)
-        .next()
-        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
-    let elem = lower_type_from_cst(elem)?;
-    let len_expr = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
-                Some(n.as_ref())
-            }
-            _ => None,
-        })
-        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
-    let len_expr = lower_expr_from_cst(len_expr)?;
-    Ok(Ty::Array(
-        TypeArray {
-            elem: Box::new(elem),
-            len: Box::new(len_expr),
-        }
-        .into(),
-    ))
-}
-
-fn lower_ty_fn(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let mut types = node_children_types(node)
-        .map(lower_type_from_cst)
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let has_arrow = node.children.iter().any(
-        |c| matches!(c, crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "->"),
-    );
-
-    let ret_ty = if has_arrow {
-        types.pop().map(|t| Box::new(t))
-    } else {
-        None
-    };
-
-    Ok(Ty::Function(
-        TypeFunction {
-            params: types,
-            generics_params: Vec::new(),
-            ret_ty,
-        }
-        .into(),
-    ))
-}
-
-fn lower_ty_tuple(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let types = node_children_types(node)
-        .map(lower_type_from_cst)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Ty::Tuple(TypeTuple { types }.into()))
-}
-
-fn lower_ty_structural(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let mut fields = Vec::new();
-    for child in &node.children {
-        let crate::syntax::SyntaxElement::Node(field) = child else {
-            continue;
-        };
-        if field.kind != SyntaxKind::TyField {
-            continue;
-        }
-        let name = field
-            .children
-            .iter()
-            .find_map(|c| match c {
-                crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text != ":" => {
-                    Some(t.text.clone())
-                }
-                _ => None,
-            })
-            .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::TyField))?;
-        let ty_node = node_children_types(field)
-            .next()
-            .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::TyField))?;
-        let mut value = lower_type_from_cst(ty_node)?;
-        let is_optional = field.children.iter().any(|c| {
-            matches!(
-                c,
-                crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "?"
-            )
-        });
-        if is_optional {
-            value = Ty::TypeBinaryOp(
-                TypeBinaryOp {
-                    kind: TypeBinaryOpKind::Union,
-                    lhs: Box::new(value),
-                    rhs: Box::new(Ty::value(Value::None(ValueNone))),
-                }
-                .into(),
-            );
-        }
-        fields.push(StructuralField::new(Ident::new(name), value));
-    }
-    let mut update: Option<Ty> = None;
-    for (idx, child) in node.children.iter().enumerate() {
-        let crate::syntax::SyntaxElement::Token(tok) = child else {
-            continue;
-        };
-        if tok.is_trivia() || tok.text != ".." {
-            continue;
-        }
-        if update.is_some() {
-            return Err(LowerError::UnexpectedNode(SyntaxKind::TyStructural));
-        }
-        for next in node.children.iter().skip(idx + 1) {
-            if let crate::syntax::SyntaxElement::Node(n) = next {
-                if n.kind.category() == CstCategory::Type {
-                    update = Some(lower_type_from_cst(n.as_ref())?);
-                    break;
-                }
-            }
-        }
-        if update.is_none() {
-            return Err(LowerError::UnexpectedNode(SyntaxKind::TyStructural));
-        }
-    }
-
-    if let Some(update) = update {
-        let lhs = Ty::Structural(TypeStructural { fields }.into());
-        return Ok(Ty::TypeBinaryOp(
-            TypeBinaryOp {
-                kind: TypeBinaryOpKind::Add,
-                lhs: Box::new(lhs),
-                rhs: Box::new(update),
-            }
-            .into(),
-        ));
-    }
-
-    Ok(Ty::Structural(TypeStructural { fields }.into()))
-}
-
-fn lower_ty_binary(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let mut tys = node_children_types(node);
-    let lhs = tys
-        .next()
-        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
-    let rhs = tys
-        .next()
-        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
-    let lhs = lower_type_from_cst(lhs)?;
-    let rhs = lower_type_from_cst(rhs)?;
-
-    let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
-    let kind = match op.as_str() {
-        "+" => TypeBinaryOpKind::Add,
-        "|" => TypeBinaryOpKind::Union,
-        "&" => TypeBinaryOpKind::Intersect,
-        "-" => TypeBinaryOpKind::Subtract,
-        _ => return Err(LowerError::MissingOperator),
-    };
-    Ok(Ty::TypeBinaryOp(
-        TypeBinaryOp {
-            kind,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
-        }
-        .into(),
-    ))
-}
-
-fn lower_ty_optional(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let inner = node_children_types(node)
-        .next()
-        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
-    let inner = lower_type_from_cst(inner)?;
-    // `T?` lowers to `T | None` so later passes can materialize a tagged union.
-    Ok(Ty::TypeBinaryOp(
-        TypeBinaryOp {
-            kind: TypeBinaryOpKind::Union,
-            lhs: Box::new(inner),
-            rhs: Box::new(Ty::value(Value::None(ValueNone))),
-        }
-        .into(),
-    ))
-}
-
-fn lower_ty_impl_traits(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let mut type_nodes = node_children_types(node);
-    let bound_node = type_nodes
-        .next()
-        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
-    let bound_ty = lower_type_from_cst(bound_node)?;
-
-    // Special-case `impl Fn(T) -> U` into a first-class function type.
-    // This matches the surface syntax used in `examples/09_higher_order_functions.fp`.
-    let is_fn_trait = match &bound_ty {
-        Ty::Expr(expr) => matches!(expr.kind(), ExprKind::Name(loc) if loc.to_string() == "Fn"),
-        _ => false,
-    };
-    let mut trailing_types = type_nodes
-        .map(lower_type_from_cst)
-        .collect::<Result<Vec<_>, _>>()?;
-    if is_fn_trait && !trailing_types.is_empty() {
-        let has_arrow = node.children.iter().any(|c| match c {
-            crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() => t.text == "->",
-            _ => false,
-        });
-        let ret_ty = if has_arrow {
-            Some(Box::new(
-                trailing_types
-                    .pop()
-                    .ok_or(LowerError::UnexpectedNode(node.kind))?,
-            ))
-        } else {
-            None
-        };
-        return Ok(Ty::Function(
-            TypeFunction {
-                params: trailing_types,
-                generics_params: Vec::new(),
-                ret_ty,
-            }
-            .into(),
-        ));
-    }
-
-    // Default: keep the representation aligned with the old token-based parser: bounds as a
-    // locator path (or a value-wrapped type).
-    let mut bounds = Vec::new();
-    let bound_expr = match bound_ty {
-        Ty::Expr(expr) => (*expr).clone(),
-        other => Expr::value(Value::Type(other)),
-    };
-    bounds.push(bound_expr);
-    for ty in trailing_types {
-        let expr = match ty {
-            Ty::Expr(expr) => (*expr).clone(),
-            other => Expr::value(Value::Type(other)),
-        };
-        bounds.push(expr);
-    }
-
-    Ok(Ty::ImplTraits(
-        ImplTraits {
-            bounds: TypeBounds { bounds },
-        }
-        .into(),
-    ))
 }
 
 fn first_child_expr(node: &SyntaxNode) -> Result<&SyntaxNode, LowerError> {

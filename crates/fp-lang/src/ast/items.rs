@@ -1,4 +1,5 @@
 use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
+use crate::ast::lower_common::{decode_string_literal, split_path_prefix};
 use crate::syntax::{collect_tokens, SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     Abi, AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BExpr, EnumTypeVariant,
@@ -854,37 +855,6 @@ fn parse_attr_path(tokens: &[String], mut idx: usize) -> Option<(Path, usize)> {
     }
 }
 
-fn split_path_prefix(mut segments: Vec<Ident>, saw_root: bool) -> (PathPrefix, Vec<Ident>) {
-    if saw_root {
-        return (PathPrefix::Root, segments);
-    }
-    let Some(first) = segments.first().map(|ident| ident.as_str()) else {
-        return (PathPrefix::Plain, segments);
-    };
-    match first {
-        "crate" => {
-            segments.remove(0);
-            (PathPrefix::Crate, segments)
-        }
-        "self" => {
-            segments.remove(0);
-            (PathPrefix::SelfMod, segments)
-        }
-        "super" => {
-            let mut depth = 0;
-            while segments
-                .first()
-                .is_some_and(|ident| ident.as_str() == "super")
-            {
-                segments.remove(0);
-                depth += 1;
-            }
-            (PathPrefix::Super(depth), segments)
-        }
-        _ => (PathPrefix::Plain, segments),
-    }
-}
-
 fn parse_attr_value_expr(tokens: &[String], start: usize) -> Option<(BExpr, usize)> {
     let mut end = start;
     let mut paren_depth = 0usize;
@@ -931,61 +901,6 @@ fn is_attr_ident(token: &str) -> bool {
         .chars()
         .next()
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-}
-
-fn decode_string_literal(raw: &str) -> Option<String> {
-    fn unescape_cooked(s: &str) -> Option<String> {
-        let mut out = String::with_capacity(s.len());
-        let mut chars = s.chars();
-        while let Some(c) = chars.next() {
-            if c != '\\' {
-                out.push(c);
-                continue;
-            }
-            let esc = chars.next()?;
-            match esc {
-                'n' => out.push('\n'),
-                'r' => out.push('\r'),
-                't' => out.push('\t'),
-                '0' => out.push('\0'),
-                '\\' => out.push('\\'),
-                '"' => out.push('"'),
-                other => {
-                    out.push('\\');
-                    out.push(other);
-                }
-            }
-        }
-        Some(out)
-    }
-
-    if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
-        let inner = &raw[1..raw.len() - 1];
-        return unescape_cooked(inner);
-    }
-
-    let (prefix, rest) = if let Some(r) = raw.strip_prefix("br") {
-        ("br", r)
-    } else if let Some(r) = raw.strip_prefix('r') {
-        ("r", r)
-    } else {
-        return None;
-    };
-    let hash_count = rest.chars().take_while(|c| *c == '#').count();
-    let after_hashes = &rest[hash_count..];
-    let Some(after_quote) = after_hashes.strip_prefix('"') else {
-        return None;
-    };
-    let closing = format!("\"{}", "#".repeat(hash_count));
-    let Some(end_idx) = after_quote.rfind(&closing) else {
-        return None;
-    };
-    if end_idx + closing.len() != after_quote.len() {
-        return None;
-    }
-    let inner = &after_quote[..end_idx];
-    let _ = prefix;
-    Some(inner.to_string())
 }
 
 fn parse_include_str_macro_expr(tokens: &[&str]) -> Option<BExpr> {

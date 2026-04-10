@@ -33,30 +33,14 @@ pub fn parse_expr_lexemes_prefix_to_cst(
     lexemes: &[Lexeme],
     file: FileId,
 ) -> Result<(SyntaxNode, usize), ExprCstParseError> {
-    let mut p = Parser::new(lexemes, file);
-    let expr = p.parse_expr_bp(0)?;
-
-    // Consume trailing trivia so callers can look at the next significant token.
-    while p.idx < p.tokens.len() && p.tokens[p.idx].is_trivia() {
-        p.idx += 1;
-    }
-
-    Ok((expr, p.idx.min(lexemes.len())))
+    parse_prefix_with(lexemes, file, |p| p.parse_expr_bp(0))
 }
 
 pub fn parse_block_lexemes_prefix_to_cst(
     lexemes: &[Lexeme],
     file: FileId,
 ) -> Result<(SyntaxNode, usize), ExprCstParseError> {
-    let mut p = Parser::new(lexemes, file);
-    let block = p.parse_block_expr()?;
-
-    // Consume trailing trivia so callers can look at the next significant token.
-    while p.idx < p.tokens.len() && p.tokens[p.idx].is_trivia() {
-        p.idx += 1;
-    }
-
-    Ok((block, p.idx.min(lexemes.len())))
+    parse_prefix_with(lexemes, file, Parser::parse_block_expr)
 }
 
 pub fn parse_type_lexemes_prefix_to_cst(
@@ -64,12 +48,32 @@ pub fn parse_type_lexemes_prefix_to_cst(
     file: FileId,
     stops: &[&str],
 ) -> Result<(SyntaxNode, usize), ExprCstParseError> {
-    let mut p = Parser::new(lexemes, file);
-    let ty = p.parse_type_bp_until(0, stops)?;
-    while p.idx < p.tokens.len() && p.tokens[p.idx].is_trivia() {
-        p.idx += 1;
+    parse_prefix_with(lexemes, file, |p| p.parse_type_bp_until(0, stops))
+}
+
+pub fn parse_pattern_lexemes_prefix_to_cst(
+    lexemes: &[Lexeme],
+    file: FileId,
+) -> Result<(SyntaxNode, usize), ExprCstParseError> {
+    parse_prefix_with(lexemes, file, Parser::parse_pattern)
+}
+
+fn consume_trailing_trivia(parser: &mut Parser) {
+    // Consume trailing trivia so callers can look at the next significant token.
+    while parser.idx < parser.tokens.len() && parser.tokens[parser.idx].is_trivia() {
+        parser.idx += 1;
     }
-    Ok((ty, p.idx.min(lexemes.len())))
+}
+
+fn parse_prefix_with(
+    lexemes: &[Lexeme],
+    file: FileId,
+    parse: impl FnOnce(&mut Parser) -> Result<SyntaxNode, ExprCstParseError>,
+) -> Result<(SyntaxNode, usize), ExprCstParseError> {
+    let mut parser = Parser::new(lexemes, file);
+    let node = parse(&mut parser)?;
+    consume_trailing_trivia(&mut parser);
+    Ok((node, parser.idx.min(lexemes.len())))
 }
 
 #[derive(Clone, Debug)]
@@ -213,6 +217,29 @@ impl Parser {
         self.parse_expr_bp_inner(0, false)
     }
 
+    fn parse_condition_expr_before_block(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+        if self.peek_non_trivia_is("let") {
+            return self.parse_let_expr();
+        }
+
+        let start_idx = self.idx;
+        match self.parse_let_expr() {
+            Ok(let_expr) => Ok(let_expr),
+            Err(_) => {
+                self.idx = start_idx;
+                self.parse_expr_before_block()
+            }
+        }
+    }
+
+    fn parse_guard_condition_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+        if self.peek_non_trivia_normalized() == Some("let") {
+            self.parse_let_expr()
+        } else {
+            self.parse_expr_bp(0)
+        }
+    }
+
     fn has_remaining_non_trivia(&self) -> bool {
         self.tokens[self.idx..].iter().any(|t| !t.is_trivia())
     }
@@ -350,69 +377,8 @@ impl Parser {
             return Ok(SyntaxNode::new(SyntaxKind::ExprAwait, children, span));
         }
 
-        match self.peek_non_trivia_normalized() {
-            Some("gen") if self.peek_second_non_trivia_raw() == Some("{") => {
-                return self.parse_gen_block_expr()
-            }
-            Some("gen")
-                if matches!(
-                    self.peek_second_non_trivia_raw(),
-                    Some("|") | Some("||") | Some("move") | Some("static")
-                ) =>
-            {
-                return self.parse_closure_expr();
-            }
-            Some("unsafe") if self.peek_second_non_trivia_raw() == Some("{") => {
-                return self.parse_unsafe_block_expr()
-            }
-            Some("quote") => return self.parse_quote_expr(),
-            Some("splice") => return self.parse_splice_expr(),
-            Some("async")
-                if matches!(
-                    self.peek_second_non_trivia_raw(),
-                    Some("|") | Some("||") | Some("move") | Some("static")
-                ) =>
-            {
-                return self.parse_closure_expr();
-            }
-            Some("async") => return self.parse_async_expr(),
-            Some("const") => {
-                if self.peek_second_non_trivia_raw() == Some("{") {
-                    return self.parse_const_block_expr();
-                }
-            }
-            Some("static") => {
-                if matches!(
-                    self.peek_second_non_trivia_raw(),
-                    Some("|") | Some("||") | Some("move") | Some("async") | Some("gen")
-                ) {
-                    return self.parse_closure_expr();
-                }
-            }
-            Some("move") => {
-                if matches!(self.peek_second_non_trivia_raw(), Some("|") | Some("||")) {
-                    return self.parse_closure_expr();
-                }
-            }
-            Some("if") => return self.parse_if_expr(),
-            Some("try") => return self.parse_try_expr(),
-            Some("loop") => return self.parse_loop_expr(),
-            Some("while") => return self.parse_while_expr(),
-            Some("with") => return self.parse_with_expr(),
-            Some("for") => return self.parse_for_expr(),
-            Some("match") => return self.parse_match_expr(),
-            Some("let") => return self.parse_let_expr(),
-            Some("struct") => {
-                if self.peek_second_non_trivia_raw() == Some("{") {
-                    return self.parse_structural_literal_expr();
-                }
-            }
-            Some("return") => return self.parse_return_expr(),
-            Some("become") => return self.parse_become_expr(),
-            Some("yield") => return self.parse_yield_expr(),
-            Some("break") => return self.parse_break_expr(),
-            Some("continue") => return self.parse_continue_expr(),
-            _ => {}
+        if let Some(result) = self.try_parse_keyword_prefix_expr() {
+            return result;
         }
 
         if matches!(self.peek_non_trivia_raw(), Some("|") | Some("||")) {
@@ -1057,18 +1023,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children); // `if`
         self.bump_trivia_into(&mut children);
-        let cond = if self.peek_non_trivia_is("let") {
-            self.parse_let_expr()?
-        } else {
-            let start_idx = self.idx;
-            match self.parse_let_expr() {
-                Ok(let_expr) => let_expr,
-                Err(_) => {
-                    self.idx = start_idx;
-                    self.parse_expr_before_block()?
-                }
-            }
-        };
+        let cond = self.parse_condition_expr_before_block()?;
         children.push(SyntaxElement::Node(Box::new(cond)));
         self.bump_trivia_into(&mut children);
         let then_block = self.parse_block_expr()?;
@@ -1179,18 +1134,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children); // `while`
         self.bump_trivia_into(&mut children);
-        let cond = if self.peek_non_trivia_is("let") {
-            self.parse_let_expr()?
-        } else {
-            let start_idx = self.idx;
-            match self.parse_let_expr() {
-                Ok(let_expr) => let_expr,
-                Err(_) => {
-                    self.idx = start_idx;
-                    self.parse_expr_before_block()?
-                }
-            }
-        };
+        let cond = self.parse_condition_expr_before_block()?;
         children.push(SyntaxElement::Node(Box::new(cond)));
         self.bump_trivia_into(&mut children);
         let block = self.parse_block_expr()?;
@@ -1832,11 +1776,7 @@ impl Parser {
         if self.peek_non_trivia_normalized() == Some("if") {
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
-            let guard = if self.peek_non_trivia_normalized() == Some("let") {
-                self.parse_let_expr()?
-            } else {
-                self.parse_expr_bp(0)?
-            };
+            let guard = self.parse_guard_condition_expr()?;
             children.push(SyntaxElement::Node(Box::new(guard)));
             self.bump_trivia_into(&mut children);
         }
@@ -2217,6 +2157,23 @@ impl Parser {
         &mut self,
         start: Option<SyntaxNode>,
     ) -> Result<SyntaxNode, ExprCstParseError> {
+        self.parse_range_expr_core(start, &["],"], false)
+    }
+
+    fn parse_range_from_paren(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+        self.parse_range_expr_core(None, &[",", ")"], true)
+    }
+
+    fn parse_range_prefix_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+        self.parse_range_expr_core(None, &[",", ")", "]", "}", ";"], true)
+    }
+
+    fn parse_range_expr_core(
+        &mut self,
+        start: Option<SyntaxNode>,
+        end_stops: &[&str],
+        include_leading_trivia: bool,
+    ) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
         let _span_start = self
             .peek_any_span()
@@ -2225,53 +2182,15 @@ impl Parser {
         if let Some(start) = start {
             children.push(SyntaxElement::Node(Box::new(start)));
             self.bump_trivia_into(&mut children);
-        }
-
-        self.bump_token_into(&mut children); // ".." or "..="
-        self.bump_trivia_into(&mut children);
-
-        if self.peek_non_trivia_raw() != Some("]") {
-            let end = self.parse_expr_bp(0)?;
-            children.push(SyntaxElement::Node(Box::new(end)));
+        } else if include_leading_trivia {
             self.bump_trivia_into(&mut children);
         }
 
-        let span = span_for_children(&children);
-        Ok(SyntaxNode::new(SyntaxKind::ExprRange, children, span))
-    }
-
-    fn parse_range_from_paren(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
-        let mut children = Vec::new();
-        let _span_start = self
-            .peek_any_span()
-            .unwrap_or_else(|| Span::new(self.file, 0, 0));
-
-        self.bump_trivia_into(&mut children);
-        self.bump_token_into(&mut children); // ".." or "..="
-        self.bump_trivia_into(&mut children);
-
-        if !matches!(self.peek_non_trivia_raw(), Some(",") | Some(")")) {
-            let end = self.parse_expr_bp(0)?;
-            children.push(SyntaxElement::Node(Box::new(end)));
-            self.bump_trivia_into(&mut children);
-        }
-
-        let span = span_for_children(&children);
-        Ok(SyntaxNode::new(SyntaxKind::ExprRange, children, span))
-    }
-
-    fn parse_range_prefix_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
-        let mut children = Vec::new();
-        let _span_start = self
-            .peek_any_span()
-            .unwrap_or_else(|| Span::new(self.file, 0, 0));
-
-        self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children); // ".." or "..="
         self.bump_trivia_into(&mut children);
 
         if let Some(raw) = self.peek_non_trivia_raw() {
-            if !matches!(raw, "," | ")" | "]" | "}" | ";") {
+            if !end_stops.iter().any(|stop| *stop == raw) {
                 let end = self.parse_expr_bp(0)?;
                 children.push(SyntaxElement::Node(Box::new(end)));
                 self.bump_trivia_into(&mut children);
@@ -2280,6 +2199,52 @@ impl Parser {
 
         let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprRange, children, span))
+    }
+
+    fn try_parse_keyword_prefix_expr(
+        &mut self,
+    ) -> Option<Result<SyntaxNode, ExprCstParseError>> {
+        let next = self.peek_second_non_trivia_raw();
+        let result = match self.peek_non_trivia_normalized() {
+            Some("gen") if next == Some("{") => self.parse_gen_block_expr(),
+            Some("gen")
+                if matches!(next, Some("|") | Some("||") | Some("move") | Some("static")) =>
+            {
+                self.parse_closure_expr()
+            }
+            Some("unsafe") if next == Some("{") => self.parse_unsafe_block_expr(),
+            Some("quote") => self.parse_quote_expr(),
+            Some("splice") => self.parse_splice_expr(),
+            Some("async")
+                if matches!(next, Some("|") | Some("||") | Some("move") | Some("static")) =>
+            {
+                self.parse_closure_expr()
+            }
+            Some("async") => self.parse_async_expr(),
+            Some("const") if next == Some("{") => self.parse_const_block_expr(),
+            Some("static")
+                if matches!(next, Some("|") | Some("||") | Some("move") | Some("async") | Some("gen")) =>
+            {
+                self.parse_closure_expr()
+            }
+            Some("move") if matches!(next, Some("|") | Some("||")) => self.parse_closure_expr(),
+            Some("if") => self.parse_if_expr(),
+            Some("try") => self.parse_try_expr(),
+            Some("loop") => self.parse_loop_expr(),
+            Some("while") => self.parse_while_expr(),
+            Some("with") => self.parse_with_expr(),
+            Some("for") => self.parse_for_expr(),
+            Some("match") => self.parse_match_expr(),
+            Some("let") => self.parse_let_expr(),
+            Some("struct") if next == Some("{") => self.parse_structural_literal_expr(),
+            Some("return") => self.parse_return_expr(),
+            Some("become") => self.parse_become_expr(),
+            Some("yield") => self.parse_yield_expr(),
+            Some("break") => self.parse_break_expr(),
+            Some("continue") => self.parse_continue_expr(),
+            _ => return None,
+        };
+        Some(result)
     }
 
     fn parse_macro_call(&mut self, base: SyntaxNode) -> Result<SyntaxNode, ExprCstParseError> {

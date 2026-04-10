@@ -69,14 +69,12 @@ impl FerroPhaseParser {
         self.diagnostics.add_diagnostic(diagnostic);
     }
 
-    /// Parse a FerroPhase expression directly into an fp-core AST expression.
-    pub fn parse_expr_ast(&self, source: &str) -> Result<Expr> {
-        self.parse_expr_ast_with_file(source, 0)
-    }
-
-    pub fn parse_expr_ast_with_file(&self, source: &str, file: FileId) -> Result<Expr> {
-        let file = resolve_file_id(file, source, None);
-        let lexemes = crate::lexer::tokenizer::lex_lexemes(source).map_err(|err| {
+    fn lex_expr_lexemes(
+        &self,
+        source: &str,
+        file: FileId,
+    ) -> Result<Vec<crate::lexer::lexeme::Lexeme>> {
+        crate::lexer::tokenizer::lex_lexemes(source).map_err(|err| {
             if let Some(span) = err.span() {
                 let span = fp_core::span::Span::new(file, span.start as u32, span.end as u32);
                 self.record_error_with_span(format!("failed to lex expression: {err}"), span);
@@ -84,19 +82,76 @@ impl FerroPhaseParser {
                 self.record_error(format!("failed to lex expression: {err}"));
             }
             eyre::eyre!(err)
+        })
+    }
+
+    fn parse_expr_prefix_cst(
+        &self,
+        lexemes: &[crate::lexer::lexeme::Lexeme],
+        file: FileId,
+    ) -> Result<(crate::syntax::SyntaxNode, usize)> {
+        crate::cst::parse_expr_lexemes_prefix_to_cst(lexemes, file).map_err(|err| {
+            if let Some(span) = err.span {
+                self.record_error_with_span(format!("failed to parse expression CST: {err}"), span);
+            } else {
+                self.record_error(format!("failed to parse expression CST: {err}"));
+            }
+            eyre::eyre!(err)
+        })
+    }
+
+    fn parse_expr_cst(
+        &self,
+        lexemes: &[crate::lexer::lexeme::Lexeme],
+        file: FileId,
+    ) -> Result<crate::syntax::SyntaxNode> {
+        crate::cst::parse_expr_lexemes_to_cst(lexemes, file).map_err(|err| {
+            if let Some(span) = err.span {
+                self.record_error_with_span(format!("failed to parse expression CST: {err}"), span);
+            } else {
+                self.record_error(format!("failed to parse expression CST: {err}"));
+            }
+            eyre::eyre!(err)
+        })
+    }
+
+    fn parse_items_cst_from_source(
+        &self,
+        source: &str,
+        file: FileId,
+    ) -> Result<crate::syntax::SyntaxNode> {
+        let tokens = crate::lexer::tokenizer::lex(source).map_err(|err| {
+            if let Some(span) = err.span() {
+                let span = fp_core::span::Span::new(file, span.start as u32, span.end as u32);
+                self.record_error_with_span(format!("failed to lex items: {err}"), span);
+            } else {
+                self.record_error(format!("failed to lex items: {err}"));
+            }
+            eyre::eyre!(err)
         })?;
-        let (cst, idx) =
-            crate::cst::parse_expr_lexemes_prefix_to_cst(&lexemes, file).map_err(|err| {
-                if let Some(span) = err.span {
-                    self.record_error_with_span(
-                        format!("failed to parse expression CST: {err}"),
-                        span,
-                    );
-                } else {
-                    self.record_error(format!("failed to parse expression CST: {err}"));
-                }
-                eyre::eyre!(err)
-            })?;
+        let tokens = crate::tokens::rewrite::lower_tokens(tokens).map_err(|err| {
+            self.record_error(format!("failed to lower tokens: {err}"));
+            eyre::eyre!(err)
+        })?;
+        crate::cst::items::parse_items_tokens_to_cst_with_file(&tokens, file).map_err(|err| {
+            if let Some(span) = err.span() {
+                self.record_error_with_span(format!("failed to parse items CST: {err}"), span);
+            } else {
+                self.record_error(format!("failed to parse items CST: {err}"));
+            }
+            eyre::eyre!(err)
+        })
+    }
+
+    /// Parse a FerroPhase expression directly into an fp-core AST expression.
+    pub fn parse_expr_ast(&self, source: &str) -> Result<Expr> {
+        self.parse_expr_ast_with_file(source, 0)
+    }
+
+    pub fn parse_expr_ast_with_file(&self, source: &str, file: FileId) -> Result<Expr> {
+        let file = resolve_file_id(file, source, None);
+        let lexemes = self.lex_expr_lexemes(source, file)?;
+        let (cst, idx) = self.parse_expr_prefix_cst(&lexemes, file)?;
         if lexemes[idx..].iter().any(|lexeme| !lexeme.is_trivia()) {
             self.record_error("trailing tokens after expression");
             return Err(eyre::eyre!("trailing tokens after expression"));
@@ -118,18 +173,8 @@ impl FerroPhaseParser {
         file: FileId,
     ) -> Result<crate::syntax::SyntaxNode> {
         let file = resolve_file_id(file, source, None);
-        let lexemes = crate::lexer::tokenizer::lex_lexemes(source).map_err(|err| {
-            self.record_error(format!("failed to lex expression: {err}"));
-            eyre::eyre!(err)
-        })?;
-        crate::cst::parse_expr_lexemes_to_cst(&lexemes, file).map_err(|err| {
-            if let Some(span) = err.span {
-                self.record_error_with_span(format!("failed to parse expression CST: {err}"), span);
-            } else {
-                self.record_error(format!("failed to parse expression CST: {err}"));
-            }
-            eyre::eyre!(err)
-        })
+        let lexemes = self.lex_expr_lexemes(source, file)?;
+        self.parse_expr_cst(&lexemes, file)
     }
 
     /// Parse a sequence of items into fp-core AST items.
@@ -144,29 +189,7 @@ impl FerroPhaseParser {
         source_path: Option<&Path>,
     ) -> Result<Vec<fp_core::ast::Item>> {
         let file = resolve_file_id(file, source, source_path);
-        let tokens = crate::lexer::tokenizer::lex(source).map_err(|err| {
-            if let Some(span) = err.span() {
-                let span = fp_core::span::Span::new(file, span.start as u32, span.end as u32);
-                self.record_error_with_span(format!("failed to lex items: {err}"), span);
-            } else {
-                self.record_error(format!("failed to lex items: {err}"));
-            }
-            eyre::eyre!(err)
-        })?;
-        let tokens = crate::tokens::rewrite::lower_tokens(tokens).map_err(|err| {
-            self.record_error(format!("failed to lower tokens: {err}"));
-            eyre::eyre!(err)
-        })?;
-        let cst = crate::cst::items::parse_items_tokens_to_cst_with_file(&tokens, file).map_err(
-            |err| {
-                if let Some(span) = err.span() {
-                    self.record_error_with_span(format!("failed to parse items CST: {err}"), span);
-                } else {
-                    self.record_error(format!("failed to parse items CST: {err}"));
-                }
-                eyre::eyre!(err)
-            },
-        )?;
+        let cst = self.parse_items_cst_from_source(source, file)?;
         crate::ast::lower_items_from_cst(&cst).map_err(|err| {
             self.record_error(format!("failed to lower items CST: {err}"));
             eyre::eyre!(err)
@@ -181,28 +204,7 @@ impl FerroPhaseParser {
         path: PathBuf,
     ) -> Result<fp_core::ast::File> {
         let file_id = resolve_file_id(file, source, source_path);
-        let tokens = crate::lexer::tokenizer::lex(source).map_err(|err| {
-            if let Some(span) = err.span() {
-                let span = fp_core::span::Span::new(file_id, span.start as u32, span.end as u32);
-                self.record_error_with_span(format!("failed to lex items: {err}"), span);
-            } else {
-                self.record_error(format!("failed to lex items: {err}"));
-            }
-            eyre::eyre!(err)
-        })?;
-        let tokens = crate::tokens::rewrite::lower_tokens(tokens).map_err(|err| {
-            self.record_error(format!("failed to lower tokens: {err}"));
-            eyre::eyre!(err)
-        })?;
-        let cst = crate::cst::items::parse_items_tokens_to_cst_with_file(&tokens, file_id)
-            .map_err(|err| {
-                if let Some(span) = err.span() {
-                    self.record_error_with_span(format!("failed to parse items CST: {err}"), span);
-                } else {
-                    self.record_error(format!("failed to parse items CST: {err}"));
-                }
-                eyre::eyre!(err)
-            })?;
+        let cst = self.parse_items_cst_from_source(source, file_id)?;
         let (attrs, items) = crate::ast::lower_file_from_cst(&cst).map_err(|err| {
             self.record_error(format!("failed to lower items CST: {err}"));
             eyre::eyre!(err)
@@ -213,6 +215,7 @@ impl FerroPhaseParser {
 
 pub(crate) mod expr;
 pub(crate) mod items;
+pub(crate) mod lower_common;
 pub(crate) mod macros;
 
 pub(crate) use expr::lower_expr_from_cst;
