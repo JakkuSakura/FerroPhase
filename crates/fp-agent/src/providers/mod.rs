@@ -1,3 +1,5 @@
+pub mod adapter;
+pub mod errors;
 pub mod openai;
 pub mod openrouter;
 pub mod tabcode;
