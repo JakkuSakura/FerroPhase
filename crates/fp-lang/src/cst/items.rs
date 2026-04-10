@@ -117,7 +117,6 @@ pub fn parse_items_tokens_to_cst_with_file(
                 continue;
             }
 
-            let mut item_children = Vec::new();
             if let Some(attr) = match parse_inner_attr_cst(&mut input) {
                 Ok(attr) => attr,
                 Err(err) => {
@@ -749,8 +748,13 @@ fn parse_extern_member_decl(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     if match_keyword(input, Keyword::Fn) {
         let sig = parse_fn_sig_cst(input)?;
         member_children.push(SyntaxElement::Node(Box::new(sig)));
-        expect_symbol(input, ";")?;
-        return Ok(node(SyntaxKind::ItemExternFnDecl, member_children));
+        if match_symbol(input, ";") {
+            return Ok(node(SyntaxKind::ItemExternFnDecl, member_children));
+        }
+        // Tolerate extern block members with bodies; lowering will inherit the block ABI.
+        let body = parse_block_expr_from_tokens(input)?;
+        member_children.push(SyntaxElement::Node(Box::new(body)));
+        return Ok(node(SyntaxKind::ItemFn, member_children));
     }
 
     if match_keyword(input, Keyword::Static) {

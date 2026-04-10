@@ -415,7 +415,62 @@ pub fn lex_lexemes(source: &str) -> Result<Vec<Lexeme>, LexerError> {
             Span { start, end },
         ));
     }
-    Ok(out)
+    Ok(normalize_lexemes(out))
+}
+
+fn normalize_lexemes(lexemes: Vec<Lexeme>) -> Vec<Lexeme> {
+    let mut out = Vec::with_capacity(lexemes.len());
+    let mut i = 0usize;
+    while i < lexemes.len() {
+        let lexeme = &lexemes[i];
+        if lexeme.kind == LexemeKind::Token && lexeme.text == "::<" {
+            out.push(Lexeme::token("::".to_string(), lexeme.span));
+            out.push(Lexeme::token("<".to_string(), lexeme.span));
+            i += 1;
+            continue;
+        }
+
+        if lexeme.kind == LexemeKind::Token && lexeme.text == "." {
+            let prev_idx = out.len().checked_sub(1);
+            let prev_is_number = prev_idx
+                .and_then(|idx| out.get(idx))
+                .is_some_and(|prev| {
+                    prev.kind == LexemeKind::Token
+                        && prev.span.end == lexeme.span.start
+                        && classify_and_normalize_lexeme(&prev.text)
+                            .is_some_and(|(kind, _)| kind == TokenKind::Number)
+                });
+
+            let next_non_trivia = lexemes[i + 1..]
+                .iter()
+                .find(|next| next.kind == LexemeKind::Token);
+            let next_raw = next_non_trivia.map(|next| next.text.as_str());
+            let next_kind = next_non_trivia.and_then(|next| {
+                classify_and_normalize_lexeme(&next.text).map(|(kind, _)| kind)
+            });
+            let next_is_field_like = matches!(
+                next_kind,
+                Some(TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_))
+            );
+            let next_is_dot = next_raw.is_some_and(|raw| raw.starts_with('.'));
+
+            if prev_is_number && !next_is_field_like && !next_is_dot {
+                if let Some(prev_idx) = prev_idx {
+                    if let Some(prev) = out.get_mut(prev_idx) {
+                        prev.text.push('.');
+                        prev.span.end = lexeme.span.end;
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        out.push(lexeme.clone());
+        i += 1;
+    }
+
+    out
 }
 
 fn frontmatter_end_offset(source: &str) -> Option<usize> {
@@ -534,7 +589,7 @@ fn number_token(input: &mut &str) -> ModalResult<TokenKind> {
     // optional fractional part, but avoid consuming range operator `..`
     if let Some(&(dot_idx, '.')) = iter.peek() {
         if !s[dot_idx..].starts_with("..") {
-            // look ahead one more char to ensure it's a digit
+            // look ahead one more char to determine fractional part.
             if let Some((_, next_ch)) = { iter.clone().nth(1) } {
                 if next_ch.is_ascii_digit() {
                     // consume '.'
@@ -549,7 +604,15 @@ fn number_token(input: &mut &str) -> ModalResult<TokenKind> {
                             break;
                         }
                     }
+                } else if !is_ident_start(next_ch) && next_ch != '_' {
+                    // Allow trailing dot float literal like `1.`.
+                    end = dot_idx + 1;
+                    iter.next();
                 }
+            } else {
+                // Input ends after '.', accept trailing dot.
+                end = dot_idx + 1;
+                iter.next();
             }
         }
     }

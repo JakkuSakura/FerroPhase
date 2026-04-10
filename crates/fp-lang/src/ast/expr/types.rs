@@ -1,7 +1,8 @@
 use crate::ast::lower_common::{
-    collect_path_tokens_until_generics, decode_string_literal, split_path_prefix,
+    collect_path_tokens_until_generics, decode_string_literal, lex_span_from_span,
+    lex_spans_for_group, macro_token_trees_to_lexemes, macro_tokens_file_id, split_path_prefix,
 };
-use crate::lexer::lexeme::{Lexeme, LexSpan};
+use crate::lexer::lexeme::Lexeme;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     Expr, ExprKind, Ident, ImplTraits, MacroDelimiter, MacroInvocation, MacroTokenTree, Name,
@@ -171,90 +172,6 @@ fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
     ))
     .into();
     Ok(Ty::expr(expr))
-}
-
-fn macro_token_trees_to_lexemes(tokens: &[MacroTokenTree]) -> Vec<Lexeme> {
-    let mut out = Vec::new();
-    append_macro_lexemes(tokens, &mut out);
-    out
-}
-
-fn append_macro_lexemes(tokens: &[MacroTokenTree], out: &mut Vec<Lexeme>) {
-    for token in tokens {
-        match token {
-            MacroTokenTree::Token(tok) => {
-                out.push(Lexeme::token(
-                    tok.text.clone(),
-                    lex_span_from_span(tok.span),
-                ));
-            }
-            MacroTokenTree::Group(group) => {
-                let (open, close) = match group.delimiter {
-                    MacroDelimiter::Parenthesis => ("(", ")"),
-                    MacroDelimiter::Bracket => ("[", "]"),
-                    MacroDelimiter::Brace => ("{", "}"),
-                };
-                let (open_span, close_span) = lex_spans_for_group(group.span);
-                out.push(Lexeme::token(open.to_string(), open_span));
-                append_macro_lexemes(&group.tokens, out);
-                out.push(Lexeme::token(close.to_string(), close_span));
-            }
-        }
-    }
-}
-
-fn macro_tokens_file_id(tokens: &[MacroTokenTree]) -> u64 {
-    for tree in tokens {
-        if let Some(file) = token_tree_file(tree) {
-            return file;
-        }
-    }
-    0
-}
-
-fn token_tree_file(tree: &MacroTokenTree) -> Option<u64> {
-    match tree {
-        MacroTokenTree::Token(tok) => Some(tok.span.file),
-        MacroTokenTree::Group(group) => {
-            if group.span.file != 0 {
-                return Some(group.span.file);
-            }
-            for inner in &group.tokens {
-                if let Some(file) = token_tree_file(inner) {
-                    return Some(file);
-                }
-            }
-            None
-        }
-    }
-}
-
-fn lex_span_from_span(span: fp_core::span::Span) -> LexSpan {
-    LexSpan {
-        start: span.lo as usize,
-        end: span.hi as usize,
-    }
-}
-
-fn lex_spans_for_group(span: fp_core::span::Span) -> (LexSpan, LexSpan) {
-    let open_start = span.lo;
-    let open_end = if span.hi > span.lo {
-        span.lo.saturating_add(1)
-    } else {
-        span.lo
-    };
-    let close_start = span.hi.saturating_sub(1);
-    let close_end = span.hi;
-    (
-        LexSpan {
-            start: open_start as usize,
-            end: open_end as usize,
-        },
-        LexSpan {
-            start: close_start as usize,
-            end: close_end as usize,
-        },
-    )
 }
 
 pub(super) fn node_children_types<'a>(node: &'a SyntaxNode) -> impl Iterator<Item = &'a SyntaxNode> {

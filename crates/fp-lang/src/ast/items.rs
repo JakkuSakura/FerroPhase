@@ -131,6 +131,11 @@ pub(crate) fn lower_extern_block(node: &SyntaxNode) -> Result<Vec<Item>, LowerIt
                 let decl = lower_extern_static_decl(n.as_ref())?;
                 items.push(Item::from(ItemKind::DeclStatic(decl)));
             }
+            SyntaxKind::ItemFn => {
+                let mut def = lower_fn(n.as_ref())?;
+                def.sig.abi = abi.clone();
+                items.push(Item::from(ItemKind::DefFunction(def)));
+            }
             _ => {}
         }
     }

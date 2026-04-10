@@ -100,7 +100,7 @@ impl FerroPhaseParser {
         })
     }
 
-    fn parse_expr_cst(
+    fn parse_expr_cst_from_lexemes(
         &self,
         lexemes: &[crate::lexer::lexeme::Lexeme],
         file: FileId,
@@ -174,7 +174,7 @@ impl FerroPhaseParser {
     ) -> Result<crate::syntax::SyntaxNode> {
         let file = resolve_file_id(file, source, None);
         let lexemes = self.lex_expr_lexemes(source, file)?;
-        self.parse_expr_cst(&lexemes, file)
+        self.parse_expr_cst_from_lexemes(&lexemes, file)
     }
 
     /// Parse a sequence of items into fp-core AST items.

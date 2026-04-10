@@ -60,7 +60,10 @@ impl MacroExpansionParser for FerroMacroExpansionParser {
 fn parse_macro_prefix_cst(
     lexemes: &[Lexeme],
     file_id: FileId,
-    parse: impl FnOnce(&[Lexeme], FileId) -> Result<(crate::syntax::SyntaxNode, usize), crate::cst::ExprCstParseError>,
+    parse: impl FnOnce(
+        &[Lexeme],
+        FileId,
+    ) -> std::result::Result<(crate::syntax::SyntaxNode, usize), crate::cst::ExprCstParseError>,
     has_trailing: impl Fn(&Lexeme) -> bool,
     trailing_message: &'static str,
 ) -> Result<crate::syntax::SyntaxNode> {
