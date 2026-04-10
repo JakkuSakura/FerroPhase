@@ -4,7 +4,38 @@ use crate::lexer::{Keyword, Span, Token, TokenKind};
 
 pub(crate) fn lower_tokens(tokens: Vec<Token>) -> Result<Vec<Token>> {
     let tokens = lower_emit(tokens)?;
+    let tokens = lower_trailing_dot_numbers(tokens);
     lower_fn_generic_closing_shifts(tokens)
+}
+
+fn lower_trailing_dot_numbers(tokens: Vec<Token>) -> Vec<Token> {
+    let mut out = Vec::with_capacity(tokens.len());
+    let mut i = 0usize;
+    while i < tokens.len() {
+        if tokens[i].kind == TokenKind::Number
+            && tokens
+                .get(i + 1)
+                .is_some_and(|tok| tok.kind == TokenKind::Symbol && tok.lexeme == ".")
+        {
+            let next = tokens.get(i + 2);
+            let next_is_field_like = matches!(
+                next.map(|tok| &tok.kind),
+                Some(TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_))
+            );
+            if !next_is_field_like {
+                let dot = tokens[i + 1].clone();
+                let mut merged = tokens[i].clone();
+                merged.lexeme.push('.');
+                merged.span.end = dot.span.end;
+                out.push(merged);
+                i += 2;
+                continue;
+            }
+        }
+        out.push(tokens[i].clone());
+        i += 1;
+    }
+    out
 }
 
 fn lower_fn_generic_closing_shifts(tokens: Vec<Token>) -> Result<Vec<Token>> {

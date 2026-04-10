@@ -496,6 +496,24 @@ impl Parser {
                     base = self.parse_dot_postfix(base)?;
                 }
                 Some("::") => {
+                    if matches!(
+                        base.kind,
+                        SyntaxKind::ExprSelect
+                            | SyntaxKind::ExprPath
+                            | SyntaxKind::ExprName
+                            | SyntaxKind::ExprQuoteToken
+                    ) {
+                        if self.peek_second_non_trivia_raw() == Some("<")
+                            || (self.peek_nth_non_trivia(2)
+                                .is_some_and(|tok| tok.raw.as_str() == ":")
+                                && self
+                                    .peek_nth_non_trivia(3)
+                                    .is_some_and(|tok| tok.raw.as_str() == "<"))
+                        {
+                            base = self.parse_turbofish_postfix(base)?;
+                            continue;
+                        }
+                    }
                     break;
                 }
                 Some("!") => {
@@ -2016,8 +2034,7 @@ impl Parser {
         if self.peek_non_trivia_raw() == Some("::<") {
             self.split_turbofish();
         }
-        self.expect_token_raw("::")?;
-        self.bump_token_into(&mut children);
+        self.bump_colon_colon_into(&mut children)?;
         self.bump_trivia_into(&mut children);
         self.parse_generic_args_into(&mut children)?;
         let span = span_for_children(&children);
@@ -2044,10 +2061,38 @@ impl Parser {
         if self.peek_non_trivia_raw() == Some("::<") {
             return true;
         }
-        self.peek_non_trivia_raw() == Some("::")
+        if self.peek_non_trivia_raw() == Some("::") {
+            return self.peek_second_non_trivia_raw() == Some("<");
+        }
+        self.peek_non_trivia_raw() == Some(":")
             && self
                 .peek_nth_non_trivia(2)
+                .is_some_and(|tok| tok.raw.as_str() == ":")
+            && self
+                .peek_nth_non_trivia(3)
                 .is_some_and(|tok| tok.raw.as_str() == "<")
+    }
+
+    fn bump_colon_colon_into(
+        &mut self,
+        children: &mut Vec<SyntaxElement>,
+    ) -> Result<(), ExprCstParseError> {
+        if self.peek_non_trivia_raw() == Some("::") {
+            self.bump_token_into(children);
+            return Ok(());
+        }
+        if self.peek_non_trivia_raw() == Some(":")
+            && self
+                .peek_nth_non_trivia(2)
+                .is_some_and(|tok| tok.raw.as_str() == ":")
+        {
+            self.bump_token_into(children);
+            self.bump_trivia_into(children);
+            self.expect_token_raw(":")?;
+            self.bump_token_into(children);
+            return Ok(());
+        }
+        Err(self.error("expected token '::'"))
     }
 
     fn parse_call(&mut self, callee: SyntaxNode) -> Result<SyntaxNode, ExprCstParseError> {

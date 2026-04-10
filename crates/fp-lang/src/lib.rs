@@ -255,6 +255,13 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn parse_expression_mode_supports_turbofish_method_call() {
+        let frontend = FerroFrontend::new();
+        let result = frontend.parse("ap.arg::<u64>()", None);
+        assert!(result.is_ok(), "unexpected parse error: {:?}", result.err());
+    }
 }
 
 pub mod ast;

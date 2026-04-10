@@ -1,6 +1,4 @@
-use super::lexeme::Lexeme;
-#[cfg(test)]
-use super::lexeme::LexemeKind;
+use super::lexeme::{Lexeme, LexemeKind};
 use super::winnow::{
     backtrack_err, block_comment, is_ident_continue, is_ident_start, line_comment,
     parse_byte_char_literal, parse_char_literal, parse_cooked_string_literal, parse_lifetime,

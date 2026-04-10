@@ -1154,11 +1154,8 @@ fn parse_param_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     }
     if let Some(pattern) = try_parse_pattern_param_prefix(input)? {
         children.push(SyntaxElement::Node(Box::new(pattern)));
-        children.push(SyntaxElement::Token(SyntaxToken {
-            kind: SyntaxTokenKind::Token,
-            text: ":".to_string(),
-            span: fp_core::span::Span::null(),
-        }));
+        let colon = expect_symbol_token(input)?;
+        children.push(SyntaxElement::Token(colon));
         if matches_symbol(input.first(), "...") {
             let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
             let ty = node(
@@ -1807,6 +1804,22 @@ fn parse_pattern_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
 
 fn try_parse_pattern_param_prefix(input: &mut &[Token]) -> ModalResult<Option<SyntaxNode>> {
     let cursor = *input;
+    if let (Some(first), Some(second)) = (input.first(), input.get(1)) {
+        let is_ident_like = matches!(first.kind, TokenKind::Ident | TokenKind::Keyword(_));
+        let is_underscore = first.lexeme == "_";
+        if (is_ident_like || is_underscore) && matches_symbol(Some(second), ":") {
+            let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+            let mut children = Vec::new();
+            children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
+            let span = span_for_children(&children);
+            let kind = if tok.lexeme == "_" {
+                SyntaxKind::PatternWildcard
+            } else {
+                SyntaxKind::PatternIdent
+            };
+            return Ok(Some(SyntaxNode::new(kind, children, span)));
+        }
+    }
     if let Ok(pattern) = parse_pattern_prefix_from_tokens(input) {
         if matches_symbol(input.first(), ":") {
             return Ok(Some(pattern));

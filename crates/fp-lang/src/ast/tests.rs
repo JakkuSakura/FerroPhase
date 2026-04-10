@@ -310,6 +310,13 @@ fn parse_expr_ast_handles_closure() {
 }
 
 #[test]
+fn parse_expr_ast_supports_turbofish_method_call() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    parser.parse_expr_ast("ap.arg::<u64>()").unwrap();
+}
+
+#[test]
 fn parse_expr_ast_handles_typed_and_mut_closure_params() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
