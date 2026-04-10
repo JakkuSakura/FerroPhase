@@ -1968,32 +1968,44 @@ fn emit_binop(
             }
         }
         AsmValue::Constant(constant) => {
-            let imm = constant_to_i64(constant)?;
-            if imm < 0 || imm > u16::MAX as i64 {
-                emit_mov_imm64(asm, Reg::X17, imm as u64);
+            if matches!(
+                constant,
+                AsmConstant::GlobalRef(_, _, _) | AsmConstant::FunctionRef(_, _)
+            ) {
+                load_value(asm, layout, rhs, Reg::X17, reg_types, local_types)?;
                 match op {
                     BinOp::Add => emit_add_reg(asm, Reg::X16, Reg::X16, Reg::X17),
                     BinOp::Sub => emit_sub_reg(asm, Reg::X16, Reg::X16, Reg::X17),
                     BinOp::Mul => emit_mul_reg(asm, Reg::X16, Reg::X16, Reg::X17),
                 }
             } else {
-                match op {
-                    BinOp::Add if imm <= 4095 => {
-                        emit_add_imm12(asm, Reg::X16, Reg::X16, imm as u32)
+                let imm = constant_to_i64(constant)?;
+                if imm < 0 || imm > u16::MAX as i64 {
+                    emit_mov_imm64(asm, Reg::X17, imm as u64);
+                    match op {
+                        BinOp::Add => emit_add_reg(asm, Reg::X16, Reg::X16, Reg::X17),
+                        BinOp::Sub => emit_sub_reg(asm, Reg::X16, Reg::X16, Reg::X17),
+                        BinOp::Mul => emit_mul_reg(asm, Reg::X16, Reg::X16, Reg::X17),
                     }
-                    BinOp::Sub if imm <= 4095 => {
-                        emit_sub_imm12(asm, Reg::X16, Reg::X16, imm as u32)
-                    }
-                    BinOp::Mul => {
-                        emit_mov_imm16(asm, Reg::X17, imm as u16);
-                        emit_mul_reg(asm, Reg::X16, Reg::X16, Reg::X17);
-                    }
-                    _ => {
-                        emit_mov_imm16(asm, Reg::X17, imm as u16);
-                        match op {
-                            BinOp::Add => emit_add_reg(asm, Reg::X16, Reg::X16, Reg::X17),
-                            BinOp::Sub => emit_sub_reg(asm, Reg::X16, Reg::X16, Reg::X17),
-                            BinOp::Mul => unreachable!(),
+                } else {
+                    match op {
+                        BinOp::Add if imm <= 4095 => {
+                            emit_add_imm12(asm, Reg::X16, Reg::X16, imm as u32)
+                        }
+                        BinOp::Sub if imm <= 4095 => {
+                            emit_sub_imm12(asm, Reg::X16, Reg::X16, imm as u32)
+                        }
+                        BinOp::Mul => {
+                            emit_mov_imm16(asm, Reg::X17, imm as u16);
+                            emit_mul_reg(asm, Reg::X16, Reg::X16, Reg::X17);
+                        }
+                        _ => {
+                            emit_mov_imm16(asm, Reg::X17, imm as u16);
+                            match op {
+                                BinOp::Add => emit_add_reg(asm, Reg::X16, Reg::X16, Reg::X17),
+                                BinOp::Sub => emit_sub_reg(asm, Reg::X16, Reg::X16, Reg::X17),
+                                BinOp::Mul => unreachable!(),
+                            }
                         }
                     }
                 }
@@ -7000,12 +7012,20 @@ fn emit_cmp(
     load_value(asm, layout, lhs, Reg::X16, reg_types, local_types)?;
     match rhs {
         AsmValue::Constant(constant) => {
-            let imm = constant_to_i64(constant)?;
-            if (0..=4095).contains(&imm) {
-                emit_cmp_imm12(asm, Reg::X16, imm as u32);
-            } else {
+            if matches!(
+                constant,
+                AsmConstant::GlobalRef(_, _, _) | AsmConstant::FunctionRef(_, _)
+            ) {
                 load_value(asm, layout, rhs, Reg::X17, reg_types, local_types)?;
                 emit_cmp_reg(asm, Reg::X16, Reg::X17);
+            } else {
+                let imm = constant_to_i64(constant)?;
+                if (0..=4095).contains(&imm) {
+                    emit_cmp_imm12(asm, Reg::X16, imm as u32);
+                } else {
+                    load_value(asm, layout, rhs, Reg::X17, reg_types, local_types)?;
+                    emit_cmp_reg(asm, Reg::X16, Reg::X17);
+                }
             }
         }
         _ => {
