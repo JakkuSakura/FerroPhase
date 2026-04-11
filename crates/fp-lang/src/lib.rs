@@ -149,6 +149,7 @@ impl LanguageFrontend for FerroFrontend {
             });
         }
 
+        self.ferro.clear_diagnostics();
         match self
             .ferro
             .parse_items_ast_with_file(&cleaned, file_id, Some(&source_path))

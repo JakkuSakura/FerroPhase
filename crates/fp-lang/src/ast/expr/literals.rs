@@ -120,9 +120,12 @@ pub(super) fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), Lo
                     .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
                 Ok((Value::decimal(d), None))
             } else {
-                let i = parse_i64_literal(&normalized)
+                if let Some(i) = parse_i64_literal(&normalized) {
+                    return Ok((Value::int(i), None));
+                }
+                let big = parse_big_int_literal(&normalized)
                     .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
-                Ok((Value::int(i), None))
+                Ok((Value::big_int(big), Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt)))))
             }
         }
     }

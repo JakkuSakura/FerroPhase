@@ -18,10 +18,12 @@ fn lower_trailing_dot_numbers(tokens: Vec<Token>) -> Vec<Token> {
                 .is_some_and(|tok| tok.kind == TokenKind::Symbol && tok.lexeme == ".")
         {
             let next = tokens.get(i + 2);
-            let next_is_field_like = matches!(
-                next.map(|tok| &tok.kind),
-                Some(TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_))
-            );
+            let next_is_field_like = next.is_some_and(|tok| {
+                matches!(
+                    tok.kind,
+                    TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_)
+                )
+            });
             if !next_is_field_like {
                 let dot = tokens[i + 1].clone();
                 let mut merged = tokens[i].clone();

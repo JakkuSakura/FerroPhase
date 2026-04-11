@@ -722,7 +722,7 @@ fn parse_extern_item_after_keyword(
     }
     let body = parse_block_expr_from_tokens(input)?;
     children.push(SyntaxElement::Node(Box::new(body)));
-    Ok(node(SyntaxKind::ItemFn, children))
+    Ok(node(SyntaxKind::ItemExternFnDecl, children))
 }
 
 fn parse_extern_block_members(input: &mut &[Token]) -> ModalResult<Vec<SyntaxElement>> {
@@ -751,10 +751,11 @@ fn parse_extern_member_decl(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
         if match_symbol(input, ";") {
             return Ok(node(SyntaxKind::ItemExternFnDecl, member_children));
         }
-        // Tolerate extern block members with bodies; lowering will inherit the block ABI.
+        // Tolerate extern block members with bodies; keep them as extern decls so lowering
+        // does not treat them as normal functions outside the extern ABI context.
         let body = parse_block_expr_from_tokens(input)?;
         member_children.push(SyntaxElement::Node(Box::new(body)));
-        return Ok(node(SyntaxKind::ItemFn, member_children));
+        return Ok(node(SyntaxKind::ItemExternFnDecl, member_children));
     }
 
     if match_keyword(input, Keyword::Static) {
@@ -1596,12 +1597,7 @@ fn parse_inner_attr_cst(input: &mut &[Token]) -> ModalResult<Option<SyntaxNode>>
 fn parse_attr_cst(input: &mut &[Token], is_inner: bool) -> ModalResult<Option<SyntaxNode>> {
     let mut cursor = *input;
     let mut joined_open = None;
-    if let Some(Token {
-        kind: TokenKind::Symbol,
-        lexeme,
-        ..
-    }) = cursor.first()
-    {
+    if let Some(Token { lexeme, .. }) = cursor.first() {
         if lexeme == "#[" {
             joined_open = Some(false);
         } else if lexeme == "#![" {
@@ -1609,7 +1605,9 @@ fn parse_attr_cst(input: &mut &[Token], is_inner: bool) -> ModalResult<Option<Sy
         }
     }
 
-    if joined_open.is_none() {
+    let (has_bang, is_joined) = if let Some(joined) = joined_open {
+        (joined, true)
+    } else {
         if !matches_symbol(cursor.first(), "#") {
             return Ok(None);
         }
@@ -1624,9 +1622,22 @@ fn parse_attr_cst(input: &mut &[Token], is_inner: bool) -> ModalResult<Option<Sy
         if !matches_symbol(cursor.first(), "[") {
             return Ok(None);
         }
+        (has_bang, false)
+    };
 
-        // Consume '#', optional '!', '['.
-        let mut children = Vec::new();
+    if has_bang != is_inner {
+        return Ok(None);
+    }
+
+    let mut children = Vec::new();
+    if is_joined {
+        let _combined = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        children.push(SyntaxElement::Token(token_text("#")));
+        if has_bang {
+            children.push(SyntaxElement::Token(token_text("!")));
+        }
+        children.push(SyntaxElement::Token(token_text("[")));
+    } else {
         children.push(SyntaxElement::Token(syntax_token_from_token(
             &advance(input).unwrap(),
         )));
@@ -1637,44 +1648,16 @@ fn parse_attr_cst(input: &mut &[Token], is_inner: bool) -> ModalResult<Option<Sy
         }
         let open = advance(input).unwrap();
         children.push(SyntaxElement::Token(syntax_token_from_token(&open)));
-
-        while !matches_symbol(input.first(), "]") {
-            let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
-            children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
-        }
-        let close = advance(input).unwrap();
-        children.push(SyntaxElement::Token(syntax_token_from_token(&close)));
-
-        return Ok(Some(node(
-            if is_inner {
-                SyntaxKind::AttrInner
-            } else {
-                SyntaxKind::AttrOuter
-            },
-            children,
-        )));
     }
 
-    let has_bang = joined_open.unwrap_or(false);
-    if has_bang != is_inner {
-        return Ok(None);
-    }
-
-    // Consume combined '#[' or '#![' token.
-    let mut children = Vec::new();
-    let _combined = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
-    children.push(SyntaxElement::Token(token_text("#")));
-    if has_bang {
-        children.push(SyntaxElement::Token(token_text("!")));
-    }
-    children.push(SyntaxElement::Token(token_text("[")));
-
-    while !matches_symbol(input.first(), "]") {
-        let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    let group_tokens = consume_attr_group_tokens(input, "[")?;
+    for tok in group_tokens {
         children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
     }
-    let close = advance(input).unwrap();
-    children.push(SyntaxElement::Token(syntax_token_from_token(&close)));
+    if matches_symbol(input.first(), "]") {
+        let close = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        children.push(SyntaxElement::Token(syntax_token_from_token(&close)));
+    }
 
     Ok(Some(node(
         if is_inner {
@@ -2480,6 +2463,28 @@ fn consume_balanced_group_tokens(input: &mut &[Token], opener: &str) -> ModalRes
             }
         }
         out.push(tok);
+    }
+    Ok(out)
+}
+
+fn consume_attr_group_tokens(input: &mut &[Token], opener: &str) -> ModalResult<Vec<Token>> {
+    let closer = match opener {
+        "(" => ")",
+        "[" => "]",
+        "{" => "}",
+        _ => return Err(ErrMode::Cut(ContextError::new())),
+    };
+    if matches_symbol(input.first(), opener) {
+        let _ = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    }
+    let mut out = consume_balanced_group_tokens(input, opener)?;
+    if !matches_symbol(out.last(), closer) {
+        if matches_symbol(input.first(), closer) {
+            let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+            out.push(tok);
+        } else {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
     }
     Ok(out)
 }

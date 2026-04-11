@@ -436,6 +436,14 @@ impl Parser {
         allow_struct_literal: bool,
     ) -> Result<SyntaxNode, ExprCstParseError> {
         loop {
+            let combined_attr = matches!(self.peek_non_trivia_raw(), Some("#[") | Some("#!["));
+            let is_outer_attr = (combined_attr && self.peek_non_trivia_raw() != Some("#!["))
+                || (self.peek_non_trivia_raw() == Some("#")
+                    && self.peek_second_non_trivia_raw() != Some("!"));
+            if is_outer_attr {
+                base = self.parse_postfix_attr(base)?;
+                continue;
+            }
             if self.has_turbofish_start()
                 && matches!(
                     base.kind,
@@ -479,7 +487,7 @@ impl Parser {
                 }
                 Some(".") => {
                     if base.kind == SyntaxKind::ExprNumber {
-                        let next = self.peek_nth_non_trivia(1);
+                        let next = self.peek_nth_non_trivia(2);
                         let is_field_like = next.is_some_and(|tok| {
                             matches!(tok.kind, TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_))
                         });
@@ -524,6 +532,23 @@ impl Parser {
         }
 
         Ok(base)
+    }
+
+    fn parse_postfix_attr(
+        &mut self,
+        base: SyntaxNode,
+    ) -> Result<SyntaxNode, ExprCstParseError> {
+        let attrs = self.parse_outer_attrs_expr()?;
+        if attrs.is_empty() {
+            return Ok(base);
+        }
+        let mut children = Vec::new();
+        children.push(SyntaxElement::Node(Box::new(base)));
+        for attr in attrs {
+            children.push(SyntaxElement::Node(Box::new(attr)));
+        }
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(SyntaxKind::ExprAttr, children, span))
     }
 
     fn parse_primary(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
@@ -2204,7 +2229,7 @@ impl Parser {
         &mut self,
         start: Option<SyntaxNode>,
     ) -> Result<SyntaxNode, ExprCstParseError> {
-        self.parse_range_expr_core(start, &["],"], false)
+        self.parse_range_expr_core(start, &["]", ","], false)
     }
 
     fn parse_range_from_paren(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
@@ -2722,7 +2747,9 @@ impl Parser {
         if self.peek_non_trivia_normalized() == Some("extern") {
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
-            if self.peek_non_trivia_token_kind() == Some(TokenKind::StringLiteral) {
+            if self.peek_non_trivia_token_kind() == Some(TokenKind::StringLiteral)
+                || self.peek_non_trivia_raw().is_some_and(|raw| looks_like_string_literal(raw))
+            {
                 self.bump_token_into(&mut children);
                 self.bump_trivia_into(&mut children);
             }
@@ -3693,8 +3720,19 @@ impl Parser {
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children);
+        if let (Some(prev), Some(next)) = (
+            self.tokens.get(self.idx.saturating_sub(1)),
+            self.peek_nth_non_trivia(1),
+        ) {
+            if prev.span.hi == next.span.lo
+                && next.raw.starts_with('_')
+                && matches!(next.kind, TokenKind::Ident | TokenKind::Keyword(_))
+            {
+                self.bump_token_into(&mut children);
+            }
+        }
         if self.peek_non_trivia_raw() == Some(".") {
-            let next = self.peek_nth_non_trivia(1);
+            let next = self.peek_nth_non_trivia(2);
             let is_field_like = next.is_some_and(|tok| {
                 matches!(tok.kind, TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_))
             });
@@ -3931,7 +3969,9 @@ impl Parser {
         let Some(next) = self.peek_nth_non_trivia(idx) else {
             return false;
         };
-        if next.kind == TokenKind::StringLiteral {
+        if next.kind == TokenKind::StringLiteral
+            || looks_like_string_literal(next.raw.as_str())
+        {
             return self
                 .peek_nth_non_trivia(idx + 1)
                 .is_some_and(|t| t.normalized.as_str() == "fn")
@@ -3987,6 +4027,20 @@ impl Parser {
     fn peek_non_trivia_span(&self) -> Option<Span> {
         self.peek_non_trivia().map(|t| t.span)
     }
+}
+
+fn looks_like_string_literal(raw: &str) -> bool {
+    raw.starts_with('"')
+        || raw.starts_with("b\"")
+        || raw.starts_with("f\"")
+        || raw.starts_with("t\"")
+        || raw.starts_with("c\"")
+        || raw.starts_with("r\"")
+        || raw.starts_with("r#")
+        || raw.starts_with("br\"")
+        || raw.starts_with("br#")
+        || raw.starts_with("rb\"")
+        || raw.starts_with("rb#")
 }
 
 fn infix_binding_power(op: &str) -> Option<(u8, u8, SyntaxKind)> {

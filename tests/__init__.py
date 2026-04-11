@@ -1,1 +1,1 @@
-# Intentionally empty: make tests a package so pytest can import tests.conftest.
+# Intentionally empty: allows pytest to import tests._rust_ui_plugin.

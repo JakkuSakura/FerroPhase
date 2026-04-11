@@ -1217,6 +1217,24 @@ fn lower_assign_pattern_expr(
     span: fp_core::span::Span,
 ) -> Result<Expr, LowerError> {
     if op != "=" {
+        if let Some(binop) = compound_assign_binop(op) {
+            if let Some(target_ident) = assign_pattern_target_ident(&pattern) {
+                let target_expr = Expr::ident(target_ident);
+                let combined = ExprKind::BinOp(ExprBinOp {
+                    span,
+                    kind: binop,
+                    lhs: Box::new(target_expr.clone()),
+                    rhs: Box::new(rhs),
+                })
+                .into();
+                return Ok(ExprKind::Assign(fp_core::ast::ExprAssign {
+                    span,
+                    target: Box::new(target_expr),
+                    value: Box::new(combined),
+                })
+                .into());
+            }
+        }
         return Err(LowerError::Unsupported(format!(
             "pattern assignment operator '{op}'"
         )));
@@ -1235,6 +1253,17 @@ fn lower_assign_pattern_expr(
     ));
     block.push_expr(Expr::unit());
     Ok(ExprKind::Block(block).into())
+}
+
+fn assign_pattern_target_ident(pattern: &Pattern) -> Option<Ident> {
+    match pattern.kind() {
+        PatternKind::Ident(ident) => Some(ident.ident.clone()),
+        PatternKind::Bind(bind) => Some(bind.ident.ident.clone()),
+        PatternKind::Type(pattern_type) => assign_pattern_target_ident(&pattern_type.pat),
+        PatternKind::Ref(pattern_ref) => assign_pattern_target_ident(&pattern_ref.pattern),
+        PatternKind::Box(pattern_box) => assign_pattern_target_ident(&pattern_box.pattern),
+        _ => None,
+    }
 }
 
 fn rewrite_assign_pattern(

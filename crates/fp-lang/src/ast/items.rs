@@ -23,6 +23,8 @@ pub enum LowerItemsError {
     UnexpectedNode(SyntaxKind),
     #[error("missing required token: {0}")]
     MissingToken(&'static str),
+    #[error("failed to lower expression: {0}")]
+    LowerExpr(String),
 }
 
 pub fn lower_items_from_cst(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
@@ -691,10 +693,8 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
 
     let body_node = first_child_by_category(node, CstCategory::Expr)
         .ok_or(LowerItemsError::MissingToken("fn body"))?;
-    let body = lower_expr_from_cst(body_node).map_err(|err| match err {
-        crate::ast::expr::LowerError::UnexpectedNode(kind) => LowerItemsError::UnexpectedNode(kind),
-        _ => LowerItemsError::UnexpectedNode(node.kind),
-    })?;
+    let body =
+        lower_expr_from_cst(body_node).map_err(|err| LowerItemsError::LowerExpr(err.to_string()))?;
     let is_async = node.children.iter().any(|c| {
         matches!(
             c,

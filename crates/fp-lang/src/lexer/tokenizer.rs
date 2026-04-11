@@ -258,7 +258,11 @@ pub(crate) fn strip_number_suffix(lexeme: &str) -> &str {
             if is_exponent {
                 continue;
             }
-            numeric_part = &lexeme[..idx];
+            if idx > 0 && lexeme[..idx].ends_with('_') {
+                numeric_part = &lexeme[..idx - 1];
+            } else {
+                numeric_part = &lexeme[..idx];
+            }
             break;
         }
     }
@@ -615,9 +619,20 @@ fn number_token(input: &mut &str) -> ModalResult<TokenKind> {
         }
     }
 
-    // Optional type suffix: alphabetic start, then alphanumeric/underscore.
+    // Optional type suffix: allow `_` separator before the suffix (e.g. `4.2_f32`).
+    // Suffix proper starts with alphabetic, followed by alphanumeric/underscore.
     let mut suffix_end = end;
     let mut suffix_iter = s[end..].char_indices().peekable();
+    if let Some(&(off, ch)) = suffix_iter.peek() {
+        if ch == '_' {
+            if let Some((_, next_ch)) = suffix_iter.clone().nth(1) {
+                if next_ch.is_ascii_alphabetic() {
+                    suffix_end = end + off + ch.len_utf8();
+                    suffix_iter.next();
+                }
+            }
+        }
+    }
     if let Some(&(off, ch)) = suffix_iter.peek() {
         if ch.is_ascii_alphabetic() {
             suffix_end = end + off + ch.len_utf8();
