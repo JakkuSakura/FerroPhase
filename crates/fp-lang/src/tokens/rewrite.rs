@@ -12,27 +12,10 @@ fn lower_trailing_dot_numbers(tokens: Vec<Token>) -> Vec<Token> {
     let mut out = Vec::with_capacity(tokens.len());
     let mut i = 0usize;
     while i < tokens.len() {
-        if tokens[i].kind == TokenKind::Number
-            && tokens
-                .get(i + 1)
-                .is_some_and(|tok| tok.kind == TokenKind::Symbol && tok.lexeme == ".")
-        {
-            let next = tokens.get(i + 2);
-            let next_is_field_like = next.is_some_and(|tok| {
-                matches!(
-                    tok.kind,
-                    TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_)
-                )
-            });
-            if !next_is_field_like {
-                let dot = tokens[i + 1].clone();
-                let mut merged = tokens[i].clone();
-                merged.lexeme.push('.');
-                merged.span.end = dot.span.end;
-                out.push(merged);
-                i += 2;
-                continue;
-            }
+        if let Some(merged) = try_merge_trailing_dot_number(&tokens, i) {
+            out.push(merged);
+            i += 2;
+            continue;
         }
         out.push(tokens[i].clone());
         i += 1;
@@ -46,72 +29,13 @@ fn lower_fn_generic_closing_shifts(tokens: Vec<Token>) -> Result<Vec<Token>> {
     //
     // This pass only splits `>>` while we're inside a function generic parameter list.
     let mut out = Vec::with_capacity(tokens.len());
-    let mut in_fn_header = false;
-    let mut saw_fn_name = false;
-    let mut in_generics = false;
-    let mut angle_depth: i32 = 0;
-
+    let mut state = FnGenericShiftState::new();
     for tok in tokens {
-        if matches!(tok.kind, TokenKind::Keyword(Keyword::Fn)) {
-            in_fn_header = true;
-            saw_fn_name = false;
-            in_generics = false;
-            angle_depth = 0;
-            out.push(tok);
+        if state.process(tok, &mut out)? {
             continue;
         }
-        if in_fn_header {
-            if tok.kind == TokenKind::Symbol && tok.lexeme == "{" {
-                in_fn_header = false;
-                saw_fn_name = false;
-                in_generics = false;
-                angle_depth = 0;
-                out.push(tok);
-                continue;
-            }
-            if !saw_fn_name && tok.kind == TokenKind::Ident {
-                saw_fn_name = true;
-                out.push(tok);
-                continue;
-            }
-            if saw_fn_name && !in_generics && tok.kind == TokenKind::Symbol && tok.lexeme == "<" {
-                in_generics = true;
-                angle_depth = 1;
-                out.push(tok);
-                continue;
-            }
-            if in_generics {
-                if tok.kind == TokenKind::Symbol && tok.lexeme == "<" {
-                    angle_depth += 1;
-                    out.push(tok);
-                    continue;
-                }
-                if tok.kind == TokenKind::Symbol && tok.lexeme == ">" {
-                    angle_depth -= 1;
-                    if angle_depth <= 0 {
-                        in_generics = false;
-                        angle_depth = 0;
-                    }
-                    out.push(tok);
-                    continue;
-                }
-                if tok.kind == TokenKind::Symbol && tok.lexeme == ">>" {
-                    // Split into two consecutive `>` tokens.
-                    out.push(synth(">", tok.span)?);
-                    out.push(synth(">", tok.span)?);
-                    angle_depth -= 2;
-                    if angle_depth <= 0 {
-                        in_generics = false;
-                        angle_depth = 0;
-                    }
-                    continue;
-                }
-            }
-        }
-
         out.push(tok);
     }
-
     Ok(out)
 }
 
@@ -119,36 +43,8 @@ fn lower_emit(tokens: Vec<Token>) -> Result<Vec<Token>> {
     let mut out = Vec::with_capacity(tokens.len());
     let mut i = 0usize;
     while i < tokens.len() {
-        if matches!(tokens[i].kind, TokenKind::Keyword(Keyword::Emit))
-            && tokens
-                .get(i + 1)
-                .is_some_and(|t| t.kind == TokenKind::Symbol && t.lexeme == "!")
-            && tokens
-                .get(i + 2)
-                .is_some_and(|t| t.kind == TokenKind::Symbol && t.lexeme == "{")
-        {
-            // TODO(semantic constraints): `emit! { ... }` is currently desugared in this token
-            // rewrite pass into `splice(quote { ... })`, without validating where it appears.
-            //
-            // If we ever want diagnostics like “emit! only allowed inside const blocks”, that
-            // belongs in a later semantic/typing stage (after AST), because a token pass cannot
-            // reliably understand surrounding context.
-            let (group_end, group_tokens) = consume_balanced_group(&tokens, i + 2)
-                .ok_or_else(|| eyre::eyre!("unterminated emit! {{...}} group"))?;
-
-            // TODO: synthesized token spans are currently anchored to the `emit` span.
-            // This is convenient but yields coarse diagnostics. Possible follow-ups:
-            // - pick better spans per synthesized token (e.g. around `!` / `{`)
-            // - or add a synthetic/derived marker to Token for diagnostics.
-            let emit_span = tokens[i].span;
-            let bang_span = tokens[i + 1].span;
-            let group_span = tokens[i + 2].span;
-            out.push(synth("splice", emit_span)?);
-            out.push(synth("(", bang_span)?);
-            out.push(synth("quote", group_span)?);
-            out.extend(group_tokens.into_iter().cloned());
-            out.push(synth(")", group_span)?);
-
+        if let Some((group_end, replacement)) = try_lower_emit(&tokens, i)? {
+            out.extend(replacement);
             i = group_end + 1;
             continue;
         }
@@ -157,6 +53,180 @@ fn lower_emit(tokens: Vec<Token>) -> Result<Vec<Token>> {
         i += 1;
     }
     Ok(out)
+}
+
+fn try_merge_trailing_dot_number(tokens: &[Token], idx: usize) -> Option<Token> {
+    let current = tokens.get(idx)?;
+    if !is_number(current) {
+        return None;
+    }
+    let dot = tokens.get(idx + 1)?;
+    if !is_symbol(dot, ".") {
+        return None;
+    }
+    let next_is_field_like = tokens
+        .get(idx + 2)
+        .is_some_and(|tok| is_field_like_after_dot(tok));
+    if next_is_field_like {
+        return None;
+    }
+
+    let mut merged = current.clone();
+    merged.lexeme.push('.');
+    merged.span.end = dot.span.end;
+    Some(merged)
+}
+
+fn try_lower_emit(tokens: &[Token], idx: usize) -> Result<Option<(usize, Vec<Token>)>> {
+    let current = tokens.get(idx)?;
+    if !is_keyword(current, Keyword::Emit) {
+        return Ok(None);
+    }
+    if !tokens.get(idx + 1).is_some_and(|t| is_symbol(t, "!")) {
+        return Ok(None);
+    }
+    if !tokens.get(idx + 2).is_some_and(|t| is_symbol(t, "{")) {
+        return Ok(None);
+    }
+
+    // TODO(semantic constraints): `emit! { ... }` is currently desugared in this token
+    // rewrite pass into `splice(quote { ... })`, without validating where it appears.
+    //
+    // If we ever want diagnostics like “emit! only allowed inside const blocks”, that
+    // belongs in a later semantic/typing stage (after AST), because a token pass cannot
+    // reliably understand surrounding context.
+    let (group_end, group_tokens) = consume_balanced_group(tokens, idx + 2)
+        .ok_or_else(|| eyre::eyre!("unterminated emit! {{...}} group"))?;
+
+    // TODO: synthesized token spans are currently anchored to the `emit` span.
+    // This is convenient but yields coarse diagnostics. Possible follow-ups:
+    // - pick better spans per synthesized token (e.g. around `!` / `{`)
+    // - or add a synthetic/derived marker to Token for diagnostics.
+    let emit_span = tokens[idx].span;
+    let bang_span = tokens[idx + 1].span;
+    let group_span = tokens[idx + 2].span;
+
+    let mut replacement = Vec::with_capacity(group_tokens.len() + 4);
+    replacement.push(synth("splice", emit_span)?);
+    replacement.push(synth("(", bang_span)?);
+    replacement.push(synth("quote", group_span)?);
+    replacement.extend(group_tokens.iter().cloned());
+    replacement.push(synth(")", group_span)?);
+
+    Ok(Some((group_end, replacement)))
+}
+
+fn is_field_like_after_dot(token: &Token) -> bool {
+    matches!(token.kind, TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_))
+}
+
+fn is_keyword(token: &Token, keyword: Keyword) -> bool {
+    matches!(token.kind, TokenKind::Keyword(kw) if kw == keyword)
+}
+
+fn is_number(token: &Token) -> bool {
+    token.kind == TokenKind::Number
+}
+
+fn is_symbol(token: &Token, lexeme: &str) -> bool {
+    token.kind == TokenKind::Symbol && token.lexeme == lexeme
+}
+
+fn is_ident(token: &Token) -> bool {
+    token.kind == TokenKind::Ident
+}
+
+struct FnGenericShiftState {
+    in_fn_header: bool,
+    saw_fn_name: bool,
+    in_generics: bool,
+    angle_depth: i32,
+}
+
+impl FnGenericShiftState {
+    fn new() -> Self {
+        Self {
+            in_fn_header: false,
+            saw_fn_name: false,
+            in_generics: false,
+            angle_depth: 0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.in_fn_header = false;
+        self.saw_fn_name = false;
+        self.in_generics = false;
+        self.angle_depth = 0;
+    }
+
+    fn start_fn(&mut self) {
+        self.in_fn_header = true;
+        self.saw_fn_name = false;
+        self.in_generics = false;
+        self.angle_depth = 0;
+    }
+
+    fn process(&mut self, tok: Token, out: &mut Vec<Token>) -> Result<bool> {
+        if is_keyword(&tok, Keyword::Fn) {
+            self.start_fn();
+            out.push(tok);
+            return Ok(true);
+        }
+
+        if !self.in_fn_header {
+            return Ok(false);
+        }
+
+        if is_symbol(&tok, "{") {
+            self.reset();
+            out.push(tok);
+            return Ok(true);
+        }
+
+        if !self.saw_fn_name && is_ident(&tok) {
+            self.saw_fn_name = true;
+            out.push(tok);
+            return Ok(true);
+        }
+
+        if self.saw_fn_name && !self.in_generics && is_symbol(&tok, "<") {
+            self.in_generics = true;
+            self.angle_depth = 1;
+            out.push(tok);
+            return Ok(true);
+        }
+
+        if self.in_generics {
+            if is_symbol(&tok, "<") {
+                self.angle_depth += 1;
+                out.push(tok);
+                return Ok(true);
+            }
+            if is_symbol(&tok, ">") {
+                self.angle_depth -= 1;
+                if self.angle_depth <= 0 {
+                    self.in_generics = false;
+                    self.angle_depth = 0;
+                }
+                out.push(tok);
+                return Ok(true);
+            }
+            if is_symbol(&tok, ">>") {
+                // Split into two consecutive `>` tokens.
+                out.push(synth(">", tok.span)?);
+                out.push(synth(">", tok.span)?);
+                self.angle_depth -= 2;
+                if self.angle_depth <= 0 {
+                    self.in_generics = false;
+                    self.angle_depth = 0;
+                }
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
 }
 
 fn consume_balanced_group<'a>(

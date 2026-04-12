@@ -91,6 +91,65 @@ impl Classified {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+enum SplitStrategy {
+    RightShift,
+    Turbofish,
+}
+
+enum PostfixParseOutcome {
+    Applied(SyntaxNode),
+    Stop,
+}
+
+enum TypeLookahead {
+    RefTypeLiteral,
+    FnType,
+    None,
+}
+
+enum GenericArgsEntry {
+    Any,
+    AfterColon2,
+}
+
+struct RangeParseContext;
+
+impl RangeParseContext {
+    fn end_is_missing(parser: &Parser) -> bool {
+        matches!(
+            parser.peek_non_trivia_raw(),
+            None | Some("]") | Some(")") | Some("}") | Some(",") | Some(";")
+        )
+    }
+}
+
+impl SplitStrategy {
+    fn raw(self) -> &'static str {
+        match self {
+            SplitStrategy::RightShift => ">>",
+            SplitStrategy::Turbofish => "::<",
+        }
+    }
+
+    fn parts(self) -> (&'static str, &'static str) {
+        match self {
+            SplitStrategy::RightShift => (">", ">"),
+            SplitStrategy::Turbofish => ("::", "<"),
+        }
+    }
+}
+
+fn make_symbol_piece(token: &Classified, raw: &str) -> Classified {
+    Classified {
+        raw: raw.to_string(),
+        normalized: raw.to_string(),
+        kind: TokenKind::Symbol,
+        lexeme_kind: token.lexeme_kind,
+        span: token.span,
+    }
+}
+
 struct Parser {
     tokens: Vec<Classified>,
     idx: usize,
@@ -138,28 +197,7 @@ impl Parser {
     }
 
     fn split_right_shift(&mut self) {
-        let Some(token) = self.tokens.get(self.idx).cloned() else {
-            return;
-        };
-        if token.raw != ">>" {
-            return;
-        }
-        let first = Classified {
-            raw: ">".to_string(),
-            normalized: ">".to_string(),
-            kind: TokenKind::Symbol,
-            lexeme_kind: token.lexeme_kind,
-            span: token.span,
-        };
-        let second = Classified {
-            raw: ">".to_string(),
-            normalized: ">".to_string(),
-            kind: TokenKind::Symbol,
-            lexeme_kind: token.lexeme_kind,
-            span: token.span,
-        };
-        self.tokens[self.idx] = first;
-        self.tokens.insert(self.idx + 1, second);
+        self.split_token_at(self.idx, SplitStrategy::RightShift);
     }
 
     fn split_turbofish(&mut self) {
@@ -167,28 +205,21 @@ impl Parser {
     }
 
     fn split_turbofish_at(&mut self, idx: usize) {
+        self.split_token_at(idx, SplitStrategy::Turbofish);
+    }
+
+    fn split_token_at(&mut self, idx: usize, strategy: SplitStrategy) {
         let Some(token) = self.tokens.get(idx).cloned() else {
             return;
         };
-        if token.raw != "::<" {
+        if token.raw != strategy.raw() {
             return;
         }
-        let colon_colon = Classified {
-            raw: "::".to_string(),
-            normalized: "::".to_string(),
-            kind: TokenKind::Symbol,
-            lexeme_kind: token.lexeme_kind,
-            span: token.span,
-        };
-        let lt = Classified {
-            raw: "<".to_string(),
-            normalized: "<".to_string(),
-            kind: TokenKind::Symbol,
-            lexeme_kind: token.lexeme_kind,
-            span: token.span,
-        };
-        self.tokens[idx] = colon_colon;
-        self.tokens.insert(idx + 1, lt);
+        let (first_raw, second_raw) = strategy.parts();
+        let first = make_symbol_piece(&token, first_raw);
+        let second = make_symbol_piece(&token, second_raw);
+        self.tokens[idx] = first;
+        self.tokens.insert(idx + 1, second);
     }
 
     fn parse_root_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
@@ -281,7 +312,7 @@ impl Parser {
             if kind == SyntaxKind::ExprCast {
                 let ty = self.parse_type_node()?;
                 children.push(SyntaxElement::Node(Box::new(ty)));
-            } else if kind == SyntaxKind::ExprRange && self.range_end_is_missing() {
+            } else if kind == SyntaxKind::ExprRange && RangeParseContext::end_is_missing(self) {
                 let span = span_for_children(&children);
                 left = SyntaxNode::new(kind, children, span);
                 continue;
@@ -333,13 +364,6 @@ impl Parser {
         Ok(Some(SyntaxNode::new(kind, children, span)))
     }
 
-    fn range_end_is_missing(&self) -> bool {
-        matches!(
-            self.peek_non_trivia_raw(),
-            None | Some("]") | Some(")") | Some("}") | Some(",") | Some(";")
-        )
-    }
-
     fn parse_prefix(
         &mut self,
         allow_struct_literal: bool,
@@ -360,7 +384,10 @@ impl Parser {
                 return Ok(SyntaxNode::new(SyntaxKind::ExprAttr, children, span));
             }
         }
-        if self.looks_like_ref_type_literal() {
+        if matches!(
+            self.classify_type_lookahead(),
+            TypeLookahead::RefTypeLiteral
+        ) {
             return self.parse_type_literal_expr();
         }
         if self.peek_non_trivia_normalized() == Some("await") {
@@ -436,102 +463,138 @@ impl Parser {
         allow_struct_literal: bool,
     ) -> Result<SyntaxNode, ExprCstParseError> {
         loop {
-            let combined_attr = matches!(self.peek_non_trivia_raw(), Some("#[") | Some("#!["));
-            let is_outer_attr = (combined_attr && self.peek_non_trivia_raw() != Some("#!["))
-                || (self.peek_non_trivia_raw() == Some("#")
-                    && self.peek_second_non_trivia_raw() != Some("!"));
-            if is_outer_attr {
-                base = self.parse_postfix_attr(base)?;
-                continue;
-            }
-            if self.has_turbofish_start()
-                && matches!(
-                    base.kind,
-                    SyntaxKind::ExprSelect
-                        | SyntaxKind::ExprPath
-                        | SyntaxKind::ExprName
-                        | SyntaxKind::ExprQuoteToken
-                )
-            {
-                base = self.parse_turbofish_postfix(base)?;
-                continue;
-            }
-            match self.peek_non_trivia_raw() {
-                Some("{") => {
-                    if allow_struct_literal
-                        && matches!(
-                            base.kind,
-                            SyntaxKind::ExprName
-                                | SyntaxKind::ExprPath
-                                | SyntaxKind::ExprQuoteToken
-                        )
-                    {
-                        base = self.parse_struct_literal(base)?;
-                        continue;
-                    }
-                    break;
-                }
-                Some("(") => {
-                    base = self.parse_call(base)?;
-                }
-                Some("[") => {
-                    base = self.parse_index(base)?;
-                }
-                Some("?") => {
-                    let mut children = Vec::new();
-                    children.push(SyntaxElement::Node(Box::new(base.clone())));
-                    self.bump_trivia_into(&mut children);
-                    self.bump_token_into(&mut children);
-                    let span = span_for_children(&children);
-                    base = SyntaxNode::new(SyntaxKind::ExprTry, children, span);
-                }
-                Some(".") => {
-                    if base.kind == SyntaxKind::ExprNumber {
-                        let next = self.peek_nth_non_trivia(2);
-                        let is_field_like = next.is_some_and(|tok| {
-                            matches!(tok.kind, TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_))
-                        });
-                        if !is_field_like {
-                            let mut children = base.children.clone();
-                            self.bump_trivia_into(&mut children);
-                            self.bump_token_into(&mut children);
-                            let span = span_for_children(&children);
-                            base = SyntaxNode::new(SyntaxKind::ExprNumber, children, span);
-                            continue;
-                        }
-                    }
-                    // `.await` or field selection
-                    base = self.parse_dot_postfix(base)?;
-                }
-                Some("::") => {
-                    if matches!(
-                        base.kind,
-                        SyntaxKind::ExprSelect
-                            | SyntaxKind::ExprPath
-                            | SyntaxKind::ExprName
-                            | SyntaxKind::ExprQuoteToken
-                    ) {
-                        if self.peek_second_non_trivia_raw() == Some("<")
-                            || (self.peek_nth_non_trivia(2)
-                                .is_some_and(|tok| tok.raw.as_str() == ":")
-                                && self
-                                    .peek_nth_non_trivia(3)
-                                    .is_some_and(|tok| tok.raw.as_str() == "<"))
-                        {
-                            base = self.parse_turbofish_postfix(base)?;
-                            continue;
-                        }
-                    }
-                    break;
-                }
-                Some("!") => {
-                    base = self.parse_macro_call(base)?;
-                }
-                _ => break,
+            match self.parse_postfix_step(base, allow_struct_literal)? {
+                PostfixParseOutcome::Applied(updated) => base = updated,
+                PostfixParseOutcome::Stop => break,
             }
         }
 
         Ok(base)
+    }
+
+    fn parse_postfix_step(
+        &mut self,
+        base: SyntaxNode,
+        allow_struct_literal: bool,
+    ) -> Result<PostfixParseOutcome, ExprCstParseError> {
+        if self.postfix_has_outer_attr() {
+            let updated = self.parse_postfix_attr(base)?;
+            return Ok(PostfixParseOutcome::Applied(updated));
+        }
+        if self.has_turbofish_start() && self.postfix_allows_turbofish(&base) {
+            let updated = self.parse_turbofish_postfix(base)?;
+            return Ok(PostfixParseOutcome::Applied(updated));
+        }
+
+        match self.peek_non_trivia_raw() {
+            Some("{") => {
+                if self.postfix_allows_struct_literal(&base, allow_struct_literal) {
+                    let updated = self.parse_struct_literal(base)?;
+                    return Ok(PostfixParseOutcome::Applied(updated));
+                }
+                Ok(PostfixParseOutcome::Stop)
+            }
+            Some("(") => Ok(PostfixParseOutcome::Applied(self.parse_call(base)?)),
+            Some("[") => Ok(PostfixParseOutcome::Applied(self.parse_index(base)?)),
+            Some("?") => Ok(PostfixParseOutcome::Applied(self.parse_try_postfix(base))),
+            Some(".") => self.parse_dot_postfix_or_number(base),
+            Some("::") => self.parse_colon2_postfix(base),
+            Some("!") => Ok(PostfixParseOutcome::Applied(self.parse_macro_call(base)?)),
+            _ => Ok(PostfixParseOutcome::Stop),
+        }
+    }
+
+    fn parse_try_postfix(&mut self, base: SyntaxNode) -> SyntaxNode {
+        let mut children = Vec::new();
+        children.push(SyntaxElement::Node(Box::new(base)));
+        self.bump_trivia_into(&mut children);
+        self.bump_token_into(&mut children);
+        let span = span_for_children(&children);
+        SyntaxNode::new(SyntaxKind::ExprTry, children, span)
+    }
+
+    fn parse_dot_postfix_or_number(
+        &mut self,
+        base: SyntaxNode,
+    ) -> Result<PostfixParseOutcome, ExprCstParseError> {
+        if self.dot_extends_number(&base) {
+            let updated = self.extend_number_with_dot(base);
+            return Ok(PostfixParseOutcome::Applied(updated));
+        }
+        let updated = self.parse_dot_postfix(base)?;
+        Ok(PostfixParseOutcome::Applied(updated))
+    }
+
+    fn parse_colon2_postfix(
+        &mut self,
+        base: SyntaxNode,
+    ) -> Result<PostfixParseOutcome, ExprCstParseError> {
+        if self.postfix_allows_turbofish(&base) && self.colon2_starts_turbofish() {
+            let updated = self.parse_turbofish_postfix(base)?;
+            return Ok(PostfixParseOutcome::Applied(updated));
+        }
+        Ok(PostfixParseOutcome::Stop)
+    }
+
+    fn postfix_has_outer_attr(&self) -> bool {
+        let combined_attr = matches!(self.peek_non_trivia_raw(), Some("#[") | Some("#!["));
+        (combined_attr && self.peek_non_trivia_raw() != Some("#!["))
+            || (self.peek_non_trivia_raw() == Some("#")
+                && self.peek_second_non_trivia_raw() != Some("!"))
+    }
+
+    fn postfix_allows_turbofish(&self, base: &SyntaxNode) -> bool {
+        matches!(
+            base.kind,
+            SyntaxKind::ExprSelect
+                | SyntaxKind::ExprPath
+                | SyntaxKind::ExprName
+                | SyntaxKind::ExprQuoteToken
+        )
+    }
+
+    fn postfix_allows_struct_literal(
+        &self,
+        base: &SyntaxNode,
+        allow_struct_literal: bool,
+    ) -> bool {
+        allow_struct_literal
+            && matches!(
+                base.kind,
+                SyntaxKind::ExprName | SyntaxKind::ExprPath | SyntaxKind::ExprQuoteToken
+            )
+    }
+
+    fn colon2_starts_turbofish(&self) -> bool {
+        self.peek_second_non_trivia_raw() == Some("<")
+            || (self
+                .peek_nth_non_trivia(2)
+                .is_some_and(|tok| tok.raw.as_str() == ":")
+                && self
+                    .peek_nth_non_trivia(3)
+                    .is_some_and(|tok| tok.raw.as_str() == "<"))
+    }
+
+    fn dot_extends_number(&self, base: &SyntaxNode) -> bool {
+        if base.kind != SyntaxKind::ExprNumber {
+            return false;
+        }
+        let next = self.peek_nth_non_trivia(2);
+        let is_field_like = next.is_some_and(|tok| {
+            matches!(
+                tok.kind,
+                TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_)
+            )
+        });
+        !is_field_like
+    }
+
+    fn extend_number_with_dot(&mut self, base: SyntaxNode) -> SyntaxNode {
+        let mut children = base.children.clone();
+        self.bump_trivia_into(&mut children);
+        self.bump_token_into(&mut children);
+        let span = span_for_children(&children);
+        SyntaxNode::new(SyntaxKind::ExprNumber, children, span)
     }
 
     fn parse_postfix_attr(
@@ -1463,34 +1526,16 @@ impl Parser {
         }
         self.bump_trivia_into(&mut path_children);
 
-        if self.peek_non_trivia_raw() == Some("::<") {
-            self.split_turbofish();
-        }
-        if self.peek_non_trivia_raw() == Some("::")
-            && self
-                .peek_nth_non_trivia(1)
-                .is_some_and(|tok| tok.raw.as_str() == "<")
-        {
-            self.bump_token_into(&mut path_children);
-            self.bump_trivia_into(&mut path_children);
-            self.parse_generic_args_into(&mut path_children)?;
-            self.bump_trivia_into(&mut path_children);
-        }
-        if self.peek_non_trivia_raw() == Some("<") {
-            self.parse_generic_args_into(&mut path_children)?;
-            self.bump_trivia_into(&mut path_children);
-        }
+        self.parse_generic_args_entry_into(&mut path_children, GenericArgsEntry::Any)?;
 
         while self.peek_non_trivia_raw() == Some("::") {
             saw_colon = true;
             self.bump_token_into(&mut path_children);
             self.bump_trivia_into(&mut path_children);
-            if self.peek_non_trivia_raw() == Some("::<") {
-                self.split_turbofish();
-            }
-            if self.peek_non_trivia_raw() == Some("<") {
-                self.parse_generic_args_into(&mut path_children)?;
-                self.bump_trivia_into(&mut path_children);
+            if self.parse_generic_args_entry_into(
+                &mut path_children,
+                GenericArgsEntry::AfterColon2,
+            )? {
                 continue;
             }
             match self.peek_non_trivia_token_kind() {
@@ -1500,23 +1545,7 @@ impl Parser {
                 _ => return Err(self.error("expected path segment")),
             }
             self.bump_trivia_into(&mut path_children);
-            if self.peek_non_trivia_raw() == Some("::<") {
-                self.split_turbofish();
-            }
-            if self.peek_non_trivia_raw() == Some("::")
-                && self
-                    .peek_nth_non_trivia(1)
-                    .is_some_and(|tok| tok.raw.as_str() == "<")
-            {
-                self.bump_token_into(&mut path_children);
-                self.bump_trivia_into(&mut path_children);
-                self.parse_generic_args_into(&mut path_children)?;
-                self.bump_trivia_into(&mut path_children);
-            }
-            if self.peek_non_trivia_raw() == Some("<") {
-                self.parse_generic_args_into(&mut path_children)?;
-                self.bump_trivia_into(&mut path_children);
-            }
+            self.parse_generic_args_entry_into(&mut path_children, GenericArgsEntry::Any)?;
         }
 
         let path_span = span_for_children(&path_children);
@@ -2385,27 +2414,13 @@ impl Parser {
                 left = SyntaxNode::new(SyntaxKind::TyOptional, children, span);
                 continue;
             }
-            if op == "::"
-                && matches!(left.kind, SyntaxKind::TyPath)
-                && self
-                    .peek_nth_non_trivia(1)
-                    .is_some_and(|tok| tok.raw.as_str() == "<")
-            {
+            if matches!(left.kind, SyntaxKind::TyPath) && matches!(op, "::" | "<") {
                 let mut children = left.children.clone();
-                self.bump_trivia_into(&mut children);
-                self.bump_token_into(&mut children);
-                self.bump_trivia_into(&mut children);
-                self.parse_generic_args_into(&mut children)?;
-                let span = span_for_children(&children);
-                left = SyntaxNode::new(SyntaxKind::TyPath, children, span);
-                continue;
-            }
-            if op == "<" && matches!(left.kind, SyntaxKind::TyPath) {
-                let mut children = left.children.clone();
-                self.parse_generic_args_into(&mut children)?;
-                let span = span_for_children(&children);
-                left = SyntaxNode::new(SyntaxKind::TyPath, children, span);
-                continue;
+                if self.parse_generic_args_entry_into(&mut children, GenericArgsEntry::Any)? {
+                    let span = span_for_children(&children);
+                    left = SyntaxNode::new(SyntaxKind::TyPath, children, span);
+                    continue;
+                }
             }
             if is_type_boundary_token(op) {
                 break;
@@ -2489,7 +2504,7 @@ impl Parser {
         {
             return self.parse_for_binder_type(stops);
         }
-        if self.looks_like_fn_type() {
+        if matches!(self.classify_type_lookahead(), TypeLookahead::FnType) {
             return self.parse_fn_type();
         }
 
@@ -2979,23 +2994,7 @@ impl Parser {
         }
         self.bump_trivia_into(&mut children);
 
-        if self.peek_non_trivia_raw() == Some("::<") {
-            self.split_turbofish();
-        }
-        if self.peek_non_trivia_raw() == Some("::")
-            && self
-                .peek_nth_non_trivia(1)
-                .is_some_and(|tok| tok.raw.as_str() == "<")
-        {
-            self.bump_token_into(&mut children);
-            self.bump_trivia_into(&mut children);
-            self.parse_generic_args_into(&mut children)?;
-            self.bump_trivia_into(&mut children);
-        }
-        if self.peek_non_trivia_raw() == Some("<") {
-            self.parse_generic_args_into(&mut children)?;
-            self.bump_trivia_into(&mut children);
-        }
+        self.parse_generic_args_entry_into(&mut children, GenericArgsEntry::Any)?;
 
         loop {
             if self.peek_non_trivia_raw() == Some("::<") {
@@ -3006,11 +3005,7 @@ impl Parser {
             }
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
-            if self.peek_non_trivia_raw() == Some("::<") {
-                self.split_turbofish();
-            }
-            if self.peek_non_trivia_raw() == Some("<") {
-                self.parse_generic_args_into(&mut children)?;
+            if self.parse_generic_args_entry_into(&mut children, GenericArgsEntry::AfterColon2)? {
                 continue;
             }
             match self.peek_non_trivia_token_kind() {
@@ -3024,21 +3019,7 @@ impl Parser {
             }
         }
 
-        if self.peek_non_trivia_raw() == Some("::<") {
-            self.split_turbofish();
-        }
-        if self.peek_non_trivia_raw() == Some("::")
-            && self
-                .peek_nth_non_trivia(1)
-                .is_some_and(|tok| tok.raw.as_str() == "<")
-        {
-            self.bump_token_into(&mut children);
-            self.bump_trivia_into(&mut children);
-            self.parse_generic_args_into(&mut children)?;
-        }
-        if self.peek_non_trivia_raw() == Some("<") {
-            self.parse_generic_args_into(&mut children)?;
-        }
+        self.parse_generic_args_entry_into(&mut children, GenericArgsEntry::Any)?;
 
         if self.peek_non_trivia_raw() == Some("(") {
             self.bump_token_into(&mut children); // '('
@@ -3423,11 +3404,7 @@ impl Parser {
             is_path = true;
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
-            if self.peek_non_trivia_raw() == Some("::<") {
-                self.split_turbofish();
-            }
-            if self.peek_non_trivia_raw() == Some("<") {
-                self.parse_generic_args_into(&mut children)?;
+            if self.parse_generic_args_entry_into(&mut children, GenericArgsEntry::AfterColon2)? {
                 continue;
             }
 
@@ -3533,6 +3510,34 @@ impl Parser {
         }
         let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::TyUnknown, children, span))
+    }
+
+    fn parse_generic_args_entry_into(
+        &mut self,
+        out: &mut Vec<SyntaxElement>,
+        entry: GenericArgsEntry,
+    ) -> Result<bool, ExprCstParseError> {
+        if matches!(entry, GenericArgsEntry::Any) && self.peek_non_trivia_raw() == Some("::<") {
+            self.split_turbofish();
+        }
+        if matches!(entry, GenericArgsEntry::Any)
+            && self.peek_non_trivia_raw() == Some("::")
+            && self
+                .peek_nth_non_trivia(1)
+                .is_some_and(|tok| tok.raw.as_str() == "<")
+        {
+            self.bump_token_into(out);
+            self.bump_trivia_into(out);
+            self.parse_generic_args_into(out)?;
+            self.bump_trivia_into(out);
+            return Ok(true);
+        }
+        if self.peek_non_trivia_raw() == Some("<") {
+            self.parse_generic_args_into(out)?;
+            self.bump_trivia_into(out);
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     fn parse_generic_args_into(
@@ -3934,6 +3939,16 @@ impl Parser {
         };
         matches!(third.kind, TokenKind::Ident | TokenKind::Keyword(_))
             || matches!(third.raw.as_str(), "(" | "[" | "&")
+    }
+
+    fn classify_type_lookahead(&self) -> TypeLookahead {
+        if self.looks_like_ref_type_literal() {
+            return TypeLookahead::RefTypeLiteral;
+        }
+        if self.looks_like_fn_type() {
+            return TypeLookahead::FnType;
+        }
+        TypeLookahead::None
     }
 
     fn peek_nth_non_trivia_token_kind(&self, n: usize) -> Option<TokenKind> {

@@ -36,7 +36,7 @@ impl MacroExpansionParser for FerroMacroExpansionParser {
             &lexemes,
             file_id,
             |lexemes, file_id| parse_expr_lexemes_prefix_to_cst(lexemes, file_id),
-            |lex| !lex.is_trivia(),
+            TrailingStrategy::IgnoreTrivia,
             "macro expression tokens contain trailing input",
         )?;
         lower_expr_from_cst(&cst).map_err(|err| fp_core::error::Error::from(err.to_string()))
@@ -49,7 +49,7 @@ impl MacroExpansionParser for FerroMacroExpansionParser {
             &lexemes,
             file_id,
             |lexemes, file_id| parse_type_lexemes_prefix_to_cst(lexemes, file_id, &[]),
-            |lex| lex.kind == LexemeKind::Token,
+            TrailingStrategy::TokenOnly,
             "macro type expansion has trailing input",
         )?;
         crate::ast::expr::lower_type_from_cst(&cst)
@@ -64,15 +64,29 @@ fn parse_macro_prefix_cst(
         &[Lexeme],
         FileId,
     ) -> std::result::Result<(crate::syntax::SyntaxNode, usize), crate::cst::ExprCstParseError>,
-    has_trailing: impl Fn(&Lexeme) -> bool,
+    trailing: TrailingStrategy,
     trailing_message: &'static str,
 ) -> Result<crate::syntax::SyntaxNode> {
     let (cst, consumed) =
         parse(lexemes, file_id).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
-    if lexemes[consumed..].iter().any(has_trailing) {
+    if lexemes[consumed..].iter().any(|lex| trailing.has_trailing(lex)) {
         return Err(fp_core::error::Error::from(trailing_message));
     }
     Ok(cst)
+}
+
+enum TrailingStrategy {
+    IgnoreTrivia,
+    TokenOnly,
+}
+
+impl TrailingStrategy {
+    fn has_trailing(&self, lexeme: &Lexeme) -> bool {
+        match self {
+            TrailingStrategy::IgnoreTrivia => !lexeme.is_trivia(),
+            TrailingStrategy::TokenOnly => lexeme.kind == LexemeKind::Token,
+        }
+    }
 }
 
 fn macro_token_trees_to_tokens(tokens: &[MacroTokenTree]) -> Vec<Token> {
@@ -87,11 +101,7 @@ fn append_macro_tokens(tokens: &[MacroTokenTree], out: &mut Vec<Token>) {
             MacroTokenTree::Token(tok) => {
                 let (kind, lexeme) = classify_and_normalize_lexeme(&tok.text)
                     .unwrap_or((TokenKind::Symbol, tok.text.clone()));
-                out.push(Token {
-                    kind,
-                    lexeme,
-                    span: lex_span_from_span(tok.span),
-                });
+                out.push(make_token(kind, lexeme, lex_span_from_span(tok.span)));
             }
             MacroTokenTree::Group(group) => {
                 let (open, close) = match group.delimiter {
@@ -100,18 +110,18 @@ fn append_macro_tokens(tokens: &[MacroTokenTree], out: &mut Vec<Token>) {
                     fp_core::ast::MacroDelimiter::Brace => ("{", "}"),
                 };
                 let (open_span, close_span) = lex_spans_for_group(group.span);
-                out.push(Token {
-                    kind: TokenKind::Symbol,
-                    lexeme: open.to_string(),
-                    span: open_span,
-                });
+                push_symbol_token(out, open, open_span);
                 append_macro_tokens(&group.tokens, out);
-                out.push(Token {
-                    kind: TokenKind::Symbol,
-                    lexeme: close.to_string(),
-                    span: close_span,
-                });
+                push_symbol_token(out, close, close_span);
             }
         }
     }
+}
+
+fn make_token(kind: TokenKind, lexeme: String, span: fp_core::span::Span) -> Token {
+    Token { kind, lexeme, span }
+}
+
+fn push_symbol_token(out: &mut Vec<Token>, symbol: &str, span: fp_core::span::Span) {
+    out.push(make_token(TokenKind::Symbol, symbol.to_string(), span));
 }
