@@ -153,7 +153,7 @@ the source file, not individual lines.
 ### Procedure
 
 1) **Enumerate files** in a stable order (lexicographic), excluding `target/`,
-   `.git/`, `bootstrap/`, and any `tests/` paths unless explicitly requested.
+   `.git/`, and any `tests/` paths unless explicitly requested.
 2) **Read the entire file** top to bottom; do not stop at the first match.
 3) **Summarize file intent** from module docs, public APIs, and main types.
 4) **Identify concerns with explicit reasoning**:
