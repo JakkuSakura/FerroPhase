@@ -124,6 +124,15 @@ pub enum CstKind {
     PatternWildcard,
     PatternTuple,
     PatternType,
+    PatternStruct,
+    PatternTupleStruct,
+    PatternBox,
+    PatternSlice,
+    PatternRest,
+    PatternBind,
+    PatternPath,
+    PatternParen,
+    PatternRef,
 
     MatchArm,
     StructField,
@@ -216,7 +225,16 @@ impl CstKind {
             CstKind::PatternIdent
             | CstKind::PatternWildcard
             | CstKind::PatternTuple
-            | CstKind::PatternType => CstCategory::Pattern,
+            | CstKind::PatternType
+            | CstKind::PatternStruct
+            | CstKind::PatternTupleStruct
+            | CstKind::PatternBox
+            | CstKind::PatternSlice
+            | CstKind::PatternRest
+            | CstKind::PatternBind
+            | CstKind::PatternPath
+            | CstKind::PatternParen
+            | CstKind::PatternRef => CstCategory::Pattern,
 
             CstKind::BlockStmtItem | CstKind::BlockStmtLet | CstKind::BlockStmtExpr => {
                 CstCategory::Stmt

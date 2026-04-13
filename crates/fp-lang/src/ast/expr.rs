@@ -988,23 +988,25 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
             })))
         }
         SyntaxKind::PatternBind => {
-            let mut pattern_nodes = node
-                .children
-                .iter()
-                .filter_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Pattern =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                });
-            let lhs = pattern_nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternBind))?;
-            let rhs = pattern_nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternBind))?;
+            let mut lhs: Option<&SyntaxNode> = None;
+            let mut rhs: Option<&SyntaxNode> = None;
+            for child in &node.children {
+                let crate::syntax::SyntaxElement::Node(n) = child else {
+                    continue;
+                };
+                if lhs.is_none() && n.kind.category() == CstCategory::Pattern {
+                    lhs = Some(n.as_ref());
+                    continue;
+                }
+                if rhs.is_none()
+                    && (n.kind.category() == CstCategory::Pattern
+                        || n.kind == SyntaxKind::ExprRange)
+                {
+                    rhs = Some(n.as_ref());
+                }
+            }
+            let lhs = lhs.ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternBind))?;
+            let rhs = rhs.ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternBind))?;
             let ident = match lhs.kind {
                 SyntaxKind::PatternIdent => match lower_pattern_from_cst(lhs)?.kind() {
                     PatternKind::Ident(ident) => ident.clone(),
@@ -1024,7 +1026,12 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
                 }
                 _ => return Err(LowerError::UnexpectedNode(SyntaxKind::PatternBind)),
             };
-            let pattern = lower_pattern_from_cst(rhs)?;
+            let pattern = match rhs.kind {
+                // In `x @ ..`, the parser currently emits `ExprRange` for the RHS.
+                // Treat it as a wildcard rest-pattern when lowering.
+                SyntaxKind::ExprRange => Pattern::new(PatternKind::Wildcard(PatternWildcard {})),
+                _ => lower_pattern_from_cst(rhs)?,
+            };
             Ok(Pattern::new(PatternKind::Bind(PatternBind {
                 ident,
                 pattern: Box::new(pattern),

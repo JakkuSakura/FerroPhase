@@ -10,6 +10,7 @@ use crate::ast::{lower_expr_from_cst, lower_items_from_cst};
 use crate::cst::{parse_expr_lexemes_prefix_to_cst, parse_type_lexemes_prefix_to_cst};
 use crate::lexer::lexeme::{Lexeme, LexemeKind};
 use crate::lexer::tokenizer::{classify_and_normalize_lexeme, Token, TokenKind};
+use crate::lexer::Span as TokSpan;
 
 #[derive(Clone)]
 pub struct FerroMacroExpansionParser {}
@@ -118,10 +119,10 @@ fn append_macro_tokens(tokens: &[MacroTokenTree], out: &mut Vec<Token>) {
     }
 }
 
-fn make_token(kind: TokenKind, lexeme: String, span: fp_core::span::Span) -> Token {
+fn make_token(kind: TokenKind, lexeme: String, span: TokSpan) -> Token {
     Token { kind, lexeme, span }
 }
 
-fn push_symbol_token(out: &mut Vec<Token>, symbol: &str, span: fp_core::span::Span) {
+fn push_symbol_token(out: &mut Vec<Token>, symbol: &str, span: TokSpan) {
     out.push(make_token(TokenKind::Symbol, symbol.to_string(), span));
 }

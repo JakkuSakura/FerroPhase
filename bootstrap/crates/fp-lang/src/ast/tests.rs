@@ -337,6 +337,22 @@ fn parse_items_ast_handles_const_item() {
 }
 
 #[test]
+fn parse_items_ast_handles_const_array_index_and_const_len_cast() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        fn main() {
+            const ARR: [i32; 6] = [42, 43, 44, 45, 46, 47];
+            const IDX: usize = 3;
+            const VAL: i32 = ARR[IDX];
+            const BLUB: [i32; (ARR[0] - 41) as usize] = [5];
+        }
+    "#;
+    let items = parser.parse_items_ast(src).expect("parse const indexing sample");
+    assert!(!items.is_empty(), "expected at least one parsed item");
+}
+
+#[test]
 fn parse_items_ast_handles_static_item() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

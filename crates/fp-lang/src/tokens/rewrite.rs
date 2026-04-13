@@ -31,7 +31,7 @@ fn lower_fn_generic_closing_shifts(tokens: Vec<Token>) -> Result<Vec<Token>> {
     let mut out = Vec::with_capacity(tokens.len());
     let mut state = FnGenericShiftState::new();
     for tok in tokens {
-        if state.process(tok, &mut out)? {
+        if state.process(&tok, &mut out)? {
             continue;
         }
         out.push(tok);
@@ -56,7 +56,9 @@ fn lower_emit(tokens: Vec<Token>) -> Result<Vec<Token>> {
 }
 
 fn try_merge_trailing_dot_number(tokens: &[Token], idx: usize) -> Option<Token> {
-    let current = tokens.get(idx)?;
+    let Some(current) = tokens.get(idx) else {
+        return None;
+    };
     if !is_number(current) {
         return None;
     }
@@ -78,7 +80,9 @@ fn try_merge_trailing_dot_number(tokens: &[Token], idx: usize) -> Option<Token> 
 }
 
 fn try_lower_emit(tokens: &[Token], idx: usize) -> Result<Option<(usize, Vec<Token>)>> {
-    let current = tokens.get(idx)?;
+    let Some(current) = tokens.get(idx) else {
+        return Ok(None);
+    };
     if !is_keyword(current, Keyword::Emit) {
         return Ok(None);
     }
@@ -167,10 +171,10 @@ impl FnGenericShiftState {
         self.angle_depth = 0;
     }
 
-    fn process(&mut self, tok: Token, out: &mut Vec<Token>) -> Result<bool> {
+    fn process(&mut self, tok: &Token, out: &mut Vec<Token>) -> Result<bool> {
         if is_keyword(&tok, Keyword::Fn) {
             self.start_fn();
-            out.push(tok);
+            out.push(tok.clone());
             return Ok(true);
         }
 
@@ -180,27 +184,27 @@ impl FnGenericShiftState {
 
         if is_symbol(&tok, "{") {
             self.reset();
-            out.push(tok);
+            out.push(tok.clone());
             return Ok(true);
         }
 
         if !self.saw_fn_name && is_ident(&tok) {
             self.saw_fn_name = true;
-            out.push(tok);
+            out.push(tok.clone());
             return Ok(true);
         }
 
         if self.saw_fn_name && !self.in_generics && is_symbol(&tok, "<") {
             self.in_generics = true;
             self.angle_depth = 1;
-            out.push(tok);
+            out.push(tok.clone());
             return Ok(true);
         }
 
         if self.in_generics {
             if is_symbol(&tok, "<") {
                 self.angle_depth += 1;
-                out.push(tok);
+                out.push(tok.clone());
                 return Ok(true);
             }
             if is_symbol(&tok, ">") {
@@ -209,7 +213,7 @@ impl FnGenericShiftState {
                     self.in_generics = false;
                     self.angle_depth = 0;
                 }
-                out.push(tok);
+                out.push(tok.clone());
                 return Ok(true);
             }
             if is_symbol(&tok, ">>") {

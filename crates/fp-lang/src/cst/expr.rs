@@ -463,7 +463,7 @@ impl Parser {
         allow_struct_literal: bool,
     ) -> Result<SyntaxNode, ExprCstParseError> {
         loop {
-            match self.parse_postfix_step(base, allow_struct_literal)? {
+            match self.parse_postfix_step(&base, allow_struct_literal)? {
                 PostfixParseOutcome::Applied(updated) => base = updated,
                 PostfixParseOutcome::Stop => break,
             }
@@ -474,32 +474,32 @@ impl Parser {
 
     fn parse_postfix_step(
         &mut self,
-        base: SyntaxNode,
+        base: &SyntaxNode,
         allow_struct_literal: bool,
     ) -> Result<PostfixParseOutcome, ExprCstParseError> {
         if self.postfix_has_outer_attr() {
-            let updated = self.parse_postfix_attr(base)?;
+            let updated = self.parse_postfix_attr(base.clone())?;
             return Ok(PostfixParseOutcome::Applied(updated));
         }
-        if self.has_turbofish_start() && self.postfix_allows_turbofish(&base) {
-            let updated = self.parse_turbofish_postfix(base)?;
+        if self.has_turbofish_start() && self.postfix_allows_turbofish(base) {
+            let updated = self.parse_turbofish_postfix(base.clone())?;
             return Ok(PostfixParseOutcome::Applied(updated));
         }
 
         match self.peek_non_trivia_raw() {
             Some("{") => {
-                if self.postfix_allows_struct_literal(&base, allow_struct_literal) {
-                    let updated = self.parse_struct_literal(base)?;
+                if self.postfix_allows_struct_literal(base, allow_struct_literal) {
+                    let updated = self.parse_struct_literal(base.clone())?;
                     return Ok(PostfixParseOutcome::Applied(updated));
                 }
                 Ok(PostfixParseOutcome::Stop)
             }
-            Some("(") => Ok(PostfixParseOutcome::Applied(self.parse_call(base)?)),
-            Some("[") => Ok(PostfixParseOutcome::Applied(self.parse_index(base)?)),
-            Some("?") => Ok(PostfixParseOutcome::Applied(self.parse_try_postfix(base))),
-            Some(".") => self.parse_dot_postfix_or_number(base),
-            Some("::") => self.parse_colon2_postfix(base),
-            Some("!") => Ok(PostfixParseOutcome::Applied(self.parse_macro_call(base)?)),
+            Some("(") => Ok(PostfixParseOutcome::Applied(self.parse_call(base.clone())?)),
+            Some("[") => Ok(PostfixParseOutcome::Applied(self.parse_index(base.clone())?)),
+            Some("?") => Ok(PostfixParseOutcome::Applied(self.parse_try_postfix(base.clone()))),
+            Some(".") => self.parse_dot_postfix_or_number(base.clone()),
+            Some("::") => self.parse_colon2_postfix(base.clone()),
+            Some("!") => Ok(PostfixParseOutcome::Applied(self.parse_macro_call(base.clone())?)),
             _ => Ok(PostfixParseOutcome::Stop),
         }
     }
@@ -850,6 +850,8 @@ impl Parser {
         let mut toks: Vec<Token> = Vec::new();
         let mut idx_map: Vec<usize> = Vec::new();
         let mut brace_depth = 0usize;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
         let mut saw_brace = false;
         for (rel, t) in self.tokens[self.idx..].iter().enumerate() {
             if t.is_trivia() {
@@ -861,6 +863,14 @@ impl Parser {
                 saw_brace = true;
             } else if raw == "}" {
                 brace_depth = brace_depth.saturating_sub(1);
+            } else if raw == "(" {
+                paren_depth = paren_depth.saturating_add(1);
+            } else if raw == ")" {
+                paren_depth = paren_depth.saturating_sub(1);
+            } else if raw == "[" {
+                bracket_depth = bracket_depth.saturating_add(1);
+            } else if raw == "]" {
+                bracket_depth = bracket_depth.saturating_sub(1);
             }
 
             let span = TokSpan {
@@ -874,7 +884,11 @@ impl Parser {
             });
             idx_map.push(self.idx + rel);
 
-            if brace_depth == 0 && (raw == ";" || (raw == "}" && saw_brace)) {
+            if brace_depth == 0
+                && paren_depth == 0
+                && bracket_depth == 0
+                && (raw == ";" || (raw == "}" && saw_brace))
+            {
                 break;
             }
         }
@@ -2388,17 +2402,14 @@ impl Parser {
         let mut left = self.parse_type_atom(stops)?;
 
         loop {
-            let Some(op) = self.peek_non_trivia_raw() else {
+            let Some(op) = self.peek_non_trivia_raw().map(|value| value.to_string()) else {
                 break;
             };
-            if op == "::<" {
-                self.split_turbofish();
-                continue;
-            }
             if op == ">>" && stops.iter().any(|s| *s == ">") {
                 self.split_right_shift();
                 continue;
             }
+            let op = op.as_str();
             if stops.iter().any(|s| *s == op) {
                 break;
             }

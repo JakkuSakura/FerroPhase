@@ -1216,6 +1216,7 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
                                 | SyntaxKind::PatternWildcard
                                 | SyntaxKind::PatternTuple
                                 | SyntaxKind::PatternType
+                                | SyntaxKind::PatternBind
                         ) =>
                     {
                         Some(n.as_ref())
@@ -1225,6 +1226,44 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
                 .map(lower_pattern_from_cst)
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Pattern::new(PatternKind::Tuple(PatternTuple { patterns })))
+        }
+        SyntaxKind::PatternBind => {
+            let mut lhs: Option<&SyntaxNode> = None;
+            let mut rhs: Option<&SyntaxNode> = None;
+            for child in &node.children {
+                let crate::syntax::SyntaxElement::Node(n) = child else {
+                    continue;
+                };
+                if lhs.is_none() && n.kind.category() == CstCategory::Pattern {
+                    lhs = Some(n.as_ref());
+                    continue;
+                }
+                if rhs.is_none()
+                    && (n.kind.category() == CstCategory::Pattern
+                        || n.kind == SyntaxKind::ExprRange)
+                {
+                    rhs = Some(n.as_ref());
+                }
+            }
+            let lhs = lhs.ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternBind))?;
+            let rhs = rhs.ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternBind))?;
+            let ident = match lhs.kind {
+                SyntaxKind::PatternIdent => match lower_pattern_from_cst(lhs)?.kind() {
+                    PatternKind::Ident(ident) => ident.clone(),
+                    _ => return Err(LowerError::UnexpectedNode(SyntaxKind::PatternBind)),
+                },
+                _ => return Err(LowerError::UnexpectedNode(SyntaxKind::PatternBind)),
+            };
+            let pattern = match rhs.kind {
+                // In `x @ ..`, the parser currently emits `ExprRange` for the RHS.
+                // Treat it as a wildcard rest-pattern when lowering.
+                SyntaxKind::ExprRange => Pattern::new(PatternKind::Wildcard(PatternWildcard {})),
+                _ => lower_pattern_from_cst(rhs)?,
+            };
+            Ok(Pattern::new(PatternKind::Bind(PatternBind {
+                ident,
+                pattern: Box::new(pattern),
+            })))
         }
         SyntaxKind::PatternType => {
             let pat_node = node
@@ -1312,84 +1351,69 @@ fn lower_block_from_cst(node: &SyntaxNode) -> Result<ExprBlock, LowerError> {
 }
 
 fn lower_let_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
-    let mut saw_mut = false;
-    let mut name: Option<String> = None;
+    let mut pattern: Option<Pattern> = None;
     let mut ty: Option<Ty> = None;
-    let mut init_expr: Option<Expr> = None;
+    let mut expr_nodes: Vec<&SyntaxNode> = Vec::new();
 
     for child in &node.children {
         match child {
-            crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "mut" => {
-                saw_mut = true;
-            }
-            crate::syntax::SyntaxElement::Token(t)
-                if !t.is_trivia()
-                    && name.is_none()
-                    && t.text != "let"
-                    && t.text != "mut"
-                    && t.text
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_') =>
-            {
-                name = Some(t.text.clone());
+            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Pattern => {
+                if pattern.is_none() {
+                    pattern = Some(lower_pattern_from_cst(n)?);
+                }
             }
             crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => {
                 ty = Some(lower_type_from_cst(n)?);
             }
             crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
-                init_expr = Some(lower_expr_from_cst(n)?);
+                expr_nodes.push(n);
             }
-            crate::syntax::SyntaxElement::Node(n) => {
-                if matches!(
-                    n.kind,
-                    SyntaxKind::ExprName
-                        | SyntaxKind::ExprNumber
-                        | SyntaxKind::ExprBinary
-                        | SyntaxKind::ExprCall
-                        | SyntaxKind::ExprIndex
-                        | SyntaxKind::ExprSelect
-                        | SyntaxKind::ExprCast
-                        | SyntaxKind::ExprRange
-                        | SyntaxKind::ExprTry
-                        | SyntaxKind::ExprAwait
-                        | SyntaxKind::ExprUnary
-                        | SyntaxKind::ExprMacroCall
-                        | SyntaxKind::ExprParen
-                        | SyntaxKind::ExprBlock
-                ) {
-                    init_expr = Some(lower_expr_from_cst(n)?);
-                }
+            crate::syntax::SyntaxElement::Node(n) if matches!(
+                n.kind,
+                SyntaxKind::ExprName
+                    | SyntaxKind::ExprNumber
+                    | SyntaxKind::ExprBinary
+                    | SyntaxKind::ExprCall
+                    | SyntaxKind::ExprIndex
+                    | SyntaxKind::ExprSelect
+                    | SyntaxKind::ExprCast
+                    | SyntaxKind::ExprRange
+                    | SyntaxKind::ExprTry
+                    | SyntaxKind::ExprAwait
+                    | SyntaxKind::ExprUnary
+                    | SyntaxKind::ExprMacroCall
+                    | SyntaxKind::ExprParen
+                    | SyntaxKind::ExprBlock
+            ) => {
+                expr_nodes.push(n);
             }
             _ => {}
         }
     }
 
-    let Some(name) = name else {
+    let Some(pat) = pattern else {
         return Err(LowerError::UnexpectedNode(SyntaxKind::BlockStmtLet));
     };
-    let pat = if name == "_" {
-        Pattern::new(PatternKind::Wildcard(PatternWildcard {}))
-    } else {
-        let ident = Ident::new(name);
-        let mut pat = Pattern::new(PatternKind::Ident(PatternIdent::new(ident)));
-        if saw_mut {
-            pat.make_mut();
-        }
-        pat
-    };
+
+    let mut init_expr = None;
+    let mut diverge_expr = None;
+    if let Some(first) = expr_nodes.get(0) {
+        init_expr = Some(lower_expr_from_cst(first)?);
+    }
+    if let Some(second) = expr_nodes.get(1) {
+        diverge_expr = Some(lower_expr_from_cst(second)?);
+    }
+    if init_expr.is_none() {
+        diverge_expr = None;
+    }
 
     let stmt = match (ty, init_expr) {
         (Some(ty), Some(init)) => {
-            if let PatternKind::Ident(_) = pat.kind() {
-                let typed_pat = Pattern::from(PatternKind::Type(PatternType::new(pat, ty)));
-                StmtLet::new(typed_pat, Some(init), None)
-            } else {
-                StmtLet::new(pat, Some(init), None)
-            }
+            let typed_pat = Pattern::from(PatternKind::Type(PatternType::new(pat, ty)));
+            StmtLet::new(typed_pat, Some(init), diverge_expr)
         }
         (Some(_ty), None) => StmtLet::new(pat, None, None),
-        (None, init) => StmtLet::new(pat, init, None),
+        (None, init) => StmtLet::new(pat, init, diverge_expr),
     };
     Ok(BlockStmt::Let(stmt))
 }
@@ -1414,6 +1438,9 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
     // Patterns are currently parsed as expression CST nodes in match arms.
     // We lower a small subset of expressions into `Pattern` so that the typer
     // can bind names for match bodies.
+    if node.kind.category() == CstCategory::Pattern {
+        return lower_pattern_from_cst(node);
+    }
     match node.kind {
         SyntaxKind::ExprName => {
             let name = direct_first_non_trivia_token_text(node)

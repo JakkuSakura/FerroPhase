@@ -421,17 +421,10 @@ pub fn lex_lexemes(source: &str) -> Result<Vec<Lexeme>, LexerError> {
 }
 
 fn normalize_lexemes(lexemes: Vec<Lexeme>) -> Vec<Lexeme> {
-    let mut out = Vec::with_capacity(lexemes.len());
+    let mut out: Vec<Lexeme> = Vec::with_capacity(lexemes.len());
     let mut i = 0usize;
     while i < lexemes.len() {
         let lexeme = &lexemes[i];
-        if lexeme.kind == LexemeKind::Token && lexeme.text == "::<" {
-            out.push(Lexeme::token("::".to_string(), lexeme.span));
-            out.push(Lexeme::token("<".to_string(), lexeme.span));
-            i += 1;
-            continue;
-        }
-
         if lexeme.kind == LexemeKind::Token && lexeme.text == "." {
             let prev_idx = out.len().checked_sub(1);
             let prev_is_number = prev_idx

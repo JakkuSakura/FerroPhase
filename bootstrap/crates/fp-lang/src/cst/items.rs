@@ -475,7 +475,7 @@ fn parse_item_cst(
 
                 // Discriminant: `= expr`
                 if match_symbol(input, "=") {
-                    let expr = parse_expr_prefix_from_tokens(input)?;
+                    let expr = parse_expr_prefix_from_tokens_with_stops(input, &[",", "}"])?;
                     var_children.push(SyntaxElement::Node(Box::new(expr)));
                 }
 
@@ -602,7 +602,7 @@ fn parse_item_cst(
                     children.push(SyntaxElement::Node(Box::new(ty)));
                 }
                 expect_symbol(input, "=")?;
-                let expr = parse_expr_prefix_from_tokens(input)?;
+                let expr = parse_expr_prefix_from_tokens_with_stops(input, &[";"])?;
                 children.push(SyntaxElement::Node(Box::new(expr)));
                 expect_symbol(input, ";")?;
                 Ok(node(SyntaxKind::ItemConst, children))
@@ -638,7 +638,7 @@ fn parse_item_cst(
             let ty = parse_type_prefix_from_tokens(input, &["="])?;
             children.push(SyntaxElement::Node(Box::new(ty)));
             expect_symbol(input, "=")?;
-            let expr = parse_expr_prefix_from_tokens(input)?;
+            let expr = parse_expr_prefix_from_tokens_with_stops(input, &[";"])?;
             children.push(SyntaxElement::Node(Box::new(expr)));
             expect_symbol(input, ";")?;
             Ok(node(SyntaxKind::ItemStatic, children))
@@ -703,7 +703,7 @@ fn parse_item_cst(
         }
         _ => {
             // Expression item.
-            let expr = parse_expr_prefix_from_tokens(input)?;
+            let expr = parse_expr_prefix_from_tokens_with_stops(input, &[";"])?;
             children.push(SyntaxElement::Node(Box::new(expr)));
             if match_symbol(input, ";") {
                 // optional
@@ -1214,7 +1214,7 @@ fn parse_let_stmt_as_block(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
         let_children.push(SyntaxElement::Node(Box::new(ty)));
     }
     expect_symbol(input, "=")?;
-    let expr = parse_expr_prefix_from_tokens(input)?;
+    let expr = parse_expr_prefix_from_tokens_with_stops(input, &[";"])?;
     let_children.push(SyntaxElement::Node(Box::new(expr)));
     expect_symbol(input, ";")?;
     let let_node = node(SyntaxKind::BlockStmtLet, let_children);
@@ -1261,9 +1261,49 @@ fn consume_balanced_group_tokens(input: &mut &[Token], opener: &str) -> ModalRes
 
 #[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
 fn parse_expr_prefix_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
-    let lexemes = lexemes_from_tokens(input);
-    let (node, consumed) =
-        cst::parse_expr_lexemes_prefix_to_cst(&lexemes, current_items_file()).map_err(|err| {
+    let (lexemes, lexeme_to_token_end) = lexemes_from_tokens_for_expr(input);
+    parse_prefix_from_lexemes(
+        input,
+        lexemes,
+        lexeme_to_token_end,
+        cst::parse_expr_lexemes_prefix_to_cst,
+    )
+}
+
+#[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
+fn parse_expr_prefix_from_tokens_with_stops(
+    input: &mut &[Token],
+    stops: &[&str],
+) -> ModalResult<SyntaxNode> {
+    let token_count = expr_prefix_token_count_with_stops(input, stops);
+    let (lexemes, lexeme_to_token_end) = lexemes_from_tokens_for_expr(&input[..token_count]);
+    parse_prefix_from_lexemes(
+        input,
+        lexemes,
+        lexeme_to_token_end,
+        cst::parse_expr_lexemes_prefix_to_cst,
+    )
+}
+
+#[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
+fn parse_type_prefix_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {
+    let (lexemes, lexeme_to_token_end) = lexemes_from_tokens_for_type(input);
+    parse_prefix_from_lexemes(
+        input,
+        lexemes,
+        lexeme_to_token_end,
+        |lexemes, file| cst::parse_type_lexemes_prefix_to_cst(lexemes, file, stops),
+    )
+}
+
+#[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
+fn parse_prefix_from_lexemes(
+    input: &mut &[Token],
+    lexemes: Vec<Lexeme>,
+    lexeme_to_token_end: Vec<usize>,
+    parse: impl FnOnce(&[Lexeme], FileId) -> Result<(SyntaxNode, usize), cst::ExprCstParseError>,
+) -> ModalResult<SyntaxNode> {
+    let (node, consumed) = parse(&lexemes, current_items_file()).map_err(|err| {
         ErrMode::Cut(
             <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
                 &lexemes,
@@ -1272,29 +1312,197 @@ fn parse_expr_prefix_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode
             ),
         )
     })?;
-    *input = &input[consumed..];
+
+    let consumed_tokens = if consumed == 0 {
+        0
+    } else {
+        *lexeme_to_token_end
+            .get(consumed - 1)
+            .ok_or_else(|| ErrMode::Cut(ContextError::new()))?
+    };
+    if consumed_tokens > input.len() {
+        return Err(ErrMode::Cut(ContextError::new()));
+    }
+    *input = &input[consumed_tokens..];
     Ok(node)
 }
 
-#[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
-fn parse_type_prefix_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {
-    let lexemes = lexemes_from_tokens(input);
-    let (node, consumed) = cst::parse_type_lexemes_prefix_to_cst(
-        &lexemes,
-        current_items_file(),
-        stops,
-    )
-    .map_err(|err| {
-        ErrMode::Cut(
-            <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
-                &lexemes,
-                    ErrorKind::Fail,
-                    err,
-                ),
-            )
-        })?;
-    *input = &input[consumed..];
-    Ok(node)
+fn push_symbol_lexeme(
+    lexemes: &mut Vec<Lexeme>,
+    lexeme_to_token_end: &mut Vec<usize>,
+    token: &Token,
+    idx: usize,
+    text: &str,
+) {
+    lexemes.push(Lexeme::token(text.to_string(), token.span));
+    lexeme_to_token_end.push(idx + 1);
+}
+
+fn push_repeated_symbol_lexemes(
+    lexemes: &mut Vec<Lexeme>,
+    lexeme_to_token_end: &mut Vec<usize>,
+    token: &Token,
+    idx: usize,
+    ch: char,
+) {
+    let count = token.lexeme.len();
+    for pos in 0..count {
+        lexemes.push(Lexeme::token(ch.to_string(), token.span));
+        let end = if pos + 1 == count { idx + 1 } else { idx };
+        lexeme_to_token_end.push(end);
+    }
+}
+
+fn push_keyword_or_lexeme(
+    lexemes: &mut Vec<Lexeme>,
+    lexeme_to_token_end: &mut Vec<usize>,
+    token: &Token,
+    idx: usize,
+) {
+    lexemes.push(Lexeme::token(token.lexeme.clone(), token.span));
+    lexeme_to_token_end.push(idx + 1);
+}
+
+fn lexemes_from_tokens_for_type(tokens: &[Token]) -> (Vec<Lexeme>, Vec<usize>) {
+    let mut lexemes = Vec::new();
+    let mut lexeme_to_token_end = Vec::new();
+
+    for (idx, token) in tokens.iter().enumerate() {
+        if token.kind == TokenKind::Symbol && token.lexeme.len() > 1 {
+            if token.lexeme.chars().all(|ch| ch == '>') {
+                push_repeated_symbol_lexemes(
+                    &mut lexemes,
+                    &mut lexeme_to_token_end,
+                    token,
+                    idx,
+                    '>',
+                );
+                continue;
+            }
+            if token.lexeme.chars().all(|ch| ch == '<') {
+                push_repeated_symbol_lexemes(
+                    &mut lexemes,
+                    &mut lexeme_to_token_end,
+                    token,
+                    idx,
+                    '<',
+                );
+                continue;
+            }
+        }
+
+        push_keyword_or_lexeme(&mut lexemes, &mut lexeme_to_token_end, token, idx);
+    }
+
+    (lexemes, lexeme_to_token_end)
+}
+
+fn lexemes_from_tokens_for_expr(tokens: &[Token]) -> (Vec<Lexeme>, Vec<usize>) {
+    let mut lexemes = Vec::new();
+    let mut lexeme_to_token_end = Vec::new();
+    let mut generic_depth: i32 = 0;
+    let mut prev_was_coloncolon = false;
+
+    for (idx, token) in tokens.iter().enumerate() {
+        if token.kind == TokenKind::Symbol && token.lexeme == "::" {
+            push_symbol_lexeme(&mut lexemes, &mut lexeme_to_token_end, token, idx, "::");
+            prev_was_coloncolon = true;
+            continue;
+        }
+
+        if token.kind == TokenKind::Symbol && token.lexeme == "<" {
+            let should_track = prev_was_coloncolon || generic_depth > 0;
+            prev_was_coloncolon = false;
+            if should_track {
+                generic_depth = generic_depth.saturating_add(1);
+            }
+            push_keyword_or_lexeme(&mut lexemes, &mut lexeme_to_token_end, token, idx);
+            continue;
+        }
+
+        if token.kind == TokenKind::Symbol && token.lexeme == ">" {
+            if generic_depth > 0 {
+                generic_depth -= 1;
+            }
+            prev_was_coloncolon = false;
+            push_keyword_or_lexeme(&mut lexemes, &mut lexeme_to_token_end, token, idx);
+            continue;
+        }
+
+        if token.kind == TokenKind::Symbol && token.lexeme.len() > 1 {
+            if token.lexeme.chars().all(|ch| ch == '<') {
+                let should_split = prev_was_coloncolon || generic_depth > 0;
+                prev_was_coloncolon = false;
+                if should_split {
+                    let count = token.lexeme.len();
+                    push_repeated_symbol_lexemes(
+                        &mut lexemes,
+                        &mut lexeme_to_token_end,
+                        token,
+                        idx,
+                        '<',
+                    );
+                    generic_depth = generic_depth.saturating_add(count as i32);
+                    continue;
+                }
+            }
+
+            if token.lexeme.chars().all(|ch| ch == '>') && generic_depth > 0 {
+                let count = token.lexeme.len();
+                push_repeated_symbol_lexemes(
+                    &mut lexemes,
+                    &mut lexeme_to_token_end,
+                    token,
+                    idx,
+                    '>',
+                );
+                generic_depth = (generic_depth - count as i32).max(0);
+                prev_was_coloncolon = false;
+                continue;
+            }
+        }
+
+        prev_was_coloncolon = false;
+        push_keyword_or_lexeme(&mut lexemes, &mut lexeme_to_token_end, token, idx);
+    }
+
+    (lexemes, lexeme_to_token_end)
+}
+
+fn expr_prefix_token_count_with_stops(tokens: &[Token], stops: &[&str]) -> usize {
+    let mut depth_paren = 0i32;
+    let mut depth_bracket = 0i32;
+    let mut depth_brace = 0i32;
+    let mut count = 0usize;
+
+    for tok in tokens {
+        if tok.kind == TokenKind::Symbol {
+            if depth_paren == 0 && depth_bracket == 0 && depth_brace == 0 {
+                match tok.lexeme.as_str() {
+                    ")" | "]" | "}" => break,
+                    _ => {}
+                }
+            }
+            match tok.lexeme.as_str() {
+                "(" => depth_paren += 1,
+                ")" => depth_paren = (depth_paren - 1).max(0),
+                "[" => depth_bracket += 1,
+                "]" => depth_bracket = (depth_bracket - 1).max(0),
+                "{" => depth_brace += 1,
+                "}" => depth_brace = (depth_brace - 1).max(0),
+                _ => {}
+            }
+            if depth_paren == 0
+                && depth_bracket == 0
+                && depth_brace == 0
+                && stops.iter().any(|stop| *stop == tok.lexeme)
+            {
+                break;
+            }
+        }
+        count += 1;
+    }
+    count
 }
 
 fn parse_type_bound_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {
@@ -1309,13 +1517,6 @@ fn parse_type_bound_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalRe
         ));
     }
     parse_type_prefix_from_tokens(input, stops)
-}
-
-fn lexemes_from_tokens(tokens: &[Token]) -> Vec<Lexeme> {
-    tokens
-        .iter()
-        .map(|t| Lexeme::token(t.lexeme.clone(), t.span))
-        .collect()
 }
 
 fn is_receiver(input: &[Token]) -> bool {

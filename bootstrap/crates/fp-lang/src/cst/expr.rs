@@ -485,9 +485,28 @@ impl Parser {
 
         let mut toks: Vec<Token> = Vec::new();
         let mut idx_map: Vec<usize> = Vec::new();
+        let mut brace_depth = 0usize;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut saw_brace = false;
         for (rel, t) in self.tokens[self.idx..].iter().enumerate() {
             if t.is_trivia() {
                 continue;
+            }
+            let raw = t.raw.as_str();
+            if raw == "{" {
+                brace_depth = brace_depth.saturating_add(1);
+                saw_brace = true;
+            } else if raw == "}" {
+                brace_depth = brace_depth.saturating_sub(1);
+            } else if raw == "(" {
+                paren_depth = paren_depth.saturating_add(1);
+            } else if raw == ")" {
+                paren_depth = paren_depth.saturating_sub(1);
+            } else if raw == "[" {
+                bracket_depth = bracket_depth.saturating_add(1);
+            } else if raw == "]" {
+                bracket_depth = bracket_depth.saturating_sub(1);
             }
             let span = TokSpan {
                 start: t.span.lo as usize,
@@ -499,12 +518,23 @@ impl Parser {
                 span,
             });
             idx_map.push(self.idx + rel);
+
+            if brace_depth == 0
+                && paren_depth == 0
+                && bracket_depth == 0
+                && (raw == ";" || (raw == "}" && saw_brace))
+            {
+                break;
+            }
+        }
+        if toks.is_empty() || idx_map.is_empty() {
+            return Err(self.error("failed to parse item statement"));
         }
 
         let (item, consumed) =
             crate::cst::items::parse_item_tokens_prefix_to_cst_with_file(&toks, self.file)
                 .map_err(|err| self.error(&format!("failed to parse item statement: {err}")))?;
-        if consumed == 0 {
+        if consumed == 0 || consumed != toks.len() {
             return Err(self.error("failed to parse item statement"));
         }
         let last_idx = idx_map
@@ -514,6 +544,10 @@ impl Parser {
         self.idx = last_idx + 1;
 
         children.push(SyntaxElement::Node(Box::new(item)));
+        self.bump_trivia_into(&mut children);
+        if self.peek_non_trivia_raw() == Some(";") {
+            self.bump_token_into(&mut children);
+        }
         let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::BlockStmtItem, children, span))
     }
@@ -768,15 +802,93 @@ impl Parser {
     }
 
     fn parse_pattern(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
-        let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
+        let mut pat = self.parse_pattern_atom()?;
+        self.bump_trivia_into(&mut pat.children);
+
+        let is_split_range = self.peek_non_trivia_raw() == Some("..")
+            && self
+                .peek_nth_non_trivia(1)
+                .is_some_and(|tok| tok.raw.as_str() == "=");
+        let is_split_dotdot = {
+            let mut i = self.idx;
+            while self.tokens.get(i).is_some_and(|t| t.is_trivia()) {
+                i += 1;
+            }
+            self.tokens.get(i).is_some_and(|t| t.raw.as_str() == ".")
+                && self
+                    .tokens
+                    .get(i + 1)
+                    .is_some_and(|t| !t.is_trivia() && t.raw.as_str() == ".")
+        };
+        if matches!(self.peek_non_trivia_raw(), Some("..") | Some("..="))
+            || is_split_range
+            || is_split_dotdot
+        {
+            let start = self
+                .coerce_pattern_range_start(pat)
+                .ok_or_else(|| self.error("invalid range pattern start"))?;
+            pat = self.parse_range_pattern(Some(start))?;
+            self.bump_trivia_into(&mut pat.children);
+        }
+
+        if self.peek_non_trivia_raw() == Some("@") {
+            let mut children = Vec::new();
+            children.push(SyntaxElement::Node(Box::new(pat)));
+            self.bump_trivia_into(&mut children);
+            self.bump_token_into(&mut children); // '@'
+            self.bump_trivia_into(&mut children);
+            let rhs = self.parse_pattern()?;
+            children.push(SyntaxElement::Node(Box::new(rhs)));
+            let span = span_for_children(&children);
+            return Ok(SyntaxNode::new(SyntaxKind::PatternBind, children, span));
+        }
+
+        Ok(pat)
+    }
+
+    fn parse_pattern_atom(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = Vec::new();
         self.bump_trivia_into(&mut children);
 
-        if self.peek_non_trivia_normalized() == Some("mut") {
+        if self.peek_non_trivia_raw() == Some("&") {
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
+            if self.peek_non_trivia_normalized() == Some("mut") {
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+            }
+            let inner = self.parse_pattern()?;
+            children.push(SyntaxElement::Node(Box::new(inner)));
+            let span = span_for_children(&children);
+            return Ok(SyntaxNode::new(SyntaxKind::PatternRef, children, span));
+        }
+
+        if self.peek_non_trivia_normalized() == Some("ref") {
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+            if self.peek_non_trivia_normalized() == Some("mut") {
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+            }
+        } else if self.peek_non_trivia_normalized() == Some("mut") {
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+            if self.peek_non_trivia_normalized() == Some("ref") {
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+            }
+        }
+
+        if self.peek_non_trivia_normalized() == Some("box") {
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+            let inner = self.parse_pattern()?;
+            children.push(SyntaxElement::Node(Box::new(inner)));
+            let span = span_for_children(&children);
+            return Ok(SyntaxNode::new(SyntaxKind::PatternBox, children, span));
         }
 
         match self.peek_non_trivia_raw() {
@@ -785,39 +897,388 @@ impl Parser {
                 let span = span_for_children(&children);
                 Ok(SyntaxNode::new(SyntaxKind::PatternWildcard, children, span))
             }
-            Some("(") => {
-                self.bump_token_into(&mut children); // '('
-                self.bump_trivia_into(&mut children);
-
-                while self.peek_non_trivia_raw() != Some(")") {
-                    let pat = self.parse_pattern()?;
-                    children.push(SyntaxElement::Node(Box::new(pat)));
-                    self.bump_trivia_into(&mut children);
-
-                    if self.peek_non_trivia_raw() == Some(",") {
-                        self.bump_token_into(&mut children);
-                        self.bump_trivia_into(&mut children);
-                        // Allow trailing comma.
-                        if self.peek_non_trivia_raw() == Some(")") {
-                            break;
-                        }
-                        continue;
-                    }
-                    break;
+            Some("..") => {
+                if matches!(
+                    self.peek_nth_non_trivia(1).map(|tok| tok.raw.as_str()),
+                    Some("," | ")" | "]" | "}")
+                ) {
+                    self.bump_token_into(&mut children);
+                    let span = span_for_children(&children);
+                    Ok(SyntaxNode::new(SyntaxKind::PatternRest, children, span))
+                } else {
+                    self.parse_range_pattern(None)
                 }
-
-                self.expect_token_raw(")")?;
-                self.bump_token_into(&mut children);
-                let span = span_for_children(&children);
-                Ok(SyntaxNode::new(SyntaxKind::PatternTuple, children, span))
             }
-            _ => {
-                self.expect_ident_token()?;
-                self.bump_token_into(&mut children);
-                let span = span_for_children(&children);
-                Ok(SyntaxNode::new(SyntaxKind::PatternIdent, children, span))
+            Some("..=") => self.parse_range_pattern(None),
+            Some("(") => self.parse_tuple_or_paren_pattern(children),
+            Some("[") => self.parse_slice_pattern(children),
+            _ => match self.peek_non_trivia_token_kind() {
+                Some(TokenKind::Number) => {
+                    let node = self.parse_number()?;
+                    Ok(node)
+                }
+                Some(TokenKind::StringLiteral) => {
+                    let node = self.parse_string()?;
+                    Ok(node)
+                }
+                _ => self.parse_path_or_ident_pattern(children),
+            },
+        }
+    }
+
+    fn parse_tuple_or_paren_pattern(
+        &mut self,
+        mut children: Vec<SyntaxElement>,
+    ) -> Result<SyntaxNode, ExprCstParseError> {
+        self.bump_token_into(&mut children); // '('
+        self.bump_trivia_into(&mut children);
+        if self.peek_non_trivia_raw() == Some(")") {
+            self.bump_token_into(&mut children);
+            let span = span_for_children(&children);
+            return Ok(SyntaxNode::new(SyntaxKind::PatternTuple, children, span));
+        }
+
+        let first = self.parse_pattern()?;
+        children.push(SyntaxElement::Node(Box::new(first)));
+        self.bump_trivia_into(&mut children);
+
+        let mut is_tuple = false;
+        if self.peek_non_trivia_raw() == Some(",") {
+            is_tuple = true;
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+            while self.peek_non_trivia_raw() != Some(")") {
+                let next = self.parse_pattern()?;
+                children.push(SyntaxElement::Node(Box::new(next)));
+                self.bump_trivia_into(&mut children);
+                if self.peek_non_trivia_raw() == Some(",") {
+                    self.bump_token_into(&mut children);
+                    self.bump_trivia_into(&mut children);
+                    if self.peek_non_trivia_raw() == Some(")") {
+                        break;
+                    }
+                    continue;
+                }
+                break;
             }
         }
+
+        if !is_tuple && self.peek_non_trivia_normalized() == Some("if") {
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+            let guard = self.parse_expr_bp(0)?;
+            children.push(SyntaxElement::Node(Box::new(guard)));
+            self.bump_trivia_into(&mut children);
+        }
+
+        self.expect_token_raw(")")?;
+        self.bump_token_into(&mut children);
+        let span = span_for_children(&children);
+        if is_tuple {
+            Ok(SyntaxNode::new(SyntaxKind::PatternTuple, children, span))
+        } else {
+            Ok(SyntaxNode::new(SyntaxKind::PatternParen, children, span))
+        }
+    }
+
+    fn parse_slice_pattern(
+        &mut self,
+        mut children: Vec<SyntaxElement>,
+    ) -> Result<SyntaxNode, ExprCstParseError> {
+        self.bump_token_into(&mut children); // '['
+        self.bump_trivia_into(&mut children);
+        while self.peek_non_trivia_raw() != Some("]") {
+            if self.peek_non_trivia_raw().is_none() {
+                return Err(self.error("unterminated slice pattern"));
+            }
+            let pat = self.parse_pattern()?;
+            children.push(SyntaxElement::Node(Box::new(pat)));
+            self.bump_trivia_into(&mut children);
+            if self.peek_non_trivia_raw() == Some(",") {
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+                if self.peek_non_trivia_raw() == Some("]") {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect_token_raw("]")?;
+        self.bump_token_into(&mut children);
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(SyntaxKind::PatternSlice, children, span))
+    }
+
+    fn parse_path_or_ident_pattern(
+        &mut self,
+        mut children: Vec<SyntaxElement>,
+    ) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut path_children = Vec::new();
+        path_children.append(&mut children);
+
+        let mut saw_colon = false;
+        if self.peek_non_trivia_raw() == Some("::") {
+            self.bump_token_into(&mut path_children);
+            self.bump_trivia_into(&mut path_children);
+            saw_colon = true;
+        }
+
+        match self.peek_non_trivia_token_kind() {
+            Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) => {
+                self.bump_token_into(&mut path_children)
+            }
+            _ => return Err(self.error("expected pattern")),
+        }
+        self.bump_trivia_into(&mut path_children);
+
+        if self.peek_non_trivia_raw() == Some("<") {
+            self.parse_generic_args_into(&mut path_children)?;
+            self.bump_trivia_into(&mut path_children);
+        }
+
+        while self.peek_non_trivia_raw() == Some("::") {
+            saw_colon = true;
+            self.bump_token_into(&mut path_children);
+            self.bump_trivia_into(&mut path_children);
+            if self.peek_non_trivia_raw() == Some("<") {
+                self.parse_generic_args_into(&mut path_children)?;
+                continue;
+            }
+            match self.peek_non_trivia_token_kind() {
+                Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) => {
+                    self.bump_token_into(&mut path_children)
+                }
+                _ => return Err(self.error("expected path segment")),
+            }
+            self.bump_trivia_into(&mut path_children);
+            if self.peek_non_trivia_raw() == Some("<") {
+                self.parse_generic_args_into(&mut path_children)?;
+                self.bump_trivia_into(&mut path_children);
+            }
+        }
+
+        let path_span = span_for_children(&path_children);
+        let path_node = SyntaxNode::new(SyntaxKind::PatternPath, path_children, path_span);
+
+        match self.peek_non_trivia_raw() {
+            Some("{") => self.parse_struct_pattern(path_node),
+            Some("(") => self.parse_tuple_struct_pattern(path_node),
+            _ => {
+                if saw_colon {
+                    Ok(path_node)
+                } else {
+                    Ok(SyntaxNode::new(
+                        SyntaxKind::PatternIdent,
+                        path_node.children,
+                        path_node.span,
+                    ))
+                }
+            }
+        }
+    }
+
+    fn coerce_pattern_range_start(&self, node: SyntaxNode) -> Option<SyntaxNode> {
+        match node.kind {
+            SyntaxKind::ExprNumber | SyntaxKind::ExprString | SyntaxKind::ExprName => Some(node),
+            SyntaxKind::PatternIdent => Some(SyntaxNode::new(
+                SyntaxKind::ExprName,
+                node.children,
+                node.span,
+            )),
+            SyntaxKind::PatternPath => Some(SyntaxNode::new(
+                SyntaxKind::ExprPath,
+                node.children,
+                node.span,
+            )),
+            _ => None,
+        }
+    }
+
+    fn parse_range_pattern(
+        &mut self,
+        start: Option<SyntaxNode>,
+    ) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = Vec::new();
+        let _span_start = self
+            .peek_any_span()
+            .unwrap_or_else(|| Span::new(self.file, 0, 0));
+
+        if let Some(start) = start {
+            children.push(SyntaxElement::Node(Box::new(start)));
+            self.bump_trivia_into(&mut children);
+        }
+
+        let split_dotdot = {
+            let mut i = self.idx;
+            while self.tokens.get(i).is_some_and(|t| t.is_trivia()) {
+                i += 1;
+            }
+            if self.tokens.get(i).is_some_and(|t| t.raw.as_str() == ".") {
+                let j = i + 1;
+                if self
+                    .tokens
+                    .get(j)
+                    .is_some_and(|t| !t.is_trivia() && t.raw.as_str() == ".")
+                {
+                    Some((i, j))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if !matches!(self.peek_non_trivia_raw(), Some("..") | Some("..=")) && split_dotdot.is_none()
+        {
+            return Err(self.error("expected range operator"));
+        }
+        if let Some((first_idx, second_idx)) = split_dotdot {
+            let mut op_text = "..";
+            let mut last_idx = second_idx;
+            let third_idx = second_idx + 1;
+            if self
+                .tokens
+                .get(third_idx)
+                .is_some_and(|t| !t.is_trivia() && t.raw.as_str() == "=")
+            {
+                op_text = "..=";
+                last_idx = third_idx;
+            }
+            let start_span = self.tokens[first_idx].span;
+            let end_span = self.tokens[last_idx].span;
+            let span = Span::new(self.file, start_span.lo, end_span.hi);
+            children.push(SyntaxElement::Token(SyntaxToken {
+                kind: SyntaxTokenKind::Token,
+                text: op_text.to_string(),
+                span,
+            }));
+            self.idx = last_idx + 1;
+            self.bump_trivia_into(&mut children);
+        } else if self.peek_non_trivia_raw() == Some("..") {
+            self.bump_token_into(&mut children); // ".."
+            self.bump_trivia_into(&mut children);
+            if self.peek_non_trivia_raw() == Some("=") {
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+            }
+        } else {
+            self.bump_token_into(&mut children); // "..="
+            self.bump_trivia_into(&mut children);
+        }
+
+        if let Some(raw) = self.peek_non_trivia_raw() {
+            if !matches!(raw, "," | ")" | "]" | "}" | ";" | "if") {
+                let end = self.parse_expr_bp(0)?;
+                children.push(SyntaxElement::Node(Box::new(end)));
+                self.bump_trivia_into(&mut children);
+            }
+        }
+
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(SyntaxKind::ExprRange, children, span))
+    }
+
+    fn parse_struct_pattern(
+        &mut self,
+        path_node: SyntaxNode,
+    ) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = vec![SyntaxElement::Node(Box::new(path_node))];
+        self.bump_trivia_into(&mut children);
+        self.bump_token_into(&mut children); // '{'
+        self.bump_trivia_into(&mut children);
+        while self.peek_non_trivia_raw() != Some("}") {
+            if self.peek_non_trivia_raw().is_none() {
+                return Err(self.error("unterminated struct pattern"));
+            }
+            if self.peek_non_trivia_raw() == Some("..") {
+                let mut rest_children = Vec::new();
+                self.bump_token_into(&mut rest_children);
+                let rest_span = span_for_children(&rest_children);
+                let rest =
+                    SyntaxNode::new(SyntaxKind::PatternRest, rest_children, rest_span);
+                children.push(SyntaxElement::Node(Box::new(rest)));
+                self.bump_trivia_into(&mut children);
+                if self.peek_non_trivia_raw() == Some(",") {
+                    self.bump_token_into(&mut children);
+                    self.bump_trivia_into(&mut children);
+                }
+                continue;
+            }
+
+            let mut field_children = Vec::new();
+            self.bump_trivia_into(&mut field_children);
+            match self.peek_non_trivia_token_kind() {
+                Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) | Some(TokenKind::Number) => {
+                    self.bump_token_into(&mut field_children)
+                }
+                _ => return Err(self.error("expected field name in struct pattern")),
+            }
+            self.bump_trivia_into(&mut field_children);
+            if self.peek_non_trivia_raw() == Some(":") {
+                self.bump_token_into(&mut field_children);
+                self.bump_trivia_into(&mut field_children);
+                let pat = self.parse_pattern()?;
+                field_children.push(SyntaxElement::Node(Box::new(pat)));
+            }
+            let span = span_for_children(&field_children);
+            children.push(SyntaxElement::Node(Box::new(SyntaxNode::new(
+                SyntaxKind::StructField,
+                field_children,
+                span,
+            ))));
+
+            self.bump_trivia_into(&mut children);
+            if self.peek_non_trivia_raw() == Some(",") {
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+                if self.peek_non_trivia_raw() == Some("}") {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect_token_raw("}")?;
+        self.bump_token_into(&mut children);
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(SyntaxKind::PatternStruct, children, span))
+    }
+
+    fn parse_tuple_struct_pattern(
+        &mut self,
+        path_node: SyntaxNode,
+    ) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = vec![SyntaxElement::Node(Box::new(path_node))];
+        self.bump_trivia_into(&mut children);
+        self.bump_token_into(&mut children); // '('
+        self.bump_trivia_into(&mut children);
+        while self.peek_non_trivia_raw() != Some(")") {
+            if self.peek_non_trivia_raw().is_none() {
+                return Err(self.error("unterminated tuple-struct pattern"));
+            }
+            let pat = self.parse_pattern()?;
+            children.push(SyntaxElement::Node(Box::new(pat)));
+            self.bump_trivia_into(&mut children);
+            if self.peek_non_trivia_raw() == Some(",") {
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+                if self.peek_non_trivia_raw() == Some(")") {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect_token_raw(")")?;
+        self.bump_token_into(&mut children);
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(
+            SyntaxKind::PatternTupleStruct,
+            children,
+            span,
+        ))
     }
 
     fn parse_for_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
@@ -888,17 +1349,9 @@ impl Parser {
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
-        let pat = self.parse_expr_bp(0)?;
+        let pat = self.parse_pattern()?;
         children.push(SyntaxElement::Node(Box::new(pat)));
         self.bump_trivia_into(&mut children);
-
-        // Support struct-like match patterns like `Variant { .. }` by consuming the braced body.
-        // The current match lowering does not destructure fields, but this at least keeps parsing
-        // compatible with example sources.
-        if self.peek_non_trivia_raw() == Some("{") {
-            self.parse_balanced_group_into("{", "}", &mut children)?;
-            self.bump_trivia_into(&mut children);
-        }
         if self.peek_non_trivia_normalized() == Some("if") {
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
