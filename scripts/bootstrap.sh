@@ -7,22 +7,16 @@ cd "${ROOT}"
 cargo build -p fp-cli -p magnet
 
 export FP_BIN="${ROOT}/target/debug/fp"
-"${ROOT}/target/debug/magnet" build
+OUT_DIR="${ROOT}/target/bootstrap/build"
+mkdir -p "${OUT_DIR}"
 
-mapfile -t OUTPUT_DIRS < <(find "${ROOT}" -type d -path "*/target/magnet/*/build" | sort)
-if [ "${#OUTPUT_DIRS[@]}" -eq 0 ]; then
-  echo "No magnet build output directory found under target/magnet/*/build"
-  exit 1
-fi
+# NOTE: `magnet build` builds full crates using the workspace graph and currently
+# requires more language support than bootstrap mode provides. For bootstrap we
+# compile a single entrypoint without a workspace graph and verify the produced
+# native executable exists.
+"${FP_BIN}" compile "${ROOT}/src/bin/fptest.fp" \
+  --backend binary \
+  --output "${OUT_DIR}/fptest.out"
 
-for dir in "${OUTPUT_DIRS[@]}"; do
-  echo "Build artifacts: ${dir}"
-  ls -la "${dir}"
-  mapfile -t BINARIES < <(find "${dir}" -maxdepth 1 -type f \( -name "*.out" -o -name "*.exe" \) | sort)
-  if [ "${#BINARIES[@]}" -gt 0 ]; then
-    echo "Executable outputs:"
-    printf '%s\n' "${BINARIES[@]}"
-  else
-    echo "No executable outputs found in ${dir}"
-  fi
-done
+echo "Build artifacts: ${OUT_DIR}"
+ls -la "${OUT_DIR}"

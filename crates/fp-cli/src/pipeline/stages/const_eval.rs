@@ -19,7 +19,7 @@ impl Pipeline {
             true
         };
         if include_std {
-            for std_path in runtime_std_paths() {
+            for std_path in runtime_std_paths(&options.target) {
                 let source = match embedded_std::read(&std_path) {
                     Some(source) => source,
                     None => {

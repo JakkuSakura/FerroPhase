@@ -68,7 +68,7 @@ impl Pipeline {
             let mut diagnostics = PipelineDiagnostics::default();
             diagnostics.set_display_options(diag::display_options(options));
             let mut merged = ast.clone();
-            for std_path in runtime_std_paths() {
+            for std_path in runtime_std_paths(&options.target) {
                 let source = embedded_std::read(&std_path).ok_or_else(|| {
                     CliError::Io(std::io::Error::new(
                         std::io::ErrorKind::Other,
@@ -97,6 +97,7 @@ impl Pipeline {
                 merged = merge_std_module(
                     merged,
                     std_node,
+                    &options.target,
                     &mut diagnostics,
                     STAGE_INTRINSIC_NORMALIZE,
                 )

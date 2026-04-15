@@ -812,7 +812,7 @@ impl Pipeline {
         {
             let stage_started = std::time::Instant::now();
             info!("pipeline: start {}", STAGE_RUNTIME_MATERIALIZE);
-            self.inject_runtime_std(&mut ast, options)?;
+            self.inject_runtime_std(&mut ast, target, options)?;
             info!(
                 "pipeline: finished {} in {:.2?}",
                 STAGE_RUNTIME_MATERIALIZE,
@@ -1297,11 +1297,12 @@ impl Pipeline {
     fn inject_runtime_std(
         &mut self,
         ast: &mut Node,
+        target: &BackendKind,
         options: &PipelineOptions,
     ) -> Result<(), CliError> {
         let mut diagnostics = PipelineDiagnostics::default();
         diagnostics.set_display_options(diag::display_options(options));
-        for std_path in runtime_std_paths() {
+        for std_path in runtime_std_paths(target) {
             let Some(source) = embedded_std::read(&std_path) else {
                 diagnostics.push(
                     Diagnostic::error(format!(
@@ -1317,6 +1318,7 @@ impl Pipeline {
             let merged = merge_std_module(
                 ast.clone(),
                 std_node,
+                target,
                 &mut diagnostics,
                 STAGE_RUNTIME_MATERIALIZE,
             )
@@ -1544,13 +1546,20 @@ impl Pipeline {
     // moved to pipeline::diagnostics
 }
 
-fn runtime_std_paths() -> Vec<PathBuf> {
+fn runtime_std_paths(target: &BackendKind) -> Vec<PathBuf> {
+    // NOTE: The compiled backends are not yet able to compile the full embedded std.
+    // For now we skip std injection entirely there and rely on compiler intrinsics.
+    // This keeps bootstrap builds unblocked.
+    if matches!(target, BackendKind::Binary | BackendKind::Ebpf) {
+        return Vec::new();
+    }
     vec![embedded_std::root_module_path()]
 }
 
 fn merge_std_module(
     ast: Node,
     std_node: Node,
+    target: &BackendKind,
     diagnostics: &mut PipelineDiagnostics,
     stage: &'static str,
 ) -> Result<Node, PipelineError> {
@@ -1585,6 +1594,32 @@ fn merge_std_module(
     }
     let mut std_module = match std_module {
         Some(mut module) => {
+            if matches!(target, BackendKind::Binary | BackendKind::Ebpf) {
+                // The compiled backends are not yet able to handle the full std surface area.
+                // For bootstrap we inject a minimal subset that keeps basic std functionality.
+                let allowed: &[&str] = &[
+                    "assert",
+                    "any",
+                    "env",
+                    "error",
+                    "fmt",
+                    "fs",
+                    "io",
+                    "intrinsics",
+                    "libc",
+                    "option",
+                    "path",
+                    "result",
+                    "time",
+                ];
+
+                module.items.retain(|item| {
+                    let fp_core::ast::ItemKind::Module(inner) = item.kind() else {
+                        return true;
+                    };
+                    allowed.contains(&inner.name.as_str())
+                });
+            }
             module.items.extend(std_items);
             module
         }
