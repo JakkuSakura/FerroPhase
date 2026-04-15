@@ -1,5 +1,5 @@
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 
 use fp_core::ast::{Ident, Item, ItemKind, Module, Node, NodeKind, Value, Visibility};
 use fp_core::context::SharedScopedContext;
@@ -51,9 +51,9 @@ fn interpret_and_run(source: &str) -> Result<i64> {
         })
         .map_err(|err| fp_core::error::Error::from(format!("spawn test thread: {err}")))?;
 
-    handle.join().map_err(|_| {
-        fp_core::error::Error::from("json api test thread panicked")
-    })?
+    handle
+        .join()
+        .map_err(|_| fp_core::error::Error::from("json api test thread panicked"))?
 }
 
 fn inject_core_std(frontend: &FerroFrontend, ast: &mut Node) -> Result<()> {
@@ -72,9 +72,7 @@ fn inject_core_std(frontend: &FerroFrontend, ast: &mut Node) -> Result<()> {
 }
 
 fn module_path_for_core_std(embedded_path: &str) -> Result<Vec<&str>> {
-    let without_prefix = embedded_path
-        .strip_prefix("std/")
-        .unwrap_or(embedded_path);
+    let without_prefix = embedded_path.strip_prefix("std/").unwrap_or(embedded_path);
     if without_prefix == "mod.fp" {
         return Ok(Vec::new());
     }

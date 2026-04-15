@@ -1,6 +1,6 @@
 use super::*;
 use fp_core::diagnostics::DiagnosticLevel;
-use fp_core::query::QueryKind;
+use fp_core::query::{QueryIrStmt, QueryKind};
 use fp_core::LanguageFrontend;
 
 #[test]
@@ -28,6 +28,8 @@ from employees
             assert!(sql.contains("FROM employees"));
             assert!(sql.contains("WHERE country = \"US\""));
             assert!(sql.contains("LIMIT 5"));
+            let semantic = doc.semantic.as_ref().expect("semantic query");
+            assert!(matches!(semantic.statements[0], QueryIrStmt::Query(_)));
         }
         other => panic!("expected query node, found {other:?}"),
     }
@@ -68,4 +70,25 @@ from sales
             .unwrap_or(false),
         "compiled statements should reference source table"
     );
+}
+
+#[test]
+fn pipeline_compiles_sort_clause() {
+    let frontend = frontend::PrqlFrontend::new();
+    let pipeline = r#"
+from ticks
+| filter symbol == "AAPL"
+| sort {ts, seq}
+| select {value}
+"#;
+    let result = frontend.parse(pipeline, None).expect("parse");
+
+    let fp_core::ast::NodeKind::Query(doc) = result.ast.kind() else {
+        panic!("expected query node");
+    };
+    let QueryKind::Prql(prql) = &doc.kind else {
+        panic!("expected prql variant");
+    };
+    let sql = &prql.compiled[0].text;
+    assert!(sql.contains("ORDER BY ts, seq"));
 }

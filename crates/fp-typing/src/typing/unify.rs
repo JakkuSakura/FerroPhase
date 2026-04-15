@@ -128,15 +128,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::TypeBinaryOp(op) => {
                 self.ty_contains_generic_param(&op.lhs) || self.ty_contains_generic_param(&op.rhs)
             }
-            Ty::Function(func) => func
-                .params
-                .iter()
-                .any(|param| self.ty_contains_generic_param(param))
-                || func
-                    .ret_ty
-                    .as_ref()
-                    .map(|ret| self.ty_contains_generic_param(ret))
-                    .unwrap_or(false),
+            Ty::Function(func) => {
+                func.params
+                    .iter()
+                    .any(|param| self.ty_contains_generic_param(param))
+                    || func
+                        .ret_ty
+                        .as_ref()
+                        .map(|ret| self.ty_contains_generic_param(ret))
+                        .unwrap_or(false)
+            }
             _ => false,
         }
     }
@@ -144,9 +145,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn generic_name_from_locator<'a>(&self, name: &'a Name) -> Option<&'a str> {
         match name {
             Name::Ident(ident) => Some(ident.as_str()),
-            Name::Path(path) if path.segments.len() == 1 => {
-                Some(path.segments[0].as_str())
-            }
+            Name::Path(path) if path.segments.len() == 1 => Some(path.segments[0].as_str()),
             Name::ParameterPath(path)
                 if path.segments.len() == 1 && path.segments[0].args.is_empty() =>
             {
@@ -756,9 +755,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             if (resolved_a.variants.is_empty() || resolved_b.variants.is_empty())
                                 && self.lookup_enum_def_by_name(ae_tail).is_some()
                             {
-                                if let Some((_, def)) =
-                                    self.lookup_enum_def_by_name(ae_tail)
-                                {
+                                if let Some((_, def)) = self.lookup_enum_def_by_name(ae_tail) {
                                     if resolved_a.variants.is_empty() {
                                         resolved_a = def.clone();
                                         resolved = true;
@@ -1403,15 +1400,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 if let Some(key) = self.resolve_locator_key(loc) {
                                     if let Some(enum_ty) = self.enum_defs.get(&key) {
                                         if enum_ty.generics_params.len() == concrete_args.len() {
-                                            let concrete =
-                                                self.apply_generic_args_to_enum(enum_ty, &concrete_args);
+                                            let concrete = self.apply_generic_args_to_enum(
+                                                enum_ty,
+                                                &concrete_args,
+                                            );
                                             self.bind(var, TypeTerm::Enum(concrete));
                                             handled = true;
                                         }
                                     }
                                     if !handled {
                                         if let Some(struct_ty) = self.struct_defs.get(&key) {
-                                            if struct_ty.generics_params.len() == concrete_args.len() {
+                                            if struct_ty.generics_params.len()
+                                                == concrete_args.len()
+                                            {
                                                 let concrete = self.apply_generic_args_to_struct(
                                                     struct_ty,
                                                     &concrete_args,
@@ -1440,8 +1441,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         "Option".to_string(),
                                     ]);
                                     if let Some(enum_ty) = self.enum_defs.get(&std_option) {
-                                        let concrete =
-                                            self.apply_generic_args_to_enum(enum_ty, &concrete_args);
+                                        let concrete = self
+                                            .apply_generic_args_to_enum(enum_ty, &concrete_args);
                                         self.bind(var, TypeTerm::Enum(concrete));
                                         return Ok(var);
                                     }
@@ -1453,16 +1454,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         "Result".to_string(),
                                     ]);
                                     if let Some(enum_ty) = self.enum_defs.get(&std_result) {
-                                        let concrete =
-                                            self.apply_generic_args_to_enum(enum_ty, &concrete_args);
+                                        let concrete = self
+                                            .apply_generic_args_to_enum(enum_ty, &concrete_args);
                                         self.bind(var, TypeTerm::Enum(concrete));
                                         return Ok(var);
                                     }
                                 }
                                 if let Some((_, struct_ty)) = self.lookup_struct_def_by_name(name) {
                                     if struct_ty.generics_params.len() == concrete_args.len() {
-                                        let concrete = self
-                                            .apply_generic_args_to_struct(&struct_ty, &concrete_args);
+                                        let concrete = self.apply_generic_args_to_struct(
+                                            &struct_ty,
+                                            &concrete_args,
+                                        );
                                         self.bind(var, TypeTerm::Struct(concrete));
                                         return Ok(var);
                                     }
@@ -1582,8 +1585,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     if let Some(parsed) = self.resolution_parsed_path(loc) {
                         let name_path = QualifiedPath::new(parsed.segments);
-                        let is_unqualified = parsed.prefix == PathPrefix::Plain
-                            && name_path.segments.len() == 1;
+                        let is_unqualified =
+                            parsed.prefix == PathPrefix::Plain && name_path.segments.len() == 1;
                         let mut candidates =
                             self.struct_name_variants_for_path(&name_path, is_unqualified);
                         if let Some(stripped) = Self::strip_std_prefix(&name_path) {

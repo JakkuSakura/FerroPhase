@@ -86,7 +86,11 @@ fn make_std_result_ty(ok: Ty, err: Ty) -> Ty {
 }
 
 fn std_error_ty() -> Ty {
-    let path = Path::plain(vec![Ident::new("std"), Ident::new("error"), Ident::new("Error")]);
+    let path = Path::plain(vec![
+        Ident::new("std"),
+        Ident::new("error"),
+        Ident::new("Error"),
+    ]);
     Ty::locator(Name::Path(path))
 }
 
@@ -513,7 +517,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             .unwrap_or(ExceptionReturnPolicy::Disabled)
     }
 
-    fn push_exception_context(&mut self, policy: ExceptionReturnPolicy) -> ExceptionContextGuard<'ctx> {
+    fn push_exception_context(
+        &mut self,
+        policy: ExceptionReturnPolicy,
+    ) -> ExceptionContextGuard<'ctx> {
         self.exception_stack.push(ExceptionContext { policy });
         ExceptionContextGuard {
             inferencer: self as *mut _,
@@ -911,9 +918,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                     } else {
                         for root in &self.root_modules {
-                            let mut segments = Vec::with_capacity(
-                                self.module_path.segments.len() + 2,
-                            );
+                            let mut segments =
+                                Vec::with_capacity(self.module_path.segments.len() + 2);
                             segments.push(root.to_string());
                             segments.extend(self.module_path.segments.iter().cloned());
                             segments.push(head.to_string());
@@ -1143,9 +1149,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
             return None;
         }
-        if matches!(prefix, PathPrefix::Plain)
-            && !segments.is_empty()
-        {
+        if matches!(prefix, PathPrefix::Plain) && !segments.is_empty() {
             if let Some(symbol_path) = self.lookup_symbol_alias(&segments[0]) {
                 return Some(symbol_path.join(&segments[1..]));
             }
@@ -1239,9 +1243,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 return Some((stripped, sig.clone()));
             }
         }
-        if let Some((path, sig)) =
-            self.lookup_prefixed_signature_with_path(&candidate, false)
-        {
+        if let Some((path, sig)) = self.lookup_prefixed_signature_with_path(&candidate, false) {
             return Some((path, sig));
         }
         self.locator_tail_name(locator)
@@ -1295,9 +1297,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn strip_std_prefix(candidate: &QualifiedPath) -> Option<QualifiedPath> {
         let first = candidate.segments.first()?;
-        if (first == "std" || first == "core" || first == "alloc")
-            && candidate.segments.len() > 1
-        {
+        if (first == "std" || first == "core" || first == "alloc") && candidate.segments.len() > 1 {
             Some(QualifiedPath::new(
                 candidate.segments.iter().skip(1).cloned().collect(),
             ))

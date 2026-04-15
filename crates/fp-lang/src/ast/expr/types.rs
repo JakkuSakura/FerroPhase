@@ -16,8 +16,7 @@ use fp_core::module::path::PathPrefix;
 use super::literals::parse_numeric_literal;
 use super::quote::{quote_type_from_ident, quote_type_from_type_arg};
 use super::{
-    direct_first_non_trivia_token_text, direct_operator_token_text, lower_expr_from_cst,
-    LowerError,
+    direct_first_non_trivia_token_text, direct_operator_token_text, lower_expr_from_cst, LowerError,
 };
 
 pub(crate) fn lower_type_from_cst(node: &SyntaxNode) -> Result<Ty, LowerError> {
@@ -174,7 +173,9 @@ fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
     Ok(Ty::expr(expr))
 }
 
-pub(super) fn node_children_types<'a>(node: &'a SyntaxNode) -> impl Iterator<Item = &'a SyntaxNode> {
+pub(super) fn node_children_types<'a>(
+    node: &'a SyntaxNode,
+) -> impl Iterator<Item = &'a SyntaxNode> {
     node.children.iter().filter_map(|c| match c {
         crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => {
             Some(n.as_ref())

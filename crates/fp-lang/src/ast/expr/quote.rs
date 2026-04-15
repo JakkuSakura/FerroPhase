@@ -1,7 +1,7 @@
 use crate::syntax::{SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     ExprKind, Ident, Pattern, PatternIdent, PatternKind, PatternQuote, PatternStructField,
-    QuoteFragmentKind, QuoteItemKind, TypeQuote, TypeType, Ty,
+    QuoteFragmentKind, QuoteItemKind, Ty, TypeQuote, TypeType,
 };
 
 use super::LowerError;

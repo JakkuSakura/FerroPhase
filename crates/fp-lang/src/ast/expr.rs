@@ -11,10 +11,9 @@ use fp_core::ast::{
     ExprSelect, ExprSelectType, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural,
     ExprTry, ExprTryCatch, ExprTuple, ExprWhile, ExprWith, FormatArgRef, FormatPlaceholder,
     FormatSpec, FormatTemplatePart, Ident, MacroInvocation, Name, ParameterPath,
-    ParameterPathSegment, Path, Pattern, PatternBind,
-    PatternBox, PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternRef,
-    PatternStruct, PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct,
-    PatternType, PatternVariant,
+    ParameterPathSegment, Path, Pattern, PatternBind, PatternBox, PatternIdent, PatternKind,
+    PatternQuote, PatternQuotePlural, PatternRef, PatternStruct, PatternStructField,
+    PatternStructural, PatternTuple, PatternTupleStruct, PatternType, PatternVariant,
     PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtDefer, StmtLet, StructuralField, Ty,
     TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeInt, TypePrimitive,
     TypeQuote, TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeType, TypeVec, Value,
@@ -271,7 +270,8 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
         }
 
         SyntaxKind::ExprFor => {
-            let pat_node = first_child_in_category(node, CstCategory::Pattern, SyntaxKind::ExprFor)?;
+            let pat_node =
+                first_child_in_category(node, CstCategory::Pattern, SyntaxKind::ExprFor)?;
             let pat = lower_pattern_from_cst(pat_node)?;
 
             let mut expr_nodes = node_children_exprs(node);
@@ -441,8 +441,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let path_tokens = collect_path_tokens_with_generics(node);
             let saw_generic_start = path_tokens.saw_generic_start;
             let generic_segment_index = path_tokens.generic_segment_index;
-            let (prefix, segments) =
-                split_path_prefix(path_tokens.segments, path_tokens.saw_root);
+            let (prefix, segments) = split_path_prefix(path_tokens.segments, path_tokens.saw_root);
             if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
                 return Err(LowerError::UnexpectedNode(SyntaxKind::ExprPath));
             }
@@ -1042,9 +1041,7 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
                 .children
                 .iter()
                 .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind == SyntaxKind::PatternPath =>
-                    {
+                    crate::syntax::SyntaxElement::Node(n) if n.kind == SyntaxKind::PatternPath => {
                         Some(n.as_ref())
                     }
                     _ => None,
@@ -1114,9 +1111,7 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
                 .children
                 .iter()
                 .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind == SyntaxKind::PatternPath =>
-                    {
+                    crate::syntax::SyntaxElement::Node(n) if n.kind == SyntaxKind::PatternPath => {
                         Some(n.as_ref())
                     }
                     _ => None,
@@ -1167,9 +1162,7 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
                     {
                         Some(n.as_ref())
                     }
-                    crate::syntax::SyntaxElement::Token(t)
-                        if !t.is_trivia() && t.text == "mut" =>
-                    {
+                    crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "mut" => {
                         is_mut = true;
                         None
                     }
@@ -1185,7 +1178,8 @@ fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
         SyntaxKind::PatternType => {
             let pat_node =
                 first_child_in_category(node, CstCategory::Pattern, SyntaxKind::PatternType)?;
-            let ty_node = first_child_in_category(node, CstCategory::Type, SyntaxKind::PatternType)?;
+            let ty_node =
+                first_child_in_category(node, CstCategory::Type, SyntaxKind::PatternType)?;
             let pat = lower_pattern_from_cst(pat_node)?;
             let ty = lower_type_from_cst(ty_node)?;
             Ok(Pattern::new(PatternKind::Type(PatternType::new(pat, ty))))
@@ -1563,23 +1557,25 @@ fn lower_let_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
             crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
                 expr_nodes.push(n);
             }
-            crate::syntax::SyntaxElement::Node(n) if matches!(
-                n.kind,
-                SyntaxKind::ExprName
-                    | SyntaxKind::ExprNumber
-                    | SyntaxKind::ExprBinary
-                    | SyntaxKind::ExprCall
-                    | SyntaxKind::ExprIndex
-                    | SyntaxKind::ExprSelect
-                    | SyntaxKind::ExprCast
-                    | SyntaxKind::ExprRange
-                    | SyntaxKind::ExprTry
-                    | SyntaxKind::ExprAwait
-                    | SyntaxKind::ExprUnary
-                    | SyntaxKind::ExprMacroCall
-                    | SyntaxKind::ExprParen
-                    | SyntaxKind::ExprBlock
-            ) => {
+            crate::syntax::SyntaxElement::Node(n)
+                if matches!(
+                    n.kind,
+                    SyntaxKind::ExprName
+                        | SyntaxKind::ExprNumber
+                        | SyntaxKind::ExprBinary
+                        | SyntaxKind::ExprCall
+                        | SyntaxKind::ExprIndex
+                        | SyntaxKind::ExprSelect
+                        | SyntaxKind::ExprCast
+                        | SyntaxKind::ExprRange
+                        | SyntaxKind::ExprTry
+                        | SyntaxKind::ExprAwait
+                        | SyntaxKind::ExprUnary
+                        | SyntaxKind::ExprMacroCall
+                        | SyntaxKind::ExprParen
+                        | SyntaxKind::ExprBlock
+                ) =>
+            {
                 expr_nodes.push(n);
             }
             _ => {}

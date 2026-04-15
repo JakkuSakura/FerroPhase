@@ -49,6 +49,7 @@ pub fn function_item(body_id: BodyId) -> Item {
         body_id,
         abi: mir::ty::Abi::Rust,
         is_extern: false,
+        attrs: Vec::new(),
     };
 
     Item {

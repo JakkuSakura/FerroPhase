@@ -1,11 +1,11 @@
 use crate::ast::lower_common::decode_string_literal;
+use crate::ast::FerroPhaseParser;
 use crate::lexer::lexeme::LexemeKind;
 use crate::lexer::tokenizer::strip_number_suffix;
-use crate::ast::FerroPhaseParser;
 use bigdecimal::BigDecimal;
 use fp_core::ast::{
     DecimalType, Expr, ExprIntrinsicCall, ExprKind, ExprStringTemplate, FormatArgRef,
-    FormatPlaceholder, FormatSpec, FormatTemplatePart, TypeInt, TypePrimitive, Ty, Value,
+    FormatPlaceholder, FormatSpec, FormatTemplatePart, Ty, TypeInt, TypePrimitive, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use num_bigint::BigInt;
@@ -125,7 +125,10 @@ pub(super) fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), Lo
                 }
                 let big = parse_big_int_literal(&normalized)
                     .ok_or_else(|| LowerError::InvalidNumber(raw.to_string()))?;
-                Ok((Value::big_int(big), Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt)))))
+                Ok((
+                    Value::big_int(big),
+                    Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
+                ))
             }
         }
     }
@@ -277,9 +280,11 @@ fn parse_f_string_expr(src: &str, file: fp_core::span::FileId) -> Result<Expr, L
     let lexemes = parser.lex_expr_lexemes(src, file).map_err(|err| {
         LowerError::Unsupported(format!("failed to tokenize f-string expression: {err}"))
     })?;
-    let (cst, consumed) = parser.parse_expr_prefix_cst(&lexemes, file).map_err(|err| {
-        LowerError::Unsupported(format!("failed to parse f-string expression: {}", err))
-    })?;
+    let (cst, consumed) = parser
+        .parse_expr_prefix_cst(&lexemes, file)
+        .map_err(|err| {
+            LowerError::Unsupported(format!("failed to parse f-string expression: {}", err))
+        })?;
     if lexemes[consumed..]
         .iter()
         .any(|lex| lex.kind == LexemeKind::Token)

@@ -1,6 +1,7 @@
 use super::*;
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::frontend::LanguageFrontend;
+use fp_core::query::QueryIrStmt;
 
 #[test]
 fn parses_basic_select() {
@@ -16,6 +17,8 @@ fn parses_basic_select() {
                 assert_eq!(sql.statements.len(), 1);
                 assert!(sql.statements[0].text.to_uppercase().contains("SELECT"));
                 assert_eq!(sql.ast.len(), 1);
+                let semantic = doc.semantic.as_ref().expect("semantic query");
+                assert!(matches!(semantic.statements[0], QueryIrStmt::Query(_)));
             } else {
                 panic!("expected sql query kind");
             }
@@ -50,4 +53,20 @@ fn parses_multiple_statements_and_attaches_name() {
     assert_eq!(sql.statements[0].text, "CREATE TABLE items(id INTEGER)");
     assert_eq!(sql.statements[1].text, "INSERT INTO items VALUES (1)");
     assert_eq!(sql.ast.len(), 2, "expected two SQL AST statements");
+    let semantic = doc.semantic.as_ref().expect("semantic query");
+    assert_eq!(semantic.statements.len(), 1, "DDL stays outside semantic IR");
+}
+
+#[test]
+fn parses_update_into_semantic_mutation() {
+    let frontend = frontend::SqlFrontend::new();
+    let result = frontend
+        .parse("UPDATE ticks SET value = value + 1 WHERE symbol = 'AAPL';", None)
+        .expect("sql frontend should parse update");
+
+    let fp_core::ast::NodeKind::Query(doc) = result.ast.kind() else {
+        panic!("expected query node");
+    };
+    let semantic = doc.semantic.as_ref().expect("semantic mutation");
+    assert!(matches!(semantic.statements[0], QueryIrStmt::Update(_)));
 }

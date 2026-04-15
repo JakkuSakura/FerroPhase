@@ -902,9 +902,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::FsExists
-        | IntrinsicCallKind::FsIsDir
-        | IntrinsicCallKind::FsIsFile => {
+        IntrinsicCallKind::FsExists | IntrinsicCallKind::FsIsDir | IntrinsicCallKind::FsIsFile => {
             if invoke.args.len() != 1 {
                 return None;
             }

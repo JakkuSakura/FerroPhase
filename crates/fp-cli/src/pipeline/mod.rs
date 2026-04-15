@@ -1,4 +1,3 @@
-use crate::CliError;
 use crate::codegen::CodeGenerator;
 use crate::languages::frontend::{FerroFrontend, FrontendResult, FrontendSnapshot, LanguageFrontend};
 #[cfg(feature = "lang-flatbuffers")]
@@ -24,6 +23,7 @@ use crate::languages::frontend::TypeScriptFrontend;
 #[cfg(feature = "lang-wit")]
 use crate::languages::frontend::WitFrontend;
 use crate::languages::{self, detect_source_language};
+use crate::CliError;
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_bytecode;
 use fp_core::ast::register_threadlocal_serializer;
@@ -37,7 +37,8 @@ use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager,
 };
 use fp_core::intrinsics::IntrinsicNormalizer;
-use fp_core::pretty::{PrettyOptions, pretty};
+use fp_core::pretty::{pretty, PrettyOptions};
+use fp_core::query::promote_fp_query_node;
 use fp_core::{hir, lir};
 #[cfg(feature = "lang-dotnet")]
 use fp_dotnet::{emit_assembly, emit_cil};
@@ -48,7 +49,7 @@ use fp_interpret::engine::{
 use fp_jvm;
 use fp_lang::embedded_std;
 #[cfg(feature = "llvm")]
-use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
+use fp_llvm::{linking::LinkerConfig, LlvmCompiler, LlvmConfig};
 use fp_pipeline::{PipelineBuilder, PipelineDiagnostics, PipelineError, PipelineStage};
 #[cfg(feature = "lang-typescript")]
 use fp_typescript::frontend::TsParseMode;
@@ -335,7 +336,11 @@ impl Pipeline {
         self.frontend_snapshot = snapshot;
         self.source_language = Some(frontend.language().to_string());
 
-        Ok(ast)
+        Ok(Self::promote_query_node_for_language(
+            frontend.language(),
+            ast,
+            path,
+        ))
     }
 
     fn parse_input_source(
@@ -623,7 +628,18 @@ impl Pipeline {
         self.macro_parser = macro_parser;
         self.frontend_snapshot = snapshot;
 
-        Ok(ast)
+        Ok(Self::promote_query_node_for_language(
+            frontend.language(),
+            ast,
+            input_path,
+        ))
+    }
+
+    fn promote_query_node_for_language(language: &str, mut ast: Node, path: Option<&Path>) -> Node {
+        if language == languages::FERROPHASE {
+            promote_fp_query_node(&mut ast, path);
+        }
+        ast
     }
 
     fn resolve_file_modules(
@@ -1325,7 +1341,7 @@ impl Pipeline {
             return Ok(());
         }
 
-        use fp_core::pretty::{PrettyOptions, pretty};
+        use fp_core::pretty::{pretty, PrettyOptions};
 
         let pretty_options = PrettyOptions {
             show_types: extension != EXT_AST,
@@ -1905,12 +1921,10 @@ fn main() {
             panic!("expected module foo");
         };
         assert!(!module.items.is_empty(), "expected foo to be populated");
-        assert!(
-            module
-                .items
-                .iter()
-                .any(|item| matches!(item.kind(), ast::ItemKind::DefFunction(_)))
-        );
+        assert!(module
+            .items
+            .iter()
+            .any(|item| matches!(item.kind(), ast::ItemKind::DefFunction(_))));
     }
 
     fn find_intrinsic_calls(ast: &ast::Node) -> Vec<ast::ExprIntrinsicCall> {
@@ -2117,6 +2131,18 @@ fn main() {
     fn rust_frontend_parses_expression() {
         let mut pipeline = Pipeline::new();
         assert!(pipeline.parse_source_public("1 + 2", None).is_ok());
+    }
+
+    #[test]
+    fn ferro_pipeline_promotes_query_after_frontend_parse() {
+        let mut pipeline = Pipeline::new();
+        let ast = pipeline
+            .parse_source_with_path_for_tests(
+                "from(ticks).where(symbol == \"AAPL\").select(value)",
+                Path::new("unit_query.fp"),
+            )
+            .expect("parse");
+        assert!(matches!(ast.kind(), ast::NodeKind::Query(_)));
     }
 
     #[test]
@@ -2422,18 +2448,14 @@ fn main() {
         harness.type_check(&mut ast);
 
         let intrinsic_calls = find_intrinsic_calls(&ast);
-        assert!(
-            intrinsic_calls
-                .iter()
-                .any(|call| call.kind == IntrinsicCallKind::Println)
-        );
+        assert!(intrinsic_calls
+            .iter()
+            .any(|call| call.kind == IntrinsicCallKind::Println));
 
         let outcome = harness.const_eval(&mut ast);
-        assert!(
-            stdout_lines(&outcome)
-                .iter()
-                .any(|line| line.trim().is_empty())
-        );
+        assert!(stdout_lines(&outcome)
+            .iter()
+            .any(|line| line.trim().is_empty()));
         harness.ensure_no_errors();
     }
 

@@ -188,8 +188,20 @@ fn transform_slice_syntax_to_hir_slice_expr_preserves_bounds() -> Result<()> {
 
     let cases = vec![
         (None, ast::ExprRangeLimit::Exclusive, None, false, false),
-        (Some(start.clone()), ast::ExprRangeLimit::Exclusive, None, true, false),
-        (None, ast::ExprRangeLimit::Exclusive, Some(end.clone()), false, true),
+        (
+            Some(start.clone()),
+            ast::ExprRangeLimit::Exclusive,
+            None,
+            true,
+            false,
+        ),
+        (
+            None,
+            ast::ExprRangeLimit::Exclusive,
+            Some(end.clone()),
+            false,
+            true,
+        ),
         (
             Some(start.clone()),
             ast::ExprRangeLimit::Exclusive,
@@ -197,7 +209,13 @@ fn transform_slice_syntax_to_hir_slice_expr_preserves_bounds() -> Result<()> {
             true,
             true,
         ),
-        (None, ast::ExprRangeLimit::Inclusive, Some(end.clone()), false, true),
+        (
+            None,
+            ast::ExprRangeLimit::Inclusive,
+            Some(end.clone()),
+            false,
+            true,
+        ),
         (
             Some(start.clone()),
             ast::ExprRangeLimit::Inclusive,
@@ -733,6 +751,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                     }
                 }
             }
+            hir::ItemKind::Query(_) => {}
             hir::ItemKind::Expr(expr) => collect_paths(expr, out),
             hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => {}
         }

@@ -121,7 +121,10 @@ fn try_lower_emit(tokens: &[Token], idx: usize) -> Result<Option<(usize, Vec<Tok
 }
 
 fn is_field_like_after_dot(token: &Token) -> bool {
-    matches!(token.kind, TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_))
+    matches!(
+        token.kind,
+        TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_)
+    )
 }
 
 fn is_keyword(token: &Token, keyword: Keyword) -> bool {

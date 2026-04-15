@@ -161,21 +161,28 @@ fn parse_item_with_attrs_and_visibility(
     let mut item_children: Vec<SyntaxElement> = Vec::new();
     let attrs = match parse_outer_attrs_cst(input) {
         Ok(attrs) => attrs,
-        Err(err) => return Err(ItemParseError::from_err_with_span(err, input, full_input, None)),
+        Err(err) => {
+            return Err(ItemParseError::from_err_with_span(
+                err, input, full_input, None,
+            ))
+        }
     };
     for attr in attrs {
         item_children.push(SyntaxElement::Node(Box::new(attr)));
     }
     let visibility = match parse_visibility_cst(input) {
         Ok(vis) => vis,
-        Err(err) => return Err(ItemParseError::from_err_with_span(err, input, full_input, None)),
+        Err(err) => {
+            return Err(ItemParseError::from_err_with_span(
+                err, input, full_input, None,
+            ))
+        }
     };
     if let Some(vis) = visibility {
         item_children.push(SyntaxElement::Node(Box::new(vis)));
     }
-    parse_item_cst(input, item_children).map_err(|err| {
-        ItemParseError::from_err_with_span(err, input, full_input, context)
-    })
+    parse_item_cst(input, item_children)
+        .map_err(|err| ItemParseError::from_err_with_span(err, input, full_input, context))
 }
 
 fn take_unsafe_prefix_token(
@@ -779,9 +786,7 @@ fn parse_extern_member_prefix(input: &mut &[Token]) -> ModalResult<Vec<SyntaxEle
         );
         if is_safe {
             let safe_token = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
-            member_children.push(SyntaxElement::Token(syntax_token_from_token(
-                &safe_token,
-            )));
+            member_children.push(SyntaxElement::Token(syntax_token_from_token(&safe_token)));
             continue;
         }
         let is_async = matches!(
@@ -793,9 +798,7 @@ fn parse_extern_member_prefix(input: &mut &[Token]) -> ModalResult<Vec<SyntaxEle
         );
         if is_async {
             let async_token = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
-            member_children.push(SyntaxElement::Token(syntax_token_from_token(
-                &async_token,
-            )));
+            member_children.push(SyntaxElement::Token(syntax_token_from_token(&async_token)));
             continue;
         }
         break;
@@ -910,9 +913,7 @@ fn parse_named_field_decl(
     field_children.push(SyntaxElement::Token(field_name));
     if allow_optional_qmark && matches_symbol(input.first(), "?") {
         let optional_tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
-        field_children.push(SyntaxElement::Token(syntax_token_from_token(
-            &optional_tok,
-        )));
+        field_children.push(SyntaxElement::Token(syntax_token_from_token(&optional_tok)));
     }
     expect_symbol(input, ":")?;
     let ty = parse_type_prefix_from_tokens(input, &[",", "}"])?;
@@ -1269,8 +1270,8 @@ fn parse_trait_member_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
                                 ..
                             })
                         ) {
-                            let abi = advance(input)
-                                .ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                            let abi =
+                                advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
                             children.push(SyntaxElement::Token(syntax_token_from_token(&abi)));
                         }
                     }
@@ -1351,7 +1352,13 @@ fn parse_generic_params_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
         for attr in attrs {
             param_children.push(SyntaxElement::Node(Box::new(attr)));
         }
-        if matches!(cursor.first(), Some(Token { kind: TokenKind::Keyword(Keyword::Const), .. })) {
+        if matches!(
+            cursor.first(),
+            Some(Token {
+                kind: TokenKind::Keyword(Keyword::Const),
+                ..
+            })
+        ) {
             let tok = advance(&mut cursor).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
             param_children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
             let name = expect_ident_token(&mut cursor)?;
@@ -1374,7 +1381,8 @@ fn parse_generic_params_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
                     lexeme,
                     ..
                 }) if lexeme.starts_with('\'') => {
-                    let tok = advance(&mut cursor).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                    let tok =
+                        advance(&mut cursor).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
                     syntax_token_from_token(&tok)
                 }
                 Some(Token {
@@ -1452,9 +1460,7 @@ fn split_angle_tokens_for_generics(tokens: &[Token]) -> (Vec<Token>, Vec<usize>)
         if token.kind == TokenKind::Symbol && token.lexeme.len() > 1 {
             let mut chars = token.lexeme.chars();
             if let Some(first) = chars.next() {
-                if (first == '<' || first == '>')
-                    && chars.clone().all(|ch| ch == first)
-                {
+                if (first == '<' || first == '>') && chars.clone().all(|ch| ch == first) {
                     let count = token.lexeme.len();
                     for pos in 0..count {
                         let mut split = token.clone();
@@ -1811,9 +1817,10 @@ fn try_parse_pattern_param_prefix(input: &mut &[Token]) -> ModalResult<Option<Sy
 fn parse_pattern_from_tokens_legacy(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     let mut pat = parse_pattern_atom_from_tokens_legacy(input)?;
 
-    if matches!(input.first(), Some(Token { kind: TokenKind::Symbol, lexeme, .. }) if lexeme == ".." || lexeme == "..=") {
-        let start = coerce_pattern_range_start(pat)
-            .ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    if matches!(input.first(), Some(Token { kind: TokenKind::Symbol, lexeme, .. }) if lexeme == ".." || lexeme == "..=")
+    {
+        let start =
+            coerce_pattern_range_start(pat).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
         pat = parse_range_pattern_from_tokens_legacy(input, Some(start))?;
     }
 
@@ -2235,10 +2242,7 @@ fn parse_range_pattern_from_tokens_legacy(
     children.push(SyntaxElement::Token(syntax_token_from_token(&op)));
 
     if let Some(tok) = input.first() {
-        if !matches!(
-            tok.lexeme.as_str(),
-            "," | ")" | "]" | "}" | ";" | "if"
-        ) {
+        if !matches!(tok.lexeme.as_str(), "," | ")" | "]" | "}" | ";" | "if") {
             let end = parse_expr_prefix_from_tokens(input)?;
             children.push(SyntaxElement::Node(Box::new(end)));
         }
@@ -2247,10 +2251,7 @@ fn parse_range_pattern_from_tokens_legacy(
     Ok(node(SyntaxKind::ExprRange, children))
 }
 
-fn parse_generic_args_into(
-    input: &mut &[Token],
-    out: &mut Vec<SyntaxElement>,
-) -> ModalResult<()> {
+fn parse_generic_args_into(input: &mut &[Token], out: &mut Vec<SyntaxElement>) -> ModalResult<()> {
     let (split_tokens, token_to_input_end) = split_angle_tokens_for_generics(input);
     let mut cursor: &[Token] = &split_tokens;
 
@@ -2327,7 +2328,8 @@ fn parse_generic_args_into(
                 kind: TokenKind::Keyword(Keyword::Const),
                 ..
             })
-        ) || matches_symbol(cursor.first(), "{") {
+        ) || matches_symbol(cursor.first(), "{")
+        {
             parse_unknown_generic_arg_from_tokens(&mut cursor)?
         } else {
             parse_type_prefix_from_tokens(&mut cursor, &[",", ">"])?
@@ -2414,7 +2416,11 @@ fn consume_where_clause(input: &mut &[Token]) {
     let mut bracket_depth: i32 = 0;
     while let Some(tok) = input.first() {
         let at_top = angle_depth == 0 && paren_depth == 0 && bracket_depth == 0;
-        if at_top && (matches_symbol(Some(tok), "{") || matches_symbol(Some(tok), ";") || matches_symbol(Some(tok), "=")) {
+        if at_top
+            && (matches_symbol(Some(tok), "{")
+                || matches_symbol(Some(tok), ";")
+                || matches_symbol(Some(tok), "="))
+        {
             break;
         }
         if tok.kind == TokenKind::Symbol {
@@ -2577,12 +2583,9 @@ fn parse_pattern_prefix_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxN
 #[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
 fn parse_type_prefix_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {
     let (lexemes, lexeme_to_token_end) = lexemes_from_tokens_for_type(input);
-    parse_prefix_from_lexemes(
-        input,
-        lexemes,
-        lexeme_to_token_end,
-        |lexemes, file| cst::parse_type_lexemes_prefix_to_cst(lexemes, file, stops),
-    )
+    parse_prefix_from_lexemes(input, lexemes, lexeme_to_token_end, |lexemes, file| {
+        cst::parse_type_lexemes_prefix_to_cst(lexemes, file, stops)
+    })
 }
 
 fn push_symbol_lexeme(
@@ -2890,12 +2893,8 @@ fn expect_keyword(input: &mut &[Token], keyword: Keyword) -> ModalResult<()> {
 
 fn symbol_matches_token(tok: &Token, sym: &str) -> bool {
     tok.lexeme == sym
-        || (sym == ">"
-            && tok.lexeme.len() > 1
-            && tok.lexeme.chars().all(|ch| ch == '>'))
-        || (sym == "<"
-            && tok.lexeme.len() > 1
-            && tok.lexeme.chars().all(|ch| ch == '<'))
+        || (sym == ">" && tok.lexeme.len() > 1 && tok.lexeme.chars().all(|ch| ch == '>'))
+        || (sym == "<" && tok.lexeme.len() > 1 && tok.lexeme.chars().all(|ch| ch == '<'))
 }
 
 fn match_symbol(input: &mut &[Token], sym: &str) -> bool {

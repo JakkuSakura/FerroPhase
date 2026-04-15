@@ -85,8 +85,7 @@ fn projects_intrinsic_slice_compatibility_path() {
         span(),
     );
 
-    let projected =
-        project_hir_assign_target(&slice_call).expect("intrinsic slice should project");
+    let projected = project_hir_assign_target(&slice_call).expect("intrinsic slice should project");
     let projection = projected
         .projections
         .last()
@@ -100,4 +99,3 @@ fn projects_intrinsic_slice_compatibility_path() {
     assert!(slice.end.is_some());
     assert!(!slice.inclusive);
 }
-

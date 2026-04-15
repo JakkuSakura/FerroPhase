@@ -51,6 +51,7 @@ pub fn lower_program(
                 }
             }
             mir::ItemKind::Static(_) => return Err(JvmError::UnsupportedItem("static")),
+            mir::ItemKind::Query(_) => continue,
         }
     }
 

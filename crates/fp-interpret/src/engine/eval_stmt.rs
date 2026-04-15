@@ -15,8 +15,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         match stmt {
             BlockStmt::Expr(expr_stmt) => {
                 if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
-                    if !self.in_const_region() && !matches!(self.mode, InterpreterMode::Comptime)
-                    {
+                    if !self.in_const_region() && !matches!(self.mode, InterpreterMode::Comptime) {
                         self.emit_error("splice is only supported during const evaluation");
                         return None;
                     }

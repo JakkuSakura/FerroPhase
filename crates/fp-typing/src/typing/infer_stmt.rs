@@ -182,8 +182,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if let Some(scrutinee) = match_expr.scrutinee.as_mut() {
             let scrutinee_var = self.infer_expr(scrutinee.as_mut())?;
             let scrutinee_ty_initial = self.resolve_to_ty(scrutinee_var).ok();
-            let scrutinee_enum_hint = self
-                .scrutinee_enum_from_explicit_generic_invoke(scrutinee.as_ref());
+            let scrutinee_enum_hint =
+                self.scrutinee_enum_from_explicit_generic_invoke(scrutinee.as_ref());
             for case in &mut match_expr.cases {
                 self.enter_scope();
 
@@ -305,15 +305,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let Name::ParameterPath(path) = locator else {
             return None;
         };
-        let segment = path.segments.iter().rev().find(|seg| !seg.args.is_empty())?;
+        let segment = path
+            .segments
+            .iter()
+            .rev()
+            .find(|seg| !seg.args.is_empty())?;
         Some(segment.args.as_slice())
     }
 
-    fn bind_enum_variant_pattern(
-        &mut self,
-        pat: &Pattern,
-        enum_ty: &TypeEnum,
-    ) -> Result<()> {
+    fn bind_enum_variant_pattern(&mut self, pat: &Pattern, enum_ty: &TypeEnum) -> Result<()> {
         let needs_generics = !enum_ty.generics_params.is_empty();
         if needs_generics {
             self.enter_scope();
@@ -330,11 +330,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 PatternKind::TupleStruct(tuple_struct) => {
                     let variant_name = match &tuple_struct.name {
                         Name::Ident(ident) => ident.as_str(),
-                        Name::Path(path) => path
-                            .segments
-                            .last()
-                            .map(|seg| seg.as_str())
-                            .unwrap_or(""),
+                        Name::Path(path) => {
+                            path.segments.last().map(|seg| seg.as_str()).unwrap_or("")
+                        }
                         _ => "",
                     };
                     if let Some(def_variant) = enum_ty
@@ -347,10 +345,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .unwrap_or_else(|| def_variant.value.clone());
                         match &expected_value {
                             Ty::Tuple(tuple_ty) => {
-                                for (pat, expected_ty) in tuple_struct
-                                    .patterns
-                                    .iter()
-                                    .zip(tuple_ty.types.iter())
+                                for (pat, expected_ty) in
+                                    tuple_struct.patterns.iter().zip(tuple_ty.types.iter())
                                 {
                                     self.bind_pattern_expected_type(pat, expected_ty)?;
                                 }
@@ -366,11 +362,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 PatternKind::Variant(variant) => {
                     let variant_name = match variant.name.kind() {
                         ExprKind::Name(Name::Ident(ident)) => ident.as_str(),
-                        ExprKind::Name(Name::Path(path)) => path
-                            .segments
-                            .last()
-                            .map(|seg| seg.as_str())
-                            .unwrap_or(""),
+                        ExprKind::Name(Name::Path(path)) => {
+                            path.segments.last().map(|seg| seg.as_str()).unwrap_or("")
+                        }
                         _ => "",
                     };
                     if let Some(def_variant) = enum_ty
@@ -467,9 +461,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         enum_ty: &TypeEnum,
         variant_name: &str,
     ) -> Result<Option<Ty>> {
-        let Some((_, enum_def)) =
-            self.lookup_enum_def_by_name(enum_ty.name.as_str())
-        else {
+        let Some((_, enum_def)) = self.lookup_enum_def_by_name(enum_ty.name.as_str()) else {
             let expected = enum_ty
                 .variants
                 .iter()
@@ -514,7 +506,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if mapping.is_empty() {
             return Ok(Some(concrete_variant.value.clone()));
         }
-        Ok(Some(self.substitute_generic_ty(&def_variant.value, &mapping)))
+        Ok(Some(
+            self.substitute_generic_ty(&def_variant.value, &mapping),
+        ))
     }
 
     pub(crate) fn collect_enum_generic_mapping(
@@ -586,9 +580,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             Ty::Tuple(tuple) => {
                 if let Ty::Tuple(concrete) = concrete_value {
-                    for (def_elem, conc_elem) in
-                        tuple.types.iter().zip(concrete.types.iter())
-                    {
+                    for (def_elem, conc_elem) in tuple.types.iter().zip(concrete.types.iter()) {
                         self.collect_enum_generic_mapping(
                             def_elem,
                             conc_elem,
@@ -676,11 +668,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             PatternKind::Tuple(tuple) => {
                 if let Ty::Tuple(tuple_ty) = expected {
-                    for (pat, expected_ty) in tuple
-                        .patterns
-                        .iter()
-                        .zip(tuple_ty.types.iter())
-                    {
+                    for (pat, expected_ty) in tuple.patterns.iter().zip(tuple_ty.types.iter()) {
                         self.bind_pattern_expected_type(pat, expected_ty)?;
                     }
                 }
@@ -701,9 +689,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         };
                         if let Some(rename) = field.rename.as_ref() {
                             self.bind_pattern_expected_type(rename, &def_field.value)?;
-                        } else if let Some(var) =
-                            self.lookup_env_var(field.name.as_str())
-                        {
+                        } else if let Some(var) = self.lookup_env_var(field.name.as_str()) {
                             let expected_var = self.type_from_ast_ty(&def_field.value)?;
                             self.unify(var, expected_var)?;
                         }
@@ -717,9 +703,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         };
                         if let Some(rename) = field.rename.as_ref() {
                             self.bind_pattern_expected_type(rename, &def_field.value)?;
-                        } else if let Some(var) =
-                            self.lookup_env_var(field.name.as_str())
-                        {
+                        } else if let Some(var) = self.lookup_env_var(field.name.as_str()) {
                             let expected_var = self.type_from_ast_ty(&def_field.value)?;
                             self.unify(var, expected_var)?;
                         }
@@ -736,9 +720,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         };
                         if let Some(rename) = field.rename.as_ref() {
                             self.bind_pattern_expected_type(rename, &def_field.value)?;
-                        } else if let Some(var) =
-                            self.lookup_env_var(field.name.as_str())
-                        {
+                        } else if let Some(var) = self.lookup_env_var(field.name.as_str()) {
                             let expected_var = self.type_from_ast_ty(&def_field.value)?;
                             self.unify(var, expected_var)?;
                         }
@@ -779,9 +761,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 };
                 self.bind_pattern_expected_type(ref_pat.pattern.as_ref(), inner_expected)?;
             }
-            PatternKind::Quote(_)
-            | PatternKind::QuotePlural(_)
-            | PatternKind::Wildcard(_) => {}
+            PatternKind::Quote(_) | PatternKind::QuotePlural(_) | PatternKind::Wildcard(_) => {}
         }
         Ok(())
     }

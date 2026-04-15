@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 fp-core = { path = "../fp-core" }
 fp-backend = { path = "../fp-backend" }
+fp-prql = { path = "../fp-prql" }
 eyre = "0.6"
 thiserror = "2.0.17"
 winnow = "0.6"

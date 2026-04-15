@@ -16,6 +16,7 @@ pub fn eliminate_dead_code(program: &mut hir::Program) -> usize {
             hir::ItemKind::Function(function) if function.sig.name.as_str() == "main" => {
                 Some(item.def_id)
             }
+            hir::ItemKind::Query(_) => Some(item.def_id),
             hir::ItemKind::Expr(_) => Some(item.def_id),
             _ => None,
         })
@@ -86,6 +87,7 @@ fn item_has_unresolved_paths(item: &hir::Item) -> bool {
                     .is_some_and(expr_has_unresolved_paths)
         }),
         hir::ItemKind::Impl(_) => true,
+        hir::ItemKind::Query(_) => false,
         hir::ItemKind::Expr(expr) => expr_has_unresolved_paths(expr),
     }
 }
@@ -273,6 +275,7 @@ fn item_name(item: &hir::Item) -> Option<&str> {
         hir::ItemKind::Enum(def) => Some(def.name.as_str()),
         hir::ItemKind::Const(def) => Some(def.name.as_str()),
         hir::ItemKind::Impl(_) => None,
+        hir::ItemKind::Query(_) => None,
         hir::ItemKind::Expr(_) => None,
     }
 }
@@ -316,6 +319,7 @@ fn collect_item_refs(
             }
         }
         hir::ItemKind::Impl(_) => {}
+        hir::ItemKind::Query(_) => {}
         hir::ItemKind::Expr(expr) => collect_expr_refs(expr, full_map, tail_map, work),
     }
 }

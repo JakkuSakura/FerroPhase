@@ -137,6 +137,7 @@ impl LirGenerator {
                     let lir_static = self.transform_static(mir_static)?;
                     lir_program.globals.push(lir_static);
                 }
+                mir::ItemKind::Query(_) => {}
             }
         }
 
@@ -318,10 +319,8 @@ impl LirGenerator {
                 self.function_symbol_map
                     .entry(String::from(mir_func.name.clone()))
                     .or_insert(extern_name.clone());
-                let short_name = abi::extern_symbol_name_with_attrs(
-                    mir_func.name.as_str(),
-                    &mir_func.attrs,
-                );
+                let short_name =
+                    abi::extern_symbol_name_with_attrs(mir_func.name.as_str(), &mir_func.attrs);
                 self.function_symbol_map
                     .entry(short_name)
                     .or_insert(extern_name.clone());

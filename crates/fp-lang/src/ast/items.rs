@@ -4,12 +4,11 @@ use crate::syntax::{collect_tokens, SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     Abi, AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BExpr, EnumTypeVariant,
     Expr, ExprAsync, ExprKind, ExprMacro, ExprUnOp, FunctionParam, FunctionParamReceiver,
-    FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType,
-    ItemDeclStatic, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
+    FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclStatic,
+    ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
     ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath,
-    ItemImportRename,
-    ItemImportStyle, ItemImportTree, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter,
-    MacroInvocation, Module, Name, Path, QuoteFragmentKind, ReprFlags, ReprOptions,
+    ItemImportRename, ItemImportStyle, ItemImportTree, ItemKind, ItemMacro, ItemOpaqueType,
+    MacroDelimiter, MacroInvocation, Module, Name, Path, QuoteFragmentKind, ReprFlags, ReprOptions,
     StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeQuote,
     TypeStruct, Value, ValueNone, Visibility,
 };
@@ -49,7 +48,9 @@ pub fn lower_items_from_cst(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsEr
     lower_items_from_cst_children(node)
 }
 
-pub fn lower_file_from_cst(node: &SyntaxNode) -> Result<(Vec<Attribute>, Vec<Item>), LowerItemsError> {
+pub fn lower_file_from_cst(
+    node: &SyntaxNode,
+) -> Result<(Vec<Attribute>, Vec<Item>), LowerItemsError> {
     if node.kind == SyntaxKind::Root {
         if let Some(list) = first_child_by_kind(node, SyntaxKind::ItemList) {
             let mut attrs = lower_inner_attrs(node);
@@ -99,9 +100,9 @@ pub(crate) fn lower_item_from_cst(node: &SyntaxNode) -> Result<Item, LowerItemsE
         SyntaxKind::ItemExternFnDecl => Ok(Item::from(ItemKind::DeclFunction(
             lower_extern_fn_decl(node, None)?,
         ))),
-        SyntaxKind::ItemExternStaticDecl => {
-            Ok(Item::from(ItemKind::DeclStatic(lower_extern_static_decl(node)?)))
-        }
+        SyntaxKind::ItemExternStaticDecl => Ok(Item::from(ItemKind::DeclStatic(
+            lower_extern_static_decl(node)?,
+        ))),
         SyntaxKind::ItemMacro => Ok(Item::from(ItemKind::Macro(lower_item_macro(node)?))),
         SyntaxKind::ItemExpr => {
             let expr_node = first_child_by_category(node, CstCategory::Expr)
@@ -693,8 +694,8 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
 
     let body_node = first_child_by_category(node, CstCategory::Expr)
         .ok_or(LowerItemsError::MissingToken("fn body"))?;
-    let body =
-        lower_expr_from_cst(body_node).map_err(|err| LowerItemsError::LowerExpr(err.to_string()))?;
+    let body = lower_expr_from_cst(body_node)
+        .map_err(|err| LowerItemsError::LowerExpr(err.to_string()))?;
     let is_async = node.children.iter().any(|c| {
         matches!(
             c,
@@ -1261,9 +1262,7 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
                             &["const", "mut", "context", "box", "ref"],
                         )
                     });
-                if pname_text.is_none()
-                    && tokens.iter().any(|token| *token == "...")
-                {
+                if pname_text.is_none() && tokens.iter().any(|token| *token == "...") {
                     continue;
                 }
                 let pname = if let Some(pname_text) = pname_text {

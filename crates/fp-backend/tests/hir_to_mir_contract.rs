@@ -1,8 +1,8 @@
 use fp_backend::transformations::MirLowering;
 use fp_core::ast::{TypeInt, TypePrimitive};
 use fp_core::hir::{
-    self, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Lit, Pat, PatKind,
-    Path, PathSegment, Program, Res, Symbol, TypeExpr, TypeExprKind, Visibility,
+    self, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Lit, Pat, PatKind, Path,
+    PathSegment, Program, Res, Symbol, TypeExpr, TypeExprKind, Visibility,
 };
 use fp_core::mir::{
     self,
@@ -494,7 +494,10 @@ fn lowers_index_on_static_slice_into_subslice_then_index_projection() {
         .transform(program_with_items(vec![item]))
         .expect("HIR→MIR lowering should succeed");
     let (diagnostics, has_errors) = lowering.take_diagnostics();
-    assert!(diagnostics.is_empty(), "unexpected diagnostics: {diagnostics:?}");
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics: {diagnostics:?}"
+    );
     assert!(!has_errors);
 
     let mir_function = match &mir_program.items[0].kind {
@@ -606,7 +609,10 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
         .transform(program_with_items(vec![item]))
         .expect("HIR→MIR lowering should succeed");
     let (diagnostics, has_errors) = lowering.take_diagnostics();
-    assert!(diagnostics.is_empty(), "unexpected diagnostics: {diagnostics:?}");
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics: {diagnostics:?}"
+    );
     assert!(!has_errors);
 
     let mir_function = match &mir_program.items[0].kind {
@@ -636,7 +642,13 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
                 container: Operand::Copy(place),
                 ..
             },
-        ) => place.local == slice_value_local && !place.projection.iter().any(|elem| matches!(elem, mir::PlaceElem::Subslice { .. })),
+        ) => {
+            place.local == slice_value_local
+                && !place
+                    .projection
+                    .iter()
+                    .any(|elem| matches!(elem, mir::PlaceElem::Subslice { .. }))
+        }
         _ => false,
     });
 

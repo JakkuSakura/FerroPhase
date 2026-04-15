@@ -1324,6 +1324,7 @@ dependencies = [
  "eyre",
  "fp-core",
  "fp-interpret",
+ "fp-lang",
  "fp-sql",
  "fp-typing",
  "itertools 0.12.1",
@@ -1616,6 +1617,7 @@ dependencies = [
  "eyre",
  "fp-backend",
  "fp-core",
+ "fp-prql",
  "num-bigint",
  "thiserror 2.0.17",
  "tracing",
@@ -1673,6 +1675,7 @@ name = "fp-prql"
 version = "0.1.0"
 dependencies = [
  "fp-core",
+ "fp-sql",
 ]
 
 [[package]]

@@ -17,6 +17,11 @@ use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
 pub fn lift_program(program: &hir::Program, path: PathBuf) -> Result<ast::Node> {
+    if let [item] = program.items.as_slice() {
+        if let hir::ItemKind::Query(query) = &item.kind {
+            return Ok(ast::Node::query(query.document.clone()));
+        }
+    }
     let mut items = Vec::with_capacity(program.items.len());
     for item in &program.items {
         items.push(lift_item(item)?);
@@ -89,6 +94,12 @@ fn lift_item(item: &hir::Item) -> Result<Item> {
         hir::ItemKind::Impl(_) => {
             return Err(fp_core::error::Error::Generic(eyre::eyre!(
                 "HIR->AST lifting for impl items is not implemented"
+            )))
+        }
+        hir::ItemKind::Query(query) => {
+            return Err(fp_core::error::Error::Generic(eyre::eyre!(
+                "HIR->AST lifting for query item '{}' requires lift_program root handling",
+                query.document.name.as_deref().unwrap_or("<query>")
             )))
         }
         hir::ItemKind::Expr(expr) => Item::from(ItemKind::Expr(lift_expr(expr)?)),

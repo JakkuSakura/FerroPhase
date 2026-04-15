@@ -37,7 +37,7 @@ impl PipelineStage for FrontendStage {
 
         if matches!(
             context.ast.kind(),
-            NodeKind::Item(_) | NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_)
+            NodeKind::Item(_) | NodeKind::Schema(_) | NodeKind::Workspace(_)
         ) {
             let message = "Top-level items are not supported; provide a file or expression";
             diagnostics
@@ -52,8 +52,9 @@ impl PipelineStage for FrontendStage {
         let result = match context.ast.kind() {
             NodeKind::Expr(expr) => generator.transform_expr(expr),
             NodeKind::File(file) => generator.transform_file(file),
+            NodeKind::Query(query) => generator.transform_query_document(query),
             NodeKind::Item(_) => unreachable!(),
-            NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => unreachable!(),
+            NodeKind::Schema(_) | NodeKind::Workspace(_) => unreachable!(),
         };
 
         let new_diagnostics = diag_manager.diagnostics_since(diag_snapshot);

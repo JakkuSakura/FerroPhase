@@ -1,6 +1,6 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprAssign, ExprBlock, ExprDereference, ExprIndex, ExprKind,
-    ExprRange, ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType, ExprLet, Ident, Pattern,
+    ExprLet, ExprRange, ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType, Ident, Pattern,
     PatternIdent, PatternKind, Value, ValueField, ValueList, ValueStructural,
 };
 use fp_core::context::SharedScopedContext;
@@ -216,7 +216,9 @@ fn deref_assignment_updates_referenced_storage() {
         ))
         .with_semicolon(true),
     ));
-    block.push_stmt(BlockStmt::Expr(BlockStmtExpr::new(Expr::ident(Ident::new("a")))));
+    block.push_stmt(BlockStmt::Expr(BlockStmtExpr::new(Expr::ident(
+        Ident::new("a"),
+    ))));
 
     let mut expr = Expr::new(ExprKind::Block(block));
     let value = interpreter.evaluate_expression(&mut expr);

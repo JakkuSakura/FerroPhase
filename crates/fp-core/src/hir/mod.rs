@@ -1,5 +1,7 @@
 use crate::ast::{TypeBinaryOpKind, TypePrimitive};
 use crate::intrinsics::IntrinsicCallKind;
+use crate::query::QueryDocument;
+use crate::sql_ast;
 use std::collections::HashMap;
 
 pub mod ident;
@@ -39,6 +41,7 @@ pub enum ItemKind {
     Enum(Enum),
     Const(Const),
     Impl(Impl),
+    Query(Query),
     Expr(Expr),
 }
 
@@ -115,6 +118,13 @@ pub struct Impl {
     pub trait_ty: Option<TypeExpr>,
     pub self_ty: TypeExpr,
     pub items: Vec<ImplItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Query {
+    pub document: QueryDocument,
+    pub statements: Vec<sql_ast::Statement>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -546,6 +556,7 @@ impl ItemKind {
             ItemKind::Enum(enm) => enm.span(),
             ItemKind::Const(cons) => cons.span(),
             ItemKind::Impl(imp) => imp.span(),
+            ItemKind::Query(query) => query.span(),
             ItemKind::Expr(expr) => expr.span(),
         }
     }
@@ -638,6 +649,12 @@ impl Impl {
             .into_iter()
             .flatten(),
         )
+    }
+}
+
+impl Query {
+    pub fn span(&self) -> Span {
+        self.span
     }
 }
 

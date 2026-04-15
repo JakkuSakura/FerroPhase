@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
 use crate::intrinsics::IntrinsicCallKind;
+use crate::query::QueryDocument;
+use crate::sql_ast;
 
 pub mod ident;
 pub mod pretty;
@@ -29,6 +31,7 @@ pub struct Item {
 pub enum ItemKind {
     Function(Function),
     Static(Static),
+    Query(Query),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,6 +57,13 @@ pub struct Static {
     pub ty: Ty,
     pub init: Operand,
     pub mutability: Mutability,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Query {
+    pub document: QueryDocument,
+    pub statements: Vec<sql_ast::Statement>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -539,6 +549,7 @@ impl ItemKind {
         match self {
             ItemKind::Function(func) => func.span(),
             ItemKind::Static(stat) => stat.span(),
+            ItemKind::Query(query) => query.span(),
         }
     }
 }
@@ -558,6 +569,12 @@ impl FunctionSig {
 impl Static {
     pub fn span(&self) -> Span {
         self.init.span()
+    }
+}
+
+impl Query {
+    pub fn span(&self) -> Span {
+        self.span
     }
 }
 

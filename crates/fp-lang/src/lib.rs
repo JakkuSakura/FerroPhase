@@ -76,13 +76,14 @@ impl LanguageFrontend for FerroFrontend {
 
         if path.is_some() {
             self.ferro.clear_diagnostics();
-            return match self
-                .ferro
-                .parse_file_ast_with_file(&cleaned, file_id, Some(&source_path), source_path.clone())
-            {
+            return match self.ferro.parse_file_ast_with_file(
+                &cleaned,
+                file_id,
+                Some(&source_path),
+                source_path.clone(),
+            ) {
                 Ok(file) => {
                     let diagnostics = self.ferro.diagnostics();
-
                     let last = Node::file(file);
                     let mut ast = last.clone();
                     // Perform intrinsic normalization (includes Rust macro lowering via the
@@ -200,6 +201,7 @@ impl LanguageFrontend for FerroFrontend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fp_core::ast::NodeKind;
     use std::fs;
     use std::path::Path;
 
@@ -262,6 +264,39 @@ mod tests {
         let frontend = FerroFrontend::new();
         let result = frontend.parse("ap.arg::<u64>()", None);
         assert!(result.is_ok(), "unexpected parse error: {:?}", result.err());
+    }
+
+    #[test]
+    fn query_expression_stays_as_host_ast_until_feature_pass() {
+        let frontend = FerroFrontend::new();
+        let result = frontend
+            .parse(
+                "from(ticks).filter(symbol == \"AAPL\").select(value).take(5)",
+                None,
+            )
+            .expect("parse");
+        assert!(matches!(result.ast.kind(), NodeKind::Expr(_)));
+    }
+
+    #[test]
+    fn query_file_stays_as_host_ast_until_feature_pass() {
+        let frontend = FerroFrontend::new();
+        let dir = std::env::temp_dir().join(format!("fp-lang-query-pass-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("query_feature.fp");
+        fs::write(
+            &path,
+            "from(ticks).where(ts >= 10 && ts < 20).select(symbol, value)",
+        )
+        .expect("write temp source");
+
+        let result = frontend
+            .parse(&fs::read_to_string(&path).expect("read"), Some(&path))
+            .expect("parse");
+        assert!(matches!(result.ast.kind(), NodeKind::File(_)));
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(&dir);
     }
 }
 

@@ -1,5 +1,7 @@
 use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVarKind};
-use crate::{std_result_inner_types, AstTypeInferencer, EnvEntry, PatternBinding, PatternInfo, TypeVarId};
+use crate::{
+    std_result_inner_types, AstTypeInferencer, EnvEntry, PatternBinding, PatternInfo, TypeVarId,
+};
 use fp_core::ast::*;
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
@@ -256,11 +258,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         module
     }
 
-    fn signature_module_path(
-        &self,
-        locator: &Name,
-        sig_path: &QualifiedPath,
-    ) -> QualifiedPath {
+    fn signature_module_path(&self, locator: &Name, sig_path: &QualifiedPath) -> QualifiedPath {
         let sig_module = sig_path
             .parent_n(1)
             .unwrap_or_else(|| QualifiedPath::new(Vec::new()));
@@ -1362,8 +1360,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         let body_var = self.infer_expr(closure.body.as_mut())?;
-        let ret_var = if matches!(exception_policy, super::super::ExceptionReturnPolicy::AutoResult)
-        {
+        let ret_var = if matches!(
+            exception_policy,
+            super::super::ExceptionReturnPolicy::AutoResult
+        ) {
             let body_ty = self.resolve_to_ty(body_var)?;
             let result_ty = super::super::make_std_result_ty(body_ty, super::super::std_error_ty());
             self.type_from_ast_ty(&result_ty)?
@@ -1473,8 +1473,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
                     let arg_var = self.infer_expr(arg_expr)?;
-                    let param_var =
-                        self.type_from_ast_ty_in_module(&param.ty, &sig_module)?;
+                    let param_var = self.type_from_ast_ty_in_module(&param.ty, &sig_module)?;
                     let expects_cstr = self
                         .resolve_to_ty(param_var)
                         .ok()
@@ -1576,8 +1575,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
                         let arg_var = self.infer_expr(arg_expr)?;
-                        let param_var =
-                            self.type_from_ast_ty_in_module(&param.ty, &sig_module)?;
+                        let param_var = self.type_from_ast_ty_in_module(&param.ty, &sig_module)?;
                         let expects_cstr = self
                             .resolve_to_ty(param_var)
                             .ok()
@@ -1627,8 +1625,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
                         let arg_var = self.infer_expr(arg_expr)?;
-                        let param_var =
-                            self.type_from_ast_ty_in_module(&param.ty, &sig_module)?;
+                        let param_var = self.type_from_ast_ty_in_module(&param.ty, &sig_module)?;
                         self.unify(arg_var, param_var)?;
                     }
                     let ret_var = if let Some(ret_ty) = &sig.ret_ty {
@@ -2059,8 +2056,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 for (name, var) in &generic_vars {
                     if let Some(expected_ty) = mapping.get(name) {
-                        let resolved =
-                            self.resolve_to_ty(*var).unwrap_or(Ty::Unknown(TypeUnknown));
+                        let resolved = self.resolve_to_ty(*var).unwrap_or(Ty::Unknown(TypeUnknown));
                         if matches!(resolved, Ty::Unknown(_) | Ty::Any(_)) {
                             let expected_var = self.type_from_ast_ty(expected_ty)?;
                             self.unify(expected_var, *var)?;
@@ -2480,7 +2476,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let Name::ParameterPath(path) = locator else {
             return None;
         };
-        let segment = path.segments.iter().rev().find(|seg| !seg.args.is_empty())?;
+        let segment = path
+            .segments
+            .iter()
+            .rev()
+            .find(|seg| !seg.args.is_empty())?;
         Some(segment.args.as_slice())
     }
 
@@ -2835,9 +2835,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                         if enum_def.is_none() {
                             let enum_name = enum_segments.join("::");
-                            enum_def = self
-                                .lookup_enum_def_by_name(&enum_name)
-                                .map(|(_, def)| def);
+                            enum_def = self.lookup_enum_def_by_name(&enum_name).map(|(_, def)| def);
                         }
                         if let Some(enum_def) = enum_def {
                             if let Some(variant) = enum_def
@@ -2848,10 +2846,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 self.enter_scope();
                                 let mut generic_vars: Vec<(String, TypeVarId)> = Vec::new();
                                 for param in &enum_def.generics_params {
-                                    let var =
-                                        self.register_generic_param(param.name.as_str());
-                                    generic_vars
-                                        .push((param.name.as_str().to_string(), var));
+                                    let var = self.register_generic_param(param.name.as_str());
+                                    generic_vars.push((param.name.as_str().to_string(), var));
                                     let bounds = Self::extract_trait_bounds(&param.bounds);
                                     if !bounds.is_empty() {
                                         self.generic_trait_bounds.insert(var, bounds);
@@ -2871,8 +2867,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         }
                                     }
                                     _ if element_vars.len() == 1 => {
-                                        let expected_var =
-                                            self.type_from_ast_ty(&variant.value)?;
+                                        let expected_var = self.type_from_ast_ty(&variant.value)?;
                                         self.unify(element_vars[0], expected_var)?;
                                     }
                                     _ => {}
@@ -2885,8 +2880,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         .unwrap_or(Ty::Unknown(TypeUnknown));
                                     args.push(ty);
                                 }
-                                let concrete =
-                                    self.apply_generic_args_to_enum(&enum_def, &args);
+                                let concrete = self.apply_generic_args_to_enum(&enum_def, &args);
                                 self.exit_scope();
                                 let enum_var = self.fresh_type_var();
                                 self.bind(enum_var, TypeTerm::Enum(concrete));
@@ -2950,17 +2944,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                 let mut generic_vars: Vec<(String, TypeVarId)> =
                                                     Vec::new();
                                                 for param in &enum_def.generics_params {
-                                                    let var =
-                                                        self.register_generic_param(
-                                                            param.name.as_str(),
-                                                        );
+                                                    let var = self.register_generic_param(
+                                                        param.name.as_str(),
+                                                    );
                                                     generic_vars.push((
                                                         param.name.as_str().to_string(),
                                                         var,
                                                     ));
-                                                    let bounds = Self::extract_trait_bounds(
-                                                        &param.bounds,
-                                                    );
+                                                    let bounds =
+                                                        Self::extract_trait_bounds(&param.bounds);
                                                     if !bounds.is_empty() {
                                                         self.generic_trait_bounds
                                                             .insert(var, bounds);
@@ -2972,20 +2964,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                         .iter()
                                                         .find(|f| f.name == field.name)
                                                     {
-                                                        let expected_var = self
-                                                            .type_from_ast_ty(
-                                                                &expected_field.value,
-                                                            )?;
-                                                        if let Some(rename) =
-                                                            field.rename.as_mut()
+                                                        let expected_var = self.type_from_ast_ty(
+                                                            &expected_field.value,
+                                                        )?;
+                                                        if let Some(rename) = field.rename.as_mut()
                                                         {
                                                             let child =
                                                                 self.infer_pattern(rename)?;
                                                             bindings.extend(child.bindings);
-                                                            self.unify(
-                                                                child.var,
-                                                                expected_var,
-                                                            )?;
+                                                            self.unify(child.var, expected_var)?;
                                                         } else {
                                                             let var = self.fresh_type_var();
                                                             self.insert_env(
@@ -3012,10 +2999,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                     args.push(ty);
                                                 }
                                                 let concrete = self
-                                                    .apply_generic_args_to_enum(
-                                                        &enum_def,
-                                                        &args,
-                                                    );
+                                                    .apply_generic_args_to_enum(&enum_def, &args);
                                                 self.exit_scope();
                                                 self.bind(enum_var, TypeTerm::Enum(concrete));
                                                 return Ok(PatternInfo {
@@ -3199,7 +3183,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.unify(obj_var, receiver_var)?;
                 }
             }
-            let skip_scheme = field.as_str() == "unwrap" && (type_name == "Result" || is_result_like);
+            let skip_scheme =
+                field.as_str() == "unwrap" && (type_name == "Result" || is_result_like);
             if !skip_scheme {
                 if let Some(scheme) = record.scheme.as_ref() {
                     return Ok(self.instantiate_scheme(scheme));

@@ -3,8 +3,7 @@ use fp_core::error::Result;
 use fp_core::span::FileId;
 
 use crate::ast::lower_common::{
-    lex_span_from_span, lex_spans_for_group, macro_token_trees_to_lexemes,
-    macro_tokens_file_id,
+    lex_span_from_span, lex_spans_for_group, macro_token_trees_to_lexemes, macro_tokens_file_id,
 };
 use crate::ast::{lower_expr_from_cst, lower_items_from_cst};
 use crate::cst::{parse_expr_lexemes_prefix_to_cst, parse_type_lexemes_prefix_to_cst};
@@ -64,13 +63,19 @@ fn parse_macro_prefix_cst(
     parse: impl FnOnce(
         &[Lexeme],
         FileId,
-    ) -> std::result::Result<(crate::syntax::SyntaxNode, usize), crate::cst::ExprCstParseError>,
+    ) -> std::result::Result<
+        (crate::syntax::SyntaxNode, usize),
+        crate::cst::ExprCstParseError,
+    >,
     trailing: TrailingStrategy,
     trailing_message: &'static str,
 ) -> Result<crate::syntax::SyntaxNode> {
     let (cst, consumed) =
         parse(lexemes, file_id).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
-    if lexemes[consumed..].iter().any(|lex| trailing.has_trailing(lex)) {
+    if lexemes[consumed..]
+        .iter()
+        .any(|lex| trailing.has_trailing(lex))
+    {
         return Err(fp_core::error::Error::from(trailing_message));
     }
     Ok(cst)

@@ -255,23 +255,43 @@ fn runtime_invoke_lang_core_fs_intrinsics_use_intrinsic_path() {
     let mut registry = LangItemRegistry::default();
     registry.insert(
         "fs_write_string",
-        Path::plain(vec![Ident::new("std"), Ident::new("fs"), Ident::new("write_string")]),
+        Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("fs"),
+            Ident::new("write_string"),
+        ]),
     );
     registry.insert(
         "fs_append_string",
-        Path::plain(vec![Ident::new("std"), Ident::new("fs"), Ident::new("append_string")]),
+        Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("fs"),
+            Ident::new("append_string"),
+        ]),
     );
     registry.insert(
         "fs_exists",
-        Path::plain(vec![Ident::new("std"), Ident::new("fs"), Ident::new("exists")]),
+        Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("fs"),
+            Ident::new("exists"),
+        ]),
     );
     registry.insert(
         "fs_is_dir",
-        Path::plain(vec![Ident::new("std"), Ident::new("fs"), Ident::new("is_dir")]),
+        Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("fs"),
+            Ident::new("is_dir"),
+        ]),
     );
     registry.insert(
         "fs_is_file",
-        Path::plain(vec![Ident::new("std"), Ident::new("fs"), Ident::new("is_file")]),
+        Path::plain(vec![
+            Ident::new("std"),
+            Ident::new("fs"),
+            Ident::new("is_file"),
+        ]),
     );
     register_threadlocal_lang_items(registry);
 
@@ -300,7 +320,10 @@ fn runtime_invoke_lang_core_fs_intrinsics_use_intrinsic_path() {
         kwargs: Vec::new(),
         span: Span::null(),
     }));
-    assert_eq!(interpreter.evaluate_expression(&mut write_expr), Value::unit());
+    assert_eq!(
+        interpreter.evaluate_expression(&mut write_expr),
+        Value::unit()
+    );
 
     let mut append_expr = Expr::new(ExprKind::Invoke(ExprInvoke {
         target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
@@ -315,7 +338,10 @@ fn runtime_invoke_lang_core_fs_intrinsics_use_intrinsic_path() {
         kwargs: Vec::new(),
         span: Span::null(),
     }));
-    assert_eq!(interpreter.evaluate_expression(&mut append_expr), Value::unit());
+    assert_eq!(
+        interpreter.evaluate_expression(&mut append_expr),
+        Value::unit()
+    );
 
     let mut exists_expr = Expr::new(ExprKind::Invoke(ExprInvoke {
         target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
@@ -327,7 +353,10 @@ fn runtime_invoke_lang_core_fs_intrinsics_use_intrinsic_path() {
         kwargs: Vec::new(),
         span: Span::null(),
     }));
-    assert_eq!(interpreter.evaluate_expression(&mut exists_expr), Value::bool(true));
+    assert_eq!(
+        interpreter.evaluate_expression(&mut exists_expr),
+        Value::bool(true)
+    );
 
     let mut is_file_expr = Expr::new(ExprKind::Invoke(ExprInvoke {
         target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
@@ -339,7 +368,10 @@ fn runtime_invoke_lang_core_fs_intrinsics_use_intrinsic_path() {
         kwargs: Vec::new(),
         span: Span::null(),
     }));
-    assert_eq!(interpreter.evaluate_expression(&mut is_file_expr), Value::bool(true));
+    assert_eq!(
+        interpreter.evaluate_expression(&mut is_file_expr),
+        Value::bool(true)
+    );
 
     let mut is_dir_expr = Expr::new(ExprKind::Invoke(ExprInvoke {
         target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
@@ -351,9 +383,15 @@ fn runtime_invoke_lang_core_fs_intrinsics_use_intrinsic_path() {
         kwargs: Vec::new(),
         span: Span::null(),
     }));
-    assert_eq!(interpreter.evaluate_expression(&mut is_dir_expr), Value::bool(true));
+    assert_eq!(
+        interpreter.evaluate_expression(&mut is_dir_expr),
+        Value::bool(true)
+    );
 
-    assert_eq!(fs::read_to_string(&file_path).expect("read file"), "hello world");
+    assert_eq!(
+        fs::read_to_string(&file_path).expect("read file"),
+        "hello world"
+    );
 
     let outcome = interpreter.take_outcome();
     assert!(!outcome.has_errors);

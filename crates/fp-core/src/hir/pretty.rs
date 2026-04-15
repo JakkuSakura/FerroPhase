@@ -5,7 +5,7 @@ use std::fmt::{self, Formatter};
 use super::{
     BinOp, Block, Body, Const, Enum, Expr, ExprKind, FormatArgRef, FormatTemplatePart, Function,
     GenericArg, GenericParamKind, Generics, Impl, ImplItemKind, Item, ItemKind, Lit, Pat, PatKind,
-    Path, Program, Stmt, StmtKind, Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
+    Path, Program, Query, Stmt, StmtKind, Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
 };
 
 impl PrettyPrintable for Program {
@@ -31,11 +31,55 @@ fn write_item(item: &Item, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
         ItemKind::Enum(enm) => write_enum(item, enm, f, ctx),
         ItemKind::Const(konst) => write_const(item, konst, f, ctx),
         ItemKind::Impl(imp) => write_impl(item, imp, f, ctx),
+        ItemKind::Query(query) => write_query(item, query, f, ctx),
         ItemKind::Expr(expr) => {
             ctx.writeln(f, format!("expr#{} @ {:?}", item.hir_id, item.span))?;
             ctx.with_indent(|ctx| write_expr(expr, f, ctx))
         }
     }
+}
+
+fn write_query(
+    item: &Item,
+    query: &Query,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
+    let span_suffix = if ctx.options.show_spans {
+        format!(" // span: {:?}", item.span)
+    } else {
+        String::new()
+    };
+    let kind = match &query.document.kind {
+        crate::query::QueryKind::Sql(sql) => format!("sql[{}]", sql.dialect),
+        crate::query::QueryKind::Prql(prql) => format!(
+            "prql{}",
+            prql.target
+                .as_ref()
+                .map(|target| format!("[{}]", target))
+                .unwrap_or_default()
+        ),
+        crate::query::QueryKind::Any(_) => "any".to_string(),
+    };
+    let name_suffix = query
+        .document
+        .name
+        .as_ref()
+        .map(|name| format!(" {}", name))
+        .unwrap_or_default();
+    ctx.writeln(f, format!("query {}{}{}", kind, name_suffix, span_suffix))?;
+    ctx.with_indent(|ctx| {
+        if let Some(semantic) = &query.document.semantic {
+            ctx.writeln(
+                f,
+                format!("semantic statements: {}", semantic.statements.len()),
+            )?;
+        }
+        for statement in &query.statements {
+            ctx.writeln(f, statement.to_string())?;
+        }
+        Ok(())
+    })
 }
 
 fn write_function(
@@ -484,7 +528,13 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 .map(|expr| format_expr_inline(expr, ctx))
                 .unwrap_or_default();
             let dots = if slice.inclusive { "..=" } else { ".." };
-            format!("{}[{}{}{}]", format_expr_inline(&slice.base, ctx), start, dots, end)
+            format!(
+                "{}[{}{}{}]",
+                format_expr_inline(&slice.base, ctx),
+                start,
+                dots,
+                end
+            )
         }
         ExprKind::Struct(path, fields) => {
             let fields = fields

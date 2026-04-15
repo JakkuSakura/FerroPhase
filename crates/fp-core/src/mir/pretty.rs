@@ -4,7 +4,7 @@ use crate::pretty::{PrettyCtx, PrettyPrintable};
 
 use super::{
     AggregateKind, BasicBlockData, Body, BodyId, Constant, Function, Item, ItemKind, Operand,
-    Place, Program, Rvalue, Statement, StatementKind, Static, Terminator, TerminatorKind,
+    Place, Program, Query, Rvalue, Statement, StatementKind, Static, Terminator, TerminatorKind,
 };
 
 impl PrettyPrintable for Program {
@@ -47,6 +47,7 @@ fn write_item(item: &Item, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
     match &item.kind {
         ItemKind::Function(func) => write_function(func, f, ctx),
         ItemKind::Static(stat) => write_static(stat, f, ctx),
+        ItemKind::Query(query) => write_query(query, f, ctx),
     }
 }
 
@@ -97,6 +98,44 @@ fn write_static(stat: &Static, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -
             summarize_operand(&stat.init)
         ),
     )
+}
+
+fn write_query(query: &Query, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+    let kind = match &query.document.kind {
+        crate::query::QueryKind::Sql(sql) => format!("sql[{}]", sql.dialect),
+        crate::query::QueryKind::Prql(prql) => format!(
+            "prql{}",
+            prql.target
+                .as_ref()
+                .map(|target| format!("[{}]", target))
+                .unwrap_or_default()
+        ),
+        crate::query::QueryKind::Any(_) => "any".to_string(),
+    };
+    let name_suffix = query
+        .document
+        .name
+        .as_ref()
+        .map(|name| format!(" {}", name))
+        .unwrap_or_default();
+    let span_suffix = if ctx.options.show_spans {
+        format!(" // span: {:?}", query.span)
+    } else {
+        String::new()
+    };
+    ctx.writeln(f, format!("query {}{}{}", kind, name_suffix, span_suffix))?;
+    ctx.with_indent(|ctx| {
+        if let Some(semantic) = &query.document.semantic {
+            ctx.writeln(
+                f,
+                format!("semantic statements: {}", semantic.statements.len()),
+            )?;
+        }
+        for statement in &query.statements {
+            ctx.writeln(f, statement.to_string())?;
+        }
+        Ok(())
+    })
 }
 
 fn write_body(

@@ -427,22 +427,19 @@ fn normalize_lexemes(lexemes: Vec<Lexeme>) -> Vec<Lexeme> {
         let lexeme = &lexemes[i];
         if lexeme.kind == LexemeKind::Token && lexeme.text == "." {
             let prev_idx = out.len().checked_sub(1);
-            let prev_is_number = prev_idx
-                .and_then(|idx| out.get(idx))
-                .is_some_and(|prev| {
-                    prev.kind == LexemeKind::Token
-                        && prev.span.end == lexeme.span.start
-                        && classify_and_normalize_lexeme(&prev.text)
-                            .is_some_and(|(kind, _)| kind == TokenKind::Number)
-                });
+            let prev_is_number = prev_idx.and_then(|idx| out.get(idx)).is_some_and(|prev| {
+                prev.kind == LexemeKind::Token
+                    && prev.span.end == lexeme.span.start
+                    && classify_and_normalize_lexeme(&prev.text)
+                        .is_some_and(|(kind, _)| kind == TokenKind::Number)
+            });
 
             let next_non_trivia = lexemes[i + 1..]
                 .iter()
                 .find(|next| next.kind == LexemeKind::Token);
             let next_raw = next_non_trivia.map(|next| next.text.as_str());
-            let next_kind = next_non_trivia.and_then(|next| {
-                classify_and_normalize_lexeme(&next.text).map(|(kind, _)| kind)
-            });
+            let next_kind = next_non_trivia
+                .and_then(|next| classify_and_normalize_lexeme(&next.text).map(|(kind, _)| kind));
             let next_is_field_like = matches!(
                 next_kind,
                 Some(TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_))
@@ -481,10 +478,17 @@ fn frontmatter_end_offset(source: &str) -> Option<usize> {
         first_line_end
     };
     while pos <= source.len() {
-        let line_end = source[pos..].find('\n').map(|i| pos + i).unwrap_or(source.len());
+        let line_end = source[pos..]
+            .find('\n')
+            .map(|i| pos + i)
+            .unwrap_or(source.len());
         let line = source[pos..line_end].trim_end_matches('\r');
         if line == "---" {
-            return Some(if line_end < source.len() { line_end + 1 } else { line_end });
+            return Some(if line_end < source.len() {
+                line_end + 1
+            } else {
+                line_end
+            });
         }
         if line_end >= source.len() {
             break;

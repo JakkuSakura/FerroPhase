@@ -74,19 +74,22 @@ pub fn project_assign_target(expr: &Expr) -> Option<ProjectedAssignTarget> {
             let mut target = project_assign_target(index.obj.as_ref())
                 .unwrap_or_else(|| ProjectedAssignTarget::from_expr(index.obj.as_ref().clone()));
             match index.index.kind() {
-                ExprKind::Range(range) => target.push(AssignTargetProjection::Slice(AssignTargetSlice {
-                    start: range.start.clone(),
-                    end: range.end.clone(),
-                    inclusive: matches!(range.limit, crate::ast::ExprRangeLimit::Inclusive),
-                })),
+                ExprKind::Range(range) => {
+                    target.push(AssignTargetProjection::Slice(AssignTargetSlice {
+                        start: range.start.clone(),
+                        end: range.end.clone(),
+                        inclusive: matches!(range.limit, crate::ast::ExprRangeLimit::Inclusive),
+                    }))
+                }
                 _ => target.push(AssignTargetProjection::Index(index.index.clone())),
             }
             target.span = expr.span();
             Some(target)
         }
         ExprKind::Dereference(deref) => {
-            let mut target = project_assign_target(deref.referee.as_ref())
-                .unwrap_or_else(|| ProjectedAssignTarget::from_expr(deref.referee.as_ref().clone()));
+            let mut target = project_assign_target(deref.referee.as_ref()).unwrap_or_else(|| {
+                ProjectedAssignTarget::from_expr(deref.referee.as_ref().clone())
+            });
             target.push(AssignTargetProjection::Deref);
             target.span = expr.span();
             Some(target)

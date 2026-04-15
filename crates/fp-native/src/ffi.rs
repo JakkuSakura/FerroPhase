@@ -213,7 +213,9 @@ fn ffi_type_for_arg(ty: &Ty) -> Result<FfiType> {
             }
             TypeInt::U8 | TypeInt::U16 | TypeInt::U32 | TypeInt::U64 => FfiType::U64,
             TypeInt::I128 | TypeInt::U128 => {
-                return Err(Error::from("unsupported extern 128-bit integer arg without libffi"));
+                return Err(Error::from(
+                    "unsupported extern 128-bit integer arg without libffi",
+                ));
             }
         }),
         Ty::Primitive(TypePrimitive::Decimal(_)) => {
@@ -362,7 +364,9 @@ fn push_int_arg(int_ty: TypeInt, value: i64, args: &mut Vec<FfiValue>) -> Result
             args.push(FfiValue::U64(value as u64));
         }
         TypeInt::I128 | TypeInt::U128 => {
-            return Err(Error::from("unsupported extern 128-bit integer arg without libffi"));
+            return Err(Error::from(
+                "unsupported extern 128-bit integer arg without libffi",
+            ));
         }
     }
     Ok(())
@@ -373,12 +377,8 @@ fn c_abi_layout(ty: &Ty) -> Result<CAbiLayout> {
     match &resolved {
         Ty::Primitive(primitive) => c_abi_layout_for_primitive(*primitive),
         Ty::Tuple(TypeTuple { types }) => c_abi_layout_for_fields(types),
-        Ty::Struct(TypeStruct { repr, fields, .. }) => {
-            c_abi_layout_for_struct(fields, repr)
-        }
-        Ty::Enum(TypeEnum { repr, variants, .. }) => {
-            c_abi_layout_for_enum(variants, repr)
-        }
+        Ty::Struct(TypeStruct { repr, fields, .. }) => c_abi_layout_for_struct(fields, repr),
+        Ty::Enum(TypeEnum { repr, variants, .. }) => c_abi_layout_for_enum(variants, repr),
         Ty::Structural(TypeStructural { .. }) => Err(Error::from(
             "anonymous structural types are not allowed in C ABI; declare a #[repr(C)] struct",
         )),
@@ -408,7 +408,10 @@ fn c_abi_layout_for_fields(fields: &[Ty]) -> Result<CAbiLayout> {
     c_abi_layout_for_fields_with_repr(fields, &ReprOptions::default())
 }
 
-fn c_abi_layout_for_struct(fields: &[fp_core::ast::StructuralField], repr: &ReprOptions) -> Result<CAbiLayout> {
+fn c_abi_layout_for_struct(
+    fields: &[fp_core::ast::StructuralField],
+    repr: &ReprOptions,
+) -> Result<CAbiLayout> {
     validate_struct_repr_for_c_abi(repr)?;
     if repr.flags.contains(ReprFlags::IS_TRANSPARENT) {
         let transparent = transparent_field_ty(fields)?;
@@ -433,7 +436,9 @@ fn c_abi_layout_for_fields_with_repr(fields: &[Ty], repr: &ReprOptions) -> Resul
     let mut max_align = 1usize;
     for field in fields {
         let layout = c_abi_layout(field)?;
-        let field_align = pack.map(|pack| layout.align.min(pack)).unwrap_or(layout.align);
+        let field_align = pack
+            .map(|pack| layout.align.min(pack))
+            .unwrap_or(layout.align);
         max_align = max_align.max(field_align);
         offset = align_to(offset, field_align);
         offsets.push(offset);
@@ -445,7 +450,9 @@ fn c_abi_layout_for_fields_with_repr(fields: &[Ty], repr: &ReprOptions) -> Resul
         .align
         .map(|value| parse_repr_align(value, "repr(align)"))
         .transpose()?;
-    let struct_align = explicit_align.map(|align| max_align.max(align)).unwrap_or(max_align);
+    let struct_align = explicit_align
+        .map(|align| max_align.max(align))
+        .unwrap_or(max_align);
     let size = align_to(offset, struct_align);
     Ok(CAbiLayout {
         size,
@@ -480,7 +487,8 @@ fn c_abi_layout_for_enum(variants: &[EnumTypeVariant], repr: &ReprOptions) -> Re
 }
 
 fn parse_repr_align(value: u64, context: &str) -> Result<usize> {
-    let align = usize::try_from(value).map_err(|_| Error::from(format!("{context} is too large")))?;
+    let align =
+        usize::try_from(value).map_err(|_| Error::from(format!("{context} is too large")))?;
     if align == 0 || !align.is_power_of_two() {
         return Err(Error::from(format!(
             "{context} requires a non-zero power-of-two alignment"
@@ -562,16 +570,24 @@ fn validate_struct_repr_for_c_abi(repr: &ReprOptions) -> Result<()> {
 
 fn validate_enum_repr_for_c_abi(variants: &[EnumTypeVariant], repr: &ReprOptions) -> Result<()> {
     if repr.flags.contains(ReprFlags::IS_TRANSPARENT) {
-        return Err(Error::from("repr(transparent) is not supported on enums for C ABI"));
+        return Err(Error::from(
+            "repr(transparent) is not supported on enums for C ABI",
+        ));
     }
     if repr.flags.contains(ReprFlags::IS_PACKED) || repr.pack.is_some() {
-        return Err(Error::from("repr(packed) is not supported on enums for C ABI"));
+        return Err(Error::from(
+            "repr(packed) is not supported on enums for C ABI",
+        ));
     }
     if repr.flags.contains(ReprFlags::IS_SIMD) {
-        return Err(Error::from("repr(simd) is not supported on enums for C ABI"));
+        return Err(Error::from(
+            "repr(simd) is not supported on enums for C ABI",
+        ));
     }
     if repr.flags.contains(ReprFlags::IS_LINEAR) {
-        return Err(Error::from("repr(linear) is not supported on enums for C ABI"));
+        return Err(Error::from(
+            "repr(linear) is not supported on enums for C ABI",
+        ));
     }
     if repr.int.is_some() && variants.is_empty() {
         return Err(Error::from(
@@ -600,9 +616,8 @@ fn transparent_field_ty<'a>(fields: &'a [fp_core::ast::StructuralField]) -> Resu
         }
         non_zero = Some(&field.value);
     }
-    non_zero.ok_or_else(|| {
-        Error::from("repr(transparent) requires exactly one non-zero-sized field")
-    })
+    non_zero
+        .ok_or_else(|| Error::from("repr(transparent) requires exactly one non-zero-sized field"))
 }
 
 fn enum_tag_layout(repr: &ReprOptions) -> Result<EnumTagLayout> {
@@ -612,7 +627,7 @@ fn enum_tag_layout(repr: &ReprOptions) -> Result<EnumTagLayout> {
         None => {
             return Err(Error::from(
                 "missing repr(C) or primitive integer repr for C ABI enum",
-            ))
+            ));
         }
     };
     let layout = c_abi_layout_for_primitive(primitive)?;
@@ -640,7 +655,11 @@ fn enum_variant_payload_fields(variant_ty: &Ty) -> Vec<Ty> {
     match variant_ty {
         Ty::Unit(_) => Vec::new(),
         Ty::Tuple(tuple) => tuple.types.clone(),
-        Ty::Struct(struct_ty) => struct_ty.fields.iter().map(|field| field.value.clone()).collect(),
+        Ty::Struct(struct_ty) => struct_ty
+            .fields
+            .iter()
+            .map(|field| field.value.clone())
+            .collect(),
         Ty::Structural(structural) => structural
             .fields
             .iter()
@@ -799,7 +818,9 @@ fn write_transparent_struct_value(
             };
             write_c_abi_value(inner_ty, selected, buf, base)
         }
-        _ => Err(Error::from("expected struct value for repr(transparent) struct")),
+        _ => Err(Error::from(
+            "expected struct value for repr(transparent) struct",
+        )),
     }
 }
 
@@ -811,7 +832,10 @@ fn write_enum_value(
     base: usize,
 ) -> Result<()> {
     validate_enum_repr_for_c_abi(variants, repr)?;
-    if variants.iter().any(|variant| !matches!(variant.value, Ty::Unit(_))) {
+    if variants
+        .iter()
+        .any(|variant| !matches!(variant.value, Ty::Unit(_)))
+    {
         return Err(Error::from(
             "native C ABI enum values with payloads are not yet supported",
         ));
@@ -862,9 +886,7 @@ fn write_int_value(int_ty: TypeInt, value: i64, buf: &mut [u8], base: usize) -> 
         TypeInt::U16 => buf[base..base + 2].copy_from_slice(&(value as u16).to_ne_bytes()),
         TypeInt::I32 => buf[base..base + 4].copy_from_slice(&(value as i32).to_ne_bytes()),
         TypeInt::U32 => buf[base..base + 4].copy_from_slice(&(value as u32).to_ne_bytes()),
-        TypeInt::I64 => {
-            buf[base..base + 8].copy_from_slice(&(value as i64).to_ne_bytes())
-        }
+        TypeInt::I64 => buf[base..base + 8].copy_from_slice(&(value as i64).to_ne_bytes()),
         TypeInt::U64 => buf[base..base + 8].copy_from_slice(&(value as u64).to_ne_bytes()),
         TypeInt::I128 | TypeInt::U128 | TypeInt::BigInt => {
             return Err(Error::from("unsupported 128-bit integer in C ABI layout"));

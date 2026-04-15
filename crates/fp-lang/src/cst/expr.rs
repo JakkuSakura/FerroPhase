@@ -368,8 +368,7 @@ impl Parser {
         &mut self,
         allow_struct_literal: bool,
     ) -> Result<SyntaxNode, ExprCstParseError> {
-        if self.peek_non_trivia_raw() == Some("#")
-            && self.peek_second_non_trivia_raw() != Some("!")
+        if self.peek_non_trivia_raw() == Some("#") && self.peek_second_non_trivia_raw() != Some("!")
         {
             let attrs = self.parse_outer_attrs_expr()?;
             if !attrs.is_empty() {
@@ -427,9 +426,7 @@ impl Parser {
                     Some(SyntaxElement::Token(token)) if token.text == "&"
                 );
                 if op_is_ref && self.peek_non_trivia_normalized() == Some("raw") {
-                    let next = self
-                        .peek_nth_non_trivia(2)
-                        .map(|t| t.normalized.as_str());
+                    let next = self.peek_nth_non_trivia(2).map(|t| t.normalized.as_str());
                     if matches!(next, Some("mut") | Some("const")) {
                         self.bump_token_into(&mut children);
                         self.bump_trivia_into(&mut children);
@@ -495,11 +492,17 @@ impl Parser {
                 Ok(PostfixParseOutcome::Stop)
             }
             Some("(") => Ok(PostfixParseOutcome::Applied(self.parse_call(base.clone())?)),
-            Some("[") => Ok(PostfixParseOutcome::Applied(self.parse_index(base.clone())?)),
-            Some("?") => Ok(PostfixParseOutcome::Applied(self.parse_try_postfix(base.clone()))),
+            Some("[") => Ok(PostfixParseOutcome::Applied(
+                self.parse_index(base.clone())?,
+            )),
+            Some("?") => Ok(PostfixParseOutcome::Applied(
+                self.parse_try_postfix(base.clone()),
+            )),
             Some(".") => self.parse_dot_postfix_or_number(base.clone()),
             Some("::") => self.parse_colon2_postfix(base.clone()),
-            Some("!") => Ok(PostfixParseOutcome::Applied(self.parse_macro_call(base.clone())?)),
+            Some("!") => Ok(PostfixParseOutcome::Applied(
+                self.parse_macro_call(base.clone())?,
+            )),
             _ => Ok(PostfixParseOutcome::Stop),
         }
     }
@@ -553,11 +556,7 @@ impl Parser {
         )
     }
 
-    fn postfix_allows_struct_literal(
-        &self,
-        base: &SyntaxNode,
-        allow_struct_literal: bool,
-    ) -> bool {
+    fn postfix_allows_struct_literal(&self, base: &SyntaxNode, allow_struct_literal: bool) -> bool {
         allow_struct_literal
             && matches!(
                 base.kind,
@@ -597,10 +596,7 @@ impl Parser {
         SyntaxNode::new(SyntaxKind::ExprNumber, children, span)
     }
 
-    fn parse_postfix_attr(
-        &mut self,
-        base: SyntaxNode,
-    ) -> Result<SyntaxNode, ExprCstParseError> {
+    fn parse_postfix_attr(&mut self, base: SyntaxNode) -> Result<SyntaxNode, ExprCstParseError> {
         let attrs = self.parse_outer_attrs_expr()?;
         if attrs.is_empty() {
             return Ok(base);
@@ -737,19 +733,18 @@ impl Parser {
         let first_norm = first.normalized.as_str();
         match first_norm {
             "fn" | "struct" | "enum" | "type" | "trait" | "impl" | "use" | "extern" | "mod"
-                | "static" | "opaque"
-            => true,
+            | "static" | "opaque" => true,
             "unsafe" => matches!(
                 self.nth_non_trivia_from(idx, 2).map(|t| t.raw.as_str()),
                 Some("extern" | "fn" | "trait" | "impl")
             ),
-            "async" => self
-                .nth_non_trivia_from(idx, 2)
-                .map(|t| t.raw.as_str())
-                == Some("fn"),
+            "async" => self.nth_non_trivia_from(idx, 2).map(|t| t.raw.as_str()) == Some("fn"),
             "const" => {
                 // Disambiguate `const { ... }` (expression) vs `const NAME: Ty = ...;` (item).
-                matches!(self.nth_non_trivia_from(idx, 2).map(|t| t.kind.clone()), Some(TokenKind::Ident))
+                matches!(
+                    self.nth_non_trivia_from(idx, 2).map(|t| t.kind.clone()),
+                    Some(TokenKind::Ident)
+                )
             }
             _ => false,
         }
@@ -1546,10 +1541,9 @@ impl Parser {
             saw_colon = true;
             self.bump_token_into(&mut path_children);
             self.bump_trivia_into(&mut path_children);
-            if self.parse_generic_args_entry_into(
-                &mut path_children,
-                GenericArgsEntry::AfterColon2,
-            )? {
+            if self
+                .parse_generic_args_entry_into(&mut path_children, GenericArgsEntry::AfterColon2)?
+            {
                 continue;
             }
             match self.peek_non_trivia_token_kind() {
@@ -1701,8 +1695,7 @@ impl Parser {
                 let mut rest_children = Vec::new();
                 self.bump_token_into(&mut rest_children);
                 let rest_span = span_for_children(&rest_children);
-                let rest =
-                    SyntaxNode::new(SyntaxKind::PatternRest, rest_children, rest_span);
+                let rest = SyntaxNode::new(SyntaxKind::PatternRest, rest_children, rest_span);
                 children.push(SyntaxElement::Node(Box::new(rest)));
                 self.bump_trivia_into(&mut children);
                 if self.peek_non_trivia_raw() == Some(",") {
@@ -2209,7 +2202,10 @@ impl Parser {
             let value = self.parse_expr_bp(0)?;
             children.push(SyntaxElement::Node(Box::new(value)));
             let span = span_for_children(&children);
-            return Ok((SyntaxNode::new(SyntaxKind::ExprSplatDict, children, span), true));
+            return Ok((
+                SyntaxNode::new(SyntaxKind::ExprSplatDict, children, span),
+                true,
+            ));
         }
         if self.peek_non_trivia_raw() == Some("*") {
             let mut children = Vec::new();
@@ -2219,7 +2215,10 @@ impl Parser {
             let value = self.parse_expr_bp(0)?;
             children.push(SyntaxElement::Node(Box::new(value)));
             let span = span_for_children(&children);
-            return Ok((SyntaxNode::new(SyntaxKind::ExprSplat, children, span), false));
+            return Ok((
+                SyntaxNode::new(SyntaxKind::ExprSplat, children, span),
+                false,
+            ));
         }
         if self.peek_non_trivia_token_kind() == Some(TokenKind::Ident)
             && self
@@ -2316,9 +2315,7 @@ impl Parser {
         Ok(SyntaxNode::new(SyntaxKind::ExprRange, children, span))
     }
 
-    fn try_parse_keyword_prefix_expr(
-        &mut self,
-    ) -> Option<Result<SyntaxNode, ExprCstParseError>> {
+    fn try_parse_keyword_prefix_expr(&mut self) -> Option<Result<SyntaxNode, ExprCstParseError>> {
         let next = self.peek_second_non_trivia_raw();
         let result = match self.peek_non_trivia_normalized() {
             Some("gen") if next == Some("{") => self.parse_gen_block_expr(),
@@ -2338,7 +2335,10 @@ impl Parser {
             Some("async") => self.parse_async_expr(),
             Some("const") if next == Some("{") => self.parse_const_block_expr(),
             Some("static")
-                if matches!(next, Some("|") | Some("||") | Some("move") | Some("async") | Some("gen")) =>
+                if matches!(
+                    next,
+                    Some("|") | Some("||") | Some("move") | Some("async") | Some("gen")
+                ) =>
             {
                 self.parse_closure_expr()
             }
@@ -2774,7 +2774,9 @@ impl Parser {
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
             if self.peek_non_trivia_token_kind() == Some(TokenKind::StringLiteral)
-                || self.peek_non_trivia_raw().is_some_and(|raw| looks_like_string_literal(raw))
+                || self
+                    .peek_non_trivia_raw()
+                    .is_some_and(|raw| looks_like_string_literal(raw))
             {
                 self.bump_token_into(&mut children);
                 self.bump_trivia_into(&mut children);
@@ -3095,7 +3097,9 @@ impl Parser {
         self.bump_token_into(&mut children);
         self.bump_trivia_into(&mut children);
         match self.peek_non_trivia_token_kind() {
-            Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) => self.bump_token_into(&mut children),
+            Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) => {
+                self.bump_token_into(&mut children)
+            }
             _ => return Err(self.error("expected identifier after '$'")),
         }
         let span = span_for_children(&children);
@@ -3589,7 +3593,9 @@ impl Parser {
                 break;
             }
 
-            if self.peek_non_trivia_normalized() == Some("const") || self.peek_non_trivia_raw() == Some("{") {
+            if self.peek_non_trivia_normalized() == Some("const")
+                || self.peek_non_trivia_raw() == Some("{")
+            {
                 let arg = self.parse_unknown_generic_arg()?;
                 out.push(SyntaxElement::Node(Box::new(arg)));
                 self.bump_trivia_into(out);
@@ -3750,7 +3756,10 @@ impl Parser {
         if self.peek_non_trivia_raw() == Some(".") {
             let next = self.peek_nth_non_trivia(2);
             let is_field_like = next.is_some_and(|tok| {
-                matches!(tok.kind, TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_))
+                matches!(
+                    tok.kind,
+                    TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_)
+                )
             });
             if !is_field_like {
                 self.bump_trivia_into(&mut children);
@@ -3995,9 +4004,7 @@ impl Parser {
         let Some(next) = self.peek_nth_non_trivia(idx) else {
             return false;
         };
-        if next.kind == TokenKind::StringLiteral
-            || looks_like_string_literal(next.raw.as_str())
-        {
+        if next.kind == TokenKind::StringLiteral || looks_like_string_literal(next.raw.as_str()) {
             return self
                 .peek_nth_non_trivia(idx + 1)
                 .is_some_and(|t| t.normalized.as_str() == "fn")

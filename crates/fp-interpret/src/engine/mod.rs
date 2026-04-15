@@ -14,7 +14,6 @@ use crate::engine::macro_rules::{expand_macro, parse_macro_rules, MacroRulesDefi
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicFunction;
 use crate::intrinsics::IntrinsicsRegistry;
-use fp_jit::{JitCallOutcome, JitKey};
 use fp_core::ast::DecimalType;
 use fp_core::ast::{
     AttrMeta, AttrMetaList, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure,
@@ -22,8 +21,8 @@ use fp_core::ast::{
     ExprRangeLimit, ExprStringTemplate, File, FormatArgRef, FormatTemplatePart, FunctionParam,
     FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefFunction, ItemImport, ItemImportTree,
     ItemKind, MacroDelimiter, MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Name, Node,
-    NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, ReprOptions, StmtLet, StructuralField,
-    Ty, TypeAny, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote,
+    NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, ReprOptions, StmtLet, StructuralField, Ty,
+    TypeAny, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote,
     TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTokenStream, TypeTuple, TypeUnit,
     TypeVec, Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural,
     ValueTokenStream, ValueTuple,
@@ -46,6 +45,7 @@ use fp_core::place::{
 };
 use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
+use fp_jit::{JitCallOutcome, JitKey};
 use fp_typing::runtime_types::{resolve_type_binding_match, TypeBindingMatch};
 use fp_typing::{AstTypeInferencer, TypeResolutionHook};
 use num_traits::ToPrimitive;
@@ -140,7 +140,10 @@ pub struct InterpreterCapability {
 
 impl Default for InterpreterCapability {
     fn default() -> Self {
-        Self { io: true, exec: true }
+        Self {
+            io: true,
+            exec: true,
+        }
     }
 }
 
@@ -617,7 +620,6 @@ enum EvalMode {
     Const,
     Runtime,
 }
-
 
 type ExprDiscriminant = std::mem::Discriminant<ExprKind>;
 
@@ -3742,10 +3744,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             .expect("ffi runtime must be initialized"))
     }
 
-    fn with_command_mock_state<T>(
-        &self,
-        f: impl FnOnce(&mut CommandMockState) -> T,
-    ) -> Option<T> {
+    fn with_command_mock_state<T>(&self, f: impl FnOnce(&mut CommandMockState) -> T) -> Option<T> {
         let state = self.command_mock_state.as_ref()?;
         let mut guard = match state.lock() {
             Ok(guard) => guard,
@@ -3768,11 +3767,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         })
     }
 
-    fn try_mock_command(
-        &self,
-        command: &str,
-        ret_ty: Option<&Ty>,
-    ) -> Option<Result<Value>> {
+    fn try_mock_command(&self, command: &str, ret_ty: Option<&Ty>) -> Option<Result<Value>> {
         let ret_ty = ret_ty.cloned();
         self.with_command_mock_state(|state| {
             if !state.enabled() {
@@ -3860,7 +3855,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         };
         let rendered_command = render_command_line(&fixed_args, &runtime_args);
-        if let Some(result) = self.try_mock_command(rendered_command.as_str(), sig.ret_ty.as_ref()) {
+        if let Some(result) = self.try_mock_command(rendered_command.as_str(), sig.ret_ty.as_ref())
+        {
             return match result {
                 Ok(value) => RuntimeFlow::Value(value),
                 Err(err) => {
@@ -5434,7 +5430,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 (RuntimeLValue::Place(runtime_ref), AssignTargetProjection::Field(field)) => {
                     RuntimeLValue::Place(RuntimeRef::field(runtime_ref, field.as_str().to_string()))
                 }
-                (RuntimeLValue::Place(runtime_ref), AssignTargetProjection::Index(mut index_expr)) => {
+                (
+                    RuntimeLValue::Place(runtime_ref),
+                    AssignTargetProjection::Index(mut index_expr),
+                ) => {
                     let index_value = match self.eval_expr_runtime(index_expr.as_mut()) {
                         RuntimeFlow::Value(value) => value,
                         other => return Err(other),
@@ -5506,7 +5505,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 (RuntimeLValue::Binding(name), AssignTargetProjection::Field(field)) => {
                     let mut segments = vec![field];
-                    if let Some(next) = select_chain_to_path_segments(&Expr::name(name), &mut segments) {
+                    if let Some(next) =
+                        select_chain_to_path_segments(&Expr::name(name), &mut segments)
+                    {
                         RuntimeLValue::Binding(next)
                     } else {
                         RuntimeLValue::NotPlace
@@ -5686,7 +5687,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         } else if let Name::ParameterPath(path) = locator {
             if path.prefix != PathPrefix::Plain {
-                let plain = Path::new(PathPrefix::Plain, path.segments.iter().map(|s| s.ident.clone()).collect());
+                let plain = Path::new(
+                    PathPrefix::Plain,
+                    path.segments.iter().map(|s| s.ident.clone()).collect(),
+                );
                 let plain_name = plain.to_string();
                 if !names.contains(&plain_name) {
                     names.push(plain_name);
@@ -5844,7 +5848,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         match ty {
             Ty::Struct(struct_ty) => Value::Struct(ValueStruct::new(
                 struct_ty,
-                vec![ValueField::new(Ident::new("message"), Value::string(message))],
+                vec![ValueField::new(
+                    Ident::new("message"),
+                    Value::string(message),
+                )],
             )),
             _ => Value::string(message),
         }
@@ -5858,10 +5865,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         if enum_value.enum_name != "Result" {
             return None;
         }
-        let payload = enum_value
-            .payload
-            .clone()
-            .unwrap_or_else(Value::unit);
+        let payload = enum_value.payload.clone().unwrap_or_else(Value::unit);
         match enum_value.variant_name.as_str() {
             "Ok" => Some(Ok(payload)),
             "Err" => Some(Err(payload)),
@@ -6691,8 +6695,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 };
                 let idx = match &args[0] {
-                Value::Int(int_val) if int_val.value >= 0 => int_val.value as usize,
-                Value::UInt(int_val) => int_val.value as usize,
+                    Value::Int(int_val) if int_val.value >= 0 => int_val.value as usize,
+                    Value::UInt(int_val) => int_val.value as usize,
                     _ => {
                         self.emit_error("field_name_at expects a non-negative integer index");
                         return Some(Value::undefined());
@@ -8520,21 +8524,33 @@ fn builtin_mock_command_result(command: &str, ret_ty: Option<&Ty>) -> Option<Res
             command,
             String::new(),
             String::new(),
-            if std::path::Path::new(path).is_file() { 0 } else { 1 },
+            if std::path::Path::new(path).is_file() {
+                0
+            } else {
+                1
+            },
             ret_ty,
         )),
         ["test", "-d", path] => Some(command_mock_result(
             command,
             String::new(),
             String::new(),
-            if std::path::Path::new(path).is_dir() { 0 } else { 1 },
+            if std::path::Path::new(path).is_dir() {
+                0
+            } else {
+                1
+            },
             ret_ty,
         )),
         ["test", "-e", path] => Some(command_mock_result(
             command,
             String::new(),
             String::new(),
-            if std::path::Path::new(path).exists() { 0 } else { 1 },
+            if std::path::Path::new(path).exists() {
+                0
+            } else {
+                1
+            },
             ret_ty,
         )),
         ["command", "-v", _] => Some(command_mock_result(
@@ -8644,7 +8660,9 @@ fn resolve_lang_instrinstic_handler(intrinsic: LangInstrinstic) -> Option<LangIt
         LangInstrinstic::TestCommandMockTakeCalls => Some(lang_test_command_mock_take_calls),
         LangInstrinstic::TestCommandMockApply => Some(lang_test_command_mock_apply),
 
-        LangInstrinstic::TimeNow | LangInstrinstic::CreateStruct | LangInstrinstic::AddField => None,
+        LangInstrinstic::TimeNow | LangInstrinstic::CreateStruct | LangInstrinstic::AddField => {
+            None
+        }
     }
 }
 
@@ -9220,7 +9238,11 @@ fn lang_runtime_ref_value(runtime_ref: &RuntimeRef) -> Value {
             _ => Value::undefined(),
         },
         RuntimeRefTarget::Index { index, .. } => match &*guard {
-            Value::List(list) => list.values.get(*index).cloned().unwrap_or_else(Value::undefined),
+            Value::List(list) => list
+                .values
+                .get(*index)
+                .cloned()
+                .unwrap_or_else(Value::undefined),
             Value::Tuple(tuple) => tuple
                 .values
                 .get(*index)

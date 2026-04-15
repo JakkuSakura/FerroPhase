@@ -2,8 +2,13 @@ use fp_core::ast::Name;
 use fp_core::ast::Pattern;
 use fp_core::error::Result;
 use fp_core::ops::{BinOpKind, UnOpKind};
+use fp_core::query::{
+    lower_fp_expr_to_query, lower_fp_file_to_query, statement_to_query_ir, QueryDocument,
+    QueryIrDocument, QueryKind,
+};
 use fp_core::span::{FileId, Span};
-use fp_core::{ast, ast::ItemKind, ast::attrs_repr, cfg::TargetEnv, hir};
+use fp_core::{ast, ast::attrs_repr, ast::ItemKind, cfg::TargetEnv, hir};
+use fp_sql::sql_ast::parse_sql_ast;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -18,6 +23,23 @@ mod tests;
 use fp_core::diagnostics::{diagnostic_manager, Diagnostic};
 
 const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
+
+fn normalize_prql_sql_literals(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut in_double = false;
+    for ch in sql.chars() {
+        if ch == '"' {
+            in_double = !in_double;
+            out.push('\'');
+            continue;
+        }
+        if in_double && ch == '\'' {
+            out.push('\'');
+        }
+        out.push(ch);
+    }
+    out
+}
 
 /// Generator for transforming AST to HIR (High-level IR)
 ///
@@ -790,6 +812,9 @@ impl HirGenerator {
         let mut lowered_expr = ast_expr.clone();
         let (generated_items, closure_diagnostics) = lower_closures_in_expr(&mut lowered_expr)?;
         diagnostic_manager().add_diagnostics(closure_diagnostics);
+        if let Some(query) = lower_fp_expr_to_query(&lowered_expr, None) {
+            return self.transform_query_document(&query);
+        }
 
         self.reset_file_context("<expr>");
         self.prepare_lowering_state();
@@ -827,7 +852,43 @@ impl HirGenerator {
         let closure_diagnostics = lower_closures_in_file(&mut lowered)?;
         diagnostic_manager().add_diagnostics(closure_diagnostics);
         strip_doc_attrs_in_file(&mut lowered);
+        if let Some(query) = lower_fp_file_to_query(&lowered, Some(&lowered.path)) {
+            return self.transform_query_document(&query);
+        }
         self.transform_file_inner(&lowered)
+    }
+
+    /// Transform a query document node into HIR.
+    pub fn transform_query_document(&mut self, query: &QueryDocument) -> Result<hir::Program> {
+        let file_name = query.name.as_deref().unwrap_or("<query>");
+        self.reset_file_context(file_name);
+        self.prepare_lowering_state();
+        self.insert_default_prelude_aliases();
+        self.program_def_map = HashMap::new();
+
+        let statements = self.lower_query_statements(query)?;
+        let mut document = query.clone();
+        if document.semantic.is_none() {
+            document.semantic = self.lower_query_semantic(&document, &statements)?;
+        }
+        let span = self.create_span(query.to_string_render().len().max(1) as u32);
+        let item = hir::Item {
+            hir_id: self.next_id(),
+            def_id: self.next_def_id(),
+            visibility: hir::Visibility::Private,
+            kind: hir::ItemKind::Query(hir::Query {
+                document,
+                statements,
+                span,
+            }),
+            span,
+        };
+
+        let mut program = hir::Program::new();
+        program.def_map.insert(item.def_id, item.clone());
+        self.program_def_map.insert(item.def_id, item.clone());
+        program.items.push(item);
+        Ok(program)
     }
 
     fn transform_file_inner(&mut self, file: &ast::File) -> Result<hir::Program> {
@@ -856,6 +917,71 @@ impl HirGenerator {
 
         self.program_def_map.extend(program.def_map.clone());
         Ok(program)
+    }
+
+    fn lower_query_statements(
+        &mut self,
+        query: &QueryDocument,
+    ) -> Result<Vec<fp_core::sql_ast::Statement>> {
+        if let Ok(statements) = query.semantic_statement_cache() {
+            if !statements.is_empty() {
+                return Ok(statements);
+            }
+        }
+        match &query.kind {
+            QueryKind::Sql(sql) => {
+                if !sql.ast.is_empty() {
+                    return Ok(sql.ast.clone());
+                }
+                parse_sql_ast(&query.to_string_render(), sql.dialect.clone()).map_err(|err| {
+                    fp_core::error::Error::from(format!("failed to normalize SQL query: {err}"))
+                })
+            }
+            QueryKind::Prql(prql) => {
+                if prql.compiled.is_empty() {
+                    return Err(fp_core::error::Error::from(
+                        "PRQL query has no compiled SQL statements",
+                    ));
+                }
+                let sql = prql
+                    .compiled
+                    .iter()
+                    .map(|statement| statement.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(";\n");
+                let sql = normalize_prql_sql_literals(&sql);
+                parse_sql_ast(&sql, prql.target.clone().unwrap_or_default()).map_err(|err| {
+                    fp_core::error::Error::from(format!("failed to normalize PRQL query: {err}"))
+                })
+            }
+            QueryKind::Any(_) => Err(fp_core::error::Error::from(
+                "unsupported opaque query document in AST→HIR",
+            )),
+        }
+    }
+
+    fn lower_query_semantic(
+        &mut self,
+        query: &QueryDocument,
+        statements: &[fp_core::sql_ast::Statement],
+    ) -> Result<Option<QueryIrDocument>> {
+        if let Some(semantic) = &query.semantic {
+            return Ok(Some(semantic.clone()));
+        }
+        let mut lowered = Vec::with_capacity(statements.len());
+        for statement in statements {
+            let Some(stmt) = statement_to_query_ir(statement) else {
+                return Ok(None);
+            };
+            lowered.push(stmt);
+        }
+        if lowered.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(QueryIrDocument {
+            name: query.name.clone(),
+            statements: lowered,
+        }))
     }
 
     fn append_item(&mut self, program: &mut hir::Program, item: &ast::Item) -> Result<()> {

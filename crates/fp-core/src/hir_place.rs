@@ -1,7 +1,8 @@
 use crate::hir::{self, Expr, ExprKind, Symbol};
 use crate::intrinsics::IntrinsicCallKind;
 use crate::place::{
-    AssignTargetBaseKind, AssignTargetProjectionKind, AssignTargetSliceKind, ProjectedAssignTargetKind,
+    AssignTargetBaseKind, AssignTargetProjectionKind, AssignTargetSliceKind,
+    ProjectedAssignTargetKind,
 };
 
 pub type HirAssignTargetBase = AssignTargetBaseKind<hir::Path, Expr>;
@@ -38,8 +39,9 @@ pub fn project_hir_assign_target(expr: &Expr) -> Option<HirProjectedAssignTarget
             Some(target)
         }
         ExprKind::Slice(slice) => {
-            let mut target = project_hir_assign_target(slice.base.as_ref())
-                .unwrap_or_else(|| HirProjectedAssignTarget::from_expr(slice.base.as_ref().clone()));
+            let mut target = project_hir_assign_target(slice.base.as_ref()).unwrap_or_else(|| {
+                HirProjectedAssignTarget::from_expr(slice.base.as_ref().clone())
+            });
             target.push(HirAssignTargetProjection::Slice(HirAssignTargetSlice {
                 start: slice.start.clone(),
                 end: slice.end.clone(),
@@ -49,9 +51,18 @@ pub fn project_hir_assign_target(expr: &Expr) -> Option<HirProjectedAssignTarget
             Some(target)
         }
         ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Slice => {
-            let base = call.callargs.iter().find(|arg| arg.name.as_str() == "base")?;
-            let start = call.callargs.iter().find(|arg| arg.name.as_str() == "start")?;
-            let end = call.callargs.iter().find(|arg| arg.name.as_str() == "end")?;
+            let base = call
+                .callargs
+                .iter()
+                .find(|arg| arg.name.as_str() == "base")?;
+            let start = call
+                .callargs
+                .iter()
+                .find(|arg| arg.name.as_str() == "start")?;
+            let end = call
+                .callargs
+                .iter()
+                .find(|arg| arg.name.as_str() == "end")?;
 
             let mut target = project_hir_assign_target(&base.value)
                 .unwrap_or_else(|| HirProjectedAssignTarget::from_expr(base.value.clone()));

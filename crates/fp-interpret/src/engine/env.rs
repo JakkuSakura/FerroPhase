@@ -170,8 +170,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                             (_, Value::Tuple(items))
                                 if items.values.len() == tuple_struct.patterns.len() =>
                             {
-                                for (pat, val) in
-                                    tuple_struct.patterns.iter().zip(items.values.iter().cloned())
+                                for (pat, val) in tuple_struct
+                                    .patterns
+                                    .iter()
+                                    .zip(items.values.iter().cloned())
                                 {
                                     self.bind_pattern(pat, val);
                                 }
@@ -258,16 +260,14 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub fn pattern_matches(&mut self, pattern: &Pattern, value: &Value) -> bool {
         match pattern.kind() {
             PatternKind::Wildcard(_) => true,
-            PatternKind::Ident(ident) => {
-                match ident.ident.as_str() {
-                    "true" => matches!(value, Value::Bool(flag) if flag.value),
-                    "false" => matches!(value, Value::Bool(flag) if !flag.value),
-                    _ => {
-                        self.bind_pattern(pattern, value.clone());
-                        true
-                    }
+            PatternKind::Ident(ident) => match ident.ident.as_str() {
+                "true" => matches!(value, Value::Bool(flag) if flag.value),
+                "false" => matches!(value, Value::Bool(flag) if !flag.value),
+                _ => {
+                    self.bind_pattern(pattern, value.clone());
+                    true
                 }
-            }
+            },
             PatternKind::Bind(bind) => {
                 if self.pattern_matches(&bind.pattern, value) {
                     self.insert_value(bind.ident.ident.as_str(), value.clone());
@@ -306,7 +306,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
                 match (tuple_struct.patterns.len(), payload) {
                     (1, payload) => self.pattern_matches(&tuple_struct.patterns[0], payload),
-                    (_, Value::Tuple(items)) if items.values.len() == tuple_struct.patterns.len() => {
+                    (_, Value::Tuple(items))
+                        if items.values.len() == tuple_struct.patterns.len() =>
+                    {
                         tuple_struct
                             .patterns
                             .iter()

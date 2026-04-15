@@ -8,11 +8,10 @@ use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer, NormalizeOutco
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
-use crate::ast::lower_common::{
-    lex_span_from_span, lex_spans_for_group, macro_token_trees_to_lexemes,
-    macro_tokens_file_id,
-};
 use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
+use crate::ast::lower_common::{
+    lex_span_from_span, lex_spans_for_group, macro_token_trees_to_lexemes, macro_tokens_file_id,
+};
 use crate::cst::{parse_expr_lexemes_prefix_to_cst, parse_type_lexemes_prefix_to_cst};
 use crate::lexer::lexeme::{Lexeme, LexemeKind};
 

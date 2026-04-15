@@ -241,10 +241,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.exception_stack.pop();
 
         match flow {
-            RuntimeFlow::Return(value) => RuntimeFlow::Value(self.finish_exception_return(
-                value.unwrap_or_else(Value::unit),
-                exception_mode,
-            )),
+            RuntimeFlow::Return(value) => RuntimeFlow::Value(
+                self.finish_exception_return(value.unwrap_or_else(Value::unit), exception_mode),
+            ),
             RuntimeFlow::Value(value) => {
                 RuntimeFlow::Value(self.finish_exception_return(value, exception_mode))
             }
@@ -327,11 +326,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 fp_core::ast::FunctionParamReceiver::Ref
                 | fp_core::ast::FunctionParamReceiver::RefStatic
                 | fp_core::ast::FunctionParamReceiver::RefMut
-                | fp_core::ast::FunctionParamReceiver::RefMutStatic => {
-                    receiver.shared.as_ref().map(|shared| {
-                        Value::Any(AnyBox::new(RuntimeRef::whole(Arc::clone(shared))))
-                    })
-                }
+                | fp_core::ast::FunctionParamReceiver::RefMutStatic => receiver
+                    .shared
+                    .as_ref()
+                    .map(|shared| Value::Any(AnyBox::new(RuntimeRef::whole(Arc::clone(shared))))),
                 _ => Some(receiver.value.clone()),
             };
 
@@ -395,10 +393,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         match flow {
-            RuntimeFlow::Return(value) => RuntimeFlow::Value(self.finish_exception_return(
-                value.unwrap_or_else(Value::unit),
-                exception_mode,
-            )),
+            RuntimeFlow::Return(value) => RuntimeFlow::Value(
+                self.finish_exception_return(value.unwrap_or_else(Value::unit), exception_mode),
+            ),
             RuntimeFlow::Value(value) => {
                 RuntimeFlow::Value(self.finish_exception_return(value, exception_mode))
             }
@@ -466,10 +463,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.exception_stack.pop();
 
         match flow {
-            RuntimeFlow::Return(value) => RuntimeFlow::Value(self.finish_exception_return(
-                value.unwrap_or_else(Value::unit),
-                exception_mode,
-            )),
+            RuntimeFlow::Return(value) => RuntimeFlow::Value(
+                self.finish_exception_return(value.unwrap_or_else(Value::unit), exception_mode),
+            ),
             RuntimeFlow::Value(value) => {
                 RuntimeFlow::Value(self.finish_exception_return(value, exception_mode))
             }
@@ -536,10 +532,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.exception_stack.pop();
 
         match flow {
-            RuntimeFlow::Return(value) => RuntimeFlow::Value(self.finish_exception_return(
-                value.unwrap_or_else(Value::unit),
-                exception_mode,
-            )),
+            RuntimeFlow::Return(value) => RuntimeFlow::Value(
+                self.finish_exception_return(value.unwrap_or_else(Value::unit), exception_mode),
+            ),
             RuntimeFlow::Value(value) => {
                 RuntimeFlow::Value(self.finish_exception_return(value, exception_mode))
             }

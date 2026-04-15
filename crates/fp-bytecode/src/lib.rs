@@ -1,12 +1,12 @@
-use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
+use fp_core::diagnostics::{diagnostic_manager, Diagnostic};
 pub use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::mir;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use winnow::ModalResult;
-use winnow::Parser;
 use winnow::error::{ContextError, ErrMode};
 use winnow::token::{literal, take_till, take_while};
+use winnow::ModalResult;
+use winnow::Parser;
 
 pub const BYTECODE_MAGIC: [u8; 4] = *b"FPBC";
 pub const BYTECODE_VERSION: u32 = 1;
@@ -459,6 +459,7 @@ pub fn lower_program(program: &mir::Program) -> Result<BytecodeProgram, Bytecode
         let function = match &item.kind {
             mir::ItemKind::Function(func) => func,
             mir::ItemKind::Static(_) => continue,
+            mir::ItemKind::Query(_) => continue,
         };
         let body =
             program

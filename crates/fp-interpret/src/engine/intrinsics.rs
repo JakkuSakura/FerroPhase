@@ -181,12 +181,18 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
             }
-            IntrinsicCallKind::FsReadDir => {
-                self.eval_host_intrinsic_runtime(call, "filesystem access", true, super::lang_fs_read_dir)
-            }
-            IntrinsicCallKind::FsWalkDir => {
-                self.eval_host_intrinsic_runtime(call, "filesystem access", true, super::lang_fs_walk_dir)
-            }
+            IntrinsicCallKind::FsReadDir => self.eval_host_intrinsic_runtime(
+                call,
+                "filesystem access",
+                true,
+                super::lang_fs_read_dir,
+            ),
+            IntrinsicCallKind::FsWalkDir => self.eval_host_intrinsic_runtime(
+                call,
+                "filesystem access",
+                true,
+                super::lang_fs_walk_dir,
+            ),
             IntrinsicCallKind::FsReadToString => {
                 if !self.require_io_capability("filesystem access") {
                     return RuntimeFlow::Value(Value::undefined());
@@ -368,73 +374,134 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.emit_error("fs_is_file intrinsic expects a string path");
                     return RuntimeFlow::Value(Value::undefined());
                 };
-                RuntimeFlow::Value(Value::bool(
-                    std::path::Path::new(path.as_str()).is_file(),
-                ))
+                RuntimeFlow::Value(Value::bool(std::path::Path::new(path.as_str()).is_file()))
             }
-            IntrinsicCallKind::FsCreateDirAll => {
-                self.eval_host_intrinsic_runtime(call, "filesystem access", true, super::lang_fs_create_dir_all)
-            }
-            IntrinsicCallKind::FsRemoveFile => {
-                self.eval_host_intrinsic_runtime(call, "filesystem access", true, super::lang_fs_remove_file)
-            }
-            IntrinsicCallKind::FsRemoveDirAll => {
-                self.eval_host_intrinsic_runtime(call, "filesystem access", true, super::lang_fs_remove_dir_all)
-            }
-            IntrinsicCallKind::FsGlob => {
-                self.eval_host_intrinsic_runtime(call, "filesystem access", true, super::lang_fs_glob)
-            }
-            IntrinsicCallKind::EnvCurrentDir => {
-                self.eval_host_intrinsic_runtime(call, "environment access", false, super::lang_env_current_dir)
-            }
-            IntrinsicCallKind::EnvTempDir => {
-                self.eval_host_intrinsic_runtime(call, "environment access", false, super::lang_env_temp_dir)
-            }
-            IntrinsicCallKind::EnvHomeDir => {
-                self.eval_host_intrinsic_runtime(call, "environment access", false, super::lang_env_home_dir)
-            }
-            IntrinsicCallKind::EnvVar => {
-                self.eval_host_intrinsic_runtime(call, "environment access", false, super::lang_env_var)
-            }
-            IntrinsicCallKind::EnvVarExists => {
-                self.eval_host_intrinsic_runtime(call, "environment access", false, super::lang_env_var_exists)
-            }
-            IntrinsicCallKind::PathJoin => {
-                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_join)
-            }
-            IntrinsicCallKind::PathParent => {
-                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_parent)
-            }
-            IntrinsicCallKind::PathFileName => {
-                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_file_name)
-            }
-            IntrinsicCallKind::PathExtension => {
-                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_extension)
-            }
-            IntrinsicCallKind::PathStem => {
-                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_stem)
-            }
-            IntrinsicCallKind::PathIsAbsolute => {
-                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_is_absolute)
-            }
-            IntrinsicCallKind::PathNormalize => {
-                self.eval_host_intrinsic_runtime(call, "path operations", false, super::lang_path_normalize)
-            }
-            IntrinsicCallKind::IoReadStdinToString => {
-                self.eval_host_intrinsic_runtime(call, "stdio access", true, super::lang_io_read_stdin_to_string)
-            }
-            IntrinsicCallKind::IoWriteStdout => {
-                self.eval_host_intrinsic_runtime(call, "stdio access", true, super::lang_io_write_stdout)
-            }
-            IntrinsicCallKind::IoWriteStderr => {
-                self.eval_host_intrinsic_runtime(call, "stdio access", true, super::lang_io_write_stderr)
-            }
-            IntrinsicCallKind::YamlToJson => {
-                self.eval_host_intrinsic_runtime(call, "yaml conversion", false, super::lang_yaml_to_json)
-            }
-            IntrinsicCallKind::JsonParse => {
-                self.eval_host_intrinsic_runtime(call, "json parsing", false, super::lang_json_parse)
-            }
+            IntrinsicCallKind::FsCreateDirAll => self.eval_host_intrinsic_runtime(
+                call,
+                "filesystem access",
+                true,
+                super::lang_fs_create_dir_all,
+            ),
+            IntrinsicCallKind::FsRemoveFile => self.eval_host_intrinsic_runtime(
+                call,
+                "filesystem access",
+                true,
+                super::lang_fs_remove_file,
+            ),
+            IntrinsicCallKind::FsRemoveDirAll => self.eval_host_intrinsic_runtime(
+                call,
+                "filesystem access",
+                true,
+                super::lang_fs_remove_dir_all,
+            ),
+            IntrinsicCallKind::FsGlob => self.eval_host_intrinsic_runtime(
+                call,
+                "filesystem access",
+                true,
+                super::lang_fs_glob,
+            ),
+            IntrinsicCallKind::EnvCurrentDir => self.eval_host_intrinsic_runtime(
+                call,
+                "environment access",
+                false,
+                super::lang_env_current_dir,
+            ),
+            IntrinsicCallKind::EnvTempDir => self.eval_host_intrinsic_runtime(
+                call,
+                "environment access",
+                false,
+                super::lang_env_temp_dir,
+            ),
+            IntrinsicCallKind::EnvHomeDir => self.eval_host_intrinsic_runtime(
+                call,
+                "environment access",
+                false,
+                super::lang_env_home_dir,
+            ),
+            IntrinsicCallKind::EnvVar => self.eval_host_intrinsic_runtime(
+                call,
+                "environment access",
+                false,
+                super::lang_env_var,
+            ),
+            IntrinsicCallKind::EnvVarExists => self.eval_host_intrinsic_runtime(
+                call,
+                "environment access",
+                false,
+                super::lang_env_var_exists,
+            ),
+            IntrinsicCallKind::PathJoin => self.eval_host_intrinsic_runtime(
+                call,
+                "path operations",
+                false,
+                super::lang_path_join,
+            ),
+            IntrinsicCallKind::PathParent => self.eval_host_intrinsic_runtime(
+                call,
+                "path operations",
+                false,
+                super::lang_path_parent,
+            ),
+            IntrinsicCallKind::PathFileName => self.eval_host_intrinsic_runtime(
+                call,
+                "path operations",
+                false,
+                super::lang_path_file_name,
+            ),
+            IntrinsicCallKind::PathExtension => self.eval_host_intrinsic_runtime(
+                call,
+                "path operations",
+                false,
+                super::lang_path_extension,
+            ),
+            IntrinsicCallKind::PathStem => self.eval_host_intrinsic_runtime(
+                call,
+                "path operations",
+                false,
+                super::lang_path_stem,
+            ),
+            IntrinsicCallKind::PathIsAbsolute => self.eval_host_intrinsic_runtime(
+                call,
+                "path operations",
+                false,
+                super::lang_path_is_absolute,
+            ),
+            IntrinsicCallKind::PathNormalize => self.eval_host_intrinsic_runtime(
+                call,
+                "path operations",
+                false,
+                super::lang_path_normalize,
+            ),
+            IntrinsicCallKind::IoReadStdinToString => self.eval_host_intrinsic_runtime(
+                call,
+                "stdio access",
+                true,
+                super::lang_io_read_stdin_to_string,
+            ),
+            IntrinsicCallKind::IoWriteStdout => self.eval_host_intrinsic_runtime(
+                call,
+                "stdio access",
+                true,
+                super::lang_io_write_stdout,
+            ),
+            IntrinsicCallKind::IoWriteStderr => self.eval_host_intrinsic_runtime(
+                call,
+                "stdio access",
+                true,
+                super::lang_io_write_stderr,
+            ),
+            IntrinsicCallKind::YamlToJson => self.eval_host_intrinsic_runtime(
+                call,
+                "yaml conversion",
+                false,
+                super::lang_yaml_to_json,
+            ),
+            IntrinsicCallKind::JsonParse => self.eval_host_intrinsic_runtime(
+                call,
+                "json parsing",
+                false,
+                super::lang_json_parse,
+            ),
             IntrinsicCallKind::TestCommandMockReset => self.eval_host_intrinsic_runtime(
                 call,
                 "test command mock access",

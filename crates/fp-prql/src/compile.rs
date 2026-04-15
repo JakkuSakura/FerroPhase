@@ -1,5 +1,8 @@
 use fp_core::error::Result as CoreResult;
-use fp_core::query::{QueryDocument, QueryKind, QueryStatement, SqlDialect};
+use fp_core::query::{
+    statement_to_query_ir, QueryCoverage, QueryDocument, QueryFallback, QueryIrDocument, QueryKind,
+    QueryOrigin, QueryStatement, SqlDialect,
+};
 
 use crate::dialect::detect_target_dialect;
 
@@ -52,10 +55,48 @@ pub fn build_document(
             if prql.target.is_none() {
                 prql.target = Some(SqlDialect::Generic);
             }
+            let normalized_sql = normalize_prql_sql_literals(&compiled_sql);
+            if let Ok(ast) = fp_sql::sql_ast::parse_sql_ast(
+                &normalized_sql,
+                prql.target.clone().unwrap_or_default(),
+            ) {
+                let semantic = ast
+                    .iter()
+                    .filter_map(statement_to_query_ir)
+                    .collect::<Vec<_>>();
+                if !semantic.is_empty() {
+                    document.semantic = Some(QueryIrDocument {
+                        name: document.name.clone(),
+                        statements: semantic,
+                    });
+                    if let Some(bridge) = &mut document.bridge {
+                        bridge.origin = Some(QueryOrigin::Prql);
+                        bridge.coverage = Some(QueryCoverage::Dual);
+                        bridge.fallback = Some(QueryFallback::PrqlToSql);
+                    }
+                }
+            }
         }
     }
 
     document
+}
+
+fn normalize_prql_sql_literals(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut in_double = false;
+    for ch in sql.chars() {
+        if ch == '"' {
+            in_double = !in_double;
+            out.push('\'');
+            continue;
+        }
+        if in_double && ch == '\'' {
+            out.push('\'');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn naive_prql_to_sql(source: &str) -> Option<String> {
@@ -63,6 +104,7 @@ fn naive_prql_to_sql(source: &str) -> Option<String> {
     let mut selects: Vec<String> = Vec::new();
     let mut filters: Vec<String> = Vec::new();
     let mut limits: Option<String> = None;
+    let mut sort_keys: Vec<String> = Vec::new();
 
     for chunk in source.split('|') {
         let trimmed = chunk.trim();
@@ -89,6 +131,10 @@ fn naive_prql_to_sql(source: &str) -> Option<String> {
                 filters.push(normalized);
             } else if let Some(rest) = entry.strip_prefix("take ") {
                 limits = Some(rest.trim().to_string());
+            } else if let Some(rest) = entry.strip_prefix("sort") {
+                if let Some(fields) = extract_group(rest) {
+                    sort_keys.extend(fields);
+                }
             }
         }
     }
@@ -110,6 +156,11 @@ fn naive_prql_to_sql(source: &str) -> Option<String> {
     if let Some(limit) = limits {
         sql.push_str(" LIMIT ");
         sql.push_str(&limit);
+    }
+
+    if !sort_keys.is_empty() {
+        sql.push_str(" ORDER BY ");
+        sql.push_str(&sort_keys.join(", "));
     }
 
     Some(sql)

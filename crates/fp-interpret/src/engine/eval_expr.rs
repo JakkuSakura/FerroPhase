@@ -1175,8 +1175,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                                                         }
                                                         _ => None,
                                                     });
-                                                let message = message
-                                                    .unwrap_or_else(|| self.render_panic_value(&err));
+                                                let message = message.unwrap_or_else(|| {
+                                                    self.render_panic_value(&err)
+                                                });
                                                 Value::string(message)
                                             }
                                             Value::Structural(structural) => {
@@ -1188,8 +1189,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                                                         }
                                                         _ => None,
                                                     });
-                                                let message = message
-                                                    .unwrap_or_else(|| self.render_panic_value(&err));
+                                                let message = message.unwrap_or_else(|| {
+                                                    self.render_panic_value(&err)
+                                                });
                                                 Value::string(message)
                                             }
                                             _ => Value::string(self.render_panic_value(&err)),
@@ -1947,19 +1949,25 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
                                     if let Some(shared) = stored.shared_handle() {
                                         if let ExprKind::Range(range) = index_expr.index.kind() {
-                                            let mut start_expr =
-                                                range.start.as_ref().map(|expr| expr.as_ref().clone());
+                                            let mut start_expr = range
+                                                .start
+                                                .as_ref()
+                                                .map(|expr| expr.as_ref().clone());
                                             let start = start_expr
                                                 .as_mut()
                                                 .map(|expr| self.eval_expr(expr));
-                                            let mut end_expr =
-                                                range.end.as_ref().map(|expr| expr.as_ref().clone());
+                                            let mut end_expr = range
+                                                .end
+                                                .as_ref()
+                                                .map(|expr| expr.as_ref().clone());
                                             let end =
                                                 end_expr.as_mut().map(|expr| self.eval_expr(expr));
                                             let start_idx = match start {
                                                 Some(value) => match self
-                                                    .numeric_to_non_negative_usize(&value, "range start")
-                                                {
+                                                    .numeric_to_non_negative_usize(
+                                                        &value,
+                                                        "range start",
+                                                    ) {
                                                     Some(value) => value,
                                                     None => return Value::undefined(),
                                                 },
@@ -1967,8 +1975,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                                             };
                                             let end_idx = match end {
                                                 Some(value) => match self
-                                                    .numeric_to_non_negative_usize(&value, "range end")
-                                                {
+                                                    .numeric_to_non_negative_usize(
+                                                        &value,
+                                                        "range end",
+                                                    ) {
                                                     Some(value) => {
                                                         if matches!(
                                                             range.limit,
@@ -1994,10 +2004,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                                                 end_idx,
                                             )));
                                         }
-                                        let mut index_expr_value = index_expr.index.as_ref().clone();
+                                        let mut index_expr_value =
+                                            index_expr.index.as_ref().clone();
                                         let index_value = self.eval_expr(&mut index_expr_value);
-                                        if let Some(index) =
-                                            self.numeric_to_non_negative_usize(&index_value, "index")
+                                        if let Some(index) = self
+                                            .numeric_to_non_negative_usize(&index_value, "index")
                                         {
                                             return Value::Any(AnyBox::new(RuntimeRef::index(
                                                 RuntimeRef::whole(shared),
@@ -2539,8 +2550,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                         };
                     if let Some(lang_name) = super::function_lang_item(&function) {
                         if let Some(handler) = super::resolve_lang_item_handler(&lang_name) {
-                            let _command_mock_state =
-                                super::ScopedCommandMockState::enter(self.command_mock_state.clone());
+                            let _command_mock_state = super::ScopedCommandMockState::enter(
+                                self.command_mock_state.clone(),
+                            );
                             return match handler(&evaluated) {
                                 Ok(value) => value,
                                 Err(err) => {
@@ -2645,7 +2657,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                 .collect(),
         )
     }
-
 
     fn try_eval_method_chain(&mut self, locator: &Name) -> Option<Value> {
         let text = locator.to_string();
@@ -2881,8 +2892,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                     if let Some(lang_name) = super::function_lang_item(&function) {
                         if let Some(handler) = super::resolve_lang_item_handler(&lang_name) {
-                            let _command_mock_state =
-                                super::ScopedCommandMockState::enter(self.command_mock_state.clone());
+                            let _command_mock_state = super::ScopedCommandMockState::enter(
+                                self.command_mock_state.clone(),
+                            );
                             return match handler(&args) {
                                 Ok(value) => RuntimeFlow::Value(value),
                                 Err(err) => {
@@ -2980,9 +2992,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if let Some(value) = self.lookup_callable_value(&locator) {
                     match value {
                         Value::Function(function) => {
-                            let args =
-                                match self.evaluate_invoke_args(invoke, Some(&function.sig.params))
-                                {
+                            let args = match self
+                                .evaluate_invoke_args(invoke, Some(&function.sig.params))
+                            {
                                 Ok(values) => values,
                                 Err(flow) => return flow,
                             };
@@ -3021,7 +3033,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Value::Any(any) => {
                         if let Some(symbol) = any.downcast_ref::<ImportedSymbol>() {
                             let Some(module_path) = self.module_id_path(&symbol.module) else {
-                                self.emit_error("unable to resolve module path for imported symbol");
+                                self.emit_error(
+                                    "unable to resolve module path for imported symbol",
+                                );
                                 return RuntimeFlow::Value(Value::undefined());
                             };
                             let mut segments = module_path
@@ -3031,14 +3045,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 .collect::<Vec<_>>();
                             segments.push(Ident::new(symbol.symbol.name.clone()));
                             let mut locator = Name::path(Path::new(PathPrefix::Plain, segments));
-                            if let Some(function) =
-                                self.resolve_function_call(&mut locator, invoke, ResolutionMode::Default)
-                            {
+                            if let Some(function) = self.resolve_function_call(
+                                &mut locator,
+                                invoke,
+                                ResolutionMode::Default,
+                            ) {
                                 invoke.target = ExprInvokeTarget::Function(locator.clone());
-                                let args = match self.evaluate_invoke_args(
-                                    invoke,
-                                    Some(&function.sig.params),
-                                ) {
+                                let args = match self
+                                    .evaluate_invoke_args(invoke, Some(&function.sig.params))
+                                {
                                     Ok(values) => values,
                                     Err(flow) => return flow,
                                 };
@@ -3134,14 +3149,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         if let Some(flow) = self.try_eval_option_method(&receiver.value, &method_name, args) {
             return flow;
         }
-        if let Some(flow) =
-            self.try_eval_json_value_method(&receiver.value, &method_name, args)
-        {
+        if let Some(flow) = self.try_eval_json_value_method(&receiver.value, &method_name, args) {
             return flow;
         }
-        if let Some(flow) =
-            self.try_eval_json_number_method(&receiver.value, &method_name, args)
-        {
+        if let Some(flow) = self.try_eval_json_number_method(&receiver.value, &method_name, args) {
             return flow;
         }
         if let Some(flow) =
@@ -3179,8 +3190,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             return self.call_method_runtime(function, receiver, arg_values);
         }
 
-        if matches!(method_name.as_str(), "starts_with" | "ends_with" | "contains")
-            && args.len() == 1
+        if matches!(
+            method_name.as_str(),
+            "starts_with" | "ends_with" | "contains"
+        ) && args.len() == 1
         {
             if let Value::String(receiver_text) = &receiver.value {
                 let needle = match self.evaluate_args_runtime(args) {
@@ -3654,8 +3667,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                     };
                     let key = structural.get_field(&Ident::new("key".to_string()));
                     let value = structural.get_field(&Ident::new("value".to_string()));
-                    let Some(key) = key else { continue; };
-                    let Some(value) = value else { continue; };
+                    let Some(key) = key else {
+                        continue;
+                    };
+                    let Some(value) = value else {
+                        continue;
+                    };
                     if let Value::String(text) = &key.value {
                         if text.value == needle {
                             return Some(RuntimeFlow::Value(make_option_some(value.value.clone())));
@@ -3829,7 +3846,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             "as_i64" => {
                 let has = matches!(field("has_int"), Some(Value::Bool(flag)) if flag.value);
                 let value = if has {
-                    field("int").map(make_option_some).unwrap_or_else(make_option_none)
+                    field("int")
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none)
                 } else {
                     make_option_none()
                 };
@@ -3838,7 +3857,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             "as_u64" => {
                 let has = matches!(field("has_uint"), Some(Value::Bool(flag)) if flag.value);
                 let value = if has {
-                    field("uint").map(make_option_some).unwrap_or_else(make_option_none)
+                    field("uint")
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none)
                 } else {
                     make_option_none()
                 };
@@ -3847,7 +3868,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             "as_f64" => {
                 let has = matches!(field("has_float"), Some(Value::Bool(flag)) if flag.value);
                 let value = if has {
-                    field("float").map(make_option_some).unwrap_or_else(make_option_none)
+                    field("float")
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none)
                 } else {
                     make_option_none()
                 };
@@ -3866,9 +3889,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Some(RuntimeFlow::Value(Value::bool(has)))
             }
             "to_string" => match field("raw") {
-                Some(Value::String(text)) => {
-                    Some(RuntimeFlow::Value(Value::string(text.value)))
-                }
+                Some(Value::String(text)) => Some(RuntimeFlow::Value(Value::string(text.value))),
                 Some(value) => {
                     self.emit_error(format!(
                         "Number::to_string expected string field, got {:?}",
@@ -4636,10 +4657,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.emit_error("splat dict expects string keys for keyword arguments");
                 return Err(());
             };
-            let value = values
-                .get(idx)
-                .cloned()
-                .unwrap_or_else(Value::undefined);
+            let value = values.get(idx).cloned().unwrap_or_else(Value::undefined);
             kwargs.push((text.value.clone(), value));
         }
         Ok(kwargs)
@@ -5088,9 +5106,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 .unwrap_or(type_name);
                             let is_hashmap = base_name == "HashMap";
                             if is_hashmap {
-                                let pairs = match self
-                                    .collect_hashmap_kwargs_from_structural(&struct_value.structural)
-                                {
+                                let pairs = match self.collect_hashmap_kwargs_from_structural(
+                                    &struct_value.structural,
+                                ) {
                                     Ok(pairs) => pairs,
                                     Err(()) => {
                                         return Err(RuntimeFlow::Value(Value::undefined()));
@@ -5199,9 +5217,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 .unwrap_or(type_name);
                             let is_hashmap = base_name == "HashMap";
                             if is_hashmap {
-                                let pairs = match self
-                                    .collect_hashmap_kwargs_from_structural(&struct_value.structural)
-                                {
+                                let pairs = match self.collect_hashmap_kwargs_from_structural(
+                                    &struct_value.structural,
+                                ) {
                                     Ok(pairs) => pairs,
                                     Err(()) => return None,
                                 };
@@ -5364,19 +5382,18 @@ impl<'ctx> AstInterpreter<'ctx> {
     ) -> std::result::Result<Vec<Value>, RuntimeFlow> {
         // Const vs runtime is determined by interpreter mode and const region.
         // Capability gating (IO/exec/etc.) is orthogonal and handled elsewhere.
-        let (positional, kwargs) = if self.in_const_region()
-            || matches!(self.mode, InterpreterMode::Comptime)
-        {
-            match self.collect_invoke_values_const(invoke) {
-                Some(values) => values,
-                None => return Err(RuntimeFlow::Value(Value::undefined())),
-            }
-        } else {
-            self.collect_invoke_values_runtime(invoke)?
-        };
+        let (positional, kwargs) =
+            if self.in_const_region() || matches!(self.mode, InterpreterMode::Comptime) {
+                match self.collect_invoke_values_const(invoke) {
+                    Some(values) => values,
+                    None => return Err(RuntimeFlow::Value(Value::undefined())),
+                }
+            } else {
+                self.collect_invoke_values_runtime(invoke)?
+            };
         match params {
             Some(params) => {
-        if self.in_const_region() || matches!(self.mode, InterpreterMode::Comptime) {
+                if self.in_const_region() || matches!(self.mode, InterpreterMode::Comptime) {
                     self.apply_invoke_values_to_params_const(params, positional, kwargs)
                         .ok_or_else(|| RuntimeFlow::Value(Value::undefined()))
                 } else {

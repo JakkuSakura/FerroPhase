@@ -1,13 +1,13 @@
 use super::{RuntimeEnum, RuntimeRef, RuntimeRefTarget};
 use std::collections::HashMap;
-use std::ffi::{CStr, CString, c_char, c_void};
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::MutexGuard;
 
 use fp_core::ast::{
     DecimalType, EnumTypeVariant, ExprKind, FunctionSignature, Name, ReprFlags, ReprInt,
     ReprOptions, StructuralField, Ty, TypeArray, TypeEnum, TypeInt, TypePrimitive, TypeReference,
-    TypeStruct, TypeStructural, TypeTuple, Value, ValueChar, ValueEscaped, ValueList,
-    ValuePointer, ValueStruct, ValueStructural, ValueTuple,
+    TypeStruct, TypeStructural, TypeTuple, Value, ValueChar, ValueEscaped, ValueList, ValuePointer,
+    ValueStruct, ValueStructural, ValueTuple,
 };
 use fp_core::error::{Error, Result};
 use libffi::middle::{Arg, Cif, CodePtr, Type};
@@ -650,12 +650,8 @@ fn c_abi_layout(ty: &Ty) -> Result<CAbiLayout> {
     match &resolved {
         Ty::Primitive(primitive) => c_abi_layout_for_primitive(*primitive),
         Ty::Tuple(TypeTuple { types }) => c_abi_layout_for_fields(types),
-        Ty::Struct(TypeStruct { repr, fields, .. }) => {
-            c_abi_layout_for_struct(fields, repr)
-        }
-        Ty::Enum(TypeEnum { repr, variants, .. }) => {
-            c_abi_layout_for_enum(variants, repr)
-        }
+        Ty::Struct(TypeStruct { repr, fields, .. }) => c_abi_layout_for_struct(fields, repr),
+        Ty::Enum(TypeEnum { repr, variants, .. }) => c_abi_layout_for_enum(variants, repr),
         Ty::Structural(TypeStructural { .. }) => Err(Error::from(
             "anonymous structural types are not allowed in C ABI; declare a #[repr(C)] struct",
         )),
@@ -710,7 +706,9 @@ fn c_abi_layout_for_fields_with_repr(fields: &[Ty], repr: &ReprOptions) -> Resul
     let mut max_align = 1usize;
     for field in fields {
         let layout = c_abi_layout(field)?;
-        let field_align = pack.map(|pack| layout.align.min(pack)).unwrap_or(layout.align);
+        let field_align = pack
+            .map(|pack| layout.align.min(pack))
+            .unwrap_or(layout.align);
         max_align = max_align.max(field_align);
         offset = align_to(offset, field_align);
         offsets.push(offset);
@@ -722,7 +720,9 @@ fn c_abi_layout_for_fields_with_repr(fields: &[Ty], repr: &ReprOptions) -> Resul
         .align
         .map(|value| parse_repr_align(value, "repr(align)"))
         .transpose()?;
-    let struct_align = explicit_align.map(|align| max_align.max(align)).unwrap_or(max_align);
+    let struct_align = explicit_align
+        .map(|align| max_align.max(align))
+        .unwrap_or(max_align);
     let size = align_to(offset, struct_align);
     Ok(CAbiLayout {
         size,
@@ -757,7 +757,8 @@ fn c_abi_layout_for_enum(variants: &[EnumTypeVariant], repr: &ReprOptions) -> Re
 }
 
 fn parse_repr_align(value: u64, context: &str) -> Result<usize> {
-    let align = usize::try_from(value).map_err(|_| Error::from(format!("{context} is too large")))?;
+    let align =
+        usize::try_from(value).map_err(|_| Error::from(format!("{context} is too large")))?;
     if align == 0 || !align.is_power_of_two() {
         return Err(Error::from(format!(
             "{context} requires a non-zero power-of-two alignment"
@@ -839,16 +840,24 @@ fn validate_struct_repr_for_c_abi(repr: &ReprOptions) -> Result<()> {
 
 fn validate_enum_repr_for_c_abi(variants: &[EnumTypeVariant], repr: &ReprOptions) -> Result<()> {
     if repr.flags.contains(ReprFlags::IS_TRANSPARENT) {
-        return Err(Error::from("repr(transparent) is not supported on enums for C ABI"));
+        return Err(Error::from(
+            "repr(transparent) is not supported on enums for C ABI",
+        ));
     }
     if repr.flags.contains(ReprFlags::IS_PACKED) || repr.pack.is_some() {
-        return Err(Error::from("repr(packed) is not supported on enums for C ABI"));
+        return Err(Error::from(
+            "repr(packed) is not supported on enums for C ABI",
+        ));
     }
     if repr.flags.contains(ReprFlags::IS_SIMD) {
-        return Err(Error::from("repr(simd) is not supported on enums for C ABI"));
+        return Err(Error::from(
+            "repr(simd) is not supported on enums for C ABI",
+        ));
     }
     if repr.flags.contains(ReprFlags::IS_LINEAR) {
-        return Err(Error::from("repr(linear) is not supported on enums for C ABI"));
+        return Err(Error::from(
+            "repr(linear) is not supported on enums for C ABI",
+        ));
     }
     if repr.int.is_some() && variants.is_empty() {
         return Err(Error::from(
@@ -877,9 +886,8 @@ fn transparent_field_ty<'a>(fields: &'a [StructuralField]) -> Result<&'a Ty> {
         }
         non_zero = Some(&field.value);
     }
-    non_zero.ok_or_else(|| {
-        Error::from("repr(transparent) requires exactly one non-zero-sized field")
-    })
+    non_zero
+        .ok_or_else(|| Error::from("repr(transparent) requires exactly one non-zero-sized field"))
 }
 
 fn enum_tag_layout(repr: &ReprOptions) -> Result<EnumTagLayout> {
@@ -917,7 +925,11 @@ fn enum_variant_payload_fields(variant_ty: &Ty) -> Vec<Ty> {
     match variant_ty {
         Ty::Unit(_) => Vec::new(),
         Ty::Tuple(tuple) => tuple.types.clone(),
-        Ty::Struct(struct_ty) => struct_ty.fields.iter().map(|field| field.value.clone()).collect(),
+        Ty::Struct(struct_ty) => struct_ty
+            .fields
+            .iter()
+            .map(|field| field.value.clone())
+            .collect(),
         Ty::Structural(structural) => structural
             .fields
             .iter()
@@ -1076,7 +1088,9 @@ fn write_transparent_struct_value(
             };
             write_c_abi_value(inner_ty, selected, buf, base)
         }
-        _ => Err(Error::from("expected struct value for repr(transparent) struct")),
+        _ => Err(Error::from(
+            "expected struct value for repr(transparent) struct",
+        )),
     }
 }
 
@@ -1102,7 +1116,11 @@ fn write_enum_value(
                 .find(|variant| variant.name.as_str() == enum_value.variant_name.as_str())
                 .ok_or_else(|| Error::from("enum variant does not match enum type"))?;
 
-            for byte in buf.iter_mut().skip(base).take(c_abi_layout_for_enum(variants, repr)?.size) {
+            for byte in buf
+                .iter_mut()
+                .skip(base)
+                .take(c_abi_layout_for_enum(variants, repr)?.size)
+            {
                 *byte = 0;
             }
             write_primitive_value(tag.primitive, &Value::int(discriminant), buf, base)?;
@@ -1126,7 +1144,10 @@ fn write_enum_value(
             Ok(())
         }
         other => {
-            if variants.iter().all(|variant| matches!(variant.value, Ty::Unit(_))) {
+            if variants
+                .iter()
+                .all(|variant| matches!(variant.value, Ty::Unit(_)))
+            {
                 write_primitive_value(tag.primitive, other, buf, base)
             } else {
                 Err(Error::from(
@@ -1224,9 +1245,7 @@ fn write_int_value(int_ty: TypeInt, value: i64, buf: &mut [u8], base: usize) -> 
         TypeInt::U16 => buf[base..base + 2].copy_from_slice(&(value as u16).to_ne_bytes()),
         TypeInt::I32 => buf[base..base + 4].copy_from_slice(&(value as i32).to_ne_bytes()),
         TypeInt::U32 => buf[base..base + 4].copy_from_slice(&(value as u32).to_ne_bytes()),
-        TypeInt::I64 => {
-            buf[base..base + 8].copy_from_slice(&(value as i64).to_ne_bytes())
-        }
+        TypeInt::I64 => buf[base..base + 8].copy_from_slice(&(value as i64).to_ne_bytes()),
         TypeInt::U64 => buf[base..base + 8].copy_from_slice(&(value as u64).to_ne_bytes()),
         TypeInt::I128 | TypeInt::U128 | TypeInt::BigInt => {
             return Err(Error::from("unsupported 128-bit integer in C ABI layout"));
