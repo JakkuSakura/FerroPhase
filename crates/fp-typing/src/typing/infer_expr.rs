@@ -3455,6 +3455,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         arg_len: usize,
     ) -> Result<Option<TypeVarId>> {
         match field.name.as_str() {
+            "len" if arg_len == 0 => {
+                let obj_ty = match self.resolve_to_ty(obj_var) {
+                    Ok(ty) => Self::peel_reference(ty),
+                    Err(_) => return Ok(None),
+                };
+                match obj_ty {
+                    Ty::Vec(_)
+                    | Ty::Slice(_)
+                    | Ty::Array(_)
+                    | Ty::Primitive(TypePrimitive::String) => {
+                        let result_var = self.fresh_type_var();
+                        self.bind(
+                            result_var,
+                            TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                        );
+                        Ok(Some(result_var))
+                    }
+                    _ => Ok(None),
+                }
+            }
             "push" if arg_len == 1 => {
                 let obj_ty = match self.resolve_to_ty(obj_var) {
                     Ok(ty) => Self::peel_reference(ty),
@@ -3516,6 +3536,23 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     return Ok(Some(result_var));
                 }
                 Ok(None)
+            }
+            "split" => {
+                if arg_len != 1 {
+                    return Ok(None);
+                }
+                let obj_ty = match self.resolve_to_ty(obj_var) {
+                    Ok(ty) => Self::peel_reference(ty),
+                    Err(_) => return Ok(None),
+                };
+                if !matches!(obj_ty, Ty::Primitive(TypePrimitive::String)) {
+                    return Ok(None);
+                }
+                let elem_var = self.fresh_type_var();
+                self.bind(elem_var, TypeTerm::Primitive(TypePrimitive::String));
+                let result_var = self.fresh_type_var();
+                self.bind(result_var, TypeTerm::Vec(elem_var));
+                Ok(Some(result_var))
             }
             "join" => {
                 if arg_len != 1 {

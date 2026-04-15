@@ -19,13 +19,34 @@ pub const KOTLIN: &str = "kotlin";
 pub const SWIFT: &str = "swift";
 pub const FERROPHASE: &str = fp_lang::FERROPHASE;
 pub const WIT: &str = "wit";
+#[cfg(feature = "lang-sql")]
 pub const SQL: &str = fp_sql::SQL;
+#[cfg(not(feature = "lang-sql"))]
+pub const SQL: &str = "sql";
+#[cfg(feature = "lang-prql")]
 pub const PRQL: &str = fp_prql::PRQL;
+#[cfg(not(feature = "lang-prql"))]
+pub const PRQL: &str = "prql";
+#[cfg(feature = "lang-jsonschema")]
 pub const JSONSCHEMA: &str = fp_jsonschema::JSON_SCHEMA;
+#[cfg(not(feature = "lang-jsonschema"))]
+pub const JSONSCHEMA: &str = "jsonschema";
+#[cfg(feature = "lang-json")]
 pub const JSON: &str = fp_json::JSON;
+#[cfg(not(feature = "lang-json"))]
+pub const JSON: &str = "json";
+#[cfg(feature = "lang-flatbuffers")]
 pub const FLATBUFFERS: &str = fp_flatbuffers::FLATBUFFERS;
+#[cfg(not(feature = "lang-flatbuffers"))]
+pub const FLATBUFFERS: &str = "flatbuffers";
+#[cfg(feature = "lang-toml")]
 pub const TOML: &str = fp_toml::TOML;
+#[cfg(not(feature = "lang-toml"))]
+pub const TOML: &str = "toml";
+#[cfg(feature = "lang-hcl")]
 pub const HCL: &str = fp_hcl::HCL;
+#[cfg(not(feature = "lang-hcl"))]
+pub const HCL: &str = "hcl";
 
 /// Language information structure
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,36 +63,43 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
         extensions: &["rs"],
         ast_target_supported: true,
     },
+    #[cfg(feature = "lang-typescript")]
     Language {
         name: TYPESCRIPT,
         extensions: &["ts", "tsx", "js", "jsx", "mjs", "mts", "cts"],
         ast_target_supported: true,
     },
+    #[cfg(feature = "lang-typescript")]
     Language {
         name: JAVASCRIPT,
         extensions: &["js"],
         ast_target_supported: true,
     },
+    #[cfg(feature = "lang-csharp")]
     Language {
         name: CSHARP,
         extensions: &["cs"],
         ast_target_supported: true,
     },
+    #[cfg(feature = "lang-python")]
     Language {
         name: PYTHON,
         extensions: &["py"],
         ast_target_supported: true,
     },
+    #[cfg(feature = "lang-golang")]
     Language {
         name: GO,
         extensions: &["go"],
         ast_target_supported: true,
     },
+    #[cfg(feature = "lang-zig")]
     Language {
         name: ZIG,
         extensions: &["zig"],
         ast_target_supported: true,
     },
+    #[cfg(feature = "lang-sycl")]
     Language {
         name: SYCL,
         extensions: &["sycl"],
@@ -107,41 +135,49 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
         extensions: &["fp"],
         ast_target_supported: true,
     },
+    #[cfg(feature = "lang-wit")]
     Language {
         name: WIT,
         extensions: &["wit"],
         ast_target_supported: true,
     },
+    #[cfg(feature = "lang-sql")]
     Language {
         name: SQL,
         extensions: &["sql"],
         ast_target_supported: false,
     },
+    #[cfg(feature = "lang-prql")]
     Language {
         name: PRQL,
         extensions: &["prql"],
         ast_target_supported: false,
     },
+    #[cfg(feature = "lang-jsonschema")]
     Language {
         name: JSONSCHEMA,
         extensions: &["jsonschema"],
         ast_target_supported: false,
     },
+    #[cfg(feature = "lang-json")]
     Language {
         name: JSON,
         extensions: &["json"],
         ast_target_supported: false,
     },
+    #[cfg(feature = "lang-flatbuffers")]
     Language {
         name: FLATBUFFERS,
         extensions: &["fbs"],
         ast_target_supported: false,
     },
+    #[cfg(feature = "lang-toml")]
     Language {
         name: TOML,
         extensions: &["toml"],
         ast_target_supported: false,
     },
+    #[cfg(feature = "lang-hcl")]
     Language {
         name: HCL,
         extensions: &["hcl"],

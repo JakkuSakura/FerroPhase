@@ -14,24 +14,24 @@ fp-interpret = { path = "../fp-interpret" }
 fp-jit = { path = "../fp-jit" }
 fp-backend = { path = "../fp-backend" }
 fp-typing = { path = "../fp-typing" }
-fp-typescript = { path = "../fp-typescript" }
-fp-csharp = { path = "../fp-csharp" }
-fp-dotnet = { path = "../fp-dotnet" }
-fp-python = { path = "../fp-python" }
-fp-golang = { path = "../fp-golang" }
-fp-godot = { path = "../fp-godot" }
-fp-llvm = { path = "../fp-llvm" }
+fp-typescript = { path = "../fp-typescript", optional = true }
+fp-csharp = { path = "../fp-csharp", optional = true }
+fp-dotnet = { path = "../fp-dotnet", optional = true }
+fp-python = { path = "../fp-python", optional = true }
+fp-golang = { path = "../fp-golang", optional = true }
+fp-godot = { path = "../fp-godot", optional = true }
+fp-llvm = { path = "../fp-llvm", optional = true }
 fp-lang = { path = "../fp-lang" }
-fp-wit = { path = "../fp-wit" }
-fp-zig = { path = "../fp-zig" }
-fp-sycl = { path = "../fp-sycl" }
-fp-prql = { path = "../fp-prql" }
-fp-sql = { path = "../fp-sql" }
-fp-jsonschema = { path = "../fp-jsonschema" }
-fp-json = { path = "../fp-json" }
-fp-flatbuffers = { path = "../fp-flatbuffers" }
-fp-toml = { path = "../fp-toml" }
-fp-hcl = { path = "../fp-hcl" }
+fp-wit = { path = "../fp-wit", optional = true }
+fp-zig = { path = "../fp-zig", optional = true }
+fp-sycl = { path = "../fp-sycl", optional = true }
+fp-prql = { path = "../fp-prql", optional = true }
+fp-sql = { path = "../fp-sql", optional = true }
+fp-jsonschema = { path = "../fp-jsonschema", optional = true }
+fp-json = { path = "../fp-json", optional = true }
+fp-flatbuffers = { path = "../fp-flatbuffers", optional = true }
+fp-toml = { path = "../fp-toml", optional = true }
+fp-hcl = { path = "../fp-hcl", optional = true }
 fp-pipeline = { path = "../fp-pipeline" }
 fp-bytecode = { path = "../fp-bytecode" }
 fp-jvm = { path = "../fp-jvm" }
@@ -41,7 +41,7 @@ fp-ebpf = { path = "../fp-ebpf" }
 fp-native = { path = "../fp-native" }
 fp-goasm = { path = "../fp-goasm" }
 fp-urcl = { path = "../fp-urcl" }
-fp-cranelift = { path = "../fp-cranelift" }
+fp-cranelift = { path = "../fp-cranelift", optional = true }
 
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color"] }
@@ -89,3 +89,45 @@ semver = "1"
 tempfile = "3.8"
 assert_cmd = "2.0"
 predicates = "3.0"
+
+[features]
+default = [
+    "llvm",
+    "cranelift",
+    "lang-typescript",
+    "lang-python",
+    "lang-golang",
+    "lang-zig",
+    "lang-csharp",
+    "lang-dotnet",
+    "lang-godot",
+    "lang-sycl",
+    "lang-wit",
+    "lang-prql",
+    "lang-sql",
+    "lang-jsonschema",
+    "lang-json",
+    "lang-flatbuffers",
+    "lang-toml",
+    "lang-hcl",
+]
+
+llvm = ["dep:fp-llvm"]
+cranelift = ["dep:fp-cranelift"]
+
+lang-typescript = ["dep:fp-typescript"]
+lang-python = ["dep:fp-python"]
+lang-golang = ["dep:fp-golang"]
+lang-zig = ["dep:fp-zig"]
+lang-csharp = ["dep:fp-csharp"]
+lang-dotnet = ["dep:fp-dotnet"]
+lang-godot = ["dep:fp-godot"]
+lang-sycl = ["dep:fp-sycl"]
+lang-wit = ["dep:fp-wit"]
+lang-prql = ["dep:fp-prql"]
+lang-sql = ["dep:fp-sql"]
+lang-jsonschema = ["dep:fp-jsonschema"]
+lang-json = ["dep:fp-json"]
+lang-flatbuffers = ["dep:fp-flatbuffers"]
+lang-toml = ["dep:fp-toml"]
+lang-hcl = ["dep:fp-hcl"]

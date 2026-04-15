@@ -178,6 +178,7 @@ pub trait TypeResolutionHook {
 }
 
 use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVar, TypeVarKind};
+use fp_core::module::resolution::ModuleResolutionContext;
 
 // TypeScheme moved to typing/scheme.rs
 
@@ -3757,6 +3758,29 @@ where
     inferencer.infer(node)
 }
 
+pub fn annotate_with_module_resolution(
+    node: &mut Node,
+    module_resolution: Option<&ModuleResolutionContext>,
+) -> Result<TypingOutcome> {
+    annotate_with_module_resolution_and_prelude(node, module_resolution, default_extern_prelude())
+}
+
+pub fn annotate_with_module_resolution_and_prelude<I, S>(
+    node: &mut Node,
+    module_resolution: Option<&ModuleResolutionContext>,
+    extern_prelude: I,
+) -> Result<TypingOutcome>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let mut inferencer = AstTypeInferencer::new().with_extern_prelude(extern_prelude);
+    if let Some(ctx) = module_resolution {
+        inferencer.seed_modules_from_resolution_context(ctx);
+    }
+    inferencer.infer(node)
+}
+
 pub fn annotate(node: &mut Node) -> Result<TypingOutcome> {
     annotate_with_prelude(node, default_extern_prelude())
 }
@@ -3795,5 +3819,36 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return None;
         }
         Some(ParsedPath { prefix, segments })
+    }
+}
+
+impl<'ctx> AstTypeInferencer<'ctx> {
+    fn seed_modules_from_resolution_context(&mut self, ctx: &ModuleResolutionContext) {
+        let Some(module_id) = ctx.current_module.as_ref() else {
+            return;
+        };
+        let Some(current_module) = ctx.graph.module(module_id) else {
+            return;
+        };
+        let Some(modules) = ctx.graph.modules_for_package(&current_module.package) else {
+            return;
+        };
+
+        for module_id in modules {
+            let Some(module) = ctx.graph.module(module_id) else {
+                continue;
+            };
+            if module.module_path.is_empty() {
+                continue;
+            }
+            // `module_defs`/`root_modules` are used as a coarse existence filter for imports during
+            // typing. When compiling a single entrypoint file (e.g. `src/bin/*.fp`), we still want
+            // imports to see other crate modules listed in the workspace graph.
+            let path = QualifiedPath::new(module.module_path.clone());
+            self.module_defs.insert(path);
+            if let Some(head) = module.module_path.first() {
+                self.root_modules.insert(head.clone());
+            }
+        }
     }
 }

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+#[cfg(feature = "net")]
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -245,6 +246,7 @@ where
 
 /// A [`ModelClient`] that speaks the OpenAI-compatible chat completions protocol.
 /// Works with OpenRouter, and any provider that exposes the same API surface.
+#[cfg(feature = "net")]
 #[derive(Clone)]
 pub struct OpenRouterClient {
     client: Client,
@@ -252,6 +254,7 @@ pub struct OpenRouterClient {
     api_key: String,
 }
 
+#[cfg(feature = "net")]
 impl OpenRouterClient {
     pub fn new(base_url: String, api_key: String) -> Self {
         Self {
@@ -262,6 +265,7 @@ impl OpenRouterClient {
     }
 }
 
+#[cfg(feature = "net")]
 #[async_trait]
 impl ModelClient for OpenRouterClient {
     async fn chat(&self, request: AgentRequest) -> Result<AgentResponse, AgentError> {
@@ -306,8 +310,30 @@ impl ModelClient for OpenRouterClient {
     }
 }
 
+#[cfg(not(feature = "net"))]
+#[derive(Clone)]
+pub struct OpenRouterClient;
+
+#[cfg(not(feature = "net"))]
+impl OpenRouterClient {
+    pub fn new(_base_url: String, _api_key: String) -> Self {
+        Self
+    }
+}
+
+#[cfg(not(feature = "net"))]
+#[async_trait]
+impl ModelClient for OpenRouterClient {
+    async fn chat(&self, _request: AgentRequest) -> Result<AgentResponse, AgentError> {
+        Err(AgentError::new(
+            "Feature 'net' is disabled; OpenRouter client is unavailable.",
+        ))
+    }
+}
+
 // Wire-format types for the OpenAI / OpenRouter chat completions API.
 
+#[cfg(feature = "net")]
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenRouterPayload {
@@ -322,12 +348,14 @@ struct OpenRouterPayload {
     response_format: Option<Value>,
 }
 
+#[cfg(feature = "net")]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenRouterResponseBody {
     choices: Vec<OpenRouterChoice>,
 }
 
+#[cfg(feature = "net")]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenRouterChoice {

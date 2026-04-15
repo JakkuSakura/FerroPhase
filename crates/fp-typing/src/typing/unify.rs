@@ -1921,6 +1921,7 @@ mod tests {
             TypeTerm::Struct(TypeStruct {
                 name: Ident::new("Parser".to_string()),
                 generics_params: Vec::new(),
+                repr: Default::default(),
                 fields: Vec::new(),
             }),
         );

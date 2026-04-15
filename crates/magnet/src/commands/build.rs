@@ -94,6 +94,7 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         let sources = collect_sources(&package, &entry)?;
         let output_dir = build_output_dir(&package, &profile);
         info!("build: compiling single entry {}", entry.display());
+        let output_path = output_path_for_entry(&entry, &output_dir);
         return compile_only(
             &fp_bin,
             &package.root_path,
@@ -101,6 +102,7 @@ pub fn build(options: &BuildOptions) -> Result<()> {
             &sources,
             &graph_path,
             &output_dir,
+            &output_path,
             &build_option_args,
         )
         .map(|_| ());
@@ -141,31 +143,37 @@ fn compile_only(
     sources: &[PathBuf],
     graph_path: &Path,
     output_dir: &Path,
+    output_path: &Path,
     build_options: &[String],
 ) -> Result<BuildOutcome> {
     let started_at = Instant::now();
-    let entry_output = output_path_for_entry(entry, output_dir);
     let fingerprint = build_fingerprint(fp_bin, entry, sources, build_options, graph_path)?;
-    if let Some(outcome) = check_build_cache(output_dir, entry, &entry_output, &fingerprint)? {
+    if let Some(outcome) = check_build_cache(output_dir, entry, output_path, &fingerprint)? {
         return Ok(outcome);
+    }
+
+    if !output_dir.exists() {
+        fs::create_dir_all(output_dir)
+            .with_context(|| format!("Failed to create {}", output_dir.display()))?;
     }
 
     info!("build: fp binary {}", fp_bin.display());
     info!("build: output dir {}", output_dir.display());
-    info!("build: output file {}", entry_output.display());
+    info!("build: output file {}", output_path.display());
     info!("build: graph {}", graph_path.display());
     info!("build: sources ({})", sources.len());
     log_sources(sources);
 
     let mut args: Vec<String> = Vec::new();
     args.push("compile".to_string());
-    for source in sources {
-        args.push(source.display().to_string());
-    }
-    args.push("--target".to_string());
+    // Compile a single entrypoint. The workspace graph is used for module resolution, so we do
+    // not need to pass every source file as a separate input (fp-cli would treat them as separate
+    // compilation units and also force `--output` to be interpreted as a directory).
+    args.push(entry.display().to_string());
+    args.push("--backend".to_string());
     args.push("binary".to_string());
     args.push("--output".to_string());
-    args.push(output_dir.display().to_string());
+    args.push(output_path.display().to_string());
     args.push("--graph".to_string());
     args.push(graph_path.display().to_string());
     for option in build_options {
@@ -194,7 +202,7 @@ fn compile_only(
     write_build_cache(output_dir, entry, &fingerprint)?;
     info!(
         "build: compiled {} in {:.2?}",
-        entry_output.display(),
+        output_path.display(),
         started_at.elapsed()
     );
     Ok(BuildOutcome::Built)
@@ -318,12 +326,17 @@ fn resolve_run_path(options: &BuildOptions) -> Result<PathBuf> {
     Ok(options.path.clone())
 }
 
+struct BuildEntry {
+    entry: PathBuf,
+    output_path: PathBuf,
+}
+
 struct BuildTask {
     name: String,
     root_path: PathBuf,
-    entry: PathBuf,
     sources: Vec<PathBuf>,
     output_dir: PathBuf,
+    entries: Vec<BuildEntry>,
 }
 
 fn build_packages_with_dependencies(
@@ -379,19 +392,26 @@ fn build_packages_with_dependencies(
             tasks.push(None);
             continue;
         }
-        let entry = resolve_node_entry(node)?;
-        let Some(entry) = entry else {
+        let entries = resolve_node_entries(node)?;
+        if entries.is_empty() {
             tasks.push(None);
             continue;
-        };
-        let sources = collect_sources_root(&node.root, &entry)?;
+        }
+        let sources = collect_sources_root(&node.root, &entries[0])?;
         let output_dir = build_output_dir_root(&node.root, profile);
+        let entries = entries
+            .into_iter()
+            .map(|entry| BuildEntry {
+                output_path: output_path_for_entry(&entry, &output_dir),
+                entry,
+            })
+            .collect();
         tasks.push(Some(BuildTask {
             name: node.name.clone(),
             root_path: node.root.clone(),
-            entry,
             sources,
             output_dir,
+            entries,
         }));
     }
 
@@ -523,22 +543,25 @@ fn build_sequential(
     let total = order.len();
     for (pos, idx) in order.into_iter().enumerate() {
         if let Some(task) = tasks.get(idx).and_then(|task| task.as_ref()) {
-            info!(
-                "build: [{} / {}] compiling {} ({})",
-                pos + 1,
-                total,
-                task.name,
-                task.entry.display()
-            );
-            compile_only(
-                fp_bin,
-                &task.root_path,
-                &task.entry,
-                &task.sources,
-                graph_path,
-                &task.output_dir,
-                build_options,
-            )?;
+            for entry in &task.entries {
+                info!(
+                    "build: [{} / {}] compiling {} ({})",
+                    pos + 1,
+                    total,
+                    task.name,
+                    entry.entry.display()
+                );
+                compile_only(
+                    fp_bin,
+                    &task.root_path,
+                    &entry.entry,
+                    &task.sources,
+                    graph_path,
+                    &task.output_dir,
+                    &entry.output_path,
+                    build_options,
+                )?;
+            }
         } else {
             info!(
                 "build: [{} / {}] skipping {} (no FP/RS sources)",
@@ -668,17 +691,28 @@ fn build_parallel(
                     let Some(idx) = idx else { continue };
 
                     let result = if let Some(task) = tasks.get(idx).and_then(|task| task.as_ref()) {
-                        info!("build: compiling {} ({})", task.name, task.entry.display());
-                        compile_only(
-                            &fp_bin,
-                            &task.root_path,
-                            &task.entry,
-                            &task.sources,
-                            &graph_path,
-                            &task.output_dir,
-                            &build_options,
-                        )
-                        .map(|_| ())
+                        let mut result = Ok(());
+                        for entry in &task.entries {
+                            info!(
+                                "build: compiling {} ({})",
+                                task.name,
+                                entry.entry.display()
+                            );
+                            if let Err(err) = compile_only(
+                                &fp_bin,
+                                &task.root_path,
+                                &entry.entry,
+                                &task.sources,
+                                &graph_path,
+                                &task.output_dir,
+                                &entry.output_path,
+                                &build_options,
+                            ) {
+                                result = Err(err);
+                                break;
+                            }
+                        }
+                        result
                     } else {
                         info!("build: skipping {} (no FP/RS sources)", nodes[idx].name);
                         Ok(())
@@ -773,33 +807,39 @@ fn resolve_entry(path: &Path, package: &PackageModel, entry: Option<&Path>) -> R
     Ok(entry_path)
 }
 
-fn resolve_node_entry(node: &PackageNode) -> Result<Option<PathBuf>> {
+fn resolve_node_entries(node: &PackageNode) -> Result<Vec<PathBuf>> {
+    let mut entries = Vec::new();
     if let Some(entry) = node.entry.as_ref() {
         if entry.exists() {
-            return Ok(Some(entry.clone()));
+            entries.push(entry.clone());
         }
     }
-    resolve_root_entry(&node.root)
+    entries.extend(resolve_root_entries(&node.root)?);
+    let mut seen = HashSet::new();
+    entries.retain(|entry| seen.insert(entry.clone()));
+    Ok(entries)
 }
 
-fn resolve_root_entry(root: &Path) -> Result<Option<PathBuf>> {
-    let fp = root.join("src").join("main.fp");
-    if fp.exists() {
-        return Ok(Some(fp));
+fn resolve_root_entries(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut entries = Vec::new();
+    let main = root.join("src").join("main.fp");
+    if main.exists() {
+        entries.push(main);
     }
-    let fp_lib = root.join("src").join("lib.fp");
-    if fp_lib.exists() {
-        return Ok(Some(fp_lib));
+    let bin_root = root.join("src").join("bin");
+    if bin_root.exists() {
+        let pattern = format!("{}/**/*.fp", bin_root.display());
+        let mut bin_entries = Vec::new();
+        for item in glob(&pattern)? {
+            let path = item?;
+            if path.is_file() {
+                bin_entries.push(path);
+            }
+        }
+        bin_entries.sort();
+        entries.extend(bin_entries);
     }
-    let rs = root.join("src").join("main.rs");
-    if rs.exists() {
-        return Ok(Some(rs));
-    }
-    let rs_lib = root.join("src").join("lib.rs");
-    if rs_lib.exists() {
-        return Ok(Some(rs_lib));
-    }
-    Ok(None)
+    Ok(entries)
 }
 
 fn resolve_path(path: &Path, root: &Path) -> PathBuf {
@@ -875,7 +915,7 @@ fn has_fp_sources(root: &Path) -> Result<bool> {
     if !src_root.exists() {
         return Ok(false);
     }
-    for ext in ["fp", "rs"] {
+    for ext in ["fp"] {
         let pattern = format!("{}/**/*.{}", src_root.display(), ext);
         for item in glob(&pattern)? {
             if item.is_ok() {

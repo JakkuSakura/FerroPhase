@@ -442,6 +442,7 @@ async fn transpile_jvm_bytecode(
     Ok(Some(output_path))
 }
 
+#[cfg(feature = "lang-dotnet")]
 async fn transpile_cil(
     input: &Path,
     output: &Path,
@@ -534,6 +535,18 @@ async fn transpile_cil(
             other.as_str()
         ))),
     }
+}
+
+#[cfg(not(feature = "lang-dotnet"))]
+async fn transpile_cil(
+    _input: &Path,
+    _output: &Path,
+    _args: &CompileArgs,
+    _bytes: &[u8],
+) -> Result<Option<PathBuf>> {
+    Err(CliError::MissingDependency(
+        "Feature 'lang-dotnet' is disabled; CIL/NET transpilation is unavailable.".to_string(),
+    ))
 }
 
 async fn transpile_goasm(

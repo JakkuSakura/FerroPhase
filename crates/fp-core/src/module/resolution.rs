@@ -104,11 +104,12 @@ fn resolve_base_segments(
                 }
                 return Some((package_id, Vec::new(), remaining));
             }
-            Some((
-                module.package.clone(),
-                module.module_path.clone(),
-                parsed.segments.clone(),
-            ))
+            let base = if module.module_path.first().map(|seg| seg == "bin").unwrap_or(false) {
+                Vec::new()
+            } else {
+                module.module_path.clone()
+            };
+            Some((module.package.clone(), base, parsed.segments.clone()))
         }
     }
 }

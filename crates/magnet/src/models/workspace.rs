@@ -138,6 +138,7 @@ impl WorkspaceModel {
                 all_members.retain(|path| path != &exclude_path);
             }
         }
+        all_members.retain(|path| path.is_dir());
         Ok(all_members)
     }
     /// list packages paths joined with the workspace root path
@@ -147,6 +148,14 @@ impl WorkspaceModel {
         for member in all_members.iter() {
             let package = PackageModel::from_dir(member)?;
             packages.push(package);
+        }
+        if let Ok(root_package) = PackageModel::from_dir(&self.root_path) {
+            if !packages
+                .iter()
+                .any(|pkg| pkg.root_path == root_package.root_path)
+            {
+                packages.push(root_package);
+            }
         }
         Ok(packages)
     }
@@ -164,5 +173,47 @@ impl WorkspaceModel {
     }
     pub fn find_dependency(&self, name: &str) -> Option<DependencyModel> {
         self.dependencies.get(name).cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn list_packages_includes_root_package_when_present() -> Result<()> {
+        let temp = tempdir()?;
+        let root = temp.path();
+        fs::create_dir_all(root.join("crates").join("demo"))?;
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "root-demo"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["crates/*"]
+"#,
+        )?;
+        fs::write(
+            root.join("crates").join("demo").join("Cargo.toml"),
+            r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )?;
+
+        let workspace = WorkspaceModel::from_dir(root)?;
+        let packages = workspace.list_packages()?;
+        let root_path = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        assert!(packages.iter().any(|pkg| pkg.root_path == root_path));
+        assert!(packages
+            .iter()
+            .any(|pkg| pkg.root_path == root_path.join("crates").join("demo")));
+        Ok(())
     }
 }

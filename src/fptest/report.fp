@@ -146,7 +146,9 @@ fn build_file_report(file: &FileRun) -> FileReport {
     let mut idx = 0;
     while idx < file.parsed().len() {
         let entry = file.parsed()[idx];
-        let (expectation, reason) = resolve_expectation(file.markers(), entry.name);
+        let resolved = resolve_expectation(file.markers(), entry.name);
+        let expectation = resolved.expectation;
+        let reason = resolved.reason;
         let status = match expectation {
             Expectation::Skip => TestStatus::Skipped,
             Expectation::Xfail => match entry.ok {
@@ -187,6 +189,11 @@ fn build_file_report(file: &FileRun) -> FileReport {
     }
 }
 
+struct ResolvedExpectation {
+    expectation: Expectation,
+    reason: str,
+}
+
 fn all_skipped(tests: &Vec<TestResult>) -> bool {
     if tests.len() == 0 {
         return false;
@@ -203,22 +210,40 @@ fn all_skipped(tests: &Vec<TestResult>) -> bool {
     true
 }
 
-fn resolve_expectation(markers_ref: &markers::MarkerSet, name: &str) -> (Expectation, str) {
+fn resolve_expectation(markers_ref: &markers::MarkerSet, name: &str) -> ResolvedExpectation {
     let file_expectation = markers::file_expectation(markers_ref);
     if file_expectation == Expectation::Skip {
-        return (Expectation::Skip, markers::file_reason(markers_ref));
+        return ResolvedExpectation {
+            expectation: Expectation::Skip,
+            reason: markers::file_reason(markers_ref),
+        };
     }
     let named = markers::find_named_expectation(markers_ref, name);
     if named == Expectation::Skip {
-        return (named, markers::find_named_reason(markers_ref, name));
+        return ResolvedExpectation {
+            expectation: named,
+            reason: markers::find_named_reason(markers_ref, name),
+        };
     }
     if file_expectation == Expectation::Xfail {
-        return (Expectation::Xfail, markers::file_reason(markers_ref));
+        return ResolvedExpectation {
+            expectation: Expectation::Xfail,
+            reason: markers::file_reason(markers_ref),
+        };
     }
-    if named == Expectation::Xfail {
-        return (named, markers::find_named_reason(markers_ref, name));
+    match named {
+        Expectation::Xfail => {
+            return ResolvedExpectation {
+                expectation: named,
+                reason: markers::find_named_reason(markers_ref, name),
+            };
+        }
+        _ => {}
+    };
+    ResolvedExpectation {
+        expectation: Expectation::Normal,
+        reason: "",
     }
-    (Expectation::Normal, "")
 }
 
 fn print_file_report(file: &FileReport) {

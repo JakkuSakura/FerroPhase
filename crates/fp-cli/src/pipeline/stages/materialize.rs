@@ -3,6 +3,7 @@ use fp_core::ast;
 use fp_core::error::Result as CoreResult;
 use fp_core::intrinsics::IntrinsicMaterializer;
 use fp_core::span::Span;
+#[cfg(feature = "llvm")]
 use fp_llvm::runtime::LlvmRuntimeIntrinsicMaterializer;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 
@@ -77,7 +78,10 @@ impl IntrinsicsMaterializer {
     fn for_target(target: &BackendKind, backend: Option<&str>) -> Self {
         match target {
             BackendKind::Llvm => Self {
+                #[cfg(feature = "llvm")]
                 strategy: Box::new(LlvmRuntimeIntrinsicMaterializer),
+                #[cfg(not(feature = "llvm"))]
+                strategy: Box::new(NoopIntrinsicMaterializer),
             },
             BackendKind::Binary => {
                 let wants_cranelift = backend
@@ -97,7 +101,10 @@ impl IntrinsicsMaterializer {
                     }
                 } else {
                     Self {
+                        #[cfg(feature = "llvm")]
                         strategy: Box::new(LlvmRuntimeIntrinsicMaterializer),
+                        #[cfg(not(feature = "llvm"))]
+                        strategy: Box::new(NoopIntrinsicMaterializer),
                     }
                 }
             }

@@ -1,9 +1,9 @@
-use fptest::config;
-use fptest::discovery;
-use fptest::markers;
-use fptest::markers::Expectation;
-use fptest::report;
-use fptest::runner;
+use crate::fptest::config;
+use crate::fptest::discovery;
+use crate::fptest::markers;
+use crate::fptest::markers::Expectation;
+use crate::fptest::report;
+use crate::fptest::runner;
 
 fn main() {
     let config = config::from_env();

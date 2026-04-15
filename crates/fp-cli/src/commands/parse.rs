@@ -1,6 +1,7 @@
 use crate::{Result, cli::CliConfig, pipeline::Pipeline};
 use clap::{ArgAction, Args, ValueEnum, ValueHint};
 use fp_core::pretty::{PrettyOptions, pretty};
+#[cfg(feature = "lang-typescript")]
 use fp_typescript::frontend::TsParseMode;
 use serde_json;
 use std::fs;
@@ -12,6 +13,7 @@ pub enum ParseModeArg {
     Loose,
 }
 
+#[cfg(feature = "lang-typescript")]
 impl From<ParseModeArg> for TsParseMode {
     fn from(value: ParseModeArg) -> Self {
         match value {
@@ -40,6 +42,7 @@ pub struct ParseArgs {
     pub snapshot: Option<PathBuf>,
 }
 
+#[cfg(feature = "lang-typescript")]
 pub async fn parse_command(mut args: ParseArgs, _config: &CliConfig) -> Result<()> {
     if args.snapshot.is_some() {
         let source_count = args.files.len() + usize::from(args.expr.is_some());
@@ -90,6 +93,13 @@ pub async fn parse_command(mut args: ParseArgs, _config: &CliConfig) -> Result<(
     Ok(())
 }
 
+#[cfg(not(feature = "lang-typescript"))]
+pub async fn parse_command(_args: ParseArgs, _config: &CliConfig) -> Result<()> {
+    Err(crate::CliError::MissingDependency(
+        "Feature 'lang-typescript' is disabled; parse command requires it.".to_string(),
+    ))
+}
+
 fn parse_expression(
     pipeline: &mut Pipeline,
     expr: String,
@@ -107,6 +117,7 @@ fn parse_expression(
     Ok(())
 }
 
+#[cfg(feature = "lang-typescript")]
 fn parse_path(
     path: &Path,
     pipeline: &mut Pipeline,
@@ -122,6 +133,7 @@ fn parse_path(
     parse_file(path, pipeline, mode, resolve_imports, snapshot)
 }
 
+#[cfg(feature = "lang-typescript")]
 fn parse_file(
     path: &Path,
     pipeline: &mut Pipeline,

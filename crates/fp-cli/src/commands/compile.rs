@@ -23,17 +23,25 @@ use fp_core::package::{
 };
 use fp_core::vfs::VirtualPath;
 use fp_core::workspace::WorkspaceDocument;
+#[cfg(feature = "lang-csharp")]
 use fp_csharp::CSharpSerializer;
+#[cfg(feature = "lang-godot")]
 use fp_godot::GdscriptSerializer;
+#[cfg(feature = "lang-golang")]
 use fp_golang::GoSerializer;
 use fp_lang::PrettyAstSerializer;
 use fp_native::asm::{aarch64::AsmAarch64Program, x86_64::AsmX86_64Program};
 use fp_native::asmir::{lift_from_aarch64, lift_from_x86_64, lower_to_aarch64, lower_to_x86_64};
 use fp_native::emit::{self, TargetArch};
+#[cfg(feature = "lang-python")]
 use fp_python::PythonSerializer;
+#[cfg(feature = "lang-sycl")]
 use fp_sycl::SyclSerializer;
+#[cfg(feature = "lang-typescript")]
 use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
+#[cfg(feature = "lang-wit")]
 use fp_wit::{WitOptions, WitSerializer, WorldMode};
+#[cfg(feature = "lang-zig")]
 use fp_zig::ZigSerializer;
 use object::Object as _;
 use semver::Version;
@@ -45,6 +53,13 @@ use tokio::{fs as async_fs, process::Command};
 use tracing::{info, warn};
 
 use clap::{ArgAction, Args, ValueEnum};
+
+#[allow(dead_code)]
+fn disabled_feature_error(feature: &str, capability: &str) -> CliError {
+    CliError::MissingDependency(format!(
+        "Feature '{feature}' is disabled; enable it to use {capability}."
+    ))
+}
 
 /// Arguments for the compile command (also used by Clap)
 #[derive(Debug, Clone, Args)]
@@ -823,6 +838,7 @@ async fn compile_ast_target(
     Ok(())
 }
 
+#[allow(unused_variables)]
 fn emit_ast_target(
     node: &Node,
     target: crate::languages::backend::AstLanguageTarget,
@@ -832,59 +848,121 @@ fn emit_ast_target(
 ) -> Result<AstTargetOutput> {
     match target {
         crate::languages::backend::AstLanguageTarget::TypeScript => {
-            let serializer = TypeScriptSerializer::new(emit_type_defs);
-            let mut result = serializer
-                .emit_node(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-            if let Some(defs) = serializer.take_type_defs() {
-                result.side_files.push(fp_core::ast::AstTargetSideFile {
-                    extension: "d.ts".to_string(),
-                    contents: defs,
-                });
+            #[cfg(feature = "lang-typescript")]
+            {
+                let serializer = TypeScriptSerializer::new(emit_type_defs);
+                let mut result = serializer
+                    .emit_node(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+                if let Some(defs) = serializer.take_type_defs() {
+                    result.side_files.push(fp_core::ast::AstTargetSideFile {
+                        extension: "d.ts".to_string(),
+                        contents: defs,
+                    });
+                }
+                Ok(result)
             }
-            Ok(result)
+            #[cfg(not(feature = "lang-typescript"))]
+            {
+                Err(disabled_feature_error(
+                    "lang-typescript",
+                    "TypeScript/JavaScript AST emission",
+                ))
+            }
         }
         crate::languages::backend::AstLanguageTarget::JavaScript => {
-            let serializer = JavaScriptSerializer;
-            serializer
-                .emit_node(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))
+            #[cfg(feature = "lang-typescript")]
+            {
+                let serializer = JavaScriptSerializer;
+                serializer
+                    .emit_node(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-typescript"))]
+            {
+                Err(disabled_feature_error(
+                    "lang-typescript",
+                    "JavaScript AST emission",
+                ))
+            }
         }
         crate::languages::backend::AstLanguageTarget::CSharp => {
-            let serializer = CSharpSerializer;
-            serializer
-                .emit_node(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))
+            #[cfg(feature = "lang-csharp")]
+            {
+                let serializer = CSharpSerializer;
+                serializer
+                    .emit_node(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-csharp"))]
+            {
+                Err(disabled_feature_error("lang-csharp", "C# AST emission"))
+            }
         }
         crate::languages::backend::AstLanguageTarget::Python => {
-            let serializer = PythonSerializer;
-            serializer
-                .emit_node(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))
+            #[cfg(feature = "lang-python")]
+            {
+                let serializer = PythonSerializer;
+                serializer
+                    .emit_node(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-python"))]
+            {
+                Err(disabled_feature_error("lang-python", "Python AST emission"))
+            }
         }
         crate::languages::backend::AstLanguageTarget::Go => {
-            let serializer = GoSerializer::default();
-            serializer
-                .emit_node(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))
+            #[cfg(feature = "lang-golang")]
+            {
+                let serializer = GoSerializer::default();
+                serializer
+                    .emit_node(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-golang"))]
+            {
+                Err(disabled_feature_error("lang-golang", "Go AST emission"))
+            }
         }
         crate::languages::backend::AstLanguageTarget::Gdscript => {
-            let serializer = GdscriptSerializer;
-            serializer
-                .emit_node(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))
+            #[cfg(feature = "lang-godot")]
+            {
+                let serializer = GdscriptSerializer;
+                serializer
+                    .emit_node(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-godot"))]
+            {
+                Err(disabled_feature_error("lang-godot", "GDScript AST emission"))
+            }
         }
         crate::languages::backend::AstLanguageTarget::Zig => {
-            let serializer = ZigSerializer;
-            serializer
-                .emit_node(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))
+            #[cfg(feature = "lang-zig")]
+            {
+                let serializer = ZigSerializer;
+                serializer
+                    .emit_node(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-zig"))]
+            {
+                Err(disabled_feature_error("lang-zig", "Zig AST emission"))
+            }
         }
         crate::languages::backend::AstLanguageTarget::Sycl => {
-            let serializer = SyclSerializer;
-            serializer
-                .emit_node(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))
+            #[cfg(feature = "lang-sycl")]
+            {
+                let serializer = SyclSerializer;
+                serializer
+                    .emit_node(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-sycl"))]
+            {
+                Err(disabled_feature_error("lang-sycl", "SYCL AST emission"))
+            }
         }
         crate::languages::backend::AstLanguageTarget::Rust => {
             let serializer = PrettyAstSerializer::new();
@@ -893,14 +971,22 @@ fn emit_ast_target(
                 .map_err(|e| CliError::TargetEmit(e.to_string()))
         }
         crate::languages::backend::AstLanguageTarget::Wit => {
-            let serializer = WitSerializer::with_options(build_wit_options(input, single_world));
-            serializer
-                .emit_node(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))
+            #[cfg(feature = "lang-wit")]
+            {
+                let serializer = WitSerializer::with_options(build_wit_options(input, single_world));
+                serializer
+                    .emit_node(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-wit"))]
+            {
+                Err(disabled_feature_error("lang-wit", "WIT AST emission"))
+            }
         }
     }
 }
 
+#[cfg(feature = "lang-wit")]
 fn build_wit_options(input: &Path, single_world: bool) -> WitOptions {
     let namespace = input
         .parent()

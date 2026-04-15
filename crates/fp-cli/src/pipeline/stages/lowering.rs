@@ -3,6 +3,7 @@ use super::super::*;
 use fp_backend::optimizer::{MirOptimizer, OptimizationPlan};
 use fp_core::config;
 use fp_core::mir;
+#[cfg(feature = "llvm")]
 use fp_llvm::target::{OptimizationLevel, TargetConfig};
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 use std::sync::Arc;
@@ -190,6 +191,7 @@ impl Pipeline {
         self.run_pipeline_stage(STAGE_MIR_TO_LIR, stage, context, options)
     }
 
+    #[cfg(feature = "llvm")]
     pub(crate) fn generate_llvm_artifacts(
         &self,
         lir_program: &lir::LirProgram,
@@ -231,6 +233,7 @@ impl Pipeline {
     }
 }
 
+#[cfg(feature = "llvm")]
 fn target_config_from_options(options: &PipelineOptions) -> TargetConfig {
     let base = if let Some(triple) = options.target_triple.as_deref() {
         TargetConfig::for_triple(triple)

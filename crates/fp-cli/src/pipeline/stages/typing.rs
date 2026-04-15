@@ -5,6 +5,7 @@ use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 pub(crate) struct TypingContext {
     pub ast: Node,
     pub stage_label: &'static str,
+    pub module_resolution: Option<fp_core::module::resolution::ModuleResolutionContext>,
 }
 
 pub(crate) struct TypingStage {
@@ -25,7 +26,8 @@ impl PipelineStage for TypingStage {
         diagnostics: &mut PipelineDiagnostics,
     ) -> Result<Node, PipelineError> {
         let mut ast = context.ast;
-        match fp_typing::annotate(&mut ast) {
+        match fp_typing::annotate_with_module_resolution(&mut ast, context.module_resolution.as_ref())
+        {
             Ok(outcome) => {
                 let mut saw_error = false;
                 for message in outcome.diagnostics {
@@ -78,6 +80,7 @@ impl Pipeline {
         let context = TypingContext {
             ast: ast.clone(),
             stage_label,
+            module_resolution: options.module_resolution.clone(),
         };
         match self.run_pipeline_stage(stage_label, stage, context, options) {
             Ok(next_ast) => {

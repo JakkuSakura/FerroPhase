@@ -9,6 +9,7 @@ pub(crate) struct LinkNativeContext {
     pub lir_program: fp_core::lir::LirProgram,
 }
 
+#[cfg(feature = "cranelift")]
 pub(crate) struct LinkCraneliftContext {
     pub base_path: PathBuf,
     pub options: PipelineOptions,
@@ -36,6 +37,7 @@ pub(crate) struct LinkLlvmContext {
 pub(crate) struct LinkNativeStage;
 pub(crate) struct LinkGoAsmStage;
 pub(crate) struct LinkUrclStage;
+#[cfg(feature = "cranelift")]
 pub(crate) struct LinkCraneliftStage;
 pub(crate) struct LinkLlvmStage;
 
@@ -371,6 +373,7 @@ impl PipelineStage for LinkLlvmStage {
     }
 }
 
+#[cfg(feature = "cranelift")]
 impl PipelineStage for LinkCraneliftStage {
     type SrcCtx = LinkCraneliftContext;
     type DstCtx = PathBuf;
@@ -619,6 +622,7 @@ impl Pipeline {
         self.run_pipeline_stage(STAGE_LINK_BINARY, stage, context, options)
     }
 
+    #[cfg(feature = "cranelift")]
     pub(crate) fn stage_link_binary_cranelift(
         &self,
         lir_program: &fp_core::lir::LirProgram,

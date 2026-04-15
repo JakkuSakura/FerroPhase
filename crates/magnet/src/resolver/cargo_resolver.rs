@@ -708,7 +708,14 @@ fn package_to_node_with_resolved(
     target: &TargetContext,
     feature_state: &FeatureState,
 ) -> Result<PackageNode> {
-    let module_root = package.root_path.join("src");
+    let module_root = {
+        let src = package.root_path.join("src");
+        if src.is_dir() {
+            src
+        } else {
+            package.root_path.clone()
+        }
+    };
     let entry = {
         let path = module_root.join("main.fp");
         if path.exists() { Some(path) } else { None }

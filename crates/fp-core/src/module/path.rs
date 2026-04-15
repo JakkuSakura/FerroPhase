@@ -154,10 +154,20 @@ pub fn resolve_path(
             .map(|parent| parent.join(&parsed.segments)),
         PathPrefix::Plain => {
             let first = parsed.segments.first()?;
-            if !module_path.is_empty() {
-                let local = module_path.with_segment(first.clone());
+            let base = if module_path.head() == Some("bin") {
+                QualifiedPath::new(Vec::new())
+            } else {
+                module_path.clone()
+            };
+            if !base.is_empty() {
+                let local = base.with_segment(first.clone());
                 if module_defs.contains(&local) {
-                    return Some(module_path.join(&parsed.segments));
+                    return Some(base.join(&parsed.segments));
+                }
+            } else {
+                let local = QualifiedPath::new(vec![first.clone()]);
+                if module_defs.contains(&local) {
+                    return Some(QualifiedPath::new(parsed.segments.clone()));
                 }
             }
             if root_modules.contains(first) || extern_prelude.contains(first) {
@@ -192,12 +202,17 @@ where
             .map(|parent| parent.join(&parsed.segments)),
         PathPrefix::Plain => {
             let first = parsed.segments.first()?;
+            let base = if module_path.head() == Some("bin") {
+                QualifiedPath::new(Vec::new())
+            } else {
+                module_path.clone()
+            };
             if parsed.segments.len() == 1 {
                 if scope_contains(first) {
                     return Some(QualifiedPath::new(vec![first.clone()]));
                 }
-                if !module_path.is_empty() {
-                    let local = module_path.with_segment(first.clone());
+                if !base.is_empty() {
+                    let local = base.with_segment(first.clone());
                     if item_exists(&local) || module_defs.contains(&local) {
                         return Some(local);
                     }
@@ -213,18 +228,22 @@ where
                 return None;
             }
 
-            if !module_path.is_empty() {
-                let local = module_path.join(&parsed.segments);
+            if !base.is_empty() {
+                let local = base.join(&parsed.segments);
                 if item_exists(&local) {
                     return Some(local);
                 }
-                let module_candidate = module_path.with_segment(first.clone());
+                let module_candidate = base.with_segment(first.clone());
                 if module_defs.contains(&module_candidate) {
                     return Some(local);
                 }
             } else {
                 let local = QualifiedPath::new(parsed.segments.clone());
                 if item_exists(&local) {
+                    return Some(local);
+                }
+                let module_candidate = QualifiedPath::new(vec![first.clone()]);
+                if module_defs.contains(&module_candidate) {
                     return Some(local);
                 }
             }
@@ -350,6 +369,28 @@ mod tests {
                 "net".to_string(),
                 "tcp".to_string()
             ])
+        );
+    }
+
+    #[test]
+    fn resolve_plain_from_bin_uses_crate_root() {
+        let parsed = ParsedPath {
+            prefix: PathPrefix::Plain,
+            segments: vec!["fptest".to_string(), "config".to_string()],
+        };
+        let mut module_defs = HashSet::new();
+        module_defs.insert(QualifiedPath::new(vec!["fptest".to_string()]));
+        let resolved = resolve_path(
+            &parsed,
+            &QualifiedPath::new(vec!["bin".to_string(), "fptest".to_string()]),
+            &HashSet::new(),
+            &HashSet::new(),
+            &module_defs,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved,
+            QualifiedPath::new(vec!["fptest".to_string(), "config".to_string()])
         );
     }
 }

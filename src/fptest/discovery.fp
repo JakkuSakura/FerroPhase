@@ -48,13 +48,16 @@ pub fn discover(config: &Config) -> Vec<TestFile> {
             }
         }
 
-        let name = match path_obj.file_name() {
-            Option::Some(file_name) => file_name,
+        let mut name = "";
+        match path_obj.file_name() {
+            Option::Some(file_name) => {
+                name = file_name;
+            }
             Option::None => {
                 idx = idx + 1;
                 continue;
             }
-        };
+        }
 
         if !matches_name(name) {
             idx = idx + 1;

@@ -106,6 +106,13 @@ impl FerroResolver {
                 {
                     package_id = pkg_id;
                     base_segments = segments;
+                } else if from
+                    .module_path
+                    .first()
+                    .map(|segment| segment == "bin")
+                    .unwrap_or(false)
+                {
+                    base_segments = Vec::new();
                 } else {
                     base_segments.extend(from.module_path.iter().cloned());
                 }
@@ -206,6 +213,56 @@ impl LanguageResolver for FerroResolver {
             .iter()
             .map(|item| (item.name.clone(), item.clone()))
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
+    use crate::package::{PackageDescriptor, PackageId, PackageMetadata};
+    use crate::package::graph::PackageGraph;
+    use crate::vfs::VirtualPath;
+
+    #[test]
+    fn plain_import_from_bin_module_resolves_from_crate_root() {
+        let package_id = PackageId::new("fp");
+        let bin_module_id = ModuleId::new("fp::bin::fptest");
+        let config_module_id = ModuleId::new("fp::fptest::config");
+        let package = PackageDescriptor {
+            id: package_id.clone(),
+            name: "fp".to_string(),
+            version: None,
+            manifest_path: VirtualPath::from_path("Cargo.toml"),
+            root: VirtualPath::from_path("."),
+            metadata: PackageMetadata::default(),
+            modules: vec![bin_module_id.clone(), config_module_id.clone()],
+        };
+        let mut graph = PackageGraph::new(vec![package]);
+        graph.insert_module(ModuleDescriptor {
+            id: bin_module_id.clone(),
+            package: package_id.clone(),
+            language: ModuleLanguage::Ferro,
+            module_path: vec!["bin".to_string(), "fptest".to_string()],
+            source: VirtualPath::from_path("src/bin/fptest.fp"),
+            exports: Vec::new(),
+            requires_features: Vec::new(),
+        });
+        graph.insert_module(ModuleDescriptor {
+            id: config_module_id.clone(),
+            package: package_id.clone(),
+            language: ModuleLanguage::Ferro,
+            module_path: vec!["fptest".to_string(), "config".to_string()],
+            source: VirtualPath::from_path("src/fptest/config.fp"),
+            exports: Vec::new(),
+            requires_features: Vec::new(),
+        });
+
+        let resolver = FerroResolver::default();
+        let import = ModuleImport::new("fptest::config");
+        let from = graph.module(&bin_module_id);
+        let resolved = resolver.resolve_module(&import, from, &graph).unwrap();
+        assert_eq!(resolved, config_module_id);
     }
 }
 

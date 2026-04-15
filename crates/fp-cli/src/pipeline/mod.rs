@@ -1,10 +1,28 @@
 use crate::CliError;
 use crate::codegen::CodeGenerator;
-use crate::languages::frontend::{
-    FerroFrontend, FlatbuffersFrontend, FrontendResult, FrontendSnapshot, GoFrontend, HclFrontend,
-    JsonFrontend, JsonSchemaFrontend, LanguageFrontend, PrqlFrontend, PythonFrontend, SqlFrontend,
-    TomlFrontend, TypeScriptFrontend, WitFrontend,
-};
+use crate::languages::frontend::{FerroFrontend, FrontendResult, FrontendSnapshot, LanguageFrontend};
+#[cfg(feature = "lang-flatbuffers")]
+use crate::languages::frontend::FlatbuffersFrontend;
+#[cfg(feature = "lang-golang")]
+use crate::languages::frontend::GoFrontend;
+#[cfg(feature = "lang-hcl")]
+use crate::languages::frontend::HclFrontend;
+#[cfg(feature = "lang-json")]
+use crate::languages::frontend::JsonFrontend;
+#[cfg(feature = "lang-jsonschema")]
+use crate::languages::frontend::JsonSchemaFrontend;
+#[cfg(feature = "lang-prql")]
+use crate::languages::frontend::PrqlFrontend;
+#[cfg(feature = "lang-python")]
+use crate::languages::frontend::PythonFrontend;
+#[cfg(feature = "lang-sql")]
+use crate::languages::frontend::SqlFrontend;
+#[cfg(feature = "lang-toml")]
+use crate::languages::frontend::TomlFrontend;
+#[cfg(feature = "lang-typescript")]
+use crate::languages::frontend::TypeScriptFrontend;
+#[cfg(feature = "lang-wit")]
+use crate::languages::frontend::WitFrontend;
 use crate::languages::{self, detect_source_language};
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_bytecode;
@@ -21,6 +39,7 @@ use fp_core::diagnostics::{
 use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::pretty::{PrettyOptions, pretty};
 use fp_core::{hir, lir};
+#[cfg(feature = "lang-dotnet")]
 use fp_dotnet::{emit_assembly, emit_cil};
 use fp_interpret::const_eval::ConstEvalOutcome;
 use fp_interpret::engine::{
@@ -28,8 +47,10 @@ use fp_interpret::engine::{
 };
 use fp_jvm;
 use fp_lang::embedded_std;
+#[cfg(feature = "llvm")]
 use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
 use fp_pipeline::{PipelineBuilder, PipelineDiagnostics, PipelineError, PipelineStage};
+#[cfg(feature = "lang-typescript")]
 use fp_typescript::frontend::TsParseMode;
 use fp_typing::TypingDiagnosticLevel;
 use std::collections::HashMap;
@@ -45,6 +66,7 @@ mod diagnostics;
 mod options;
 mod stages;
 use self::diagnostics as diag;
+#[cfg(feature = "llvm")]
 use artifacts::LlvmArtifacts;
 pub use options::{BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig};
 
@@ -72,6 +94,12 @@ const EXT_AST_TYPED: &str = "ast-typed";
 const EXT_AST_EVAL: &str = "ast-eval";
 const EXT_HIR: &str = "hir";
 
+fn disabled_feature_error(feature: &str, capability: &str) -> CliError {
+    CliError::MissingDependency(format!(
+        "Feature '{feature}' is disabled; enable it to use {capability}."
+    ))
+}
+
 #[derive(Debug)]
 pub enum PipelineInput {
     Expression(String),
@@ -97,7 +125,9 @@ pub struct Pipeline {
     source_language: Option<String>,
     frontend_snapshot: Option<FrontendSnapshot>,
     last_const_eval: Option<ConstEvalOutcome>,
+    #[cfg(feature = "lang-typescript")]
     typescript_frontend: Option<Arc<TypeScriptFrontend>>,
+    #[cfg(feature = "lang-typescript")]
     typescript_parse_mode: TsParseMode,
 }
 
@@ -120,29 +150,63 @@ impl Pipeline {
         };
         let ferro_frontend: Arc<dyn LanguageFrontend> = Arc::new(FerroFrontend::new());
         register(ferro_frontend);
-        let wit_frontend: Arc<dyn LanguageFrontend> = Arc::new(WitFrontend::new());
-        register(wit_frontend);
+        #[cfg(feature = "lang-wit")]
+        {
+            let wit_frontend: Arc<dyn LanguageFrontend> = Arc::new(WitFrontend::new());
+            register(wit_frontend);
+        }
+        #[cfg(feature = "lang-typescript")]
         let ts_frontend_concrete = Arc::new(TypeScriptFrontend::new(TsParseMode::Loose));
-        let ts_frontend: Arc<dyn LanguageFrontend> = ts_frontend_concrete.clone();
-        register(ts_frontend);
-        let sql_frontend: Arc<dyn LanguageFrontend> = Arc::new(SqlFrontend::new());
-        register(sql_frontend);
-        let prql_frontend: Arc<dyn LanguageFrontend> = Arc::new(PrqlFrontend::new());
-        register(prql_frontend);
-        let jsonschema_frontend: Arc<dyn LanguageFrontend> = Arc::new(JsonSchemaFrontend::new());
-        register(jsonschema_frontend);
-        let json_frontend: Arc<dyn LanguageFrontend> = Arc::new(JsonFrontend::new());
-        register(json_frontend);
-        let flatbuffers_frontend: Arc<dyn LanguageFrontend> = Arc::new(FlatbuffersFrontend::new());
-        register(flatbuffers_frontend);
-        let toml_frontend: Arc<dyn LanguageFrontend> = Arc::new(TomlFrontend::new());
-        register(toml_frontend);
-        let hcl_frontend: Arc<dyn LanguageFrontend> = Arc::new(HclFrontend::new());
-        register(hcl_frontend);
-        let python_frontend: Arc<dyn LanguageFrontend> = Arc::new(PythonFrontend::new());
-        register(python_frontend);
-        let go_frontend: Arc<dyn LanguageFrontend> = Arc::new(GoFrontend::new());
-        register(go_frontend);
+        #[cfg(feature = "lang-typescript")]
+        {
+            let ts_frontend: Arc<dyn LanguageFrontend> = ts_frontend_concrete.clone();
+            register(ts_frontend);
+        }
+        #[cfg(feature = "lang-sql")]
+        {
+            let sql_frontend: Arc<dyn LanguageFrontend> = Arc::new(SqlFrontend::new());
+            register(sql_frontend);
+        }
+        #[cfg(feature = "lang-prql")]
+        {
+            let prql_frontend: Arc<dyn LanguageFrontend> = Arc::new(PrqlFrontend::new());
+            register(prql_frontend);
+        }
+        #[cfg(feature = "lang-jsonschema")]
+        {
+            let jsonschema_frontend: Arc<dyn LanguageFrontend> = Arc::new(JsonSchemaFrontend::new());
+            register(jsonschema_frontend);
+        }
+        #[cfg(feature = "lang-json")]
+        {
+            let json_frontend: Arc<dyn LanguageFrontend> = Arc::new(JsonFrontend::new());
+            register(json_frontend);
+        }
+        #[cfg(feature = "lang-flatbuffers")]
+        {
+            let flatbuffers_frontend: Arc<dyn LanguageFrontend> = Arc::new(FlatbuffersFrontend::new());
+            register(flatbuffers_frontend);
+        }
+        #[cfg(feature = "lang-toml")]
+        {
+            let toml_frontend: Arc<dyn LanguageFrontend> = Arc::new(TomlFrontend::new());
+            register(toml_frontend);
+        }
+        #[cfg(feature = "lang-hcl")]
+        {
+            let hcl_frontend: Arc<dyn LanguageFrontend> = Arc::new(HclFrontend::new());
+            register(hcl_frontend);
+        }
+        #[cfg(feature = "lang-python")]
+        {
+            let python_frontend: Arc<dyn LanguageFrontend> = Arc::new(PythonFrontend::new());
+            register(python_frontend);
+        }
+        #[cfg(feature = "lang-golang")]
+        {
+            let go_frontend: Arc<dyn LanguageFrontend> = Arc::new(GoFrontend::new());
+            register(go_frontend);
+        }
         Self {
             frontends,
             default_runtime: "literal".to_string(),
@@ -152,7 +216,9 @@ impl Pipeline {
             source_language: None,
             frontend_snapshot: None,
             last_const_eval: None,
+            #[cfg(feature = "lang-typescript")]
             typescript_frontend: Some(ts_frontend_concrete),
+            #[cfg(feature = "lang-typescript")]
             typescript_parse_mode: TsParseMode::Loose,
         }
     }
@@ -178,6 +244,7 @@ impl Pipeline {
         self.last_const_eval.as_ref()
     }
 
+    #[cfg(feature = "lang-typescript")]
     pub fn set_typescript_parse_mode(&mut self, mode: TsParseMode) {
         if let Some(frontend) = &self.typescript_frontend {
             frontend.set_parse_mode(mode);
@@ -185,10 +252,12 @@ impl Pipeline {
         self.typescript_parse_mode = mode;
     }
 
+    #[cfg(feature = "lang-typescript")]
     pub fn typescript_parse_mode(&self) -> TsParseMode {
         self.typescript_parse_mode
     }
 
+    #[cfg(feature = "lang-typescript")]
     pub fn typescript_frontend(&self) -> Option<Arc<TypeScriptFrontend>> {
         self.typescript_frontend.as_ref().map(Arc::clone)
     }
@@ -240,10 +309,15 @@ impl Pipeline {
             .iter()
             .any(|diag| diag.level == DiagnosticLevel::Error);
 
-        let treat_as_errors = if language_key == languages::TYPESCRIPT
-            && matches!(self.typescript_parse_mode, TsParseMode::Loose)
-        {
-            false
+        let treat_as_errors = if language_key == languages::TYPESCRIPT {
+            #[cfg(feature = "lang-typescript")]
+            {
+                !matches!(self.typescript_parse_mode, TsParseMode::Loose) && has_errors
+            }
+            #[cfg(not(feature = "lang-typescript"))]
+            {
+                has_errors
+            }
         } else {
             has_errors
         };
@@ -282,17 +356,94 @@ impl Pipeline {
             }
         };
 
-        let ast =
+        let mut ast =
             self.parse_with_frontend(&frontend, source, input_path.map(|p| p.as_path()), options)?;
         if language == languages::FERROPHASE {
             if let Some(path) = input_path {
-                if options.module_resolution.is_none() {
-                    return self.resolve_file_modules(options, &frontend, ast, path);
+                if let Some(ctx) = options.module_resolution.as_ref() {
+                    Self::inject_workspace_root_modules(&mut ast, ctx);
                 }
+                return self.resolve_file_modules(options, &frontend, ast, path);
             }
         }
         Ok(ast)
     }
+
+    fn inject_workspace_root_modules(
+        ast: &mut Node,
+        ctx: &fp_core::module::resolution::ModuleResolutionContext,
+    ) {
+    let Some(module_id) = ctx.current_module.as_ref() else {
+        return;
+    };
+    let Some(current_module) = ctx.graph.module(module_id) else {
+        return;
+    };
+    let Some(modules) = ctx.graph.modules_for_package(&current_module.package) else {
+        return;
+    };
+
+    let NodeKind::File(file) = ast.kind_mut() else {
+        return;
+    };
+
+    // Collect root module heads from the workspace graph. These are expected to correspond to
+    // `src/<head>/mod.fp` on disk, which the file module loader can resolve.
+    let mut heads = std::collections::BTreeSet::new();
+    for module_id in modules {
+        let Some(module) = ctx.graph.module(module_id) else {
+            continue;
+        };
+        if module.language != fp_core::module::ModuleLanguage::Ferro {
+            continue;
+        }
+        if module.module_path.first().map(|s| s == "bin").unwrap_or(false) {
+            continue;
+        }
+        if let Some(head) = module.module_path.first() {
+            if !head.is_empty() {
+                heads.insert(head.clone());
+            }
+        }
+    }
+
+    if heads.is_empty() {
+        return;
+    }
+
+    let mut existing = std::collections::HashSet::new();
+    for item in &file.items {
+        if let fp_core::ast::ItemKind::Module(module) = item.kind() {
+            existing.insert(module.name.as_str().to_string());
+        }
+    }
+
+    let mut injected = Vec::new();
+    for head in heads {
+        if existing.contains(&head) {
+            continue;
+        }
+        injected.push(fp_core::ast::Item::new(fp_core::ast::ItemKind::Module(
+            fp_core::ast::Module {
+                attrs: Vec::new(),
+                name: fp_core::ast::Ident::new(head),
+                items: Vec::new(),
+                visibility: fp_core::ast::Visibility::Public,
+                is_external: true,
+            },
+        )));
+    }
+
+    if injected.is_empty() {
+        return;
+    }
+
+    // Prepend injected crate-root modules to give them stable resolution precedence.
+    let mut items = Vec::with_capacity(injected.len() + file.items.len());
+    items.extend(injected);
+    items.extend(std::mem::take(&mut file.items));
+    file.items = items;
+}
 
     #[cfg(test)]
     pub fn parse_source_with_path_for_tests(
@@ -308,6 +459,15 @@ impl Pipeline {
         input: PipelineInput,
         mut options: PipelineOptions,
     ) -> Result<PipelineOutput, CliError> {
+        if matches!(options.target, BackendKind::Llvm) && !cfg!(feature = "llvm") {
+            return Err(disabled_feature_error("llvm", "LLVM backend"));
+        }
+        if matches!(options.target, BackendKind::Cil | BackendKind::Dotnet)
+            && !cfg!(feature = "lang-dotnet")
+        {
+            return Err(disabled_feature_error("lang-dotnet", ".NET backend"));
+        }
+
         let explicit_base_path = options.base_path.clone();
         let (source, default_base_path, input_path) = self.read_input(input)?;
         options.base_path = explicit_base_path.or_else(|| Some(default_base_path.clone()));
@@ -477,9 +637,17 @@ impl Pipeline {
             return Ok(ast);
         };
 
+        // Module resolution should be rooted at `src/` for `src/bin/*.fp` entrypoints, so that
+        // `mod foo;` (and injected crate-root modules) find `src/foo/mod.fp`.
         let root_dir = input_path
             .parent()
-            .map(Path::to_path_buf)
+            .and_then(|dir| {
+                if dir.file_name().and_then(|n| n.to_str()) == Some("bin") {
+                    dir.parent().map(Path::to_path_buf)
+                } else {
+                    Some(dir.to_path_buf())
+                }
+            })
             .unwrap_or_else(|| PathBuf::from("."));
 
         let mut loader = FileModuleLoader::new(self, options, frontend);
@@ -696,31 +864,50 @@ impl Pipeline {
                     PipelineOutput::Code(code)
                 }
                 BackendKind::Cil => {
-                    let stage_started = std::time::Instant::now();
-                    info!("pipeline: start {}", STAGE_EMIT_CIL);
-                    let code = emit_cil(&ast).map_err(|err| {
-                        CliError::Compilation(format!("CIL emit failed: {}", err))
-                    })?;
-                    info!(
-                        "pipeline: finished {} in {:.2?}",
-                        STAGE_EMIT_CIL,
-                        stage_started.elapsed()
-                    );
-                    PipelineOutput::Code(code)
+                    #[cfg(feature = "lang-dotnet")]
+                    {
+                        let stage_started = std::time::Instant::now();
+                        info!("pipeline: start {}", STAGE_EMIT_CIL);
+                        let code = emit_cil(&ast).map_err(|err| {
+                            CliError::Compilation(format!("CIL emit failed: {}", err))
+                        })?;
+                        info!(
+                            "pipeline: finished {} in {:.2?}",
+                            STAGE_EMIT_CIL,
+                            stage_started.elapsed()
+                        );
+                        PipelineOutput::Code(code)
+                    }
+                    #[cfg(not(feature = "lang-dotnet"))]
+                    {
+                        return Err(disabled_feature_error("lang-dotnet", "CIL emission"));
+                    }
                 }
                 BackendKind::Dotnet => {
-                    let stage_started = std::time::Instant::now();
-                    info!("pipeline: start {}", STAGE_EMIT_CIL);
-                    let assembly_path = emit_assembly(&ast, base_path, options.save_intermediates)
-                        .map_err(|err| {
-                            CliError::Compilation(format!(".NET assembly emit failed: {}", err))
-                        })?;
-                    info!(
-                        "pipeline: finished {} in {:.2?}",
-                        STAGE_EMIT_CIL,
-                        stage_started.elapsed()
-                    );
-                    PipelineOutput::Binary(assembly_path)
+                    #[cfg(feature = "lang-dotnet")]
+                    {
+                        let stage_started = std::time::Instant::now();
+                        info!("pipeline: start {}", STAGE_EMIT_CIL);
+                        let assembly_path =
+                            emit_assembly(&ast, base_path, options.save_intermediates).map_err(
+                                |err| {
+                                    CliError::Compilation(format!(
+                                        ".NET assembly emit failed: {}",
+                                        err
+                                    ))
+                                },
+                            )?;
+                        info!(
+                            "pipeline: finished {} in {:.2?}",
+                            STAGE_EMIT_CIL,
+                            stage_started.elapsed()
+                        );
+                        PipelineOutput::Binary(assembly_path)
+                    }
+                    #[cfg(not(feature = "lang-dotnet"))]
+                    {
+                        return Err(disabled_feature_error("lang-dotnet", ".NET assembly emission"));
+                    }
                 }
                 _ => unreachable!(),
             }
@@ -736,37 +923,44 @@ impl Pipeline {
 
             match target {
                 BackendKind::Llvm => {
-                    let stage_started = std::time::Instant::now();
-                    info!("pipeline: start {}", STAGE_HIR_TO_MIR);
-                    let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
-                    info!(
-                        "pipeline: finished {} in {:.2?}",
-                        STAGE_HIR_TO_MIR,
-                        stage_started.elapsed()
-                    );
-                    let stage_started = std::time::Instant::now();
-                    info!("pipeline: start {}", STAGE_MIR_TO_LIR);
-                    let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
-                    info!(
-                        "pipeline: finished {} in {:.2?}",
-                        STAGE_MIR_TO_LIR,
-                        stage_started.elapsed()
-                    );
+                    #[cfg(feature = "llvm")]
+                    {
+                        let stage_started = std::time::Instant::now();
+                        info!("pipeline: start {}", STAGE_HIR_TO_MIR);
+                        let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
+                        info!(
+                            "pipeline: finished {} in {:.2?}",
+                            STAGE_HIR_TO_MIR,
+                            stage_started.elapsed()
+                        );
+                        let stage_started = std::time::Instant::now();
+                        info!("pipeline: start {}", STAGE_MIR_TO_LIR);
+                        let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
+                        info!(
+                            "pipeline: finished {} in {:.2?}",
+                            STAGE_MIR_TO_LIR,
+                            stage_started.elapsed()
+                        );
 
-                    let stage_started = std::time::Instant::now();
-                    info!("pipeline: start emit-llvm");
-                    let llvm = self.generate_llvm_artifacts(
-                        &lir.lir_program,
-                        base_path,
-                        input_path,
-                        false,
-                        options,
-                    )?;
-                    info!(
-                        "pipeline: finished emit-llvm in {:.2?}",
-                        stage_started.elapsed()
-                    );
-                    PipelineOutput::Code(llvm.ir_text)
+                        let stage_started = std::time::Instant::now();
+                        info!("pipeline: start emit-llvm");
+                        let llvm = self.generate_llvm_artifacts(
+                            &lir.lir_program,
+                            base_path,
+                            input_path,
+                            false,
+                            options,
+                        )?;
+                        info!(
+                            "pipeline: finished emit-llvm in {:.2?}",
+                            stage_started.elapsed()
+                        );
+                        PipelineOutput::Code(llvm.ir_text)
+                    }
+                    #[cfg(not(feature = "llvm"))]
+                    {
+                        return Err(disabled_feature_error("llvm", "LLVM backend"));
+                    }
                 }
                 BackendKind::Binary => {
                     let stage_started = std::time::Instant::now();
@@ -840,38 +1034,55 @@ impl Pipeline {
                     } else if backend == "cranelift" || backend == "fp-cranelift" {
                         let stage_started = std::time::Instant::now();
                         info!("pipeline: start {}", STAGE_LINK_BINARY);
-                        let binary_path =
-                            self.stage_link_binary_cranelift(&lir.lir_program, base_path, options)?;
-                        info!(
-                            "pipeline: finished {} in {:.2?}",
-                            STAGE_LINK_BINARY,
-                            stage_started.elapsed()
-                        );
-                        PipelineOutput::Binary(binary_path)
+                        #[cfg(feature = "cranelift")]
+                        {
+                            let binary_path = self.stage_link_binary_cranelift(
+                                &lir.lir_program,
+                                base_path,
+                                options,
+                            )?;
+                            info!(
+                                "pipeline: finished {} in {:.2?}",
+                                STAGE_LINK_BINARY,
+                                stage_started.elapsed()
+                            );
+                            PipelineOutput::Binary(binary_path)
+                        }
+                        #[cfg(not(feature = "cranelift"))]
+                        {
+                            return Err(disabled_feature_error("cranelift", "Cranelift emitter"));
+                        }
                     } else {
-                        let stage_started = std::time::Instant::now();
-                        info!("pipeline: start emit-llvm");
-                        let llvm = self.generate_llvm_artifacts(
-                            &lir.lir_program,
-                            base_path,
-                            input_path,
-                            true,
-                            options,
-                        )?;
-                        info!(
-                            "pipeline: finished emit-llvm in {:.2?}",
-                            stage_started.elapsed()
-                        );
-                        let stage_started = std::time::Instant::now();
-                        info!("pipeline: start {}", STAGE_LINK_BINARY);
-                        let binary_path =
-                            self.stage_link_binary(&llvm.ir_path, base_path, options)?;
-                        info!(
-                            "pipeline: finished {} in {:.2?}",
-                            STAGE_LINK_BINARY,
-                            stage_started.elapsed()
-                        );
-                        PipelineOutput::Binary(binary_path)
+                        #[cfg(feature = "llvm")]
+                        {
+                            let stage_started = std::time::Instant::now();
+                            info!("pipeline: start emit-llvm");
+                            let llvm = self.generate_llvm_artifacts(
+                                &lir.lir_program,
+                                base_path,
+                                input_path,
+                                true,
+                                options,
+                            )?;
+                            info!(
+                                "pipeline: finished emit-llvm in {:.2?}",
+                                stage_started.elapsed()
+                            );
+                            let stage_started = std::time::Instant::now();
+                            info!("pipeline: start {}", STAGE_LINK_BINARY);
+                            let binary_path =
+                                self.stage_link_binary(&llvm.ir_path, base_path, options)?;
+                            info!(
+                                "pipeline: finished {} in {:.2?}",
+                                STAGE_LINK_BINARY,
+                                stage_started.elapsed()
+                            );
+                            PipelineOutput::Binary(binary_path)
+                        }
+                        #[cfg(not(feature = "llvm"))]
+                        {
+                            return Err(disabled_feature_error("llvm", "LLVM emitter"));
+                        }
                     }
                 }
                 BackendKind::Ebpf => {
@@ -2142,6 +2353,7 @@ fn main() {
         harness.ensure_no_errors();
     }
 
+    #[cfg(feature = "llvm")]
     #[test]
     fn example09_higher_order_functions_lowering() {
         let source = r#"
@@ -2225,6 +2437,7 @@ fn main() {
         harness.ensure_no_errors();
     }
 
+    #[cfg(feature = "llvm")]
     #[test]
     fn example11_function_specialisation_patterns() {
         let source = r#"
@@ -2277,6 +2490,7 @@ fn main() {
         harness.ensure_no_errors();
     }
 
+    #[cfg(feature = "llvm")]
     #[test]
     fn example13_loops_and_breaks() {
         let source = r#"
