@@ -26,8 +26,10 @@ impl PipelineStage for TypingStage {
         diagnostics: &mut PipelineDiagnostics,
     ) -> Result<Node, PipelineError> {
         let mut ast = context.ast;
-        match fp_typing::annotate_with_module_resolution(&mut ast, context.module_resolution.as_ref())
-        {
+        match fp_typing::annotate_with_module_resolution(
+            &mut ast,
+            context.module_resolution.as_ref(),
+        ) {
             Ok(outcome) => {
                 let mut saw_error = false;
                 for message in outcome.diagnostics {

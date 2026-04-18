@@ -466,13 +466,12 @@ fn normalize_lexemes(lexemes: Vec<Lexeme>) -> Vec<Lexeme> {
 }
 
 fn frontmatter_end_offset(source: &str) -> Option<usize> {
-    let mut pos = 0usize;
     let first_line_end = source.find('\n').unwrap_or(source.len());
     let first_line = source[..first_line_end].trim_end_matches('\r');
     if first_line != "---" {
         return None;
     }
-    pos = if first_line_end < source.len() {
+    let mut pos = if first_line_end < source.len() {
         first_line_end + 1
     } else {
         first_line_end

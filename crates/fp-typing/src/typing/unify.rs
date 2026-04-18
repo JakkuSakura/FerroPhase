@@ -1659,13 +1659,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 self.bind(var, TypeTerm::Any);
             }
-            other => {
-                // Error out loudly instead of silently defaulting, to avoid masking bugs.
-                return Err(Error::from(format!(
-                    "unsupported AST type in type_from_ast_ty: {:?}",
-                    other
-                )));
-            }
         }
         Ok(var)
     }

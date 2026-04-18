@@ -1,14 +1,13 @@
 use crate::ast::lower_common::{
-    collect_path_tokens_until_generics, decode_string_literal, lex_span_from_span,
-    lex_spans_for_group, macro_token_trees_to_lexemes, macro_tokens_file_id, split_path_prefix,
+    collect_path_tokens_until_generics, decode_string_literal, macro_token_trees_to_lexemes,
+    macro_tokens_file_id, split_path_prefix,
 };
-use crate::lexer::lexeme::Lexeme;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 use fp_core::ast::{
-    Expr, ExprKind, Ident, ImplTraits, MacroDelimiter, MacroInvocation, MacroTokenTree, Name,
-    ParameterPath, ParameterPathSegment, Path, StructuralField, Ty, TypeArray, TypeBinaryOp,
-    TypeBinaryOpKind, TypeBounds, TypeFunction, TypeQuote, TypeReference, TypeSlice,
-    TypeStructural, TypeTuple, TypeType, TypeVec, Value, ValueNone, ValueString,
+    Expr, ExprKind, Ident, ImplTraits, MacroInvocation, Name, ParameterPath,
+    ParameterPathSegment, Path, StructuralField, Ty, TypeArray, TypeBinaryOp,
+    TypeBinaryOpKind, TypeBounds, TypeFunction, TypeReference, TypeSlice, TypeStructural,
+    TypeTuple, TypeVec, Value, ValueNone, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::module::path::PathPrefix;

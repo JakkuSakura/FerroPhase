@@ -4,20 +4,16 @@ use crate::ast::lower_common::{
 };
 use crate::syntax::{SyntaxKind, SyntaxNode};
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, DecimalType, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait,
-    ExprBinOp, ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor,
-    ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprKwArg,
-    ExprLet, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn,
-    ExprSelect, ExprSelectType, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural,
-    ExprTry, ExprTryCatch, ExprTuple, ExprWhile, ExprWith, FormatArgRef, FormatPlaceholder,
-    FormatSpec, FormatTemplatePart, Ident, MacroInvocation, Name, ParameterPath,
+    BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait, ExprBinOp,
+    ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor, ExprIf,
+    ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprKwArg, ExprLet,
+    ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn,
+    ExprSelect, ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTryCatch,
+    ExprTuple, ExprWhile, ExprWith, Ident, MacroInvocation, Name, ParameterPath,
     ParameterPathSegment, Path, Pattern, PatternBind, PatternBox, PatternIdent, PatternKind,
     PatternQuote, PatternQuotePlural, PatternRef, PatternStruct, PatternStructField,
-    PatternStructural, PatternTuple, PatternTupleStruct, PatternType, PatternVariant,
-    PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtDefer, StmtLet, StructuralField, Ty,
-    TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeInt, TypePrimitive,
-    TypeQuote, TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeType, TypeVec, Value,
-    ValueNone, ValueString,
+    PatternStructural, PatternTuple, PatternTupleStruct, PatternType, PatternVariant, PatternWildcard,
+    QuoteFragmentKind, QuoteItemKind, StmtDefer, StmtLet, Ty, Value, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::IntrinsicCallKind;
@@ -855,7 +851,6 @@ fn lower_struct_fields(node: &SyntaxNode) -> Result<(Vec<ExprField>, Option<Expr
     }
 
     let mut update: Option<Expr> = None;
-    let mut saw_update = false;
     for (idx, child) in node.children.iter().enumerate() {
         let crate::syntax::SyntaxElement::Token(tok) = child else {
             continue;
@@ -866,7 +861,6 @@ fn lower_struct_fields(node: &SyntaxNode) -> Result<(Vec<ExprField>, Option<Expr
         if update.is_some() {
             return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStruct));
         }
-        saw_update = true;
         for next in node.children.iter().skip(idx + 1) {
             match next {
                 crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {

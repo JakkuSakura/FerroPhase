@@ -1,5 +1,5 @@
-use crate::schema::openai::{CompactRequest, ResponsesInput, ResponsesRequest, Tool};
 use crate::AgentError;
+use crate::schema::openai::{CompactRequest, ResponsesInput, ResponsesRequest, Tool};
 
 pub fn validate_responses_request(req: &ResponsesRequest) -> Result<(), AgentError> {
     validate_model(&req.model)?;

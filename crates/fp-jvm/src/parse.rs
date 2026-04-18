@@ -209,17 +209,9 @@ struct ClassReader<'a> {
 #[derive(Debug, Clone)]
 enum CpEntry {
     Utf8(String),
-    Class {
-        name_index: u16,
-    },
-    NameAndType {
-        name_index: u16,
-        descriptor_index: u16,
-    },
-    Methodref {
-        class_index: u16,
-        name_and_type_index: u16,
-    },
+    Class,
+    NameAndType,
+    Methodref,
     Unused,
 }
 
@@ -330,24 +322,18 @@ impl<'a> ClassReader<'a> {
                     CpEntry::Utf8(value)
                 }
                 7 => {
-                    let name_index = self.read_u16()?;
-                    CpEntry::Class { name_index }
+                    let _name_index = self.read_u16()?;
+                    CpEntry::Class
                 }
                 12 => {
-                    let name_index = self.read_u16()?;
-                    let descriptor_index = self.read_u16()?;
-                    CpEntry::NameAndType {
-                        name_index,
-                        descriptor_index,
-                    }
+                    let _name_index = self.read_u16()?;
+                    let _descriptor_index = self.read_u16()?;
+                    CpEntry::NameAndType
                 }
                 10 => {
-                    let class_index = self.read_u16()?;
-                    let name_and_type_index = self.read_u16()?;
-                    CpEntry::Methodref {
-                        class_index,
-                        name_and_type_index,
-                    }
+                    let _class_index = self.read_u16()?;
+                    let _name_and_type_index = self.read_u16()?;
+                    CpEntry::Methodref
                 }
                 3 => {
                     let _ = self.read_u32()?;

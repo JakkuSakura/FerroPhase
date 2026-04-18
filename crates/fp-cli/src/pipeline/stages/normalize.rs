@@ -64,6 +64,13 @@ impl Pipeline {
         ast: &mut Node,
         options: &PipelineOptions,
     ) -> Result<(), CliError> {
+        if matches!(
+            ast.kind(),
+            NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_)
+        ) {
+            return Ok(());
+        }
+
         if !ast_has_std(ast) {
             let mut diagnostics = PipelineDiagnostics::default();
             diagnostics.set_display_options(diag::display_options(options));

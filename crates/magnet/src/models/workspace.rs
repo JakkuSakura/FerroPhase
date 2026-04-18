@@ -211,9 +211,11 @@ edition = "2024"
         let packages = workspace.list_packages()?;
         let root_path = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         assert!(packages.iter().any(|pkg| pkg.root_path == root_path));
-        assert!(packages
-            .iter()
-            .any(|pkg| pkg.root_path == root_path.join("crates").join("demo")));
+        assert!(
+            packages
+                .iter()
+                .any(|pkg| pkg.root_path == root_path.join("crates").join("demo"))
+        );
         Ok(())
     }
 }

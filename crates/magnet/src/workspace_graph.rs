@@ -1,6 +1,8 @@
 use crate::models::{DependencyEdge, PackageGraph, PackageNode};
 use eyre::{Context, Result, eyre};
-use fp_core::workspace::{WorkspaceDependency, WorkspaceDocument, WorkspaceModule, WorkspacePackage};
+use fp_core::workspace::{
+    WorkspaceDependency, WorkspaceDocument, WorkspaceModule, WorkspacePackage,
+};
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 

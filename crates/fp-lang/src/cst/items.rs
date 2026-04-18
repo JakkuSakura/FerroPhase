@@ -1385,11 +1385,6 @@ fn parse_generic_params_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
                         advance(&mut cursor).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
                     syntax_token_from_token(&tok)
                 }
-                Some(Token {
-                    kind: TokenKind::Ident,
-                    lexeme,
-                    ..
-                }) if lexeme.starts_with('\'') => expect_ident_token(&mut cursor)?,
                 _ => return Err(ErrMode::Cut(ContextError::new())),
             };
             param_children.push(SyntaxElement::Token(name));

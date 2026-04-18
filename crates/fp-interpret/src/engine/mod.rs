@@ -7889,8 +7889,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             if let Some(symbol) = any.downcast_ref::<ImportedSymbol>() {
                 return Some(format!(
                     "imported symbol '{}' from module {} cannot be evaluated without module execution",
-                    symbol.symbol.name,
-                    symbol.module
+                    symbol.symbol.name, symbol.module
                 ));
             }
             if let Some(module) = any.downcast_ref::<ImportedModule>() {
@@ -8053,21 +8052,6 @@ impl<'ctx> AstInterpreter<'ctx> {
             return None;
         }
         let canonical = self.qualified_name(function.name.as_str());
-        Some(JitKey::from_signature(canonical, &function.sig))
-    }
-
-    fn jit_key_for_value_function(&self, function: &ValueFunction) -> Option<JitKey> {
-        if function.sig.receiver.is_some()
-            || !function.sig.generics_params.is_empty()
-            || function.sig.quote_kind.is_some()
-        {
-            return None;
-        }
-        if !self.jit_signature_supported(&function.sig, None) {
-            return None;
-        }
-        let name = function.sig.name.as_ref()?.as_str();
-        let canonical = self.qualified_name(name);
         Some(JitKey::from_signature(canonical, &function.sig))
     }
 

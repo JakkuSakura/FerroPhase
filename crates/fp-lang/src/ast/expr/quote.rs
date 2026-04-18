@@ -1,4 +1,4 @@
-use crate::syntax::{SyntaxKind, SyntaxNode};
+use crate::syntax::SyntaxNode;
 use fp_core::ast::{
     ExprKind, Ident, Pattern, PatternIdent, PatternKind, PatternQuote, PatternStructField,
     QuoteFragmentKind, QuoteItemKind, Ty, TypeQuote, TypeType,

@@ -1250,17 +1250,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             .and_then(|name| self.lookup_function_signature_by_name_with_path(&name))
     }
 
-    fn lookup_extern_function_signature(&self, locator: &Name) -> Option<FunctionSignature> {
-        let candidate = self
-            .resolve_locator_key(locator)
-            .or_else(|| self.fallback_locator_key(locator))?;
-        if let Some(sig) = self.extern_function_signatures.get(&candidate) {
-            return Some(sig.clone());
-        }
-        self.lookup_stripped_extern_function_signature(&candidate)
-            .or_else(|| self.lookup_prefixed_extern_function_signature(&candidate))
-    }
-
     fn lookup_extern_function_signature_with_path(
         &self,
         locator: &Name,
@@ -1287,14 +1276,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.function_signatures.get(&stripped).cloned()
     }
 
-    fn lookup_stripped_extern_function_signature(
-        &self,
-        candidate: &QualifiedPath,
-    ) -> Option<FunctionSignature> {
-        let stripped = Self::strip_std_prefix(candidate)?;
-        self.extern_function_signatures.get(&stripped).cloned()
-    }
-
     fn strip_std_prefix(candidate: &QualifiedPath) -> Option<QualifiedPath> {
         let first = candidate.segments.first()?;
         if (first == "std" || first == "core" || first == "alloc") && candidate.segments.len() > 1 {
@@ -1311,13 +1292,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         candidate: &QualifiedPath,
     ) -> Option<FunctionSignature> {
         self.lookup_prefixed_signature(candidate, false)
-    }
-
-    fn lookup_prefixed_extern_function_signature(
-        &self,
-        candidate: &QualifiedPath,
-    ) -> Option<FunctionSignature> {
-        self.lookup_prefixed_signature(candidate, true)
     }
 
     fn fallback_locator_key(&self, locator: &Name) -> Option<QualifiedPath> {

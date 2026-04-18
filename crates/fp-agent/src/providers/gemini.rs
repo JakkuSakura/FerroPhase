@@ -153,10 +153,12 @@ pub fn build_gemini_request(
 ) -> GeminiRequestBody {
     let (contents, system_instruction) = map_messages(&request.messages);
     let (tools, tool_config) = apply_tools(request);
-    let thinking_config = thinking_budget.filter(|b| *b > 0).map(|budget| GeminiThinkingConfig {
-        thinking_budget: budget,
-        include_thoughts: true,
-    });
+    let thinking_config = thinking_budget
+        .filter(|b| *b > 0)
+        .map(|budget| GeminiThinkingConfig {
+            thinking_budget: budget,
+            include_thoughts: true,
+        });
 
     GeminiRequestBody {
         contents,
@@ -269,7 +271,10 @@ pub fn map_messages(
             let tool_role = "user".to_string();
             if let Some(last) = contents.last_mut() {
                 if last.role == tool_role
-                    && last.parts.iter().any(|part| part.function_response.is_some())
+                    && last
+                        .parts
+                        .iter()
+                        .any(|part| part.function_response.is_some())
                 {
                     last.parts.push(resp_part);
                     continue;

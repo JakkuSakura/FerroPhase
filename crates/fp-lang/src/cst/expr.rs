@@ -3971,10 +3971,6 @@ impl Parser {
         TypeLookahead::None
     }
 
-    fn peek_nth_non_trivia_token_kind(&self, n: usize) -> Option<TokenKind> {
-        self.peek_nth_non_trivia(n).map(|t| t.kind.clone())
-    }
-
     fn looks_like_fn_type(&self) -> bool {
         let Some(first) = self.peek_nth_non_trivia(1) else {
             return false;

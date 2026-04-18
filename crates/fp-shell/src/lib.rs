@@ -162,7 +162,10 @@ impl ShellRuntimeState {
             .collect::<Vec<_>>();
         let changed_any = self.change_log.iter().any(|change| change.changed);
         Value::map([
-            (Value::string("changed_any".to_string()), Value::bool(changed_any)),
+            (
+                Value::string("changed_any".to_string()),
+                Value::bool(changed_any),
+            ),
             (
                 Value::string("entries".to_string()),
                 Value::List(fp_core::ast::ValueList::new(entries)),
@@ -187,13 +190,11 @@ impl RuntimeExternHook for ShellRuntimeHook {
                 std::env::temp_dir().to_string_lossy().into_owned(),
             ))),
             "runtime_fail" => Some(string_arg(args, 0).and_then(|message| Err(message.into()))),
-            "runtime_set_changed" => {
-                Some(bool_arg(args, 0).map(|changed| {
-                    let mut guard = lock_mutex(&self.state);
-                    guard.changed = changed;
-                    Value::unit()
-                }))
-            }
+            "runtime_set_changed" => Some(bool_arg(args, 0).map(|changed| {
+                let mut guard = lock_mutex(&self.state);
+                guard.changed = changed;
+                Value::unit()
+            })),
             "runtime_last_changed" => {
                 let guard = lock_mutex(&self.state);
                 Some(Ok(Value::bool(guard.changed)))
@@ -241,11 +242,7 @@ fn lock_mutex<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 fn string_arg(args: &[Value], index: usize) -> fp_core::error::Result<String> {
     let Some(value) = args.get(index) else {
-        return Err(format!(
-            "missing string argument at index {}",
-            index
-        )
-        .into());
+        return Err(format!("missing string argument at index {}", index).into());
     };
     match value {
         Value::String(text) => Ok(text.value.clone()),
@@ -259,26 +256,15 @@ fn string_arg(args: &[Value], index: usize) -> fp_core::error::Result<String> {
 
 fn bool_arg(args: &[Value], index: usize) -> fp_core::error::Result<bool> {
     let Some(value) = args.get(index) else {
-        return Err(format!(
-            "missing bool argument at index {}",
-            index
-        )
-        .into());
+        return Err(format!("missing bool argument at index {}", index).into());
     };
     match value {
         Value::Bool(flag) => Ok(flag.value),
-        other => Err(format!(
-            "expected bool argument at index {}, got {:?}",
-            index, other
-        )
-        .into()),
+        other => Err(format!("expected bool argument at index {}, got {:?}", index, other).into()),
     }
 }
 
-pub fn interpret_source(
-    source: &str,
-    source_path: &Path,
-) -> Result<Value, ShellError> {
+pub fn interpret_source(source: &str, source_path: &Path) -> Result<Value, ShellError> {
     interpret_source_with_options(source, source_path, &InterpretOptions::default())
 }
 
@@ -378,8 +364,7 @@ fn merge_core_std_tree(
     frontend: &FerroFrontend,
     user_file: &mut fp_core::ast::File,
 ) -> Result<(), ShellError> {
-    let core_std_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fp-lang/src/std");
+    let core_std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fp-lang/src/std");
     let mut files = Vec::new();
     collect_fp_files(core_std_root.as_path(), &mut files)?;
     for path in files {
@@ -454,11 +439,19 @@ fn merge_source_items(
     core_std: bool,
 ) -> Result<(), ShellError> {
     let source = if core_std {
-        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../fp-lang/src/std").join(embedded_path))
-            .map_err(|err| ShellError::Lower(format!("missing embedded core std {embedded_path}: {err}")))?
+        fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../fp-lang/src/std")
+                .join(embedded_path),
+        )
+        .map_err(|err| {
+            ShellError::Lower(format!("missing embedded core std {embedded_path}: {err}"))
+        })?
     } else {
         embedded_std::read(embedded_path)
-            .ok_or_else(|| ShellError::Lower(format!("missing embedded shell std: {embedded_path}")))?
+            .ok_or_else(|| {
+                ShellError::Lower(format!("missing embedded shell std: {embedded_path}"))
+            })?
             .to_string()
     };
     let parsed = frontend
@@ -496,9 +489,7 @@ fn collect_fp_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), ShellError
 }
 
 fn module_path_for_core_std(embedded_path: &str) -> Result<Vec<&str>, ShellError> {
-    let without_prefix = embedded_path
-        .strip_prefix("std/")
-        .unwrap_or(embedded_path);
+    let without_prefix = embedded_path.strip_prefix("std/").unwrap_or(embedded_path);
     if without_prefix == "mod.fp" {
         return Ok(Vec::new());
     }
@@ -1007,7 +998,10 @@ fn is_runtime_primitive(name: &str) -> bool {
 
 fn runtime_change_to_value(change: &RuntimeChange) -> Value {
     Value::map([
-        (Value::string("op".to_string()), Value::string(change.op.clone())),
+        (
+            Value::string("op".to_string()),
+            Value::string(change.op.clone()),
+        ),
         (
             Value::string("target".to_string()),
             Value::string(change.target.clone()),

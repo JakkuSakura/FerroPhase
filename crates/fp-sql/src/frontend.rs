@@ -6,8 +6,8 @@ use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::error::Result as CoreResult;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::query::{
-    statement_to_query_ir, QueryCoverage, QueryDocument, QueryFallback, QueryIrDocument,
-    QueryKind, QueryOrigin, QuerySerializer,
+    statement_to_query_ir, QueryCoverage, QueryDocument, QueryFallback, QueryIrDocument, QueryKind,
+    QueryOrigin, QuerySerializer,
 };
 
 use crate::SqlDialect;

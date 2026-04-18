@@ -90,12 +90,8 @@ fn process_input_item(item: &InputItem, messages: &mut Vec<ChatMessage>) {
     match item_type {
         "message" | "agentMessage" => process_message(item, messages),
         "reasoning" => process_reasoning(item, messages),
-        "function_call"
-        | "commandExecution"
-        | "local_shell_call"
-        | "fileChange"
-        | "custom_tool_call"
-        | "web_search_call" => process_tool_call(item, messages),
+        "function_call" | "commandExecution" | "local_shell_call" | "fileChange"
+        | "custom_tool_call" | "web_search_call" => process_tool_call(item, messages),
         "function_call_output"
         | "commandExecutionOutput"
         | "fileChangeOutput"

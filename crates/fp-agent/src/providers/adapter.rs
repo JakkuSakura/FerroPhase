@@ -1,15 +1,13 @@
 use crate::AgentError;
-use crate::schema::openai::{ChatRequest, CompactRequest, ResponsesRequest};
+use crate::providers::gemini::{GeminiRequestBody, build_gemini_request};
 use crate::providers::openai::{
     OpenAiCompactPayload, OpenAiReasoning, OpenAiResponsesPayload, build_openai_compact_payload,
     build_openai_payload,
 };
-use crate::providers::openrouter::{
-    build_openrouter_compact_payload, build_openrouter_payload,
-};
+use crate::providers::openrouter::{build_openrouter_compact_payload, build_openrouter_payload};
 use crate::providers::tabcode::{build_tabcode_compact_payload, build_tabcode_payload};
-use crate::providers::gemini::{GeminiRequestBody, build_gemini_request};
 use crate::providers::zai::{ZaiChatRequest, build_zai_chat_request};
+use crate::schema::openai::{ChatRequest, CompactRequest, ResponsesRequest};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ProviderKind {
@@ -68,14 +66,14 @@ pub fn build_provider_payload(
     ctx: &ProviderBuildContext,
 ) -> Result<ProviderPayload, AgentError> {
     match (provider, request) {
-        (ProviderKind::OpenAi, ProviderRequest::Responses(req)) => Ok(
-            ProviderPayload::OpenAiResponses(build_openai_payload(
+        (ProviderKind::OpenAi, ProviderRequest::Responses(req)) => {
+            Ok(ProviderPayload::OpenAiResponses(build_openai_payload(
                 req,
                 &ctx.model,
                 ctx.reasoning.clone(),
                 ctx.default_max_output_tokens,
-            )),
-        ),
+            )))
+        }
         (ProviderKind::OpenAi, ProviderRequest::Compact(req)) => Ok(
             ProviderPayload::OpenAiCompact(build_openai_compact_payload(
                 req,
@@ -107,14 +105,14 @@ pub fn build_provider_payload(
                 ctx.compact_temperature,
             )),
         ),
-        (ProviderKind::Tabcode, ProviderRequest::Responses(req)) => Ok(
-            ProviderPayload::OpenAiResponses(build_tabcode_payload(
+        (ProviderKind::Tabcode, ProviderRequest::Responses(req)) => {
+            Ok(ProviderPayload::OpenAiResponses(build_tabcode_payload(
                 req,
                 &ctx.model,
                 ctx.reasoning.clone(),
                 ctx.default_max_output_tokens,
-            )),
-        ),
+            )))
+        }
         (ProviderKind::Tabcode, ProviderRequest::Compact(req)) => Ok(
             ProviderPayload::OpenAiCompact(build_tabcode_compact_payload(
                 req,
@@ -125,19 +123,12 @@ pub fn build_provider_payload(
                 ctx.compact_temperature,
             )),
         ),
-        (ProviderKind::Gemini, ProviderRequest::Chat(req)) => Ok(
-            ProviderPayload::Gemini(build_gemini_request(
-                req,
-                ctx.thinking_budget,
-            )),
-        ),
-        (ProviderKind::Zai, ProviderRequest::Chat(req)) => Ok(
-            ProviderPayload::Zai(build_zai_chat_request(
-                req,
-                &ctx.model,
-                ctx.thinking_enabled,
-            )),
-        ),
+        (ProviderKind::Gemini, ProviderRequest::Chat(req)) => Ok(ProviderPayload::Gemini(
+            build_gemini_request(req, ctx.thinking_budget),
+        )),
+        (ProviderKind::Zai, ProviderRequest::Chat(req)) => Ok(ProviderPayload::Zai(
+            build_zai_chat_request(req, &ctx.model, ctx.thinking_enabled),
+        )),
         _ => Err(AgentError::new("Provider request type mismatch")),
     }
 }

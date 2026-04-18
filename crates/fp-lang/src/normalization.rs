@@ -10,7 +10,7 @@ use fp_core::span::Span;
 
 use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::ast::lower_common::{
-    lex_span_from_span, lex_spans_for_group, macro_token_trees_to_lexemes, macro_tokens_file_id,
+    lex_spans_for_group, macro_token_trees_to_lexemes, macro_tokens_file_id,
 };
 use crate::cst::{parse_expr_lexemes_prefix_to_cst, parse_type_lexemes_prefix_to_cst};
 use crate::lexer::lexeme::{Lexeme, LexemeKind};
@@ -557,11 +557,6 @@ fn parse_placeholder_content(content: &str) -> Result<FormatPlaceholder> {
             format_spec: None,
         })
     }
-}
-
-fn assert_macro(cond: Expr, message: &str) -> Expr {
-    let panic_expr = panic_call_with_message(message);
-    assert_macro_with_panic(cond, panic_expr)
 }
 
 fn assert_macro_with_panic(cond: Expr, panic_expr: Expr) -> Expr {

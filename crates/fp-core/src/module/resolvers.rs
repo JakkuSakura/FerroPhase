@@ -220,8 +220,8 @@ impl LanguageResolver for FerroResolver {
 mod tests {
     use super::*;
     use crate::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-    use crate::package::{PackageDescriptor, PackageId, PackageMetadata};
     use crate::package::graph::PackageGraph;
+    use crate::package::{PackageDescriptor, PackageId, PackageMetadata};
     use crate::vfs::VirtualPath;
 
     #[test]

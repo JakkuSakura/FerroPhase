@@ -5,7 +5,9 @@ use fp_agent::validate::validate_responses_request;
 fn allows_custom_tool_type() {
     let request = ResponsesRequest {
         model: "gpt-5.2".into(),
-        input: Some(fp_agent::schema::openai::ResponsesInput::Text("ping".into())),
+        input: Some(fp_agent::schema::openai::ResponsesInput::Text(
+            "ping".into(),
+        )),
         messages: None,
         instructions: None,
         previous_response_id: None,

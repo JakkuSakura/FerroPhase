@@ -104,7 +104,12 @@ fn resolve_base_segments(
                 }
                 return Some((package_id, Vec::new(), remaining));
             }
-            let base = if module.module_path.first().map(|seg| seg == "bin").unwrap_or(false) {
+            let base = if module
+                .module_path
+                .first()
+                .map(|seg| seg == "bin")
+                .unwrap_or(false)
+            {
                 Vec::new()
             } else {
                 module.module_path.clone()

@@ -1,12 +1,12 @@
-use fp_core::diagnostics::{diagnostic_manager, Diagnostic};
+use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
 pub use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::mir;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use winnow::error::{ContextError, ErrMode};
-use winnow::token::{literal, take_till, take_while};
 use winnow::ModalResult;
 use winnow::Parser;
+use winnow::error::{ContextError, ErrMode};
+use winnow::token::{literal, take_till, take_while};
 
 pub const BYTECODE_MAGIC: [u8; 4] = *b"FPBC";
 pub const BYTECODE_VERSION: u32 = 1;

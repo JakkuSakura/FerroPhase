@@ -12,6 +12,13 @@ impl Pipeline {
         ast: &mut Node,
         options: &PipelineOptions,
     ) -> Result<ConstEvalOutcome, CliError> {
+        if matches!(
+            ast.kind(),
+            NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_)
+        ) {
+            return Ok(ConstEvalOutcome::default());
+        }
+
         let mut std_modules = Vec::new();
         let include_std = if matches!(options.target, BackendKind::Interpret) {
             !ast_has_std(ast)

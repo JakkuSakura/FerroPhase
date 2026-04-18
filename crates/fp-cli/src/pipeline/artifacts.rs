@@ -1,5 +1,23 @@
 use crate::CliError;
-use fp_core::{lir, mir};
+use crate::languages::frontend::FrontendSnapshot;
+use fp_core::ast::Node;
+use fp_core::{hir, lir, mir};
+use fp_interpret::const_eval::ConstEvalOutcome;
+
+#[derive(Debug, Clone)]
+pub struct FrontendBundle {
+    pub source_language: String,
+    pub ast: Node,
+    pub frontend_snapshot: Option<FrontendSnapshot>,
+    pub const_eval: Option<ConstEvalOutcome>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MirBundle {
+    pub frontend: FrontendBundle,
+    pub hir_program: hir::Program,
+    pub mir_program: mir::Program,
+}
 
 #[derive(Debug)]
 pub(crate) struct MirArtifacts {

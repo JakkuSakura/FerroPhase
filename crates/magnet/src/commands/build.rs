@@ -693,11 +693,7 @@ fn build_parallel(
                     let result = if let Some(task) = tasks.get(idx).and_then(|task| task.as_ref()) {
                         let mut result = Ok(());
                         for entry in &task.entries {
-                            info!(
-                                "build: compiling {} ({})",
-                                task.name,
-                                entry.entry.display()
-                            );
+                            info!("build: compiling {} ({})", task.name, entry.entry.display());
                             if let Err(err) = compile_only(
                                 &fp_bin,
                                 &task.root_path,

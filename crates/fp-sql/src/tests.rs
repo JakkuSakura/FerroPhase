@@ -54,14 +54,21 @@ fn parses_multiple_statements_and_attaches_name() {
     assert_eq!(sql.statements[1].text, "INSERT INTO items VALUES (1)");
     assert_eq!(sql.ast.len(), 2, "expected two SQL AST statements");
     let semantic = doc.semantic.as_ref().expect("semantic query");
-    assert_eq!(semantic.statements.len(), 1, "DDL stays outside semantic IR");
+    assert_eq!(
+        semantic.statements.len(),
+        1,
+        "DDL stays outside semantic IR"
+    );
 }
 
 #[test]
 fn parses_update_into_semantic_mutation() {
     let frontend = frontend::SqlFrontend::new();
     let result = frontend
-        .parse("UPDATE ticks SET value = value + 1 WHERE symbol = 'AAPL';", None)
+        .parse(
+            "UPDATE ticks SET value = value + 1 WHERE symbol = 'AAPL';",
+            None,
+        )
         .expect("sql frontend should parse update");
 
     let fp_core::ast::NodeKind::Query(doc) = result.ast.kind() else {

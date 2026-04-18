@@ -4,7 +4,6 @@ use std::ops::{Add, Deref, DerefMut, Mul, Sub};
 
 use bigdecimal::BigDecimal;
 use bytes::BytesMut;
-use itertools::Itertools;
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;

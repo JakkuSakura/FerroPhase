@@ -102,6 +102,7 @@ fn normalize_prql_sql_literals(sql: &str) -> String {
 fn naive_prql_to_sql(source: &str) -> Option<String> {
     let mut from_table: Option<String> = None;
     let mut selects: Vec<String> = Vec::new();
+    let mut derives: Vec<(String, String)> = Vec::new();
     let mut filters: Vec<String> = Vec::new();
     let mut limits: Option<String> = None;
     let mut sort_keys: Vec<String> = Vec::new();
@@ -126,6 +127,12 @@ fn naive_prql_to_sql(source: &str) -> Option<String> {
                             .map(|field| field.trim_matches('.').to_string()),
                     );
                 }
+            } else if let Some(rest) = entry.strip_prefix("derive") {
+                if let Some(fields) = extract_assignments(rest) {
+                    derives.extend(fields.into_iter().map(|(alias, expr)| {
+                        (alias, normalize_prql_expr(&expr))
+                    }));
+                }
             } else if let Some(rest) = entry.strip_prefix("filter ") {
                 let normalized = rest.trim().replace("==", "=");
                 filters.push(normalized);
@@ -140,11 +147,7 @@ fn naive_prql_to_sql(source: &str) -> Option<String> {
     }
 
     let table = from_table?;
-    let select_clause = if selects.is_empty() {
-        "*".to_string()
-    } else {
-        selects.join(", ")
-    };
+    let select_clause = build_select_clause(&selects, &derives);
 
     let mut sql = format!("SELECT {} FROM {}", select_clause, table);
 
@@ -164,6 +167,29 @@ fn naive_prql_to_sql(source: &str) -> Option<String> {
     }
 
     Some(sql)
+}
+
+fn build_select_clause(selects: &[String], derives: &[(String, String)]) -> String {
+    if selects.is_empty() {
+        if derives.is_empty() {
+            return "*".to_string();
+        }
+        return derives
+            .iter()
+            .map(|(alias, expr)| format!("{expr} AS {alias}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+    }
+
+    let mut rendered = Vec::with_capacity(selects.len());
+    for field in selects {
+        if let Some((alias, expr)) = derives.iter().find(|(alias, _)| alias == field) {
+            rendered.push(format!("{expr} AS {alias}"));
+        } else {
+            rendered.push(field.clone());
+        }
+    }
+    rendered.join(", ")
 }
 
 fn extract_group(rest: &str) -> Option<Vec<String>> {
@@ -188,4 +214,43 @@ fn extract_group(rest: &str) -> Option<Vec<String>> {
     } else {
         Some(fields)
     }
+}
+
+fn extract_assignments(rest: &str) -> Option<Vec<(String, String)>> {
+    let trimmed = rest.trim();
+    let start = trimmed.find(['{', '['])?;
+    let end = trimmed.rfind(['}', ']'])?;
+    let group = &trimmed[start + 1..end];
+    let mut fields = Vec::new();
+    for field in group.split(',') {
+        let entry = field.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let (alias, expr) = entry.split_once('=')?;
+        fields.push((alias.trim().to_string(), expr.trim().to_string()));
+    }
+    if fields.is_empty() {
+        None
+    } else {
+        Some(fields)
+    }
+}
+
+fn normalize_prql_expr(expr: &str) -> String {
+    let trimmed = expr.trim();
+    let mut parts = trimmed.split_whitespace();
+    let Some(head) = parts.next() else {
+        return trimmed.to_string();
+    };
+    let Some(arg) = parts.next() else {
+        return trimmed.to_string();
+    };
+    if parts.next().is_none()
+        && matches!(head, "sum" | "count" | "min" | "max" | "avg")
+        && !arg.contains('(')
+    {
+        return format!("{head}({arg})");
+    }
+    trimmed.to_string()
 }

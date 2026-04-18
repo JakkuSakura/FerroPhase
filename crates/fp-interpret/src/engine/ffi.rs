@@ -92,45 +92,6 @@ impl FfiRuntime {
         unsafe { self.invoke(&cif, code, sig.ret_ty.as_ref(), &ffi_args) }
     }
 
-    pub fn call_ptr(
-        &self,
-        sig: &FunctionSignature,
-        func_ptr: *const c_void,
-        args: &[Value],
-    ) -> Result<Value> {
-        if sig.params.len() != args.len() {
-            return Err(Error::from(format!(
-                "jit call expects {} args, got {}",
-                sig.params.len(),
-                args.len()
-            )));
-        }
-
-        let (arg_types, arg_values, _backings) = self.build_args(sig, args)?;
-        let ret_ty = ffi_type_for_return(sig.ret_ty.as_ref())?;
-
-        let cif = Cif::new(arg_types, ret_ty.clone());
-        let ffi_args: Vec<Arg<'_>> = arg_values
-            .iter()
-            .map(|value| match value {
-                FfiArgValue::I8(v) => Arg::new(v),
-                FfiArgValue::U8(v) => Arg::new(v),
-                FfiArgValue::I16(v) => Arg::new(v),
-                FfiArgValue::U16(v) => Arg::new(v),
-                FfiArgValue::I32(v) => Arg::new(v),
-                FfiArgValue::U32(v) => Arg::new(v),
-                FfiArgValue::I64(v) => Arg::new(v),
-                FfiArgValue::U64(v) => Arg::new(v),
-                FfiArgValue::F32(v) => Arg::new(v),
-                FfiArgValue::F64(v) => Arg::new(v),
-                FfiArgValue::Ptr(v) => Arg::new(v),
-            })
-            .collect();
-
-        let code = CodePtr::from_ptr(func_ptr as *mut c_void);
-        unsafe { self.invoke(&cif, code, sig.ret_ty.as_ref(), &ffi_args) }
-    }
-
     fn resolve_symbol(&mut self, name: &str) -> Result<*const c_void> {
         if let Some(ptr) = self.symbols.get(name).copied() {
             return Ok(ptr);
@@ -897,7 +858,7 @@ fn enum_tag_layout(repr: &ReprOptions) -> Result<EnumTagLayout> {
         None => {
             return Err(Error::from(
                 "missing repr(C) or primitive integer repr for C ABI enum",
-            ))
+            ));
         }
     };
     let layout = c_abi_layout_for_primitive(primitive)?;

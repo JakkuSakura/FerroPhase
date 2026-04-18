@@ -168,7 +168,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return Err(interpretation_error(format!(
                     "unsupported operands for ordering comparison: {:?}",
                     other
-                )))
+                )));
             }
         };
         let result = match op {
@@ -200,7 +200,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return Err(interpretation_error(format!(
                     "logical operators require booleans, found {:?}",
                     other
-                )))
+                )));
             }
         };
         let result = match op {
@@ -247,7 +247,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         return Err(interpretation_error(format!(
                             "unsupported operands for bitwise: {:?}",
                             (op, Value::Type(lhs_ty), Value::Type(rhs_ty))
-                        )))
+                        )));
                     }
                 };
                 Ok(Value::Type(Ty::TypeBinaryOp(

@@ -349,8 +349,15 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         };
 
         // Compile single file
-        if let Some(artifact_path) =
-            compile_file(input_file, &output_file, &args, target, module_resolution, config).await?
+        if let Some(artifact_path) = compile_file(
+            input_file,
+            &output_file,
+            &args,
+            target,
+            module_resolution,
+            config,
+        )
+        .await?
         {
             compiled_files.push(artifact_path);
         }
@@ -935,7 +942,10 @@ fn emit_ast_target(
             }
             #[cfg(not(feature = "lang-godot"))]
             {
-                Err(disabled_feature_error("lang-godot", "GDScript AST emission"))
+                Err(disabled_feature_error(
+                    "lang-godot",
+                    "GDScript AST emission",
+                ))
             }
         }
         crate::languages::backend::AstLanguageTarget::Zig => {
@@ -973,7 +983,8 @@ fn emit_ast_target(
         crate::languages::backend::AstLanguageTarget::Wit => {
             #[cfg(feature = "lang-wit")]
             {
-                let serializer = WitSerializer::with_options(build_wit_options(input, single_world));
+                let serializer =
+                    WitSerializer::with_options(build_wit_options(input, single_world));
                 serializer
                     .emit_node(node)
                     .map_err(|e| CliError::TargetEmit(e.to_string()))
@@ -1338,7 +1349,11 @@ fn load_workspace_document(path: &Path) -> Result<WorkspaceDocument> {
 fn build_package_graph_from_workspace(
     workspace: &WorkspaceDocument,
     graph_path: &Path,
-) -> Result<(PackageGraph, Vec<(VirtualPath, ModuleId)>, HashSet<ModuleLanguage>)> {
+) -> Result<(
+    PackageGraph,
+    Vec<(VirtualPath, ModuleId)>,
+    HashSet<ModuleLanguage>,
+)> {
     let graph_root = graph_path.parent().unwrap_or_else(|| Path::new("."));
     let manifest_path = resolve_workspace_path(graph_root, &workspace.manifest);
     let workspace_root = manifest_path.parent().unwrap_or(graph_root);
@@ -1740,18 +1755,19 @@ mod tests {
         let module_path = package_root.join("src").join("mod.fp");
         std::fs::write(&module_path, "fn main() {}\n")?;
 
-        let workspace = WorkspaceDocument::new(manifest_path.to_string_lossy()).with_packages(
-            vec![WorkspacePackage::new(
-                "demo",
-                package_manifest.to_string_lossy(),
-                package_root.to_string_lossy(),
-            )
-            .with_modules(vec![
-                WorkspaceModule::new("demo", module_path.to_string_lossy())
-                    .with_module_path(Vec::new())
-                    .with_language(Some("ferro".to_string())),
-            ])],
-        );
+        let workspace =
+            WorkspaceDocument::new(manifest_path.to_string_lossy()).with_packages(vec![
+                WorkspacePackage::new(
+                    "demo",
+                    package_manifest.to_string_lossy(),
+                    package_root.to_string_lossy(),
+                )
+                .with_modules(vec![
+                    WorkspaceModule::new("demo", module_path.to_string_lossy())
+                        .with_module_path(Vec::new())
+                        .with_language(Some("ferro".to_string())),
+                ]),
+            ]);
 
         let graph_path = root.join("workspace-graph.json");
         let payload = serde_json::to_string_pretty(&workspace)
@@ -1776,17 +1792,18 @@ mod tests {
         std::fs::create_dir_all(package_root.join("src"))?;
         std::fs::write(&package_manifest, "[package]\nname = \"demo\"\n")?;
 
-        let workspace = WorkspaceDocument::new(manifest_path.to_string_lossy()).with_packages(
-            vec![WorkspacePackage::new(
-                "demo",
-                package_manifest.to_string_lossy(),
-                package_root.to_string_lossy(),
-            )
-            .with_dependencies(vec![WorkspaceDependency::new(
-                "dep",
-                Some("invalid".to_string()),
-            )])],
-        );
+        let workspace =
+            WorkspaceDocument::new(manifest_path.to_string_lossy()).with_packages(vec![
+                WorkspacePackage::new(
+                    "demo",
+                    package_manifest.to_string_lossy(),
+                    package_root.to_string_lossy(),
+                )
+                .with_dependencies(vec![WorkspaceDependency::new(
+                    "dep",
+                    Some("invalid".to_string()),
+                )]),
+            ]);
 
         let graph_path = root.join("workspace-graph.json");
         let payload = serde_json::to_string_pretty(&workspace)
@@ -1794,9 +1811,7 @@ mod tests {
         std::fs::write(&graph_path, payload)?;
 
         let err = build_package_graph_from_workspace(&workspace, &graph_path).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("Unsupported dependency kind"));
+        assert!(err.to_string().contains("Unsupported dependency kind"));
         Ok(())
     }
 }
