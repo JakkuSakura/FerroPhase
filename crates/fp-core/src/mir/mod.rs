@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use crate::intrinsics::IntrinsicCallKind;
-use crate::query::QueryDocument;
-use crate::sql_ast;
+use crate::query::{QueryIrDocument, QueryOrigin};
 
 pub mod ident;
 pub mod pretty;
@@ -61,8 +60,8 @@ pub struct Static {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Query {
-    pub document: QueryDocument,
-    pub statements: Vec<sql_ast::Statement>,
+    pub origin: QueryOrigin,
+    pub ir: QueryIrDocument,
     pub span: Span,
 }
 
@@ -192,6 +191,7 @@ pub struct SwitchTargets {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Rvalue {
     Use(Operand),
+    Query(Query),
     IntrinsicCall {
         kind: IntrinsicCallKind,
         format: String,
@@ -663,6 +663,7 @@ impl Rvalue {
     pub fn span(&self) -> Span {
         match self {
             Rvalue::Use(operand) => operand.span(),
+            Rvalue::Query(query) => query.span,
             Rvalue::IntrinsicCall { args, .. } => Span::union(args.iter().map(Operand::span)),
             Rvalue::Repeat(op, _) => op.span(),
             Rvalue::Ref(_, _, place) => place.span(),

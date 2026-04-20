@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use fp_core::error::Error;
 use fp_core::mir;
-use fp_core::query::{QueryDocument, QueryKind, SqlDialect};
 use fp_sql::extract_select_projection;
 
 use crate::error::optimization_error;
@@ -50,19 +49,15 @@ impl MirPassName {
 #[derive(Debug, Clone)]
 pub struct OptimizationPlan {
     pub passes: Vec<MirPassName>,
-    pub query: Option<QueryDocument>,
 }
 
 impl OptimizationPlan {
     pub fn empty() -> Self {
-        Self {
-            passes: Vec::new(),
-            query: None,
-        }
+        Self { passes: Vec::new() }
     }
 
     pub fn for_level(level: u8) -> Self {
-        let query = match level {
+        let source = match level {
             0 => None,
             1 => Some("SELECT const_fold, const_propagate FROM mir"),
             _ => Some(
@@ -70,20 +65,21 @@ impl OptimizationPlan {
             ),
         };
 
-        match query {
-            Some(text) => {
-                let query = QueryDocument::sql(text, SqlDialect::Generic);
-                Self::from_query(query).unwrap_or_else(|_| Self::empty())
-            }
+        match source {
+            Some(text) => Self::from_sql(text).unwrap_or_else(|_| Self::empty()),
             None => Self::empty(),
         }
     }
 
-    pub fn from_query(query: QueryDocument) -> Result<Self, Error> {
-        let passes = parse_passes_from_query(&query)?;
+    pub fn from_sql(source: &str) -> Result<Self, Error> {
         Ok(Self {
-            passes,
-            query: Some(query),
+            passes: parse_passes_from_sql(source)?,
+        })
+    }
+
+    pub fn from_prql(source: &str) -> Result<Self, Error> {
+        Ok(Self {
+            passes: parse_passes_from_prql(source)?,
         })
     }
 
@@ -216,25 +212,17 @@ impl MirQueryEngine {
     }
 }
 
-fn parse_passes_from_query(query: &QueryDocument) -> Result<Vec<MirPassName>, Error> {
+fn parse_passes_from_sql(source: &str) -> Result<Vec<MirPassName>, Error> {
     let mut passes = Vec::new();
-
-    match &query.kind {
-        QueryKind::Sql(sql) => {
-            for statement in &sql.statements {
-                parse_sql_statement(&statement.text, &mut passes)?;
-            }
-        }
-        QueryKind::Prql(prql) => {
-            parse_prql_pipeline(&prql.pipeline, &mut passes)?;
-        }
-        QueryKind::Any(_) => {
-            return Err(optimization_error(
-                "unsupported query payload for MIR optimizer",
-            ));
-        }
+    for statement in source.split(';') {
+        parse_sql_statement(statement, &mut passes)?;
     }
+    Ok(passes)
+}
 
+fn parse_passes_from_prql(source: &str) -> Result<Vec<MirPassName>, Error> {
+    let mut passes = Vec::new();
+    parse_prql_pipeline(source, &mut passes)?;
     Ok(passes)
 }
 
@@ -546,6 +534,7 @@ fn collect_statement_defs(stmt: &mir::Statement, defs: &mut [bool]) {
 
 fn collect_rvalue_uses(rvalue: &mir::Rvalue, uses: &mut [bool], defs: &[bool]) {
     match rvalue {
+        mir::Rvalue::Query(_) => {}
         mir::Rvalue::Use(op) => collect_operand_uses(op, uses, defs),
         mir::Rvalue::BinaryOp(_, lhs, rhs) | mir::Rvalue::CheckedBinaryOp(_, lhs, rhs) => {
             collect_operand_uses(lhs, uses, defs);
@@ -1010,6 +999,7 @@ fn rewrite_rvalue_operands(
     span: mir::Span,
 ) -> usize {
     match rvalue {
+        mir::Rvalue::Query(_) => 0,
         mir::Rvalue::Use(operand) => rewrite_operand(operand, state, policy, span).unwrap_or(0),
         mir::Rvalue::BinaryOp(_, lhs, rhs) | mir::Rvalue::CheckedBinaryOp(_, lhs, rhs) => {
             rewrite_operand(lhs, state, policy, span).unwrap_or(0)
@@ -1131,6 +1121,7 @@ fn constant_to_u128(value: Option<&mir::ConstantKind>) -> Option<u128> {
 
 fn is_pure_rvalue(rvalue: &mir::Rvalue) -> bool {
     match rvalue {
+        mir::Rvalue::Query(_) => false,
         mir::Rvalue::Use(_)
         | mir::Rvalue::BinaryOp(_, _, _)
         | mir::Rvalue::CheckedBinaryOp(_, _, _)

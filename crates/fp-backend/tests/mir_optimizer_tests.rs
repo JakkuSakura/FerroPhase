@@ -3,7 +3,6 @@ use fp_core::mir::{
     self,
     ty::{IntTy, Ty},
 };
-use fp_core::query::{QueryDocument, SqlDialect};
 use fp_core::span::Span;
 use std::collections::HashMap;
 
@@ -25,6 +24,10 @@ fn int_constant(value: i64) -> mir::Constant {
         user_ty: None,
         literal: mir::ConstantKind::Int(value),
     }
+}
+
+fn plan_from_sql(source: &str) -> OptimizationPlan {
+    OptimizationPlan::from_sql(source).expect("plan should parse")
 }
 
 fn build_program(statements: Vec<mir::Statement>) -> mir::Program {
@@ -123,8 +126,7 @@ fn const_fold_rewrites_binary_op() {
     }];
 
     let mut program = build_program(statements);
-    let query = QueryDocument::sql("SELECT const_fold FROM mir", SqlDialect::Generic);
-    let plan = OptimizationPlan::from_query(query).expect("plan should parse");
+    let plan = plan_from_sql("SELECT const_fold FROM mir");
     let optimizer = MirOptimizer::new();
     optimizer
         .apply_plan(&mut program, &plan)
@@ -158,8 +160,7 @@ fn remove_nop_eliminates_empty_statements() {
     ];
 
     let mut program = build_program(statements);
-    let query = QueryDocument::sql("SELECT remove_nop FROM mir", SqlDialect::Generic);
-    let plan = OptimizationPlan::from_query(query).expect("plan should parse");
+    let plan = plan_from_sql("SELECT remove_nop FROM mir");
     let optimizer = MirOptimizer::new();
     optimizer
         .apply_plan(&mut program, &plan)
@@ -198,8 +199,7 @@ fn const_propagate_rewrites_copy_to_constant() {
         kind: mir::TerminatorKind::Return,
     };
     let mut program = build_program_with_locals(statements, locals, terminator);
-    let query = QueryDocument::sql("SELECT const_propagate FROM mir", SqlDialect::Generic);
-    let plan = OptimizationPlan::from_query(query).expect("plan should parse");
+    let plan = plan_from_sql("SELECT const_propagate FROM mir");
     let optimizer = MirOptimizer::new();
     optimizer
         .apply_plan(&mut program, &plan)
@@ -246,8 +246,7 @@ fn copy_propagate_rewrites_alias_copy() {
         kind: mir::TerminatorKind::Return,
     };
     let mut program = build_program_with_locals(statements, locals, terminator);
-    let query = QueryDocument::sql("SELECT copy_propagate FROM mir", SqlDialect::Generic);
-    let plan = OptimizationPlan::from_query(query).expect("plan should parse");
+    let plan = plan_from_sql("SELECT copy_propagate FROM mir");
     let optimizer = MirOptimizer::new();
     optimizer
         .apply_plan(&mut program, &plan)
@@ -266,11 +265,7 @@ fn copy_propagate_rewrites_alias_copy() {
 
 #[test]
 fn optimizer_query_parses_multiline_from_clause() {
-    let query = QueryDocument::sql(
-        "SELECT const_fold,\n  const_propagate\nFROM mir",
-        SqlDialect::Generic,
-    );
-    let plan = OptimizationPlan::from_query(query).expect("plan should parse");
+    let plan = plan_from_sql("SELECT const_fold,\n  const_propagate\nFROM mir");
     assert_eq!(
         plan.passes,
         vec![MirPassName::ConstFold, MirPassName::ConstPropagate]
@@ -288,8 +283,7 @@ fn dead_store_marks_unused_temp_assignments() {
     }];
 
     let mut program = build_program(statements);
-    let query = QueryDocument::sql("SELECT dead_store FROM mir", SqlDialect::Generic);
-    let plan = OptimizationPlan::from_query(query).expect("plan should parse");
+    let plan = plan_from_sql("SELECT dead_store FROM mir");
     let optimizer = MirOptimizer::new();
     optimizer
         .apply_plan(&mut program, &plan)
@@ -356,8 +350,7 @@ fn simplify_branches_rewrites_constant_switch() {
         }],
         bodies,
     };
-    let query = QueryDocument::sql("SELECT simplify_branches FROM mir", SqlDialect::Generic);
-    let plan = OptimizationPlan::from_query(query).expect("plan should parse");
+    let plan = plan_from_sql("SELECT simplify_branches FROM mir");
     let optimizer = MirOptimizer::new();
     optimizer
         .apply_plan(&mut program, &plan)
@@ -392,8 +385,7 @@ fn remove_storage_drops_storage_markers() {
     ];
 
     let mut program = build_program(statements);
-    let query = QueryDocument::sql("SELECT remove_storage FROM mir", SqlDialect::Generic);
-    let plan = OptimizationPlan::from_query(query).expect("plan should parse");
+    let plan = plan_from_sql("SELECT remove_storage FROM mir");
     let optimizer = MirOptimizer::new();
     optimizer
         .apply_plan(&mut program, &plan)

@@ -16,8 +16,8 @@ fn parses_basic_select() {
             if let Some(sql) = doc.kind.as_sql() {
                 assert_eq!(sql.statements.len(), 1);
                 assert!(sql.statements[0].text.to_uppercase().contains("SELECT"));
-                assert_eq!(sql.ast.len(), 1);
                 let semantic = doc.semantic.as_ref().expect("semantic query");
+                assert_eq!(semantic.statements.len(), 1);
                 assert!(matches!(semantic.statements[0], QueryIrStmt::Query(_)));
             } else {
                 panic!("expected sql query kind");
@@ -52,7 +52,6 @@ fn parses_multiple_statements_and_attaches_name() {
     assert_eq!(sql.statements.len(), 2, "expected two SQL statements");
     assert_eq!(sql.statements[0].text, "CREATE TABLE items(id INTEGER)");
     assert_eq!(sql.statements[1].text, "INSERT INTO items VALUES (1)");
-    assert_eq!(sql.ast.len(), 2, "expected two SQL AST statements");
     let semantic = doc.semantic.as_ref().expect("semantic query");
     assert_eq!(
         semantic.statements.len(),

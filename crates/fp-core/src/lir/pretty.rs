@@ -5,7 +5,7 @@ use crate::pretty::{escape_string, PrettyCtx, PrettyPrintable};
 use super::ty::Ty;
 use super::{
     CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirGlobal, LirInstruction,
-    LirInstructionKind, LirProgram, LirTerminator, LirValue, Visibility,
+    LirInstructionKind, LirProgram, LirQuery, LirTerminator, LirValue, Visibility,
 };
 
 impl PrettyPrintable for LirProgram {
@@ -35,6 +35,16 @@ impl PrettyPrintable for LirProgram {
                 })?;
             }
 
+            if !self.queries.is_empty() {
+                ctx.writeln(f, "queries:")?;
+                ctx.with_indent(|ctx| {
+                    for query in &self.queries {
+                        write_query(query, f, ctx)?;
+                    }
+                    Ok(())
+                })?;
+            }
+
             if !self.functions.is_empty() {
                 ctx.writeln(f, "functions:")?;
                 ctx.with_indent(|ctx| {
@@ -52,6 +62,18 @@ impl PrettyPrintable for LirProgram {
         })?;
         ctx.writeln(f, "}")
     }
+}
+
+fn write_query(query: &LirQuery, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+    let name = query.ir.name.as_deref().unwrap_or("<anonymous>");
+    let statement_count = query.ir.statements.len();
+    ctx.writeln(
+        f,
+        format!(
+            "q{} \"{}\" // semantic_stmts: {}, span: {:?}",
+            query.query_id, name, statement_count, query.span
+        ),
+    )
 }
 
 fn write_global(global: &LirGlobal, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
@@ -463,6 +485,13 @@ fn summarize_instruction(inst: &LirInstruction) -> String {
             let args = args.iter().map(format_value).collect::<Vec<_>>().join(", ");
             text.push_str(&format!("({})", args));
             text
+        }
+        ExecQuery(query) => {
+            let name = query.ir.name.as_deref().unwrap_or("<anonymous>");
+            format!(
+                "%r{} = exec_query q{} \"{}\"",
+                inst.id, query.query_id, name
+            )
         }
         IntrinsicCall { kind, format, args } => {
             let args = args.iter().map(format_value).collect::<Vec<_>>().join(", ");

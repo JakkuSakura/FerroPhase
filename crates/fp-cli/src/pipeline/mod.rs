@@ -30,8 +30,8 @@ use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_bytecode;
 use fp_core::ast::register_threadlocal_serializer;
 use fp_core::ast::{
-    self, AstSerializer, File, Ident, Item, ItemChunk, ItemKind, MacroExpansionParser, Module,
-    Node, NodeKind, RuntimeValue, Value, Visibility,
+    AstSerializer, File, Ident, Item, ItemChunk, ItemKind, MacroExpansionParser, Module, Node,
+    NodeKind, RuntimeValue, Value, Visibility,
 };
 use fp_core::cfg::TargetEnv;
 use fp_core::context::SharedScopedContext;
@@ -39,10 +39,8 @@ use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager,
 };
 use fp_core::intrinsics::IntrinsicNormalizer;
-use fp_core::intrinsics::{ensure_function_decl, make_function_decl};
 use fp_core::pretty::{PrettyOptions, pretty};
-use fp_core::query::{QueryDocument, lower_fp_expr_to_query, promote_fp_query_node};
-use fp_core::span::Span;
+use fp_core::query::promote_fp_query_node;
 use fp_core::{hir, lir};
 #[cfg(feature = "lang-dotnet")]
 use fp_dotnet::{emit_assembly, emit_cil};
@@ -73,7 +71,7 @@ mod stages;
 use self::diagnostics as diag;
 #[cfg(feature = "llvm")]
 use artifacts::LlvmArtifacts;
-pub use artifacts::{FrontendBundle, MirBundle};
+pub use artifacts::{FrontendBundle, LirBundle, MirBundle};
 pub use options::{BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig};
 
 const STAGE_FRONTEND: &str = "frontend";
@@ -131,21 +129,11 @@ pub struct Pipeline {
     source_language: Option<String>,
     frontend_snapshot: Option<FrontendSnapshot>,
     last_const_eval: Option<ConstEvalOutcome>,
-    embedded_queries: Vec<EmbeddedQuery>,
     #[cfg(feature = "lang-typescript")]
     typescript_frontend: Option<Arc<TypeScriptFrontend>>,
     #[cfg(feature = "lang-typescript")]
     typescript_parse_mode: TsParseMode,
 }
-
-#[derive(Debug, Clone)]
-struct EmbeddedQuery {
-    document: QueryDocument,
-    span: Span,
-    call_name: Option<String>,
-}
-
-const EMBEDDED_QUERY_FN_PREFIX: &str = "__px_query_";
 
 #[derive(Debug, Clone, Default)]
 pub struct AstPreparationOptions {
@@ -234,7 +222,6 @@ impl Pipeline {
             source_language: None,
             frontend_snapshot: None,
             last_const_eval: None,
-            embedded_queries: Vec::new(),
             #[cfg(feature = "lang-typescript")]
             typescript_frontend: Some(ts_frontend_concrete),
             #[cfg(feature = "lang-typescript")]
@@ -521,6 +508,45 @@ impl Pipeline {
         self.lower_ast_to_mir_bundle(ast, &options, Some(path))
     }
 
+    pub fn compile_source_to_lir(
+        &mut self,
+        source: &str,
+        source_path: Option<&Path>,
+        mut options: PipelineOptions,
+    ) -> Result<LirBundle, CliError> {
+        let explicit_base_path = options.base_path.clone();
+        let input_path = source_path.map(Path::to_path_buf);
+        let default_base_path = input_path
+            .as_ref()
+            .map(|path| path.with_extension(""))
+            .unwrap_or_else(|| PathBuf::from("expression"));
+        options.base_path = explicit_base_path.or_else(|| Some(default_base_path));
+
+        self.reset_state();
+        let ast = self.parse_input_source(&options, source, input_path.as_ref())?;
+        self.lower_ast_to_lir_bundle(ast, &options, input_path.as_deref())
+    }
+
+    pub fn compile_file_to_lir(
+        &mut self,
+        path: &Path,
+        mut options: PipelineOptions,
+    ) -> Result<LirBundle, CliError> {
+        let source = fs::read_to_string(path).map_err(|err| {
+            CliError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to read file {}: {err}", path.display()),
+            ))
+        })?;
+        let explicit_base_path = options.base_path.clone();
+        options.base_path = explicit_base_path.or_else(|| Some(path.with_extension("")));
+        let input_path = path.to_path_buf();
+
+        self.reset_state();
+        let ast = self.parse_input_source(&options, &source, Some(&input_path))?;
+        self.lower_ast_to_lir_bundle(ast, &options, Some(path))
+    }
+
     pub async fn execute_with_options(
         &mut self,
         input: PipelineInput,
@@ -628,9 +654,6 @@ impl Pipeline {
             ));
         }
 
-        self.extract_embedded_queries(&mut ast, input_path);
-        self.inject_embedded_query_decls(&mut ast);
-
         if stage_enabled(options, STAGE_INTRINSIC_NORMALIZE) {
             self.stage_normalize_intrinsics(&mut ast, options)?;
         }
@@ -673,8 +696,7 @@ impl Pipeline {
             self.stage_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE, options)?;
         }
 
-        let mut hir_program = self.stage_hir_generation(&ast, options, input_path, base_path)?;
-        self.append_embedded_queries_to_hir(&mut hir_program)?;
+        let hir_program = self.stage_hir_generation(&ast, options, input_path, base_path)?;
         let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
         let frontend = FrontendBundle {
             source_language: self
@@ -692,6 +714,25 @@ impl Pipeline {
         })
     }
 
+    fn lower_ast_to_lir_bundle(
+        &mut self,
+        ast: Node,
+        options: &PipelineOptions,
+        input_path: Option<&Path>,
+    ) -> Result<LirBundle, CliError> {
+        let base_path = options.base_path.as_ref().ok_or_else(|| {
+            CliError::Compilation("Missing base path for LIR lowering".to_string())
+        })?;
+        let mir_bundle = self.lower_ast_to_mir_bundle(ast, options, input_path)?;
+        let lir = self.stage_mir_to_lir(&mir_bundle.mir_program, options, base_path)?;
+        Ok(LirBundle {
+            frontend: mir_bundle.frontend,
+            hir_program: mir_bundle.hir_program,
+            mir_program: mir_bundle.mir_program,
+            lir_program: lir.lir_program,
+        })
+    }
+
     fn reset_state(&mut self) {
         self.serializer = None;
         self.intrinsic_normalizer = None;
@@ -699,601 +740,6 @@ impl Pipeline {
         self.source_language = None;
         self.frontend_snapshot = None;
         self.last_const_eval = None;
-        self.embedded_queries.clear();
-    }
-
-    fn extract_embedded_queries(&mut self, ast: &mut Node, input_path: Option<&Path>) {
-        if self.source_language.as_deref() != Some(languages::FERROPHASE) {
-            return;
-        }
-
-        match ast.kind_mut() {
-            NodeKind::File(file) => {
-                for item in &mut file.items {
-                    self.extract_embedded_queries_from_item(item, input_path);
-                }
-            }
-            NodeKind::Item(item) => self.extract_embedded_queries_from_item(item, input_path),
-            NodeKind::Expr(expr) => {
-                self.extract_embedded_queries_from_expr(expr, input_path, false)
-            }
-            NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {}
-        }
-    }
-
-    fn inject_embedded_query_decls(&self, ast: &mut Node) {
-        let NodeKind::File(file) = ast.kind_mut() else {
-            return;
-        };
-
-        for embedded in &self.embedded_queries {
-            let Some(name) = embedded.call_name.as_deref() else {
-                continue;
-            };
-            let ret_ty = ast::Ty::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I64));
-            ensure_function_decl(file, make_function_decl(name, Vec::new(), ret_ty));
-        }
-    }
-
-    fn extract_embedded_queries_from_item(
-        &mut self,
-        item: &mut ast::Item,
-        input_path: Option<&Path>,
-    ) {
-        match item.kind_mut() {
-            ast::ItemKind::Module(module) => {
-                for child in &mut module.items {
-                    self.extract_embedded_queries_from_item(child, input_path);
-                }
-            }
-            ast::ItemKind::Impl(impl_block) => {
-                for child in &mut impl_block.items {
-                    self.extract_embedded_queries_from_item(child, input_path);
-                }
-            }
-            ast::ItemKind::DefFunction(function) => {
-                let runtime_bind = function_returns_value(function);
-                self.extract_embedded_queries_from_expr(
-                    function.body.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ItemKind::DefConst(def) => {
-                self.extract_embedded_queries_from_expr(def.value.as_mut(), input_path, false);
-            }
-            ast::ItemKind::DefStatic(def) => {
-                self.extract_embedded_queries_from_expr(def.value.as_mut(), input_path, false);
-            }
-            ast::ItemKind::Expr(expr) => {
-                self.extract_embedded_queries_from_expr(expr, input_path, false)
-            }
-            ast::ItemKind::DefStruct(_)
-            | ast::ItemKind::DefStructural(_)
-            | ast::ItemKind::DefEnum(_)
-            | ast::ItemKind::DefType(_)
-            | ast::ItemKind::OpaqueType(_)
-            | ast::ItemKind::DefTrait(_)
-            | ast::ItemKind::DeclType(_)
-            | ast::ItemKind::DeclConst(_)
-            | ast::ItemKind::DeclStatic(_)
-            | ast::ItemKind::DeclFunction(_)
-            | ast::ItemKind::Import(_)
-            | ast::ItemKind::Macro(_)
-            | ast::ItemKind::Any(_) => {}
-        }
-    }
-
-    fn extract_embedded_queries_from_block(
-        &mut self,
-        block: &mut ast::ExprBlock,
-        input_path: Option<&Path>,
-        runtime_bind: bool,
-    ) {
-        for stmt in &mut block.stmts {
-            match stmt {
-                ast::BlockStmt::Expr(expr_stmt) => {
-                    let runtime_bind = runtime_bind && expr_stmt.has_value();
-                    self.extract_embedded_queries_from_expr(
-                        expr_stmt.expr.as_mut(),
-                        input_path,
-                        runtime_bind,
-                    );
-                }
-                ast::BlockStmt::Let(stmt_let) => {
-                    if let Some(init) = stmt_let.init.as_mut() {
-                        self.extract_embedded_queries_from_expr(init, input_path, true);
-                    }
-                    if let Some(diverge) = stmt_let.diverge.as_mut() {
-                        self.extract_embedded_queries_from_expr(diverge, input_path, true);
-                    }
-                }
-                ast::BlockStmt::Defer(stmt_defer) => {
-                    self.extract_embedded_queries_from_expr(
-                        stmt_defer.expr.as_mut(),
-                        input_path,
-                        false,
-                    );
-                }
-                ast::BlockStmt::Item(item) => {
-                    self.extract_embedded_queries_from_item(item.as_mut(), input_path);
-                }
-                ast::BlockStmt::Noop | ast::BlockStmt::Any(_) => {}
-            }
-        }
-    }
-
-    fn extract_embedded_queries_from_expr(
-        &mut self,
-        expr: &mut ast::Expr,
-        input_path: Option<&Path>,
-        runtime_bind: bool,
-    ) {
-        if let Some(document) = lower_fp_expr_to_query(expr, input_path) {
-            let span = expr.span();
-            let ty = expr.ty().cloned();
-            let call_name =
-                runtime_bind.then(|| embedded_query_fn_name(self.embedded_queries.len()));
-            self.embedded_queries.push(EmbeddedQuery {
-                document,
-                span,
-                call_name: call_name.clone(),
-            });
-            *expr = match call_name {
-                Some(name) => embedded_query_call_expr(&name, span, ty),
-                None => ast::Expr::unit().with_span(span).with_ty_slot(ty),
-            };
-            return;
-        }
-
-        match expr.kind_mut() {
-            ast::ExprKind::Block(block) => {
-                self.extract_embedded_queries_from_block(block, input_path, runtime_bind)
-            }
-            ast::ExprKind::If(expr_if) => {
-                self.extract_embedded_queries_from_expr(
-                    expr_if.cond.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-                self.extract_embedded_queries_from_expr(
-                    expr_if.then.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-                if let Some(else_expr) = expr_if.elze.as_mut() {
-                    self.extract_embedded_queries_from_expr(else_expr, input_path, runtime_bind);
-                }
-            }
-            ast::ExprKind::Loop(expr_loop) => {
-                self.extract_embedded_queries_from_expr(
-                    expr_loop.body.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::For(expr_for) => {
-                self.extract_embedded_queries_from_expr(
-                    expr_for.iter.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-                self.extract_embedded_queries_from_expr(
-                    expr_for.body.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Async(expr_async) => {
-                self.extract_embedded_queries_from_expr(
-                    expr_async.expr.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::While(expr_while) => {
-                self.extract_embedded_queries_from_expr(
-                    expr_while.cond.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-                self.extract_embedded_queries_from_expr(
-                    expr_while.body.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::With(expr_with) => {
-                self.extract_embedded_queries_from_expr(
-                    expr_with.context.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-                self.extract_embedded_queries_from_expr(
-                    expr_with.body.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Return(expr_return) => {
-                if let Some(value) = expr_return.value.as_mut() {
-                    self.extract_embedded_queries_from_expr(
-                        value.as_mut(),
-                        input_path,
-                        runtime_bind,
-                    );
-                }
-            }
-            ast::ExprKind::Break(expr_break) => {
-                if let Some(value) = expr_break.value.as_mut() {
-                    self.extract_embedded_queries_from_expr(
-                        value.as_mut(),
-                        input_path,
-                        runtime_bind,
-                    );
-                }
-            }
-            ast::ExprKind::ConstBlock(const_block) => {
-                self.extract_embedded_queries_from_expr(
-                    const_block.expr.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Match(expr_match) => {
-                for case in &mut expr_match.cases {
-                    self.extract_embedded_queries_from_expr(
-                        case.cond.as_mut(),
-                        input_path,
-                        runtime_bind,
-                    );
-                    self.extract_embedded_queries_from_expr(
-                        case.body.as_mut(),
-                        input_path,
-                        runtime_bind,
-                    );
-                }
-            }
-            ast::ExprKind::Let(expr_let) => {
-                self.extract_embedded_queries_from_expr(
-                    expr_let.expr.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Assign(assign) => {
-                self.extract_embedded_queries_from_expr(
-                    assign.target.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-                self.extract_embedded_queries_from_expr(
-                    assign.value.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Cast(cast) => {
-                self.extract_embedded_queries_from_expr(
-                    cast.expr.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Invoke(invoke) => {
-                match &mut invoke.target {
-                    ast::ExprInvokeTarget::Expr(inner) => {
-                        self.extract_embedded_queries_from_expr(
-                            inner.as_mut(),
-                            input_path,
-                            runtime_bind,
-                        );
-                    }
-                    ast::ExprInvokeTarget::Method(select) => {
-                        self.extract_embedded_queries_from_expr(
-                            select.obj.as_mut(),
-                            input_path,
-                            runtime_bind,
-                        );
-                    }
-                    ast::ExprInvokeTarget::Closure(closure) => {
-                        self.extract_embedded_queries_from_expr(
-                            closure.body.as_mut(),
-                            input_path,
-                            runtime_bind,
-                        );
-                    }
-                    ast::ExprInvokeTarget::Function(_)
-                    | ast::ExprInvokeTarget::Type(_)
-                    | ast::ExprInvokeTarget::BinOp(_) => {}
-                }
-                for arg in &mut invoke.args {
-                    self.extract_embedded_queries_from_expr(arg, input_path, runtime_bind);
-                }
-                for kwarg in &mut invoke.kwargs {
-                    self.extract_embedded_queries_from_expr(
-                        &mut kwarg.value,
-                        input_path,
-                        runtime_bind,
-                    );
-                }
-            }
-            ast::ExprKind::Await(await_expr) => {
-                self.extract_embedded_queries_from_expr(
-                    await_expr.base.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Select(select) => {
-                self.extract_embedded_queries_from_expr(
-                    select.obj.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Index(index_expr) => {
-                self.extract_embedded_queries_from_expr(
-                    index_expr.obj.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-                self.extract_embedded_queries_from_expr(
-                    index_expr.index.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Struct(struct_expr) => {
-                self.extract_embedded_queries_from_expr(
-                    struct_expr.name.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-                for field in &mut struct_expr.fields {
-                    if let Some(value) = field.value.as_mut() {
-                        self.extract_embedded_queries_from_expr(value, input_path, runtime_bind);
-                    }
-                }
-            }
-            ast::ExprKind::Structural(structural_expr) => {
-                for field in &mut structural_expr.fields {
-                    if let Some(value) = field.value.as_mut() {
-                        self.extract_embedded_queries_from_expr(value, input_path, runtime_bind);
-                    }
-                }
-            }
-            ast::ExprKind::IntrinsicContainer(collection) => match collection {
-                ast::ExprIntrinsicContainer::VecElements { elements } => {
-                    for value in elements {
-                        self.extract_embedded_queries_from_expr(value, input_path, runtime_bind);
-                    }
-                }
-                ast::ExprIntrinsicContainer::VecRepeat { elem, len } => {
-                    self.extract_embedded_queries_from_expr(
-                        elem.as_mut(),
-                        input_path,
-                        runtime_bind,
-                    );
-                    self.extract_embedded_queries_from_expr(len.as_mut(), input_path, runtime_bind);
-                }
-                ast::ExprIntrinsicContainer::HashMapEntries { entries } => {
-                    for entry in entries {
-                        self.extract_embedded_queries_from_expr(
-                            &mut entry.key,
-                            input_path,
-                            runtime_bind,
-                        );
-                        self.extract_embedded_queries_from_expr(
-                            &mut entry.value,
-                            input_path,
-                            runtime_bind,
-                        );
-                    }
-                }
-            },
-            ast::ExprKind::Array(array_expr) => {
-                for value in &mut array_expr.values {
-                    self.extract_embedded_queries_from_expr(value, input_path, runtime_bind);
-                }
-            }
-            ast::ExprKind::ArrayRepeat(repeat) => {
-                self.extract_embedded_queries_from_expr(
-                    repeat.elem.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-                self.extract_embedded_queries_from_expr(
-                    repeat.len.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Tuple(tuple_expr) => {
-                for value in &mut tuple_expr.values {
-                    self.extract_embedded_queries_from_expr(value, input_path, runtime_bind);
-                }
-            }
-            ast::ExprKind::BinOp(binop) => {
-                self.extract_embedded_queries_from_expr(
-                    binop.lhs.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-                self.extract_embedded_queries_from_expr(
-                    binop.rhs.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::UnOp(unop) => {
-                self.extract_embedded_queries_from_expr(
-                    unop.val.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Reference(reference) => {
-                self.extract_embedded_queries_from_expr(
-                    reference.referee.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Dereference(deref) => {
-                self.extract_embedded_queries_from_expr(
-                    deref.referee.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Closure(closure) => {
-                self.extract_embedded_queries_from_expr(
-                    closure.body.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Closured(closured) => {
-                self.extract_embedded_queries_from_expr(
-                    closured.expr.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Try(expr_try) => {
-                self.extract_embedded_queries_from_expr(
-                    expr_try.expr.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Paren(paren) => {
-                self.extract_embedded_queries_from_expr(
-                    paren.expr.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Quote(quote) => {
-                self.extract_embedded_queries_from_block(
-                    &mut quote.block,
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Splice(splice) => {
-                self.extract_embedded_queries_from_expr(
-                    splice.token.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Splat(splat) => {
-                self.extract_embedded_queries_from_expr(
-                    splat.iter.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::SplatDict(splat) => {
-                self.extract_embedded_queries_from_expr(
-                    splat.dict.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            ast::ExprKind::Range(range) => {
-                if let Some(start) = range.start.as_mut() {
-                    self.extract_embedded_queries_from_expr(start, input_path, runtime_bind);
-                }
-                if let Some(end) = range.end.as_mut() {
-                    self.extract_embedded_queries_from_expr(end, input_path, runtime_bind);
-                }
-                if let Some(step) = range.step.as_mut() {
-                    self.extract_embedded_queries_from_expr(step, input_path, runtime_bind);
-                }
-            }
-            ast::ExprKind::Value(value) => {
-                self.extract_embedded_queries_from_value(value.as_mut(), input_path, runtime_bind);
-            }
-            ast::ExprKind::IntrinsicCall(call) => {
-                for arg in &mut call.args {
-                    self.extract_embedded_queries_from_expr(arg, input_path, runtime_bind);
-                }
-            }
-            ast::ExprKind::FormatString(_)
-            | ast::ExprKind::Continue(_)
-            | ast::ExprKind::Name(_)
-            | ast::ExprKind::Id(_)
-            | ast::ExprKind::Macro(_)
-            | ast::ExprKind::Any(_) => {}
-            ast::ExprKind::Item(item) => {
-                self.extract_embedded_queries_from_item(item.as_mut(), input_path);
-            }
-        }
-    }
-
-    fn extract_embedded_queries_from_value(
-        &mut self,
-        value: &mut ast::Value,
-        input_path: Option<&Path>,
-        runtime_bind: bool,
-    ) {
-        match value {
-            ast::Value::Expr(expr) => {
-                self.extract_embedded_queries_from_expr(expr.as_mut(), input_path, runtime_bind);
-            }
-            ast::Value::Function(function) => {
-                self.extract_embedded_queries_from_expr(
-                    function.body.as_mut(),
-                    input_path,
-                    runtime_bind,
-                );
-            }
-            _ => {}
-        }
-    }
-
-    fn append_embedded_queries_to_hir(
-        &self,
-        hir_program: &mut hir::Program,
-    ) -> Result<(), CliError> {
-        if self.embedded_queries.is_empty() {
-            return Ok(());
-        }
-
-        let mut next_def_id = hir_program
-            .def_map
-            .keys()
-            .copied()
-            .max()
-            .map_or(0, |id| id + 1);
-        for embedded in &self.embedded_queries {
-            let statements = embedded
-                .document
-                .semantic_statement_cache()
-                .map_err(|err| {
-                    CliError::Compilation(format!(
-                        "failed to lower embedded host query into HIR statements: {err}"
-                    ))
-                })?;
-            let item = hir::Item {
-                hir_id: hir_program.next_id(),
-                def_id: next_def_id,
-                visibility: hir::Visibility::Private,
-                kind: hir::ItemKind::Query(hir::Query {
-                    document: embedded.document.clone(),
-                    statements,
-                    span: embedded.span,
-                }),
-                span: embedded.span,
-            };
-            hir_program.def_map.insert(item.def_id, item.clone());
-            hir_program.items.push(item);
-            next_def_id += 1;
-        }
-        Ok(())
     }
 
     fn resolve_language(
@@ -2485,29 +1931,6 @@ impl<'a> FileModuleLoader<'a> {
         self.loaded_files
             .insert(canonical.clone(), file.items.clone());
         Ok(file.items.clone())
-    }
-}
-
-fn embedded_query_fn_name(index: usize) -> String {
-    format!("{EMBEDDED_QUERY_FN_PREFIX}{index}")
-}
-
-fn embedded_query_call_expr(name: &str, span: Span, ty: Option<ast::Ty>) -> ast::Expr {
-    let target = ast::ExprInvokeTarget::Function(ast::Name::from_ident(Ident::new(name)));
-    ast::Expr::from(ast::ExprKind::Invoke(ast::ExprInvoke {
-        span,
-        target,
-        args: Vec::new(),
-        kwargs: Vec::new(),
-    }))
-    .with_span(span)
-    .with_ty_slot(ty)
-}
-
-fn function_returns_value(function: &ast::ItemDefFunction) -> bool {
-    match function.sig.ret_ty.as_ref() {
-        Some(ast::Ty::Unit(_)) | None => false,
-        Some(_) => true,
     }
 }
 

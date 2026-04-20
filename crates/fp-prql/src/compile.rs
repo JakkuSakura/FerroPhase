@@ -1,7 +1,6 @@
 use fp_core::error::Result as CoreResult;
 use fp_core::query::{
-    statement_to_query_ir, QueryCoverage, QueryDocument, QueryFallback, QueryIrDocument, QueryKind,
-    QueryOrigin, QueryStatement, SqlDialect,
+    statement_to_query_ir, QueryDocument, QueryIrDocument, QueryKind, SqlDialect,
 };
 
 use crate::dialect::detect_target_dialect;
@@ -22,7 +21,11 @@ pub fn compile_prql(
 
     if let QueryKind::Prql(prql) = &document.kind {
         target = prql.target.clone();
-        statements = prql.compiled.iter().map(|stmt| stmt.text.clone()).collect();
+    }
+    if let Some(semantic) = &document.semantic {
+        if let Some(rendered) = semantic.render_sql() {
+            statements = fp_core::query::split_sql_statements(&rendered);
+        }
     }
 
     Ok(PrqlCompileResult { target, statements })
@@ -48,10 +51,6 @@ pub fn build_document(
         }
 
         if let Some(compiled_sql) = naive_prql_to_sql(source) {
-            prql.compiled = fp_core::query::split_sql_statements(&compiled_sql)
-                .into_iter()
-                .map(QueryStatement::new)
-                .collect();
             if prql.target.is_none() {
                 prql.target = Some(SqlDialect::Generic);
             }
@@ -69,11 +68,6 @@ pub fn build_document(
                         name: document.name.clone(),
                         statements: semantic,
                     });
-                    if let Some(bridge) = &mut document.bridge {
-                        bridge.origin = Some(QueryOrigin::Prql);
-                        bridge.coverage = Some(QueryCoverage::Dual);
-                        bridge.fallback = Some(QueryFallback::PrqlToSql);
-                    }
                 }
             }
         }
@@ -129,9 +123,11 @@ fn naive_prql_to_sql(source: &str) -> Option<String> {
                 }
             } else if let Some(rest) = entry.strip_prefix("derive") {
                 if let Some(fields) = extract_assignments(rest) {
-                    derives.extend(fields.into_iter().map(|(alias, expr)| {
-                        (alias, normalize_prql_expr(&expr))
-                    }));
+                    derives.extend(
+                        fields
+                            .into_iter()
+                            .map(|(alias, expr)| (alias, normalize_prql_expr(&expr))),
+                    );
                 }
             } else if let Some(rest) = entry.strip_prefix("filter ") {
                 let normalized = rest.trim().replace("==", "=");

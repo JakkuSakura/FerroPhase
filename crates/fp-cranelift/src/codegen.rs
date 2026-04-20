@@ -615,6 +615,11 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                     self.record_result(instr, ret);
                 }
             }
+            LirInstructionKind::ExecQuery(_) => {
+                return Err(fp_core::error::Error::from(
+                    "LIR ExecQuery is only supported by pxc whole-file lowering",
+                ));
+            }
             LirInstructionKind::IntrinsicCall { kind, format, args } => {
                 let value = self.lower_intrinsic(kind, format, args, instr.type_hint.clone())?;
                 if let Some(val) = value {

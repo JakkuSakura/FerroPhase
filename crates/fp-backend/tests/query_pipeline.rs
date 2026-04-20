@@ -1,10 +1,13 @@
-use fp_backend::transforms::{HirGenerator, MirLowering};
+use fp_backend::transforms::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::ast::NodeKind;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::hir;
 use fp_core::mir;
-use fp_core::query::{QueryDocument, QueryIrStmt, QueryKind, QueryStatement, SqlDialect};
+use fp_core::query::{
+    statement_to_query_ir, QueryDocument, QueryIrDocument, QueryIrStmt, SqlDialect,
+};
 use fp_lang::FerroFrontend;
+use fp_sql::sql_ast::parse_sql_ast;
 
 #[test]
 fn sql_query_document_lowers_to_hir_and_mir_query_items() {
@@ -18,14 +21,17 @@ fn sql_query_document_lowers_to_hir_and_mir_query_items() {
         hir::ItemKind::Query(query) => query,
         other => panic!("expected HIR query item, got {other:?}"),
     };
-    assert_eq!(hir_query.document.name.as_deref(), Some("query.sql"));
-    assert_eq!(hir_query.statements.len(), 1);
-    assert!(matches!(
+    assert_eq!(hir_query.ir.name.as_deref(), Some("query.sql"));
+    assert_eq!(
         hir_query
-            .document
-            .semantic
-            .as_ref()
-            .and_then(|doc| doc.statements.first()),
+            .ir
+            .to_statements()
+            .expect("HIR cached statements")
+            .len(),
+        1
+    );
+    assert!(matches!(
+        hir_query.ir.statements.first(),
         Some(QueryIrStmt::Query(_))
     ));
 
@@ -38,14 +44,27 @@ fn sql_query_document_lowers_to_hir_and_mir_query_items() {
         mir::ItemKind::Query(query) => query,
         other => panic!("expected MIR query item, got {other:?}"),
     };
-    assert_eq!(mir_query.document.name.as_deref(), Some("query.sql"));
-    assert_eq!(mir_query.statements.len(), 1);
-    assert!(matches!(
+    assert_eq!(mir_query.ir.name.as_deref(), Some("query.sql"));
+    assert_eq!(
         mir_query
-            .document
-            .semantic
-            .as_ref()
-            .and_then(|doc| doc.statements.first()),
+            .ir
+            .to_statements()
+            .expect("MIR cached statements")
+            .len(),
+        1
+    );
+    assert!(matches!(
+        mir_query.ir.statements.first(),
+        Some(QueryIrStmt::Query(_))
+    ));
+
+    let mut lir_generator = LirGenerator::new();
+    let lir_program = lir_generator.transform(mir_program).expect("lir program");
+    assert_eq!(lir_program.queries.len(), 1);
+    let lir_query = &lir_program.queries[0];
+    assert_eq!(lir_query.ir.name.as_deref(), Some("query.sql"));
+    assert!(matches!(
+        lir_query.ir.statements.first(),
         Some(QueryIrStmt::Query(_))
     ));
 }
@@ -53,12 +72,17 @@ fn sql_query_document_lowers_to_hir_and_mir_query_items() {
 #[test]
 fn prql_query_document_lowers_to_hir_and_mir_query_items() {
     let mut query = QueryDocument::prql("from ticks | filter symbol == \"AAPL\" | select {value}");
-    if let QueryKind::Prql(prql) = &mut query.kind {
-        prql.target = Some(SqlDialect::Generic);
-        prql.compiled = vec![QueryStatement::new(
-            "SELECT value FROM ticks WHERE symbol = \"AAPL\"",
-        )];
-    }
+    query.semantic = Some(QueryIrDocument {
+        name: query.name.clone(),
+        statements: parse_sql_ast(
+            "SELECT value FROM ticks WHERE symbol = 'AAPL'",
+            SqlDialect::Generic,
+        )
+        .expect("sql ast")
+        .iter()
+        .filter_map(statement_to_query_ir)
+        .collect(),
+    });
     let mut hir_generator = HirGenerator::new();
     let hir_program = hir_generator
         .transform_query_document(&query)
@@ -67,13 +91,16 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
         hir::ItemKind::Query(query) => query,
         other => panic!("expected HIR query item, got {other:?}"),
     };
-    assert_eq!(hir_query.statements.len(), 1);
-    assert!(matches!(
+    assert_eq!(
         hir_query
-            .document
-            .semantic
-            .as_ref()
-            .and_then(|doc| doc.statements.first()),
+            .ir
+            .to_statements()
+            .expect("HIR cached statements")
+            .len(),
+        1
+    );
+    assert!(matches!(
+        hir_query.ir.statements.first(),
         Some(QueryIrStmt::Query(_))
     ));
 
@@ -85,13 +112,24 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
         mir::ItemKind::Query(query) => query,
         other => panic!("expected MIR query item, got {other:?}"),
     };
-    assert_eq!(mir_query.statements.len(), 1);
-    assert!(matches!(
+    assert_eq!(
         mir_query
-            .document
-            .semantic
-            .as_ref()
-            .and_then(|doc| doc.statements.first()),
+            .ir
+            .to_statements()
+            .expect("MIR cached statements")
+            .len(),
+        1
+    );
+    assert!(matches!(
+        mir_query.ir.statements.first(),
+        Some(QueryIrStmt::Query(_))
+    ));
+
+    let mut lir_generator = LirGenerator::new();
+    let lir_program = lir_generator.transform(mir_program).expect("lir program");
+    assert_eq!(lir_program.queries.len(), 1);
+    assert!(matches!(
+        lir_program.queries[0].ir.statements.first(),
         Some(QueryIrStmt::Query(_))
     ));
 }
@@ -116,11 +154,7 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
         other => panic!("expected HIR query item, got {other:?}"),
     };
     assert!(matches!(
-        hir_query
-            .document
-            .semantic
-            .as_ref()
-            .and_then(|doc| doc.statements.first()),
+        hir_query.ir.statements.first(),
         Some(QueryIrStmt::Query(_))
     ));
 
@@ -133,11 +167,15 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
         other => panic!("expected MIR query item, got {other:?}"),
     };
     assert!(matches!(
-        mir_query
-            .document
-            .semantic
-            .as_ref()
-            .and_then(|doc| doc.statements.first()),
+        mir_query.ir.statements.first(),
+        Some(QueryIrStmt::Query(_))
+    ));
+
+    let mut lir_generator = LirGenerator::new();
+    let lir_program = lir_generator.transform(mir_program).expect("lir program");
+    assert_eq!(lir_program.queries.len(), 1);
+    assert!(matches!(
+        lir_program.queries[0].ir.statements.first(),
         Some(QueryIrStmt::Query(_))
     ));
 }

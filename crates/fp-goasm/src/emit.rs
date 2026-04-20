@@ -139,6 +139,10 @@ fn emit_instruction(out: &mut String, inst: &LirInstruction, target: GoAsmTarget
             line!(out, "\tCALL {}", format_call_target(function))?;
             line!(out, "\t{} {}, {}", mov, ret_reg(target), dst)
         }
+        LirInstructionKind::ExecQuery(_) => emit_unsupported(
+            out,
+            "ExecQuery is only supported by pxc whole-file lowering",
+        ),
         LirInstructionKind::IntrinsicCall { kind, format, args } => {
             emit_intrinsic(out, kind, format, args, &dst, target)
         }

@@ -7,6 +7,7 @@ use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::path::{PathPrefix, QualifiedPath};
 use fp_core::ops::{BinOpKind, UnOpKind};
+use fp_core::query::lower_fp_expr_to_query;
 use fp_core::span::Span;
 use std::collections::{HashMap, HashSet};
 
@@ -1419,6 +1420,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_invoke(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if let Some(result) = self.try_infer_query_pipeline_call(invoke) {
+            return result;
+        }
+
         if let Some(result) = self.try_infer_collection_call(invoke)? {
             return Ok(result);
         }
@@ -2490,6 +2495,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Struct(struct_ty) => struct_ty.name.as_str() == "HashMap",
             _ => false,
         }
+    }
+
+    fn try_infer_query_pipeline_call(&mut self, invoke: &ExprInvoke) -> Option<Result<TypeVarId>> {
+        let expr = Expr::new(ExprKind::Invoke(invoke.clone()));
+        if lower_fp_expr_to_query(&expr, None).is_none() {
+            return None;
+        }
+
+        Some(Ok(self.fresh_type_var()))
     }
 
     fn infer_builtin_printf(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {

@@ -334,6 +334,7 @@ fn default_lir_program() -> LirProgram {
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        queries: Vec::new(),
     }
 }
 

@@ -4,7 +4,7 @@ use fp_core::error::Result;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::query::{
     lower_fp_expr_to_query, lower_fp_file_to_query, statement_to_query_ir, QueryDocument,
-    QueryIrDocument, QueryKind,
+    QueryIrDocument, QueryKind, QueryOrigin,
 };
 use fp_core::span::{FileId, Span};
 use fp_core::{ast, ast::attrs_repr, ast::ItemKind, cfg::TargetEnv, hir};
@@ -24,21 +24,8 @@ use fp_core::diagnostics::{diagnostic_manager, Diagnostic};
 
 const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
 
-fn normalize_prql_sql_literals(sql: &str) -> String {
-    let mut out = String::with_capacity(sql.len());
-    let mut in_double = false;
-    for ch in sql.chars() {
-        if ch == '"' {
-            in_double = !in_double;
-            out.push('\'');
-            continue;
-        }
-        if in_double && ch == '\'' {
-            out.push('\'');
-        }
-        out.push(ch);
-    }
-    out
+fn query_origin(document: &QueryDocument) -> QueryOrigin {
+    document.origin.clone()
 }
 
 /// Generator for transforming AST to HIR (High-level IR)
@@ -866,19 +853,15 @@ impl HirGenerator {
         self.insert_default_prelude_aliases();
         self.program_def_map = HashMap::new();
 
-        let statements = self.lower_query_statements(query)?;
-        let mut document = query.clone();
-        if document.semantic.is_none() {
-            document.semantic = self.lower_query_semantic(&document, &statements)?;
-        }
-        let span = self.create_span(query.to_string_render().len().max(1) as u32);
+        let ir = self.resolve_query_ir(query)?;
+        let span = self.create_span(query.source_len_hint() as u32);
         let item = hir::Item {
             hir_id: self.next_id(),
             def_id: self.next_def_id(),
             visibility: hir::Visibility::Private,
             kind: hir::ItemKind::Query(hir::Query {
-                document,
-                statements,
+                origin: query_origin(query),
+                ir,
                 span,
             }),
             span,
@@ -919,69 +902,49 @@ impl HirGenerator {
         Ok(program)
     }
 
-    fn lower_query_statements(
-        &mut self,
-        query: &QueryDocument,
-    ) -> Result<Vec<fp_core::sql_ast::Statement>> {
-        if let Ok(statements) = query.semantic_statement_cache() {
-            if !statements.is_empty() {
-                return Ok(statements);
-            }
-        }
-        match &query.kind {
-            QueryKind::Sql(sql) => {
-                if !sql.ast.is_empty() {
-                    return Ok(sql.ast.clone());
-                }
-                parse_sql_ast(&query.to_string_render(), sql.dialect.clone()).map_err(|err| {
-                    fp_core::error::Error::from(format!("failed to normalize SQL query: {err}"))
-                })
-            }
-            QueryKind::Prql(prql) => {
-                if prql.compiled.is_empty() {
-                    return Err(fp_core::error::Error::from(
-                        "PRQL query has no compiled SQL statements",
-                    ));
-                }
-                let sql = prql
-                    .compiled
-                    .iter()
-                    .map(|statement| statement.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join(";\n");
-                let sql = normalize_prql_sql_literals(&sql);
-                parse_sql_ast(&sql, prql.target.clone().unwrap_or_default()).map_err(|err| {
-                    fp_core::error::Error::from(format!("failed to normalize PRQL query: {err}"))
-                })
-            }
-            QueryKind::Any(_) => Err(fp_core::error::Error::from(
-                "unsupported opaque query document in AST→HIR",
-            )),
-        }
-    }
-
-    fn lower_query_semantic(
-        &mut self,
-        query: &QueryDocument,
-        statements: &[fp_core::sql_ast::Statement],
-    ) -> Result<Option<QueryIrDocument>> {
+    fn resolve_query_ir(&mut self, query: &QueryDocument) -> Result<QueryIrDocument> {
         if let Some(semantic) = &query.semantic {
-            return Ok(Some(semantic.clone()));
+            if !semantic.is_empty() {
+                return Ok(semantic.clone());
+            }
+            return Err(fp_core::error::Error::from(
+                "query item missing semantic IR",
+            ));
         }
+        let statements = match &query.kind {
+            QueryKind::Sql(sql) => {
+                let source = sql.raw.clone().unwrap_or_else(|| sql.to_string());
+                parse_sql_ast(&source, sql.dialect.clone()).map_err(|err| {
+                    fp_core::error::Error::from(format!("failed to normalize SQL query: {err}"))
+                })?
+            }
+            QueryKind::Prql(_prql) => {
+                return Err(fp_core::error::Error::from("PRQL query has no semantic IR"));
+            }
+            QueryKind::Any(_) => {
+                return Err(fp_core::error::Error::from(
+                    "unsupported opaque query document in AST→HIR",
+                ));
+            }
+        };
         let mut lowered = Vec::with_capacity(statements.len());
-        for statement in statements {
+        for statement in &statements {
             let Some(stmt) = statement_to_query_ir(statement) else {
-                return Ok(None);
+                return Err(fp_core::error::Error::from(
+                    "SQL query could not be lowered into semantic query IR",
+                ));
             };
             lowered.push(stmt);
         }
         if lowered.is_empty() {
-            return Ok(None);
+            return Err(fp_core::error::Error::from(
+                "query item missing semantic IR",
+            ));
         }
-        Ok(Some(QueryIrDocument {
+        Ok(QueryIrDocument {
             name: query.name.clone(),
             statements: lowered,
-        }))
+        })
     }
 
     fn append_item(&mut self, program: &mut hir::Program, item: &ast::Item) -> Result<()> {

@@ -4,10 +4,9 @@ use crate::ast::lower_common::{
 };
 use crate::syntax::{SyntaxKind, SyntaxNode};
 use fp_core::ast::{
-    Expr, ExprKind, Ident, ImplTraits, MacroInvocation, Name, ParameterPath,
-    ParameterPathSegment, Path, StructuralField, Ty, TypeArray, TypeBinaryOp,
-    TypeBinaryOpKind, TypeBounds, TypeFunction, TypeReference, TypeSlice, TypeStructural,
-    TypeTuple, TypeVec, Value, ValueNone, ValueString,
+    Expr, ExprKind, Ident, ImplTraits, MacroInvocation, Name, ParameterPath, ParameterPathSegment,
+    Path, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction,
+    TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeVec, Value, ValueNone, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::module::path::PathPrefix;

@@ -154,6 +154,7 @@ fn lower_assign(
             out.push(JvmInstr::IStore(place.local as u16));
             Ok(())
         }
+        mir::Rvalue::Query(_) => Err(JvmError::UnsupportedItem("query rvalue")),
         mir::Rvalue::BinaryOp(op, lhs, rhs) => {
             lower_operand(lhs, out)?;
             lower_operand(rhs, out)?;
@@ -477,6 +478,7 @@ mod tests {
                     body_id,
                     abi: mir::ty::Abi::Rust,
                     is_extern: false,
+                    attrs: Vec::new(),
                 }),
             }],
             bodies: HashMap::from([(

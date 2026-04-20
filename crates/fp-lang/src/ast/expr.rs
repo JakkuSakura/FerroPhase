@@ -12,8 +12,8 @@ use fp_core::ast::{
     ExprTuple, ExprWhile, ExprWith, Ident, MacroInvocation, Name, ParameterPath,
     ParameterPathSegment, Path, Pattern, PatternBind, PatternBox, PatternIdent, PatternKind,
     PatternQuote, PatternQuotePlural, PatternRef, PatternStruct, PatternStructField,
-    PatternStructural, PatternTuple, PatternTupleStruct, PatternType, PatternVariant, PatternWildcard,
-    QuoteFragmentKind, QuoteItemKind, StmtDefer, StmtLet, Ty, Value, ValueString,
+    PatternStructural, PatternTuple, PatternTupleStruct, PatternType, PatternVariant,
+    PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtDefer, StmtLet, Ty, Value, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::IntrinsicCallKind;

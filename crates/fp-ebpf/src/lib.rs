@@ -576,6 +576,11 @@ impl<'a> TextFunctionEmitter<'a> {
                     &mut lines,
                 )?;
             }
+            ExecQuery(_) => {
+                return Err(Error::from(
+                    "LIR ExecQuery is only supported by pxc whole-file lowering",
+                ));
+            }
             IntrinsicCall { kind, format, args } => {
                 self.emit_intrinsic(instruction, kind, format, args, &mut lines)?;
             }
@@ -1486,6 +1491,9 @@ fn validate_instruction(
                 ))
             }
         }),
+        ExecQuery(_) => Err(Error::from(
+            "LIR ExecQuery is only supported by pxc whole-file lowering",
+        )),
         Call { .. } => Err(Error::from("calls are not supported in fp-ebpf yet")),
         IntrinsicCall { kind, args, .. } => match kind {
             fp_core::lir::LirIntrinsicKind::TimeNow => {
@@ -2211,6 +2219,7 @@ mod tests {
             functions: vec![function],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            queries: Vec::new(),
         }
     }
 
@@ -2278,6 +2287,8 @@ mod tests {
             functions: vec![function],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+
+            queries: Vec::new(),
         };
 
         let assembly = emit_assembly(&program).unwrap();
@@ -2311,6 +2322,8 @@ mod tests {
             functions: vec![function],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+
+            queries: Vec::new(),
         };
 
         let err = validate_program(&program).unwrap_err().to_string();
@@ -2341,6 +2354,8 @@ mod tests {
             functions: vec![function],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+
+            queries: Vec::new(),
         };
 
         let err = validate_program(&program).unwrap_err().to_string();
@@ -2374,6 +2389,8 @@ mod tests {
             functions: vec![function],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+
+            queries: Vec::new(),
         };
 
         let bytes = emit_object(&program).unwrap();
@@ -2460,6 +2477,8 @@ mod tests {
             functions: vec![function],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+
+            queries: Vec::new(),
         };
 
         let assembly = emit_assembly(&program).unwrap();

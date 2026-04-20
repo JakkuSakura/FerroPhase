@@ -1,7 +1,6 @@
 use crate::ast::{TypeBinaryOpKind, TypePrimitive};
 use crate::intrinsics::IntrinsicCallKind;
-use crate::query::QueryDocument;
-use crate::sql_ast;
+use crate::query::{QueryIrDocument, QueryOrigin};
 use std::collections::HashMap;
 
 pub mod ident;
@@ -122,8 +121,8 @@ pub struct Impl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Query {
-    pub document: QueryDocument,
-    pub statements: Vec<sql_ast::Statement>,
+    pub origin: QueryOrigin,
+    pub ir: QueryIrDocument,
     pub span: Span,
 }
 
@@ -158,6 +157,7 @@ pub struct Expr {
 pub enum ExprKind {
     Literal(Lit),
     Path(Path),
+    Query(Query),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Unary(UnOp, Box<Expr>),
     Reference(ExprReference),
@@ -695,6 +695,7 @@ impl ExprKind {
         match self {
             ExprKind::Literal(_) => Span::null(),
             ExprKind::Path(path) => path.span(),
+            ExprKind::Query(query) => query.span,
             ExprKind::Binary(_, lhs, rhs) => Span::union([lhs.span(), rhs.span()]),
             ExprKind::Unary(_, expr) => expr.span(),
             ExprKind::Reference(reference) => reference.expr.span(),

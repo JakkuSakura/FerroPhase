@@ -625,6 +625,7 @@ mod tests {
             }],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            queries: Vec::new(),
         }
     }
 

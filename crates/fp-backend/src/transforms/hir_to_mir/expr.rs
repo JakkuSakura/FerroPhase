@@ -575,8 +575,8 @@ impl MirLowering {
         let mir_item = mir::Item {
             mir_id: self.next_mir_id,
             kind: mir::ItemKind::Query(mir::Query {
-                document: query.document.clone(),
-                statements: query.statements.clone(),
+                origin: query.origin.clone(),
+                ir: query.ir.clone(),
                 span: item.span,
             }),
         };
@@ -7866,12 +7866,15 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
-        let mut decl = self.lowering.make_local_decl(
-            declared_ty.as_ref().unwrap_or(&Ty {
+        let implicit_ty = init
+            .as_deref()
+            .map(Self::implicit_local_init_ty)
+            .unwrap_or_else(|| Ty {
                 kind: TyKind::Tuple(Vec::new()),
-            }),
-            init_span,
-        );
+            });
+        let mut decl = self
+            .lowering
+            .make_local_decl(declared_ty.as_ref().unwrap_or(&implicit_ty), init_span);
         decl.local_info = mir::LocalInfo::User(());
 
         if let hir::PatKind::Binding { mutable, .. } = &pat.kind {
@@ -9052,6 +9055,17 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
+    fn implicit_local_init_ty(expr: &hir::Expr) -> Ty {
+        match expr.kind {
+            hir::ExprKind::Query(_) => Ty {
+                kind: TyKind::Int(IntTy::I64),
+            },
+            _ => Ty {
+                kind: TyKind::Tuple(Vec::new()),
+            },
+        }
+    }
+
     fn lower_local(&mut self, local: &hir::Local) -> Result<()> {
         let init_span = local
             .init
@@ -9103,12 +9117,16 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
-        let mut decl = self.lowering.make_local_decl(
-            declared_ty.as_ref().unwrap_or(&Ty {
+        let implicit_ty = local
+            .init
+            .as_ref()
+            .map(Self::implicit_local_init_ty)
+            .unwrap_or_else(|| Ty {
                 kind: TyKind::Tuple(Vec::new()),
-            }),
-            init_span,
-        );
+            });
+        let mut decl = self
+            .lowering
+            .make_local_decl(declared_ty.as_ref().unwrap_or(&implicit_ty), init_span);
         decl.local_info = mir::LocalInfo::User(());
 
         if let hir::PatKind::Binding { mutable, .. } = &local.pat.kind {
@@ -12749,6 +12767,28 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Reference(reference) => {
                 self.lower_reference_operand(reference, expr.span)
             }
+            hir::ExprKind::Query(query) => {
+                let query_ty = expected.cloned().unwrap_or_else(|| Ty {
+                    kind: TyKind::Int(IntTy::I64),
+                });
+                let local_id = self.allocate_temp(query_ty.clone(), expr.span);
+                let place = mir::Place::from_local(local_id);
+                self.push_statement(mir::Statement {
+                    source_info: expr.span,
+                    kind: mir::StatementKind::Assign(
+                        place.clone(),
+                        mir::Rvalue::Query(mir::Query {
+                            origin: query.origin.clone(),
+                            ir: query.ir.clone(),
+                            span: query.span,
+                        }),
+                    ),
+                });
+                Ok(OperandInfo {
+                    operand: mir::Operand::copy(place),
+                    ty: query_ty,
+                })
+            }
             hir::ExprKind::Let(pat, ty, init) => {
                 self.lower_let_expr(pat, ty, init, expr.span)?;
                 let unit_ty = Ty {
@@ -16141,6 +16181,23 @@ impl<'a> BodyBuilder<'a> {
                     ),
                 };
                 self.push_statement(statement);
+            }
+            hir::ExprKind::Query(query) => {
+                let statement = mir::Statement {
+                    source_info: expr.span,
+                    kind: mir::StatementKind::Assign(
+                        place.clone(),
+                        mir::Rvalue::Query(mir::Query {
+                            origin: query.origin.clone(),
+                            ir: query.ir.clone(),
+                            span: query.span,
+                        }),
+                    ),
+                };
+                self.push_statement(statement);
+                if place.projection.is_empty() {
+                    self.locals[place.local as usize].ty = expected_ty.clone();
+                }
             }
             hir::ExprKind::Literal(_) | hir::ExprKind::Path(_) | hir::ExprKind::Index(_, _) => {
                 let assignment_place = place.clone();

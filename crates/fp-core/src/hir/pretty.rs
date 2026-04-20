@@ -8,6 +8,17 @@ use super::{
     Path, Program, Query, Stmt, StmtKind, Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
 };
 
+fn query_statement_lines(ir: &crate::query::QueryIrDocument) -> Vec<String> {
+    ir.to_statements()
+        .map(|statements| {
+            statements
+                .into_iter()
+                .map(|statement| statement.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 impl PrettyPrintable for Program {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
         ctx.writeln(f, "hir::Program {")?;
@@ -50,33 +61,25 @@ fn write_query(
     } else {
         String::new()
     };
-    let kind = match &query.document.kind {
-        crate::query::QueryKind::Sql(sql) => format!("sql[{}]", sql.dialect),
-        crate::query::QueryKind::Prql(prql) => format!(
-            "prql{}",
-            prql.target
-                .as_ref()
-                .map(|target| format!("[{}]", target))
-                .unwrap_or_default()
-        ),
-        crate::query::QueryKind::Any(_) => "any".to_string(),
+    let kind = match &query.origin {
+        crate::query::QueryOrigin::Sql => "sql".to_string(),
+        crate::query::QueryOrigin::Prql => "prql".to_string(),
+        crate::query::QueryOrigin::Fp => "fp".to_string(),
     };
     let name_suffix = query
-        .document
+        .ir
         .name
         .as_ref()
         .map(|name| format!(" {}", name))
         .unwrap_or_default();
     ctx.writeln(f, format!("query {}{}{}", kind, name_suffix, span_suffix))?;
     ctx.with_indent(|ctx| {
-        if let Some(semantic) = &query.document.semantic {
-            ctx.writeln(
-                f,
-                format!("semantic statements: {}", semantic.statements.len()),
-            )?;
-        }
-        for statement in &query.statements {
-            ctx.writeln(f, statement.to_string())?;
+        ctx.writeln(
+            f,
+            format!("semantic statements: {}", query.ir.statements.len()),
+        )?;
+        for statement in query_statement_lines(&query.ir) {
+            ctx.writeln(f, statement)?;
         }
         Ok(())
     })
@@ -377,6 +380,14 @@ fn write_stmt(stmt: &Stmt, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
 fn write_expr(expr: &Expr, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
     match &expr.kind {
         ExprKind::Block(block) => write_block(block, f, ctx),
+        ExprKind::Query(query) => {
+            let name = query.ir.name.as_deref().unwrap_or("<anonymous>");
+            let statement_count = query.ir.statements.len();
+            ctx.writeln(
+                f,
+                format!("query-expr {} // semantic_stmts: {}", name, statement_count),
+            )
+        }
         ExprKind::If(cond, then_branch, else_branch) => {
             ctx.writeln(f, format!("if ({})", format_expr_inline(cond, ctx)))?;
             ctx.with_indent(|ctx| write_expr(then_branch, f, ctx))?;
@@ -468,6 +479,10 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
     match &expr.kind {
         ExprKind::Literal(lit) => format_lit(lit),
         ExprKind::Path(path) => fmt_path(path, ctx),
+        ExprKind::Query(query) => {
+            let name = query.ir.name.as_deref().unwrap_or("<anonymous>");
+            format!("query({name})")
+        }
         ExprKind::FormatString(template) => {
             let format_text = summarize_format_parts(&template.parts);
             format!("format_string(\"{}\")", escape_string(&format_text))

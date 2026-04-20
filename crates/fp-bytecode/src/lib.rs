@@ -1643,6 +1643,13 @@ fn lower_rvalue(
 ) -> Result<(), BytecodeError> {
     match rvalue {
         mir::Rvalue::Use(op) => lower_operand(op, code, const_pool),
+        mir::Rvalue::Query(_) => {
+            emit_lowering_warning(
+                "MIR query rvalue is not supported by fp-bytecode; using unit dummy".to_string(),
+            );
+            push_dummy_unit(code, const_pool);
+            Ok(())
+        }
         mir::Rvalue::Ref(_, _, place) => {
             lower_operand(&mir::Operand::Copy(place.clone()), code, const_pool)
         }

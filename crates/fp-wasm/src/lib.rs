@@ -686,6 +686,11 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
             LirInstructionKind::Call { function, args, .. } => {
                 self.emit_call(func, function, args, instr)?
             }
+            LirInstructionKind::ExecQuery(_) => {
+                return Err(Error::from(
+                    "LIR ExecQuery is only supported by pxc whole-file lowering",
+                ));
+            }
             LirInstructionKind::IntrinsicCall { kind, format, args } => {
                 self.emit_intrinsic(func, kind, format, args, instr)?
             }

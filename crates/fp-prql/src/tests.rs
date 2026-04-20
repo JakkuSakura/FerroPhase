@@ -19,16 +19,15 @@ from employees
     match result.ast.kind() {
         fp_core::ast::NodeKind::Query(doc) => {
             assert!(!doc.is_empty());
-            let QueryKind::Prql(prql) = &doc.kind else {
+            let QueryKind::Prql(_prql) = &doc.kind else {
                 panic!("expected prql variant");
             };
-            assert_eq!(prql.compiled.len(), 1);
-            let sql = &prql.compiled[0].text;
+            let semantic = doc.semantic.as_ref().expect("semantic query");
+            let sql = semantic.render_sql().expect("rendered sql");
             assert!(sql.contains("SELECT"));
             assert!(sql.contains("FROM employees"));
-            assert!(sql.contains("WHERE country = \"US\""));
+            assert!(sql.contains("WHERE country = 'US'"));
             assert!(sql.contains("LIMIT 5"));
-            let semantic = doc.semantic.as_ref().expect("semantic query");
             assert!(matches!(semantic.statements[0], QueryIrStmt::Query(_)));
         }
         other => panic!("expected query node, found {other:?}"),
@@ -63,13 +62,12 @@ from sales
         panic!("expected prql variant");
     };
     assert_eq!(prql.target, Some(SqlDialect::Postgres));
-    assert!(
-        prql.compiled
-            .first()
-            .map(|stmt| stmt.text.contains("FROM sales"))
-            .unwrap_or(false),
-        "compiled statements should reference source table"
-    );
+    let rendered = doc
+        .semantic
+        .as_ref()
+        .and_then(|semantic| semantic.render_sql())
+        .expect("rendered sql");
+    assert!(rendered.contains("FROM sales"));
 }
 
 #[test]
@@ -86,9 +84,13 @@ from ticks
     let fp_core::ast::NodeKind::Query(doc) = result.ast.kind() else {
         panic!("expected query node");
     };
-    let QueryKind::Prql(prql) = &doc.kind else {
+    let QueryKind::Prql(_prql) = &doc.kind else {
         panic!("expected prql variant");
     };
-    let sql = &prql.compiled[0].text;
+    let sql = doc
+        .semantic
+        .as_ref()
+        .and_then(|semantic| semantic.render_sql())
+        .expect("rendered sql");
     assert!(sql.contains("ORDER BY ts, seq"));
 }

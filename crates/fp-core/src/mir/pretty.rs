@@ -7,6 +7,17 @@ use super::{
     Place, Program, Query, Rvalue, Statement, StatementKind, Static, Terminator, TerminatorKind,
 };
 
+fn query_statement_lines(ir: &crate::query::QueryIrDocument) -> Vec<String> {
+    ir.to_statements()
+        .map(|statements| {
+            statements
+                .into_iter()
+                .map(|statement| statement.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 impl PrettyPrintable for Program {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
         ctx.writeln(f, "mir::Program {")?;
@@ -101,19 +112,13 @@ fn write_static(stat: &Static, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -
 }
 
 fn write_query(query: &Query, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
-    let kind = match &query.document.kind {
-        crate::query::QueryKind::Sql(sql) => format!("sql[{}]", sql.dialect),
-        crate::query::QueryKind::Prql(prql) => format!(
-            "prql{}",
-            prql.target
-                .as_ref()
-                .map(|target| format!("[{}]", target))
-                .unwrap_or_default()
-        ),
-        crate::query::QueryKind::Any(_) => "any".to_string(),
+    let kind = match &query.origin {
+        crate::query::QueryOrigin::Sql => "sql".to_string(),
+        crate::query::QueryOrigin::Prql => "prql".to_string(),
+        crate::query::QueryOrigin::Fp => "fp".to_string(),
     };
     let name_suffix = query
-        .document
+        .ir
         .name
         .as_ref()
         .map(|name| format!(" {}", name))
@@ -125,14 +130,12 @@ fn write_query(query: &Query, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) ->
     };
     ctx.writeln(f, format!("query {}{}{}", kind, name_suffix, span_suffix))?;
     ctx.with_indent(|ctx| {
-        if let Some(semantic) = &query.document.semantic {
-            ctx.writeln(
-                f,
-                format!("semantic statements: {}", semantic.statements.len()),
-            )?;
-        }
-        for statement in &query.statements {
-            ctx.writeln(f, statement.to_string())?;
+        ctx.writeln(
+            f,
+            format!("semantic statements: {}", query.ir.statements.len()),
+        )?;
+        for statement in query_statement_lines(&query.ir) {
+            ctx.writeln(f, statement)?;
         }
         Ok(())
     })
@@ -256,6 +259,11 @@ fn summarize_statement(stmt: &Statement, _ctx: &PrettyCtx<'_>) -> String {
 fn summarize_rvalue(rvalue: &Rvalue) -> String {
     match rvalue {
         Rvalue::Use(op) => summarize_operand(op),
+        Rvalue::Query(query) => {
+            let name = query.ir.name.as_deref().unwrap_or("<anonymous>");
+            let statement_count = query.ir.statements.len();
+            format!("query({name}; semantic_stmts={statement_count})")
+        }
         Rvalue::IntrinsicCall { kind, format, args } => {
             let args = args
                 .iter()

@@ -4566,6 +4566,9 @@ fn map_instruction_kind(kind: &LirInstructionKind) -> AsmInstructionKind {
             calling_convention: calling_convention.clone(),
             tail_call: *tail_call,
         },
+        LirInstructionKind::ExecQuery(_) => {
+            panic!("LIR ExecQuery is only supported by pxc whole-file lowering")
+        }
         LirInstructionKind::IntrinsicCall { kind, format, args } => {
             AsmInstructionKind::IntrinsicCall {
                 kind: map_intrinsic(kind),
@@ -4820,6 +4823,8 @@ mod tests {
             }],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+
+            queries: Vec::new(),
         };
 
         let program = select_program(&lir, TargetFormat::Elf, TargetArch::X86_64).unwrap();
@@ -4871,6 +4876,8 @@ mod tests {
             }],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+
+            queries: Vec::new(),
         };
 
         let program = select_program(&lir, TargetFormat::Elf, TargetArch::X86_64).unwrap();
@@ -4946,6 +4953,8 @@ mod tests {
             }],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+
+            queries: Vec::new(),
         };
 
         let program = select_program(&lir, TargetFormat::Elf, TargetArch::X86_64).unwrap();
@@ -5025,6 +5034,8 @@ mod tests {
             }],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+
+            queries: Vec::new(),
         };
 
         let program = select_program(&lir, TargetFormat::Elf, TargetArch::Aarch64).unwrap();
@@ -5089,6 +5100,8 @@ mod tests {
             ],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+
+            queries: Vec::new(),
         };
 
         let program = select_program(&lir, TargetFormat::Elf, TargetArch::X86_64).unwrap();

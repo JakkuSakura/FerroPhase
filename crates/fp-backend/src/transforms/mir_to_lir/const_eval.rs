@@ -42,6 +42,7 @@ impl LirGenerator {
         rvalue: &mir::Rvalue,
     ) -> Result<Option<lir::LirConstant>> {
         match rvalue {
+            mir::Rvalue::Query(_) => Ok(None),
             mir::Rvalue::Use(operand) => {
                 if let mir::Operand::Constant(constant) = operand {
                     match &constant.literal {

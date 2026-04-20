@@ -137,7 +137,14 @@ impl LirGenerator {
                     let lir_static = self.transform_static(mir_static)?;
                     lir_program.globals.push(lir_static);
                 }
-                mir::ItemKind::Query(_) => {}
+                mir::ItemKind::Query(query) => {
+                    lir_program.queries.push(lir::LirQuery {
+                        query_id: mir_item.mir_id,
+                        origin: query.origin,
+                        ir: query.ir,
+                        span: query.span,
+                    });
+                }
             }
         }
 
@@ -958,6 +965,21 @@ impl LirGenerator {
                     result_value = Some(value);
                 }
             },
+            mir::Rvalue::Query(query) => {
+                let query_id = self.next_id();
+                instructions.push(lir::LirInstruction {
+                    id: query_id,
+                    kind: lir::LirInstructionKind::ExecQuery(lir::LirQuery {
+                        query_id,
+                        origin: query.origin.clone(),
+                        ir: query.ir.clone(),
+                        span: query.span,
+                    }),
+                    type_hint: destination_lir_ty.clone().or(Some(lir::LirType::I64)),
+                    debug_info: None,
+                });
+                result_value = Some(lir::LirValue::Register(query_id));
+            }
             mir::Rvalue::IntrinsicCall { kind, format, args } => {
                 let lir_kind = match kind {
                     IntrinsicCallKind::Format => lir::LirIntrinsicKind::Format,

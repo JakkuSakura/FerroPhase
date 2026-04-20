@@ -7,31 +7,6 @@ pub enum QueryOrigin {
     Fp,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Hash)]
-pub enum QueryCoverage {
-    LegacyOnly,
-    Dual,
-    StructuredOnly,
-    Partial,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Hash)]
-pub enum QueryFallback {
-    None,
-    CachedSqlAst,
-    StructuredToSqlAst,
-    PrqlToSql,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Default, Hash)]
-pub struct QueryBridge {
-    pub origin: Option<QueryOrigin>,
-    pub coverage: Option<QueryCoverage>,
-    pub fallback: Option<QueryFallback>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub notes: Vec<String>,
-}
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Default, Hash)]
 pub struct QueryIrDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]

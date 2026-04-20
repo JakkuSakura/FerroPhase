@@ -53,7 +53,7 @@ impl From<&Name> for String {
     }
 }
 
-/// Convert from MIR symbol to LIR name
+/// Convert a MIR symbol into a LIR name
 impl From<crate::mir::Symbol> for Name {
     fn from(symbol: crate::mir::Symbol) -> Self {
         Name::new(symbol.name)

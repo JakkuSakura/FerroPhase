@@ -66,10 +66,9 @@ common_struct! {
     pub struct QueryDocument {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub name: Option<String>,
+        pub origin: QueryOrigin,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub semantic: Option<QueryIrDocument>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub bridge: Option<QueryBridge>,
         #[serde(flatten)]
         pub kind: QueryKind,
     }
@@ -81,13 +80,8 @@ impl QueryDocument {
         let query = SqlQuery::from_source(source.into(), dialect);
         Self {
             name: None,
+            origin: QueryOrigin::Sql,
             semantic: None,
-            bridge: Some(QueryBridge {
-                origin: Some(QueryOrigin::Sql),
-                coverage: Some(QueryCoverage::LegacyOnly),
-                fallback: Some(QueryFallback::CachedSqlAst),
-                notes: Vec::new(),
-            }),
             kind: QueryKind::Sql(query),
         }
     }
@@ -97,35 +91,20 @@ impl QueryDocument {
         let prql = PrqlQuery::new(pipeline.into());
         Self {
             name: None,
+            origin: QueryOrigin::Prql,
             semantic: None,
-            bridge: Some(QueryBridge {
-                origin: Some(QueryOrigin::Prql),
-                coverage: Some(QueryCoverage::LegacyOnly),
-                fallback: Some(QueryFallback::PrqlToSql),
-                notes: Vec::new(),
-            }),
             kind: QueryKind::Prql(prql),
         }
     }
 
     /// Construct a query document whose canonical representation is semantic IR.
-    pub fn from_semantic(
-        semantic: QueryIrDocument,
-        origin: QueryOrigin,
-    ) -> std::result::Result<Self, crate::Error> {
-        let mut document = Self {
+    pub fn from_semantic(semantic: QueryIrDocument, origin: QueryOrigin) -> Self {
+        Self {
             name: semantic.name.clone(),
+            origin: origin.clone(),
             semantic: Some(semantic),
-            bridge: Some(QueryBridge {
-                origin: Some(origin),
-                coverage: Some(QueryCoverage::StructuredOnly),
-                fallback: Some(QueryFallback::StructuredToSqlAst),
-                notes: Vec::new(),
-            }),
-            kind: QueryKind::Sql(SqlQuery::new(Vec::new(), SqlDialect::Generic)),
-        };
-        document.refresh_sql_cache_from_semantic()?;
-        Ok(document)
+            kind: empty_query_kind(&origin),
+        }
     }
 
     /// Returns true when the query document has no statements or pipeline text.
@@ -147,9 +126,9 @@ impl QueryDocument {
         }
     }
 
-    /// Render the query back to a textual representation.
-    pub fn to_string_render(&self) -> String {
-        if let Some(rendered) = self.render_semantic() {
+    /// Return display-oriented text for serializers and snapshots.
+    pub fn display_text(&self) -> String {
+        if let Some(rendered) = self.semantic.as_ref().and_then(QueryIrDocument::render_sql) {
             return rendered;
         }
         match &self.kind {
@@ -159,6 +138,20 @@ impl QueryDocument {
         }
     }
 
+    /// Return a source-length hint for spans without forcing semantic re-rendering.
+    pub fn source_len_hint(&self) -> usize {
+        let len = match &self.kind {
+            QueryKind::Sql(sql) => sql
+                .raw
+                .as_ref()
+                .map(|raw| raw.len())
+                .unwrap_or_else(|| sql.to_string().len()),
+            QueryKind::Prql(prql) => prql.pipeline.len(),
+            QueryKind::Any(_) => 0,
+        };
+        len.max(1)
+    }
+
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         if let Some(semantic) = &mut self.semantic {
@@ -166,21 +159,47 @@ impl QueryDocument {
         }
         self
     }
+}
 
-    pub fn with_semantic(mut self, semantic: QueryIrDocument, bridge: QueryBridge) -> Self {
-        self.semantic = Some(semantic);
-        self.bridge = Some(bridge);
-        self
+impl QueryIrDocument {
+    pub fn is_empty(&self) -> bool {
+        self.statements.is_empty()
     }
 
-    pub fn semantic_statement_cache(
-        &self,
-    ) -> std::result::Result<Vec<sql_ast::Statement>, crate::Error> {
-        let Some(semantic) = &self.semantic else {
-            return Ok(Vec::new());
+    /// Return the only lowered query statement in this document.
+    pub fn single_statement(&self) -> std::result::Result<&QueryIrStmt, crate::Error> {
+        if self.is_empty() {
+            let name = self.name.as_deref().unwrap_or("<anonymous>");
+            return Err(crate::Error::from(format!(
+                "query IR {name} is empty; semantic query IR must contain exactly one statement"
+            )));
+        }
+        let mut statements = self.statements.iter();
+        let statement = statements.next().ok_or_else(|| {
+            crate::Error::from("semantic query IR contains no lowered statements")
+        })?;
+        if statements.next().is_some() {
+            return Err(crate::Error::from(
+                "semantic query IR contains multiple lowered statements",
+            ));
+        }
+        Ok(statement)
+    }
+
+    /// Return the only lowered SELECT query in this document.
+    pub fn single_query(&self) -> std::result::Result<&QueryExpr, crate::Error> {
+        let statement = self.single_statement()?;
+        let QueryIrStmt::Query(query) = statement else {
+            return Err(crate::Error::from(
+                "semantic query IR must lower to a SELECT statement",
+            ));
         };
-        let mut statements = Vec::with_capacity(semantic.statements.len());
-        for stmt in &semantic.statements {
+        Ok(query)
+    }
+
+    pub fn to_statements(&self) -> std::result::Result<Vec<sql_ast::Statement>, crate::Error> {
+        let mut statements = Vec::with_capacity(self.statements.len());
+        for stmt in &self.statements {
             let lowered = query_ir_to_statement(stmt).ok_or_else(|| {
                 crate::Error::from("semantic query cannot be lowered into sql_ast::Statement")
             })?;
@@ -189,30 +208,8 @@ impl QueryDocument {
         Ok(statements)
     }
 
-    pub fn refresh_sql_cache_from_semantic(&mut self) -> std::result::Result<(), crate::Error> {
-        let statements = self.semantic_statement_cache()?;
-        let rendered = statements
-            .iter()
-            .map(|stmt| stmt.to_string())
-            .collect::<Vec<_>>();
-        match &mut self.kind {
-            QueryKind::Sql(sql) => {
-                sql.ast = statements;
-                sql.statements = rendered.into_iter().map(QueryStatement::new).collect();
-            }
-            QueryKind::Prql(prql) => {
-                prql.compiled = rendered.into_iter().map(QueryStatement::new).collect();
-            }
-            QueryKind::Any(_) => {}
-        }
-        if let Some(bridge) = &mut self.bridge {
-            bridge.coverage = Some(QueryCoverage::Dual);
-        }
-        Ok(())
-    }
-
-    fn render_semantic(&self) -> Option<String> {
-        let statements = self.semantic_statement_cache().ok()?;
+    pub fn render_sql(&self) -> Option<String> {
+        let statements = self.to_statements().ok()?;
         if statements.is_empty() {
             return None;
         }
@@ -236,6 +233,15 @@ impl Display for QueryDocument {
             QueryKind::Prql(prql) => write!(f, "{prql}"),
             QueryKind::Any(any) => write!(f, "{any:?}"),
         }
+    }
+}
+
+fn empty_query_kind(origin: &QueryOrigin) -> QueryKind {
+    match origin {
+        QueryOrigin::Sql | QueryOrigin::Fp => {
+            QueryKind::Sql(SqlQuery::new(Vec::new(), SqlDialect::Generic))
+        }
+        QueryOrigin::Prql => QueryKind::Prql(PrqlQuery::new(String::new())),
     }
 }
 
@@ -296,8 +302,6 @@ common_struct! {
         pub dialect: SqlDialect,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub statements: Vec<QueryStatement>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        pub ast: Vec<sql_ast::Statement>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub raw: Option<String>,
     }
@@ -308,7 +312,6 @@ impl SqlQuery {
         Self {
             dialect,
             statements,
-            ast: Vec::new(),
             raw: None,
         }
     }
@@ -321,14 +324,8 @@ impl SqlQuery {
         Self {
             dialect,
             statements,
-            ast: Vec::new(),
             raw: Some(source),
         }
-    }
-
-    pub fn with_ast(mut self, ast: Vec<sql_ast::Statement>) -> Self {
-        self.ast = ast;
-        self
     }
 }
 
@@ -348,14 +345,12 @@ impl Display for SqlQuery {
     }
 }
 
-// PRQL pipeline representation with optional compiled SQL.
+// PRQL pipeline representation with optional target dialect metadata.
 common_struct! {
     pub struct PrqlQuery {
         pub pipeline: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub target: Option<SqlDialect>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        pub compiled: Vec<QueryStatement>,
     }
 }
 
@@ -364,17 +359,11 @@ impl PrqlQuery {
         Self {
             pipeline,
             target: None,
-            compiled: Vec::new(),
         }
     }
 
     pub fn with_target(mut self, dialect: SqlDialect) -> Self {
         self.target = Some(dialect);
-        self
-    }
-
-    pub fn with_compiled(mut self, statements: Vec<QueryStatement>) -> Self {
-        self.compiled = statements;
         self
     }
 }
@@ -539,7 +528,7 @@ impl QuerySerializer {
 
 impl AstSerializer for QuerySerializer {
     fn serialize_query(&self, query: &QueryDocument) -> std::result::Result<String, crate::Error> {
-        Ok(query.to_string_render())
+        Ok(query.display_text())
     }
 }
 
@@ -589,7 +578,7 @@ mod tests {
             document.kind.as_sql().unwrap().dialect,
             SqlDialect::Postgres
         );
-        let rendered = document.to_string_render();
+        let rendered = document.display_text();
         assert_eq!(rendered, "SELECT 42");
     }
 
@@ -601,6 +590,5 @@ mod tests {
             panic!("expected prql variant");
         };
         assert_eq!(prql.pipeline, "from table");
-        assert!(prql.compiled.is_empty());
     }
 }

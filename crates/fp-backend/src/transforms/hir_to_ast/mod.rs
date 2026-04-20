@@ -14,12 +14,14 @@ use fp_core::ast::{
 use fp_core::error::Result;
 use fp_core::hir;
 use fp_core::ops::{BinOpKind, UnOpKind};
+use fp_core::query::QueryDocument;
 use fp_core::span::Span;
 
 pub fn lift_program(program: &hir::Program, path: PathBuf) -> Result<ast::Node> {
     if let [item] = program.items.as_slice() {
         if let hir::ItemKind::Query(query) = &item.kind {
-            return Ok(ast::Node::query(query.document.clone()));
+            let document = QueryDocument::from_semantic(query.ir.clone(), query.origin.clone());
+            return Ok(ast::Node::query(document));
         }
     }
     let mut items = Vec::with_capacity(program.items.len());
@@ -99,7 +101,7 @@ fn lift_item(item: &hir::Item) -> Result<Item> {
         hir::ItemKind::Query(query) => {
             return Err(fp_core::error::Error::Generic(eyre::eyre!(
                 "HIR->AST lifting for query item '{}' requires lift_program root handling",
-                query.document.name.as_deref().unwrap_or("<query>")
+                query.ir.name.as_deref().unwrap_or("<query>")
             )))
         }
         hir::ItemKind::Expr(expr) => Item::from(ItemKind::Expr(lift_expr(expr)?)),
@@ -213,6 +215,11 @@ fn lift_expr(expr: &hir::Expr) -> Result<Expr> {
             hir::Lit::Null => Value::null(),
         }),
         hir::ExprKind::Path(path) => Expr::name(Name::path(lift_path(path))),
+        hir::ExprKind::Query(_) => {
+            return Err(fp_core::error::Error::from(
+                "HIR query expressions cannot be lifted back into AST expressions".to_string(),
+            ));
+        }
         hir::ExprKind::Binary(op, lhs, rhs) => Expr::new(ast::ExprKind::BinOp(ExprBinOp {
             span: expr.span,
             kind: lift_binop(op),

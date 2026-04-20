@@ -19,6 +19,14 @@ pub struct MirBundle {
     pub mir_program: mir::Program,
 }
 
+#[derive(Debug, Clone)]
+pub struct LirBundle {
+    pub frontend: FrontendBundle,
+    pub hir_program: hir::Program,
+    pub mir_program: mir::Program,
+    pub lir_program: lir::LirProgram,
+}
+
 #[derive(Debug)]
 pub(crate) struct MirArtifacts {
     pub(crate) mir_program: mir::Program,

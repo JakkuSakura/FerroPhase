@@ -1,6 +1,7 @@
 use super::*;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::path::PathPrefix;
+use fp_core::query::lower_fp_expr_to_query;
 
 struct EnumerateLoopSpec {
     base_prefix: PathPrefix,
@@ -40,6 +41,19 @@ impl HirGenerator {
 
         let span = self.create_span(1); // Create a span for this expression
         let hir_id = self.next_id();
+
+        if let Some(document) = lower_fp_expr_to_query(ast_expr, None) {
+            let ir = self.resolve_query_ir(&document)?;
+            return Ok(hir::Expr {
+                hir_id,
+                kind: hir::ExprKind::Query(hir::Query {
+                    origin: super::query_origin(&document),
+                    ir,
+                    span: expr_span,
+                }),
+                span,
+            });
+        }
 
         let kind = match ast_expr.kind() {
             ExprKind::Value(value) => self.transform_value_to_hir(value)?,

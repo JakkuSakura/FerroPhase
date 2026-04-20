@@ -609,6 +609,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
     fn collect_paths<'a>(expr: &'a hir::Expr, out: &mut Vec<&'a hir::Path>) {
         match &expr.kind {
             hir::ExprKind::Path(path) => out.push(path),
+            hir::ExprKind::Query(_) => {}
             hir::ExprKind::Binary(_, lhs, rhs) => {
                 collect_paths(lhs, out);
                 collect_paths(rhs, out);

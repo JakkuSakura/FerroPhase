@@ -123,6 +123,7 @@ impl<'a> LirCodegen<'a> {
             functions,
             globals,
             type_definitions: _type_definitions,
+            queries: _queries,
         } = lir_program;
 
         self.function_signatures.clear();
@@ -906,6 +907,11 @@ impl<'a> LirCodegen<'a> {
                         self.record_result(instr_id, Some(hint), result);
                     }
                 }
+            }
+            lir::LirInstructionKind::ExecQuery(_) => {
+                return Err(fp_core::error::Error::from(
+                    "LIR ExecQuery is only supported by pxc whole-file lowering",
+                ));
             }
             lir::LirInstructionKind::IntrinsicCall { kind, format, args } => {
                 let mut call_args = Vec::with_capacity(args.len() + 1);

@@ -38,6 +38,7 @@ fn sample_program() -> LirProgram {
         functions: vec![main],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        queries: Vec::new(),
     }
 }
 

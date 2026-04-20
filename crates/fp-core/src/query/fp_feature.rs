@@ -6,9 +6,9 @@ use crate::ast::{
 };
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::query::{
-    QueryBridge, QueryCoverage, QueryDelete, QueryDocument, QueryExpr, QueryFallback, QueryFrom,
-    QueryInsert, QueryInsertSource, QueryIrDocument, QueryIrStmt, QueryOrigin, QueryRelation,
-    QuerySelect, QuerySelectItem, QuerySetExpr, QueryUpdate, QueryValues,
+    QueryDelete, QueryDocument, QueryExpr, QueryFrom, QueryInsert, QueryInsertSource,
+    QueryIrDocument, QueryIrStmt, QueryOrigin, QueryRelation, QuerySelect, QuerySelectItem,
+    QuerySetExpr, QueryUpdate, QueryValues,
 };
 use crate::sql_ast::{
     self, Assignment, BinaryOperator, Expr as SqlExpr, Ident, ObjectName, OrderByExpr,
@@ -22,13 +22,7 @@ pub fn lower_fp_expr_to_query(expr: &Expr, path: Option<&Path>) -> Option<QueryD
         name: name.clone(),
         statements: vec![statement],
     };
-    let mut document = QueryDocument::from_semantic(semantic, QueryOrigin::Fp).ok()?;
-    document.bridge = Some(QueryBridge {
-        origin: Some(QueryOrigin::Fp),
-        coverage: Some(QueryCoverage::Dual),
-        fallback: Some(QueryFallback::StructuredToSqlAst),
-        notes: vec!["fp host query feature".to_string()],
-    });
+    let mut document = QueryDocument::from_semantic(semantic, QueryOrigin::Fp);
     if let Some(name) = name {
         document = document.with_name(name);
     }

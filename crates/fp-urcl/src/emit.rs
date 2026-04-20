@@ -128,6 +128,13 @@ fn emit_instruction(out: &mut String, inst: &LirInstruction) {
             writeln!(out, "    CAL {}", format_value(function)).ok();
             writeln!(out, "    MOV {}, R1", dst).ok();
         }
+        LirInstructionKind::ExecQuery(_) => {
+            writeln!(
+                out,
+                "    ; unsupported exec query: lowered only by pxc whole-file backend"
+            )
+            .ok();
+        }
         LirInstructionKind::IntrinsicCall { kind, format, args } => {
             emit_intrinsic(out, &dst, kind, format, args)
         }

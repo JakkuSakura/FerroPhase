@@ -6,8 +6,7 @@ use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::error::Result as CoreResult;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::query::{
-    statement_to_query_ir, QueryCoverage, QueryDocument, QueryFallback, QueryIrDocument, QueryKind,
-    QueryOrigin, QuerySerializer,
+    statement_to_query_ir, QueryDocument, QueryIrDocument, QueryKind, QuerySerializer,
 };
 
 use crate::SqlDialect;
@@ -72,9 +71,7 @@ impl LanguageFrontend for SqlFrontend {
             if let Some(raw) = &sql.raw {
                 match crate::sql_ast::parse_sql_ast(raw, sql.dialect.clone()) {
                     Ok(ast) => {
-                        sql.ast = ast;
-                        let semantic = sql
-                            .ast
+                        let semantic = ast
                             .iter()
                             .filter_map(statement_to_query_ir)
                             .collect::<Vec<_>>();
@@ -83,11 +80,6 @@ impl LanguageFrontend for SqlFrontend {
                                 name: document.name.clone(),
                                 statements: semantic,
                             });
-                            if let Some(bridge) = &mut document.bridge {
-                                bridge.origin = Some(QueryOrigin::Sql);
-                                bridge.coverage = Some(QueryCoverage::Dual);
-                                bridge.fallback = Some(QueryFallback::CachedSqlAst);
-                            }
                         }
                     }
                     Err(err) => {

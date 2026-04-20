@@ -1045,15 +1045,6 @@ impl PrettyPrintable for query::QueryDocument {
                     } else {
                         ctx.writeln(f, prql.pipeline.trim())?;
                     }
-                    if !prql.compiled.is_empty() {
-                        ctx.writeln(f, "compiled:")?;
-                        ctx.with_indent(|ctx| {
-                            for (idx, stmt) in prql.compiled.iter().enumerate() {
-                                ctx.writeln(f, format!("{}: {}", idx, stmt))?;
-                            }
-                            Ok(())
-                        })?;
-                    }
                     Ok(())
                 })
             }

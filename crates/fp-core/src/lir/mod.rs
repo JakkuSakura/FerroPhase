@@ -5,6 +5,7 @@ pub mod layout;
 pub mod pretty;
 pub mod ty;
 
+use crate::query::{QueryExpr, QueryIrDocument, QueryIrStmt, QueryOrigin};
 use crate::span::Span;
 pub use ident::Name;
 pub use ty::Ty;
@@ -66,6 +67,15 @@ pub struct LirProgram {
     pub functions: Vec<LirFunction>,
     pub globals: Vec<LirGlobal>,
     pub type_definitions: Vec<LirTypeDefinition>,
+    pub queries: Vec<LirQuery>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LirQuery {
+    pub query_id: LirId,
+    pub origin: QueryOrigin,
+    pub ir: QueryIrDocument,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -186,6 +196,7 @@ pub enum LirInstructionKind {
         calling_convention: CallingConvention,
         tail_call: bool,
     },
+    ExecQuery(LirQuery),
 
     // Backend runtime intrinsics
     IntrinsicCall {
@@ -426,6 +437,7 @@ impl LirProgram {
             functions: Vec::new(),
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            queries: Vec::new(),
         }
     }
 
@@ -441,6 +453,21 @@ impl LirProgram {
         self.functions.append(&mut other.functions);
         self.globals.append(&mut other.globals);
         self.type_definitions.append(&mut other.type_definitions);
+        self.queries.append(&mut other.queries);
+    }
+
+    /// Return the only embedded query item in this LIR program.
+    pub fn single_query(&self) -> std::result::Result<&LirQuery, crate::Error> {
+        let mut queries = self.queries.iter();
+        let query = queries
+            .next()
+            .ok_or_else(|| crate::Error::from("LIR program contains no embedded query item"))?;
+        if queries.next().is_some() {
+            return Err(crate::Error::from(
+                "LIR program contains multiple embedded query items",
+            ));
+        }
+        Ok(query)
     }
 }
 
@@ -622,6 +649,22 @@ impl LirConstant {
 impl LirGlobal {
     pub fn span(&self) -> Span {
         Span::null()
+    }
+}
+
+impl LirQuery {
+    /// Return the only lowered query statement carried by this LIR query item.
+    pub fn single_statement(&self) -> std::result::Result<&QueryIrStmt, crate::Error> {
+        self.ir.single_statement()
+    }
+
+    /// Return the only lowered SELECT carried by this LIR query item.
+    pub fn single_query(&self) -> std::result::Result<&QueryExpr, crate::Error> {
+        self.ir.single_query()
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
     }
 }
 

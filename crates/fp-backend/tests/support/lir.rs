@@ -8,6 +8,7 @@ pub fn empty_program() -> LirProgram {
         functions: Vec::new(),
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        queries: Vec::new(),
     }
 }
 

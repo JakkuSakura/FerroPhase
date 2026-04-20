@@ -78,6 +78,7 @@ pub(crate) fn assemble_workspace_lir_program(
                 merged.type_definitions.push(t);
             }
         }
+        merged.queries.extend(m.lir.queries.clone());
     }
 
     // Then, add declarations for other modules
@@ -107,6 +108,7 @@ pub(crate) fn assemble_workspace_lir_program(
                 merged.type_definitions.push(t);
             }
         }
+        merged.queries.extend(m.lir.queries.clone());
     }
 
     merged

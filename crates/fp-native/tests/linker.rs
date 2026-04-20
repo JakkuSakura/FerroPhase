@@ -135,6 +135,7 @@ fn minimal_program() -> LirProgram {
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        queries: Vec::new(),
     }
 }
 
@@ -206,6 +207,7 @@ fn program_with_many_call_args() -> LirProgram {
         functions: vec![main, callee],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        queries: Vec::new(),
     }
 }
 
@@ -247,6 +249,7 @@ fn program_with_print() -> LirProgram {
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        queries: Vec::new(),
     }
 }
 
@@ -336,6 +339,7 @@ fn program_with_shifts_and_casts() -> LirProgram {
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        queries: Vec::new(),
     }
 }
 
@@ -394,6 +398,7 @@ fn program_with_switch() -> LirProgram {
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        queries: Vec::new(),
     }
 }
 
@@ -435,6 +440,7 @@ fn program_with_format_intrinsic() -> LirProgram {
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        queries: Vec::new(),
     }
 }
 

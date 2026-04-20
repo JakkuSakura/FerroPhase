@@ -95,6 +95,7 @@ fn item_has_unresolved_paths(item: &hir::Item) -> bool {
 fn expr_has_unresolved_paths(expr: &hir::Expr) -> bool {
     match &expr.kind {
         hir::ExprKind::Path(path) => path_has_unresolved_segments(path),
+        hir::ExprKind::Query(_) => false,
         hir::ExprKind::Binary(_, lhs, rhs) | hir::ExprKind::Assign(lhs, rhs) => {
             expr_has_unresolved_paths(lhs) || expr_has_unresolved_paths(rhs)
         }
@@ -332,6 +333,7 @@ fn collect_expr_refs(
 ) {
     match &expr.kind {
         hir::ExprKind::Path(path) => collect_path_refs(path, full_map, tail_map, work),
+        hir::ExprKind::Query(_) => {}
         hir::ExprKind::Binary(_, lhs, rhs) | hir::ExprKind::Assign(lhs, rhs) => {
             collect_expr_refs(lhs, full_map, tail_map, work);
             collect_expr_refs(rhs, full_map, tail_map, work);
