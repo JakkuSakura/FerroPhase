@@ -675,7 +675,7 @@ impl Pipeline {
                 | BackendKind::Wasm
         ) && const_eval.is_none()
         {
-            self.inject_runtime_std(&mut ast, options)?;
+            self.inject_runtime_std(&mut ast, &options.target, options)?;
         }
 
         if stage_enabled(options, STAGE_TYPE_ENRICH) {
