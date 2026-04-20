@@ -1,12 +1,27 @@
 use crate::emit::{EmitPlan, RelocKind, RelocSection, TargetArch, TargetFormat};
 use crate::ffi::DynamicLibrary;
 use fp_core::error::{Error, Result};
-use fp_core::lir::LirProgram;
+use fp_core::lir::{CallingConvention, LirInstructionKind, LirProgram, LirType};
 #[cfg(unix)]
 use libc;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::Arc;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum HostScalar {
+    Void,
+    Bool(bool),
+    I64(i64),
+    F64(f64),
+}
+
+#[derive(Debug, Clone)]
+struct FunctionMetadata {
+    param_count: usize,
+    return_type: LirType,
+    calling_convention: CallingConvention,
+}
 
 #[derive(Debug)]
 pub struct JitModule {
@@ -14,6 +29,7 @@ pub struct JitModule {
     _rodata: JitMemory,
     entry: *const c_void,
     symbols: HashMap<String, *const c_void>,
+    signatures: HashMap<String, FunctionMetadata>,
     _lib: Arc<DynamicLibrary>,
 }
 
@@ -24,6 +40,65 @@ impl JitModule {
 
     pub fn symbol_ptr(&self, name: &str) -> Option<*const c_void> {
         self.symbols.get(name).copied()
+    }
+
+    pub fn return_type(&self, name: &str) -> Option<&LirType> {
+        self.signatures.get(name).map(|meta| &meta.return_type)
+    }
+
+    pub unsafe fn call0_scalar(&self, name: &str) -> Result<HostScalar> {
+        let meta = self
+            .signatures
+            .get(name)
+            .ok_or_else(|| Error::from(format!("missing JIT symbol metadata for {name}")))?;
+        if meta.param_count != 0 {
+            return Err(Error::from(format!(
+                "JIT call helper requires zero-arg function, got {} args for {name}",
+                meta.param_count
+            )));
+        }
+        ensure_supported_host_call_conv(&meta.calling_convention)?;
+        let ptr = self
+            .symbol_ptr(name)
+            .ok_or_else(|| Error::from(format!("missing JIT symbol {name}")))?;
+        match &meta.return_type {
+            LirType::Void => {
+                let func: unsafe extern "C" fn() = unsafe { std::mem::transmute(ptr) };
+                unsafe { func() };
+                Ok(HostScalar::Void)
+            }
+            LirType::I1 => {
+                let func: unsafe extern "C" fn() -> u8 = unsafe { std::mem::transmute(ptr) };
+                Ok(HostScalar::Bool(unsafe { func() } != 0))
+            }
+            LirType::I8 => {
+                let func: unsafe extern "C" fn() -> i8 = unsafe { std::mem::transmute(ptr) };
+                Ok(HostScalar::I64(unsafe { func() } as i64))
+            }
+            LirType::I16 => {
+                let func: unsafe extern "C" fn() -> i16 = unsafe { std::mem::transmute(ptr) };
+                Ok(HostScalar::I64(unsafe { func() } as i64))
+            }
+            LirType::I32 => {
+                let func: unsafe extern "C" fn() -> i32 = unsafe { std::mem::transmute(ptr) };
+                Ok(HostScalar::I64(unsafe { func() } as i64))
+            }
+            LirType::I64 => {
+                let func: unsafe extern "C" fn() -> i64 = unsafe { std::mem::transmute(ptr) };
+                Ok(HostScalar::I64(unsafe { func() }))
+            }
+            LirType::F32 => {
+                let func: unsafe extern "C" fn() -> f32 = unsafe { std::mem::transmute(ptr) };
+                Ok(HostScalar::F64(unsafe { func() } as f64))
+            }
+            LirType::F64 => {
+                let func: unsafe extern "C" fn() -> f64 = unsafe { std::mem::transmute(ptr) };
+                Ok(HostScalar::F64(unsafe { func() }))
+            }
+            other => Err(Error::from(format!(
+                "unsupported JIT scalar return type for {name}: {other:?}"
+            ))),
+        }
     }
 }
 
@@ -44,6 +119,7 @@ impl JitEngine {
     }
 
     pub fn compile(&mut self, program: &LirProgram) -> Result<JitModule> {
+        validate_host_program(program)?;
         let plan = crate::emit::emit_plan(program, self.format, self.arch)?;
         self.compile_plan(&plan)
     }
@@ -80,8 +156,15 @@ impl JitEngine {
             _rodata: rodata,
             entry,
             symbols,
+            signatures: HashMap::new(),
             _lib: Arc::clone(&self.lib),
         })
+    }
+
+    pub fn compile_host(&mut self, program: &LirProgram) -> Result<JitModule> {
+        let mut module = self.compile(program)?;
+        module.signatures = collect_signatures(program);
+        Ok(module)
     }
 
     fn apply_relocations(
@@ -207,6 +290,63 @@ impl JitEngine {
     }
 }
 
+pub fn validate_host_program(program: &LirProgram) -> Result<()> {
+    let _ = crate::emit::host_arch(None)?;
+    validate_native_program(program)
+}
+
+pub fn validate_native_program(program: &LirProgram) -> Result<()> {
+    if !program.queries.is_empty() {
+        return Err(Error::from(
+            "fp-native does not support query-bearing LIR programs",
+        ));
+    }
+    for function in &program.functions {
+        for block in &function.basic_blocks {
+            for instruction in &block.instructions {
+                if matches!(instruction.kind, LirInstructionKind::ExecQuery(_)) {
+                    return Err(Error::from(format!(
+                        "fp-native does not support ExecQuery in function {}",
+                        function.name
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_signatures(program: &LirProgram) -> HashMap<String, FunctionMetadata> {
+    program
+        .functions
+        .iter()
+        .filter(|function| !function.is_declaration)
+        .map(|function| {
+            (
+                function.name.to_string(),
+                FunctionMetadata {
+                    param_count: function.signature.params.len(),
+                    return_type: function.signature.return_type.clone(),
+                    calling_convention: function.calling_convention.clone(),
+                },
+            )
+        })
+        .collect()
+}
+
+fn ensure_supported_host_call_conv(call_conv: &CallingConvention) -> Result<()> {
+    match call_conv {
+        CallingConvention::C
+        | CallingConvention::Win64
+        | CallingConvention::X86_64SysV
+        | CallingConvention::AAPCS
+        | CallingConvention::AAPCSVfp => Ok(()),
+        other => Err(Error::from(format!(
+            "unsupported JIT host entry calling convention: {other:?}"
+        ))),
+    }
+}
+
 #[derive(Debug)]
 struct JitMemory {
     ptr: *mut u8,
@@ -317,10 +457,10 @@ fn align_up(value: usize, align: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::JitEngine;
+    use super::{HostScalar, JitEngine, validate_native_program};
     use fp_core::lir::{
-        CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram,
-        LirTerminator, LirType, Name,
+        CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature,
+        LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, Name,
     };
 
     fn minimal_program() -> LirProgram {
@@ -328,7 +468,7 @@ mod tests {
             name: Name::new("main"),
             signature: LirFunctionSignature {
                 params: Vec::new(),
-                return_type: LirType::I32,
+                return_type: LirType::Void,
                 is_variadic: false,
             },
             basic_blocks: vec![LirBasicBlock {
@@ -358,7 +498,7 @@ mod tests {
     fn jit_smoke_compiles_minimal_program() {
         let program = minimal_program();
         let mut engine = JitEngine::new(None).expect("jit engine");
-        let module = engine.compile(&program).expect("jit compile");
+        let module = engine.compile_host(&program).expect("jit compile");
         assert!(
             !module.entry_ptr().is_null(),
             "entry pointer should be non-null"
@@ -366,6 +506,31 @@ mod tests {
         assert!(
             module.symbol_ptr("main").is_some(),
             "main symbol should be present"
+        );
+        let scalar = unsafe { module.call0_scalar("main") }.expect("call jit main");
+        assert_eq!(scalar, HostScalar::Void);
+    }
+
+    #[test]
+    fn validate_host_program_rejects_exec_query() {
+        let mut program = minimal_program();
+        program.functions[0].basic_blocks[0]
+            .instructions
+            .push(LirInstruction {
+                id: 1,
+                kind: LirInstructionKind::ExecQuery(fp_core::lir::LirQuery {
+                    query_id: 1,
+                    origin: fp_core::query::QueryOrigin::Fp,
+                    ir: fp_core::query::QueryIrDocument::default(),
+                    span: fp_core::span::Span::default(),
+                }),
+                type_hint: None,
+                debug_info: None,
+            });
+        let err = validate_native_program(&program).expect_err("exec query must be rejected");
+        assert!(
+            err.to_string().contains("ExecQuery"),
+            "unexpected error: {err}"
         );
     }
 }

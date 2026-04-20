@@ -18,6 +18,10 @@ use fp_core::error::Result;
 use fp_core::lir::LirProgram;
 use std::path::{Path, PathBuf};
 
+pub use crate::jit::{
+    HostScalar, JitEngine, JitModule, validate_host_program, validate_native_program,
+};
+
 /// Native (LLVM-free) compiler entry point.
 ///
 /// Current scope: minimal native backend that can emit a tiny binary stub for

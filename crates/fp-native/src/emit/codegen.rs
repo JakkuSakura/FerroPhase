@@ -60,6 +60,7 @@ pub fn emit_text_from_selection(
 }
 
 pub fn lower_program_for_native(lir_program: &LirProgram) -> Result<LirProgram> {
+    crate::jit::validate_native_program(lir_program)?;
     let mut lir_program = lir_program.clone();
     lower_phi_in_program(&mut lir_program)?;
     Ok(lir_program)
