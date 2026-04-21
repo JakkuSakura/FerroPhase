@@ -1,5 +1,6 @@
 use super::super::artifacts::{LirArtifacts, MirArtifacts};
 use super::super::*;
+use fp_backend::lir_optimizer::{LirOptimizationPlan, LirOptimizer};
 use fp_backend::optimizer::{MirOptimizer, OptimizationPlan};
 use fp_core::config;
 use fp_core::mir;
@@ -132,7 +133,7 @@ impl PipelineStage for MirToLirStage {
         diagnostics: &mut PipelineDiagnostics,
     ) -> Result<LirArtifacts, PipelineError> {
         let mut lir_generator = LirGenerator::new();
-        let lir_program = match lir_generator.transform(context.mir_program.as_ref().clone()) {
+        let mut lir_program = match lir_generator.transform(context.mir_program.as_ref().clone()) {
             Ok(program) => program,
             Err(err) => {
                 diagnostics.push(
@@ -145,6 +146,21 @@ impl PipelineStage for MirToLirStage {
                 ));
             }
         };
+
+        let opt_plan = LirOptimizationPlan::for_level(context.options.optimization_level);
+        if !opt_plan.is_empty() {
+            let optimizer = LirOptimizer::new();
+            if let Err(err) = optimizer.apply_plan(&mut lir_program, &opt_plan) {
+                diagnostics.push(
+                    Diagnostic::error(format!("LIR optimization failed: {}", err))
+                        .with_source_context(STAGE_MIR_TO_LIR),
+                );
+                return Err(PipelineError::new(
+                    STAGE_MIR_TO_LIR,
+                    "LIR optimization failed",
+                ));
+            }
+        }
 
         let mut pretty_opts = PrettyOptions::default();
         pretty_opts.show_spans = context.options.debug.verbose;

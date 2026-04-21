@@ -8,6 +8,10 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::Arc;
 
+const JIT_EXTERNAL_STUB_ALIGN: usize = 16;
+const JIT_X86_64_EXTERNAL_STUB_BYTES: usize = 12;
+const JIT_AARCH64_EXTERNAL_STUB_BYTES: usize = 16;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum HostScalar {
     Void,
@@ -125,7 +129,17 @@ impl JitEngine {
     }
 
     pub fn compile_plan(&mut self, plan: &EmitPlan) -> Result<JitModule> {
-        let text = JitMemory::new(plan.text.len(), MemoryKind::Text)?;
+        self.compile_plan_with_symbols(plan, &[])
+    }
+
+    pub fn compile_plan_with_symbols(
+        &mut self,
+        plan: &EmitPlan,
+        extra_symbols: &[(&str, *const c_void)],
+    ) -> Result<JitModule> {
+        let external_call_symbols = collect_external_call_symbols(plan);
+        let text_len = jit_text_len(plan.text.len(), self.arch, external_call_symbols.len())?;
+        let text = JitMemory::new(text_len, MemoryKind::Text)?;
         let rodata = JitMemory::new(plan.rodata.len(), MemoryKind::Rodata)?;
 
         unsafe {
@@ -135,8 +149,24 @@ impl JitEngine {
 
         let text_base = text.ptr as u64;
         let rodata_base = rodata.ptr as u64;
+        let external_call_stubs = self.materialize_external_call_stubs(
+            plan,
+            external_call_symbols.as_slice(),
+            text_base,
+            rodata_base,
+            &text,
+            extra_symbols,
+        )?;
 
-        self.apply_relocations(plan, text_base, rodata_base, &text, &rodata)?;
+        self.apply_relocations(
+            plan,
+            text_base,
+            rodata_base,
+            &text,
+            &rodata,
+            extra_symbols,
+            &external_call_stubs,
+        )?;
 
         text.make_executable()?;
         rodata.make_readonly()?;
@@ -174,6 +204,8 @@ impl JitEngine {
         rodata_base: u64,
         text: &JitMemory,
         rodata: &JitMemory,
+        extra_symbols: &[(&str, *const c_void)],
+        external_call_stubs: &HashMap<String, u64>,
     ) -> Result<()> {
         for reloc in &plan.relocs {
             let (section_base, section_mem) = match reloc.section {
@@ -189,7 +221,13 @@ impl JitEngine {
                 .checked_add(reloc.offset)
                 .ok_or_else(|| Error::from("relocation offset overflow"))?;
 
-            let target = self.resolve_symbol_addr(plan, &reloc.symbol, text_base, rodata_base)?;
+            let target = self.resolve_symbol_addr(
+                plan,
+                &reloc.symbol,
+                text_base,
+                rodata_base,
+                extra_symbols,
+            )?;
             let target = target
                 .checked_add(reloc.addend as u64)
                 .ok_or_else(|| Error::from("relocation addend overflow"))?;
@@ -199,18 +237,16 @@ impl JitEngine {
                     section_mem.write_u64(reloc.offset as usize, target)?;
                 },
                 RelocKind::CallRel32 => {
-                    if !matches!(self.arch, TargetArch::X86_64) {
-                        return Err(Error::from("CallRel32 relocation only supported on x86_64"));
-                    }
-                    let next = location
-                        .checked_add(4)
-                        .ok_or_else(|| Error::from("relocation overflow"))?;
-                    let disp = target as i64 - next as i64;
-                    let disp32 = i32::try_from(disp)
-                        .map_err(|_| Error::from("call relocation out of range"))?;
-                    unsafe {
-                        section_mem.write_i32(reloc.offset as usize, disp32)?;
-                    }
+                    let branch_target = external_call_stubs
+                        .get(&reloc.symbol)
+                        .copied()
+                        .unwrap_or(target);
+                    self.apply_call_rel32(
+                        section_mem,
+                        reloc.offset as usize,
+                        location,
+                        branch_target,
+                    )?;
                 }
                 RelocKind::Aarch64AdrpAdd => {
                     if !matches!(self.arch, TargetArch::Aarch64) {
@@ -235,12 +271,114 @@ impl JitEngine {
         Ok(())
     }
 
+    fn materialize_external_call_stubs(
+        &self,
+        plan: &EmitPlan,
+        external_call_symbols: &[String],
+        text_base: u64,
+        rodata_base: u64,
+        text: &JitMemory,
+        extra_symbols: &[(&str, *const c_void)],
+    ) -> Result<HashMap<String, u64>> {
+        if external_call_symbols.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let stub_size = external_call_stub_size(self.arch);
+        let stub_base = align_up(plan.text.len(), JIT_EXTERNAL_STUB_ALIGN);
+        let mut stubs = HashMap::with_capacity(external_call_symbols.len());
+        for (index, symbol) in external_call_symbols.iter().enumerate() {
+            let stub_offset = stub_base
+                .checked_add(
+                    index
+                        .checked_mul(stub_size)
+                        .ok_or_else(|| Error::from("stub offset overflow"))?,
+                )
+                .ok_or_else(|| Error::from("stub offset overflow"))?;
+            let stub_addr = text_base
+                .checked_add(stub_offset as u64)
+                .ok_or_else(|| Error::from("stub address overflow"))?;
+            let target =
+                self.resolve_symbol_addr(plan, symbol, text_base, rodata_base, extra_symbols)?;
+            self.emit_external_call_stub(text, stub_offset, target)?;
+            stubs.insert(symbol.clone(), stub_addr);
+        }
+        Ok(stubs)
+    }
+
+    fn emit_external_call_stub(
+        &self,
+        text: &JitMemory,
+        stub_offset: usize,
+        target: u64,
+    ) -> Result<()> {
+        match self.arch {
+            TargetArch::X86_64 => unsafe {
+                let mut stub = [0u8; JIT_X86_64_EXTERNAL_STUB_BYTES];
+                stub[0] = 0x48;
+                stub[1] = 0xB8;
+                stub[2..10].copy_from_slice(&target.to_le_bytes());
+                stub[10] = 0xFF;
+                stub[11] = 0xE0;
+                text.write_bytes_at(stub_offset, &stub)?;
+            },
+            TargetArch::Aarch64 => unsafe {
+                let mut stub = [0u8; JIT_AARCH64_EXTERNAL_STUB_BYTES];
+                let ldr = 0x5800_0050u32;
+                let br = 0xD61F_0200u32;
+                stub[0..4].copy_from_slice(&ldr.to_le_bytes());
+                stub[4..8].copy_from_slice(&br.to_le_bytes());
+                stub[8..16].copy_from_slice(&target.to_le_bytes());
+                text.write_bytes_at(stub_offset, &stub)?;
+            },
+        }
+        Ok(())
+    }
+
+    fn apply_call_rel32(
+        &self,
+        section: &JitMemory,
+        offset: usize,
+        location: u64,
+        target: u64,
+    ) -> Result<()> {
+        match self.arch {
+            TargetArch::X86_64 => {
+                let next = location
+                    .checked_add(4)
+                    .ok_or_else(|| Error::from("relocation overflow"))?;
+                let disp = target as i64 - next as i64;
+                let disp32 =
+                    i32::try_from(disp).map_err(|_| Error::from("call relocation out of range"))?;
+                unsafe {
+                    section.write_i32(offset, disp32)?;
+                }
+                Ok(())
+            }
+            TargetArch::Aarch64 => {
+                let delta = target as i64 - location as i64;
+                if delta & 0b11 != 0 {
+                    return Err(Error::from("aarch64 call target must be 4-byte aligned"));
+                }
+                let imm = delta / 4;
+                if imm < -(1 << 25) || imm > (1 << 25) - 1 {
+                    return Err(Error::from("aarch64 call relocation out of range"));
+                }
+                let encoded = 0x9400_0000u32 | ((imm as u32) & 0x03FF_FFFF);
+                unsafe {
+                    section.write_u32(offset, encoded)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     fn resolve_symbol_addr(
         &self,
         plan: &EmitPlan,
         symbol: &str,
         text_base: u64,
         rodata_base: u64,
+        extra_symbols: &[(&str, *const c_void)],
     ) -> Result<u64> {
         if symbol == ".rodata" {
             return Ok(rodata_base);
@@ -250,6 +388,9 @@ impl JitEngine {
         }
         if let Some(offset) = plan.rodata_symbols.get(symbol) {
             return Ok(rodata_base + *offset);
+        }
+        if let Some((_, ptr)) = extra_symbols.iter().find(|(name, _)| *name == symbol) {
+            return Ok(*ptr as u64);
         }
         let ptr = self.lib.symbol(symbol)? as u64;
         Ok(ptr)
@@ -378,6 +519,19 @@ impl JitMemory {
         Ok(())
     }
 
+    unsafe fn write_bytes_at(&self, offset: usize, bytes: &[u8]) -> Result<()> {
+        let end = offset
+            .checked_add(bytes.len())
+            .ok_or_else(|| Error::from("jit buffer overflow"))?;
+        if end > self.len {
+            return Err(Error::from("jit buffer overflow"));
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(offset), bytes.len());
+        }
+        Ok(())
+    }
+
     unsafe fn write_u64(&self, offset: usize, value: u64) -> Result<()> {
         if offset + 8 > self.len {
             return Err(Error::from("jit relocation overflow"));
@@ -455,13 +609,54 @@ fn align_up(value: usize, align: usize) -> usize {
     (value + (align - 1)) & !(align - 1)
 }
 
+fn jit_text_len(
+    base_text_len: usize,
+    arch: TargetArch,
+    external_stub_count: usize,
+) -> Result<usize> {
+    if external_stub_count == 0 {
+        return Ok(base_text_len);
+    }
+    let stub_bytes = external_call_stub_size(arch)
+        .checked_mul(external_stub_count)
+        .ok_or_else(|| Error::from("jit external stub size overflow"))?;
+    align_up(base_text_len, JIT_EXTERNAL_STUB_ALIGN)
+        .checked_add(stub_bytes)
+        .ok_or_else(|| Error::from("jit text size overflow"))
+}
+
+fn external_call_stub_size(arch: TargetArch) -> usize {
+    match arch {
+        TargetArch::X86_64 => JIT_X86_64_EXTERNAL_STUB_BYTES,
+        TargetArch::Aarch64 => JIT_AARCH64_EXTERNAL_STUB_BYTES,
+    }
+}
+
+fn collect_external_call_symbols(plan: &EmitPlan) -> Vec<String> {
+    let mut symbols = Vec::new();
+    for reloc in &plan.relocs {
+        if reloc.kind != RelocKind::CallRel32 {
+            continue;
+        }
+        if plan.symbols.contains_key(&reloc.symbol) {
+            continue;
+        }
+        if symbols.iter().any(|existing| existing == &reloc.symbol) {
+            continue;
+        }
+        symbols.push(reloc.symbol.clone());
+    }
+    symbols
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{HostScalar, JitEngine, validate_native_program};
+    use super::{validate_native_program, HostScalar, JitEngine};
     use fp_core::lir::{
         CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature,
-        LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, Name,
+        LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, Name,
     };
+    use std::ffi::c_void;
 
     fn minimal_program() -> LirProgram {
         let func = LirFunction {
@@ -532,6 +727,78 @@ mod tests {
             err.to_string().contains("ExecQuery"),
             "unexpected error: {err}"
         );
+    }
+
+    extern "C" fn jit_test_add1() -> i64 {
+        42
+    }
+
+    fn external_call_program() -> LirProgram {
+        let callee = LirFunction {
+            name: Name::new("jit_test_add1"),
+            signature: LirFunctionSignature {
+                params: Vec::new(),
+                return_type: LirType::I64,
+                is_variadic: false,
+            },
+            basic_blocks: Vec::new(),
+            locals: Vec::new(),
+            stack_slots: Vec::new(),
+            calling_convention: CallingConvention::C,
+            linkage: Linkage::External,
+            is_declaration: true,
+        };
+        let caller = LirFunction {
+            name: Name::new("main"),
+            signature: LirFunctionSignature {
+                params: Vec::new(),
+                return_type: LirType::I64,
+                is_variadic: false,
+            },
+            basic_blocks: vec![LirBasicBlock {
+                id: 0,
+                label: Some(Name::new("entry")),
+                instructions: vec![LirInstruction {
+                    id: 1,
+                    kind: LirInstructionKind::Call {
+                        function: LirValue::Function("jit_test_add1".to_string()),
+                        args: Vec::new(),
+                        calling_convention: CallingConvention::C,
+                        tail_call: false,
+                    },
+                    type_hint: Some(LirType::I64),
+                    debug_info: None,
+                }],
+                terminator: LirTerminator::Return(Some(LirValue::Register(1))),
+                predecessors: Vec::new(),
+                successors: Vec::new(),
+            }],
+            locals: Vec::new(),
+            stack_slots: Vec::new(),
+            calling_convention: CallingConvention::C,
+            linkage: Linkage::External,
+            is_declaration: false,
+        };
+        LirProgram {
+            functions: vec![callee, caller],
+            globals: Vec::new(),
+            type_definitions: Vec::new(),
+            queries: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn jit_compile_plan_with_external_symbol_call_works() {
+        let program = external_call_program();
+        let mut engine = JitEngine::new(None).expect("jit engine");
+        let plan = crate::emit::emit_plan(&program, engine.format, engine.arch).expect("emit plan");
+        let module = engine
+            .compile_plan_with_symbols(&plan, &[("jit_test_add1", jit_test_add1 as *const c_void)])
+            .expect("jit compile plan with symbols");
+        let main = module.symbol_ptr("main").expect("main ptr");
+        let func: unsafe extern "C" fn() -> i64 = unsafe { std::mem::transmute(main) };
+        let value = unsafe { func() };
+        assert_eq!(value, 42);
     }
 }
 

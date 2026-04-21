@@ -6405,10 +6405,7 @@ impl<'a> BodyBuilder<'a> {
             projection: path_place
                 .projection
                 .into_iter()
-                .chain([
-                    mir::PlaceElem::Deref,
-                    mir::PlaceElem::Field(0, str_ty),
-                ])
+                .chain([mir::PlaceElem::Deref, mir::PlaceElem::Field(0, str_ty)])
                 .collect(),
         })
     }
@@ -6511,11 +6508,7 @@ impl<'a> BodyBuilder<'a> {
             source_info: expr.span,
             kind: mir::StatementKind::Assign(
                 is_null_place.clone(),
-                mir::Rvalue::BinaryOp(
-                    mir::BinOp::Eq,
-                    mir::Operand::copy(getenv_place),
-                    null_const,
-                ),
+                mir::Rvalue::BinaryOp(mir::BinOp::Eq, mir::Operand::copy(getenv_place), null_const),
             ),
         });
 
@@ -6719,8 +6712,10 @@ impl<'a> BodyBuilder<'a> {
     ) -> Result<()> {
         let args = &call.callargs;
         if args.len() != 1 {
-            self.lowering
-                .emit_error(expr.span, "fs::remove_file intrinsic expects one path argument");
+            self.lowering.emit_error(
+                expr.span,
+                "fs::remove_file intrinsic expects one path argument",
+            );
         }
         let path_inner = args
             .get(0)
@@ -6813,7 +6808,10 @@ impl<'a> BodyBuilder<'a> {
         self.emit_c_call(
             "fopen",
             mir::FunctionSig {
-                inputs: vec![self.lowering.raw_string_ptr_ty(), self.lowering.raw_string_ptr_ty()],
+                inputs: vec![
+                    self.lowering.raw_string_ptr_ty(),
+                    self.lowering.raw_string_ptr_ty(),
+                ],
                 output: file_ty.clone(),
             },
             vec![mir::Operand::copy(path_ptr_place), mode_const],
@@ -16540,7 +16538,12 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(());
                 }
                 IntrinsicCallKind::FsReadToString => {
-                    self.lower_fs_read_to_string_into_place(expr, call, place.clone(), expected_ty)?;
+                    self.lower_fs_read_to_string_into_place(
+                        expr,
+                        call,
+                        place.clone(),
+                        expected_ty,
+                    )?;
                     return Ok(());
                 }
                 IntrinsicCallKind::FsWriteString

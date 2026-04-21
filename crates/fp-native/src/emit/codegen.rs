@@ -1,9 +1,6 @@
 use fp_core::asmir::AsmProgram;
 use fp_core::error::{Error, Result};
-use fp_core::lir::layout::align_of;
-use fp_core::lir::{
-    LirConstant, LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue,
-};
+use fp_core::lir::{LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirValue};
 
 use crate::emit::{CodegenOutput, TargetArch, TargetFormat, aarch64, x86_64};
 
@@ -60,9 +57,9 @@ pub fn emit_text_from_selection(
 }
 
 pub fn lower_program_for_native(lir_program: &LirProgram) -> Result<LirProgram> {
-    crate::jit::validate_native_program(lir_program)?;
     let mut lir_program = lir_program.clone();
     lower_phi_in_program(&mut lir_program)?;
+    crate::jit::validate_native_program(&lir_program)?;
     Ok(lir_program)
 }
 fn is_call_arg_value(value: &LirValue) -> bool {
@@ -79,119 +76,51 @@ fn is_call_arg_value(value: &LirValue) -> bool {
 }
 
 fn lower_phi_in_program(program: &mut LirProgram) -> Result<()> {
-    for func in &mut program.functions {
-        lower_phi_in_function(func)?;
+    for function in &mut program.functions {
+        lower_phi_in_function(function)?;
     }
     Ok(())
 }
 
-fn lower_phi_in_function(func: &mut fp_core::lir::LirFunction) -> Result<()> {
-    let mut max_id = 0u32;
-    for block in &func.basic_blocks {
-        for inst in &block.instructions {
-            max_id = max_id.max(inst.id);
-        }
-    }
-
+fn lower_phi_in_function(function: &mut fp_core::lir::LirFunction) -> Result<()> {
     let mut block_index = std::collections::HashMap::new();
-    for (idx, block) in func.basic_blocks.iter().enumerate() {
+    for (idx, block) in function.basic_blocks.iter().enumerate() {
         block_index.insert(block.id, idx);
     }
 
-    let mut entry_allocas = Vec::new();
+    let mut copies_per_block: std::collections::HashMap<usize, Vec<LirInstruction>> =
+        std::collections::HashMap::new();
 
-    for block_idx in 0..func.basic_blocks.len() {
-        let mut replacements = Vec::new();
-        let mut stores = Vec::new();
-        let mut phis = Vec::new();
-
-        {
-            let block = &func.basic_blocks[block_idx];
-            for (inst_idx, inst) in block.instructions.iter().enumerate() {
-                if let LirInstructionKind::Phi { incoming } = &inst.kind {
-                    phis.push((inst_idx, inst.id, incoming.clone(), inst.type_hint.clone()));
-                }
-            }
-        }
-
-        if phis.is_empty() {
-            continue;
-        }
-
-        for (inst_idx, phi_id, incoming, phi_ty) in phis {
-            let Some(phi_ty) = phi_ty else {
-                return Err(Error::from("phi instruction missing type hint"));
+    for block in &mut function.basic_blocks {
+        let mut retained = Vec::with_capacity(block.instructions.len());
+        for instruction in &block.instructions {
+            let LirInstructionKind::Phi { incoming } = &instruction.kind else {
+                retained.push(instruction.clone());
+                continue;
             };
-            let align = align_of(&phi_ty) as u32;
-            max_id += 1;
-            let alloca_id = max_id;
-            entry_allocas.push(LirInstruction {
-                id: alloca_id,
-                kind: LirInstructionKind::Alloca {
-                    size: LirValue::Constant(LirConstant::Int(1, LirType::I32)),
-                    alignment: align,
-                },
-                type_hint: Some(LirType::Ptr(Box::new(phi_ty.clone()))),
-                debug_info: None,
-            });
 
-            for (value, pred) in incoming {
-                let Some(pred_idx) = block_index.get(&pred).copied() else {
+            for (value, predecessor) in incoming {
+                let Some(pred_idx) = block_index.get(predecessor).copied() else {
                     return Err(Error::from("phi predecessor block not found"));
                 };
-                max_id += 1;
-                stores.push((
-                    pred_idx,
-                    LirInstruction {
-                        id: max_id,
-                        kind: LirInstructionKind::Store {
-                            value,
-                            address: LirValue::Register(alloca_id),
-                            alignment: Some(align),
-                            volatile: false,
-                        },
-                        type_hint: None,
-                        debug_info: None,
-                    },
-                ));
-            }
-
-            replacements.push((
-                inst_idx,
-                LirInstruction {
-                    id: phi_id,
-                    kind: LirInstructionKind::Load {
-                        address: LirValue::Register(alloca_id),
-                        alignment: Some(align),
-                        volatile: false,
-                    },
-                    type_hint: Some(phi_ty),
-                    debug_info: None,
-                },
-            ));
-        }
-
-        if let Some(block) = func.basic_blocks.get_mut(block_idx) {
-            for (inst_idx, replacement) in replacements.into_iter().rev() {
-                block.instructions[inst_idx] = replacement;
+                copies_per_block
+                    .entry(pred_idx)
+                    .or_default()
+                    .push(LirInstruction {
+                        id: instruction.id,
+                        kind: LirInstructionKind::Freeze(value.clone()),
+                        type_hint: instruction.type_hint.clone(),
+                        debug_info: instruction.debug_info.clone(),
+                    });
             }
         }
-
-        for (pred_idx, store_inst) in stores {
-            if let Some(pred_block) = func.basic_blocks.get_mut(pred_idx) {
-                pred_block.instructions.push(store_inst);
-            }
-        }
+        block.instructions = retained;
     }
 
-    if !entry_allocas.is_empty() {
-        if let Some(entry_block) = func.basic_blocks.first_mut() {
-            let mut new_insts =
-                Vec::with_capacity(entry_allocas.len() + entry_block.instructions.len());
-            new_insts.extend(entry_allocas);
-            new_insts.extend(entry_block.instructions.drain(..));
-            entry_block.instructions = new_insts;
-        }
+    for (block_idx, mut copies) in copies_per_block {
+        function.basic_blocks[block_idx]
+            .instructions
+            .append(&mut copies);
     }
 
     Ok(())

@@ -7,6 +7,7 @@
 
 pub mod abi;
 pub mod error;
+pub mod lir_optimizer;
 pub mod optimizer;
 pub mod transforms;
 
