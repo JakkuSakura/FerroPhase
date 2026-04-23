@@ -651,7 +651,7 @@ fn collect_external_call_symbols(plan: &EmitPlan) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_native_program, HostScalar, JitEngine};
+    use super::{HostScalar, JitEngine, validate_native_program};
     use fp_core::lir::{
         CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature,
         LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, Name,
