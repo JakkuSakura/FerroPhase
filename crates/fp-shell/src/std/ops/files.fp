@@ -419,7 +419,7 @@ pub const fn directory(
     present: bool = true,
     user: str = "",
     group: str = "",
-    mode: i64 = -1,
+    mode: i64 = 0,
     recursive: bool = false,
     force: bool = false,
     force_backup: bool = true,
@@ -464,7 +464,7 @@ pub const fn directory(
 
     if info == null {
         std::ops::server::shell(f"mkdir -p {path}", hosts=hosts, sudo=sudo);
-        if mode >= 0 {
+        if mode > 0 {
             let flag = match recursive {
                 true => "-R ",
                 false => "",
@@ -818,7 +818,7 @@ pub const fn replace(
     record_change("replace", path, summary, changed)
 }
 
-pub const fn move(
+pub const fn move_file(
     src: any,
     dest: any,
     context hosts: str = "localhost",

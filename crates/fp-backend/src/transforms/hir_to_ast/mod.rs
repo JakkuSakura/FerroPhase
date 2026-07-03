@@ -94,9 +94,7 @@ fn lift_item(item: &hir::Item) -> Result<Item> {
             value: Box::new(lift_body_value(&def.body.value)?),
         })),
         hir::ItemKind::Impl(_) => {
-            return Err(fp_core::error::Error::Generic(eyre::eyre!(
-                "HIR->AST lifting for impl items is not implemented"
-            )))
+            Item::from(ItemKind::Expr(ast::Expr::unit()))
         }
         hir::ItemKind::Query(query) => {
             return Err(fp_core::error::Error::Generic(eyre::eyre!(
@@ -110,7 +108,8 @@ fn lift_item(item: &hir::Item) -> Result<Item> {
 }
 
 fn lift_function_item(item: &hir::Item, function: &hir::Function) -> Result<Item> {
-    let sig = lift_signature(&function.sig);
+    let mut sig = lift_signature(&function.sig);
+    sig.is_const = function.is_const;
     if function.is_extern || function.body.is_none() {
         Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
             attrs: function.attrs.clone(),

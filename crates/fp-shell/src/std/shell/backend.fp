@@ -34,62 +34,6 @@ extern "bash" fn docker_exec_user(user: str, container: str, shell: str, flag: s
 extern "pwsh" fn docker_exec_user(user: str, container: str, shell: str, flag: str, cmd: str);
 
 #[cfg(target_lang = "bash")]
-#[command = "kubectl exec"]
-extern "bash" fn kubectl_exec(pod: str, separator: str, shell: str, flag: str, cmd: str);
-#[cfg(target_lang = "pwsh")]
-#[command = "kubectl exec"]
-extern "pwsh" fn kubectl_exec(pod: str, separator: str, shell: str, flag: str, cmd: str);
-
-#[cfg(target_lang = "bash")]
-#[command = "kubectl exec -c"]
-extern "bash" fn kubectl_exec_container(container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-#[cfg(target_lang = "pwsh")]
-#[command = "kubectl exec -c"]
-extern "pwsh" fn kubectl_exec_container(container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-
-#[cfg(target_lang = "bash")]
-#[command = "kubectl -n"]
-extern "bash" fn kubectl_namespace_exec(namespace: str, exec_word: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-#[cfg(target_lang = "pwsh")]
-#[command = "kubectl -n"]
-extern "pwsh" fn kubectl_namespace_exec(namespace: str, exec_word: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-
-#[cfg(target_lang = "bash")]
-#[command = "kubectl -n"]
-extern "bash" fn kubectl_namespace_exec_container(namespace: str, exec_word: str, container_flag: str, container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-#[cfg(target_lang = "pwsh")]
-#[command = "kubectl -n"]
-extern "pwsh" fn kubectl_namespace_exec_container(namespace: str, exec_word: str, container_flag: str, container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-
-#[cfg(target_lang = "bash")]
-#[command = "kubectl --context"]
-extern "bash" fn kubectl_context_exec(context: str, exec_word: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-#[cfg(target_lang = "pwsh")]
-#[command = "kubectl --context"]
-extern "pwsh" fn kubectl_context_exec(context: str, exec_word: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-
-#[cfg(target_lang = "bash")]
-#[command = "kubectl --context"]
-extern "bash" fn kubectl_context_exec_container(context: str, exec_word: str, container_flag: str, container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-#[cfg(target_lang = "pwsh")]
-#[command = "kubectl --context"]
-extern "pwsh" fn kubectl_context_exec_container(context: str, exec_word: str, container_flag: str, container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-
-#[cfg(target_lang = "bash")]
-#[command = "kubectl --context"]
-extern "bash" fn kubectl_context_namespace_exec(context: str, namespace_flag: str, namespace: str, exec_word: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-#[cfg(target_lang = "pwsh")]
-#[command = "kubectl --context"]
-extern "pwsh" fn kubectl_context_namespace_exec(context: str, namespace_flag: str, namespace: str, exec_word: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-
-#[cfg(target_lang = "bash")]
-#[command = "kubectl --context"]
-extern "bash" fn kubectl_context_namespace_exec_container(context: str, namespace_flag: str, namespace: str, exec_word: str, container_flag: str, container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-#[cfg(target_lang = "pwsh")]
-#[command = "kubectl --context"]
-extern "pwsh" fn kubectl_context_namespace_exec_container(context: str, namespace_flag: str, namespace: str, exec_word: str, container_flag: str, container: str, pod: str, separator: str, shell: str, flag: str, cmd: str);
-
-#[cfg(target_lang = "bash")]
 #[command = "pwsh"]
 extern "bash" fn winrm_run(host: str, cmd: str);
 #[cfg(target_lang = "pwsh")]
@@ -130,34 +74,6 @@ extern "bash" fn docker_cp(src: str, dest: str);
 #[cfg(target_lang = "pwsh")]
 #[command = "docker cp"]
 extern "pwsh" fn docker_cp(src: str, dest: str);
-
-#[cfg(target_lang = "bash")]
-#[command = "kubectl cp"]
-extern "bash" fn kubectl_cp(src: str, dest: str);
-#[cfg(target_lang = "pwsh")]
-#[command = "kubectl cp"]
-extern "pwsh" fn kubectl_cp(src: str, dest: str);
-
-#[cfg(target_lang = "bash")]
-#[command = "kubectl -n"]
-extern "bash" fn kubectl_namespace_cp(namespace: str, cp_word: str, src: str, dest: str);
-#[cfg(target_lang = "pwsh")]
-#[command = "kubectl -n"]
-extern "pwsh" fn kubectl_namespace_cp(namespace: str, cp_word: str, src: str, dest: str);
-
-#[cfg(target_lang = "bash")]
-#[command = "kubectl --context"]
-extern "bash" fn kubectl_context_cp(context: str, cp_word: str, src: str, dest: str);
-#[cfg(target_lang = "pwsh")]
-#[command = "kubectl --context"]
-extern "pwsh" fn kubectl_context_cp(context: str, cp_word: str, src: str, dest: str);
-
-#[cfg(target_lang = "bash")]
-#[command = "kubectl --context"]
-extern "bash" fn kubectl_context_namespace_cp(context: str, namespace_flag: str, namespace: str, cp_word: str, src: str, dest: str);
-#[cfg(target_lang = "pwsh")]
-#[command = "kubectl --context"]
-extern "pwsh" fn kubectl_context_namespace_cp(context: str, namespace_flag: str, namespace: str, cp_word: str, src: str, dest: str);
 
 #[cfg(target_lang = "bash")]
 #[command = "pwsh"]
@@ -346,28 +262,11 @@ const fn run_kubectl_host(host: str, cmd: str) {
     let namespace = host.namespace;
     let container = host.container;
     let pod = host.pod;
-    match context {
-        "" => match namespace {
-            "" => match container {
-                "" => kubectl_exec(pod, "--", "sh", "-lc", cmd),
-                _ => kubectl_exec_container(container, pod, "--", "sh", "-lc", cmd),
-            },
-            _ => match container {
-                "" => kubectl_namespace_exec(namespace, "exec", pod, "--", "sh", "-lc", cmd),
-                _ => kubectl_namespace_exec_container(namespace, "exec", "-c", container, pod, "--", "sh", "-lc", cmd),
-            },
-        },
-        _ => match namespace {
-            "" => match container {
-                "" => kubectl_context_exec(context, "exec", pod, "--", "sh", "-lc", cmd),
-                _ => kubectl_context_exec_container(context, "exec", "-c", container, pod, "--", "sh", "-lc", cmd),
-            },
-            _ => match container {
-                "" => kubectl_context_namespace_exec(context, "-n", namespace, "exec", pod, "--", "sh", "-lc", cmd),
-                _ => kubectl_context_namespace_exec_container(context, "-n", namespace, "exec", "-c", container, pod, "--", "sh", "-lc", cmd),
-            },
-        },
-    }
+    let context_part = if context != "" { f" --context {context}" } else { "" };
+    let ns_part = if namespace != "" { f" -n {namespace}" } else { "" };
+    let container_part = if container != "" { f" -c {container}" } else { "" };
+    let kubectl_cmd = f"kubectl{context_part}{ns_part} exec{container_part} {pod} -- sh -lc {cmd}";
+    run_local_host(kubectl_cmd);
 }
 
 const fn run_chroot_host(host: str, cmd: str) {
@@ -383,16 +282,10 @@ const fn copy_kubectl_host(host: str, src: str, dest: str) {
     let context = host.context;
     let namespace = host.namespace;
     let remote = f"{host.pod}:{dest}";
-    match context {
-        "" => match namespace {
-            "" => kubectl_cp(src, remote),
-            _ => kubectl_namespace_cp(namespace, "cp", src, remote),
-        },
-        _ => match namespace {
-            "" => kubectl_context_cp(context, "cp", src, remote),
-            _ => kubectl_context_namespace_cp(context, "-n", namespace, "cp", src, remote),
-        },
-    }
+    let context_part = if context != "" { f" --context {context}" } else { "" };
+    let ns_part = if namespace != "" { f" -n {namespace}" } else { "" };
+    let kubectl_cp_cmd = f"kubectl{context_part}{ns_part} cp {src} {remote}";
+    run_local_host(kubectl_cp_cmd);
 }
 
 const fn chroot_path(host: str, path: str) -> str {
@@ -522,186 +415,113 @@ const fn should_apply(only_if: str, unless: str, creates: str, removes: str) -> 
 }
 
 pub const fn shell_run(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        run_host(host, command);
-        runtime_set_changed(true);
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    run_host(host, command);
 }
 
-pub const fn shell_run_local(_host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        run_local_host(command);
-        runtime_set_changed(true);
+pub const fn shell_run_local(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    run_local_host(command);
 }
 
 pub const fn shell_run_ssh(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        run_ssh_host(host, command);
-        runtime_set_changed(true);
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    run_ssh_host(host, command);
 }
 
 pub const fn shell_run_docker(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        run_docker_host(host, command);
-        runtime_set_changed(true);
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    run_docker_host(host, command);
 }
 
 pub const fn shell_run_kubectl(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        run_kubectl_host(host, command);
-        runtime_set_changed(true);
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    run_kubectl_host(host, command);
 }
 
 pub const fn shell_run_winrm(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        winrm_run(host, command);
-        runtime_set_changed(true);
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    winrm_run(host, command);
 }
 
 pub const fn shell_run_chroot(host: str, command: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        run_chroot_host(host, command);
-        runtime_set_changed(true);
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    run_chroot_host(host, command);
 }
 
 const fn shell_copy(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        copy_host(host, src, dest);
-        runtime_set_changed(true);
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    copy_host(host, src, dest);
 }
 
-const fn shell_copy_local(_host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        copy_local_host(src, dest);
-        runtime_set_changed(true);
+const fn shell_copy_local(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    copy_local_host(src, dest);
 }
 
 const fn shell_copy_ssh(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        copy_ssh_host(host, src, dest);
-        runtime_set_changed(true);
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    copy_ssh_host(host, src, dest);
 }
 
 const fn shell_copy_docker(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        copy_docker_host(host, src, dest);
-        runtime_set_changed(true);
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    copy_docker_host(host, src, dest);
 }
 
 const fn shell_copy_kubectl(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        copy_kubectl_host(host, src, dest);
-        runtime_set_changed(true);
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    copy_kubectl_host(host, src, dest);
 }
 
 const fn shell_copy_winrm(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        winrm_copy(host, src, dest);
-        runtime_set_changed(true);
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    winrm_copy(host, src, dest);
 }
 
 const fn shell_copy_chroot(host: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        copy_chroot_host(host, src, dest);
-        runtime_set_changed(true);
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    copy_chroot_host(host, src, dest);
 }
 
-const fn shell_template(host: str, src: str, dest: str, vars: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        template_host(host, src, dest, vars);
-        runtime_set_changed(true);
+const fn template_run(host: str, src: str, dest: str, vars: str, only_if: str, unless: str, creates: str, removes: str) {
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
+    template_host(host, src, dest, vars);
 }
 
-const fn shell_template_local(_host: str, src: str, dest: str, vars: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        let tmp = runtime_temp_path();
-        render_template(src, tmp, vars);
-        copy_local_host(tmp, dest);
-        remove_file(tmp);
-        runtime_set_changed(true);
+const fn rsync_run(host: str, flags: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
+    if !should_apply(only_if, unless, creates, removes) {
+        return;
     }
-}
-
-const fn shell_template_ssh(host: str, src: str, dest: str, vars: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        let tmp = runtime_temp_path();
-        render_template(src, tmp, vars);
-        copy_ssh_host(host, tmp, dest);
-        remove_file(tmp);
-        runtime_set_changed(true);
-    }
-}
-
-const fn shell_template_chroot(host: str, src: str, dest: str, vars: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        let tmp = runtime_temp_path();
-        render_template(src, tmp, vars);
-        copy_chroot_host(host, tmp, dest);
-        remove_file(tmp);
-        runtime_set_changed(true);
-    }
-}
-
-const fn shell_rsync(host: str, flags: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        rsync_host(host, flags, src, dest);
-        runtime_set_changed(true);
-    }
-}
-
-const fn shell_rsync_local(_host: str, flags: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        rsync_cli(flags, src, dest);
-        runtime_set_changed(true);
-    }
-}
-
-const fn shell_rsync_remote(host: str, flags: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        rsync_remote_host(host, flags, src, dest);
-        runtime_set_changed(true);
-    }
-}
-
-const fn shell_rsync_chroot(host: str, flags: str, src: str, dest: str, only_if: str, unless: str, creates: str, removes: str) {
-    runtime_set_changed(false);
-    if should_apply(only_if, unless, creates, removes) {
-        rsync_chroot_host(host, flags, src, dest);
-        runtime_set_changed(true);
-    }
+    rsync_host(host, flags, src, dest);
 }

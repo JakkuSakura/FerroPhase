@@ -116,4 +116,14 @@ pub enum IntrinsicCallKind {
     ProcMacroTokenStreamFromStr,
     /// Render a TokenStream into a string.
     ProcMacroTokenStreamToString,
+
+    // Shell execution intrinsics
+    /// Execute a shell command on a host.
+    ShellExec,
+    /// Copy a file to a host.
+    ShellFileCopy,
+    /// Render a template and copy to a host.
+    ShellFileTemplate,
+    /// Rsync files to a host.
+    ShellFileRsync,
 }

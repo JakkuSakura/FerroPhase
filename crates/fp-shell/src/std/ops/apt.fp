@@ -468,7 +468,7 @@ pub const fn dist_upgrade(
 }
 
 pub const fn packages(
-    packages: Vec<str> = Vec::new(),
+    packages: Vec<str>,
     context hosts: str = "localhost",
     present: bool = true,
     latest: bool = false,

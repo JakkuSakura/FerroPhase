@@ -3,13 +3,20 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest dir"));
+    if let Err(err) = run() {
+        eprintln!("build error: {err}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), String> {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").map_err(|e| e.to_string())?);
     let std_root = manifest_dir.join("src/std");
-    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("out dir"));
+    let out_dir = PathBuf::from(env::var("OUT_DIR").map_err(|e| e.to_string())?);
     let output = out_dir.join("embedded_shell_std.rs");
 
     let mut files = Vec::new();
-    collect_fp_files(&std_root, &std_root, &mut files);
+    collect_fp_files(&std_root, &std_root, &mut files)?;
     files.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
 
     let mut generated = String::from("pub const PATHS: &[&str] = &[\n");
@@ -25,22 +32,26 @@ fn main() {
     }
     generated.push_str("        _ => None,\n    }\n}\n");
 
-    fs::write(output, generated).expect("write embedded shell std");
+    fs::write(output, generated).map_err(|err| format!("write embedded shell std: {err}"))
 }
 
-fn collect_fp_files(root: &Path, dir: &Path, files: &mut Vec<(String, String)>) {
+fn collect_fp_files(
+    root: &Path,
+    dir: &Path,
+    files: &mut Vec<(String, String)>,
+) -> Result<(), String> {
     println!("cargo:rerun-if-changed={}", dir.display());
 
     let mut entries = fs::read_dir(dir)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", dir.display()))
+        .map_err(|err| format!("failed to read {}: {err}", dir.display()))?
         .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_else(|err| panic!("failed to list {}: {err}", dir.display()));
+        .map_err(|err| format!("failed to list {}: {err}", dir.display()))?;
     entries.sort_by_key(|entry| entry.path());
 
     for entry in entries {
         let path = entry.path();
         if path.is_dir() {
-            collect_fp_files(root, &path, files);
+            collect_fp_files(root, &path, files)?;
             continue;
         }
         if path.extension().and_then(|ext| ext.to_str()) != Some("fp") {
@@ -49,9 +60,10 @@ fn collect_fp_files(root: &Path, dir: &Path, files: &mut Vec<(String, String)>) 
 
         let relative = path
             .strip_prefix(root)
-            .expect("relative shell std path")
+            .map_err(|err| format!("relative shell std path: {err}"))?
             .to_string_lossy()
             .replace('\\', "/");
         files.push((relative, path.to_string_lossy().into_owned()));
     }
+    Ok(())
 }

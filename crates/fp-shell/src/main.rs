@@ -38,6 +38,12 @@ struct CompileArgs {
 
     #[arg(long)]
     inventory: Option<PathBuf>,
+
+    #[arg(long)]
+    dry_run: bool,
+
+    #[arg(long, value_delimiter = ',')]
+    limit: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -69,7 +75,11 @@ fn run() -> Result<(), fp_shell::ShellError> {
             } else {
                 None
             };
-            let options = CompileOptions { inventory };
+            let options = CompileOptions {
+                inventory,
+                dry_run: args.dry_run,
+                limit: args.limit,
+            };
             let output =
                 compile_file_with_options(&args.input, args.output.as_deref(), target, &options)?;
             if args.check {

@@ -778,6 +778,10 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
         IntrinsicCallKind::CompileWarning => "compile_warning",
         IntrinsicCallKind::ProcMacroTokenStreamFromStr => "token_stream_from_str",
         IntrinsicCallKind::ProcMacroTokenStreamToString => "token_stream_to_string",
+        IntrinsicCallKind::ShellExec => "shell_exec",
+        IntrinsicCallKind::ShellFileCopy => "shell_file_copy",
+        IntrinsicCallKind::ShellFileTemplate => "shell_file_template",
+        IntrinsicCallKind::ShellFileRsync => "shell_file_rsync",
     }
 }
 

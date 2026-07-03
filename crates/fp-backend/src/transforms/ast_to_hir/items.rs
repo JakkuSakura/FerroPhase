@@ -96,11 +96,11 @@ impl HirGenerator {
                     value: body_expr,
                 };
 
-                let mut function = hir::Function::new(sig, Some(body), false, false);
+                let mut function = hir::Function::new(sig, Some(body), func.sig.is_const, false);
                 function.attrs = func.attrs.clone();
                 Ok(function)
             } else {
-                let mut function = hir::Function::new(sig, None, false, false);
+                let mut function = hir::Function::new(sig, None, func.sig.is_const, false);
                 function.attrs = func.attrs.clone();
                 Ok(function)
             }

@@ -38,7 +38,7 @@ pub const fn local_groups() -> str {
 }
 
 #[cfg(target_lang = "pwsh")]
-pub const fn where(command: str) -> str {
+pub const fn which(command: str) -> str {
     std::shell::process::output(f"where.exe {command}")
 }
 

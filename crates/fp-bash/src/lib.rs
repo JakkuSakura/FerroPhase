@@ -1357,6 +1357,9 @@ fn is_runtime_primitive(name: &str) -> bool {
         || name.ends_with("runtime_fail")
         || name.ends_with("runtime_set_changed")
         || name.ends_with("runtime_last_changed")
+        || name.ends_with("runtime_record_change")
+        || name.ends_with("runtime_change_summary")
+        || name.ends_with("runtime_clear_change_summary")
 }
 
 fn extern_command(function: &ItemDeclFunction) -> Option<String> {

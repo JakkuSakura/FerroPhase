@@ -1,6 +1,7 @@
 mod embedded_std;
+mod host_transforms;
 mod inventory;
-mod lower;
+mod shell_materializer;
 
 use fp_core::ast::{
     Abi, AstTargetOutput, AttrMeta, AttributesExt, BlockStmt, Expr, ExprInvokeTarget, ExprKind,
@@ -40,6 +41,8 @@ impl ScriptTarget {
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
     pub inventory: Option<Node>,
+    pub dry_run: bool,
+    pub limit: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -104,9 +107,9 @@ pub fn compile_source_with_options(
 
     let ast = merge_runtime_helpers(parsed.ast, options.inventory.as_ref())?;
 
-    let lowered = lower::lower_node(&ast).map_err(ShellError::Lower)?;
-    let lowered = match lowered.kind() {
-        NodeKind::File(file) => fp_backend::roundtrip_ast_file_via_hir(file)
+    let ast_node = host_transforms::apply(&ast, &options.limit).map_err(ShellError::Lower)?;
+    let mut lowered = match ast_node.kind() {
+        NodeKind::File(file) => fp_backend::roundtrip_ast_file_via_hir(&file)
             .map_err(|err| ShellError::Lower(err.to_string()))?,
         _ => {
             return Err(ShellError::Lower(
@@ -114,6 +117,9 @@ pub fn compile_source_with_options(
             ));
         }
     };
+    let materializer = shell_materializer::ShellMaterializer::new(options.inventory.as_ref());
+    shell_materializer::materialize_ast(&mut lowered, &materializer)
+        .map_err(|err| ShellError::Lower(err.to_string()))?;
     validate_extern_decls(&lowered, target).map_err(ShellError::Lower)?;
 
     let code = match target {
@@ -123,6 +129,15 @@ pub fn compile_source_with_options(
         ScriptTarget::PowerShell => fp_powershell::PowerShellTarget::new()
             .render(&lowered, &Default::default())
             .map_err(|err| ShellError::Emit(err.to_string()))?,
+    };
+
+    let code = if options.dry_run {
+        let mut s = String::new();
+        s.push_str("#!/usr/bin/env bash\nset -euo pipefail\nFP_DRY_RUN=1\n__dry() { echo \"[DRY-RUN] $*\"; }\n\n");
+        s.push_str(&code);
+        s
+    } else {
+        code
     };
 
     Ok(AstTargetOutput {
@@ -315,6 +330,7 @@ fn interpret_source_with_runtime_state(
             stdout_mode: StdoutMode::Inherit,
             command_mock_state,
             runtime_extern_hook: Some(runtime_hook),
+            jit: None,
         },
     );
     interpreter.enable_incremental_typing(&ast);
@@ -1112,6 +1128,8 @@ const fn inventory() -> Inventory {
             ScriptTarget::PowerShell,
             &CompileOptions {
                 inventory: Some(inventory),
+                dry_run: false,
+                limit: Vec::new(),
             },
         )
         .expect("source should compile");
