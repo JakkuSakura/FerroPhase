@@ -6,7 +6,7 @@ pub(super) mod ebpf;
 pub(super) mod frontend;
 pub(super) mod link;
 pub(super) mod lowering;
-pub(super) mod materialize;
+pub mod materialize;
 pub(super) mod normalize;
 pub(super) mod typing;
 pub(super) mod wasm;

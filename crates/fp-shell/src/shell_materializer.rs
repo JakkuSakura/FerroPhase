@@ -207,6 +207,90 @@ fn scan_sigs(items: &[Item], path: &[String], out: &mut HashMap<String, Function
 }
 
 
+pub fn pre_materialize(node: &mut fp_core::ast::Node, inventory: Option<&fp_core::ast::Node>) -> Result<()> {
+    let sigs = scan_signatures(node);
+    let NodeKind::File(file) = node.kind_mut() else { return Ok(()) };
+
+    // Extract main body as top-level exprs
+    let mut new_items = Vec::new();
+    for item in &file.items {
+        match item.kind() {
+            ItemKind::DefFunction(f) if f.name.as_str() == "main" => {
+                push_main_body(&f.body, &mut new_items);
+            }
+            ItemKind::DefConst(c) if c.name.as_str() == "main" => {
+                push_main_body(&c.value, &mut new_items);
+            }
+            _ => new_items.push(item.clone()),
+        }
+    }
+    file.items = new_items;
+
+    // Walk and transform: fill args, rewrite invokes to intrinsics
+    transform_items(&mut file.items, &sigs);
+    Ok(())
+}
+
+fn push_main_body(body: &fp_core::ast::Expr, out: &mut Vec<Item>) {
+    if let ExprKind::Block(block) = body.kind() {
+        for stmt in &block.stmts {
+            if let BlockStmt::Expr(e) = stmt {
+                out.push(Item::from(ItemKind::Expr(e.expr.as_ref().clone())));
+            }
+        }
+    }
+}
+
+fn transform_items(items: &mut [Item], sigs: &HashMap<String, FunctionSignature>) {
+    for item in items {
+        match item.kind_mut() {
+            ItemKind::Module(m) => transform_items(&mut m.items, sigs),
+            ItemKind::Expr(expr) => transform_expr(expr, sigs),
+            ItemKind::DefFunction(f) => transform_expr(&mut f.body, sigs),
+            _ => {}
+        }
+    }
+}
+
+fn transform_expr(expr: &mut Expr, sigs: &HashMap<String, FunctionSignature>) {
+    if let ExprKind::With(w) = expr.kind() {
+        let body = w.body.as_ref().clone();
+        *expr = body;
+        transform_expr(expr, sigs);
+        return;
+    }
+    match expr.kind_mut() {
+        ExprKind::Invoke(invoke) => {
+            for arg in &mut invoke.args { transform_expr(arg, sigs); }
+            for kwarg in &mut invoke.kwargs { transform_expr(&mut kwarg.value, sigs); }
+            fill_missing_args(invoke, sigs);
+            if let Some(call) = try_rewrite_invoke_to_intrinsic(invoke) {
+                *expr = call;
+                transform_expr(expr, sigs);
+            }
+        }
+        ExprKind::Block(block) => {
+            for stmt in &mut block.stmts {
+                match stmt {
+                    BlockStmt::Expr(e) => transform_expr(&mut e.expr, sigs),
+                    BlockStmt::Let(s) => { if let Some(init) = &mut s.init { transform_expr(init, sigs); } }
+                    BlockStmt::Defer(d) => transform_expr(&mut d.expr, sigs),
+                    BlockStmt::Item(i) => transform_items(std::slice::from_mut(i), sigs),
+                    _ => {}
+                }
+            }
+        }
+        ExprKind::If(e) => { transform_expr(&mut e.cond, sigs); transform_expr(&mut e.then, sigs); if let Some(elze) = &mut e.elze { transform_expr(elze, sigs); } }
+        ExprKind::Try(e) => { transform_expr(&mut e.expr, sigs); for c in &mut e.catches { transform_expr(&mut c.body, sigs); } if let Some(elze) = &mut e.elze { transform_expr(elze, sigs); } if let Some(f) = &mut e.finally { transform_expr(f, sigs); } }
+        ExprKind::While(w) => { transform_expr(&mut w.cond, sigs); transform_expr(&mut w.body, sigs); }
+        ExprKind::For(f) => { transform_expr(&mut f.body, sigs); }
+        ExprKind::Match(m) => { for case in &mut m.cases { transform_expr(&mut case.body, sigs); if let Some(g) = &mut case.guard { transform_expr(g, sigs); } } }
+        ExprKind::With(w) => { transform_expr(&mut w.body, sigs); }
+        ExprKind::Let(l) => { transform_expr(&mut l.expr, sigs); }
+        _ => {}
+    }
+}
+
 fn string_value(expr: &Expr) -> Option<String> {
     match expr.kind() {
         ExprKind::Value(v) => match v.as_ref() {
@@ -277,156 +361,4 @@ fn try_rewrite_invoke_to_intrinsic(invoke: &mut ExprInvoke) -> Option<Expr> {
         args: std::mem::take(&mut invoke.args),
         kwargs: std::mem::take(&mut invoke.kwargs),
     })))
-}
-
-pub fn materialize_ast(node: &mut fp_core::ast::Node, materializer: &dyn IntrinsicMaterializer) -> Result<()> {
-    let sigs = scan_signatures(node);
-    flatten_main_body(node);
-    let NodeKind::File(file) = node.kind_mut() else {
-        return Ok(());
-    };
-    materialize_items(&mut file.items, materializer, &sigs)
-}
-
-fn materialize_items(items: &mut [fp_core::ast::Item], materializer: &dyn IntrinsicMaterializer, sigs: &HashMap<String, FunctionSignature>) -> Result<()> {
-    for item in items {
-        match item.kind_mut() {
-            ItemKind::Module(module) => materialize_items(&mut module.items, materializer, sigs)?,
-            ItemKind::DefFunction(func) => materialize_expr(&mut func.body, materializer, sigs)?,
-            ItemKind::Expr(expr) => materialize_expr(expr, materializer, sigs)?,
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-fn materialize_expr(expr: &mut Expr, materializer: &dyn IntrinsicMaterializer, sigs: &HashMap<String, FunctionSignature>) -> Result<()> {
-    // Expand with blocks: replace `with host { ... }` with the body directly
-    // (the context is handled by the callee via host resolution)
-    if let ExprKind::With(w) = expr.kind() {
-        let body = w.body.as_ref().clone();
-        *expr = body;
-        return materialize_expr(expr, materializer, sigs);
-    }
-
-    match expr.kind_mut() {
-        ExprKind::IntrinsicCall(call) => {
-            if let Some(replacement) = materializer.materialize_call(call, &fp_core::ast::TySlot::None)? {
-                *expr = replacement;
-            }
-        }
-        ExprKind::Block(block) => {
-            for stmt in &mut block.stmts {
-                match stmt {
-                    fp_core::ast::BlockStmt::Expr(e) => materialize_expr(&mut e.expr, materializer, sigs)?,
-                    fp_core::ast::BlockStmt::Let(s) => {
-                        if let Some(init) = &mut s.init {
-                            materialize_expr(init, materializer, sigs)?;
-                        }
-                    }
-                    fp_core::ast::BlockStmt::Defer(d) => materialize_expr(&mut d.expr, materializer, sigs)?,
-                    fp_core::ast::BlockStmt::Item(i) => materialize_expr_in_item(i, materializer, sigs)?,
-                    _ => {}
-                }
-            }
-        }
-        ExprKind::If(e) => {
-            materialize_expr(&mut e.cond, materializer, sigs)?;
-            materialize_expr(&mut e.then, materializer, sigs)?;
-            if let Some(elze) = &mut e.elze {
-                materialize_expr(elze, materializer, sigs)?;
-            }
-        }
-        ExprKind::Invoke(invoke) => {
-            for arg in &mut invoke.args {
-                materialize_expr(arg, materializer, sigs)?;
-            }
-            for kwarg in &mut invoke.kwargs {
-                materialize_expr(&mut kwarg.value, materializer, sigs)?;
-            }
-            // Rewrite known shell calls to intrinsic calls
-            fill_missing_args(invoke, sigs);
-            if let Some(call) = try_rewrite_invoke_to_intrinsic(invoke) {
-                *expr = call;
-                return materialize_expr(expr, materializer, sigs);
-            }
-            if let Some(replacement) = materializer.materialize_invoke(invoke, &fp_core::ast::TySlot::None)? {
-                *expr = replacement;
-            }
-        }
-        ExprKind::Try(e) => {
-            materialize_expr(&mut e.expr, materializer, sigs)?;
-            for c in &mut e.catches {
-                materialize_expr(&mut c.body, materializer, sigs)?;
-            }
-            if let Some(elze) = &mut e.elze {
-                materialize_expr(elze, materializer, sigs)?;
-            }
-            if let Some(finally) = &mut e.finally {
-                materialize_expr(finally, materializer, sigs)?;
-            }
-        }
-        ExprKind::While(w) => {
-            materialize_expr(&mut w.cond, materializer, sigs)?;
-            materialize_expr(&mut w.body, materializer, sigs)?;
-        }
-        ExprKind::For(f) => {
-            materialize_expr(&mut f.body, materializer, sigs)?;
-        }
-        ExprKind::Match(m) => {
-            for case in &mut m.cases {
-                materialize_expr(&mut case.body, materializer, sigs)?;
-                if let Some(guard) = &mut case.guard {
-                    materialize_expr(guard, materializer, sigs)?;
-                }
-            }
-        }
-        ExprKind::With(w) => {
-            materialize_expr(&mut w.body, materializer, sigs)?;
-        }
-        ExprKind::Let(l) => {
-            materialize_expr(&mut l.expr, materializer, sigs)?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn materialize_expr_in_item(item: &mut fp_core::ast::Item, materializer: &dyn IntrinsicMaterializer, sigs: &HashMap<String, FunctionSignature>) -> Result<()> {
-    match item.kind_mut() {
-        ItemKind::DefFunction(func) => materialize_expr(&mut func.body, materializer, sigs)?,
-        ItemKind::Module(module) => materialize_items(&mut module.items, materializer, sigs)?,
-        _ => {}
-    }
-    Ok(())
-}
-
-fn flatten_main_body(node: &mut fp_core::ast::Node) {
-    let NodeKind::File(file) = node.kind_mut() else { return };
-    let mut main_body: Option<fp_core::ast::Expr> = None;
-    file.items.retain(|item| {
-        match item.kind() {
-            ItemKind::DefFunction(f) if f.name.as_str() == "main" => {
-                main_body = Some(f.body.as_ref().clone());
-                false // remove main from items
-            }
-            ItemKind::DefConst(c) if c.name.as_str() == "main" => {
-                main_body = Some((*c.value).clone());
-                false
-            }
-            _ => true
-        }
-    });
-    if let Some(body) = main_body {
-        if let ExprKind::Block(block) = body.kind() {
-            for stmt in &block.stmts {
-                match stmt {
-                    BlockStmt::Expr(e) => {
-                        file.items.push(Item::from(ItemKind::Expr(e.expr.as_ref().clone())));
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
 }

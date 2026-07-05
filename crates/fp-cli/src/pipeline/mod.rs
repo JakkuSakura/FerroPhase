@@ -67,7 +67,7 @@ use tracing::{debug, info, info_span};
 mod artifacts;
 mod diagnostics;
 mod options;
-mod stages;
+pub mod stages;
 use self::diagnostics as diag;
 #[cfg(feature = "llvm")]
 use artifacts::LlvmArtifacts;

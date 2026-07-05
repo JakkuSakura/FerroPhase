@@ -124,7 +124,7 @@ impl IntrinsicsMaterializer {
     }
 }
 
-fn materialize_node(node: Node, strategy: &dyn IntrinsicMaterializer) -> CoreResult<Node> {
+pub fn materialize_node(node: Node, strategy: &dyn IntrinsicMaterializer) -> CoreResult<Node> {
     let Node { ty, kind } = node;
     let new_kind = match kind {
         NodeKind::File(file) => NodeKind::File(materialize_file(file, strategy)?),
@@ -137,7 +137,7 @@ fn materialize_node(node: Node, strategy: &dyn IntrinsicMaterializer) -> CoreRes
     Ok(Node { ty, kind: new_kind })
 }
 
-fn materialize_file(
+pub fn materialize_file(
     mut file: ast::File,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::File> {
@@ -150,7 +150,7 @@ fn materialize_file(
     Ok(file)
 }
 
-fn materialize_item(
+pub fn materialize_item(
     item: ast::Item,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::Item> {
@@ -206,7 +206,7 @@ fn materialize_item(
     })
 }
 
-fn materialize_block(
+pub fn materialize_block(
     block: ast::ExprBlock,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::ExprBlock> {
@@ -217,7 +217,7 @@ fn materialize_block(
     Ok(ast::ExprBlock { stmts, ..block })
 }
 
-fn materialize_stmt(
+pub fn materialize_stmt(
     stmt: ast::BlockStmt,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::BlockStmt> {
@@ -247,7 +247,7 @@ fn materialize_stmt(
     }
 }
 
-fn materialize_expr(
+pub fn materialize_expr(
     expr: ast::Expr,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::Expr> {
@@ -580,7 +580,7 @@ fn build_hashmap_from_entries(
     ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), expr_ty)
 }
 
-fn materialize_value(
+pub fn materialize_value(
     value: ast::Value,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::Value> {
@@ -596,7 +596,7 @@ fn materialize_value(
     }
 }
 
-fn materialize_invoke_target(
+pub fn materialize_invoke_target(
     target: ast::ExprInvokeTarget,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::ExprInvokeTarget> {

@@ -116,7 +116,9 @@ pub fn compile_source_with_options(
         }
     };
     let materializer = shell_materializer::ShellMaterializer::new(options.inventory.as_ref());
-    shell_materializer::materialize_ast(&mut lowered, &materializer)
+    shell_materializer::pre_materialize(&mut lowered, options.inventory.as_ref())
+        .map_err(|err| ShellError::Lower(err.to_string()))?;
+    let lowered = fp_cli::pipeline::stages::materialize::materialize_node(lowered, &materializer)
         .map_err(|err| ShellError::Lower(err.to_string()))?;
     validate_extern_decls(&lowered, target).map_err(ShellError::Lower)?;
 

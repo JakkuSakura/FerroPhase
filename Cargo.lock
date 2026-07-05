@@ -1698,6 +1698,7 @@ dependencies = [
  "clap",
  "fp-backend",
  "fp-bash",
+ "fp-cli",
  "fp-core",
  "fp-interpret",
  "fp-lang",
