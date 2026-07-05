@@ -87,8 +87,8 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
                 };
                 Ok(Some(Expr::new(fp_core::ast::ExprKind::Invoke(ExprInvoke {
                     span: call.span,
-                    target: ExprInvokeTarget::Function(Name::ident(format!(
-                        "std::ops::server::{suffix}"
+                    target: ExprInvokeTarget::Function(Name::ident(mangle_name(
+                        &format!("std::ops::server::{suffix}")
                     ))),
                     args: call.args.clone(),
                     kwargs: call.kwargs.clone(),
@@ -107,8 +107,8 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
                 };
                 Ok(Some(Expr::new(fp_core::ast::ExprKind::Invoke(ExprInvoke {
                     span: call.span,
-                    target: ExprInvokeTarget::Function(Name::ident(format!(
-                        "std::ops::files::{suffix}"
+                    target: ExprInvokeTarget::Function(Name::ident(mangle_name(
+                        &format!("std::ops::files::{suffix}")
                     ))),
                     args: call.args.clone(),
                     kwargs: call.kwargs.clone(),
@@ -124,8 +124,8 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
                 };
                 Ok(Some(Expr::new(fp_core::ast::ExprKind::Invoke(ExprInvoke {
                     span: call.span,
-                    target: ExprInvokeTarget::Function(Name::ident(format!(
-                        "std::ops::files::{suffix}"
+                    target: ExprInvokeTarget::Function(Name::ident(mangle_name(
+                        &format!("std::ops::files::{suffix}")
                     ))),
                     args: call.args.clone(),
                     kwargs: call.kwargs.clone(),
@@ -140,8 +140,8 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
                 };
                 Ok(Some(Expr::new(fp_core::ast::ExprKind::Invoke(ExprInvoke {
                     span: call.span,
-                    target: ExprInvokeTarget::Function(Name::ident(format!(
-                        "std::ops::files::{suffix}"
+                    target: ExprInvokeTarget::Function(Name::ident(mangle_name(
+                        &format!("std::ops::files::{suffix}")
                     ))),
                     args: call.args.clone(),
                     kwargs: call.kwargs.clone(),
@@ -362,3 +362,18 @@ fn try_rewrite_invoke_to_intrinsic(invoke: &mut ExprInvoke) -> Option<Expr> {
         kwargs: std::mem::take(&mut invoke.kwargs),
     })))
 }
+
+
+fn mangle_name(name: &str) -> String {
+    if !name.contains("::") { return name.to_string() }
+    let mut out = String::from("__fp_");
+    for seg in name.split("::") {
+        if !out.ends_with('_') { out.push('_') }
+        for ch in seg.chars() {
+            if ch.is_alphanumeric() || ch == '_' { out.push(ch) } else { out.push('_') }
+        }
+    }
+    out.push('_');
+    out
+}
+
