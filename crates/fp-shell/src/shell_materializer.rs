@@ -1,6 +1,7 @@
-use fp_core::ast::{BlockStmt, Expr, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, Item, ItemKind, Name, NodeKind, Value};
+use fp_core::ast::{BlockStmt, Expr, ExprBlock, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, FunctionSignature, Item, ItemDefFunction, ItemKind, Name, NodeKind, Value};
 use fp_core::intrinsics::{IntrinsicMaterializer, IntrinsicCallKind};
 use fp_core::Result;
+use std::collections::HashMap;
 
 pub struct ShellMaterializer<'a> {
     inventory: Option<&'a fp_core::ast::Node>,
@@ -151,6 +152,61 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
     }
 }
 
+fn fill_missing_args(invoke: &mut ExprInvoke, sigs: &HashMap<String, FunctionSignature>) {
+    let name = invoke_target_name(&invoke.target).unwrap_or_default();
+    let Some(sig) = sigs.get(&name) else { return };
+    while invoke.args.len() < sig.params.len() {
+        let idx = invoke.args.len();
+        let param = &sig.params[idx];
+        if let Some(kw) = invoke.kwargs.iter().find(|k| k.name == param.name.as_str()) {
+            invoke.args.push(kw.value.clone());
+            continue;
+        }
+        if param.is_context {
+            invoke.args.push(Expr::value(Value::string("localhost".into())));
+        } else if let Some(d) = &param.default {
+            invoke.args.push(Expr::value(d.clone()));
+        } else {
+            let val = match &param.ty {
+                fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Bool) => Value::bool(false),
+                fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(_)) => Value::int(0),
+                _ => Value::string(String::new()),
+            };
+            invoke.args.push(Expr::value(val));
+        }
+    }
+}
+
+fn scan_signatures(node: &fp_core::ast::Node) -> HashMap<String, FunctionSignature> {
+    let mut sigs = HashMap::new();
+    if let NodeKind::File(file) = node.kind() {
+        scan_sigs(&file.items, &[], &mut sigs);
+    }
+    sigs
+}
+
+fn scan_sigs(items: &[Item], path: &[String], out: &mut HashMap<String, FunctionSignature>) {
+    for item in items {
+        match item.kind() {
+            ItemKind::DefFunction(f) => {
+                let name = if path.is_empty() { f.name.as_str().to_string() } else { format!("{}::{}", path.join("::"), f.name.as_str()) };
+                out.insert(name, f.sig.clone());
+            }
+            ItemKind::DeclFunction(f) => {
+                let name = if path.is_empty() { f.name.as_str().to_string() } else { format!("{}::{}", path.join("::"), f.name.as_str()) };
+                out.insert(name, f.sig.clone());
+            }
+            ItemKind::Module(m) => {
+                let mut child = path.to_vec();
+                child.push(m.name.as_str().to_string());
+                scan_sigs(&m.items, &child, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+
 fn string_value(expr: &Expr) -> Option<String> {
     match expr.kind() {
         ExprKind::Value(v) => match v.as_ref() {
@@ -224,32 +280,33 @@ fn try_rewrite_invoke_to_intrinsic(invoke: &mut ExprInvoke) -> Option<Expr> {
 }
 
 pub fn materialize_ast(node: &mut fp_core::ast::Node, materializer: &dyn IntrinsicMaterializer) -> Result<()> {
+    let sigs = scan_signatures(node);
     flatten_main_body(node);
     let NodeKind::File(file) = node.kind_mut() else {
         return Ok(());
     };
-    materialize_items(&mut file.items, materializer)
+    materialize_items(&mut file.items, materializer, &sigs)
 }
 
-fn materialize_items(items: &mut [fp_core::ast::Item], materializer: &dyn IntrinsicMaterializer) -> Result<()> {
+fn materialize_items(items: &mut [fp_core::ast::Item], materializer: &dyn IntrinsicMaterializer, sigs: &HashMap<String, FunctionSignature>) -> Result<()> {
     for item in items {
         match item.kind_mut() {
-            ItemKind::Module(module) => materialize_items(&mut module.items, materializer)?,
-            ItemKind::DefFunction(func) => materialize_expr(&mut func.body, materializer)?,
-            ItemKind::Expr(expr) => materialize_expr(expr, materializer)?,
+            ItemKind::Module(module) => materialize_items(&mut module.items, materializer, sigs)?,
+            ItemKind::DefFunction(func) => materialize_expr(&mut func.body, materializer, sigs)?,
+            ItemKind::Expr(expr) => materialize_expr(expr, materializer, sigs)?,
             _ => {}
         }
     }
     Ok(())
 }
 
-fn materialize_expr(expr: &mut Expr, materializer: &dyn IntrinsicMaterializer) -> Result<()> {
+fn materialize_expr(expr: &mut Expr, materializer: &dyn IntrinsicMaterializer, sigs: &HashMap<String, FunctionSignature>) -> Result<()> {
     // Expand with blocks: replace `with host { ... }` with the body directly
     // (the context is handled by the callee via host resolution)
     if let ExprKind::With(w) = expr.kind() {
         let body = w.body.as_ref().clone();
         *expr = body;
-        return materialize_expr(expr, materializer);
+        return materialize_expr(expr, materializer, sigs);
     }
 
     match expr.kind_mut() {
@@ -261,83 +318,84 @@ fn materialize_expr(expr: &mut Expr, materializer: &dyn IntrinsicMaterializer) -
         ExprKind::Block(block) => {
             for stmt in &mut block.stmts {
                 match stmt {
-                    fp_core::ast::BlockStmt::Expr(e) => materialize_expr(&mut e.expr, materializer)?,
+                    fp_core::ast::BlockStmt::Expr(e) => materialize_expr(&mut e.expr, materializer, sigs)?,
                     fp_core::ast::BlockStmt::Let(s) => {
                         if let Some(init) = &mut s.init {
-                            materialize_expr(init, materializer)?;
+                            materialize_expr(init, materializer, sigs)?;
                         }
                     }
-                    fp_core::ast::BlockStmt::Defer(d) => materialize_expr(&mut d.expr, materializer)?,
-                    fp_core::ast::BlockStmt::Item(i) => materialize_expr_in_item(i, materializer)?,
+                    fp_core::ast::BlockStmt::Defer(d) => materialize_expr(&mut d.expr, materializer, sigs)?,
+                    fp_core::ast::BlockStmt::Item(i) => materialize_expr_in_item(i, materializer, sigs)?,
                     _ => {}
                 }
             }
         }
         ExprKind::If(e) => {
-            materialize_expr(&mut e.cond, materializer)?;
-            materialize_expr(&mut e.then, materializer)?;
+            materialize_expr(&mut e.cond, materializer, sigs)?;
+            materialize_expr(&mut e.then, materializer, sigs)?;
             if let Some(elze) = &mut e.elze {
-                materialize_expr(elze, materializer)?;
+                materialize_expr(elze, materializer, sigs)?;
             }
         }
         ExprKind::Invoke(invoke) => {
             for arg in &mut invoke.args {
-                materialize_expr(arg, materializer)?;
+                materialize_expr(arg, materializer, sigs)?;
             }
             for kwarg in &mut invoke.kwargs {
-                materialize_expr(&mut kwarg.value, materializer)?;
+                materialize_expr(&mut kwarg.value, materializer, sigs)?;
             }
             // Rewrite known shell calls to intrinsic calls
+            fill_missing_args(invoke, sigs);
             if let Some(call) = try_rewrite_invoke_to_intrinsic(invoke) {
                 *expr = call;
-                return materialize_expr(expr, materializer);
+                return materialize_expr(expr, materializer, sigs);
             }
             if let Some(replacement) = materializer.materialize_invoke(invoke, &fp_core::ast::TySlot::None)? {
                 *expr = replacement;
             }
         }
         ExprKind::Try(e) => {
-            materialize_expr(&mut e.expr, materializer)?;
+            materialize_expr(&mut e.expr, materializer, sigs)?;
             for c in &mut e.catches {
-                materialize_expr(&mut c.body, materializer)?;
+                materialize_expr(&mut c.body, materializer, sigs)?;
             }
             if let Some(elze) = &mut e.elze {
-                materialize_expr(elze, materializer)?;
+                materialize_expr(elze, materializer, sigs)?;
             }
             if let Some(finally) = &mut e.finally {
-                materialize_expr(finally, materializer)?;
+                materialize_expr(finally, materializer, sigs)?;
             }
         }
         ExprKind::While(w) => {
-            materialize_expr(&mut w.cond, materializer)?;
-            materialize_expr(&mut w.body, materializer)?;
+            materialize_expr(&mut w.cond, materializer, sigs)?;
+            materialize_expr(&mut w.body, materializer, sigs)?;
         }
         ExprKind::For(f) => {
-            materialize_expr(&mut f.body, materializer)?;
+            materialize_expr(&mut f.body, materializer, sigs)?;
         }
         ExprKind::Match(m) => {
             for case in &mut m.cases {
-                materialize_expr(&mut case.body, materializer)?;
+                materialize_expr(&mut case.body, materializer, sigs)?;
                 if let Some(guard) = &mut case.guard {
-                    materialize_expr(guard, materializer)?;
+                    materialize_expr(guard, materializer, sigs)?;
                 }
             }
         }
         ExprKind::With(w) => {
-            materialize_expr(&mut w.body, materializer)?;
+            materialize_expr(&mut w.body, materializer, sigs)?;
         }
         ExprKind::Let(l) => {
-            materialize_expr(&mut l.expr, materializer)?;
+            materialize_expr(&mut l.expr, materializer, sigs)?;
         }
         _ => {}
     }
     Ok(())
 }
 
-fn materialize_expr_in_item(item: &mut fp_core::ast::Item, materializer: &dyn IntrinsicMaterializer) -> Result<()> {
+fn materialize_expr_in_item(item: &mut fp_core::ast::Item, materializer: &dyn IntrinsicMaterializer, sigs: &HashMap<String, FunctionSignature>) -> Result<()> {
     match item.kind_mut() {
-        ItemKind::DefFunction(func) => materialize_expr(&mut func.body, materializer)?,
-        ItemKind::Module(module) => materialize_items(&mut module.items, materializer)?,
+        ItemKind::DefFunction(func) => materialize_expr(&mut func.body, materializer, sigs)?,
+        ItemKind::Module(module) => materialize_items(&mut module.items, materializer, sigs)?,
         _ => {}
     }
     Ok(())

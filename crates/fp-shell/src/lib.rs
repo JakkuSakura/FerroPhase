@@ -1,5 +1,4 @@
 mod embedded_std;
-mod host_transforms;
 mod inventory;
 mod shell_materializer;
 
@@ -107,8 +106,7 @@ pub fn compile_source_with_options(
 
     let ast = merge_runtime_helpers(parsed.ast, options.inventory.as_ref())?;
 
-    let ast_node = host_transforms::apply(&ast, &options.limit).map_err(ShellError::Lower)?;
-    let mut lowered = match ast_node.kind() {
+    let mut lowered = match ast.kind() {
         NodeKind::File(file) => fp_backend::roundtrip_ast_file_via_hir(&file)
             .map_err(|err| ShellError::Lower(err.to_string()))?,
         _ => {
