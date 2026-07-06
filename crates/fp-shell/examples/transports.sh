@@ -23,8 +23,8 @@ declare -A FP_CHROOT_DIRECTORY=()
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
-std::ops::server::shell_local 'echo local hello' 'localhost' '' '' '' '' 'false' '' 'false' ''
-std::ops::server::shell_local 'echo ssh hello' 'localhost' '' '' '' '' 'false' '' 'false' ''
-std::ops::server::shell_local 'echo docker hello' 'localhost' '' '' '' '' 'false' '' 'false' ''
-std::ops::server::shell_local 'echo kubectl hello' 'localhost' '' '' '' '' 'false' '' 'false' ''
-std::ops::server::shell_local 'Write-Host winrm hello' 'localhost' '' '' '' '' 'false' '' 'false' ''
+__fp_std_ops_server_shell_local_ 'echo local hello' 'localhost' '' '' '' '' 'false' '' 'false' ''
+__fp_std_ops_server_shell_local_ 'echo ssh hello' 'localhost' '' '' '' '' 'false' '' 'false' ''
+__fp_std_ops_server_shell_local_ 'echo docker hello' 'localhost' '' '' '' '' 'false' '' 'false' ''
+__fp_std_ops_server_shell_local_ 'echo kubectl hello' 'localhost' '' '' '' '' 'false' '' 'false' ''
+__fp_std_ops_server_shell_local_ 'Write-Host winrm hello' 'localhost' '' '' '' '' 'false' '' 'false' ''

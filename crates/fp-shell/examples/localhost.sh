@@ -23,5 +23,5 @@ declare -A FP_CHROOT_DIRECTORY=()
 
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/fp-shell-%r@%h:%p"
 
-std::ops::server::shell_local 'echo localhost deployment' 'localhost' '' '' '' '' 'false' '' 'false' ''
-std::ops::files::copy_local '' '' 'localhost' '' '' '' '' '' 'false' ''
+__fp_std_ops_server_shell_local_ 'echo localhost deployment' 'localhost' '' '' '' '' 'false' '' 'false' ''
+__fp_std_ops_files_copy_local_ '' '' 'localhost' '' '' '' '' '' 'false' ''
