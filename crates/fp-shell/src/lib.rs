@@ -106,7 +106,7 @@ pub fn compile_source_with_options(
 
     let ast = merge_runtime_helpers(parsed.ast, options.inventory.as_ref())?;
 
-    // Snapshot pre-HIR items — HIR const-evaluates function bodies to empty stubs
+    // Save std items before HIR strips #[command] attrs from extern declarations
     let pre_hir_items = match ast.kind() {
         NodeKind::File(f) => f.items.clone(),
         _ => Vec::new(),
@@ -121,25 +121,14 @@ pub fn compile_source_with_options(
             ));
         }
     };
-    // Re-insert pre-HIR items (HIR strips const fn bodies, keep user code from HIR)
-    if let NodeKind::File(f) = lowered.kind_mut() {
-        // Keep only Expr items from HIR (the materialized user code)
-        let user_code: Vec<Item> = f.items.iter()
-            .filter(|i| matches!(i.kind(), ItemKind::Expr(_)))
-            .cloned()
-            .collect();
-        // Re-add pre-HIR function definitions and modules (with mangled names to match HIR output)
-        f.items = pre_hir_items.into_iter()
-            .filter(|i| !matches!(i.kind(), ItemKind::Expr(_)))
-            
-            .chain(user_code)
-            .collect();
-    }
     let materializer = shell_materializer::ShellMaterializer::new(options.inventory.as_ref());
-    shell_materializer::pre_materialize(&mut lowered, options.inventory.as_ref())
+    lowered = fp_cli::pipeline::stages::materialize::materialize_node(lowered, &materializer)
         .map_err(|err| ShellError::Lower(err.to_string()))?;
-    let lowered = fp_cli::pipeline::stages::materialize::materialize_node(lowered, &materializer)
-        .map_err(|err| ShellError::Lower(err.to_string()))?;
+
+    // Re-insert pre-HIR items (HIR strips #[command] attrs, const-evaluates fn bodies)
+    if let NodeKind::File(f) = lowered.kind_mut() {
+        f.items.extend(shell_materializer::flatten_keep_externs(pre_hir_items));
+    }
     validate_extern_decls(&lowered, target).map_err(ShellError::Lower)?;
 
     let code = match target {
