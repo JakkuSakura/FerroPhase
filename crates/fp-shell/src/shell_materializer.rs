@@ -1,6 +1,6 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind,
-    File, FunctionSignature, Item, ItemDefFunction, ItemKind, Name, NodeKind, Value,
+    BlockStmt, Expr, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind,
+    File, FunctionSignature, Item, ItemKind, Name, NodeKind, Value,
 };
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicMaterializer};
 use fp_core::Result;
@@ -95,21 +95,24 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
         invoke: &mut ExprInvoke,
         _expr_ty: &fp_core::ast::TySlot,
     ) -> Result<Option<Expr>> {
-        // Normalize invoke target to Function form (fp-bash only handles identifier targets)
-        if !matches!(&invoke.target, ExprInvokeTarget::Function(_)) {
-            let name = invoke_target_name(&invoke.target).unwrap_or_default();
-            invoke.target = ExprInvokeTarget::Function(Name::ident(mangle_name(&name)));
-        }
-
-        // Fill missing args from function signature
+        // Fill missing args from function signature (before mangling so sig lookup works)
         if let Some(ref sigs) = *self.sigs.borrow() {
             fill_args(invoke, sigs);
         }
 
-        // Rewrite known shell calls to intrinsic calls
-        if let Some(call) = try_rewrite_to_intrinsic(invoke) {
-            return Ok(Some(call));
+        // Rewrite known shell calls to intrinsic calls (before mangling)
+        if let Some(expr) = try_rewrite_to_intrinsic(invoke) {
+            if let ExprKind::IntrinsicCall(mut call) = expr.into_parts().1 {
+                // Convert intrinsic call to final mangled invoke
+                return self.materialize_call(&mut call, &None);
+            }
         }
+
+        // Normalize invoke target to Function form with an Ident name
+        // (fp-bash only handles identifier targets, not paths)
+        let name = invoke_target_name(&invoke.target).unwrap_or_default();
+        let mangled = mangle_name(&name);
+        invoke.target = ExprInvokeTarget::Function(Name::ident(mangled));
 
         Ok(None)
     }

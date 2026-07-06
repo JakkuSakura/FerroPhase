@@ -18,7 +18,7 @@ pub fn roundtrip_ast_file_via_hir(
 ) -> fp_core::Result<fp_core::ast::Node> {
     let mut generator = transforms::ast_to_hir::HirGenerator::with_file(&file.path);
     generator.set_cfg_filtering(false);
-    let mut program = generator.transform_file(file)?;
+    let program = generator.transform_file(file)?;
     Ok(transforms::hir_to_ast::lift_program(&program, file.path.clone())?)
 }
 
