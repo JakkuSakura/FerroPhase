@@ -131,7 +131,7 @@ pub fn compile_source_with_options(
         // Re-add pre-HIR function definitions and modules (with mangled names to match HIR output)
         f.items = pre_hir_items.into_iter()
             .filter(|i| !matches!(i.kind(), ItemKind::Expr(_)))
-            .map(|i| shell_materializer::mangle_item_names(i))
+            
             .chain(user_code)
             .collect();
     }
