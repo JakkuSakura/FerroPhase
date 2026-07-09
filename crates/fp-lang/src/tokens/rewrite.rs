@@ -5,7 +5,7 @@ use crate::lexer::{Keyword, Span, Token, TokenKind};
 pub(crate) fn lower_tokens(tokens: Vec<Token>) -> Result<Vec<Token>> {
     let tokens = lower_emit(tokens)?;
     let tokens = lower_trailing_dot_numbers(tokens);
-    lower_fn_generic_closing_shifts(tokens)
+    lower_generic_closing_shifts(tokens)
 }
 
 fn lower_trailing_dot_numbers(tokens: Vec<Token>) -> Vec<Token> {
@@ -23,15 +23,37 @@ fn lower_trailing_dot_numbers(tokens: Vec<Token>) -> Vec<Token> {
     out
 }
 
-fn lower_fn_generic_closing_shifts(tokens: Vec<Token>) -> Result<Vec<Token>> {
+fn lower_generic_closing_shifts(tokens: Vec<Token>) -> Result<Vec<Token>> {
     // The lexer tokenizes `>>` as a single symbol, but in generic contexts it can represent
     // two consecutive `>` tokens (e.g. `Foo<Bar<Baz>>`).
-    //
-    // This pass only splits `>>` while we're inside a function generic parameter list.
     let mut out = Vec::with_capacity(tokens.len());
-    let mut state = FnGenericShiftState::new();
+    let mut angle_depth = 0i32;
     for tok in tokens {
-        if state.process(&tok, &mut out)? {
+        if tok.kind == TokenKind::Symbol {
+            match tok.lexeme.as_str() {
+                "<" => {
+                    angle_depth += 1;
+                    out.push(tok);
+                    continue;
+                }
+                ">" => {
+                    if angle_depth > 0 {
+                        angle_depth -= 1;
+                    }
+                    out.push(tok);
+                    continue;
+                }
+                ">>" if angle_depth > 0 => {
+                    out.push(synth(">", tok.span)?);
+                    out.push(synth(">", tok.span)?);
+                    angle_depth = (angle_depth - 2).max(0);
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        if matches!(tok.kind, TokenKind::StringLiteral) {
+            out.push(tok);
             continue;
         }
         out.push(tok);
@@ -137,103 +159,6 @@ fn is_number(token: &Token) -> bool {
 
 fn is_symbol(token: &Token, lexeme: &str) -> bool {
     token.kind == TokenKind::Symbol && token.lexeme == lexeme
-}
-
-fn is_ident(token: &Token) -> bool {
-    token.kind == TokenKind::Ident
-}
-
-struct FnGenericShiftState {
-    in_fn_header: bool,
-    saw_fn_name: bool,
-    in_generics: bool,
-    angle_depth: i32,
-}
-
-impl FnGenericShiftState {
-    fn new() -> Self {
-        Self {
-            in_fn_header: false,
-            saw_fn_name: false,
-            in_generics: false,
-            angle_depth: 0,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.in_fn_header = false;
-        self.saw_fn_name = false;
-        self.in_generics = false;
-        self.angle_depth = 0;
-    }
-
-    fn start_fn(&mut self) {
-        self.in_fn_header = true;
-        self.saw_fn_name = false;
-        self.in_generics = false;
-        self.angle_depth = 0;
-    }
-
-    fn process(&mut self, tok: &Token, out: &mut Vec<Token>) -> Result<bool> {
-        if is_keyword(&tok, Keyword::Fn) {
-            self.start_fn();
-            out.push(tok.clone());
-            return Ok(true);
-        }
-
-        if !self.in_fn_header {
-            return Ok(false);
-        }
-
-        if is_symbol(&tok, "{") {
-            self.reset();
-            out.push(tok.clone());
-            return Ok(true);
-        }
-
-        if !self.saw_fn_name && is_ident(&tok) {
-            self.saw_fn_name = true;
-            out.push(tok.clone());
-            return Ok(true);
-        }
-
-        if self.saw_fn_name && !self.in_generics && is_symbol(&tok, "<") {
-            self.in_generics = true;
-            self.angle_depth = 1;
-            out.push(tok.clone());
-            return Ok(true);
-        }
-
-        if self.in_generics {
-            if is_symbol(&tok, "<") {
-                self.angle_depth += 1;
-                out.push(tok.clone());
-                return Ok(true);
-            }
-            if is_symbol(&tok, ">") {
-                self.angle_depth -= 1;
-                if self.angle_depth <= 0 {
-                    self.in_generics = false;
-                    self.angle_depth = 0;
-                }
-                out.push(tok.clone());
-                return Ok(true);
-            }
-            if is_symbol(&tok, ">>") {
-                // Split into two consecutive `>` tokens.
-                out.push(synth(">", tok.span)?);
-                out.push(synth(">", tok.span)?);
-                self.angle_depth -= 2;
-                if self.angle_depth <= 0 {
-                    self.in_generics = false;
-                    self.angle_depth = 0;
-                }
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
-    }
 }
 
 fn consume_balanced_group<'a>(

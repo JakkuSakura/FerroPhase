@@ -66,8 +66,11 @@ fn parentheses_override_precedence() {
     };
     assert!(matches!(mul.kind, BinOpKind::Mul));
     match mul.lhs.kind() {
-        ExprKind::BinOp(add) => assert!(matches!(add.kind, BinOpKind::Add)),
-        other => panic!("lhs should be add, got {:?}", other),
+        ExprKind::Paren(paren) => match paren.expr.kind() {
+            ExprKind::BinOp(add) => assert!(matches!(add.kind, BinOpKind::Add)),
+            other => panic!("paren inner should be add, got {:?}", other),
+        },
+        other => panic!("lhs should be paren, got {:?}", other),
     }
 }
 

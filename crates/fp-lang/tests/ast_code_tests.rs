@@ -390,13 +390,10 @@ fn parser_detects_const_blocks() {
 }
 
 #[test]
-fn cst_printer_can_reconstruct_source() {
-    // CST printing is now expression-focused.
+fn direct_expr_parser_handles_binary_precedence() {
     let parser = FerroPhaseParser::new();
-    let src = "a + b * 2";
-    let cst = parser.parse_expr_cst(src).expect("parse expr CST");
-    let printed = fp_lang::syntax::SyntaxPrinter::print(&cst);
-    assert_eq!(printed, src);
+    let expr = parser.parse_expr_ast("a + b * 2").expect("parse expr");
+    assert!(matches!(expr.kind(), ExprKind::BinOp(_)));
 }
 
 fn items_contain_const_block(items: &[Item]) -> bool {

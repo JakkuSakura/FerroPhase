@@ -1,2166 +1,1612 @@
-use crate::ast::items::LowerItemsError;
-use crate::ast::lower_common::{
-    collect_path_tokens_with_generics, decode_string_literal, split_path_prefix,
-};
-use crate::syntax::{SyntaxKind, SyntaxNode};
-use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait, ExprBinOp,
-    ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor, ExprIf,
-    ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprKwArg, ExprLet,
-    ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn,
-    ExprSelect, ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTryCatch,
-    ExprTuple, ExprWhile, ExprWith, Ident, MacroInvocation, Name, ParameterPath,
-    ParameterPathSegment, Path, Pattern, PatternBind, PatternBox, PatternIdent, PatternKind,
-    PatternQuote, PatternQuotePlural, PatternRef, PatternStruct, PatternStructField,
-    PatternStructural, PatternTuple, PatternTupleStruct, PatternType, PatternVariant,
-    PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtDefer, StmtLet, Ty, Value, ValueString,
-};
-use fp_core::cst::CstCategory;
-use fp_core::intrinsics::IntrinsicCallKind;
-use fp_core::module::path::PathPrefix;
-use fp_core::ops::{BinOpKind, UnOpKind};
+use super::*;
 
-mod literals;
-mod quote;
-mod types;
-
-use self::literals::{parse_f_string_literal, parse_numeric_literal};
-use self::quote::{
-    quote_block_pattern_from_cst, quote_kind_from_cst, quote_pattern_from_cst,
-    quote_pattern_kind_from_cst,
-};
-pub(crate) use self::types::lower_type_from_cst;
-use self::types::node_children_types;
-
-#[derive(Debug, thiserror::Error)]
-pub enum LowerError {
-    #[error("unexpected CST node kind: {0:?}")]
-    UnexpectedNode(SyntaxKind),
-    #[error("missing operator token")]
-    MissingOperator,
-    #[error("invalid number literal: {0}")]
-    InvalidNumber(String),
-    #[error("unsupported feature: {0}")]
-    Unsupported(String),
-    #[error("failed to lower item: {0}")]
-    Item(#[from] LowerItemsError),
+pub(crate) fn parse_expr_winnow(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    parse_assignment(input, file)
 }
 
-pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
-    if node.kind.category() == CstCategory::Item {
-        if node.kind == SyntaxKind::ItemExternBlock {
-            return Err(LowerError::UnexpectedNode(node.kind));
-        }
-        let item = crate::ast::items::lower_item_from_cst(node)?;
-        return Ok(ExprKind::Item(Box::new(item)).into());
-    }
-    let mut expr = match node.kind {
-        SyntaxKind::Root => {
-            let expr = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Expr =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or(LowerError::UnexpectedNode(SyntaxKind::Root))?;
-            lower_expr_from_cst(expr)
-        }
-        SyntaxKind::ExprParen => {
-            // Treat as grouping only.
-            // Find the first nested expression node.
-            let inner = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Expr =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or(LowerError::UnexpectedNode(SyntaxKind::ExprParen))?;
-            lower_expr_from_cst(inner)
-        }
-        SyntaxKind::ExprUnit => Ok(Expr::unit()),
-        SyntaxKind::ExprTuple => {
-            let values = node_children_exprs(node)
-                .map(lower_expr_from_cst)
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(ExprKind::Tuple(ExprTuple {
-                span: node.span,
-                values,
-            })
-            .into())
-        }
-        SyntaxKind::ExprArray => {
-            let values = node_children_exprs(node)
-                .map(lower_expr_from_cst)
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(ExprKind::Array(ExprArray {
-                span: node.span,
-                values,
-            })
-            .into())
-        }
-        SyntaxKind::ExprArrayRepeat => {
-            let mut exprs = node_children_exprs(node);
-            let elem = exprs
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprArrayRepeat))?;
-            let len = exprs
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprArrayRepeat))?;
-            let elem = lower_expr_from_cst(elem)?;
-            let len = lower_expr_from_cst(len)?;
-            Ok(ExprKind::ArrayRepeat(ExprArrayRepeat {
-                span: node.span,
-                elem: Box::new(elem),
-                len: Box::new(len),
-            })
-            .into())
-        }
-        SyntaxKind::ExprStruct => {
-            let mut exprs = node_children_exprs(node);
-            let name = exprs
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprStruct))?;
-            let name_expr = lower_expr_from_cst(name)?;
-            let (fields, update) = lower_struct_fields(node)?;
-            Ok(ExprKind::Struct(ExprStruct {
-                span: node.span,
-                name: Box::new(name_expr),
-                fields,
-                update: update.map(Box::new),
-            })
-            .into())
-        }
-        SyntaxKind::ExprStructural => {
-            let (fields, update) = lower_struct_fields(node)?;
-            if update.is_some() {
-                return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStructural));
-            }
-            Ok(ExprKind::Structural(ExprStructural {
-                span: node.span,
-                fields,
-            })
-            .into())
-        }
-        SyntaxKind::ExprBlock => {
-            let expr = lower_block_expr_from_cst(node)?;
-            Ok(expr)
-        }
-        SyntaxKind::ExprQuote => {
-            let block = lower_block_from_expr_parent(node, SyntaxKind::ExprQuote)?;
-            let kind = quote_kind_from_cst(node)?;
-            Ok(ExprKind::Quote(ExprQuote {
-                span: node.span,
-                block,
-                kind,
-            })
-            .into())
-        }
-        SyntaxKind::ExprQuoteToken => Err(LowerError::UnexpectedNode(SyntaxKind::ExprQuoteToken)),
-        SyntaxKind::ExprSplice => {
-            let token_expr = last_child_expr(node)?;
-            let expr = lower_expr_from_cst(token_expr)?;
-            Ok(ExprKind::Splice(ExprSplice {
-                span: node.span,
-                token: Box::new(expr),
-            })
-            .into())
-        }
-        SyntaxKind::ExprAsync => {
-            let block = lower_block_from_expr_parent(node, SyntaxKind::ExprAsync)?;
-            Ok(ExprKind::Async(ExprAsync {
-                span: node.span,
-                expr: Box::new(ExprKind::Block(block).into()),
-            })
-            .into())
-        }
-        SyntaxKind::ExprConstBlock => {
-            let block = lower_block_from_expr_parent(node, SyntaxKind::ExprConstBlock)?;
-            Ok(ExprKind::ConstBlock(ExprConstBlock {
-                span: node.span,
-                expr: Box::new(ExprKind::Block(block).into()),
-            })
-            .into())
-        }
-        SyntaxKind::ExprIf => {
-            let mut expr_nodes = node_children_exprs(node);
-            let cond = expr_nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprIf))?;
-            let then_block = expr_nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprIf))?;
-            let else_block = expr_nodes.next();
-
-            let cond = lower_expr_from_cst(cond)?;
-            let then_expr = lower_block_expr_from_cst(then_block)?;
-            let else_expr = if let Some(else_node) = else_block {
-                if else_node.kind == SyntaxKind::ExprBlock {
-                    Some(Box::new(lower_block_expr_from_cst(else_node)?))
-                } else {
-                    Some(Box::new(lower_expr_from_cst(else_node)?))
-                }
-            } else {
-                None
-            };
-
-            Ok(ExprKind::If(ExprIf {
-                span: node.span,
-                cond: Box::new(cond),
-                then: Box::new(then_expr),
-                elze: else_expr,
-            })
-            .into())
-        }
-        SyntaxKind::ExprLoop => {
-            let block = lower_block_from_expr_parent(node, SyntaxKind::ExprLoop)?;
-            Ok(ExprKind::Loop(ExprLoop {
-                span: node.span,
-                label: None,
-                body: Box::new(ExprKind::Block(block).into()),
-            })
-            .into())
-        }
-        SyntaxKind::ExprWhile => {
-            let mut expr_nodes = node_children_exprs(node);
-            let cond = expr_nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprWhile))?;
-            let body = expr_nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprWhile))?;
-            let cond = lower_expr_from_cst(cond)?;
-            let body_expr = lower_block_expr_from_cst(body)?;
-            Ok(ExprKind::While(ExprWhile {
-                span: node.span,
-                cond: Box::new(cond),
-                body: Box::new(body_expr),
-            })
-            .into())
-        }
-        SyntaxKind::ExprWith => {
-            let mut expr_nodes = node_children_exprs(node);
-            let context = expr_nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprWith))?;
-            let body = expr_nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprWith))?;
-            let context = lower_expr_from_cst(context)?;
-            let body = lower_block_expr_from_cst(body)?;
-            Ok(ExprKind::With(ExprWith {
-                span: node.span,
-                context: Box::new(context),
-                body: Box::new(body),
-            })
-            .into())
-        }
-
-        SyntaxKind::ExprFor => {
-            let pat_node =
-                first_child_in_category(node, CstCategory::Pattern, SyntaxKind::ExprFor)?;
-            let pat = lower_pattern_from_cst(pat_node)?;
-
-            let mut expr_nodes = node_children_exprs(node);
-            let iter = expr_nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprFor))?;
-            let body = expr_nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprFor))?;
-            let iter = lower_expr_from_cst(iter)?;
-            let body_block = lower_block_expr_from_cst(body)?;
-            Ok(ExprKind::For(ExprFor {
-                span: node.span,
-                pat: Box::new(pat),
-                iter: Box::new(iter),
-                body: Box::new(body_block),
-            })
-            .into())
-        }
-        SyntaxKind::ExprMatch => {
-            // Children: first expr is scrutinee, then MatchArm nodes.
-            let scrutinee = node_children_exprs(node)
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprMatch))?;
-            let scrutinee_expr = lower_expr_from_cst(scrutinee)?;
-
-            let mut cases = Vec::new();
-            for child in &node.children {
-                let crate::syntax::SyntaxElement::Node(arm) = child else {
-                    continue;
-                };
-                if arm.kind != SyntaxKind::MatchArm {
-                    continue;
-                }
-                let (pat, guard, body) = split_match_arm(arm)?;
-                let pat = lower_match_pattern_from_cst(pat)?;
-                let guard_expr = guard.map(lower_expr_from_cst).transpose()?;
-                let body_expr = lower_expr_from_cst(body)?;
-
-                // New-style match: store scrutinee + pattern and let typing/backends
-                // decide how to lower. Keep the legacy `cond` field populated with
-                // `true` for compatibility.
-                cases.push(ExprMatchCase {
-                    span: arm.span,
-                    pat: Some(Box::new(pat)),
-                    cond: Box::new(Expr::value(Value::bool(true))),
-                    guard: guard_expr.map(Box::new),
-                    body: Box::new(body_expr),
-                });
-            }
-
-            Ok(ExprKind::Match(ExprMatch {
-                span: node.span,
-                scrutinee: Some(Box::new(scrutinee_expr)),
-                cases,
-            })
-            .into())
-        }
-        SyntaxKind::ExprLet => {
-            let mut pattern: Option<Pattern> = None;
-            let mut ty: Option<Ty> = None;
-            let mut init_expr: Option<Expr> = None;
-
-            for child in &node.children {
-                match child {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Pattern =>
-                    {
-                        if pattern.is_none() {
-                            pattern = Some(lower_pattern_from_cst(n)?);
-                        }
-                    }
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Type =>
-                    {
-                        ty = Some(lower_type_from_cst(n)?);
-                    }
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Expr =>
-                    {
-                        init_expr = Some(lower_expr_from_cst(n)?);
-                    }
-                    _ => {}
-                }
-            }
-
-            let Some(pat) = pattern else {
-                return Err(LowerError::UnexpectedNode(SyntaxKind::ExprLet));
-            };
-            let Some(init) = init_expr else {
-                return Err(LowerError::UnexpectedNode(SyntaxKind::ExprLet));
-            };
-
-            let pat = if let Some(ty) = ty {
-                Pattern::from(PatternKind::Type(PatternType::new(pat, ty)))
-            } else {
-                pat
-            };
-
-            Ok(ExprKind::Let(ExprLet {
-                span: node.span,
-                pat: Box::new(pat),
-                expr: Box::new(init),
-            })
-            .into())
-        }
-        SyntaxKind::ExprClosure => {
-            let (params, body) = lower_closure_from_cst(node)?;
-            Ok(ExprKind::Closure(ExprClosure {
-                span: node.span,
-                params,
-                ret_ty: None,
-                movability: None,
-                body: Box::new(body),
-            })
-            .into())
-        }
-        SyntaxKind::ExprYield => {
-            let value = node_children_exprs(node)
-                .next()
-                .map(lower_expr_from_cst)
-                .transpose()?
-                .unwrap_or_else(Expr::unit);
-            Ok(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                IntrinsicCallKind::Yield,
-                vec![value],
-                Vec::new(),
-            ))
-            .into())
-        }
-        SyntaxKind::ExprReturn => {
-            let value = node_children_exprs(node)
-                .next()
-                .map(lower_expr_from_cst)
-                .transpose()?
-                .map(Box::new);
-            Ok(ExprKind::Return(ExprReturn {
-                span: node.span,
-                value,
-            })
-            .into())
-        }
-        SyntaxKind::ExprBreak => {
-            let value = node_children_exprs(node)
-                .next()
-                .map(lower_expr_from_cst)
-                .transpose()?
-                .map(Box::new);
-            Ok(ExprKind::Break(ExprBreak {
-                span: node.span,
-                value,
-            })
-            .into())
-        }
-        SyntaxKind::ExprContinue => Ok(ExprKind::Continue(ExprContinue { span: node.span }).into()),
-        SyntaxKind::ExprName => {
-            let name = direct_first_non_trivia_token_text(node)
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprName))?;
-            match name.as_str() {
-                "true" => Ok(Expr::value(Value::bool(true))),
-                "false" => Ok(Expr::value(Value::bool(false))),
-                "null" => Ok(Expr::value(Value::null())),
-                _ => Ok(ExprKind::Name(Name::from_ident(Ident::new(name))).into()),
-            }
-        }
-        SyntaxKind::ExprPath => {
-            let path_tokens = collect_path_tokens_with_generics(node);
-            let saw_generic_start = path_tokens.saw_generic_start;
-            let generic_segment_index = path_tokens.generic_segment_index;
-            let (prefix, segments) = split_path_prefix(path_tokens.segments, path_tokens.saw_root);
-            if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
-                return Err(LowerError::UnexpectedNode(SyntaxKind::ExprPath));
-            }
-            let args = node_children_types(node)
-                .map(lower_type_from_cst)
-                .collect::<Result<Vec<_>, _>>()?;
-            if saw_generic_start && !args.is_empty() {
-                let mut param_segments: Vec<ParameterPathSegment> = segments
-                    .into_iter()
-                    .map(ParameterPathSegment::from_ident)
-                    .collect();
-                if let Some(idx) = generic_segment_index {
-                    if let Some(seg) = param_segments.get_mut(idx) {
-                        seg.args = args;
-                    }
-                } else if let Some(last) = param_segments.last_mut() {
-                    last.args = args;
-                }
-                let ppath = ParameterPath::new(prefix, param_segments);
-                Ok(ExprKind::Name(Name::parameter_path(ppath)).into())
-            } else {
-                Ok(ExprKind::Name(Name::path(Path::new(prefix, segments))).into())
-            }
-        }
-        SyntaxKind::ExprNumber => {
-            let raw = direct_first_non_trivia_token_text(node)
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprNumber))?;
-            let (value, ty) = parse_numeric_literal(&raw)?;
-            let mut expr = Expr::value(value);
-            if let Some(ty) = ty {
-                expr.ty = Some(ty);
-            }
-            Ok(expr)
-        }
-        SyntaxKind::ExprString => {
-            let raw = direct_first_non_trivia_token_text(node)
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprString))?;
-            if raw.starts_with("f\"") {
-                parse_f_string_literal(&raw, node.span.file)
-            } else if raw.starts_with("t\"") {
-                let decoded = decode_string_literal(&raw).unwrap_or(raw);
-                Ok(Expr::value(Value::String(ValueString::new_ref(decoded))))
-            } else {
-                let decoded = decode_string_literal(&raw).unwrap_or(raw);
-                // String literals should lower to borrowed `&'static str` equivalents by default.
-                Ok(Expr::value(Value::String(ValueString::new_ref(decoded))))
-            }
-        }
-        SyntaxKind::ExprType => {
-            let ty_node = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Type =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprType))?;
-            let ty = lower_type_from_cst(ty_node)?;
-            Ok(Expr::value(Value::Type(ty)))
-        }
-        SyntaxKind::ExprUnary => {
-            let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
-            let expr = last_child_expr(node)?;
-            let inner = lower_expr_from_cst(expr)?;
-            match op.as_str() {
-                "-" => Ok(ExprKind::UnOp(fp_core::ast::ExprUnOp {
-                    span: node.span,
-                    op: UnOpKind::Neg,
-                    val: Box::new(inner),
-                })
-                .into()),
-                "!" => Ok(ExprKind::UnOp(fp_core::ast::ExprUnOp {
-                    span: node.span,
-                    op: UnOpKind::Not,
-                    val: Box::new(inner),
-                })
-                .into()),
-                "+" => {
-                    // Unary plus is a no-op.
-                    Ok(inner)
-                }
-                "*" => Ok(ExprKind::Dereference(fp_core::ast::ExprDereference {
-                    span: node.span,
-                    referee: Box::new(inner),
-                })
-                .into()),
-                "&" => {
-                    let is_mut = node.children.iter().any(|c| {
-                        matches!(c, crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "mut")
-                    });
-                    Ok(ExprKind::Reference(fp_core::ast::ExprReference {
-                        span: node.span,
-                        referee: Box::new(inner),
-                        mutable: if is_mut { Some(true) } else { None },
-                    })
-                    .into())
-                }
-                _ => Err(LowerError::MissingOperator),
-            }
-        }
-        SyntaxKind::ExprTry => {
-            let mut expr = None;
-            let mut catches = Vec::new();
-            let mut elze = None;
-            let mut finally = None;
-            let mut pending_clause = None::<&str>;
-
-            for child in &node.children {
-                match child {
-                    crate::syntax::SyntaxElement::Node(n) if n.kind == SyntaxKind::ExprTryCatch => {
-                        catches.push(lower_try_catch_from_cst(n)?);
-                    }
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Expr =>
-                    {
-                        let lowered = Box::new(lower_expr_from_cst(n)?);
-                        match (expr.is_none(), pending_clause) {
-                            (true, _) => expr = Some(lowered),
-                            (false, Some("else")) => elze = Some(lowered),
-                            (false, Some("finally")) => finally = Some(lowered),
-                            _ => return Err(LowerError::UnexpectedNode(SyntaxKind::ExprTry)),
-                        }
-                    }
-                    crate::syntax::SyntaxElement::Token(tok) if !tok.is_trivia() => {
-                        pending_clause = match tok.text.as_str() {
-                            "else" => Some("else"),
-                            "finally" => Some("finally"),
-                            _ => None,
-                        };
-                    }
-                    _ => {}
-                }
-            }
-
-            let expr = expr.ok_or(LowerError::UnexpectedNode(SyntaxKind::ExprTry))?;
-            Ok(ExprKind::Try(ExprTry {
-                span: node.span,
-                expr,
-                catches,
-                elze,
-                finally,
-            })
-            .into())
-        }
-        SyntaxKind::ExprAttr => {
-            let inner = node
-                .children
-                .iter()
-                .rev()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Expr =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or(LowerError::UnexpectedNode(SyntaxKind::ExprAttr))?;
-            lower_expr_from_cst(inner)
-        }
-        SyntaxKind::ExprAwait => {
-            let base = first_child_expr(node)?;
-            let expr = lower_expr_from_cst(base)?;
-            Ok(ExprKind::Await(ExprAwait {
-                span: node.span,
-                base: Box::new(expr),
-            })
-            .into())
-        }
-        SyntaxKind::ExprBinary => {
-            let mut expr_nodes = node.children.iter().filter_map(|c| match c {
-                crate::syntax::SyntaxElement::Node(n) => Some(n.as_ref()),
-                _ => None,
-            });
-            let lhs_node = expr_nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprBinary))?;
-            let rhs_node = expr_nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprBinary))?;
-            let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
-
-            if lhs_node.kind.category() == CstCategory::Pattern {
-                let pattern = lower_pattern_from_cst(lhs_node)?;
-                let rhs = lower_expr_from_cst(rhs_node)?;
-                return lower_assign_pattern_expr(pattern, rhs, &op, node.span);
-            }
-
-            let lhs = lower_expr_from_cst(lhs_node)?;
-            let rhs = lower_expr_from_cst(rhs_node)?;
-
-            if op == "=" {
-                return Ok(ExprKind::Assign(fp_core::ast::ExprAssign {
-                    span: node.span,
-                    target: Box::new(lhs),
-                    value: Box::new(rhs),
-                })
-                .into());
-            }
-
-            if let Some(binop) = compound_assign_binop(&op) {
-                let combined = ExprKind::BinOp(ExprBinOp {
-                    span: node.span,
-                    kind: binop,
-                    lhs: Box::new(lhs.clone()),
-                    rhs: Box::new(rhs),
-                })
-                .into();
-                return Ok(ExprKind::Assign(fp_core::ast::ExprAssign {
-                    span: node.span,
-                    target: Box::new(lhs),
-                    value: Box::new(combined),
-                })
-                .into());
-            }
-
-            let kind = binop_from_text(&op).ok_or(LowerError::MissingOperator)?;
-            Ok(ExprKind::BinOp(ExprBinOp {
-                span: node.span,
-                kind,
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
-            })
-            .into())
-        }
-        SyntaxKind::ExprRange => {
-            let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
-            let limit = match op.as_str() {
-                ".." => ExprRangeLimit::Exclusive,
-                "..=" => ExprRangeLimit::Inclusive,
-                _ => return Err(LowerError::MissingOperator),
-            };
-            let (start_node, end_node) = range_child_exprs(node)?;
-            let start = start_node
-                .map(lower_expr_from_cst)
-                .transpose()?
-                .map(Box::new);
-            let end = end_node.map(lower_expr_from_cst).transpose()?.map(Box::new);
-            Ok(ExprKind::Range(ExprRange {
-                span: node.span,
-                start,
-                limit,
-                end,
-                step: None,
-            })
-            .into())
-        }
-        SyntaxKind::ExprSelect => {
-            let obj = first_child_expr(node)?;
-            let obj = lower_expr_from_cst(obj)?;
-            let field = direct_last_ident_token_text(node)
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprSelect))?;
-            Ok(ExprKind::Select(ExprSelect {
-                span: node.span,
-                obj: Box::new(obj),
-                field: Ident::new(field),
-                select: ExprSelectType::Unknown,
-            })
-            .into())
-        }
-        SyntaxKind::ExprIndex => {
-            let mut nodes = node_children_exprs(node);
-            let obj = nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprIndex))?;
-            let index = nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprIndex))?;
-            let obj = lower_expr_from_cst(obj)?;
-            let index = lower_expr_from_cst(index)?;
-            Ok(ExprKind::Index(ExprIndex {
-                span: node.span,
-                obj: Box::new(obj),
-                index: Box::new(index),
-            })
-            .into())
-        }
-        SyntaxKind::ExprSplat => {
-            let inner = last_child_expr(node)?;
-            let inner = lower_expr_from_cst(inner)?;
-            Ok(ExprKind::Splat(fp_core::ast::ExprSplat {
-                span: node.span,
-                iter: Box::new(inner),
-            })
-            .into())
-        }
-        SyntaxKind::ExprSplatDict => {
-            let inner = last_child_expr(node)?;
-            let inner = lower_expr_from_cst(inner)?;
-            Ok(ExprKind::SplatDict(fp_core::ast::ExprSplatDict {
-                span: node.span,
-                dict: Box::new(inner),
-            })
-            .into())
-        }
-        SyntaxKind::ExprCall => {
-            let mut nodes = node_children_exprs(node);
-            let callee = nodes
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprCall))?;
-            let callee = lower_expr_from_cst(callee)?;
-            let (args, kwargs) = lower_call_args_from_cst(nodes)?;
-
-            let target = match callee.kind() {
-                ExprKind::Name(locator) => ExprInvokeTarget::Function(locator.clone()),
-                ExprKind::Select(select) => ExprInvokeTarget::Method(select.clone()),
-                _ => ExprInvokeTarget::expr(callee),
-            };
-
-            Ok(ExprKind::Invoke(ExprInvoke {
-                span: node.span,
-                target,
-                args,
-                kwargs,
-            })
-            .into())
-        }
-        SyntaxKind::ExprMacroCall => {
-            // Shape: <name> ! <group>
-            let name = first_child_expr(node)?;
-            if !matches!(
-                name.kind,
-                SyntaxKind::ExprName | SyntaxKind::ExprPath | SyntaxKind::ExprSelect
-            ) {
-                return Err(LowerError::UnexpectedNode(SyntaxKind::ExprMacroCall));
-            }
-            let path = macro_callee_path(name)?;
-
-            let macro_tokens = crate::ast::macros::macro_group_tokens(node)
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprMacroCall))?;
-
-            Ok(ExprKind::Macro(fp_core::ast::ExprMacro::new(
-                MacroInvocation::new(path, macro_tokens.delimiter, macro_tokens.text)
-                    .with_token_trees(macro_tokens.token_trees)
-                    .with_span(node.span),
-            ))
-            .into())
-        }
-        SyntaxKind::ExprCast => {
-            let expr = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Expr =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprCast))?;
-            let ty_node = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Type =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprCast))?;
-
-            let expr = lower_expr_from_cst(expr)?;
-            let ty = lower_type_from_cst(ty_node)?;
-            Ok(ExprKind::Cast(fp_core::ast::ExprCast {
-                span: node.span,
-                expr: Box::new(expr),
-                ty,
-            })
-            .into())
-        }
-        other => Err(LowerError::UnexpectedNode(other)),
-    }?;
-
-    if !matches!(node.kind, SyntaxKind::Root) {
-        expr = expr.with_span(node.span);
-    }
-
-    Ok(expr)
+pub(crate) fn parse_expr_winnow_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    parse_assignment_no_struct(input, file)
 }
 
-fn lower_struct_fields(node: &SyntaxNode) -> Result<(Vec<ExprField>, Option<Expr>), LowerError> {
-    let mut out = Vec::new();
-    for child in &node.children {
-        let crate::syntax::SyntaxElement::Node(field) = child else {
-            continue;
-        };
-        if field.kind != SyntaxKind::StructField {
-            continue;
-        }
-        let name = direct_first_non_trivia_token_text(field)
-            .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::StructField))?;
-        let name_ident = Ident::new(name.clone());
-        let value = if let Some(expr_node) = node_children_exprs(field).next() {
-            Some(lower_expr_from_cst(expr_node)?)
-        } else {
-            // Shorthand field: `x` => `x: x`.
-            Some(Expr::ident(name_ident.clone()))
-        };
-        out.push(ExprField {
-            span: field.span,
-            name: name_ident,
-            value,
-        });
-    }
-
-    let mut update: Option<Expr> = None;
-    for (idx, child) in node.children.iter().enumerate() {
-        let crate::syntax::SyntaxElement::Token(tok) = child else {
-            continue;
-        };
-        if tok.is_trivia() || tok.text != ".." {
-            continue;
-        }
-        if update.is_some() {
-            return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStruct));
-        }
-        for next in node.children.iter().skip(idx + 1) {
-            match next {
-                crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
-                    update = Some(lower_expr_from_cst(n.as_ref())?);
-                    break;
-                }
-                crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "}" => {
-                    break;
-                }
-                _ => {}
-            }
-        }
-        // Allow `..` without an update expression. This is needed for destructuring assignments
-        // and keeps FP permissive in parse-only mode.
-    }
-
-    Ok((out, update))
-}
-
-fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
-    match node.kind {
-        SyntaxKind::PatternIdent => {
-            let mut name: Option<String> = None;
-            let mut is_mut = false;
-            for child in &node.children {
-                let crate::syntax::SyntaxElement::Token(t) = child else {
-                    continue;
-                };
-                if t.is_trivia() {
-                    continue;
-                }
-                if t.text == "mut" {
-                    is_mut = true;
-                    continue;
-                }
-                if name.is_none() {
-                    name = Some(t.text.clone());
-                }
-            }
-            let name = name.ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternIdent))?;
-            let mut ident = PatternIdent::new(Ident::new(name));
-            if is_mut {
-                ident.mutability = Some(true);
-            }
-            Ok(Pattern::new(PatternKind::Ident(ident)))
-        }
-        SyntaxKind::PatternWildcard => Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {}))),
-        SyntaxKind::PatternTuple => {
-            let patterns = node
-                .children
-                .iter()
-                .filter_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if matches!(
-                            n.kind,
-                            SyntaxKind::PatternIdent
-                                | SyntaxKind::PatternWildcard
-                                | SyntaxKind::PatternTuple
-                                | SyntaxKind::PatternType
-                                | SyntaxKind::PatternStruct
-                                | SyntaxKind::PatternTupleStruct
-                                | SyntaxKind::PatternBox
-                                | SyntaxKind::PatternRef
-                                | SyntaxKind::PatternSlice
-                                | SyntaxKind::PatternRest
-                                | SyntaxKind::PatternBind
-                                | SyntaxKind::PatternPath
-                                | SyntaxKind::PatternParen
-                        ) =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .map(|n| {
-                    if n.kind == SyntaxKind::PatternRest {
-                        Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {})))
-                    } else {
-                        lower_pattern_from_cst(n)
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Pattern::new(PatternKind::Tuple(PatternTuple { patterns })))
-        }
-        SyntaxKind::PatternParen => {
-            let inner =
-                first_child_in_category(node, CstCategory::Pattern, SyntaxKind::PatternParen)?;
-            lower_pattern_from_cst(inner)
-        }
-        SyntaxKind::PatternSlice => {
-            let patterns = node
-                .children
-                .iter()
-                .filter_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Pattern =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .map(|n| {
-                    if n.kind == SyntaxKind::PatternRest {
-                        Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {})))
-                    } else {
-                        lower_pattern_from_cst(n)
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Pattern::new(PatternKind::Tuple(PatternTuple { patterns })))
-        }
-        SyntaxKind::PatternRest => Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {}))),
-        SyntaxKind::PatternPath => {
-            let name = lower_pattern_path_name(node)?;
-            Ok(Pattern::new(PatternKind::Variant(PatternVariant {
-                name: Expr::name(name),
-                pattern: None,
-            })))
-        }
-        SyntaxKind::PatternBind => {
-            let mut lhs: Option<&SyntaxNode> = None;
-            let mut rhs: Option<&SyntaxNode> = None;
-            for child in &node.children {
-                let crate::syntax::SyntaxElement::Node(n) = child else {
-                    continue;
-                };
-                if lhs.is_none() && n.kind.category() == CstCategory::Pattern {
-                    lhs = Some(n.as_ref());
-                    continue;
-                }
-                if rhs.is_none()
-                    && (n.kind.category() == CstCategory::Pattern
-                        || n.kind == SyntaxKind::ExprRange)
-                {
-                    rhs = Some(n.as_ref());
-                }
-            }
-            let lhs = lhs.ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternBind))?;
-            let rhs = rhs.ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternBind))?;
-            let ident = match lhs.kind {
-                SyntaxKind::PatternIdent => match lower_pattern_from_cst(lhs)?.kind() {
-                    PatternKind::Ident(ident) => ident.clone(),
-                    _ => return Err(LowerError::UnexpectedNode(SyntaxKind::PatternBind)),
-                },
-                SyntaxKind::PatternPath => {
-                    let name = lower_pattern_path_name(lhs)?;
-                    match name {
-                        Name::Ident(ident) => PatternIdent::new(ident),
-                        Name::Path(path)
-                            if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
-                        {
-                            PatternIdent::new(path.segments[0].clone())
-                        }
-                        _ => return Err(LowerError::UnexpectedNode(SyntaxKind::PatternBind)),
-                    }
-                }
-                _ => return Err(LowerError::UnexpectedNode(SyntaxKind::PatternBind)),
-            };
-            let pattern = match rhs.kind {
-                // In `x @ ..`, the parser currently emits `ExprRange` for the RHS.
-                // Treat it as a wildcard rest-pattern when lowering.
-                SyntaxKind::ExprRange => Pattern::new(PatternKind::Wildcard(PatternWildcard {})),
-                _ => lower_pattern_from_cst(rhs)?,
-            };
-            Ok(Pattern::new(PatternKind::Bind(PatternBind {
-                ident,
-                pattern: Box::new(pattern),
-            })))
-        }
-        SyntaxKind::PatternStruct => {
-            let name_node = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n) if n.kind == SyntaxKind::PatternPath => {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternStruct))?;
-            let name = lower_pattern_path_name(name_node)?;
-
-            let mut fields = Vec::new();
-            for child in &node.children {
-                let crate::syntax::SyntaxElement::Node(field) = child else {
-                    continue;
-                };
-                if field.kind != SyntaxKind::StructField {
-                    continue;
-                }
-                let field_name = direct_first_non_trivia_token_text(field)
-                    .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::StructField))?;
-                let mut rename = None;
-                if let Some(value_pat) = field.children.iter().find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Pattern =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                }) {
-                    rename = Some(Box::new(lower_pattern_from_cst(value_pat)?));
-                }
-                fields.push(PatternStructField {
-                    name: Ident::new(field_name),
-                    rename,
-                });
-            }
-
-            let has_rest = node.children.iter().any(|c| {
-                matches!(
-                    c,
-                    crate::syntax::SyntaxElement::Node(n) if n.kind == SyntaxKind::PatternRest
-                )
-            });
-
-            match name {
-                Name::Ident(ident) => Ok(Pattern::new(PatternKind::Struct(PatternStruct {
-                    name: ident,
-                    fields,
-                    has_rest,
-                }))),
-                Name::Path(path)
-                    if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
-                {
-                    Ok(Pattern::new(PatternKind::Struct(PatternStruct {
-                        name: path.segments[0].clone(),
-                        fields,
-                        has_rest,
-                    })))
-                }
-                _ => Ok(Pattern::new(PatternKind::Variant(PatternVariant {
-                    name: Expr::name(name),
-                    pattern: Some(Box::new(Pattern::new(PatternKind::Structural(
-                        PatternStructural { fields, has_rest },
-                    )))),
-                }))),
-            }
-        }
-        SyntaxKind::PatternTupleStruct => {
-            let name_node = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n) if n.kind == SyntaxKind::PatternPath => {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternTupleStruct))?;
-            let name = lower_pattern_path_name(name_node)?;
-            let patterns = node
-                .children
-                .iter()
-                .filter_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Pattern
-                            && n.kind != SyntaxKind::PatternPath =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    _ => None,
-                })
-                .map(|n| {
-                    if n.kind == SyntaxKind::PatternRest {
-                        Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {})))
-                    } else {
-                        lower_pattern_from_cst(n)
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
-                name,
-                patterns,
-            })))
-        }
-        SyntaxKind::PatternBox => {
-            let pat_node =
-                first_child_in_category(node, CstCategory::Pattern, SyntaxKind::PatternBox)?;
-            let pattern = lower_pattern_from_cst(pat_node)?;
-            Ok(Pattern::new(PatternKind::Box(PatternBox {
-                pattern: Box::new(pattern),
-            })))
-        }
-        SyntaxKind::PatternRef => {
-            let mut is_mut = false;
-            let pat_node = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    crate::syntax::SyntaxElement::Node(n)
-                        if n.kind.category() == CstCategory::Pattern =>
-                    {
-                        Some(n.as_ref())
-                    }
-                    crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "mut" => {
-                        is_mut = true;
-                        None
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::PatternRef))?;
-            let pattern = lower_pattern_from_cst(pat_node)?;
-            Ok(Pattern::new(PatternKind::Ref(PatternRef {
-                mutability: if is_mut { Some(true) } else { None },
-                pattern: Box::new(pattern),
-            })))
-        }
-        SyntaxKind::PatternType => {
-            let pat_node =
-                first_child_in_category(node, CstCategory::Pattern, SyntaxKind::PatternType)?;
-            let ty_node =
-                first_child_in_category(node, CstCategory::Type, SyntaxKind::PatternType)?;
-            let pat = lower_pattern_from_cst(pat_node)?;
-            let ty = lower_type_from_cst(ty_node)?;
-            Ok(Pattern::new(PatternKind::Type(PatternType::new(pat, ty))))
-        }
-        SyntaxKind::ExprName => {
-            let name = direct_first_non_trivia_token_text(node)
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprName))?;
-            if name == "_" {
-                return Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {})));
-            }
-            if name == "true" || name == "false" {
-                return Ok(Pattern::new(PatternKind::Variant(PatternVariant {
-                    name: Expr::value(Value::bool(name == "true")),
-                    pattern: None,
-                })));
-            }
-            Ok(Pattern::new(PatternKind::Ident(PatternIdent::new(
-                Ident::new(name),
-            ))))
-        }
-        SyntaxKind::ExprNumber | SyntaxKind::ExprString | SyntaxKind::ExprRange => {
-            let expr = lower_expr_from_cst(node)?;
-            Ok(Pattern::new(PatternKind::Variant(PatternVariant {
-                name: expr,
-                pattern: None,
-            })))
-        }
-        other => Err(LowerError::UnexpectedNode(other)),
-    }
-}
-
-fn lower_assign_pattern_expr(
-    pattern: Pattern,
-    rhs: Expr,
-    op: &str,
-    span: fp_core::span::Span,
-) -> Result<Expr, LowerError> {
-    if op != "=" {
-        if let Some(binop) = compound_assign_binop(op) {
-            if let Some(target_ident) = assign_pattern_target_ident(&pattern) {
-                let target_expr = Expr::ident(target_ident);
-                let combined = ExprKind::BinOp(ExprBinOp {
-                    span,
-                    kind: binop,
-                    lhs: Box::new(target_expr.clone()),
-                    rhs: Box::new(rhs),
-                })
-                .into();
-                return Ok(ExprKind::Assign(fp_core::ast::ExprAssign {
-                    span,
-                    target: Box::new(target_expr),
-                    value: Box::new(combined),
-                })
-                .into());
-            }
-        }
-        return Err(LowerError::Unsupported(format!(
-            "pattern assignment operator '{op}'"
-        )));
-    }
-
-    let mut counter = 0usize;
-    let mut assignments = Vec::new();
-    let rewritten_pattern = rewrite_assign_pattern(pattern, &mut counter, &mut assignments);
-    let rhs_ident = Ident::new(format!("__fp_assign_rhs{counter}"));
-
-    let mut block = ExprBlock::new();
-    block.push_stmt(BlockStmt::Let(StmtLet::new_simple(rhs_ident.clone(), rhs)));
-    let match_expr = build_assign_pattern_match(rhs_ident, rewritten_pattern, assignments, span);
-    block.push_stmt(BlockStmt::Expr(
-        BlockStmtExpr::new(match_expr).with_semicolon(true),
-    ));
-    block.push_expr(Expr::unit());
-    Ok(ExprKind::Block(block).into())
-}
-
-fn assign_pattern_target_ident(pattern: &Pattern) -> Option<Ident> {
-    match pattern.kind() {
-        PatternKind::Ident(ident) => Some(ident.ident.clone()),
-        PatternKind::Bind(bind) => Some(bind.ident.ident.clone()),
-        PatternKind::Type(pattern_type) => assign_pattern_target_ident(&pattern_type.pat),
-        PatternKind::Ref(pattern_ref) => assign_pattern_target_ident(&pattern_ref.pattern),
-        PatternKind::Box(pattern_box) => assign_pattern_target_ident(&pattern_box.pattern),
-        _ => None,
-    }
-}
-
-fn rewrite_assign_pattern(
-    pattern: Pattern,
-    counter: &mut usize,
-    assignments: &mut Vec<(Ident, Ident)>,
-) -> Pattern {
-    let (ty, kind) = pattern.into_parts();
-    let kind = match kind {
-        PatternKind::Ident(ident) => {
-            let temp = next_assign_temp_ident(counter);
-            assignments.push((ident.ident.clone(), temp.clone()));
-            let mut rewritten = PatternIdent::new(temp);
-            rewritten.mutability = ident.mutability;
-            PatternKind::Ident(rewritten)
-        }
-        PatternKind::Bind(bind) => {
-            let temp = next_assign_temp_ident(counter);
-            assignments.push((bind.ident.ident.clone(), temp.clone()));
-            let mut rewritten_ident = PatternIdent::new(temp);
-            rewritten_ident.mutability = bind.ident.mutability;
-            let inner = rewrite_assign_pattern(*bind.pattern, counter, assignments);
-            PatternKind::Bind(PatternBind {
-                ident: rewritten_ident,
-                pattern: Box::new(inner),
-            })
-        }
-        PatternKind::Type(pattern_type) => {
-            let inner = rewrite_assign_pattern(*pattern_type.pat, counter, assignments);
-            PatternKind::Type(PatternType::new(inner, pattern_type.ty))
-        }
-        PatternKind::Tuple(tuple) => {
-            let patterns = tuple
-                .patterns
-                .into_iter()
-                .map(|pat| rewrite_assign_pattern(pat, counter, assignments))
-                .collect();
-            PatternKind::Tuple(PatternTuple { patterns })
-        }
-        PatternKind::TupleStruct(tuple_struct) => {
-            let patterns = tuple_struct
-                .patterns
-                .into_iter()
-                .map(|pat| rewrite_assign_pattern(pat, counter, assignments))
-                .collect();
-            PatternKind::TupleStruct(PatternTupleStruct {
-                name: tuple_struct.name,
-                patterns,
-            })
-        }
-        PatternKind::Struct(pattern_struct) => {
-            let fields = rewrite_assign_struct_fields(pattern_struct.fields, counter, assignments);
-            PatternKind::Struct(PatternStruct {
-                name: pattern_struct.name,
-                fields,
-                has_rest: pattern_struct.has_rest,
-            })
-        }
-        PatternKind::Structural(pattern_struct) => {
-            let fields = rewrite_assign_struct_fields(pattern_struct.fields, counter, assignments);
-            PatternKind::Structural(PatternStructural {
-                fields,
-                has_rest: pattern_struct.has_rest,
-            })
-        }
-        PatternKind::Box(pattern_box) => {
-            let inner = rewrite_assign_pattern(*pattern_box.pattern, counter, assignments);
-            PatternKind::Box(PatternBox {
-                pattern: Box::new(inner),
-            })
-        }
-        PatternKind::Ref(pattern_ref) => {
-            let inner = rewrite_assign_pattern(*pattern_ref.pattern, counter, assignments);
-            PatternKind::Ref(PatternRef {
-                mutability: pattern_ref.mutability,
-                pattern: Box::new(inner),
-            })
-        }
-        PatternKind::Variant(variant) => {
-            let pattern = variant
-                .pattern
-                .map(|pat| Box::new(rewrite_assign_pattern(*pat, counter, assignments)));
-            PatternKind::Variant(PatternVariant {
-                name: variant.name,
-                pattern,
-            })
-        }
-        PatternKind::Quote(quote) => PatternKind::Quote(quote),
-        PatternKind::QuotePlural(quote) => PatternKind::QuotePlural(quote),
-        PatternKind::Wildcard(wildcard) => PatternKind::Wildcard(wildcard),
+fn parse_assignment(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let lhs = parse_range(input, file)?;
+    let Some(op) = peek_symbol(input) else {
+        return Ok(lhs);
     };
-    Pattern::from_parts(ty, kind)
-}
-
-fn rewrite_assign_struct_fields(
-    fields: Vec<PatternStructField>,
-    counter: &mut usize,
-    assignments: &mut Vec<(Ident, Ident)>,
-) -> Vec<PatternStructField> {
-    fields
-        .into_iter()
-        .map(|field| {
-            let rename = match field.rename {
-                Some(rename) => Some(Box::new(rewrite_assign_pattern(
-                    *rename,
-                    counter,
-                    assignments,
-                ))),
-                None => {
-                    let temp = next_assign_temp_ident(counter);
-                    assignments.push((field.name.clone(), temp.clone()));
-                    Some(Box::new(Pattern::new(PatternKind::Ident(
-                        PatternIdent::new(temp),
-                    ))))
-                }
-            };
-            PatternStructField {
-                name: field.name,
-                rename,
-            }
+    if !matches!(op, "=" | "+=" | "-=" | "*=" | "/=" | "%=") {
+        return Ok(lhs);
+    }
+    let op = op.to_string();
+    expect_symbol(input, &op)?;
+    let rhs = parse_assignment(input, file)?;
+    if op == "=" {
+        return Ok(ExprKind::Assign(ExprAssign {
+            span: union_exprs(&lhs, &rhs),
+            target: Box::new(lhs),
+            value: Box::new(rhs),
         })
-        .collect()
-}
-
-fn build_assign_pattern_match(
-    rhs_ident: Ident,
-    pattern: Pattern,
-    assignments: Vec<(Ident, Ident)>,
-    span: fp_core::span::Span,
-) -> Expr {
-    let mut arm_block = ExprBlock::new();
-    for (target, source) in assignments {
-        let assign_expr = Expr::new(ExprKind::Assign(fp_core::ast::ExprAssign {
-            span,
-            target: Box::new(Expr::ident(target)),
-            value: Box::new(Expr::ident(source)),
-        }));
-        arm_block.push_stmt(BlockStmt::Expr(
-            BlockStmtExpr::new(assign_expr).with_semicolon(true),
-        ));
+        .into());
     }
-    arm_block.push_expr(Expr::unit());
-    let arm_expr = ExprKind::Block(arm_block).into();
-
-    let match_case = ExprMatchCase {
-        span,
-        pat: Some(Box::new(pattern)),
-        cond: Box::new(Expr::value(Value::bool(true))),
-        guard: None,
-        body: Box::new(arm_expr),
-    };
-    let wildcard_case = ExprMatchCase {
-        span,
-        pat: Some(Box::new(Pattern::new(PatternKind::Wildcard(
-            PatternWildcard {},
-        )))),
-        cond: Box::new(Expr::value(Value::bool(true))),
-        guard: None,
-        body: Box::new(Expr::unit()),
-    };
-    ExprKind::Match(ExprMatch {
-        span,
-        scrutinee: Some(Box::new(Expr::ident(rhs_ident))),
-        cases: vec![match_case, wildcard_case],
-    })
-    .into()
-}
-
-fn next_assign_temp_ident(counter: &mut usize) -> Ident {
-    let name = format!("__fp_assign_pat{counter}");
-    *counter += 1;
-    Ident::new(name)
-}
-
-fn lower_block_from_expr_parent(
-    node: &SyntaxNode,
-    expected_kind: SyntaxKind,
-) -> Result<ExprBlock, LowerError> {
-    let block_node = node_children_exprs(node)
-        .find(|n| n.kind == SyntaxKind::ExprBlock)
-        .ok_or_else(|| LowerError::UnexpectedNode(expected_kind))?;
-    lower_block_from_cst(block_node)
-}
-
-fn lower_block_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
-    let block = lower_block_from_cst(node)?;
-    Ok(ExprKind::Block(block).into())
-}
-
-fn first_child_in_category<'a>(
-    node: &'a SyntaxNode,
-    category: CstCategory,
-    expected_kind: SyntaxKind,
-) -> Result<&'a SyntaxNode, LowerError> {
-    node.children
-        .iter()
-        .find_map(|c| match c {
-            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == category => {
-                Some(n.as_ref())
-            }
-            _ => None,
-        })
-        .ok_or_else(|| LowerError::UnexpectedNode(expected_kind))
-}
-
-fn lower_pattern_path_name(node: &SyntaxNode) -> Result<Name, LowerError> {
-    let path_tokens = collect_path_tokens_with_generics(node);
-    let (prefix, segments) = split_path_prefix(path_tokens.segments, path_tokens.saw_root);
-    if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
-        return Err(LowerError::UnexpectedNode(node.kind));
-    }
-    Ok(Name::path(Path::new(prefix, segments)))
-}
-
-fn lower_block_from_cst(node: &SyntaxNode) -> Result<ExprBlock, LowerError> {
-    if node.kind != SyntaxKind::ExprBlock {
-        return Err(LowerError::UnexpectedNode(node.kind));
-    }
-    let mut stmts: Vec<BlockStmt> = Vec::new();
-    for child in &node.children {
-        let crate::syntax::SyntaxElement::Node(stmt) = child else {
-            continue;
-        };
-        match stmt.kind {
-            SyntaxKind::BlockStmtItem => {
-                let item_node = stmt
-                    .children
-                    .iter()
-                    .find_map(|c| match c {
-                        crate::syntax::SyntaxElement::Node(n)
-                            if n.kind.category() == CstCategory::Item =>
-                        {
-                            Some(n.as_ref())
-                        }
-                        _ => None,
-                    })
-                    .ok_or(LowerError::UnexpectedNode(SyntaxKind::BlockStmtItem))?;
-                if item_node.kind == SyntaxKind::ItemExternBlock {
-                    let items = crate::ast::items::lower_extern_block(item_node)?;
-                    for item in items {
-                        stmts.push(BlockStmt::item(item));
-                    }
-                } else {
-                    let item = crate::ast::items::lower_item_from_cst(item_node)?;
-                    stmts.push(BlockStmt::item(item));
-                }
-            }
-            SyntaxKind::BlockStmtLet => stmts.push(lower_let_stmt(stmt)?),
-            SyntaxKind::BlockStmtDefer => stmts.push(lower_defer_stmt(stmt)?),
-            SyntaxKind::BlockStmtExpr => {
-                let expr_node = stmt
-                    .children
-                    .iter()
-                    .find_map(|c| match c {
-                        crate::syntax::SyntaxElement::Node(n) => Some(n.as_ref()),
-                        _ => None,
-                    })
-                    .ok_or(LowerError::UnexpectedNode(SyntaxKind::BlockStmtExpr))?;
-                let expr = lower_expr_from_cst(expr_node)?;
-                let has_semicolon = stmt
-                    .children
-                    .iter()
-                    .any(|c| matches!(c, crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == ";"));
-                let stmt_expr = BlockStmtExpr::new(expr).with_semicolon(has_semicolon);
-                stmts.push(BlockStmt::Expr(stmt_expr));
-            }
-            _ => {}
-        }
-    }
-    let mut block = ExprBlock::new_stmts(stmts);
-    block.span = node.span;
-    Ok(block)
-}
-
-fn lower_let_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
-    let mut pattern: Option<Pattern> = None;
-    let mut ty: Option<Ty> = None;
-    let mut expr_nodes: Vec<&SyntaxNode> = Vec::new();
-
-    for child in &node.children {
-        match child {
-            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Pattern => {
-                if pattern.is_none() {
-                    pattern = Some(lower_pattern_from_cst(n)?);
-                }
-            }
-            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => {
-                ty = Some(lower_type_from_cst(n)?);
-            }
-            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
-                expr_nodes.push(n);
-            }
-            crate::syntax::SyntaxElement::Node(n)
-                if matches!(
-                    n.kind,
-                    SyntaxKind::ExprName
-                        | SyntaxKind::ExprNumber
-                        | SyntaxKind::ExprBinary
-                        | SyntaxKind::ExprCall
-                        | SyntaxKind::ExprIndex
-                        | SyntaxKind::ExprSelect
-                        | SyntaxKind::ExprCast
-                        | SyntaxKind::ExprRange
-                        | SyntaxKind::ExprTry
-                        | SyntaxKind::ExprAwait
-                        | SyntaxKind::ExprUnary
-                        | SyntaxKind::ExprMacroCall
-                        | SyntaxKind::ExprParen
-                        | SyntaxKind::ExprBlock
-                ) =>
-            {
-                expr_nodes.push(n);
-            }
-            _ => {}
-        }
-    }
-
-    let Some(pat) = pattern else {
-        return Err(LowerError::UnexpectedNode(SyntaxKind::BlockStmtLet));
-    };
-
-    let mut init_expr = None;
-    let mut diverge_expr = None;
-    if let Some(first) = expr_nodes.get(0) {
-        init_expr = Some(lower_expr_from_cst(first)?);
-    }
-    if let Some(second) = expr_nodes.get(1) {
-        diverge_expr = Some(lower_expr_from_cst(second)?);
-    }
-    if init_expr.is_none() {
-        diverge_expr = None;
-    }
-
-    let stmt = match (ty, init_expr) {
-        (Some(ty), Some(init)) => {
-            let typed_pat = Pattern::from(PatternKind::Type(PatternType::new(pat, ty)));
-            StmtLet::new(typed_pat, Some(init), diverge_expr)
-        }
-        (Some(_ty), None) => StmtLet::new(pat, None, None),
-        (None, init) => StmtLet::new(pat, init, diverge_expr),
-    };
-    Ok(BlockStmt::Let(stmt))
-}
-
-fn lower_defer_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
-    let expr = first_child_expr(node)?;
-    Ok(BlockStmt::Defer(StmtDefer {
-        span: node.span,
-        expr: Box::new(lower_expr_from_cst(expr)?),
-    }))
-}
-
-fn lower_try_catch_from_cst(node: &SyntaxNode) -> Result<ExprTryCatch, LowerError> {
-    let mut pat = None;
-    let mut body = None;
-
-    for child in &node.children {
-        match child {
-            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Pattern => {
-                pat = Some(Box::new(lower_pattern_from_cst(n)?));
-            }
-            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
-                body = Some(Box::new(lower_expr_from_cst(n)?));
-            }
-            _ => {}
-        }
-    }
-
-    let body = body.ok_or(LowerError::UnexpectedNode(SyntaxKind::ExprTryCatch))?;
-    Ok(ExprTryCatch {
-        span: node.span,
-        pat,
-        body,
-    })
-}
-
-fn split_match_arm<'a>(
-    arm: &'a SyntaxNode,
-) -> Result<(&'a SyntaxNode, Option<&'a SyntaxNode>, &'a SyntaxNode), LowerError> {
-    let mut pat: Option<&SyntaxNode> = None;
-    let mut exprs: Vec<&SyntaxNode> = Vec::new();
-
-    for child in &arm.children {
-        let crate::syntax::SyntaxElement::Node(n) = child else {
-            continue;
-        };
-        if n.kind.category() == CstCategory::Pattern && pat.is_none() {
-            pat = Some(n.as_ref());
-            continue;
-        }
-        if n.kind.category() == CstCategory::Expr {
-            exprs.push(n.as_ref());
-        }
-    }
-
-    let pat = match pat {
-        Some(pat) => pat,
-        None => {
-            let first = exprs
-                .first()
-                .copied()
-                .ok_or(LowerError::UnexpectedNode(SyntaxKind::MatchArm))?;
-            exprs.remove(0);
-            first
-        }
-    };
-
-    match exprs.as_slice() {
-        [body] => Ok((pat, None, *body)),
-        [guard, body] => Ok((pat, Some(*guard), *body)),
-        _ => Err(LowerError::UnexpectedNode(SyntaxKind::MatchArm)),
-    }
-}
-
-fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
-    if node.kind.category() == CstCategory::Pattern {
-        return lower_pattern_from_cst(node);
-    }
-    // Patterns are currently parsed as expression CST nodes in match arms.
-    // We lower a small subset of expressions into `Pattern` so that the typer
-    // can bind names for match bodies.
-    match node.kind {
-        SyntaxKind::ExprName => {
-            let name = direct_first_non_trivia_token_text(node)
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprName))?;
-            if name == "_" {
-                return Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {})));
-            }
-            if name == "true" || name == "false" {
-                return Ok(Pattern::new(PatternKind::Variant(PatternVariant {
-                    name: Expr::value(Value::bool(name == "true")),
-                    pattern: None,
-                })));
-            }
-            Ok(Pattern::new(PatternKind::Ident(PatternIdent::new(
-                Ident::new(name),
-            ))))
-        }
-        SyntaxKind::ExprNumber | SyntaxKind::ExprString => {
-            let expr = lower_expr_from_cst(node)?;
-            Ok(Pattern::new(PatternKind::Variant(PatternVariant {
-                name: expr,
-                pattern: None,
-            })))
-        }
-        SyntaxKind::ExprRange => Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {}))),
-        SyntaxKind::ExprPath => {
-            let expr = lower_expr_from_cst(node)?;
-            if let ExprKind::Name(name) = expr.kind() {
-                if let Some(ident) = name.as_ident() {
-                    if ident.as_str() == "true" || ident.as_str() == "false" {
-                        return Ok(Pattern::new(PatternKind::Variant(PatternVariant {
-                            name: Expr::value(Value::bool(ident.as_str() == "true")),
-                            pattern: None,
-                        })));
-                    }
-                }
-            }
-            Ok(Pattern::new(PatternKind::Variant(PatternVariant {
-                name: expr,
-                pattern: None,
-            })))
-        }
-        SyntaxKind::ExprCall => {
-            // Tuple-struct/enum-variant pattern: `Path(p0, p1, ...)`.
-            let mut exprs = node_children_exprs(node);
-            let callee = exprs
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprCall))?;
-            if callee.kind == SyntaxKind::ExprQuoteToken {
-                let (fragment, _item, plural) = quote_pattern_kind_from_cst(callee)?;
-                if !plural {
-                    return Err(LowerError::UnexpectedNode(SyntaxKind::ExprCall));
-                }
-                let patterns = exprs
-                    .map(lower_match_pattern_from_cst)
-                    .collect::<Result<Vec<_>, _>>()?;
-                return Ok(Pattern::new(PatternKind::QuotePlural(PatternQuotePlural {
-                    fragment,
-                    patterns,
-                })));
-            }
-            let callee_expr = lower_expr_from_cst(callee)?;
-            let locator = match callee_expr.kind() {
-                ExprKind::Name(locator) => locator.clone(),
-                _ => return Err(LowerError::UnexpectedNode(SyntaxKind::ExprCall)),
-            };
-            let mut pattern_nodes = Vec::new();
-            for node in exprs {
-                if node.kind == SyntaxKind::ExprKwArg {
-                    return Err(LowerError::Unsupported(
-                        "keyword arguments are not allowed in patterns".to_string(),
-                    ));
-                }
-                pattern_nodes.push(node);
-            }
-            let patterns = pattern_nodes
-                .into_iter()
-                .map(lower_match_pattern_from_cst)
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
-                name: locator,
-                patterns,
-            })))
-        }
-        SyntaxKind::ExprStruct => {
-            // Struct-like enum variant pattern: `Enum::Variant { .. }`.
-            // We preserve the qualified variant name and (optionally) record
-            // whether `..` was present so that Rust codegen can print a valid
-            // struct-variant pattern.
-            let has_rest = node.children.iter().any(|child| {
-                matches!(
-                    child,
-                    crate::syntax::SyntaxElement::Token(tok) if !tok.is_trivia() && tok.text == ".."
-                )
-            });
-            let mut exprs = node_children_exprs(node);
-            let name_node = exprs
-                .next()
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprStruct))?;
-
-            let mut fields = Vec::new();
-            for child in &node.children {
-                let crate::syntax::SyntaxElement::Node(field) = child else {
-                    continue;
-                };
-                if field.kind != SyntaxKind::StructField {
-                    continue;
-                }
-                let name = direct_first_non_trivia_token_text(field)
-                    .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::StructField))?;
-                let mut rename = None;
-                if let Some(value_expr) = node_children_exprs(field).next() {
-                    let pattern = lower_match_pattern_from_cst(value_expr)?;
-                    rename = Some(Box::new(pattern));
-                }
-                fields.push(PatternStructField {
-                    name: Ident::new(name),
-                    rename,
-                });
-            }
-
-            if name_node.kind == SyntaxKind::ExprQuoteToken {
-                let (fragment, item, plural) = quote_pattern_kind_from_cst(name_node)?;
-                if plural {
-                    return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStruct));
-                }
-                let mut quote = PatternQuote {
-                    fragment,
-                    item,
-                    fields: Vec::new(),
-                    has_rest: false,
-                };
-                quote.fields = fields;
-                quote.has_rest = has_rest;
-                return Ok(Pattern::new(PatternKind::Quote(quote)));
-            }
-
-            let name_expr = lower_expr_from_cst(name_node)?;
-
-            if let ExprKind::Name(locator) = name_expr.kind() {
-                if let Some(ident) = locator.as_ident() {
-                    let item_kind = match ident.as_str() {
-                        "fn" => Some(QuoteItemKind::Function),
-                        "struct" => Some(QuoteItemKind::Struct),
-                        "enum" => Some(QuoteItemKind::Enum),
-                        "trait" => Some(QuoteItemKind::Trait),
-                        "impl" => Some(QuoteItemKind::Impl),
-                        "const" => Some(QuoteItemKind::Const),
-                        "static" => Some(QuoteItemKind::Static),
-                        "mod" => Some(QuoteItemKind::Module),
-                        "use" => Some(QuoteItemKind::Use),
-                        "macro" => Some(QuoteItemKind::Macro),
-                        "item" => None,
-                        _ => {
-                            // Not a quote item pattern; continue with regular struct/variant logic.
-                            None
-                        }
-                    };
-                    if item_kind.is_some() || ident.as_str() == "item" {
-                        return Ok(Pattern::new(PatternKind::Quote(PatternQuote {
-                            fragment: QuoteFragmentKind::Item,
-                            item: item_kind,
-                            fields,
-                            has_rest,
-                        })));
-                    }
-                }
-            }
-
-            if let ExprKind::Name(locator) = name_expr.kind() {
-                let ident = match locator {
-                    Name::Ident(ident) => Some(ident.clone()),
-                    Name::Path(path)
-                        if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
-                    {
-                        Some(path.segments[0].clone())
-                    }
-                    _ => None,
-                };
-                if let Some(ident) = ident {
-                    return Ok(Pattern::new(PatternKind::Struct(PatternStruct {
-                        name: ident,
-                        fields,
-                        has_rest,
-                    })));
-                }
-            }
-
-            Ok(Pattern::new(PatternKind::Variant(PatternVariant {
-                name: name_expr,
-                pattern: Some(Box::new(Pattern::new(PatternKind::Structural(
-                    PatternStructural { fields, has_rest },
-                )))),
-            })))
-        }
-        SyntaxKind::ExprTuple => {
-            let patterns = node_children_exprs(node)
-                .map(lower_match_pattern_from_cst)
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Pattern::new(PatternKind::Tuple(PatternTuple { patterns })))
-        }
-        SyntaxKind::ExprBinary => {
-            let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
-            if op == "@" {
-                let lhs = first_child_expr(node)?;
-                let rhs = last_child_expr(node)?;
-                let name = match lhs.kind {
-                    SyntaxKind::ExprName => direct_first_non_trivia_token_text(lhs)
-                        .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprName))?,
-                    _ => return Err(LowerError::UnexpectedNode(SyntaxKind::ExprBinary)),
-                };
-                let pattern = lower_match_pattern_from_cst(rhs)?;
-                return Ok(Pattern::new(PatternKind::Bind(PatternBind {
-                    ident: PatternIdent::new(Ident::new(name)),
-                    pattern: Box::new(pattern),
-                })));
-            }
-            Err(LowerError::UnexpectedNode(SyntaxKind::ExprBinary))
-        }
-        SyntaxKind::ExprUnary => {
-            let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
-            if op == "box" {
-                let rhs = last_child_expr(node)?;
-                let pattern = lower_match_pattern_from_cst(rhs)?;
-                return Ok(Pattern::new(PatternKind::Box(PatternBox {
-                    pattern: Box::new(pattern),
-                })));
-            }
-            Err(LowerError::UnexpectedNode(SyntaxKind::ExprUnary))
-        }
-        SyntaxKind::ExprQuote => {
-            let quote = quote_block_pattern_from_cst(node)?;
-            Ok(Pattern::new(PatternKind::Quote(quote)))
-        }
-        SyntaxKind::ExprQuoteToken => {
-            let quote = quote_pattern_from_cst(node)?;
-            Ok(Pattern::new(PatternKind::Quote(quote)))
-        }
-        other => Err(LowerError::UnexpectedNode(other)),
-    }
-}
-
-fn lower_closure_from_cst(node: &SyntaxNode) -> Result<(Vec<Pattern>, Expr), LowerError> {
-    let params = node
-        .children
-        .iter()
-        .filter_map(|c| match c {
-            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Pattern => {
-                Some(n.as_ref())
-            }
-            _ => None,
-        })
-        .map(lower_pattern_from_cst)
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // Body is the last child expr node.
-    let body_node = last_child_expr(node)?;
-    let body = lower_expr_from_cst(body_node)?;
-    Ok((params, body))
-}
-
-fn first_child_expr(node: &SyntaxNode) -> Result<&SyntaxNode, LowerError> {
-    node_children_exprs(node)
-        .next()
-        .ok_or(LowerError::UnexpectedNode(node.kind))
-}
-
-fn last_child_expr(node: &SyntaxNode) -> Result<&SyntaxNode, LowerError> {
-    node_children_exprs(node)
-        .last()
-        .ok_or(LowerError::UnexpectedNode(node.kind))
-}
-
-fn lower_call_args_from_cst<'a>(
-    nodes: impl Iterator<Item = &'a SyntaxNode>,
-) -> Result<(Vec<Expr>, Vec<ExprKwArg>), LowerError> {
-    let mut args = Vec::new();
-    let mut kwargs: Vec<ExprKwArg> = Vec::new();
-    let mut saw_kwarg = false;
-
-    for node in nodes {
-        if node.kind == SyntaxKind::ExprKwArg {
-            let kwarg = lower_kwarg_from_cst(node)?;
-            if kwargs.iter().any(|existing| existing.name == kwarg.name) {
-                return Err(LowerError::Unsupported(format!(
-                    "duplicate keyword argument '{}'",
-                    kwarg.name
-                )));
-            }
-            kwargs.push(kwarg);
-            saw_kwarg = true;
-            continue;
-        }
-
-        if saw_kwarg {
-            return Err(LowerError::Unsupported(
-                "positional argument after keyword argument".to_string(),
-            ));
-        }
-        args.push(lower_expr_from_cst(node)?);
-    }
-
-    Ok((args, kwargs))
-}
-
-fn lower_kwarg_from_cst(node: &SyntaxNode) -> Result<ExprKwArg, LowerError> {
-    let name = direct_first_non_trivia_token_text(node)
-        .ok_or(LowerError::UnexpectedNode(SyntaxKind::ExprKwArg))?;
-    let value_node = node_children_exprs(node)
-        .next()
-        .ok_or(LowerError::UnexpectedNode(SyntaxKind::ExprKwArg))?;
-    let value = lower_expr_from_cst(value_node)?;
-    Ok(ExprKwArg { name, value })
-}
-
-fn node_children_exprs<'a>(node: &'a SyntaxNode) -> impl Iterator<Item = &'a SyntaxNode> {
-    node.children.iter().filter_map(|c| match c {
-        crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
-            Some(n.as_ref())
-        }
-        _ => None,
-    })
-}
-
-fn range_child_exprs(
-    node: &SyntaxNode,
-) -> Result<(Option<&SyntaxNode>, Option<&SyntaxNode>), LowerError> {
-    let mut exprs = node_children_exprs(node);
-    let first = exprs.next();
-    let second = exprs.next();
-    if exprs.next().is_some() {
-        return Err(LowerError::UnexpectedNode(node.kind));
-    }
-
-    if let Some(second) = second {
-        return Ok((first, Some(second)));
-    }
-
-    if range_operator_is_leading(node) {
-        Ok((None, first))
-    } else {
-        Ok((first, None))
-    }
-}
-
-fn range_operator_is_leading(node: &SyntaxNode) -> bool {
-    for child in &node.children {
-        match child {
-            crate::syntax::SyntaxElement::Token(token)
-                if !token.is_trivia() && (token.text == ".." || token.text == "..=") =>
-            {
-                return true;
-            }
-            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
-                return false;
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-fn direct_operator_token_text(node: &SyntaxNode) -> Option<String> {
-    node.children.iter().find_map(|child| match child {
-        crate::syntax::SyntaxElement::Token(t)
-            if !t.is_trivia()
-                && !t
-                    .text
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') =>
-        {
-            Some(t.text.clone())
-        }
-        _ => None,
-    })
-}
-
-fn direct_first_non_trivia_token_text(node: &SyntaxNode) -> Option<String> {
-    node.children.iter().find_map(|child| match child {
-        crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() => Some(t.text.clone()),
-        _ => None,
-    })
-}
-
-fn macro_callee_path(node: &SyntaxNode) -> Result<Path, LowerError> {
-    let mut segments = Vec::new();
-    let mut saw_root = false;
-    let mut saw_first_token = false;
-    for child in &node.children {
-        let crate::syntax::SyntaxElement::Token(tok) = child else {
-            continue;
-        };
-        if tok.is_trivia() {
-            continue;
-        }
-        if !saw_first_token && tok.text == "::" {
-            saw_root = true;
-            saw_first_token = true;
-            continue;
-        }
-        if tok.text == "::" || tok.text == "." {
-            saw_first_token = true;
-            continue;
-        }
-        let text = tok.text.strip_prefix("r#").unwrap_or(&tok.text);
-        if text
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        {
-            segments.push(Ident::new(text.to_string()));
-        }
-        saw_first_token = true;
-    }
-    if segments.is_empty() {
-        return Err(LowerError::UnexpectedNode(SyntaxKind::ExprMacroCall));
-    }
-    let (prefix, segments) = split_path_prefix(segments, saw_root);
-    if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
-        return Err(LowerError::UnexpectedNode(SyntaxKind::ExprMacroCall));
-    }
-    Ok(Path::new(prefix, segments))
-}
-
-fn direct_last_ident_token_text(node: &SyntaxNode) -> Option<String> {
-    node.children.iter().rev().find_map(|child| match child {
-        crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() => {
-            let text = t.text.as_str();
-            if text
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-            {
-                return Some(t.text.clone());
-            }
-            if text.chars().all(|c| c.is_ascii_digit()) {
-                return Some(t.text.clone());
-            }
-            None
-        }
-        _ => None,
-    })
-}
-
-fn binop_from_text(op: &str) -> Option<BinOpKind> {
-    Some(match op {
-        "+" => BinOpKind::Add,
-        "-" => BinOpKind::Sub,
-        "*" => BinOpKind::Mul,
-        "/" => BinOpKind::Div,
-        "%" => BinOpKind::Mod,
-        "==" => BinOpKind::Eq,
-        "!=" => BinOpKind::Ne,
-        "<" => BinOpKind::Lt,
-        "<=" => BinOpKind::Le,
-        ">" => BinOpKind::Gt,
-        ">=" => BinOpKind::Ge,
-        "&&" => BinOpKind::And,
-        "||" => BinOpKind::Or,
-        "&" => BinOpKind::BitAnd,
-        "|" => BinOpKind::BitOr,
-        "^" => BinOpKind::BitXor,
-        "<<" => BinOpKind::Shl,
-        ">>" => BinOpKind::Shr,
-        _ => return None,
-    })
-}
-
-fn compound_assign_binop(op: &str) -> Option<BinOpKind> {
-    Some(match op {
+    let kind = match op.as_str() {
         "+=" => BinOpKind::Add,
         "-=" => BinOpKind::Sub,
         "*=" => BinOpKind::Mul,
         "/=" => BinOpKind::Div,
         "%=" => BinOpKind::Mod,
-        "<<=" => BinOpKind::Shl,
-        ">>=" => BinOpKind::Shr,
-        "&=" => BinOpKind::BitAnd,
-        "|=" => BinOpKind::BitOr,
-        "^=" => BinOpKind::BitXor,
-        _ => return None,
+        _ => unreachable!(),
+    };
+    let target_clone = lhs.clone();
+    let value = ExprKind::BinOp(ExprBinOp {
+        span: union_exprs(&target_clone, &rhs),
+        kind,
+        lhs: Box::new(target_clone),
+        rhs: Box::new(rhs),
     })
+    .into();
+    Ok(ExprKind::Assign(ExprAssign {
+        span: union_exprs(&lhs, &value),
+        target: Box::new(lhs),
+        value: Box::new(value),
+    })
+    .into())
+}
+
+fn parse_assignment_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let lhs = parse_range_no_struct(input, file)?;
+    let Some(op) = peek_symbol(input) else {
+        return Ok(lhs);
+    };
+    if !matches!(op, "=" | "+=" | "-=" | "*=" | "/=" | "%=") {
+        return Ok(lhs);
+    }
+    let op = op.to_string();
+    expect_symbol(input, &op)?;
+    let rhs = parse_assignment_no_struct(input, file)?;
+    if op == "=" {
+        return Ok(ExprKind::Assign(ExprAssign {
+            span: union_exprs(&lhs, &rhs),
+            target: Box::new(lhs),
+            value: Box::new(rhs),
+        })
+        .into());
+    }
+    let kind = match op.as_str() {
+        "+=" => BinOpKind::Add,
+        "-=" => BinOpKind::Sub,
+        "*=" => BinOpKind::Mul,
+        "/=" => BinOpKind::Div,
+        "%=" => BinOpKind::Mod,
+        _ => unreachable!(),
+    };
+    let target_clone = lhs.clone();
+    let value = ExprKind::BinOp(ExprBinOp {
+        span: union_exprs(&target_clone, &rhs),
+        kind,
+        lhs: Box::new(target_clone),
+        rhs: Box::new(rhs),
+    })
+    .into();
+    Ok(ExprKind::Assign(ExprAssign {
+        span: union_exprs(&lhs, &value),
+        target: Box::new(lhs),
+        value: Box::new(value),
+    })
+    .into())
+}
+
+fn parse_range(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let lhs = parse_binary(input, file, 0)?;
+    let Some(op) = peek_symbol(input) else {
+        return Ok(lhs);
+    };
+    let limit = match op {
+        ".." => ExprRangeLimit::Exclusive,
+        "..=" => ExprRangeLimit::Inclusive,
+        _ => return Ok(lhs),
+    };
+    let op = op.to_string();
+    expect_symbol(input, &op)?;
+    let rhs = if terminates_expr(input) {
+        None
+    } else {
+        Some(parse_binary(input, file, 0)?)
+    };
+    let span = rhs
+        .as_ref()
+        .map(|expr| union_exprs(&lhs, expr))
+        .unwrap_or_else(|| span_from_expr(&lhs));
+    Ok(ExprKind::Range(ExprRange {
+        span,
+        start: Some(Box::new(lhs)),
+        limit,
+        end: rhs.map(Box::new),
+        step: None,
+    })
+    .into())
+}
+
+fn parse_range_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let lhs = parse_binary_no_struct(input, file, 0)?;
+    let Some(op) = peek_symbol(input) else {
+        return Ok(lhs);
+    };
+    let limit = match op {
+        ".." => ExprRangeLimit::Exclusive,
+        "..=" => ExprRangeLimit::Inclusive,
+        _ => return Ok(lhs),
+    };
+    let op = op.to_string();
+    expect_symbol(input, &op)?;
+    let rhs = if terminates_expr(input) {
+        None
+    } else {
+        Some(parse_binary_no_struct(input, file, 0)?)
+    };
+    let span = rhs
+        .as_ref()
+        .map(|expr| union_exprs(&lhs, expr))
+        .unwrap_or_else(|| span_from_expr(&lhs));
+    Ok(ExprKind::Range(ExprRange {
+        span,
+        start: Some(Box::new(lhs)),
+        limit,
+        end: rhs.map(Box::new),
+        step: None,
+    })
+    .into())
+}
+
+fn parse_binary(input: &mut &[Token], file: FileId, min_prec: u8) -> ModalResult<Expr> {
+    let mut lhs = parse_cast(input, file)?;
+    loop {
+        let Some(op) = peek_symbol(input) else {
+            break;
+        };
+        let Some((prec, kind)) = binary_op(op) else {
+            break;
+        };
+        if prec < min_prec {
+            break;
+        }
+        let op = op.to_string();
+        expect_symbol(input, &op)?;
+        let rhs = parse_binary(input, file, prec + 1)?;
+        lhs = ExprKind::BinOp(ExprBinOp {
+            span: union_exprs(&lhs, &rhs),
+            kind,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        })
+        .into();
+    }
+    Ok(lhs)
+}
+
+fn parse_binary_no_struct(input: &mut &[Token], file: FileId, min_prec: u8) -> ModalResult<Expr> {
+    let mut lhs = parse_cast_no_struct(input, file)?;
+    loop {
+        let Some(op) = peek_symbol(input) else {
+            break;
+        };
+        let Some((prec, kind)) = binary_op(op) else {
+            break;
+        };
+        if prec < min_prec {
+            break;
+        }
+        let op = op.to_string();
+        expect_symbol(input, &op)?;
+        let rhs = parse_binary_no_struct(input, file, prec + 1)?;
+        lhs = ExprKind::BinOp(ExprBinOp {
+            span: union_exprs(&lhs, &rhs),
+            kind,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        })
+        .into();
+    }
+    Ok(lhs)
+}
+
+fn parse_cast(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut expr = parse_prefix(input, file)?;
+    loop {
+        let mut probe = *input;
+        if expect_keyword(&mut probe, Keyword::As).is_err() {
+            break;
+        }
+        let ty = parse_simple_type(&mut probe)?;
+        *input = probe;
+        let span = span_from_expr(&expr);
+        expr = ExprKind::Cast(ExprCast {
+            span,
+            expr: Box::new(expr),
+            ty,
+        })
+        .into();
+    }
+    Ok(expr)
+}
+
+fn parse_cast_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut expr = parse_prefix_no_struct(input, file)?;
+    loop {
+        let mut probe = *input;
+        if expect_keyword(&mut probe, Keyword::As).is_err() {
+            break;
+        }
+        let ty = parse_simple_type(&mut probe)?;
+        *input = probe;
+        let span = span_from_expr(&expr);
+        expr = ExprKind::Cast(ExprCast {
+            span,
+            expr: Box::new(expr),
+            ty,
+        })
+        .into();
+    }
+    Ok(expr)
+}
+
+fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Splice).is_ok() {
+        let inner = parse_prefix(&mut probe, file).or_else(|_| parse_primary(&mut probe, file))?;
+        *input = probe;
+        let token = match inner.kind().clone() {
+            ExprKind::Paren(paren) => *paren.expr,
+            _ => inner,
+        };
+        if matches!(token.kind(), ExprKind::Quote(quote) if matches!(quote.kind, Some(QuoteFragmentKind::Item))) {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        return Ok(ExprKind::Splice(ExprSplice {
+            span: span_from_expr(&token),
+            token: Box::new(token),
+        })
+        .into());
+    }
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Await).is_ok() {
+        let base = parse_prefix(&mut probe, file)?;
+        *input = probe;
+        return Ok(ExprKind::Await(ExprAwait {
+            span: span_from_expr(&base),
+            base: Box::new(base),
+        })
+        .into());
+    }
+
+    if let Some(op) = peek_symbol(input) {
+        if matches!(op, "!" | "-" | "*" | "&") {
+            let op = op.to_string();
+            expect_symbol(input, &op)?;
+            let is_mut_ref = op == "&" && expect_keyword(input, Keyword::Mut).is_ok();
+            let value = parse_prefix(input, file)?;
+            if op == "&" {
+                return Ok(ExprKind::Reference(ExprReference {
+                    span: span_from_expr(&value),
+                    referee: Box::new(value),
+                    mutable: is_mut_ref.then_some(true),
+                })
+                .into());
+            }
+            let op = match op.as_str() {
+                "!" => UnOpKind::Not,
+                "-" => UnOpKind::Neg,
+                "*" => UnOpKind::Deref,
+                _ => unreachable!(),
+            };
+            return Ok(ExprKind::UnOp(ExprUnOp {
+                span: span_from_expr(&value),
+                op,
+                val: Box::new(value),
+            })
+            .into());
+        }
+    }
+
+    parse_postfix(input, file)
+}
+
+fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Splice).is_ok() {
+        let inner =
+            parse_prefix_no_struct(&mut probe, file).or_else(|_| parse_primary_no_struct(&mut probe, file))?;
+        *input = probe;
+        let token = match inner.kind().clone() {
+            ExprKind::Paren(paren) => *paren.expr,
+            _ => inner,
+        };
+        if matches!(token.kind(), ExprKind::Quote(quote) if matches!(quote.kind, Some(QuoteFragmentKind::Item))) {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        return Ok(ExprKind::Splice(ExprSplice {
+            span: span_from_expr(&token),
+            token: Box::new(token),
+        })
+        .into());
+    }
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Await).is_ok() {
+        let base = parse_prefix_no_struct(&mut probe, file)?;
+        *input = probe;
+        return Ok(ExprKind::Await(ExprAwait {
+            span: span_from_expr(&base),
+            base: Box::new(base),
+        })
+        .into());
+    }
+
+    if let Some(op) = peek_symbol(input) {
+        if matches!(op, "!" | "-" | "*" | "&") {
+            let op = op.to_string();
+            expect_symbol(input, &op)?;
+            let is_mut_ref = op == "&" && expect_keyword(input, Keyword::Mut).is_ok();
+            let value = parse_prefix_no_struct(input, file)?;
+            if op == "&" {
+                return Ok(ExprKind::Reference(ExprReference {
+                    span: span_from_expr(&value),
+                    referee: Box::new(value),
+                    mutable: is_mut_ref.then_some(true),
+                })
+                .into());
+            }
+            let op = match op.as_str() {
+                "!" => UnOpKind::Not,
+                "-" => UnOpKind::Neg,
+                "*" => UnOpKind::Deref,
+                _ => unreachable!(),
+            };
+            return Ok(ExprKind::UnOp(ExprUnOp {
+                span: span_from_expr(&value),
+                op,
+                val: Box::new(value),
+            })
+            .into());
+        }
+    }
+
+    let base = parse_primary_no_struct(input, file)?;
+    let suffixes: Vec<Postfix> =
+        repeat(0.., |input: &mut &[Token]| parse_postfix_suffix(input, file)).parse_next(input)?;
+    Ok(apply_postfixes(base, suffixes))
+}
+
+fn parse_postfix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let base = parse_primary(input, file)?;
+    let suffixes: Vec<Postfix> = repeat(0.., |input: &mut &[Token]| parse_postfix_suffix(input, file))
+        .parse_next(input)?;
+    Ok(apply_postfixes(base, suffixes))
+}
+
+fn parse_postfix_suffix(input: &mut &[Token], file: FileId) -> ModalResult<Postfix> {
+    alt((
+        parse_try_suffix,
+        parse_field_suffix,
+        parse_turbofish_suffix,
+        |input: &mut &[Token]| parse_call_suffix(input, file),
+        |input: &mut &[Token]| parse_index_suffix(input, file),
+    ))
+    .parse_next(input)
+}
+
+fn parse_try_suffix(input: &mut &[Token]) -> ModalResult<Postfix> {
+    expect_symbol(input, "?")?;
+    Ok(Postfix::Try)
+}
+
+fn parse_field_suffix(input: &mut &[Token]) -> ModalResult<Postfix> {
+    expect_symbol(input, ".")?;
+    let field = ident_like(input)?;
+    Ok(Postfix::Field(field))
+}
+
+fn parse_turbofish_suffix(input: &mut &[Token]) -> ModalResult<Postfix> {
+    let mut probe = *input;
+    if expect_symbol(&mut probe, "::").is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    if expect_symbol(&mut probe, "<").is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let mut depth = 1usize;
+    while let Some((token, rest)) = probe.split_first() {
+        probe = rest;
+        if token.kind != TokenKind::Symbol {
+            continue;
+        }
+        match token.lexeme.as_str() {
+            "<" => depth += 1,
+            ">" => {
+                depth -= 1;
+                if depth == 0 {
+                    *input = probe;
+                    return Ok(Postfix::Turbofish);
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(ErrMode::Cut(ContextError::new()))
+}
+
+fn parse_call_suffix(input: &mut &[Token], file: FileId) -> ModalResult<Postfix> {
+    expect_symbol(input, "(")?;
+    let (args, kwargs) = parse_call_args(input, file, ")")?;
+    expect_symbol(input, ")")?;
+    Ok(Postfix::Call(args, kwargs))
+}
+
+fn parse_index_suffix(input: &mut &[Token], file: FileId) -> ModalResult<Postfix> {
+    expect_symbol(input, "[")?;
+    let index = parse_expr_winnow(input, file)?;
+    expect_symbol(input, "]")?;
+    Ok(Postfix::Index(index))
+}
+
+fn parse_primary(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    alt((
+        alt((
+            |input: &mut &[Token]| parse_closure_expr(input, file),
+            |input: &mut &[Token]| parse_if_expr(input, file),
+            |input: &mut &[Token]| parse_loop_expr(input, file),
+            |input: &mut &[Token]| parse_while_expr(input, file),
+            |input: &mut &[Token]| parse_for_expr(input, file),
+            |input: &mut &[Token]| parse_with_expr(input, file),
+            |input: &mut &[Token]| parse_async_expr(input, file),
+            |input: &mut &[Token]| parse_const_block_expr(input, file),
+        )),
+        alt((
+            |input: &mut &[Token]| parse_return_expr(input, file),
+            |input: &mut &[Token]| parse_break_expr(input, file),
+            parse_continue_expr,
+            |input: &mut &[Token]| parse_try_structured(input, file),
+            |input: &mut &[Token]| parse_match_expr(input, file),
+            |input: &mut &[Token]| parse_quote_expr(input, file),
+            |input: &mut &[Token]| parse_block_expr(input, file),
+            |input: &mut &[Token]| parse_struct_expr(input, file),
+        )),
+        alt((
+            parse_macro_expr,
+            parse_number,
+            |input: &mut &[Token]| parse_string(input, file),
+            |input: &mut &[Token]| parse_array_expr(input, file),
+            |input: &mut &[Token]| parse_grouped(input, file),
+            parse_name_expr,
+        )),
+    ))
+    .parse_next(input)
+}
+
+fn parse_primary_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    alt((
+        alt((
+            |input: &mut &[Token]| parse_closure_expr(input, file),
+            |input: &mut &[Token]| parse_if_expr(input, file),
+            |input: &mut &[Token]| parse_loop_expr(input, file),
+            |input: &mut &[Token]| parse_while_expr(input, file),
+            |input: &mut &[Token]| parse_for_expr(input, file),
+            |input: &mut &[Token]| parse_with_expr(input, file),
+            |input: &mut &[Token]| parse_async_expr(input, file),
+            |input: &mut &[Token]| parse_const_block_expr(input, file),
+        )),
+        alt((
+            |input: &mut &[Token]| parse_return_expr(input, file),
+            |input: &mut &[Token]| parse_break_expr(input, file),
+            parse_continue_expr,
+            |input: &mut &[Token]| parse_try_structured(input, file),
+            |input: &mut &[Token]| parse_match_expr(input, file),
+            |input: &mut &[Token]| parse_quote_expr(input, file),
+            |input: &mut &[Token]| parse_block_expr(input, file),
+        )),
+        alt((
+            parse_macro_expr,
+            parse_number,
+            |input: &mut &[Token]| parse_string(input, file),
+            |input: &mut &[Token]| parse_array_expr(input, file),
+            |input: &mut &[Token]| parse_grouped(input, file),
+            parse_name_expr,
+        )),
+    ))
+    .parse_next(input)
+}
+
+fn parse_array_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    expect_symbol(input, "[")?;
+    if peek_symbol(input) == Some("]") {
+        expect_symbol(input, "]")?;
+        return Ok(ExprKind::Array(ExprArray {
+            span: Span::null(),
+            values: Vec::new(),
+        })
+        .into());
+    }
+
+    let first = parse_expr_winnow(input, file)?;
+    if expect_symbol(input, ";").is_ok() {
+        let len = parse_expr_winnow(input, file)?;
+        expect_symbol(input, "]")?;
+        return Ok(ExprKind::ArrayRepeat(ExprArrayRepeat {
+            span: union_exprs(&first, &len),
+            elem: Box::new(first),
+            len: Box::new(len),
+        })
+        .into());
+    }
+
+    let mut values = vec![first];
+    while expect_symbol(input, ",").is_ok() {
+        if peek_symbol(input) == Some("]") {
+            break;
+        }
+        values.push(parse_expr_winnow(input, file)?);
+    }
+    expect_symbol(input, "]")?;
+    Ok(ExprKind::Array(ExprArray {
+        span: Span::null(),
+        values,
+    })
+    .into())
+}
+
+fn parse_grouped(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let open = expect_symbol(input, "(")?;
+    if peek_symbol(input) == Some(")") {
+        let close = expect_symbol(input, ")")?;
+        let mut expr = Expr::value(Value::unit());
+        expr.span = Some(Span::union([
+            token_span_to_span(&open),
+            token_span_to_span(&close),
+        ]));
+        return Ok(expr);
+    }
+    let expr = parse_expr_winnow(input, file)?;
+    if expect_symbol(input, ",").is_ok() {
+        let mut values = vec![expr];
+        if peek_symbol(input) != Some(")") {
+            loop {
+                values.push(parse_expr_winnow(input, file)?);
+                if expect_symbol(input, ",").is_err() {
+                    break;
+                }
+                if peek_symbol(input) == Some(")") {
+                    break;
+                }
+            }
+        }
+        let close = expect_symbol(input, ")")?;
+        let span = Span::union(
+            [token_span_to_span(&open), token_span_to_span(&close)]
+                .into_iter()
+                .chain(values.iter().map(Expr::span)),
+        );
+        return Ok(ExprKind::Tuple(ExprTuple { span, values }).into());
+    }
+    let close = expect_symbol(input, ")")?;
+    Ok(ExprKind::Paren(ExprParen {
+        span: Span::union([token_span_to_span(&open), expr.span(), token_span_to_span(&close)]),
+        expr: Box::new(expr),
+    })
+    .into())
+}
+
+fn parse_number(input: &mut &[Token]) -> ModalResult<Expr> {
+    let token = token_kind(input, TokenKind::Number)?;
+    let (value, ty) = parse_numeric_literal_local(&token.lexeme)
+        .map_err(|_| ErrMode::Cut(ContextError::new()))?;
+    Ok(Expr::value(value)
+        .with_ty_slot(ty)
+        .with_span(token_span_to_span(&token)))
+}
+
+fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let token = token_kind(input, TokenKind::StringLiteral)?;
+    if token.lexeme.starts_with('f') {
+        return parse_f_string_literal_local(&token.lexeme, file)
+            .map_err(|_| ErrMode::Cut(ContextError::new()));
+    }
+    let value =
+        decode_string_literal(&token.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    Ok(Expr::value(Value::string(value))
+        .with_ty_slot(Some(Ty::Primitive(TypePrimitive::String)))
+        .with_span(token_span_to_span(&token)))
+}
+
+fn parse_name_expr(input: &mut &[Token]) -> ModalResult<Expr> {
+    let span = input
+        .first()
+        .map(token_span_to_span)
+        .unwrap_or_else(Span::null);
+    let name = parse_name(input)?;
+    match name.as_ident().map(Ident::as_str) {
+        Some("true") => Ok(
+            Expr::value(Value::bool(true))
+                .with_ty_slot(Some(Ty::Primitive(TypePrimitive::Bool)))
+                .with_span(span)
+        ),
+        Some("false") => Ok(
+            Expr::value(Value::bool(false))
+                .with_ty_slot(Some(Ty::Primitive(TypePrimitive::Bool)))
+                .with_span(span)
+        ),
+        _ => Ok(Expr::name(name).with_span(span)),
+    }
+}
+
+
+#[derive(Debug)]
+enum Postfix {
+    Try,
+    Field(Ident),
+    Turbofish,
+    Call(Vec<Expr>, Vec<ExprKwArg>),
+    Index(Expr),
+}
+
+fn apply_postfixes(mut expr: Expr, suffixes: Vec<Postfix>) -> Expr {
+    for suffix in suffixes {
+        expr = match suffix {
+            Postfix::Try => ExprKind::Try(ExprTry {
+                span: span_from_expr(&expr),
+                expr: Box::new(expr),
+                catches: Vec::new(),
+                elze: None,
+                finally: None,
+            })
+            .into(),
+            Postfix::Field(field) => ExprKind::Select(ExprSelect {
+                span: span_from_expr(&expr),
+                obj: Box::new(expr),
+                field,
+                select: ExprSelectType::Field,
+            })
+            .into(),
+            Postfix::Turbofish => expr,
+            Postfix::Call(args, kwargs) => ExprKind::Invoke(ExprInvoke {
+                span: span_from_expr(&expr),
+                target: ExprInvokeTarget::expr(expr),
+                args,
+                kwargs,
+            })
+            .into(),
+            Postfix::Index(index) => ExprKind::Index(ExprIndex {
+                span: union_exprs(&expr, &index),
+                obj: Box::new(expr),
+                index: Box::new(index),
+            })
+            .into(),
+        };
+    }
+    expr
+}
+
+fn token_kind(input: &mut &[Token], kind: TokenKind) -> ModalResult<Token> {
+    match input.split_first() {
+        Some((token, rest)) if token.kind == kind => {
+            *input = rest;
+            Ok(token.clone())
+        }
+        _ => Err(ErrMode::Backtrack(ContextError::new())),
+    }
+}
+
+fn expect_keyword(input: &mut &[Token], expected: Keyword) -> ModalResult<Token> {
+    match input.split_first() {
+        Some((token, rest)) if token.kind == TokenKind::Keyword(expected) => {
+            *input = rest;
+            Ok(token.clone())
+        }
+        _ => Err(ErrMode::Backtrack(ContextError::new())),
+    }
+}
+
+fn expect_symbol(input: &mut &[Token], expected: &str) -> ModalResult<Token> {
+    match input.split_first() {
+        Some((token, rest))
+            if token.kind == TokenKind::Symbol && token.lexeme.as_str() == expected =>
+        {
+            *input = rest;
+            Ok(token.clone())
+        }
+        _ => Err(ErrMode::Backtrack(ContextError::new())),
+    }
+}
+
+fn ident_like(input: &mut &[Token]) -> ModalResult<Ident> {
+    match input.split_first() {
+        Some((token, rest)) if matches!(token.kind, TokenKind::Ident | TokenKind::Keyword(_)) => {
+            *input = rest;
+            Ok(Ident::new(token.lexeme.clone()))
+        }
+        _ => Err(ErrMode::Backtrack(ContextError::new())),
+    }
+}
+
+fn peek_symbol(input: &[Token]) -> Option<&str> {
+    match input.first() {
+        Some(token) if token.kind == TokenKind::Symbol => Some(token.lexeme.as_str()),
+        _ => None,
+    }
+}
+
+fn parse_call_args(
+    input: &mut &[Token],
+    file: FileId,
+    terminator: &str,
+) -> ModalResult<(Vec<Expr>, Vec<ExprKwArg>)> {
+    let mut args = Vec::new();
+    let mut kwargs = Vec::new();
+    let mut saw_kwarg = false;
+    if peek_symbol(input) == Some(terminator) {
+        return Ok((args, kwargs));
+    }
+
+    loop {
+        let mut probe = *input;
+        if let Ok(name) = parse_kwarg_name(&mut probe) {
+            if expect_symbol(&mut probe, "=").is_ok() {
+                let value = parse_expr_winnow(&mut probe, file)?;
+                *input = probe;
+                if kwargs.iter().any(|existing| existing.name == name) {
+                    return Err(ErrMode::Cut(ContextError::new()));
+                }
+                kwargs.push(ExprKwArg { name, value });
+                saw_kwarg = true;
+            } else {
+                if saw_kwarg {
+                    return Err(ErrMode::Cut(ContextError::new()));
+                }
+                let expr = parse_expr_winnow(input, file)?;
+                args.push(expr);
+            }
+        } else {
+            if saw_kwarg {
+                return Err(ErrMode::Cut(ContextError::new()));
+            }
+            let expr = parse_expr_winnow(input, file)?;
+            args.push(expr);
+        }
+
+        let mut comma_probe = *input;
+        if expect_symbol(&mut comma_probe, ",").is_err() {
+            break;
+        }
+        *input = comma_probe;
+        if peek_symbol(input) == Some(terminator) {
+            break;
+        }
+    }
+
+    Ok((args, kwargs))
+}
+
+fn parse_kwarg_name(input: &mut &[Token]) -> ModalResult<String> {
+    let ident = ident_like(input)?;
+    Ok(ident.name)
+}
+
+pub(crate) fn parse_block_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    expect_symbol(input, "{")?;
+    let mut stmts = Vec::new();
+    while peek_symbol(input) != Some("}") {
+        if starts_block_item(*input) {
+            let item = parse_block_item(input, file)?;
+            stmts.push(BlockStmt::Item(Box::new(item)));
+            continue;
+        }
+        let mut probe = *input;
+        if expect_keyword(&mut probe, Keyword::Let).is_ok() {
+            let mut pat = if expect_keyword(&mut probe, Keyword::Mut).is_ok() {
+                let name = ident_like(&mut probe)?;
+                Pattern::new(PatternKind::Ident(PatternIdent {
+                    ident: name,
+                    mutability: Some(true),
+                }))
+            } else {
+                parse_general_pattern(&mut probe)?
+            };
+            if expect_symbol(&mut probe, ":").is_ok() {
+                let ty = parse_simple_type(&mut probe)?;
+                pat = Pattern::new(PatternKind::Type(PatternType::new(pat, ty)));
+            }
+            expect_symbol(&mut probe, "=")?;
+            let init = parse_expr_winnow(&mut probe, file)?;
+            let had_semi = expect_symbol(&mut probe, ";").is_ok();
+            if !had_semi {
+                return Err(ErrMode::Cut(ContextError::new()));
+            }
+            *input = probe;
+            stmts.push(BlockStmt::Let(StmtLet::new(pat, Some(init), None)));
+            continue;
+        }
+        let mut probe = *input;
+        if expect_keyword(&mut probe, Keyword::Defer).is_ok() {
+            let expr = parse_expr_winnow(&mut probe, file)?;
+            let had_semi = expect_symbol(&mut probe, ";").is_ok();
+            if !had_semi {
+                return Err(ErrMode::Cut(ContextError::new()));
+            }
+            *input = probe;
+            stmts.push(BlockStmt::Defer(StmtDefer {
+                span: span_from_expr(&expr),
+                expr: Box::new(expr),
+            }));
+            continue;
+        }
+
+        let expr = parse_expr_winnow(input, file)?;
+        let mut semicolon = false;
+        let mut probe = *input;
+        if expect_symbol(&mut probe, ";").is_ok() {
+            *input = probe;
+            semicolon = true;
+        } else if !expr_can_omit_semicolon_in_block(&expr) && peek_symbol(input) != Some("}") {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        stmts.push(BlockStmt::Expr(
+            BlockStmtExpr::new(expr).with_semicolon(semicolon),
+        ));
+    }
+    expect_symbol(input, "}")?;
+    Ok(ExprKind::Block(ExprBlock::new_stmts(stmts)).into())
+}
+
+fn expr_can_omit_semicolon_in_block(expr: &Expr) -> bool {
+    matches!(
+        expr.kind(),
+        ExprKind::Block(_)
+            | ExprKind::If(_)
+            | ExprKind::Loop(_)
+            | ExprKind::While(_)
+            | ExprKind::For(_)
+            | ExprKind::With(_)
+            | ExprKind::Async(_)
+            | ExprKind::ConstBlock(_)
+            | ExprKind::Match(_)
+            | ExprKind::Try(_)
+    )
+}
+
+fn starts_block_item(input: &[Token]) -> bool {
+    match input {
+        [first, second, ..] if first.kind == TokenKind::Keyword(Keyword::Const) => {
+            matches!(second.kind, TokenKind::Ident | TokenKind::Keyword(_))
+        }
+        [first, ..]
+            if matches!(
+                first.kind,
+                TokenKind::Keyword(Keyword::Struct | Keyword::Type | Keyword::Static)
+            ) =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn parse_block_item(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
+    let start = *input;
+    let (item, consumed) =
+        parse_item_prefix_tokens(start, file).map_err(|_| ErrMode::Cut(ContextError::new()))?;
+    *input = &start[consumed..];
+    Ok(item)
+}
+
+fn parse_closure_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_symbol(&mut probe, "|").is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let mut params = Vec::new();
+    if peek_symbol(probe) != Some("|") {
+        loop {
+            params.push(parse_closure_param(&mut probe)?);
+            let mut comma_probe = probe;
+            if expect_symbol(&mut comma_probe, ",").is_err() {
+                break;
+            }
+            probe = comma_probe;
+        }
+    }
+    expect_symbol(&mut probe, "|")?;
+    let body = parse_expr_winnow(&mut probe, file)?;
+    *input = probe;
+    Ok(ExprKind::Closure(ExprClosure {
+        span: body.span(),
+        params,
+        ret_ty: None,
+        movability: None,
+        body: Box::new(body),
+    })
+    .into())
+}
+
+fn parse_closure_param(input: &mut &[Token]) -> ModalResult<Pattern> {
+    let mutability = expect_keyword(input, Keyword::Mut).is_ok();
+    let ident = ident_like(input)?;
+    let mut pat = Pattern::new(PatternKind::Ident(PatternIdent {
+        ident,
+        mutability: mutability.then_some(true),
+    }));
+    let mut probe = *input;
+    if expect_symbol(&mut probe, ":").is_ok() {
+        let ty = parse_simple_type(&mut probe)?;
+        *input = probe;
+        pat = Pattern::new(PatternKind::Type(PatternType::new(pat, ty)));
+    }
+    Ok(pat)
+}
+
+fn parse_quote_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Quote).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let mut kind = None;
+    if expect_symbol(&mut probe, "<").is_ok() {
+        let ident = ident_like(&mut probe)?;
+        kind = Some(match ident.as_str() {
+            "expr" => QuoteFragmentKind::Expr,
+            "stmt" => QuoteFragmentKind::Stmt,
+            "item" | "fn" | "struct" | "enum" | "trait" | "impl" | "const" | "static"
+            | "mod" | "use" | "macro" => QuoteFragmentKind::Item,
+            "type" => QuoteFragmentKind::Type,
+            _ => return Err(ErrMode::Cut(ContextError::new())),
+        });
+        expect_symbol(&mut probe, ">")?;
+    } else if let Ok(ident) = ident_like(&mut probe) {
+        if ident.as_str() == "item" || ident.as_str() == "expr" || ident.as_str() == "stmt" || ident.as_str() == "type" {
+            kind = Some(match ident.as_str() {
+                "expr" => QuoteFragmentKind::Expr,
+                "stmt" => QuoteFragmentKind::Stmt,
+                "type" => QuoteFragmentKind::Type,
+                _ => QuoteFragmentKind::Item,
+            });
+        } else {
+            probe = *input;
+            expect_keyword(&mut probe, Keyword::Quote)?;
+        }
+    }
+    let block = if matches!(kind, Some(QuoteFragmentKind::Item)) {
+        parse_balanced_quote_block(&mut probe)?
+    } else {
+        let body = parse_block_expr(&mut probe, file)?;
+        let ExprKind::Block(block) = body.kind().clone() else {
+            return Err(ErrMode::Cut(ContextError::new()));
+        };
+        block
+    };
+    *input = probe;
+    Ok(ExprKind::Quote(ExprQuote {
+        span: block.span,
+        block,
+        kind,
+    })
+    .into())
+}
+
+fn parse_balanced_quote_block(input: &mut &[Token]) -> ModalResult<ExprBlock> {
+    expect_symbol(input, "{")?;
+    let mut depth = 1usize;
+    while let Some((token, rest)) = input.split_first() {
+        *input = rest;
+        if token.kind != TokenKind::Symbol {
+            continue;
+        }
+        match token.lexeme.as_str() {
+            "{" => depth += 1,
+            "}" => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(ExprBlock::new());
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(ErrMode::Cut(ContextError::new()))
+}
+
+fn parse_macro_expr(input: &mut &[Token]) -> ModalResult<Expr> {
+    let mut probe = *input;
+    let path = parse_macro_path(&mut probe)?;
+    expect_symbol(&mut probe, "!")?;
+    let (delimiter, group_span, token_trees, text) = parse_macro_group(&mut probe)?;
+    *input = probe;
+    Ok(ExprKind::Macro(ExprMacro::new(
+        MacroInvocation::new(path, delimiter, text)
+            .with_token_trees(token_trees)
+            .with_span(group_span),
+    ))
+    .into())
+}
+
+fn parse_struct_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    let is_structural = expect_keyword(&mut probe, Keyword::Struct).is_ok();
+    let name = if is_structural {
+        None
+    } else {
+        Some(parse_name(&mut probe)?)
+    };
+    if expect_symbol(&mut probe, "{").is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let mut fields = Vec::new();
+    while peek_symbol(probe) != Some("}") {
+        let field = ident_like(&mut probe)?;
+        let value = if expect_symbol(&mut probe, ":").is_ok() {
+            Some(parse_expr_winnow(&mut probe, file)?)
+        } else {
+            None
+        };
+        fields.push(ExprField {
+            span: Span::null(),
+            name: field,
+            value,
+        });
+        let mut comma_probe = probe;
+        if expect_symbol(&mut comma_probe, ",").is_ok() {
+            probe = comma_probe;
+            if peek_symbol(probe) == Some("}") {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    expect_symbol(&mut probe, "}")?;
+    *input = probe;
+    if is_structural {
+        return Ok(ExprKind::Structural(ExprStructural {
+            span: Span::null(),
+            fields,
+        })
+        .into());
+    }
+    Ok(ExprKind::Struct(ExprStruct {
+        span: Span::null(),
+        name: Box::new(Expr::name(name.expect("named struct literal"))),
+        fields,
+        update: None,
+    })
+    .into())
+}
+
+pub(crate) fn parse_macro_path(input: &mut &[Token]) -> ModalResult<Path> {
+    let saw_root = opt(|input: &mut &[Token]| expect_symbol(input, "::"))
+        .parse_next(input)?
+        .is_some();
+    let first = ident_like(input)?;
+    let mut segments = vec![first];
+    loop {
+        let mut probe = *input;
+        if expect_symbol(&mut probe, "::").is_ok() || expect_symbol(&mut probe, ".").is_ok() {
+            let Ok(next) = ident_like(&mut probe) else {
+                break;
+            };
+            *input = probe;
+            segments.push(next);
+            continue;
+        }
+        break;
+    }
+    let (prefix, segments) = split_path_prefix(segments, saw_root);
+    Ok(Path::new(prefix, segments))
+}
+
+pub(crate) fn parse_macro_group(
+    input: &mut &[Token],
+) -> ModalResult<(MacroDelimiter, Span, Vec<MacroTokenTree>, String)> {
+    let (delimiter, open, close) = match peek_symbol(input) {
+        Some("(") => (MacroDelimiter::Parenthesis, "(", ")"),
+        Some("[") => (MacroDelimiter::Bracket, "[", "]"),
+        Some("{") => (MacroDelimiter::Brace, "{", "}"),
+        _ => return Err(ErrMode::Backtrack(ContextError::new())),
+    };
+    let open_token = expect_symbol(input, open)?;
+    let mut inner = Vec::new();
+    loop {
+        if peek_symbol(input) == Some(close) {
+            break;
+        }
+        if input.is_empty() {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        inner.push(parse_macro_token_tree(input)?);
+    }
+    let close_token = expect_symbol(input, close)?;
+    let span = Span::union([
+        token_span_to_span(&open_token),
+        token_span_to_span(&close_token),
+    ]);
+    let text = macro_token_trees_to_text(&inner);
+    Ok((delimiter, span, inner, text))
+}
+
+fn parse_macro_token_tree(input: &mut &[Token]) -> ModalResult<MacroTokenTree> {
+    if matches!(peek_symbol(input), Some("(") | Some("[") | Some("{")) {
+        let (delimiter, span, token_trees, _) = parse_macro_group(input)?;
+        return Ok(MacroTokenTree::Group(MacroGroup {
+            delimiter,
+            tokens: token_trees,
+            span,
+        }));
+    }
+    let Some((token, rest)) = input.split_first() else {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    };
+    *input = rest;
+    Ok(MacroTokenTree::Token(MacroToken {
+        text: token.lexeme.clone(),
+        span: token_span_to_span(token),
+    }))
+}
+
+fn macro_token_trees_to_text(tokens: &[MacroTokenTree]) -> String {
+    fn is_ident_like(text: &str) -> bool {
+        text.chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    fn needs_space(prev: &str, next: &str) -> bool {
+        is_ident_like(prev) && is_ident_like(next)
+    }
+
+    let mut out = String::new();
+    let mut prev: Option<String> = None;
+    for token in flatten_macro_tokens(tokens) {
+        if let Some(prev_text) = prev.as_deref() {
+            if needs_space(prev_text, token.as_str()) {
+                out.push(' ');
+            }
+        }
+        out.push_str(&token);
+        prev = Some(token);
+    }
+    out
+}
+
+fn flatten_macro_tokens(tokens: &[MacroTokenTree]) -> Vec<String> {
+    let mut out = Vec::new();
+    for token in tokens {
+        match token {
+            MacroTokenTree::Token(tok) => out.push(tok.text.clone()),
+            MacroTokenTree::Group(group) => {
+                let (open, close) = match group.delimiter {
+                    MacroDelimiter::Parenthesis => ("(", ")"),
+                    MacroDelimiter::Bracket => ("[", "]"),
+                    MacroDelimiter::Brace => ("{", "}"),
+                };
+                out.push(open.to_string());
+                out.extend(flatten_macro_tokens(&group.tokens));
+                out.push(close.to_string());
+            }
+        }
+    }
+    out
+}
+
+fn parse_try_structured(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Try).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let expr = parse_block_expr(&mut probe, file)?;
+    let mut catches = Vec::new();
+    loop {
+        let mut clause_probe = probe;
+        if expect_keyword(&mut clause_probe, Keyword::Catch).is_err() {
+            break;
+        }
+        let pat = parse_match_pattern(&mut clause_probe)?;
+        let body = parse_block_expr(&mut clause_probe, file)?;
+        catches.push(ExprTryCatch {
+            span: union_spans(pat.span(), body.span()),
+            pat: Some(Box::new(pat)),
+            body: Box::new(body),
+        });
+        probe = clause_probe;
+    }
+
+    let mut elze = None;
+    let mut else_probe = probe;
+    if expect_keyword(&mut else_probe, Keyword::Else).is_ok() {
+        let body = parse_block_expr(&mut else_probe, file)?;
+        elze = Some(Box::new(body));
+        probe = else_probe;
+    }
+
+    let mut finally = None;
+    let mut finally_probe = probe;
+    if expect_keyword(&mut finally_probe, Keyword::Finally).is_ok() {
+        let body = parse_block_expr(&mut finally_probe, file)?;
+        finally = Some(Box::new(body));
+        probe = finally_probe;
+    }
+
+    *input = probe;
+    Ok(ExprKind::Try(ExprTry {
+        span: span_from_expr(&expr),
+        expr: Box::new(expr),
+        catches,
+        elze,
+        finally,
+    })
+    .into())
+}
+
+fn parse_match_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Match).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let scrutinee = parse_expr_winnow(&mut probe, file)?;
+    expect_symbol(&mut probe, "{")?;
+    let mut cases = Vec::new();
+    while peek_symbol(probe) != Some("}") {
+        let pat = parse_match_pattern(&mut probe)?;
+        let mut guard = None;
+        let mut guard_probe = probe;
+        if expect_keyword(&mut guard_probe, Keyword::If).is_ok() {
+            let guard_expr = parse_expr_winnow(&mut guard_probe, file)?;
+            guard = Some(Box::new(guard_expr));
+            probe = guard_probe;
+        }
+        expect_symbol(&mut probe, "=>")?;
+        let body = parse_expr_winnow(&mut probe, file)?;
+        let mut comma_probe = probe;
+        if expect_symbol(&mut comma_probe, ",").is_ok() {
+            probe = comma_probe;
+        }
+        cases.push(fp_core::ast::ExprMatchCase {
+            span: union_spans(pat.span(), body.span()),
+            pat: Some(Box::new(pat)),
+            cond: Box::new(Expr::value(Value::bool(true))),
+            guard,
+            body: Box::new(body),
+        });
+    }
+    expect_symbol(&mut probe, "}")?;
+    *input = probe;
+    Ok(ExprKind::Match(fp_core::ast::ExprMatch {
+        span: span_from_expr(&scrutinee),
+        scrutinee: Some(Box::new(scrutinee)),
+        cases,
+    })
+    .into())
+}
+
+fn parse_match_pattern(input: &mut &[Token]) -> ModalResult<Pattern> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Quote).is_ok() {
+        let mut item = None;
+        let mut fragment = QuoteFragmentKind::Item;
+        if expect_symbol(&mut probe, "<").is_ok() {
+            let ident = ident_like(&mut probe)?;
+            item = match ident.as_str() {
+                "fn" => Some(QuoteItemKind::Function),
+                "struct" => Some(QuoteItemKind::Struct),
+                "enum" => Some(QuoteItemKind::Enum),
+                "trait" => Some(QuoteItemKind::Trait),
+                "impl" => Some(QuoteItemKind::Impl),
+                "const" => Some(QuoteItemKind::Const),
+                "static" => Some(QuoteItemKind::Static),
+                "mod" => Some(QuoteItemKind::Module),
+                "use" => Some(QuoteItemKind::Use),
+                "macro" => Some(QuoteItemKind::Macro),
+                "item" => None,
+                "expr" => {
+                    fragment = QuoteFragmentKind::Expr;
+                    None
+                }
+                "stmt" => {
+                    fragment = QuoteFragmentKind::Stmt;
+                    None
+                }
+                "type" => {
+                    fragment = QuoteFragmentKind::Type;
+                    None
+                }
+                _ => return Err(ErrMode::Cut(ContextError::new())),
+            };
+            expect_symbol(&mut probe, ">")?;
+        }
+        *input = probe;
+        return Ok(Pattern::new(PatternKind::Quote(PatternQuote {
+            fragment,
+            item,
+            fields: Vec::new(),
+            has_rest: false,
+        })));
+    }
+
+    let name = parse_name(input)?;
+    if let Some(ident) = name.as_ident() {
+        if ident.as_str() == "_" {
+            return Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {})));
+        }
+        if ident.as_str() == "true" || ident.as_str() == "false" {
+            return Ok(Pattern::new(PatternKind::Variant(PatternVariant {
+                name: Expr::value(Value::bool(ident.as_str() == "true")),
+                pattern: None,
+            })));
+        }
+    }
+
+    let mut probe = *input;
+    if expect_symbol(&mut probe, "(").is_ok() {
+        let mut patterns = Vec::new();
+        if peek_symbol(probe) != Some(")") {
+            loop {
+                patterns.push(parse_general_pattern(&mut probe)?);
+                let mut comma_probe = probe;
+                if expect_symbol(&mut comma_probe, ",").is_err() {
+                    break;
+                }
+                probe = comma_probe;
+                if peek_symbol(probe) == Some(")") {
+                    break;
+                }
+            }
+        }
+        expect_symbol(&mut probe, ")")?;
+        *input = probe;
+        return Ok(Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
+            name,
+            patterns,
+        })));
+    }
+
+    if matches!(name.as_ident().map(Ident::as_str), Some("true" | "false"))
+        || !matches!(name, Name::Path(ref path) if path.prefix == PathPrefix::Plain && path.segments.len() == 1)
+    {
+        return Ok(Pattern::new(PatternKind::Variant(PatternVariant {
+            name: Expr::name(name),
+            pattern: None,
+        })));
+    }
+
+    let ident = name
+        .as_ident()
+        .cloned()
+        .ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    Ok(Pattern::new(PatternKind::Ident(PatternIdent::new(ident))))
+}
+
+fn parse_general_pattern(input: &mut &[Token]) -> ModalResult<Pattern> {
+    if peek_symbol(input) == Some("(") {
+        expect_symbol(input, "(")?;
+        let mut patterns = Vec::new();
+        if peek_symbol(input) != Some(")") {
+            loop {
+                patterns.push(parse_general_pattern(input)?);
+                let mut probe = *input;
+                if expect_symbol(&mut probe, ",").is_err() {
+                    break;
+                }
+                *input = probe;
+                if peek_symbol(input) == Some(")") {
+                    break;
+                }
+            }
+        }
+        expect_symbol(input, ")")?;
+        return Ok(Pattern::new(PatternKind::Tuple(PatternTuple { patterns })));
+    }
+    parse_match_pattern(input)
+}
+
+fn parse_if_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::If).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let cond_start = probe;
+    let cond = match parse_expr_winnow(&mut probe, file) {
+        Ok(cond) => cond,
+        Err(err) => return Err(err),
+    };
+    let then_expr = match parse_block_expr(&mut probe, file) {
+        Ok(expr) => expr,
+        Err(_) => {
+            probe = cond_start;
+            let cond = parse_expr_winnow_no_struct(&mut probe, file)?;
+            let then_expr = parse_block_expr(&mut probe, file)?;
+            let mut elze = None;
+            let mut else_probe = probe;
+            if expect_keyword(&mut else_probe, Keyword::Else).is_ok() {
+                let else_expr = parse_expr_winnow(&mut else_probe, file)?;
+                elze = Some(Box::new(else_expr));
+                probe = else_probe;
+            }
+            *input = probe;
+            return Ok(ExprKind::If(ExprIf {
+                span: union_spans(cond.span(), then_expr.span()),
+                cond: Box::new(cond),
+                then: Box::new(then_expr),
+                elze,
+            })
+            .into());
+        }
+    };
+    let mut elze = None;
+    let mut else_probe = probe;
+    if expect_keyword(&mut else_probe, Keyword::Else).is_ok() {
+        let else_expr = parse_expr_winnow(&mut else_probe, file)?;
+        elze = Some(Box::new(else_expr));
+        probe = else_probe;
+    }
+    *input = probe;
+    Ok(ExprKind::If(ExprIf {
+        span: union_spans(cond.span(), then_expr.span()),
+        cond: Box::new(cond),
+        then: Box::new(then_expr),
+        elze,
+    })
+    .into())
+}
+
+fn parse_loop_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Loop).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let body = parse_block_expr(&mut probe, file)?;
+    *input = probe;
+    Ok(ExprKind::Loop(ExprLoop {
+        span: body.span(),
+        label: None,
+        body: Box::new(body),
+    })
+    .into())
+}
+
+fn parse_while_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::While).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let cond_start = probe;
+    let cond = match parse_expr_winnow(&mut probe, file) {
+        Ok(cond) => cond,
+        Err(err) => return Err(err),
+    };
+    let body = match parse_block_expr(&mut probe, file) {
+        Ok(body) => body,
+        Err(_) => {
+            probe = cond_start;
+            let cond = parse_expr_winnow_no_struct(&mut probe, file)?;
+            let body = parse_block_expr(&mut probe, file)?;
+            *input = probe;
+            return Ok(ExprKind::While(ExprWhile {
+                span: union_spans(cond.span(), body.span()),
+                cond: Box::new(cond),
+                body: Box::new(body),
+            })
+            .into());
+        }
+    };
+    *input = probe;
+    Ok(ExprKind::While(ExprWhile {
+        span: union_spans(cond.span(), body.span()),
+        cond: Box::new(cond),
+        body: Box::new(body),
+    })
+    .into())
+}
+
+fn parse_for_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::For).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let pat = parse_general_pattern(&mut probe)?;
+    expect_keyword(&mut probe, Keyword::In)?;
+    let iter = parse_expr_winnow(&mut probe, file)?;
+    let body = parse_block_expr(&mut probe, file)?;
+    *input = probe;
+    Ok(ExprKind::For(ExprFor {
+        span: union_spans(iter.span(), body.span()),
+        pat: Box::new(pat),
+        iter: Box::new(iter),
+        body: Box::new(body),
+    })
+    .into())
+}
+
+fn parse_with_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::With).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let context = parse_expr_winnow(&mut probe, file)?;
+    let body = parse_block_expr(&mut probe, file)?;
+    *input = probe;
+    Ok(ExprKind::With(ExprWith {
+        span: union_spans(context.span(), body.span()),
+        context: Box::new(context),
+        body: Box::new(body),
+    })
+    .into())
+}
+
+fn parse_async_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Async).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let body = parse_block_expr(&mut probe, file)?;
+    *input = probe;
+    Ok(ExprKind::Async(fp_core::ast::ExprAsync {
+        span: body.span(),
+        expr: Box::new(body),
+    })
+    .into())
+}
+
+fn parse_const_block_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Const).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let body = parse_block_expr(&mut probe, file)?;
+    *input = probe;
+    Ok(ExprKind::ConstBlock(ExprConstBlock {
+        span: body.span(),
+        expr: Box::new(body),
+    })
+    .into())
+}
+
+fn parse_return_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Return).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let value = if terminates_expr(probe) {
+        None
+    } else {
+        Some(Box::new(parse_expr_winnow(&mut probe, file)?))
+    };
+    *input = probe;
+    Ok(ExprKind::Return(ExprReturn {
+        span: value.as_ref().map(|expr| expr.span()).unwrap_or_else(Span::null),
+        value,
+    })
+    .into())
+}
+
+fn parse_break_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Break).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let value = if terminates_expr(probe) {
+        None
+    } else {
+        Some(Box::new(parse_expr_winnow(&mut probe, file)?))
+    };
+    *input = probe;
+    Ok(ExprKind::Break(ExprBreak {
+        span: value.as_ref().map(|expr| expr.span()).unwrap_or_else(Span::null),
+        value,
+    })
+    .into())
+}
+
+fn parse_continue_expr(input: &mut &[Token]) -> ModalResult<Expr> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Continue).is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    *input = probe;
+    Ok(ExprKind::Continue(ExprContinue { span: Span::null() }).into())
+}
+
+fn terminates_expr(input: &[Token]) -> bool {
+    matches!(peek_symbol(input), Some(";") | Some("}") | Some(")") | Some("]") | Some(","))
 }

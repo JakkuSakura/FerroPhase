@@ -41,6 +41,54 @@ impl FerroFrontend {
             source.to_string()
         }
     }
+
+    fn prefer_expr_mode_for_file_input(&self, source: &str) -> bool {
+        let trimmed = source.trim_start();
+        trimmed.starts_with('{')
+            || trimmed.starts_with('(')
+            || trimmed.starts_with('[')
+            || trimmed.starts_with("let ")
+            || trimmed.starts_with("if ")
+            || trimmed.starts_with("match ")
+            || trimmed.starts_with("async ")
+            || trimmed.starts_with("const ")
+            || trimmed.starts_with("while ")
+            || trimmed.starts_with("for ")
+            || trimmed.starts_with("loop ")
+            || trimmed.starts_with("with ")
+            || trimmed.starts_with("quote ")
+            || trimmed.starts_with("quote<")
+            || trimmed.starts_with("splice ")
+    }
+
+    fn wrap_statement_like_expr_input<'a>(&self, source: &'a str) -> std::borrow::Cow<'a, str> {
+        let trimmed = source.trim_start();
+        if trimmed.starts_with("let ") || trimmed.starts_with("defer ") {
+            return std::borrow::Cow::Owned(format!("{{ {source} }}"));
+        }
+        std::borrow::Cow::Borrowed(source)
+    }
+
+    fn looks_like_item_file_input(&self, source: &str) -> bool {
+        let trimmed = source.trim_start();
+        trimmed.starts_with("#!")
+            || trimmed.starts_with("#[")
+            || trimmed.starts_with("pub ")
+            || trimmed.starts_with("use ")
+            || trimmed.starts_with("extern ")
+            || trimmed.starts_with("fn ")
+            || trimmed.starts_with("const ")
+            || trimmed.starts_with("static ")
+            || trimmed.starts_with("type ")
+            || trimmed.starts_with("struct ")
+            || trimmed.starts_with("enum ")
+            || trimmed.starts_with("mod ")
+            || trimmed.starts_with("opaque ")
+            || trimmed.starts_with("trait ")
+            || trimmed.starts_with("impl ")
+            || trimmed.starts_with("quote fn ")
+            || trimmed.starts_with("async fn ")
+    }
 }
 
 fn strip_async_block(expr: Expr) -> Expr {
@@ -74,20 +122,42 @@ impl LanguageFrontend for FerroFrontend {
         let file_id = register_source(source_path.clone(), &cleaned);
         let source_path_display = source_path.clone();
 
+        let try_expr_mode = path.is_none() || self.prefer_expr_mode_for_file_input(&cleaned);
+        if try_expr_mode {
+            self.ferro.clear_diagnostics();
+            let expr_source = self.wrap_statement_like_expr_input(&cleaned);
+            if let Ok(expr) = self.ferro.parse_expr_ast_with_file(expr_source.as_ref(), file_id) {
+                let expr = strip_async_block(expr);
+                let diagnostics = self.ferro.diagnostics();
+                let last = Node::expr(expr.clone());
+                let mut ast = last.clone();
+                fp_core::intrinsics::normalize_intrinsics_with(
+                    &mut ast,
+                    intrinsic_normalizer.as_ref(),
+                )
+                .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                return Ok(FrontendResult {
+                    last,
+                    ast,
+                    serializer,
+                    intrinsic_normalizer: Some(intrinsic_normalizer),
+                    macro_parser: Some(macro_parser.clone()),
+                    snapshot: None,
+                    diagnostics,
+                });
+            }
+        }
+
         if path.is_some() {
             self.ferro.clear_diagnostics();
-            return match self.ferro.parse_file_ast_with_file(
-                &cleaned,
-                file_id,
-                Some(&source_path),
-                source_path.clone(),
-            ) {
+            return match self
+                .ferro
+                .parse_file_ast_with_file(&cleaned, file_id, Some(&source_path), source_path.clone())
+            {
                 Ok(file) => {
                     let diagnostics = self.ferro.diagnostics();
                     let last = Node::file(file);
                     let mut ast = last.clone();
-                    // Perform intrinsic normalization (includes Rust macro lowering via the
-                    // provided normalizer strategy).
                     fp_core::intrinsics::normalize_intrinsics_with(
                         &mut ast,
                         intrinsic_normalizer.as_ref(),
@@ -112,6 +182,58 @@ impl LanguageFrontend for FerroFrontend {
                         diagnostics,
                     })
                 }
+                Err(_) if !self.looks_like_item_file_input(&cleaned) => {
+                    self.ferro.clear_diagnostics();
+                    match self.ferro.parse_expr_ast_with_file(&cleaned, file_id) {
+                        Ok(expr) => {
+                            let file = fp_core::ast::File {
+                                path: source_path.clone(),
+                                attrs: Vec::new(),
+                                items: vec![fp_core::ast::Item::from(fp_core::ast::ItemKind::Expr(expr))],
+                            };
+                            let diagnostics = self.ferro.diagnostics();
+                            let last = Node::file(file);
+                            let mut ast = last.clone();
+                            fp_core::intrinsics::normalize_intrinsics_with(
+                                &mut ast,
+                                intrinsic_normalizer.as_ref(),
+                            )
+                            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                            let snapshot = FrontendSnapshot {
+                                language: self.language().to_string(),
+                                description: format!(
+                                    "FerroPhase LAST for {}",
+                                    source_path_display.display()
+                                ),
+                                serialized: None,
+                            };
+
+                            Ok(FrontendResult {
+                                last,
+                                ast,
+                                serializer,
+                                intrinsic_normalizer: Some(intrinsic_normalizer.clone()),
+                                macro_parser: Some(macro_parser.clone()),
+                                snapshot: Some(snapshot),
+                                diagnostics,
+                            })
+                        }
+                        Err(err) => {
+                            let mut diagnostic =
+                                Diagnostic::error(format!("failed to parse items (file mode): {err}"));
+                            if let Some(span) = self
+                                .ferro
+                                .diagnostics()
+                                .get_diagnostics()
+                                .iter()
+                                .find_map(|diag| diag.span)
+                            {
+                                diagnostic = diagnostic.with_span(span);
+                            }
+                            Err(fp_core::error::Error::diagnostic(diagnostic))
+                        }
+                    }
+                }
                 Err(err) => {
                     let mut diagnostic =
                         Diagnostic::error(format!("failed to parse items (file mode): {err}"));
@@ -127,27 +249,6 @@ impl LanguageFrontend for FerroFrontend {
                     Err(fp_core::error::Error::diagnostic(diagnostic))
                 }
             };
-        }
-
-        // Expression-only mode (no resolved file path).
-
-        self.ferro.clear_diagnostics();
-        if let Ok(expr) = self.ferro.parse_expr_ast_with_file(&cleaned, file_id) {
-            let expr = strip_async_block(expr);
-            let diagnostics = self.ferro.diagnostics();
-            let last = Node::expr(expr.clone());
-            let mut ast = last.clone();
-            fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
-                .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-            return Ok(FrontendResult {
-                last,
-                ast,
-                serializer,
-                intrinsic_normalizer: Some(intrinsic_normalizer),
-                macro_parser: Some(macro_parser.clone()),
-                snapshot: None,
-                diagnostics,
-            });
         }
 
         self.ferro.clear_diagnostics();
@@ -260,6 +361,47 @@ mod tests {
     }
 
     #[test]
+    fn parse_single_std_source_from_env() {
+        let Ok(path) = std::env::var("FP_STD_FILE") else {
+            return;
+        };
+        let frontend = FerroFrontend::new();
+        let path = Path::new(&path);
+        let source = fs::read_to_string(path).expect("read std source");
+        let result = frontend.parse(&source, Some(path));
+        assert!(
+            result.is_ok(),
+            "failed to parse {}: {:?}",
+            path.display(),
+            result.err()
+        );
+    }
+
+    #[test]
+    fn parse_single_std_ast_only_from_env() {
+        let Ok(path) = std::env::var("FP_STD_FILE") else {
+            return;
+        };
+        let parser = FerroPhaseParser::new();
+        let path = Path::new(&path);
+        let source = fs::read_to_string(path).expect("read std source");
+        let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let file_id = register_source(source_path.clone(), &source);
+        let result = parser.parse_file_ast_with_file(
+            &source,
+            file_id,
+            Some(&source_path),
+            source_path.clone(),
+        );
+        assert!(
+            result.is_ok(),
+            "failed to parse AST-only {}: {:?}",
+            path.display(),
+            result.err()
+        );
+    }
+
+    #[test]
     fn parse_expression_mode_supports_turbofish_method_call() {
         let frontend = FerroFrontend::new();
         let result = frontend.parse("ap.arg::<u64>()", None);
@@ -298,11 +440,26 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(&dir);
     }
+
+    #[test]
+    fn file_backed_if_expression_stays_expr_mode() {
+        let frontend = FerroFrontend::new();
+        let dir = std::env::temp_dir().join(format!("fp-lang-if-expr-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("if_expr.fp");
+        fs::write(&path, "if a > b { a } else { b }").expect("write temp source");
+
+        let result = frontend
+            .parse(&fs::read_to_string(&path).expect("read"), Some(&path))
+            .expect("parse");
+        assert!(matches!(result.ast.kind(), NodeKind::Expr(_)));
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(&dir);
+    }
 }
 
 pub mod ast;
-pub mod cst;
 pub mod embedded_std;
 pub mod lexer;
-pub mod syntax;
 pub(crate) mod tokens;

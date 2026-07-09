@@ -1,5 +1,4 @@
 use super::*;
-use crate::syntax::SyntaxPrinter;
 use fp_core::ast::{
     AttrMeta, AttrStyle, BlockStmt, ExprKind, ItemKind, MacroDelimiter, PatternKind, QuoteItemKind,
     Value,
@@ -41,16 +40,11 @@ fn cst_printer_roundtrips_source_text() {
 }
 
 #[test]
-fn expr_cst_first_parses_basic_binary_ops() {
+fn parse_expr_ast_parses_basic_binary_ops() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
-
-    let cst = parser.parse_expr_cst("a + b * 2").expect("parse_expr_cst");
-    let printed = SyntaxPrinter::print(&cst);
-    assert_eq!(printed, "a + b * 2");
-
-    let cst_first = parser.parse_expr_ast("a + b * 2").expect("parse_expr_ast");
-    assert!(matches!(cst_first.kind(), ExprKind::BinOp(_)));
+    let expr = parser.parse_expr_ast("a + b * 2").expect("parse_expr_ast");
+    assert!(matches!(expr.kind(), ExprKind::BinOp(_)));
 }
 
 #[test]
@@ -73,9 +67,8 @@ fn parser_handles_raw_identifiers_and_strings() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr_src = r####"r#type + "hi\\nthere" + r#"hello world"# + br##"bin data"## + b"abc""####;
-    let cst = parser.parse_expr_cst(expr_src).unwrap();
-    let printed = SyntaxPrinter::print(&cst);
-    assert_eq!(printed, expr_src);
+    let expr = parser.parse_expr_ast(expr_src).unwrap();
+    assert!(matches!(expr.kind(), ExprKind::BinOp(_)));
 }
 
 #[test]
@@ -234,6 +227,14 @@ fn parse_expr_ast_handles_if_loop_and_while() {
     assert!(matches!(expr.kind(), ExprKind::Loop(_)));
     let expr = parser.parse_expr_ast("while false { break; }").unwrap();
     assert!(matches!(expr.kind(), ExprKind::While(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_if_with_comparison_and_block_branches() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("if a > b { a } else { b }").unwrap();
+    assert!(matches!(expr.kind(), ExprKind::If(_)));
 }
 
 #[test]
@@ -412,6 +413,598 @@ fn parse_expr_ast_supports_let_statements_in_blocks() {
         ),
         other => panic!("expected block expr, got {:?}", other),
     }
+}
+
+#[test]
+fn parse_block_ast_handles_let_const_block_stmt() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("{ let optimized_size = const { BUFFER_SIZE * 2 }; optimized_size }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_block_ast_handles_multiline_let_const_block_stmt() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            "{ let cache_strategy = const { if BUFFER_SIZE > 2048 { \"large\" } else { \"small\" } }; cache_strategy }",
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_block_ast_handles_local_const_and_struct_items() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            "{ const BUFFER_SIZE: i64 = 1024 * 4; struct Config { buffer_size: i64, max_connections: i64, } let optimized_size = const { BUFFER_SIZE * 2 }; optimized_size }",
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_const_block_with_for_splice_quote_stmt() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            "const { for (i, x) in xs.iter().enumerate() { splice ( quote { if x > ys[i] { return x; } } ); } }",
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::ConstBlock(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_quote_splice_example_function() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        fn apply_ops(const ops: [i32], mut x: i32, limit: i32) -> i32 {
+            const {
+                for (i, op) in ops.iter().enumerate() {
+                    if op % 2 == 0 {
+                        splice(quote<expr> { x = x + op; });
+                    } else {
+                        emit! { x = x + op; }
+                    }
+                    splice(quote<expr> { println!("step {}: {}", i, x); });
+                    splice(quote<expr> { if x >= limit { return x; } });
+                }
+            }
+            x
+        }
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_expr_ast_handles_const_block_emit_macro_stmt() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("const { emit! { x = x + op; } }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::ConstBlock(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_const_block_splice_quote_assign_stmt() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("const { splice(quote<expr> { x = x + op; }); }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::ConstBlock(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_const_block_splice_quote_if_stmt() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("const { splice(quote<expr> { if x >= limit { return x; } }); }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::ConstBlock(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_quote_splice_example_function_min_body() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        fn apply_ops(const ops: [i32], mut x: i32, limit: i32) -> i32 {
+            const {
+                for (i, op) in ops.iter().enumerate() {
+                    splice(quote<expr> { x = x + op; });
+                }
+            }
+            x
+        }
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_quote_splice_example_function_with_emit_else() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        fn apply_ops(const ops: [i32], mut x: i32, limit: i32) -> i32 {
+            const {
+                for (i, op) in ops.iter().enumerate() {
+                    if op % 2 == 0 {
+                        splice(quote<expr> { x = x + op; });
+                    } else {
+                        emit! { x = x + op; }
+                    }
+                }
+            }
+            x
+        }
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_quote_splice_example_function_with_println_splice() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        fn apply_ops(const ops: [i32], mut x: i32, limit: i32) -> i32 {
+            const {
+                for (i, op) in ops.iter().enumerate() {
+                    if op % 2 == 0 {
+                        splice(quote<expr> { x = x + op; });
+                    } else {
+                        emit! { x = x + op; }
+                    }
+                    splice(quote<expr> { println!("step {}: {}", i, x); });
+                }
+            }
+            x
+        }
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_apply_ops_signature_with_simple_body() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        fn apply_ops(const ops: [i32], mut x: i32, limit: i32) -> i32 {
+            x
+        }
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_apply_ops_signature_with_const_then_tail() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        fn apply_ops(const ops: [i32], mut x: i32, limit: i32) -> i32 {
+            const {}
+            x
+        }
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_bench_quote_item_function() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        const fn bench(item: quote<item>) -> quote<item> {
+            let name = item.name;
+            REGISTRY.push(BenchCase { name, run: item.value });
+            item
+        }
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_expr_ast_handles_bench_run_body_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        {
+            let benches: Vec<BenchCase> = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while idx < benches.len() {
+                let bench: BenchCase = benches[idx];
+                let mut ok = true;
+                let warmup_secs = 5.0f64;
+                let measure_secs = 15.0f64;
+
+                let warmup_start = std::time::now();
+                let warmup_deadline = warmup_start + warmup_secs;
+                let mut warmup_iters = 0;
+                while std::time::now() < warmup_deadline {
+                    let warm_ok = catch_unwind(bench.run);
+                    if !warm_ok {
+                        ok = false;
+                        break;
+                    }
+                    warmup_iters = warmup_iters + 1;
+                }
+
+                let measure_start = std::time::now();
+                let measure_deadline = measure_start + measure_secs;
+                let mut measure_iters = 0;
+                if ok {
+                    while std::time::now() < measure_deadline || measure_iters == 0 {
+                        let run_ok = catch_unwind(bench.run);
+                        if !run_ok {
+                            ok = false;
+                            break;
+                        }
+                        measure_iters = measure_iters + 1;
+                    }
+                }
+                let measure_end = std::time::now();
+                let elapsed = measure_end - measure_start;
+                if ok {
+                    passed = passed + 1;
+                    let iters_f = measure_iters as f64;
+                    let ns_per_iter = if iters_f > 0.0 {
+                        (elapsed / iters_f) * 1000000000.0
+                    } else {
+                        0.0
+                    };
+                    println(
+                        "  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})",
+                        bench.name,
+                        measure_iters,
+                        elapsed,
+                        ns_per_iter
+                    );
+                } else {
+                    failed = failed + 1;
+                    println("  {} ... FAILED", bench.name);
+                }
+                idx = idx + 1;
+            }
+            let total = passed + failed;
+            println(
+                "bench result: {} passed; {} failed; {} total",
+                passed,
+                failed,
+                total
+            );
+            BenchReport {
+                total,
+                passed,
+                failed,
+            }
+        }
+    "#;
+    let expr = parser.parse_expr_ast(src).unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_bench_report_struct_literal_shorthand() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("BenchReport { total, passed, failed, }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Struct(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_multiline_println_call() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            r#"println(
+                "  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})",
+                bench.name,
+                measure_iters,
+                elapsed,
+                ns_per_iter
+            )"#,
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Invoke(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_field_arg_call() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("catch_unwind(bench.run)").unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Invoke(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_bench_run_body_prefix_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        {
+            let benches: Vec<BenchCase> = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while idx < benches.len() {
+                let bench: BenchCase = benches[idx];
+                let mut ok = true;
+                let warmup_secs = 5.0f64;
+                let measure_secs = 15.0f64;
+
+                let warmup_start = std::time::now();
+                let warmup_deadline = warmup_start + warmup_secs;
+                let mut warmup_iters = 0;
+                while std::time::now() < warmup_deadline {
+                    let warm_ok = catch_unwind(bench.run);
+                    if !warm_ok {
+                        ok = false;
+                        break;
+                    }
+                    warmup_iters = warmup_iters + 1;
+                }
+
+                let measure_start = std::time::now();
+                let measure_deadline = measure_start + measure_secs;
+                let mut measure_iters = 0;
+                if ok {
+                    while std::time::now() < measure_deadline || measure_iters == 0 {
+                        let run_ok = catch_unwind(bench.run);
+                        if !run_ok {
+                            ok = false;
+                            break;
+                        }
+                        measure_iters = measure_iters + 1;
+                    }
+                }
+                idx = idx + 1;
+            }
+            passed
+        }
+    "#;
+    let expr = parser.parse_expr_ast(src).unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_bench_run_body_suffix_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        {
+            let measure_end = std::time::now();
+            let elapsed = measure_end - measure_start;
+            if ok {
+                passed = passed + 1;
+                let iters_f = measure_iters as f64;
+                let ns_per_iter = if iters_f > 0.0 {
+                    (elapsed / iters_f) * 1000000000.0
+                } else {
+                    0.0
+                };
+                println(
+                    "  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})",
+                    bench.name,
+                    measure_iters,
+                    elapsed,
+                    ns_per_iter
+                );
+            } else {
+                failed = failed + 1;
+                println("  {} ... FAILED", bench.name);
+            }
+            let total = passed + failed;
+            println(
+                "bench result: {} passed; {} failed; {} total",
+                passed,
+                failed,
+                total
+            );
+            BenchReport {
+                total,
+                passed,
+                failed,
+            }
+        }
+    "#;
+    let expr = parser.parse_expr_ast(src).unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_bench_outer_while_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        {
+            let benches: Vec<BenchCase> = REGISTRY;
+            let mut idx = 0;
+            while idx < benches.len() {
+                let bench: BenchCase = benches[idx];
+                let mut ok = true;
+                let warmup_secs = 5.0f64;
+                let measure_secs = 15.0f64;
+                idx = idx + 1;
+            }
+            idx
+        }
+    "#;
+    let expr = parser.parse_expr_ast(src).unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_bench_warmup_loop_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        {
+            let warmup_start = std::time::now();
+            let warmup_deadline = warmup_start + warmup_secs;
+            let mut warmup_iters = 0;
+            while std::time::now() < warmup_deadline {
+                let warm_ok = catch_unwind(bench.run);
+                if !warm_ok {
+                    ok = false;
+                    break;
+                }
+                warmup_iters = warmup_iters + 1;
+            }
+            warmup_iters
+        }
+    "#;
+    let expr = parser.parse_expr_ast(src).unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_bench_measure_loop_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        {
+            let measure_start = std::time::now();
+            let measure_deadline = measure_start + measure_secs;
+            let mut measure_iters = 0;
+            if ok {
+                while std::time::now() < measure_deadline || measure_iters == 0 {
+                    let run_ok = catch_unwind(bench.run);
+                    if !run_ok {
+                        ok = false;
+                        break;
+                    }
+                    measure_iters = measure_iters + 1;
+                }
+            }
+            measure_iters
+        }
+    "#;
+    let expr = parser.parse_expr_ast(src).unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_typed_generic_let_stmt_in_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("{ let benches: Vec<BenchCase> = REGISTRY; benches }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_typed_index_let_stmt_in_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("{ let bench: BenchCase = benches[idx]; bench }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_outer_while_minimal_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            "{ let benches: Vec<BenchCase> = REGISTRY; let mut idx = 0; while idx < benches.len() { idx = idx + 1; } idx }",
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_len_call_in_comparison() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("idx < benches.len()").unwrap();
+    assert!(matches!(expr.kind(), ExprKind::BinOp(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_nonfinal_while_stmt_in_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("{ while idx < benches.len() { idx = idx + 1; } idx }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_match_with_path_tuple_patterns() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            "match self { Result::Ok(_) => true, Result::Err(_) => false }",
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Match(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_wildcard_let_stmt_in_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("{ let _ = self; _ }");
+    assert!(expr.is_ok(), "{:?}", expr.err());
+}
+
+#[test]
+fn parse_expr_ast_handles_unit_literal() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("()");
+    assert!(expr.is_ok(), "{:?}", expr.err());
+}
+
+#[test]
+fn parse_expr_ast_handles_result_ok_unit_call() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("std::result::Result::Ok(())");
+    assert!(expr.is_ok(), "{:?}", expr.err());
+}
+
+#[test]
+fn parse_expr_ast_handles_reference_prefix() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("&self.inner");
+    assert!(expr.is_ok(), "{:?}", expr.err());
+}
+
+#[test]
+fn parse_expr_ast_handles_array_literal_call_args() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("first_gt([1, 2, 5], [0, 1, 3])");
+    assert!(expr.is_ok(), "{:?}", expr.err());
 }
 
 #[test]
@@ -677,4 +1270,23 @@ fn parse_expr_ast_operator_precedence_smoke() {
         }
         other => panic!("expected binop, got {:?}", other),
     }
+}
+
+#[test]
+fn direct_parser_handles_basic_call_chain() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("foo.bar(1)[0]?").unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Try(_)));
+}
+
+#[test]
+fn direct_parser_handles_cast_and_await() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("await foo as i64 + 1").unwrap();
+    let ExprKind::BinOp(bin) = expr.kind() else {
+        panic!("expected binop");
+    };
+    assert!(matches!(bin.kind, BinOpKind::Add));
 }

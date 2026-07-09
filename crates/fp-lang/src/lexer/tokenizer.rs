@@ -107,54 +107,6 @@ impl Keyword {
             _ => None,
         }
     }
-
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Quote => "quote",
-            Self::Splice => "splice",
-            Self::Const => "const",
-            Self::Emit => "emit",
-            Self::Let => "let",
-            Self::Fn => "fn",
-            Self::Gen => "gen",
-            Self::If => "if",
-            Self::Else => "else",
-            Self::With => "with",
-            Self::Try => "try",
-            Self::Catch => "catch",
-            Self::Finally => "finally",
-            Self::Loop => "loop",
-            Self::While => "while",
-            Self::For => "for",
-            Self::In => "in",
-            Self::Match => "match",
-            Self::Mut => "mut",
-            Self::Await => "await",
-            Self::Async => "async",
-            Self::Unsafe => "unsafe",
-            Self::Return => "return",
-            Self::Break => "break",
-            Self::Continue => "continue",
-            Self::Move => "move",
-            Self::Struct => "struct",
-            Self::Enum => "enum",
-            Self::Union => "union",
-            Self::Type => "type",
-            Self::Static => "static",
-            Self::Opaque => "opaque",
-            Self::Mod => "mod",
-            Self::Trait => "trait",
-            Self::Impl => "impl",
-            Self::Where => "where",
-            Self::Use => "use",
-            Self::Extern => "extern",
-            Self::Super => "super",
-            Self::Crate => "crate",
-            Self::As => "as",
-            Self::Pub => "pub",
-            Self::Defer => "defer",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

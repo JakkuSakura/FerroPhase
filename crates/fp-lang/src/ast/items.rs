@@ -1,1599 +1,1006 @@
-use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
-use crate::ast::lower_common::{decode_string_literal, split_path_prefix};
-use crate::syntax::{collect_tokens, SyntaxElement, SyntaxKind, SyntaxNode};
-use fp_core::ast::{
-    Abi, AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BExpr, EnumTypeVariant,
-    Expr, ExprAsync, ExprKind, ExprMacro, ExprUnOp, FunctionParam, FunctionParamReceiver,
-    FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclStatic,
-    ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
-    ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath,
-    ItemImportRename, ItemImportStyle, ItemImportTree, ItemKind, ItemMacro, ItemOpaqueType,
-    MacroDelimiter, MacroInvocation, Module, Name, Path, QuoteFragmentKind, ReprFlags, ReprOptions,
-    StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeQuote,
-    TypeStruct, Value, ValueNone, Visibility,
-};
-use fp_core::cst::CstCategory;
-use fp_core::module::path::PathPrefix;
-use fp_core::ops::UnOpKind;
+use super::*;
 
-#[derive(Debug, thiserror::Error)]
-pub enum LowerItemsError {
-    #[error("unexpected CST node kind: {0:?}")]
-    UnexpectedNode(SyntaxKind),
-    #[error("missing required token: {0}")]
-    MissingToken(&'static str),
-    #[error("failed to lower expression: {0}")]
-    LowerExpr(String),
-}
-
-pub fn lower_items_from_cst(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
-    if node.kind == SyntaxKind::Root {
-        if let Some(list) = first_child_by_kind(node, SyntaxKind::ItemList) {
-            return lower_items_from_cst(list);
-        }
-        return lower_items_from_cst_children(node);
-    }
-
-    if node.kind != SyntaxKind::ItemList {
-        // Be forgiving: some callers may pass a single item node directly.
-        if node.kind.category() == CstCategory::Item {
-            if node.kind == SyntaxKind::ItemExternBlock {
-                return lower_extern_block(node);
-            }
-            return Ok(vec![lower_item_from_cst(node)?]);
-        }
-        return Err(LowerItemsError::UnexpectedNode(node.kind));
-    }
-
-    lower_items_from_cst_children(node)
-}
-
-pub fn lower_file_from_cst(
-    node: &SyntaxNode,
-) -> Result<(Vec<Attribute>, Vec<Item>), LowerItemsError> {
-    if node.kind == SyntaxKind::Root {
-        if let Some(list) = first_child_by_kind(node, SyntaxKind::ItemList) {
-            let mut attrs = lower_inner_attrs(node);
-            attrs.extend(lower_inner_attrs(list));
-            let items = lower_items_from_cst(list)?;
-            return Ok((attrs, items));
-        }
-        let attrs = lower_inner_attrs(node);
-        let items = lower_items_from_cst(node)?;
-        return Ok((attrs, items));
-    }
-
-    if node.kind != SyntaxKind::ItemList {
-        if node.kind.category() == CstCategory::Item {
-            if node.kind == SyntaxKind::ItemExternBlock {
-                let items = lower_extern_block(node)?;
-                return Ok((Vec::new(), items));
-            }
-            let item = lower_item_from_cst(node)?;
-            return Ok((Vec::new(), vec![item]));
-        }
-        return Err(LowerItemsError::UnexpectedNode(node.kind));
-    }
-
-    let attrs = lower_inner_attrs(node);
-    let items = lower_items_from_cst(node)?;
-    Ok((attrs, items))
-}
-
-pub(crate) fn lower_item_from_cst(node: &SyntaxNode) -> Result<Item, LowerItemsError> {
-    let mut item = match node.kind {
-        SyntaxKind::ItemUse => Ok(Item::from(ItemKind::Import(lower_use_item(node)?))),
-        SyntaxKind::ItemExternCrate => Ok(Item::from(ItemKind::Import(lower_extern_crate(node)?))),
-        SyntaxKind::ItemMod => Ok(Item::from(ItemKind::Module(lower_mod(node)?))),
-        SyntaxKind::ItemStruct => Ok(Item::from(ItemKind::DefStruct(lower_struct(node)?))),
-        SyntaxKind::ItemUnion => Ok(Item::from(ItemKind::DefStruct(lower_union(node)?))),
-        SyntaxKind::ItemEnum => Ok(Item::from(ItemKind::DefEnum(lower_enum(node)?))),
-        SyntaxKind::ItemTrait => Ok(Item::from(ItemKind::DefTrait(lower_trait(node)?))),
-        SyntaxKind::ItemImpl => Ok(Item::from(ItemKind::Impl(lower_impl(node)?))),
-        SyntaxKind::ItemTypeAlias => Ok(Item::from(ItemKind::DefType(lower_type_alias(node)?))),
-        SyntaxKind::ItemOpaqueType => {
-            Ok(Item::from(ItemKind::OpaqueType(lower_opaque_type(node)?)))
-        }
-        SyntaxKind::ItemConst => Ok(Item::from(ItemKind::DefConst(lower_const(node)?))),
-        SyntaxKind::ItemStatic => Ok(Item::from(ItemKind::DefStatic(lower_static(node)?))),
-        SyntaxKind::ItemFn => Ok(Item::from(ItemKind::DefFunction(lower_fn(node)?))),
-        SyntaxKind::ItemExternFnDecl => Ok(Item::from(ItemKind::DeclFunction(
-            lower_extern_fn_decl(node, None)?,
-        ))),
-        SyntaxKind::ItemExternStaticDecl => Ok(Item::from(ItemKind::DeclStatic(
-            lower_extern_static_decl(node)?,
-        ))),
-        SyntaxKind::ItemMacro => Ok(Item::from(ItemKind::Macro(lower_item_macro(node)?))),
-        SyntaxKind::ItemExpr => {
-            let expr_node = first_child_by_category(node, CstCategory::Expr)
-                .ok_or(LowerItemsError::MissingToken("expr"))?;
-            let expr = lower_expr_from_cst(expr_node)
-                .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-            Ok(Item::from(ItemKind::Expr(expr)))
-        }
-        other => Err(LowerItemsError::UnexpectedNode(other)),
-    }?;
-
-    item = item.with_span(node.span);
-    Ok(item)
-}
-
-pub(crate) fn lower_extern_block(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
-    let abi = lower_extern_abi(node)?;
+pub(crate) fn parse_items_tokens(
+    tokens: &[Token],
+    file: FileId,
+) -> Result<Vec<Item>, DirectParseError> {
+    let mut input = tokens;
     let mut items = Vec::new();
-    for child in &node.children {
-        let SyntaxElement::Node(n) = child else {
+    while !input.is_empty() {
+        if looks_like_extern_block(input) {
+            let parsed =
+                parse_extern_block_items(&mut input, file).map_err(|err| map_err(err, input))?;
+            items.extend(parsed);
             continue;
-        };
-        match n.kind {
-            SyntaxKind::ItemExternFnDecl => {
-                let decl = lower_extern_fn_decl(n.as_ref(), Some(abi.clone()))?;
-                items.push(Item::from(ItemKind::DeclFunction(decl)));
-            }
-            SyntaxKind::ItemExternStaticDecl => {
-                let decl = lower_extern_static_decl(n.as_ref())?;
-                items.push(Item::from(ItemKind::DeclStatic(decl)));
-            }
-            SyntaxKind::ItemFn => {
-                let mut def = lower_fn(n.as_ref())?;
-                def.sig.abi = abi.clone();
-                items.push(Item::from(ItemKind::DefFunction(def)));
-            }
-            _ => {}
         }
+        let item = parse_item_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
+        items.push(item);
     }
     Ok(items)
 }
 
-fn lower_extern_fn_decl(
-    node: &SyntaxNode,
-    inherited_abi: Option<Abi>,
-) -> Result<ItemDeclFunction, LowerItemsError> {
-    let sig_node = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Node(n) if n.kind == SyntaxKind::FnSig => Some(n.as_ref()),
-            _ => None,
-        })
-        .ok_or(LowerItemsError::MissingToken("fn sig"))?;
-    let mut sig = lower_fn_sig(sig_node)?;
-    sig.abi = inherited_abi.unwrap_or(lower_extern_abi(node)?);
-    let name = sig
-        .name
-        .clone()
-        .ok_or(LowerItemsError::MissingToken("fn name"))?;
-    Ok(ItemDeclFunction {
-        attrs: lower_outer_attrs(node),
-        ty_annotation: None,
-        name,
-        sig,
-    })
+pub(crate) fn parse_file_tokens(
+    tokens: &[Token],
+    file: FileId,
+) -> Result<(Vec<Attribute>, Vec<Item>), DirectParseError> {
+    let mut input = tokens;
+    let attrs = parse_inner_attrs(&mut input, file).map_err(|err| map_err(err, input))?;
+    let mut items = Vec::new();
+    while !input.is_empty() {
+        if looks_like_extern_block(input) {
+            let parsed =
+                parse_extern_block_items(&mut input, file).map_err(|err| map_err(err, input))?;
+            items.extend(parsed);
+            continue;
+        }
+        let item = parse_item_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
+        items.push(item);
+    }
+    Ok((attrs, items))
 }
 
-fn lower_extern_static_decl(node: &SyntaxNode) -> Result<ItemDeclStatic, LowerItemsError> {
-    let name = Ident::new(
-        first_ident_token_text_skipping(node, &["mut"])
-            .ok_or(LowerItemsError::MissingToken("static name"))?,
-    );
-    let ty_node = first_child_by_category(node, CstCategory::Type)
-        .ok_or(LowerItemsError::MissingToken("static type"))?;
-    let ty =
-        lower_type_from_cst(ty_node).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-    Ok(ItemDeclStatic {
+pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
+    let attrs = parse_outer_attrs(input, file)?;
+    let visibility = parse_visibility(input)?;
+    match input.first().map(|token| &token.kind) {
+        Some(TokenKind::Keyword(Keyword::Use)) => parse_use_item(input, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Extern)) => parse_extern_item(input, file, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Const)) if starts_const_fn(*input) => {
+            parse_fn_item(input, file, visibility, attrs, false)
+        }
+        Some(TokenKind::Keyword(Keyword::Const)) if starts_const_struct(*input) => {
+            parse_const_struct_item(input, visibility, attrs)
+        }
+        Some(TokenKind::Keyword(Keyword::Async)) if starts_async_fn(*input) => {
+            parse_fn_item(input, file, visibility, attrs, false)
+        }
+        Some(TokenKind::Keyword(Keyword::Const)) => parse_const_item(input, file, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Static)) => parse_static_item(input, file, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Type)) => parse_type_alias_item(input, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Struct)) => parse_struct_item(input, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Enum)) => parse_enum_item(input, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Mod)) => parse_mod_item(input, file, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Opaque)) => parse_opaque_type_item(input, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Trait)) => parse_trait_item(input, file, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Impl)) => parse_impl_item(input, file, attrs),
+        Some(TokenKind::Keyword(Keyword::Fn)) => parse_fn_item(input, file, visibility, attrs, false),
+        Some(TokenKind::Keyword(Keyword::Quote)) => parse_fn_item(input, file, visibility, attrs, true),
+        Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) if looks_like_item_macro(*input) => {
+            parse_item_macro(input, attrs)
+        }
+        _ => Err(ErrMode::Backtrack(ContextError::new())),
+    }
+}
+
+fn parse_const_item(
+    input: &mut &[Token],
+    file: FileId,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Const)?;
+    let mutable = expect_keyword(input, Keyword::Mut).is_ok();
+    let name = ident_like(input)?;
+    let ty = if expect_symbol(input, ":").is_ok() {
+        Some(parse_type_expr(input)?)
+    } else {
+        None
+    };
+    expect_symbol(input, "=")?;
+    let value = parse_expr_winnow(input, file)?;
+    expect_symbol(input, ";")?;
+    Ok(Item::from(ItemKind::DefConst(ItemDefConst {
+        attrs,
+        mutable: mutable.then_some(true),
         ty_annotation: None,
+        visibility,
         name,
         ty,
-    })
+        value: Box::new(value),
+    })))
 }
 
-fn lower_extern_abi(node: &SyntaxNode) -> Result<Abi, LowerItemsError> {
-    let abi_text = node.children.iter().find_map(|child| match child {
-        SyntaxElement::Token(tok) if tok.text.starts_with('"') || tok.text.starts_with("r#") => {
-            Some(tok.text.clone())
-        }
-        _ => None,
-    });
-    let Some(raw) = abi_text else {
-        return Ok(Abi::Rust);
-    };
-    let cleaned = if let (Some(start), Some(end)) = (raw.find('"'), raw.rfind('"')) {
-        if start < end {
-            raw[start + 1..end].to_string()
-        } else {
-            raw.clone()
-        }
-    } else {
-        raw.clone()
-    };
-    Ok(Abi::Named(cleaned))
-}
-
-fn lower_visibility(node: Option<&SyntaxNode>) -> Result<Visibility, LowerItemsError> {
-    let Some(node) = node else {
-        return Ok(Visibility::Public);
-    };
-    match node.kind {
-        SyntaxKind::VisibilityPublic => Ok(Visibility::Public),
-        SyntaxKind::VisibilityCrate => Ok(Visibility::Crate),
-        SyntaxKind::VisibilityPrivate => Ok(Visibility::Private),
-        SyntaxKind::VisibilityInherited => Ok(Visibility::Inherited),
-        SyntaxKind::VisibilityRestricted => {
-            let child = node
-                .children
-                .iter()
-                .find_map(|c| match c {
-                    SyntaxElement::Node(n) => Some(n.as_ref()),
-                    _ => None,
-                })
-                .ok_or(LowerItemsError::MissingToken("restricted path"))?;
-            Ok(Visibility::Restricted(lower_use_path_as_import_path(
-                child,
-            )?))
-        }
-        other => Err(LowerItemsError::UnexpectedNode(other)),
-    }
-}
-
-fn lower_use_item(node: &SyntaxNode) -> Result<ItemImport, LowerItemsError> {
-    let attrs = lower_outer_attrs(node);
-    let visibility = lower_visibility(first_visibility(node)?)?;
-    let tree = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Node(n)
-                if matches!(
-                    n.kind,
-                    SyntaxKind::UseTreePath
-                        | SyntaxKind::UseTreeGroup
-                        | SyntaxKind::UseTreeGlob
-                        | SyntaxKind::UseTreeRename
-                ) =>
-            {
-                Some(n.as_ref())
-            }
-            _ => None,
-        })
-        .ok_or(LowerItemsError::MissingToken("use tree"))?;
-    Ok(ItemImport {
+fn parse_static_item(
+    input: &mut &[Token],
+    file: FileId,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Static)?;
+    let _mutable = expect_keyword(input, Keyword::Mut).is_ok();
+    let name = ident_like(input)?;
+    expect_symbol(input, ":")?;
+    let ty = parse_type_expr(input)?;
+    expect_symbol(input, "=")?;
+    let value = parse_expr_winnow(input, file)?;
+    expect_symbol(input, ";")?;
+    Ok(Item::from(ItemKind::DefStatic(ItemDefStatic {
         attrs,
+        ty_annotation: None,
         visibility,
-        style: ItemImportStyle::Plain,
-        tree: lower_use_tree(tree)?,
-    })
-}
-
-fn lower_extern_crate(node: &SyntaxNode) -> Result<ItemImport, LowerItemsError> {
-    let attrs = lower_outer_attrs(node);
-    let visibility = lower_visibility(first_visibility(node)?)?;
-    let crate_name =
-        first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("crate name"))?;
-    let crate_ident = Ident::new(crate_name);
-    let tree = if let Some(rename) = node.children.iter().find_map(|c| match c {
-        SyntaxElement::Node(n) if n.kind == SyntaxKind::UseTreeRename => Some(n.as_ref()),
-        _ => None,
-    }) {
-        let to = rename
-            .children
-            .iter()
-            .filter_map(|c| match c {
-                SyntaxElement::Token(t) if !t.is_trivia() => Some(t.text.clone()),
-                _ => None,
-            })
-            .nth(1)
-            .ok_or(LowerItemsError::MissingToken("rename"))?;
-        ItemImportTree::Rename(ItemImportRename {
-            from: crate_ident,
-            to: Ident::new(to),
-        })
-    } else {
-        let mut path = ItemImportPath::new();
-        path.push(ItemImportTree::Ident(crate_ident));
-        ItemImportTree::Path(path)
-    };
-    Ok(ItemImport {
-        attrs,
-        visibility,
-        style: ItemImportStyle::Plain,
-        tree,
-    })
-}
-
-fn lower_mod(node: &SyntaxNode) -> Result<Module, LowerItemsError> {
-    let mut attrs = lower_outer_attrs(node);
-    let visibility = lower_visibility(first_visibility(node)?)?;
-    let name =
-        Ident::new(first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("mod name"))?);
-    let inner_list = node.children.iter().find_map(|c| match c {
-        SyntaxElement::Node(n) if n.kind == SyntaxKind::ItemList => Some(n.as_ref()),
-        _ => None,
-    });
-    let (items, is_external) = if let Some(inner_list) = inner_list {
-        attrs.extend(lower_inner_attrs(inner_list));
-        (lower_items_from_cst(inner_list)?, false)
-    } else {
-        (Vec::new(), true)
-    };
-    Ok(Module {
-        attrs,
         name,
-        items,
-        visibility,
-        is_external,
-    })
+        ty,
+        value: Box::new(value),
+    })))
 }
 
-fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
-    let mut attrs = lower_outer_attrs(node);
-    if is_const_struct(node) {
-        attrs.push(const_struct_attr());
-    }
-    let visibility = lower_visibility(first_visibility(node)?)?;
-    let name = Ident::new(
-        first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("struct name"))?,
-    );
-
-    let generics = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Node(n) if n.kind == SyntaxKind::GenericParams => Some(n.as_ref()),
-            _ => None,
-        })
-        .map(lower_generic_params)
-        .transpose()?
-        .unwrap_or_default();
-
-    let mut fields = Vec::new();
-    let mut tuple_index = 0usize;
-    for child in &node.children {
-        let SyntaxElement::Node(field) = child else {
-            continue;
-        };
-        if field.kind != SyntaxKind::StructFieldDecl {
-            continue;
-        }
-        let fname = if let Some(name) = first_ident_token_text(field) {
-            Ident::new(name)
-        } else if let Some(name) = first_token_text(field)
-            .filter(|text| text.chars().next().is_some_and(|c| c.is_ascii_digit()))
-        {
-            Ident::new(name)
-        } else {
-            let name = tuple_index.to_string();
-            tuple_index += 1;
-            Ident::new(name)
-        };
-        let ty_node = first_child_by_category(field, CstCategory::Type)
-            .ok_or(LowerItemsError::MissingToken("field type"))?;
-        let mut fty = lower_type_from_cst(ty_node)
-            .map_err(|_| LowerItemsError::UnexpectedNode(field.kind))?;
-        let is_optional = field.children.iter().any(|c| {
-            matches!(
-                c,
-                SyntaxElement::Token(t) if !t.is_trivia() && t.text == "?"
-            )
-        });
-        if is_optional {
-            fty = Ty::TypeBinaryOp(
-                TypeBinaryOp {
-                    kind: TypeBinaryOpKind::Union,
-                    lhs: Box::new(fty),
-                    rhs: Box::new(Ty::value(Value::None(ValueNone))),
-                }
-                .into(),
-            );
-        }
-        fields.push(StructuralField::new(fname, fty));
-    }
-    Ok(ItemDefStruct {
-        attrs,
-        visibility,
-        name: name.clone(),
-        value: TypeStruct {
-            name,
-            generics_params: generics,
-            repr: ReprOptions::default(),
-            fields,
-        },
-    })
-}
-
-fn lower_union(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
-    let attrs = lower_outer_attrs(node);
-    let visibility = lower_visibility(first_visibility(node)?)?;
-    let name = Ident::new(
-        first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("union name"))?,
-    );
-
-    let generics = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Node(n) if n.kind == SyntaxKind::GenericParams => Some(n.as_ref()),
-            _ => None,
-        })
-        .map(lower_generic_params)
-        .transpose()?
-        .unwrap_or_default();
-
-    let mut fields = Vec::new();
-    let mut tuple_index = 0usize;
-    for child in &node.children {
-        let SyntaxElement::Node(field) = child else {
-            continue;
-        };
-        if field.kind != SyntaxKind::StructFieldDecl {
-            continue;
-        }
-        let fname = if let Some(name) = first_ident_token_text(field) {
-            Ident::new(name)
-        } else if let Some(name) = first_token_text(field)
-            .filter(|text| text.chars().next().is_some_and(|c| c.is_ascii_digit()))
-        {
-            Ident::new(name)
-        } else {
-            let name = tuple_index.to_string();
-            tuple_index += 1;
-            Ident::new(name)
-        };
-        let ty_node = first_child_by_category(field, CstCategory::Type)
-            .ok_or(LowerItemsError::MissingToken("field type"))?;
-        let mut fty = lower_type_from_cst(ty_node)
-            .map_err(|_| LowerItemsError::UnexpectedNode(field.kind))?;
-        let is_optional = field.children.iter().any(|c| {
-            matches!(
-                c,
-                SyntaxElement::Token(t) if !t.is_trivia() && t.text == "?"
-            )
-        });
-        if is_optional {
-            fty = Ty::TypeBinaryOp(
-                TypeBinaryOp {
-                    kind: TypeBinaryOpKind::Union,
-                    lhs: Box::new(fty),
-                    rhs: Box::new(Ty::value(Value::None(ValueNone))),
-                }
-                .into(),
-            );
-        }
-        fields.push(StructuralField::new(fname, fty));
-    }
-
-    let mut repr = ReprOptions::default();
-    repr.flags.insert(ReprFlags::IS_C);
-    Ok(ItemDefStruct {
-        attrs,
-        visibility,
-        name: name.clone(),
-        value: TypeStruct {
-            name,
-            generics_params: generics,
-            repr,
-            fields,
-        },
-    })
-}
-
-fn is_const_struct(node: &SyntaxNode) -> bool {
-    let mut tokens = Vec::new();
-    collect_tokens(node, &mut tokens);
-    tokens
-        .iter()
-        .filter(|tok| !tok.is_trivia())
-        .any(|tok| tok.text == "const")
-}
-
-fn const_struct_attr() -> Attribute {
-    Attribute {
-        style: AttrStyle::Outer,
-        meta: AttrMeta::Path(Path::plain(vec![Ident::new("const".to_string())])),
-    }
-}
-
-fn lower_enum(node: &SyntaxNode) -> Result<ItemDefEnum, LowerItemsError> {
-    let attrs = lower_outer_attrs(node);
-    let visibility = lower_visibility(first_visibility(node)?)?;
-    let name =
-        Ident::new(first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("enum name"))?);
-
-    let generics = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Node(n) if n.kind == SyntaxKind::GenericParams => Some(n.as_ref()),
-            _ => None,
-        })
-        .map(lower_generic_params)
-        .transpose()?
-        .unwrap_or_default();
-
-    let mut variants = Vec::new();
-    for child in &node.children {
-        let SyntaxElement::Node(v) = child else {
-            continue;
-        };
-        if v.kind != SyntaxKind::EnumVariantDecl {
-            continue;
-        }
-        let vname =
-            Ident::new(first_ident_token_text(v).ok_or(LowerItemsError::MissingToken("variant"))?);
-        let value_ty = if let Some(tn) = first_child_by_category(v, CstCategory::Type) {
-            lower_type_from_cst(tn).map_err(|_| LowerItemsError::UnexpectedNode(v.kind))?
-        } else {
-            Ty::unit()
-        };
-        let discriminant = first_child_by_category(v, CstCategory::Expr)
-            .map(|e| lower_expr_from_cst(e).map(Box::new))
-            .transpose()
-            .map_err(|_| LowerItemsError::UnexpectedNode(v.kind))?;
-        variants.push(EnumTypeVariant {
-            name: vname,
-            value: value_ty,
-            discriminant,
-        });
-    }
-    Ok(ItemDefEnum {
-        attrs,
-        visibility,
-        name: name.clone(),
-        value: TypeEnum {
-            name,
-            generics_params: generics,
-            repr: ReprOptions::default(),
-            variants,
-        },
-    })
-}
-
-fn lower_type_alias(node: &SyntaxNode) -> Result<ItemDefType, LowerItemsError> {
-    let attrs = lower_outer_attrs(node);
-    let visibility = lower_visibility(first_visibility(node)?)?;
-    let name =
-        Ident::new(first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("type name"))?);
-    let value_node = first_child_by_category(node, CstCategory::Type)
-        .ok_or(LowerItemsError::MissingToken("type value"))?;
-    let value =
-        lower_type_from_cst(value_node).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-    Ok(ItemDefType {
+fn parse_type_alias_item(
+    input: &mut &[Token],
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Type)?;
+    let name = ident_like(input)?;
+    expect_symbol(input, "=")?;
+    let value = parse_type_expr(input)?;
+    expect_symbol(input, ";")?;
+    Ok(Item::from(ItemKind::DefType(ItemDefType {
         attrs,
         visibility,
         name,
         value,
-    })
+    })))
 }
 
-fn lower_opaque_type(node: &SyntaxNode) -> Result<ItemOpaqueType, LowerItemsError> {
-    let attrs = lower_outer_attrs(node);
-    let visibility = lower_visibility(first_visibility(node)?)?;
-    let name = Ident::new(
-        first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("opaque type name"))?,
-    );
-    Ok(ItemOpaqueType {
-        attrs,
-        visibility,
-        name,
-    })
-}
-
-fn lower_const(node: &SyntaxNode) -> Result<ItemDefConst, LowerItemsError> {
-    let attrs = lower_outer_attrs(node);
-    let visibility = lower_visibility(first_visibility(node)?)?;
-    let is_mutable = node.children.iter().any(|child| match child {
-        SyntaxElement::Token(token) => token.text == "mut",
-        _ => false,
-    });
-    let name = Ident::new(
-        first_ident_token_text_skipping(node, &["mut"])
-            .ok_or(LowerItemsError::MissingToken("const name"))?,
-    );
-    let ty = first_child_by_category(node, CstCategory::Type)
-        .map(|t| lower_type_from_cst(t))
-        .transpose()
-        .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-    let value_node = first_child_by_category(node, CstCategory::Expr)
-        .ok_or(LowerItemsError::MissingToken("const value"))?;
-    let value =
-        lower_expr_from_cst(value_node).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-    Ok(ItemDefConst {
-        attrs,
-        mutable: if is_mutable { Some(true) } else { None },
-        ty_annotation: None,
-        visibility,
-        name,
-        ty,
-        value: Box::new(value),
-    })
-}
-
-fn lower_static(node: &SyntaxNode) -> Result<ItemDefStatic, LowerItemsError> {
-    let attrs = lower_outer_attrs(node);
-    let visibility = lower_visibility(first_visibility(node)?)?;
-    let name = Ident::new(
-        first_ident_token_text_skipping(node, &["mut"])
-            .ok_or(LowerItemsError::MissingToken("static name"))?,
-    );
-    let ty_node = first_child_by_category(node, CstCategory::Type)
-        .ok_or(LowerItemsError::MissingToken("static type"))?;
-    let ty =
-        lower_type_from_cst(ty_node).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-    let value_node = first_child_by_category(node, CstCategory::Expr)
-        .ok_or(LowerItemsError::MissingToken("static value"))?;
-    let value =
-        lower_expr_from_cst(value_node).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-    Ok(ItemDefStatic {
-        attrs,
-        ty_annotation: None,
-        visibility,
-        name,
-        ty,
-        value: Box::new(value),
-    })
-}
-
-fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
-    let visibility = lower_visibility(first_visibility(node)?)?;
-    let sig_node = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Node(n) if n.kind == SyntaxKind::FnSig => Some(n.as_ref()),
-            _ => None,
-        })
-        .ok_or(LowerItemsError::MissingToken("fn sig"))?;
-    let mut sig = lower_fn_sig(sig_node)?;
-
-    // const fn marker stored as a token "const" directly on the item node.
-    if node
-        .children
-        .iter()
-        .any(|c| matches!(c, SyntaxElement::Token(t) if !t.is_trivia() && t.text == "const"))
-    {
-        sig.is_const = true;
+fn parse_struct_item(
+    input: &mut &[Token],
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Struct)?;
+    let name = ident_like(input)?;
+    let generics_params = parse_optional_generic_params(input)?;
+    expect_symbol(input, "{")?;
+    let mut fields = Vec::new();
+    while peek_symbol(input) != Some("}") {
+        let field_name = ident_like(input)?;
+        let is_optional = expect_symbol(input, "?").is_ok();
+        expect_symbol(input, ":")?;
+        let mut value = parse_type_expr(input)?;
+        if is_optional {
+            value = Ty::TypeBinaryOp(
+                TypeBinaryOp {
+                    kind: TypeBinaryOpKind::Union,
+                    lhs: Box::new(value),
+                    rhs: Box::new(Ty::value(Value::None(ValueNone))),
+                }
+                .into(),
+            );
+        }
+        fields.push(StructuralField::new(field_name, value));
+        if expect_symbol(input, ",").is_err() {
+            break;
+        }
     }
-    sig.abi = lower_extern_abi(node)?;
+    expect_symbol(input, "}")?;
+    Ok(Item::from(ItemKind::DefStruct(ItemDefStruct {
+        attrs,
+        visibility,
+        name: name.clone(),
+        value: TypeStruct {
+            name,
+            generics_params,
+            repr: ReprOptions::default(),
+            fields,
+        },
+    })))
+}
 
-    let quote_kind = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Token(t) if !t.is_trivia() && t.text == "quote" => Some(()),
-            _ => None,
-        })
-        .and_then(|_| sig.ret_ty.as_ref())
-        .and_then(|ty| match ty {
-            Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Name(locator) => locator.as_ident().and_then(|id| match id.as_str() {
-                    "expr" => Some(QuoteFragmentKind::Expr),
-                    "stmt" => Some(QuoteFragmentKind::Stmt),
-                    "item" => Some(QuoteFragmentKind::Item),
-                    "type" => Some(QuoteFragmentKind::Type),
-                    "items" | "fns" | "structs" | "enums" | "traits" | "impls" | "consts"
-                    | "statics" | "mods" | "uses" | "macros" => {
-                        tracing::warn!("deprecated plural quote fragment kind: {}", id.as_str());
-                        Some(QuoteFragmentKind::Item)
-                    }
-                    "exprs" | "stmts" | "types" => None,
-                    _ => Some(QuoteFragmentKind::Item),
-                }),
-                _ => None,
-            },
-            Ty::Quote(quote) => Some(quote.kind),
-            _ => None,
-        })
-        .or_else(|| {
-            if node.children.iter().any(
-                |c| matches!(c, SyntaxElement::Token(t) if !t.is_trivia() && t.text == "quote"),
-            ) {
-                Some(QuoteFragmentKind::Item)
-            } else {
-                None
-            }
-        });
+fn parse_const_struct_item(
+    input: &mut &[Token],
+    visibility: Visibility,
+    mut attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Const)?;
+    attrs.push(const_struct_attr());
+    parse_struct_item(input, visibility, attrs)
+}
 
-    let body_node = first_child_by_category(node, CstCategory::Expr)
-        .ok_or(LowerItemsError::MissingToken("fn body"))?;
-    let body = lower_expr_from_cst(body_node)
-        .map_err(|err| LowerItemsError::LowerExpr(err.to_string()))?;
-    let is_async = node.children.iter().any(|c| {
-        matches!(
-            c,
-            SyntaxElement::Token(t) if !t.is_trivia() && t.text == "async"
-        )
-    });
+fn parse_fn_item(
+    input: &mut &[Token],
+    file: FileId,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+    quoted: bool,
+) -> ModalResult<Item> {
+    parse_fn_item_core(input, file, visibility, attrs, quoted)
+}
+
+fn parse_fn_item_core(
+    input: &mut &[Token],
+    file: FileId,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+    quoted: bool,
+) -> ModalResult<Item> {
+    let is_async = expect_keyword(input, Keyword::Async).is_ok();
+    let is_const = expect_keyword(input, Keyword::Const).is_ok();
+    if quoted {
+        expect_keyword(input, Keyword::Quote)?;
+    }
+    expect_keyword(input, Keyword::Fn)?;
+    let name = ident_like(input)?;
+    let generics_params = parse_optional_generic_params(input)?;
+    expect_symbol(input, "(")?;
+    let (receiver, params) = parse_fn_params_with_receiver(input)?;
+    expect_symbol(input, ")")?;
+    let ret_ty = if expect_symbol(input, "->").is_ok() {
+        Some(parse_type_expr(input)?)
+    } else {
+        None
+    };
+    if expect_keyword(input, Keyword::Where).is_ok() {
+        skip_where_clause(input)?;
+    }
+    let body = parse_block_expr(input, file)?;
     let body = if is_async {
-        Expr::new(ExprKind::Async(ExprAsync {
+        ExprKind::Async(fp_core::ast::ExprAsync {
             span: body.span(),
             expr: Box::new(body),
-        }))
+        })
+        .into()
     } else {
         body
     };
-    if let Some(kind) = quote_kind {
+    let mut sig = FunctionSignature {
+        name: Some(name.clone()),
+        receiver,
+        params,
+        generics_params,
+        is_const,
+        abi: fp_core::ast::Abi::Rust,
+        quote_kind: quoted.then_some(QuoteFragmentKind::Item),
+        ret_ty,
+    };
+    if quoted {
         sig.is_const = true;
-        sig.quote_kind = Some(kind);
-        let inner = sig.ret_ty.as_ref().and_then(|ty| match ty {
-            Ty::Quote(quote) if quote.kind == QuoteFragmentKind::Expr => {
-                quote.inner.clone().map(|ty| (*ty).clone())
-            }
-            _ => None,
-        });
-        sig.ret_ty = Some(Ty::Quote(TypeQuote {
-            span: node.span,
-            kind,
+        sig.ret_ty = Some(Ty::Quote(fp_core::ast::TypeQuote {
+            span: Span::null(),
+            kind: QuoteFragmentKind::Item,
             item: None,
-            inner: inner.map(Box::new),
+            inner: None,
         }));
     }
-    let mut def = ItemDefFunction::new_simple(
-        sig.name
-            .clone()
-            .unwrap_or_else(|| Ident::new("<anon>".to_string())),
-        body.into(),
-    );
-    def.attrs = lower_outer_attrs(node);
-    def.visibility = visibility;
-    def.sig = sig;
-    Ok(def)
-}
-
-fn lower_outer_attrs(node: &SyntaxNode) -> Vec<Attribute> {
-    node.children
-        .iter()
-        .filter_map(|child| match child {
-            SyntaxElement::Node(attr) if attr.kind == SyntaxKind::AttrOuter => {
-                lower_attr(attr.as_ref(), AttrStyle::Outer)
-            }
-            _ => None,
-        })
-        .collect()
-}
-
-fn lower_inner_attrs(node: &SyntaxNode) -> Vec<Attribute> {
-    node.children
-        .iter()
-        .filter_map(|child| match child {
-            SyntaxElement::Node(attr) if attr.kind == SyntaxKind::AttrInner => {
-                lower_attr(attr.as_ref(), AttrStyle::Inner)
-            }
-            _ => None,
-        })
-        .collect()
-}
-
-fn lower_attr(node: &SyntaxNode, style: AttrStyle) -> Option<Attribute> {
-    let mut tokens = Vec::new();
-    crate::syntax::collect_tokens(node, &mut tokens);
-    let mut inner_tokens = Vec::new();
-    let mut in_brackets = false;
-    for tok in tokens.iter().filter(|t| !t.is_trivia()) {
-        match tok.text.as_str() {
-            "[" => {
-                in_brackets = true;
-            }
-            "]" => break,
-            _ if !in_brackets => continue,
-            text => inner_tokens.push(text.to_string()),
-        }
-    }
-
-    let meta = parse_attr_meta(&inner_tokens)?;
-    Some(Attribute { style, meta })
-}
-
-fn parse_attr_meta(tokens: &[String]) -> Option<AttrMeta> {
-    let (meta, consumed) = parse_attr_meta_at(tokens, 0)?;
-    if consumed != tokens.len() {
-        return None;
-    }
-    Some(meta)
-}
-
-fn parse_attr_meta_at(tokens: &[String], mut idx: usize) -> Option<(AttrMeta, usize)> {
-    let (path, next) = parse_attr_path(tokens, idx)?;
-    idx = next;
-
-    if tokens.get(idx).is_some_and(|tok| tok == "(") {
-        idx += 1;
-        let mut items = Vec::new();
-        while !tokens.get(idx).is_some_and(|tok| tok == ")") {
-            let (item, next_idx) = parse_attr_meta_at(tokens, idx)?;
-            idx = next_idx;
-            items.push(item);
-            if tokens.get(idx).is_some_and(|tok| tok == ",") {
-                idx += 1;
-            }
-        }
-        if !tokens.get(idx).is_some_and(|tok| tok == ")") {
-            return None;
-        }
-        idx += 1;
-        return Some((AttrMeta::List(AttrMetaList { name: path, items }), idx));
-    }
-
-    if tokens.get(idx).is_some_and(|tok| tok == "=") {
-        idx += 1;
-        let (value_expr, next_idx) = parse_attr_value_expr(tokens, idx)?;
-        return Some((
-            AttrMeta::NameValue(AttrMetaNameValue {
-                name: path,
-                value: value_expr,
-            }),
-            next_idx,
-        ));
-    }
-
-    Some((AttrMeta::Path(path), idx))
-}
-
-fn parse_attr_path(tokens: &[String], mut idx: usize) -> Option<(Path, usize)> {
-    let mut segments = Vec::new();
-    let mut saw_root = false;
-    let mut saw_first_token = false;
-    while let Some(tok) = tokens.get(idx) {
-        if !saw_first_token && tok == "::" {
-            saw_root = true;
-            saw_first_token = true;
-            idx += 1;
-            continue;
-        }
-        if tok == "::" {
-            idx += 1;
-            continue;
-        }
-        if is_attr_ident(tok) {
-            segments.push(Ident::new(tok.to_string()));
-            idx += 1;
-            saw_first_token = true;
-            continue;
-        }
-        break;
-    }
-    if segments.is_empty() {
-        None
-    } else {
-        let (prefix, segments) = split_path_prefix(segments, saw_root);
-        if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
-            return None;
-        }
-        Some((Path::new(prefix, segments), idx))
-    }
-}
-
-fn parse_attr_value_expr(tokens: &[String], start: usize) -> Option<(BExpr, usize)> {
-    let mut end = start;
-    let mut paren_depth = 0usize;
-    while let Some(token) = tokens.get(end) {
-        match token.as_str() {
-            "(" => paren_depth += 1,
-            ")" => {
-                if paren_depth == 0 {
-                    break;
-                }
-                paren_depth -= 1;
-            }
-            "," if paren_depth == 0 => break,
-            _ => {}
-        }
-        end += 1;
-    }
-
-    let cleaned: Vec<&str> = tokens[start..end]
-        .iter()
-        .map(|tok| tok.as_str())
-        .filter(|t| !t.is_empty())
-        .collect();
-    if let Some(expr) = parse_include_str_macro_expr(&cleaned) {
-        return Some((expr, end));
-    }
-    let value_token = cleaned.first()?;
-    let expr = match *value_token {
-        "true" => Box::new(Expr::value(Value::bool(true))),
-        "false" => Box::new(Expr::value(Value::bool(false))),
-        _ => {
-            if let Ok(value) = value_token.parse::<i64>() {
-                return Some((Box::new(Expr::value(Value::int(value))), end));
-            }
-            let decoded = decode_string_literal(value_token)?;
-            Box::new(Expr::value(Value::string(decoded)))
-        }
-    };
-    Some((expr, end))
-}
-
-fn is_attr_ident(token: &str) -> bool {
-    token
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-}
-
-fn parse_include_str_macro_expr(tokens: &[&str]) -> Option<BExpr> {
-    if tokens.len() < 4 {
-        return None;
-    }
-    if tokens[0] != "include_str" || tokens[1] != "!" {
-        return None;
-    }
-    if tokens[2] != "(" || tokens[tokens.len() - 1] != ")" {
-        return None;
-    }
-    let inner = &tokens[3..tokens.len() - 1];
-    if inner.is_empty() {
-        return None;
-    }
-    let tokens_text = inner.join(" ");
-    let path = Path::plain(vec![Ident::new("include_str".to_string())]);
-    let invocation = MacroInvocation::new(path, MacroDelimiter::Parenthesis, tokens_text);
-    Some(Box::new(Expr::new(ExprKind::Macro(ExprMacro::new(
-        invocation,
-    )))))
-}
-
-fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {
-    fn is_type_bound_node(node: &SyntaxNode) -> bool {
-        node.kind.category() == CstCategory::Type
-            && node.kind != SyntaxKind::GenericParam
-            && node.kind != SyntaxKind::GenericParams
-    }
-    let attrs = lower_outer_attrs(node);
-    let visibility = lower_visibility(first_visibility(node)?)?;
-    let name = Ident::new(
-        first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("trait name"))?,
-    );
-    let bounds = node
-        .children
-        .iter()
-        .filter_map(|c| match c {
-            SyntaxElement::Node(n) if is_type_bound_node(n.as_ref()) => Some(n.as_ref()),
-            _ => None,
-        })
-        .map(lower_bound_expr_from_cst)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| match err {
-            LowerItemsError::UnexpectedNode(kind) => LowerItemsError::UnexpectedNode(kind),
-            _ => LowerItemsError::UnexpectedNode(node.kind),
-        })?;
-    let bounds = TypeBounds { bounds };
-
-    let mut items = Vec::new();
-    for child in &node.children {
-        let SyntaxElement::Node(n) = child else {
-            continue;
-        };
-        if n.kind != SyntaxKind::TraitMember {
-            continue;
-        }
-        items.push(lower_trait_member(n.as_ref())?);
-    }
-
-    Ok(ItemDefTrait {
+    Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
+        ty_annotation: None,
         attrs,
+        name,
+        ty: None,
+        sig,
+        body: Box::new(body),
         visibility,
+    })))
+}
+
+fn parse_trait_item(
+    input: &mut &[Token],
+    file: FileId,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Trait)?;
+    let name = ident_like(input)?;
+    let bounds = if expect_symbol(input, ":").is_ok() {
+        parse_type_bounds(input)?
+    } else {
+        TypeBounds::any()
+    };
+    expect_symbol(input, "{")?;
+    let mut items = Vec::new();
+    while peek_symbol(input) != Some("}") {
+        items.push(parse_trait_member(input, file)?);
+    }
+    expect_symbol(input, "}")?;
+    Ok(Item::from(ItemKind::DefTrait(ItemDefTrait {
+        attrs,
         name,
         bounds,
         items,
-    })
+        visibility,
+    })))
 }
 
-fn lower_trait_member(node: &SyntaxNode) -> Result<Item, LowerItemsError> {
-    let head = first_token_text(node).ok_or(LowerItemsError::MissingToken("trait member"))?;
-    let sig_node = node.children.iter().find_map(|c| match c {
-        SyntaxElement::Node(n) if n.kind == SyntaxKind::FnSig => Some(n.as_ref()),
-        _ => None,
-    });
-    if let Some(sig_node) = sig_node {
-        let mut sig = lower_fn_sig(sig_node)?;
-        if node.children.iter().any(|c| {
-            matches!(
-                c,
-                SyntaxElement::Token(t) if !t.is_trivia() && t.text == "const"
-            )
-        }) {
-            sig.is_const = true;
-        }
-        sig.abi = lower_extern_abi(node)?;
-        let name = sig
-            .name
-            .clone()
-            .ok_or(LowerItemsError::MissingToken("fn name"))?;
+fn parse_trait_member(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
+    let attrs = parse_outer_attrs(input, file)?;
+    if expect_keyword(input, Keyword::Const).is_ok() {
+        let name = ident_like(input)?;
+        expect_symbol(input, ":")?;
+        let ty = parse_type_expr(input)?;
+        expect_symbol(input, ";")?;
+        return Ok(Item::from(ItemKind::DeclConst(ItemDeclConst {
+            ty_annotation: None,
+            name,
+            ty,
+        })));
+    }
+    if expect_keyword(input, Keyword::Type).is_ok() {
+        let name = ident_like(input)?;
+        expect_symbol(input, ";")?;
+        return Ok(Item::from(ItemKind::DeclType(ItemDeclType {
+            ty_annotation: None,
+            name,
+            bounds: TypeBounds::any(),
+        })));
+    }
+    let visibility = Visibility::Inherited;
+    if peek_keyword(*input, Keyword::Fn)
+        || peek_keyword(*input, Keyword::Quote)
+        || starts_async_fn(*input)
+    {
+        return parse_trait_fn_member(input, file, visibility, attrs);
+    }
+    Err(ErrMode::Backtrack(ContextError::new()))
+}
 
-        if let Some(body_node) = first_child_by_category(node, CstCategory::Expr) {
-            let body = lower_expr_from_cst(body_node).map_err(|err| match err {
-                crate::ast::expr::LowerError::UnexpectedNode(kind) => {
-                    LowerItemsError::UnexpectedNode(kind)
-                }
-                _ => LowerItemsError::UnexpectedNode(node.kind),
-            })?;
-            let is_async = node.children.iter().any(|c| {
-                matches!(
-                    c,
-                    SyntaxElement::Token(t) if !t.is_trivia() && t.text == "async"
-                )
-            });
-            let body = if is_async {
-                Expr::new(ExprKind::Async(ExprAsync {
-                    span: body.span(),
-                    expr: Box::new(body),
-                }))
-            } else {
-                body
-            };
-            return Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
-                ty_annotation: None,
-                attrs: Vec::new(),
-                name: name.clone(),
-                ty: None,
-                sig,
-                body: Box::new(body),
-                visibility: Visibility::Inherited,
-            })));
-        }
+fn parse_trait_fn_member(
+    input: &mut &[Token],
+    file: FileId,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    let is_async = expect_keyword(input, Keyword::Async).is_ok();
+    let quoted = expect_keyword(input, Keyword::Quote).is_ok();
+    if quoted {
+        expect_keyword(input, Keyword::Fn)?;
+    } else {
+        expect_keyword(input, Keyword::Fn)?;
+    }
+    let name = ident_like(input)?;
+    let generics_params = parse_optional_generic_params(input)?;
+    expect_symbol(input, "(")?;
+    let params = parse_fn_params(input)?;
+    expect_symbol(input, ")")?;
+    let ret_ty = if expect_symbol(input, "->").is_ok() {
+        Some(parse_type_expr(input)?)
+    } else {
+        None
+    };
+    let mut sig = FunctionSignature {
+        name: Some(name.clone()),
+        receiver: None,
+        params,
+        generics_params,
+        is_const: false,
+        abi: fp_core::ast::Abi::Rust,
+        quote_kind: quoted.then_some(QuoteFragmentKind::Item),
+        ret_ty,
+    };
+    if quoted {
+        sig.is_const = true;
+        sig.ret_ty = Some(Ty::Quote(fp_core::ast::TypeQuote {
+            span: Span::null(),
+            kind: QuoteFragmentKind::Item,
+            item: None,
+            inner: None,
+        }));
+    }
+    if expect_symbol(input, ";").is_ok() {
         return Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
-            attrs: Vec::new(),
+            attrs,
             ty_annotation: None,
             name,
             sig,
         })));
     }
-    match head.as_str() {
-        "const" => {
-            let name = Ident::new(
-                first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("const name"))?,
-            );
-            let ty_node = first_child_by_category(node, CstCategory::Type)
-                .ok_or(LowerItemsError::MissingToken("const type"))?;
-            let ty = lower_type_from_cst(ty_node)
-                .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-            Ok(Item::from(ItemKind::DeclConst(ItemDeclConst {
-                ty_annotation: None,
-                name,
-                ty,
-            })))
-        }
-        "type" => {
-            let name = Ident::new(
-                first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("type name"))?,
-            );
-            Ok(Item::from(ItemKind::DeclType(ItemDeclType {
-                ty_annotation: None,
-                name,
-                bounds: TypeBounds::any(),
-            })))
-        }
-        _ => Err(LowerItemsError::UnexpectedNode(node.kind)),
-    }
+    let body = parse_block_expr(input, file)?;
+    let body = if is_async {
+        ExprKind::Async(fp_core::ast::ExprAsync {
+            span: body.span(),
+            expr: Box::new(body),
+        })
+        .into()
+    } else {
+        body
+    };
+    Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
+        ty_annotation: None,
+        attrs,
+        name,
+        ty: None,
+        sig,
+        body: Box::new(body),
+        visibility,
+    })))
 }
 
-fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
-    fn is_impl_type_node(node: &SyntaxNode) -> bool {
-        node.kind.category() == CstCategory::Type
-            && node.kind != SyntaxKind::GenericParam
-            && node.kind != SyntaxKind::GenericParams
-    }
-    let attrs = lower_outer_attrs(node);
-    let generics = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Node(n) if n.kind == SyntaxKind::GenericParams => Some(n.as_ref()),
-            _ => None,
-        })
-        .map(lower_generic_params)
-        .transpose()?
-        .unwrap_or_default();
+fn peek_keyword(input: &[Token], keyword: Keyword) -> bool {
+    matches!(input.first(), Some(token) if token.kind == TokenKind::Keyword(keyword))
+}
 
-    let type_nodes: Vec<&SyntaxNode> = node
-        .children
-        .iter()
-        .filter_map(|c| match c {
-            SyntaxElement::Node(n) if is_impl_type_node(n.as_ref()) => Some(n.as_ref()),
-            _ => None,
-        })
-        .collect();
-
-    let items_node = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Node(n) if n.kind == SyntaxKind::ItemList => Some(n.as_ref()),
-            _ => None,
-        })
-        .ok_or(LowerItemsError::MissingToken("impl items"))?;
-    let items = lower_items_from_cst(items_node)?;
-
-    if type_nodes.is_empty() {
-        return Err(LowerItemsError::MissingToken("impl type"));
-    }
-
-    fn unwrap_not<'a>(
-        node: &'a SyntaxNode,
-        is_negative: &mut bool,
-    ) -> Result<&'a SyntaxNode, LowerItemsError> {
-        if node.kind != SyntaxKind::TyNot {
-            return Ok(node);
-        }
-        let inner = node
-            .children
-            .iter()
-            .find_map(|c| match c {
-                SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => {
-                    Some(n.as_ref())
-                }
-                _ => None,
-            })
-            .ok_or(LowerItemsError::UnexpectedNode(node.kind))?;
-        *is_negative = true;
-        Ok(inner)
-    }
-
-    let mut is_negative = false;
-
-    let (trait_ty, self_ty_node) = if type_nodes.len() >= 2 {
-        let trait_node = unwrap_not(type_nodes[0], &mut is_negative)?;
-        let trait_name =
-            name_from_ty_node(trait_node).ok_or(LowerItemsError::MissingToken("trait path"))?;
-        (Some(trait_name), type_nodes[1])
+fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Impl)?;
+    let generics_params = parse_optional_generic_params(input)?;
+    let first_ty = parse_type_expr(input)?;
+    let (trait_ty, self_ty) = if expect_keyword(input, Keyword::For).is_ok() {
+        let self_ty = parse_type_expr(input)?;
+        (type_to_name(&first_ty), type_to_expr(&self_ty))
     } else {
-        let self_ty_node = unwrap_not(type_nodes[0], &mut is_negative)?;
-        (None, self_ty_node)
+        (None, type_to_expr(&first_ty))
     };
-
-    let self_ty = if let Some(name) = name_from_ty_node(self_ty_node) {
-        Expr::name(name)
-    } else {
-        let ty = lower_type_from_cst(self_ty_node)
-            .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-        match ty {
-            Ty::Expr(expr) if matches!(expr.kind(), ExprKind::Name(_)) => *expr,
-            other => Expr::value(Value::Type(other)),
-        }
-    };
-
-    Ok(ItemImpl {
+    expect_symbol(input, "{")?;
+    let mut items = Vec::new();
+    while peek_symbol(input) != Some("}") {
+        let member_attrs = parse_outer_attrs(input, file)?;
+        let visibility = parse_visibility(input)?;
+        let member = parse_fn_item_core(input, file, visibility, member_attrs, false)?;
+        items.push(member);
+    }
+    expect_symbol(input, "}")?;
+    Ok(Item::from(ItemKind::Impl(ItemImpl {
         attrs,
-        is_negative,
+        is_negative: false,
         trait_ty,
         self_ty,
-        generics_params: generics,
+        generics_params,
         items,
-    })
+    })))
 }
 
-fn lower_item_macro(node: &SyntaxNode) -> Result<ItemMacro, LowerItemsError> {
-    let name = Ident::new(
-        first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("macro name"))?,
-    );
-    let macro_tokens = crate::ast::macros::macro_group_tokens(node)
-        .ok_or(LowerItemsError::UnexpectedNode(SyntaxKind::ItemMacro))?;
-
-    let declared_name = if name.as_str() == "macro_rules" {
-        find_macro_rules_name(node)
-    } else {
-        None
-    };
-
-    Ok(ItemMacro {
-        invocation: MacroInvocation::new(
-            Path::from_ident(name),
-            macro_tokens.delimiter,
-            macro_tokens.text,
-        )
-        .with_token_trees(macro_tokens.token_trees)
-        .with_span(node.span),
-        declared_name,
-    })
+fn parse_fn_params(input: &mut &[Token]) -> ModalResult<Vec<FunctionParam>> {
+    let (_, params) = parse_fn_params_with_receiver(input)?;
+    Ok(params)
 }
 
-fn find_macro_rules_name(node: &SyntaxNode) -> Option<Ident> {
-    let mut tokens = Vec::new();
-    collect_tokens(node, &mut tokens);
-    let mut seen_bang = false;
-    for tok in tokens.iter().filter(|tok| !tok.is_trivia()) {
-        if !seen_bang {
-            if tok.text == "!" {
-                seen_bang = true;
-            }
-            continue;
-        }
-        if tok
-            .text
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        {
-            return Some(Ident::new(tok.text.clone()));
-        }
-    }
-    None
-}
-
-fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError> {
-    let name =
-        Ident::new(first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("fn name"))?);
-
-    let mut receiver: Option<FunctionParamReceiver> = None;
-    let mut params: Vec<FunctionParam> = Vec::new();
+fn parse_fn_params_with_receiver(
+    input: &mut &[Token],
+) -> ModalResult<(Option<FunctionParamReceiver>, Vec<FunctionParam>)> {
+    let mut params = Vec::new();
+    let mut receiver = None;
     let mut saw_keyword_only_boundary = false;
-    for child in &node.children {
-        match child {
-            SyntaxElement::Token(token) if !token.is_trivia() && token.text == "/" => {
-                for param in &mut params {
-                    if !param.as_tuple && !param.as_dict {
-                        param.positional_only = true;
-                    }
+    if peek_symbol(input) == Some(")") {
+        return Ok((receiver, params));
+    }
+    loop {
+        if params.is_empty() && receiver.is_none() {
+            if let Some(parsed) = parse_receiver(input)? {
+                receiver = Some(parsed);
+                if expect_symbol(input, ",").is_err() {
+                    break;
+                }
+                if peek_symbol(input) == Some(")") {
+                    break;
+                }
+                continue;
+            }
+        }
+        if expect_symbol(input, "/").is_ok() {
+            for param in &mut params {
+                if !param.as_tuple && !param.as_dict {
+                    param.positional_only = true;
                 }
             }
-            SyntaxElement::Token(token) if !token.is_trivia() && token.text == "*" => {
+        } else if peek_two_stars(*input) {
+            expect_symbol(input, "*")?;
+            expect_symbol(input, "*")?;
+            let mut param = parse_fn_param_core(input)?;
+            param.as_dict = true;
+            param.keyword_only = true;
+            params.push(param);
+        } else if expect_symbol(input, "*").is_ok() {
+            let mut probe = *input;
+            if peek_symbol(probe) == Some(",") || peek_symbol(probe) == Some(")") {
                 saw_keyword_only_boundary = true;
-            }
-            SyntaxElement::Node(n) if n.kind == SyntaxKind::FnReceiver => {
-                let has_ref = n.children.iter().any(
-                    |c| matches!(c, SyntaxElement::Token(t) if !t.is_trivia() && t.text == "&"),
-                );
-                let has_mut = n.children.iter().any(
-                    |c| matches!(c, SyntaxElement::Token(t) if !t.is_trivia() && t.text == "mut"),
-                );
-                receiver = Some(match (has_ref, has_mut) {
-                    (true, true) => FunctionParamReceiver::RefMut,
-                    (true, false) => FunctionParamReceiver::Ref,
-                    (false, true) => FunctionParamReceiver::MutValue,
-                    (false, false) => FunctionParamReceiver::Value,
-                });
-            }
-            SyntaxElement::Node(n) if n.kind == SyntaxKind::FnParam => {
-                let tokens = n
-                    .children
-                    .iter()
-                    .filter_map(|child| match child {
-                        SyntaxElement::Token(token) if !token.is_trivia() => {
-                            Some(token.text.as_str())
-                        }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
-                let is_const = tokens.iter().any(|token| *token == "const");
-                let is_context = tokens.first() == Some(&"context") && tokens.len() >= 2;
-                let pname_text = first_ident_token_text_skipping(n, &["const", "mut", "context"])
-                    .or_else(|| {
-                        first_ident_token_text_deep_skipping(
-                            n,
-                            &["const", "mut", "context", "box", "ref"],
-                        )
-                    });
-                if pname_text.is_none() && tokens.iter().any(|token| *token == "...") {
-                    continue;
-                }
-                let pname = if let Some(pname_text) = pname_text {
-                    Ident::new(pname_text)
-                } else if first_child_by_category(n, CstCategory::Type).is_some() {
-                    Ident::new("_".to_string())
-                } else {
-                    return Err(LowerItemsError::MissingToken("param"));
-                };
-                let ty_node = first_child_by_category(n, CstCategory::Type)
-                    .ok_or(LowerItemsError::MissingToken("param type"))?;
-                let ty = lower_type_from_cst(ty_node)
-                    .map_err(|_| LowerItemsError::UnexpectedNode(n.kind))?;
-                let mut param = FunctionParam::new(pname, ty);
-                param.is_const = is_const;
-                param.is_context = is_context;
-                param.as_tuple = tokens.first() == Some(&"*");
-                param.as_dict = tokens.first() == Some(&"**");
+            } else {
+                let mut param = parse_fn_param_after_star(&mut probe)?;
+                param.as_tuple = true;
                 if saw_keyword_only_boundary {
                     param.keyword_only = true;
                 }
-                if param.as_tuple {
-                    saw_keyword_only_boundary = true;
-                }
-                if let Some(default_node) = n.children.iter().find_map(|child| match child {
-                    SyntaxElement::Node(node) if node.kind.category() == CstCategory::Expr => {
-                        Some(node.as_ref())
-                    }
-                    _ => None,
-                }) {
-                    let expr = lower_expr_from_cst(default_node)
-                        .map_err(|_| LowerItemsError::UnexpectedNode(default_node.kind))?;
-                    let ExprKind::Value(value) = expr.kind() else {
-                        return Err(LowerItemsError::MissingToken("literal default value"));
-                    };
-                    param.default = Some((**value).clone());
-                }
+                *input = probe;
                 params.push(param);
+                saw_keyword_only_boundary = true;
             }
-            _ => {}
+        } else {
+            let mut param = parse_fn_param_core(input)?;
+            if saw_keyword_only_boundary {
+                param.keyword_only = true;
+            }
+            params.push(param);
+        }
+
+        if expect_symbol(input, ",").is_err() {
+            break;
+        }
+        if peek_symbol(input) == Some(")") {
+            break;
         }
     }
+    Ok((receiver, params))
+}
 
-    let generics_params = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Node(n) if n.kind == SyntaxKind::GenericParams => Some(n.as_ref()),
-            _ => None,
+fn parse_fn_param_after_star(input: &mut &[Token]) -> ModalResult<FunctionParam> {
+    parse_fn_param_core(input)
+}
+
+fn parse_receiver(input: &mut &[Token]) -> ModalResult<Option<FunctionParamReceiver>> {
+    let mut probe = *input;
+    let by_ref = expect_symbol(&mut probe, "&").is_ok();
+    let mutable = expect_keyword(&mut probe, Keyword::Mut).is_ok();
+    let ident = peek_ident_like(probe);
+    if ident != Some("self") {
+        return Ok(None);
+    }
+    let _ = ident_like(&mut probe)?;
+    *input = probe;
+    let receiver = match (by_ref, mutable) {
+        (true, true) => FunctionParamReceiver::RefMut,
+        (true, false) => FunctionParamReceiver::Ref,
+        (false, true) => FunctionParamReceiver::MutValue,
+        (false, false) => FunctionParamReceiver::Value,
+    };
+    Ok(Some(receiver))
+}
+
+fn parse_fn_param_core(input: &mut &[Token]) -> ModalResult<FunctionParam> {
+    let is_const = expect_keyword(input, Keyword::Const).is_ok();
+    let is_context = expect_ident_like_text(input, "context").is_ok();
+    let _is_mut = expect_keyword(input, Keyword::Mut).is_ok();
+    let name = ident_like(input)?;
+    expect_symbol(input, ":")?;
+    let ty = parse_type_expr(input)?;
+    let mut param = FunctionParam::new(name, ty);
+    param.is_const = is_const;
+    param.is_context = is_context;
+    if expect_symbol(input, "=").is_ok() {
+        let expr = parse_expr_winnow_no_struct(input, 0)?;
+        let ExprKind::Value(value) = expr.kind() else {
+            return Err(ErrMode::Cut(ContextError::new()));
+        };
+        param.default = Some((**value).clone());
+    }
+    Ok(param)
+}
+
+fn expect_ident_like_text(input: &mut &[Token], text: &str) -> ModalResult<()> {
+    let mut probe = *input;
+    let ident = ident_like(&mut probe)?;
+    if ident.as_str() != text {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    *input = probe;
+    Ok(())
+}
+
+fn peek_two_stars(input: &[Token]) -> bool {
+    matches!(input, [first, second, ..] if first.kind == TokenKind::Symbol && first.lexeme == "*" && second.kind == TokenKind::Symbol && second.lexeme == "*")
+}
+
+fn skip_where_clause(input: &mut &[Token]) -> ModalResult<()> {
+    while !input.is_empty() {
+        if peek_symbol(input) == Some("{") {
+            return Ok(());
+        }
+        *input = &input[1..];
+    }
+    Err(ErrMode::Cut(ContextError::new()))
+}
+
+fn parse_use_item(
+    input: &mut &[Token],
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Use)?;
+    let tree = parse_use_tree(input)?;
+    expect_symbol(input, ";")?;
+    Ok(Item::from(ItemKind::Import(fp_core::ast::ItemImport {
+        attrs,
+        visibility,
+        style: fp_core::ast::ItemImportStyle::Plain,
+        tree,
+    })))
+}
+
+fn parse_extern_crate_item(
+    input: &mut &[Token],
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Extern)?;
+    expect_keyword(input, Keyword::Crate)?;
+    let crate_name = ident_like(input)?;
+    let tree = if expect_keyword(input, Keyword::As).is_ok() {
+        let rename = ident_like(input)?;
+        fp_core::ast::ItemImportTree::Rename(fp_core::ast::ItemImportRename {
+            from: crate_name,
+            to: rename,
         })
-        .map(lower_generic_params)
-        .transpose()?
-        .unwrap_or_default();
+    } else {
+        let mut path = fp_core::ast::ItemImportPath::new();
+        path.push(fp_core::ast::ItemImportTree::Ident(crate_name));
+        fp_core::ast::ItemImportTree::Path(path)
+    };
+    expect_symbol(input, ";")?;
+    Ok(Item::from(ItemKind::Import(fp_core::ast::ItemImport {
+        attrs,
+        visibility,
+        style: fp_core::ast::ItemImportStyle::Plain,
+        tree,
+    })))
+}
 
-    let ret_ty = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Node(n) if n.kind == SyntaxKind::FnRet => Some(n.as_ref()),
-            _ => None,
-        })
-        .and_then(|ret| first_child_by_category(ret, CstCategory::Type))
-        .map(|t| lower_type_from_cst(t))
-        .transpose()
-        .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
+fn parse_extern_item(
+    input: &mut &[Token],
+    file: FileId,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    let mut probe = *input;
+    expect_keyword(&mut probe, Keyword::Extern)?;
+    if expect_keyword(&mut probe, Keyword::Crate).is_ok() {
+        return parse_extern_crate_item(input, visibility, attrs);
+    }
+    let abi = parse_extern_abi(input)?;
+    if peek_keyword(*input, Keyword::Fn) {
+        return parse_extern_fn_item(input, file, visibility, attrs, abi);
+    }
+    if peek_symbol(input) == Some("{") {
+        let items = parse_extern_block_items(input, file)?;
+        let item = items
+            .into_iter()
+            .next()
+            .ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        return Ok(item);
+    }
+    Err(ErrMode::Backtrack(ContextError::new()))
+}
 
-    Ok(FunctionSignature {
-        name: Some(name),
-        receiver,
+fn parse_extern_abi(input: &mut &[Token]) -> ModalResult<fp_core::ast::Abi> {
+    expect_keyword(input, Keyword::Extern)?;
+    let abi = token_kind(input, TokenKind::StringLiteral)?;
+    let cleaned = decode_string_literal(&abi.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    Ok(fp_core::ast::Abi::Named(cleaned))
+}
+
+fn parse_extern_fn_item(
+    input: &mut &[Token],
+    file: FileId,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+    abi: fp_core::ast::Abi,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Fn)?;
+    let name = ident_like(input)?;
+    let generics_params = parse_optional_generic_params(input)?;
+    expect_symbol(input, "(")?;
+    let params = parse_fn_params(input)?;
+    expect_symbol(input, ")")?;
+    let ret_ty = if expect_symbol(input, "->").is_ok() {
+        Some(parse_type_expr(input)?)
+    } else {
+        None
+    };
+    let sig = FunctionSignature {
+        name: Some(name.clone()),
+        receiver: None,
         params,
         generics_params,
         is_const: false,
-        abi: Abi::Rust,
+        abi,
         quote_kind: None,
         ret_ty,
-    })
-}
-
-fn lower_generic_params(node: &SyntaxNode) -> Result<Vec<GenericParam>, LowerItemsError> {
-    fn is_bound_node(node: &SyntaxNode) -> bool {
-        node.kind.category() == CstCategory::Type
-            && node.kind != SyntaxKind::GenericParam
-            && node.kind != SyntaxKind::GenericParams
-    }
-    let mut out = Vec::new();
-    for child in &node.children {
-        let SyntaxElement::Node(n) = child else {
-            continue;
-        };
-        if n.kind != SyntaxKind::GenericParam {
-            continue;
-        }
-        let name =
-            Ident::new(first_ident_token_text(n).ok_or(LowerItemsError::MissingToken("generic"))?);
-        let bounds = n
-            .children
-            .iter()
-            .filter_map(|c| match c {
-                SyntaxElement::Node(t) if is_bound_node(t.as_ref()) => Some(t.as_ref()),
-                _ => None,
-            })
-            .map(lower_bound_expr_from_cst)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| LowerItemsError::UnexpectedNode(n.kind))?;
-        out.push(GenericParam {
+    };
+    if expect_symbol(input, ";").is_ok() {
+        return Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
+            attrs,
+            ty_annotation: None,
             name,
-            bounds: TypeBounds { bounds },
-        });
+            sig,
+        })));
     }
-    Ok(out)
+    let body = parse_block_expr(input, file)?;
+    Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
+        ty_annotation: None,
+        attrs,
+        name,
+        ty: None,
+        sig,
+        body: Box::new(body),
+        visibility,
+    })))
 }
 
-fn lower_bound_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerItemsError> {
-    if node.kind == SyntaxKind::TyNot {
-        let inner = node
-            .children
-            .iter()
-            .find_map(|c| match c {
-                SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => {
-                    Some(n.as_ref())
-                }
-                _ => None,
-            })
-            .ok_or(LowerItemsError::UnexpectedNode(node.kind))?;
-        let ty = lower_type_from_cst(inner).map_err(|err| match err {
-            crate::ast::expr::LowerError::UnexpectedNode(kind) => {
-                LowerItemsError::UnexpectedNode(kind)
-            }
-            _ => LowerItemsError::UnexpectedNode(node.kind),
-        })?;
-        let inner_expr = Expr::value(Value::Type(ty));
-        let expr = ExprKind::UnOp(ExprUnOp {
-            span: fp_core::span::Span::null(),
-            op: UnOpKind::Not,
-            val: Box::new(inner_expr),
-        });
-        return Ok(Expr::new(expr));
-    }
-
-    lower_type_from_cst(node)
-        .map(|ty| Expr::value(Value::Type(ty)))
-        .map_err(|err| match err {
-            crate::ast::expr::LowerError::UnexpectedNode(kind) => {
-                LowerItemsError::UnexpectedNode(kind)
-            }
-            _ => LowerItemsError::UnexpectedNode(node.kind),
-        })
-}
-
-fn lower_use_tree(node: &SyntaxNode) -> Result<ItemImportTree, LowerItemsError> {
-    match node.kind {
-        SyntaxKind::UseTreeGroup => {
-            let mut group = ItemImportGroup::new();
-            for child in &node.children {
-                let SyntaxElement::Node(n) = child else {
-                    continue;
-                };
-                group.push(lower_use_tree(n.as_ref())?);
-            }
-            Ok(ItemImportTree::Group(group))
-        }
-        SyntaxKind::UseTreeGlob => Ok(ItemImportTree::Glob),
-        SyntaxKind::UseTreeRename => {
-            let mut ids = node.children.iter().filter_map(|c| match c {
-                SyntaxElement::Token(t) if !t.is_trivia() => Some(t.text.clone()),
-                _ => None,
-            });
-            let from = ids
-                .next()
-                .ok_or(LowerItemsError::MissingToken("rename from"))?;
-            let to = ids
-                .next()
-                .ok_or(LowerItemsError::MissingToken("rename to"))?;
-            Ok(ItemImportTree::Rename(ItemImportRename {
-                from: Ident::new(from),
-                to: Ident::new(to),
-            }))
-        }
-        SyntaxKind::UseTreePath => Ok(ItemImportTree::Path(lower_use_path_as_import_path(node)?)),
-        other => Err(LowerItemsError::UnexpectedNode(other)),
-    }
-}
-
-fn lower_use_path_as_import_path(node: &SyntaxNode) -> Result<ItemImportPath, LowerItemsError> {
-    let mut path = ItemImportPath::new();
-    for child in &node.children {
-        match child {
-            SyntaxElement::Node(n) => match n.kind {
-                SyntaxKind::UseTreeRoot => path.push(ItemImportTree::Root),
-                SyntaxKind::UseTreeSelf => path.push(ItemImportTree::SelfMod),
-                SyntaxKind::UseTreeSuper => path.push(ItemImportTree::SuperMod),
-                SyntaxKind::UseTreeGroup | SyntaxKind::UseTreeGlob | SyntaxKind::UseTreeRename => {
-                    path.push(lower_use_tree(n.as_ref())?)
-                }
-                _ => {}
-            },
-            SyntaxElement::Token(t) if !t.is_trivia() => {
-                if t.text == "::" {
-                    continue;
-                }
-                if t.text == "crate" {
-                    path.push(ItemImportTree::Crate);
-                } else {
-                    path.push(ItemImportTree::Ident(Ident::new(t.text.clone())));
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(path)
-}
-
-fn name_from_ty_node(node: &SyntaxNode) -> Option<Name> {
-    let ty = lower_type_from_cst(node).ok()?;
-    match ty {
-        Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(name) => Some(name.clone()),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn first_visibility<'a>(node: &'a SyntaxNode) -> Result<Option<&'a SyntaxNode>, LowerItemsError> {
-    Ok(node.children.iter().find_map(|c| match c {
-        SyntaxElement::Node(n)
-            if matches!(
-                n.kind,
-                SyntaxKind::VisibilityPublic
-                    | SyntaxKind::VisibilityCrate
-                    | SyntaxKind::VisibilityRestricted
-                    | SyntaxKind::VisibilityPrivate
-                    | SyntaxKind::VisibilityInherited
-            ) =>
-        {
-            Some(n.as_ref())
-        }
-        _ => None,
-    }))
-}
-
-fn first_child_by_category<'a>(node: &'a SyntaxNode, cat: CstCategory) -> Option<&'a SyntaxNode> {
-    node.children.iter().find_map(|c| match c {
-        SyntaxElement::Node(n) if n.kind.category() == cat => Some(n.as_ref()),
-        _ => None,
-    })
-}
-
-fn first_child_by_kind<'a>(node: &'a SyntaxNode, kind: SyntaxKind) -> Option<&'a SyntaxNode> {
-    node.children.iter().find_map(|c| match c {
-        SyntaxElement::Node(n) if n.kind == kind => Some(n.as_ref()),
-        _ => None,
-    })
-}
-
-fn lower_items_from_cst_children(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
-    let mut out = Vec::new();
-    for child in &node.children {
-        let SyntaxElement::Node(n) = child else {
+fn parse_extern_block_items(input: &mut &[Token], file: FileId) -> ModalResult<Vec<Item>> {
+    let abi = parse_extern_abi(input)?;
+    expect_symbol(input, "{")?;
+    let mut items = Vec::new();
+    while peek_symbol(input) != Some("}") {
+        let attrs = parse_outer_attrs(input, file)?;
+        let visibility = parse_visibility(input)?;
+        if peek_keyword(*input, Keyword::Fn) {
+            items.push(parse_abi_fn_item(input, file, visibility, attrs, abi.clone())?);
             continue;
+        }
+        return Err(ErrMode::Cut(ContextError::new()));
+    }
+    expect_symbol(input, "}")?;
+    Ok(items)
+}
+
+fn parse_abi_fn_item(
+    input: &mut &[Token],
+    file: FileId,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+    abi: fp_core::ast::Abi,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Fn)?;
+    let name = ident_like(input)?;
+    let generics_params = parse_optional_generic_params(input)?;
+    expect_symbol(input, "(")?;
+    let params = parse_fn_params(input)?;
+    expect_symbol(input, ")")?;
+    let ret_ty = if expect_symbol(input, "->").is_ok() {
+        Some(parse_type_expr(input)?)
+    } else {
+        None
+    };
+    let sig = FunctionSignature {
+        name: Some(name.clone()),
+        receiver: None,
+        params,
+        generics_params,
+        is_const: false,
+        abi,
+        quote_kind: None,
+        ret_ty,
+    };
+    if expect_symbol(input, ";").is_ok() {
+        return Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
+            attrs,
+            ty_annotation: None,
+            name,
+            sig,
+        })));
+    }
+    let body = parse_block_expr(input, file)?;
+    Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
+        ty_annotation: None,
+        attrs,
+        name,
+        ty: None,
+        sig,
+        body: Box::new(body),
+        visibility,
+    })))
+}
+
+fn parse_enum_item(
+    input: &mut &[Token],
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Enum)?;
+    let name = ident_like(input)?;
+    let generics_params = parse_optional_generic_params(input)?;
+    expect_symbol(input, "{")?;
+    let mut variants = Vec::new();
+    while peek_symbol(input) != Some("}") {
+        let variant_name = ident_like(input)?;
+        let value = if expect_symbol(input, "(").is_ok() {
+            let mut tys = Vec::new();
+            if peek_symbol(input) != Some(")") {
+                loop {
+                    tys.push(parse_type_expr(input)?);
+                    if expect_symbol(input, ",").is_err() {
+                        break;
+                    }
+                    if peek_symbol(input) == Some(")") {
+                        break;
+                    }
+                }
+            }
+            expect_symbol(input, ")")?;
+            if tys.len() == 1 {
+                tys.pop().expect("single enum variant type")
+            } else {
+                Ty::Tuple(fp_core::ast::TypeTuple { types: tys }.into())
+            }
+        } else {
+            Ty::unit()
         };
-        if n.kind.category() != CstCategory::Item {
-            continue;
+        let discriminant = if expect_symbol(input, "=").is_ok() {
+            Some(Box::new(parse_expr_winnow_no_struct(input, 0)?))
+        } else {
+            None
+        };
+        variants.push(EnumTypeVariant {
+            name: variant_name,
+            value,
+            discriminant,
+        });
+        if expect_symbol(input, ",").is_err() {
+            break;
         }
-        if n.kind == SyntaxKind::ItemExternBlock {
-            out.extend(lower_extern_block(n.as_ref())?);
-            continue;
-        }
-        out.push(lower_item_from_cst(n.as_ref())?);
     }
-    Ok(out)
+    expect_symbol(input, "}")?;
+    Ok(Item::from(ItemKind::DefEnum(ItemDefEnum {
+        attrs,
+        visibility,
+        name: name.clone(),
+        value: TypeEnum {
+            name,
+            generics_params,
+            repr: ReprOptions::default(),
+            variants,
+        },
+    })))
 }
 
-fn first_ident_token_text(node: &SyntaxNode) -> Option<String> {
-    node.children.iter().find_map(|c| match c {
-        SyntaxElement::Token(t)
-            if !t.is_trivia()
-                && t.text
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '\'') =>
-        {
-            Some(t.text.clone())
-        }
-        _ => None,
-    })
+fn parse_mod_item(
+    input: &mut &[Token],
+    file: FileId,
+    visibility: Visibility,
+    mut attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Mod)?;
+    let name = ident_like(input)?;
+    if expect_symbol(input, ";").is_ok() {
+        return Ok(Item::from(ItemKind::Module(Module {
+            attrs,
+            name,
+            items: Vec::new(),
+            visibility,
+            is_external: true,
+        })));
+    }
+    expect_symbol(input, "{")?;
+    attrs.extend(parse_inner_attrs(input, file)?);
+    let mut items = Vec::new();
+    while peek_symbol(input) != Some("}") {
+        items.push(parse_item_winnow(input, file)?);
+    }
+    expect_symbol(input, "}")?;
+    Ok(Item::from(ItemKind::Module(Module {
+        attrs,
+        name,
+        items,
+        visibility,
+        is_external: false,
+    })))
 }
 
-fn first_ident_token_text_skipping(node: &SyntaxNode, skip: &[&str]) -> Option<String> {
-    node.children.iter().find_map(|c| match c {
-        SyntaxElement::Token(t)
-            if !t.is_trivia()
-                && !skip.contains(&t.text.as_str())
-                && t.text
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '\'') =>
-        {
-            Some(t.text.clone())
-        }
-        _ => None,
-    })
+fn parse_opaque_type_item(
+    input: &mut &[Token],
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    expect_keyword(input, Keyword::Opaque)?;
+    expect_keyword(input, Keyword::Type)?;
+    let name = ident_like(input)?;
+    expect_symbol(input, ";")?;
+    Ok(Item::from(ItemKind::OpaqueType(ItemOpaqueType {
+        attrs,
+        visibility,
+        name,
+    })))
 }
 
-fn first_ident_token_text_deep_skipping(node: &SyntaxNode, skip: &[&str]) -> Option<String> {
-    for child in &node.children {
-        match child {
-            SyntaxElement::Token(t)
-                if !t.is_trivia()
-                    && !skip.contains(&t.text.as_str())
-                    && t.text
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '\'') =>
-            {
-                return Some(t.text.clone());
-            }
-            SyntaxElement::Node(n) => {
-                if let Some(found) = first_ident_token_text_deep_skipping(n.as_ref(), skip) {
-                    return Some(found);
+fn parse_item_macro(input: &mut &[Token], _attrs: Vec<Attribute>) -> ModalResult<Item> {
+    let path = parse_macro_path(input)?;
+    expect_symbol(input, "!")?;
+    let declared_name = if path.segments.last().map(Ident::as_str) == Some("macro_rules") {
+        Some(ident_like(input)?)
+    } else {
+        None
+    };
+    let (delimiter, group_span, token_trees, text) = parse_macro_group(input)?;
+    Ok(Item::from(ItemKind::Macro(ItemMacro {
+        invocation: MacroInvocation::new(path, delimiter, text)
+            .with_token_trees(token_trees)
+            .with_span(group_span),
+        declared_name,
+    })))
+}
+
+fn parse_visibility(input: &mut &[Token]) -> ModalResult<Visibility> {
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Pub).is_err() {
+        return Ok(Visibility::Public);
+    }
+    if expect_symbol(&mut probe, "(").is_err() {
+        *input = probe;
+        return Ok(Visibility::Public);
+    }
+    let visibility = if expect_keyword(&mut probe, Keyword::Crate).is_ok() {
+        Visibility::Crate
+    } else if peek_ident_like(probe) == Some("self") {
+        let _ = ident_like(&mut probe)?;
+        Visibility::Restricted(single_segment_path(fp_core::ast::ItemImportTree::SelfMod))
+    } else if expect_keyword(&mut probe, Keyword::Super).is_ok() {
+        Visibility::Restricted(single_segment_path(fp_core::ast::ItemImportTree::SuperMod))
+    } else if expect_keyword(&mut probe, Keyword::In).is_ok() {
+        Visibility::Restricted(parse_use_path(&mut probe)?)
+    } else {
+        return Err(ErrMode::Cut(ContextError::new()));
+    };
+    expect_symbol(&mut probe, ")")?;
+    *input = probe;
+    Ok(visibility)
+}
+
+fn parse_outer_attrs(input: &mut &[Token], file: FileId) -> ModalResult<Vec<Attribute>> {
+    parse_attrs(input, file, false)
+}
+
+fn parse_inner_attrs(input: &mut &[Token], file: FileId) -> ModalResult<Vec<Attribute>> {
+    parse_attrs(input, file, true)
+}
+
+fn parse_attrs(input: &mut &[Token], file: FileId, inner: bool) -> ModalResult<Vec<Attribute>> {
+    let mut attrs = Vec::new();
+    loop {
+        let mut probe = *input;
+        if inner {
+            if expect_symbol(&mut probe, "#![").is_err() {
+                let mut split_probe = *input;
+                if expect_symbol(&mut split_probe, "#").is_err() {
+                    break;
                 }
+                if expect_symbol(&mut split_probe, "!").is_err()
+                    || expect_symbol(&mut split_probe, "[").is_err()
+                {
+                    break;
+                }
+                probe = split_probe;
             }
-            _ => {}
+        } else if expect_symbol(&mut probe, "#[").is_err() {
+            if expect_symbol(&mut probe, "#").is_err() {
+                break;
+            }
+            expect_symbol(&mut probe, "[")?;
         }
+        let meta = parse_attr_meta_direct(&mut probe, file)?;
+        expect_symbol(&mut probe, "]")?;
+        *input = probe;
+        attrs.push(Attribute {
+            style: if inner { AttrStyle::Inner } else { AttrStyle::Outer },
+            meta,
+        });
     }
-    None
+    Ok(attrs)
 }
 
-fn first_token_text(node: &SyntaxNode) -> Option<String> {
-    node.children.iter().find_map(|c| match c {
-        SyntaxElement::Token(t) if !t.is_trivia() => Some(t.text.clone()),
-        _ => None,
-    })
+fn const_struct_attr() -> Attribute {
+    Attribute {
+        style: AttrStyle::Outer,
+        meta: AttrMeta::Path(Path::plain(vec![Ident::new("const")])),
+    }
+}
+
+fn parse_attr_meta_direct(input: &mut &[Token], file: FileId) -> ModalResult<AttrMeta> {
+    let name = parse_attr_path_direct(input)?;
+    if expect_symbol(input, "=").is_ok() {
+        let value = parse_expr_winnow_no_struct(input, file)?;
+        return Ok(AttrMeta::NameValue(AttrMetaNameValue {
+            name,
+            value: Box::new(value),
+        }));
+    }
+    if expect_symbol(input, "(").is_ok() {
+        let mut items = Vec::new();
+        while peek_symbol(input) != Some(")") {
+            items.push(parse_attr_meta_direct(input, file)?);
+            if expect_symbol(input, ",").is_err() {
+                break;
+            }
+        }
+        expect_symbol(input, ")")?;
+        return Ok(AttrMeta::List(AttrMetaList { name, items }));
+    }
+    Ok(AttrMeta::Path(name))
+}
+
+fn parse_attr_path_direct(input: &mut &[Token]) -> ModalResult<Path> {
+    let saw_root = expect_symbol(input, "::").is_ok();
+    let mut segments = vec![ident_like(input)?];
+    while expect_symbol(input, "::").is_ok() {
+        segments.push(ident_like(input)?);
+    }
+    let (prefix, segments) = split_path_prefix(segments, saw_root);
+    Ok(Path::new(prefix, segments))
+}
+
+fn looks_like_item_macro(input: &[Token]) -> bool {
+    matches!(input, [first, second, ..] if matches!(first.kind, TokenKind::Ident | TokenKind::Keyword(_)) && second.kind == TokenKind::Symbol && second.lexeme == "!")
 }

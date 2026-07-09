@@ -8,12 +8,11 @@ use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer, NormalizeOutco
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
-use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::ast::lower_common::{
-    lex_spans_for_group, macro_token_trees_to_lexemes, macro_tokens_file_id,
+    macro_token_trees_to_lexemes, macro_tokens_file_id,
 };
-use crate::cst::{parse_expr_lexemes_prefix_to_cst, parse_type_lexemes_prefix_to_cst};
-use crate::lexer::lexeme::{Lexeme, LexemeKind};
+use crate::macro_parser::{macro_token_trees_to_tokens, tokens_to_top_level_slices, wrap_tokens_in_group};
+use crate::lexer::lexeme::LexemeKind;
 
 /// FerroPhase intrinsic normalizer that adds `t!` macro lowering for type expressions,
 /// delegating all other macros to the Rust normalizer.
@@ -234,68 +233,33 @@ fn intrinsic_macro_kind(name: &str) -> Option<IntrinsicCallKind> {
 }
 
 fn parse_type_macro_tokens(tokens: &[MacroTokenTree]) -> Result<fp_core::ast::Ty> {
-    let lexemes = macro_token_trees_to_lexemes(tokens);
     let file_id = macro_tokens_file_id(tokens);
-    let (ty_cst, consumed) = parse_type_lexemes_prefix_to_cst(&lexemes, file_id, &[])
-        .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
-
-    if lexemes[consumed..]
-        .iter()
-        .any(|lex| lex.kind == LexemeKind::Token)
-    {
-        return Err(fp_core::error::Error::from(
-            "t! macro tokens contain trailing input",
-        ));
-    }
-
-    lower_type_from_cst(&ty_cst).map_err(|err| fp_core::error::Error::from(err.to_string()))
+    let tokens = macro_token_trees_to_tokens(tokens);
+    crate::ast::parse_type_tokens(&tokens, file_id)
+        .map_err(|err| fp_core::error::Error::from(err.to_string()))
 }
 
 fn parse_expr_macro_tokens(tokens: &[MacroTokenTree]) -> Result<Vec<Expr>> {
-    let lexemes = macro_token_trees_to_lexemes(tokens);
     let file_id = macro_tokens_file_id(tokens);
-    let mut idx = 0;
     let mut args = Vec::new();
-    while idx < lexemes.len() {
-        while idx < lexemes.len() && lexemes[idx].kind != LexemeKind::Token {
-            idx += 1;
-        }
-        if idx >= lexemes.len() {
-            break;
-        }
-        if lexemes[idx].text == "," {
-            idx += 1;
+    let tokens = macro_token_trees_to_tokens(tokens);
+    for slice in tokens_to_top_level_slices(&tokens) {
+        if slice.is_empty() {
             continue;
         }
-        let (expr_cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], file_id)
-            .map_err(|err| {
-                fp_core::error::Error::from(format!("assert macro parse error: {}", err))
-            })?;
-        let expr = lower_expr_from_cst(&expr_cst)
-            .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+        let expr = crate::ast::parse_expr_tokens(slice, file_id)
+            .map_err(|err| fp_core::error::Error::from(format!("macro expr parse error: {err}")))?;
         args.push(expr);
-        idx += consumed;
     }
     Ok(args)
 }
 
 fn parse_vec_macro_tokens(tokens: &[MacroTokenTree], span: Span) -> Result<Expr> {
-    let mut lexemes = macro_token_trees_to_lexemes(tokens);
     let file_id = macro_tokens_file_id(tokens);
-    let (open_span, close_span) = lex_spans_for_group(span);
-    lexemes.insert(0, Lexeme::token("[".to_string(), open_span));
-    lexemes.push(Lexeme::token("]".to_string(), close_span));
-    let (expr_cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes, file_id)
-        .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
-    if lexemes[consumed..]
-        .iter()
-        .any(|lex| lex.kind == LexemeKind::Token)
-    {
-        return Err(fp_core::error::Error::from(
-            "vec! macro tokens contain trailing input",
-        ));
-    }
-    lower_expr_from_cst(&expr_cst).map_err(|err| fp_core::error::Error::from(err.to_string()))
+    let tokens = macro_token_trees_to_tokens(tokens);
+    let wrapped = wrap_tokens_in_group(&tokens, "[", "]", span);
+    crate::ast::parse_expr_tokens(&wrapped, file_id)
+        .map_err(|err| fp_core::error::Error::from(err.to_string()))
 }
 
 #[allow(dead_code)]
@@ -321,40 +285,64 @@ fn parse_macro_tokens_with_type_args(
         }
         let is_type = type_positions.iter().any(|pos| *pos == arg_index);
         if is_type {
-            match parse_type_lexemes_prefix_to_cst(&lexemes[idx..], file_id, &[","]) {
-                Ok((ty_cst, consumed)) => {
-                    let ty = lower_type_from_cst(&ty_cst)
-                        .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+            let slice = lexeme_slice_to_tokens(&lexemes[idx..]);
+            match crate::ast::parse_type_prefix_tokens(&slice, file_id) {
+                Ok((ty, consumed)) => {
                     args.push(Expr::value(Value::Type(ty)));
                     idx += consumed;
                 }
                 Err(_) => {
-                    let (expr_cst, consumed) = parse_expr_lexemes_prefix_to_cst(
-                        &lexemes[idx..],
-                        file_id,
-                    )
-                    .map_err(|err| {
-                        fp_core::error::Error::from(format!("assert macro parse error: {}", err))
-                    })?;
-                    let expr = lower_expr_from_cst(&expr_cst)
-                        .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+                    let slice = lexeme_slice_to_tokens(&lexemes[idx..]);
+                    let (expr, consumed) =
+                        parse_expr_prefix_tokens(slice.as_slice(), file_id).map_err(|err| {
+                            fp_core::error::Error::from(format!("assert macro parse error: {err}"))
+                        })?;
                     args.push(Expr::value(Value::Type(Ty::Expr(expr.into()))));
                     idx += consumed;
                 }
             }
         } else {
-            let (expr_cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], file_id)
+            let slice = lexeme_slice_to_tokens(&lexemes[idx..]);
+            let (expr, consumed) = parse_expr_prefix_tokens(slice.as_slice(), file_id)
                 .map_err(|err| {
-                fp_core::error::Error::from(format!("assert macro parse error: {}", err))
-            })?;
-            let expr = lower_expr_from_cst(&expr_cst)
-                .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+                    fp_core::error::Error::from(format!("assert macro parse error: {err}"))
+                })?;
             args.push(expr);
             idx += consumed;
         }
         arg_index += 1;
     }
     Ok(args)
+}
+
+fn lexeme_slice_to_tokens(lexemes: &[crate::lexer::lexeme::Lexeme]) -> Vec<crate::lexer::tokenizer::Token> {
+    lexemes
+        .iter()
+        .filter(|lex| lex.kind == LexemeKind::Token)
+        .map(|lex| {
+            let (kind, lexeme) = crate::lexer::tokenizer::classify_and_normalize_lexeme(&lex.text)
+                .unwrap_or((crate::lexer::tokenizer::TokenKind::Symbol, lex.text.clone()));
+            crate::lexer::tokenizer::Token {
+                kind,
+                lexeme,
+                span: crate::lexer::Span {
+                    start: lex.span.start,
+                    end: lex.span.end,
+                },
+            }
+        })
+        .collect()
+}
+
+fn parse_expr_prefix_tokens(tokens: &[crate::lexer::tokenizer::Token], file_id: fp_core::span::FileId) -> Result<(Expr, usize)> {
+    let mut best = None;
+    for end in 1..=tokens.len() {
+        match crate::ast::parse_expr_tokens(&tokens[..end], file_id) {
+            Ok(expr) => best = Some((expr, end)),
+            Err(_) => continue,
+        }
+    }
+    best.ok_or_else(|| fp_core::error::Error::from("failed to parse expression prefix"))
 }
 
 fn parse_format_template(template: &str) -> Result<Vec<FormatTemplatePart>> {
