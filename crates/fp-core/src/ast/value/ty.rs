@@ -99,10 +99,10 @@ impl Ty {
         Ty::Primitive(TypePrimitive::Bool)
     }
     pub fn expr(expr: Expr) -> Self {
-        let (ty, kind) = expr.into_parts();
+        let (id, ty, span, kind) = expr.into_parts();
         match kind {
             ExprKind::Value(value) => Self::value(*value),
-            other => Ty::Expr(Box::new(Expr::from_parts(ty, other))),
+            other => Ty::Expr(Box::new(Expr::from_parts(id, ty, span, other))),
         }
     }
     pub fn value(v: impl Into<Value>) -> Self {

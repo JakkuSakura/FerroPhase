@@ -295,6 +295,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypeVarId> {
+        let expr_id = self.expr_id(expr);
         let span = expr.span();
         let previous = self.current_span;
         let active = self.span_or_previous(span, previous);
@@ -450,7 +451,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ExprKind::Name(locator) => {
                     let (var, resolved_name) = self.lookup_locator_with_resolution(locator)?;
                     if let Some(resolved_name) = resolved_name {
-                        expr.set_resolved_name(resolved_name);
+                        self.record_resolved_name(expr_id, resolved_name);
                     }
                     if let Some(ty) = existing_ty.as_ref() {
                         let annot = self.type_from_ast_ty(ty)?;

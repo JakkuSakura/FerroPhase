@@ -1,4 +1,6 @@
+use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
+use std::collections::HashMap;
 
 #[derive(Clone, Copy)]
 pub enum TypingDiagnosticLevel {
@@ -49,4 +51,22 @@ impl TypingDiagnostic {
 pub struct TypingOutcome {
     pub diagnostics: Vec<TypingDiagnostic>,
     pub has_errors: bool,
+    pub resolved_names: ResolvedNameTable,
+}
+
+pub type ExprId = fp_core::ast::ExprId;
+
+pub type ResolvedNameTable = HashMap<ExprId, ResolvedName>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedNameNamespace {
+    Value,
+    Type,
+    Module,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedName {
+    pub namespace: ResolvedNameNamespace,
+    pub path: QualifiedPath,
 }

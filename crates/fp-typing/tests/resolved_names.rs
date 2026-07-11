@@ -1,6 +1,6 @@
 use fp_core::ast::*;
 use fp_core::module::path::QualifiedPath;
-use fp_typing::AstTypeInferencer;
+use fp_typing::{AstTypeInferencer, ResolvedNameNamespace};
 
 #[test]
 fn type_inference_records_resolved_name_on_tast_expr() {
@@ -34,9 +34,10 @@ fn type_inference_records_resolved_name_on_tast_expr() {
         panic!("expected expr item");
     };
     expr = typed_expr.clone();
-    let resolved = expr
-        .resolved_name()
-        .expect("typed AST expression should carry resolved name");
+    let resolved = outcome
+        .resolved_names
+        .get(&expr.id())
+        .expect("typing outcome should carry resolved name for expression");
     assert_eq!(resolved.path, QualifiedPath::new(vec!["VALUE".to_string()]));
     assert!(matches!(resolved.namespace, ResolvedNameNamespace::Value));
 }

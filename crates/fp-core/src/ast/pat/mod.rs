@@ -1,6 +1,16 @@
 use crate::ast::{Expr, Ident, Name, QuoteFragmentKind, QuoteItemKind, Ty, TySlot};
 use crate::span::Span;
 use crate::{common_enum, common_struct};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+pub type PatternId = u64;
+
+static PATTERN_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+pub fn fresh_pattern_id() -> PatternId {
+    PATTERN_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
 pub type BPattern = Box<Pattern>;
 common_enum! {
     pub enum PatternKind {
@@ -22,6 +32,8 @@ common_enum! {
 
 common_struct! {
     pub struct Pattern {
+        #[serde(default)]
+        pub id: PatternId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ty: TySlot,
         #[serde(flatten)]
@@ -31,11 +43,27 @@ common_struct! {
 
 impl Pattern {
     pub fn new(kind: PatternKind) -> Self {
-        Self { ty: None, kind }
+        Self {
+            id: fresh_pattern_id(),
+            ty: None,
+            kind,
+        }
     }
 
     pub fn with_ty(kind: PatternKind, ty: TySlot) -> Self {
-        Self { ty, kind }
+        Self {
+            id: fresh_pattern_id(),
+            ty,
+            kind,
+        }
+    }
+
+    pub fn id(&self) -> PatternId {
+        self.id
+    }
+
+    pub fn set_id(&mut self, id: PatternId) {
+        self.id = id;
     }
 
     pub fn ty(&self) -> Option<&Ty> {
@@ -58,12 +86,12 @@ impl Pattern {
         &mut self.kind
     }
 
-    pub fn into_parts(self) -> (TySlot, PatternKind) {
-        (self.ty, self.kind)
+    pub fn into_parts(self) -> (PatternId, TySlot, PatternKind) {
+        (self.id, self.ty, self.kind)
     }
 
-    pub fn from_parts(ty: TySlot, kind: PatternKind) -> Self {
-        Self { ty, kind }
+    pub fn from_parts(id: PatternId, ty: TySlot, kind: PatternKind) -> Self {
+        Self { id, ty, kind }
     }
 
     pub fn as_ident(&self) -> Option<&Ident> {

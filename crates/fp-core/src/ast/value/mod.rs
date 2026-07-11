@@ -97,10 +97,10 @@ impl Value {
 
     pub fn expr(e: impl Into<Expr>) -> Self {
         let expr: Expr = e.into();
-        let (ty, kind) = expr.into_parts();
+        let (id, ty, span, kind) = expr.into_parts();
         match kind {
             ExprKind::Value(v) => *v,
-            other => Value::Expr(Expr::from_parts(ty, other).into()),
+            other => Value::Expr(Expr::from_parts(id, ty, span, other).into()),
         }
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {

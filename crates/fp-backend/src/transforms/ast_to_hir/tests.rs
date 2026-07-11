@@ -1,7 +1,9 @@
 use super::*;
 use fp_core::ast;
+use fp_core::module::path::QualifiedPath;
 use fp_core::ops::BinOpKind;
 use fp_core::span::Span;
+use fp_typing::{ResolvedName, ResolvedNameNamespace, ResolvedNameTable};
 use std::collections::HashMap;
 
 fn ident(name: &str) -> ast::Ident {
@@ -37,6 +39,33 @@ fn make_fn(
         .with_params(params)
         .with_ret_ty(ret);
     ast::Item::from(ast::ItemKind::DefFunction(func))
+}
+
+#[test]
+fn transform_expr_uses_typing_resolved_name_table() -> Result<()> {
+    let expr = ast::Expr::name(ast::Name::from_ident(ident("VALUE")));
+
+    let mut resolved_names = ResolvedNameTable::new();
+    resolved_names.insert(
+        expr.id(),
+        ResolvedName {
+            namespace: ResolvedNameNamespace::Value,
+            path: QualifiedPath::new(vec!["module".to_string(), "VALUE".to_string()]),
+        },
+    );
+
+    let mut generator = HirGenerator::new().with_resolved_names(resolved_names);
+    let hir_expr = generator.transform_expr_to_hir(&expr)?;
+    let hir::ExprKind::Path(path) = hir_expr.kind else {
+        return Err(crate::error::optimization_error(
+            "expected path expression".to_string(),
+        ));
+    };
+
+    assert_eq!(path.segments.len(), 2);
+    assert_eq!(path.segments[0].name.as_str(), "module");
+    assert_eq!(path.segments[1].name.as_str(), "VALUE");
+    Ok(())
 }
 
 fn cfg_target_os_attr(value: &str) -> ast::Attribute {

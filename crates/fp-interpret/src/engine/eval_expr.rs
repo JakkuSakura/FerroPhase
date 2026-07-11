@@ -4501,7 +4501,12 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn make_ready_future_runtime_value(&self, value: Value) -> Value {
-        let expr = Expr::from_parts(None, ExprKind::Value(Box::new(value)));
+        let expr = Expr::from_parts(
+            fp_core::ast::fresh_expr_id(),
+            None,
+            None,
+            ExprKind::Value(Box::new(value)),
+        );
         let future = self.capture_runtime_future(&expr);
         self.make_future_runtime_value(future)
     }

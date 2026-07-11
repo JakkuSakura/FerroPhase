@@ -2,11 +2,11 @@ use crate::ast::{
     get_threadlocal_serializer, BItem, BValue, ExprMacro, Ident, MacroInvocation, Name, Path, Ty,
     TySlot, Value, ValueUnit,
 };
-use crate::module::path::QualifiedPath;
 use crate::span::Span;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 use std::fmt::{Debug, Display, Formatter};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 mod closure;
 mod collection;
@@ -21,19 +21,10 @@ pub use value::*;
 pub type ExprId = u64;
 pub type BExpr = Box<Expr>;
 
-common_enum! {
-    pub enum ResolvedNameNamespace {
-        Value,
-        Type,
-        Module,
-    }
-}
+static EXPR_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-common_struct! {
-    pub struct ResolvedName {
-        pub namespace: ResolvedNameNamespace,
-        pub path: QualifiedPath,
-    }
+pub fn fresh_expr_id() -> ExprId {
+    EXPR_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 common_enum! {
@@ -98,10 +89,10 @@ common_enum! {
 
 common_struct! {
     pub struct Expr {
+        #[serde(default)]
+        pub id: ExprId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ty: TySlot,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub resolved_name: Option<ResolvedName>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub span: Option<Span>,
         #[serde(flatten)]
@@ -112,8 +103,8 @@ common_struct! {
 impl Expr {
     pub fn new(kind: ExprKind) -> Self {
         Self {
+            id: fresh_expr_id(),
             ty: None,
-            resolved_name: None,
             span: None,
             kind,
         }
@@ -121,11 +112,19 @@ impl Expr {
 
     pub fn with_ty(kind: ExprKind, ty: TySlot) -> Self {
         Self {
+            id: fresh_expr_id(),
             ty,
-            resolved_name: None,
             span: None,
             kind,
         }
+    }
+
+    pub fn id(&self) -> ExprId {
+        self.id
+    }
+
+    pub fn set_id(&mut self, id: ExprId) {
+        self.id = id;
     }
 
     pub fn ty(&self) -> Option<&Ty> {
@@ -138,14 +137,6 @@ impl Expr {
 
     pub fn set_ty(&mut self, ty: Ty) {
         self.ty = Some(ty);
-    }
-
-    pub fn resolved_name(&self) -> Option<&ResolvedName> {
-        self.resolved_name.as_ref()
-    }
-
-    pub fn set_resolved_name(&mut self, resolved_name: ResolvedName) {
-        self.resolved_name = Some(resolved_name);
     }
 
     pub fn span(&self) -> Span {
@@ -165,17 +156,12 @@ impl Expr {
         &mut self.kind
     }
 
-    pub fn into_parts(self) -> (TySlot, ExprKind) {
-        (self.ty, self.kind)
+    pub fn into_parts(self) -> (ExprId, TySlot, Option<Span>, ExprKind) {
+        (self.id, self.ty, self.span, self.kind)
     }
 
-    pub fn from_parts(ty: TySlot, kind: ExprKind) -> Self {
-        Self {
-            ty,
-            resolved_name: None,
-            span: None,
-            kind,
-        }
+    pub fn from_parts(id: ExprId, ty: TySlot, span: Option<Span>, kind: ExprKind) -> Self {
+        Self { id, ty, span, kind }
     }
 
     pub fn with_ty_slot(mut self, ty: TySlot) -> Self {
@@ -216,10 +202,10 @@ impl Expr {
         block.into_expr()
     }
     pub fn into_block(self) -> ExprBlock {
-        let (ty, kind) = self.into_parts();
+        let (id, ty, span, kind) = self.into_parts();
         match kind {
             ExprKind::Block(block) => block,
-            other => ExprBlock::new_expr(Expr::from_parts(ty, other)),
+            other => ExprBlock::new_expr(Expr::from_parts(id, ty, span, other)),
         }
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
@@ -303,5 +289,22 @@ where
 impl From<BExpr> for Expr {
     fn from(expr: BExpr) -> Self {
         *expr
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{Ident, Name, Ty};
+
+    #[test]
+    fn expr_parts_preserve_type_metadata() {
+        let mut expr = Expr::name(Name::from_ident(Ident::new("value")));
+        expr.set_ty(Ty::bool());
+
+        let (id, ty, span, kind) = expr.into_parts();
+        let rebuilt = Expr::from_parts(id, ty, span, kind);
+
+        assert_eq!(rebuilt.ty(), Some(&Ty::bool()));
     }
 }

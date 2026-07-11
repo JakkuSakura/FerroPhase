@@ -251,7 +251,7 @@ pub fn materialize_expr(
     expr: ast::Expr,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::Expr> {
-    let ast::Expr { ty, span, kind } = expr;
+    let ast::Expr { id, ty, span, kind } = expr;
     let expr_ty = ty.clone();
     let mut new_expr = match kind {
         ast::ExprKind::Block(block) => ast::Expr::with_ty(
@@ -490,6 +490,7 @@ pub fn materialize_expr(
         }
         other => ast::Expr::with_ty(other, ty),
     };
+    new_expr.id = id;
     new_expr.span = span;
     Ok(new_expr)
 }

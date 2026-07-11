@@ -4,7 +4,10 @@ use std::collections::{HashMap, HashSet};
 pub mod runtime_types;
 pub mod typing;
 pub use runtime_types::{materialize_type_with_hooks, type_from_value, TypeMaterializeHooks};
-pub use typing::types::{TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome};
+pub use typing::types::{
+    ExprId, ResolvedName, ResolvedNameNamespace, ResolvedNameTable, TypingDiagnostic,
+    TypingDiagnosticLevel, TypingOutcome,
+};
 
 use crate::typing::scheme::TypeScheme;
 use fp_core::ast::*;
@@ -321,6 +324,7 @@ pub struct AstTypeInferencer<'ctx> {
     exception_stack: Vec<ExceptionContext>,
     current_span: Option<Span>,
     resolution_hook: Option<Box<dyn TypeResolutionHook + 'ctx>>,
+    resolved_names: ResolvedNameTable,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -446,6 +450,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             current_span: None,
             resolution_hook: None,
             unimplemented_symbols: HashSet::new(),
+            resolved_names: HashMap::new(),
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -667,7 +672,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         TypingOutcome {
             diagnostics: std::mem::take(&mut self.diagnostics),
             has_errors: std::mem::replace(&mut self.has_errors, false),
+            resolved_names: std::mem::take(&mut self.resolved_names),
         }
+    }
+
+    fn expr_id(&self, expr: &Expr) -> ExprId {
+        expr.id()
+    }
+
+    fn record_resolved_name(&mut self, expr_id: ExprId, resolved_name: ResolvedName) {
+        self.resolved_names.insert(expr_id, resolved_name);
     }
 
     fn validate_struct_recursion(&mut self, name: &str, fields: &[StructuralField]) {

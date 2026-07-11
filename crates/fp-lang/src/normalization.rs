@@ -21,9 +21,11 @@ pub struct FerroIntrinsicNormalizer;
 
 impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     fn normalize_macro(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
-        let (ty_slot, kind) = expr.into_parts();
+        let (id, ty_slot, span, kind) = expr.into_parts();
         let ExprKind::Macro(macro_expr) = kind else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(ty_slot, kind)));
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                id, ty_slot, span, kind,
+            )));
         };
 
         if let Some(name) = macro_expr.invocation.path.segments.last() {
@@ -34,7 +36,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     return Ok(NormalizeOutcome::Normalized(replacement));
                 }
                 return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                    id,
                     ty_slot,
+                    span,
                     ExprKind::Macro(macro_expr),
                 )));
             }
@@ -147,7 +151,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 call_args.push(Expr::new(ExprKind::FormatString(template)));
                 call_args.extend(args[1..].iter().cloned());
                 let replacement = Expr::from_parts(
+                    id,
                     ty_slot.clone(),
+                    span,
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
                         IntrinsicCallKind::Format,
                         call_args,
@@ -164,7 +170,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     ));
                 }
                 let replacement = Expr::from_parts(
+                    id,
                     ty_slot.clone(),
+                    span,
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
                         IntrinsicCallKind::TypeOf,
                         args,
@@ -185,7 +193,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 call_args.push(Expr::new(ExprKind::FormatString(template)));
                 call_args.extend(args[skip..].iter().cloned());
                 let replacement = Expr::from_parts(
+                    id,
                     ty_slot.clone(),
+                    span,
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(kind, call_args, Vec::new())),
                 );
                 return Ok(NormalizeOutcome::Normalized(replacement));
@@ -193,7 +203,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             if let Some(kind) = intrinsic_macro_kind(macro_name) {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 let replacement = Expr::from_parts(
+                    id,
                     ty_slot.clone(),
+                    span,
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(kind, args, Vec::new())),
                 );
                 return Ok(NormalizeOutcome::Normalized(replacement));
@@ -201,7 +213,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         }
 
         Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+            id,
             ty_slot,
+            span,
             ExprKind::Macro(macro_expr),
         )))
     }

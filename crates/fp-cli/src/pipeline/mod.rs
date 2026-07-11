@@ -55,7 +55,7 @@ use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
 use fp_pipeline::{PipelineBuilder, PipelineDiagnostics, PipelineError, PipelineStage};
 #[cfg(feature = "lang-typescript")]
 use fp_typescript::frontend::TsParseMode;
-use fp_typing::TypingDiagnosticLevel;
+use fp_typing::{ResolvedNameTable, TypingDiagnosticLevel};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
@@ -129,6 +129,7 @@ pub struct Pipeline {
     source_language: Option<String>,
     frontend_snapshot: Option<FrontendSnapshot>,
     last_const_eval: Option<ConstEvalOutcome>,
+    last_resolved_names: ResolvedNameTable,
     #[cfg(feature = "lang-typescript")]
     typescript_frontend: Option<Arc<TypeScriptFrontend>>,
     #[cfg(feature = "lang-typescript")]
@@ -222,6 +223,7 @@ impl Pipeline {
             source_language: None,
             frontend_snapshot: None,
             last_const_eval: None,
+            last_resolved_names: ResolvedNameTable::new(),
             #[cfg(feature = "lang-typescript")]
             typescript_frontend: Some(ts_frontend_concrete),
             #[cfg(feature = "lang-typescript")]

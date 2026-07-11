@@ -9,6 +9,7 @@ use fp_core::query::{
 use fp_core::span::{FileId, Span};
 use fp_core::{ast, ast::attrs_repr, ast::ItemKind, cfg::TargetEnv, hir};
 use fp_sql::sql_ast::parse_sql_ast;
+use fp_typing::ResolvedNameTable;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -56,6 +57,7 @@ pub struct HirGenerator {
     unimplemented_type_def_ids: HashSet<hir::DefId>,
     resolving_type_aliases: HashSet<String>,
     module_resolution: Option<fp_core::module::resolution::ModuleResolutionContext>,
+    resolved_names: ResolvedNameTable,
     target_env: TargetEnv,
     respect_cfg: bool,
 }
@@ -312,9 +314,15 @@ impl HirGenerator {
             unimplemented_type_def_ids: HashSet::new(),
             resolving_type_aliases: HashSet::new(),
             module_resolution: None,
+            resolved_names: ResolvedNameTable::new(),
             target_env: TargetEnv::host(),
             respect_cfg: true,
         }
+    }
+
+    pub fn with_resolved_names(mut self, resolved_names: ResolvedNameTable) -> Self {
+        self.resolved_names = resolved_names;
+        self
     }
 
     pub fn with_module_resolution(
@@ -2651,7 +2659,8 @@ const DUMMY_CAPTURE_NAME: &str = "__fp_no_capture";
 
 fn expand_intrinsic_collection(expr: &mut ast::Expr) -> bool {
     if let ast::ExprKind::IntrinsicContainer(collection) = expr.kind() {
-        let new_expr = collection.clone().into_const_expr();
+        let mut new_expr = collection.clone().into_const_expr();
+        new_expr.id = expr.id();
         *expr = new_expr;
         true
     } else {
@@ -2967,6 +2976,7 @@ impl ClosureLowering {
             update: None,
         }));
         struct_expr.set_ty(env_struct_ty.clone());
+        struct_expr.id = expr.id();
 
         *expr = struct_expr;
 
@@ -3650,6 +3660,7 @@ impl CaptureReplacer {
                                 select: ast::ExprSelectType::Field,
                             }));
                         expr_struct.set_ty(capture_ty.clone());
+                        expr_struct.id = expr.id();
                         *expr = expr_struct;
                     }
                 }
@@ -3842,6 +3853,7 @@ impl CaptureReplacer {
             ast::ExprKind::IntrinsicContainer(container) => {
                 let mut new_expr = container.clone().into_const_expr();
                 self.visit(&mut new_expr);
+                new_expr.id = expr.id();
                 *expr = new_expr;
             }
             ast::ExprKind::Any(_)

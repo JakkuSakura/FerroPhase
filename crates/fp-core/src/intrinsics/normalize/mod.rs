@@ -317,7 +317,9 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
         }
         if let Some(new_expr) = replacement {
             let old_ty = expr.ty.clone();
+            let old_id = expr.id();
             *expr = new_expr.with_ty_slot(old_ty);
+            expr.set_id(old_id);
             continue;
         }
 

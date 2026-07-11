@@ -1,5 +1,6 @@
 use super::super::*;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+use fp_typing::ResolvedNameTable;
 use tracing::warn;
 
 pub(crate) struct FrontendContext {
@@ -7,6 +8,7 @@ pub(crate) struct FrontendContext {
     pub options: PipelineOptions,
     pub file_path: Option<PathBuf>,
     pub base_path: PathBuf,
+    pub resolved_names: ResolvedNameTable,
 }
 
 pub(crate) struct FrontendStage;
@@ -33,6 +35,7 @@ impl PipelineStage for FrontendStage {
         if let Some(module_resolution) = context.options.module_resolution.as_ref() {
             generator = generator.with_module_resolution(module_resolution.clone());
         }
+        generator = generator.with_resolved_names(context.resolved_names);
         generator.set_target_triple(context.options.target_triple.as_deref());
 
         if matches!(
@@ -102,6 +105,7 @@ impl Pipeline {
             options: options.clone(),
             file_path: file_path.map(Path::to_path_buf),
             base_path: base_path.to_path_buf(),
+            resolved_names: std::mem::take(&mut self.last_resolved_names),
         };
         self.run_pipeline_stage(STAGE_AST_TO_HIR, stage, context, options)
     }

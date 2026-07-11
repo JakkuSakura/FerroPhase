@@ -1,6 +1,7 @@
 use super::super::*;
 use fp_core::config;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+use fp_typing::ResolvedNameTable;
 
 pub(crate) struct TypingContext {
     pub ast: Node,
@@ -14,7 +15,7 @@ pub(crate) struct TypingStage {
 
 impl PipelineStage for TypingStage {
     type SrcCtx = TypingContext;
-    type DstCtx = Node;
+    type DstCtx = (Node, ResolvedNameTable);
 
     fn name(&self) -> &'static str {
         self.stage_label
@@ -24,7 +25,7 @@ impl PipelineStage for TypingStage {
         &self,
         context: TypingContext,
         diagnostics: &mut PipelineDiagnostics,
-    ) -> Result<Node, PipelineError> {
+    ) -> Result<(Node, ResolvedNameTable), PipelineError> {
         let mut ast = context.ast;
         match fp_typing::annotate_with_module_resolution(
             &mut ast,
@@ -54,7 +55,7 @@ impl PipelineStage for TypingStage {
                         "AST typing reported errors",
                     ));
                 }
-                Ok(ast)
+                Ok((ast, outcome.resolved_names))
             }
             Err(err) => {
                 let diagnostic = match err {
@@ -85,8 +86,10 @@ impl Pipeline {
             module_resolution: options.module_resolution.clone(),
         };
         match self.run_pipeline_stage(stage_label, stage, context, options) {
-            Ok(next_ast) => {
+            Ok((next_ast, resolved_names)) => {
                 *ast = next_ast;
+                self.last_resolved_names
+                    .extend(resolved_names.into_iter());
                 Ok(())
             }
             Err(err) => {

@@ -5,14 +5,14 @@ use fp_core::module::resolution::resolve_symbol_path;
 impl HirGenerator {
     fn resolved_name_to_hir_path(
         &mut self,
-        resolved_name: &ast::ResolvedName,
+        resolved_name: &fp_typing::ResolvedName,
         locator: &Name,
         scope: PathResolutionScope,
     ) -> Result<Option<hir::Path>> {
         let resolution_scope = match resolved_name.namespace {
-            ast::ResolvedNameNamespace::Value => PathResolutionScope::Value,
-            ast::ResolvedNameNamespace::Type => PathResolutionScope::Type,
-            ast::ResolvedNameNamespace::Module => {
+            fp_typing::ResolvedNameNamespace::Value => PathResolutionScope::Value,
+            fp_typing::ResolvedNameNamespace::Type => PathResolutionScope::Type,
+            fp_typing::ResolvedNameNamespace::Module => {
                 return Ok(Some(hir::Path {
                     segments: resolved_name
                         .path
@@ -443,9 +443,9 @@ impl HirGenerator {
     ) -> Result<hir::Path> {
         match expr.kind() {
             ast::ExprKind::Name(locator) => {
-                if let Some(resolved_name) = expr.resolved_name() {
+                if let Some(resolved_name) = self.resolved_names.get(&expr.id()).cloned() {
                     if let Some(path) =
-                        self.resolved_name_to_hir_path(resolved_name, locator, scope)?
+                        self.resolved_name_to_hir_path(&resolved_name, locator, scope)?
                     {
                         return Ok(path);
                     }
