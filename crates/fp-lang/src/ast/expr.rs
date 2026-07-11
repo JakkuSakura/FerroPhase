@@ -1,4 +1,6 @@
 use super::*;
+use fp_core::module::path::PathPrefix;
+use winnow::Parser;
 
 pub(crate) fn parse_expr_winnow(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     parse_assignment(input, file)
@@ -257,7 +259,8 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
             ExprKind::Paren(paren) => *paren.expr,
             _ => inner,
         };
-        if matches!(token.kind(), ExprKind::Quote(quote) if matches!(quote.kind, Some(QuoteFragmentKind::Item))) {
+        if matches!(token.kind(), ExprKind::Quote(quote) if matches!(quote.kind, Some(QuoteFragmentKind::Item)))
+        {
             return Err(ErrMode::Cut(ContextError::new()));
         }
         return Ok(ExprKind::Splice(ExprSplice {
@@ -312,14 +315,15 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
 fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     let mut probe = *input;
     if expect_keyword(&mut probe, Keyword::Splice).is_ok() {
-        let inner =
-            parse_prefix_no_struct(&mut probe, file).or_else(|_| parse_primary_no_struct(&mut probe, file))?;
+        let inner = parse_prefix_no_struct(&mut probe, file)
+            .or_else(|_| parse_primary_no_struct(&mut probe, file))?;
         *input = probe;
         let token = match inner.kind().clone() {
             ExprKind::Paren(paren) => *paren.expr,
             _ => inner,
         };
-        if matches!(token.kind(), ExprKind::Quote(quote) if matches!(quote.kind, Some(QuoteFragmentKind::Item))) {
+        if matches!(token.kind(), ExprKind::Quote(quote) if matches!(quote.kind, Some(QuoteFragmentKind::Item)))
+        {
             return Err(ErrMode::Cut(ContextError::new()));
         }
         return Ok(ExprKind::Splice(ExprSplice {
@@ -369,15 +373,19 @@ fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Exp
     }
 
     let base = parse_primary_no_struct(input, file)?;
-    let suffixes: Vec<Postfix> =
-        repeat(0.., |input: &mut &[Token]| parse_postfix_suffix(input, file)).parse_next(input)?;
+    let suffixes: Vec<Postfix> = repeat(0.., |input: &mut &[Token]| {
+        parse_postfix_suffix(input, file)
+    })
+    .parse_next(input)?;
     Ok(apply_postfixes(base, suffixes))
 }
 
 fn parse_postfix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     let base = parse_primary(input, file)?;
-    let suffixes: Vec<Postfix> = repeat(0.., |input: &mut &[Token]| parse_postfix_suffix(input, file))
-        .parse_next(input)?;
+    let suffixes: Vec<Postfix> = repeat(0.., |input: &mut &[Token]| {
+        parse_postfix_suffix(input, file)
+    })
+    .parse_next(input)?;
     Ok(apply_postfixes(base, suffixes))
 }
 
@@ -586,7 +594,11 @@ fn parse_grouped(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     }
     let close = expect_symbol(input, ")")?;
     Ok(ExprKind::Paren(ExprParen {
-        span: Span::union([token_span_to_span(&open), expr.span(), token_span_to_span(&close)]),
+        span: Span::union([
+            token_span_to_span(&open),
+            expr.span(),
+            token_span_to_span(&close),
+        ]),
         expr: Box::new(expr),
     })
     .into())
@@ -621,20 +633,15 @@ fn parse_name_expr(input: &mut &[Token]) -> ModalResult<Expr> {
         .unwrap_or_else(Span::null);
     let name = parse_name(input)?;
     match name.as_ident().map(Ident::as_str) {
-        Some("true") => Ok(
-            Expr::value(Value::bool(true))
-                .with_ty_slot(Some(Ty::Primitive(TypePrimitive::Bool)))
-                .with_span(span)
-        ),
-        Some("false") => Ok(
-            Expr::value(Value::bool(false))
-                .with_ty_slot(Some(Ty::Primitive(TypePrimitive::Bool)))
-                .with_span(span)
-        ),
+        Some("true") => Ok(Expr::value(Value::bool(true))
+            .with_ty_slot(Some(Ty::Primitive(TypePrimitive::Bool)))
+            .with_span(span)),
+        Some("false") => Ok(Expr::value(Value::bool(false))
+            .with_ty_slot(Some(Ty::Primitive(TypePrimitive::Bool)))
+            .with_span(span)),
         _ => Ok(Expr::name(name).with_span(span)),
     }
 }
-
 
 #[derive(Debug)]
 enum Postfix {
@@ -680,55 +687,6 @@ fn apply_postfixes(mut expr: Expr, suffixes: Vec<Postfix>) -> Expr {
         };
     }
     expr
-}
-
-fn token_kind(input: &mut &[Token], kind: TokenKind) -> ModalResult<Token> {
-    match input.split_first() {
-        Some((token, rest)) if token.kind == kind => {
-            *input = rest;
-            Ok(token.clone())
-        }
-        _ => Err(ErrMode::Backtrack(ContextError::new())),
-    }
-}
-
-fn expect_keyword(input: &mut &[Token], expected: Keyword) -> ModalResult<Token> {
-    match input.split_first() {
-        Some((token, rest)) if token.kind == TokenKind::Keyword(expected) => {
-            *input = rest;
-            Ok(token.clone())
-        }
-        _ => Err(ErrMode::Backtrack(ContextError::new())),
-    }
-}
-
-fn expect_symbol(input: &mut &[Token], expected: &str) -> ModalResult<Token> {
-    match input.split_first() {
-        Some((token, rest))
-            if token.kind == TokenKind::Symbol && token.lexeme.as_str() == expected =>
-        {
-            *input = rest;
-            Ok(token.clone())
-        }
-        _ => Err(ErrMode::Backtrack(ContextError::new())),
-    }
-}
-
-fn ident_like(input: &mut &[Token]) -> ModalResult<Ident> {
-    match input.split_first() {
-        Some((token, rest)) if matches!(token.kind, TokenKind::Ident | TokenKind::Keyword(_)) => {
-            *input = rest;
-            Ok(Ident::new(token.lexeme.clone()))
-        }
-        _ => Err(ErrMode::Backtrack(ContextError::new())),
-    }
-}
-
-fn peek_symbol(input: &[Token]) -> Option<&str> {
-    match input.first() {
-        Some(token) if token.kind == TokenKind::Symbol => Some(token.lexeme.as_str()),
-        _ => None,
-    }
 }
 
 fn parse_call_args(
@@ -950,14 +908,18 @@ fn parse_quote_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
         kind = Some(match ident.as_str() {
             "expr" => QuoteFragmentKind::Expr,
             "stmt" => QuoteFragmentKind::Stmt,
-            "item" | "fn" | "struct" | "enum" | "trait" | "impl" | "const" | "static"
-            | "mod" | "use" | "macro" => QuoteFragmentKind::Item,
+            "item" | "fn" | "struct" | "enum" | "trait" | "impl" | "const" | "static" | "mod"
+            | "use" | "macro" => QuoteFragmentKind::Item,
             "type" => QuoteFragmentKind::Type,
             _ => return Err(ErrMode::Cut(ContextError::new())),
         });
         expect_symbol(&mut probe, ">")?;
     } else if let Ok(ident) = ident_like(&mut probe) {
-        if ident.as_str() == "item" || ident.as_str() == "expr" || ident.as_str() == "stmt" || ident.as_str() == "type" {
+        if ident.as_str() == "item"
+            || ident.as_str() == "expr"
+            || ident.as_str() == "stmt"
+            || ident.as_str() == "type"
+        {
             kind = Some(match ident.as_str() {
                 "expr" => QuoteFragmentKind::Expr,
                 "stmt" => QuoteFragmentKind::Stmt,
@@ -1076,25 +1038,7 @@ fn parse_struct_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
 }
 
 pub(crate) fn parse_macro_path(input: &mut &[Token]) -> ModalResult<Path> {
-    let saw_root = opt(|input: &mut &[Token]| expect_symbol(input, "::"))
-        .parse_next(input)?
-        .is_some();
-    let first = ident_like(input)?;
-    let mut segments = vec![first];
-    loop {
-        let mut probe = *input;
-        if expect_symbol(&mut probe, "::").is_ok() || expect_symbol(&mut probe, ".").is_ok() {
-            let Ok(next) = ident_like(&mut probe) else {
-                break;
-            };
-            *input = probe;
-            segments.push(next);
-            continue;
-        }
-        break;
-    }
-    let (prefix, segments) = split_path_prefix(segments, saw_root);
-    Ok(Path::new(prefix, segments))
+    parse_module_path(input)
 }
 
 pub(crate) fn parse_macro_group(
@@ -1574,7 +1518,10 @@ fn parse_return_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     };
     *input = probe;
     Ok(ExprKind::Return(ExprReturn {
-        span: value.as_ref().map(|expr| expr.span()).unwrap_or_else(Span::null),
+        span: value
+            .as_ref()
+            .map(|expr| expr.span())
+            .unwrap_or_else(Span::null),
         value,
     })
     .into())
@@ -1592,7 +1539,10 @@ fn parse_break_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     };
     *input = probe;
     Ok(ExprKind::Break(ExprBreak {
-        span: value.as_ref().map(|expr| expr.span()).unwrap_or_else(Span::null),
+        span: value
+            .as_ref()
+            .map(|expr| expr.span())
+            .unwrap_or_else(Span::null),
         value,
     })
     .into())
@@ -1608,5 +1558,8 @@ fn parse_continue_expr(input: &mut &[Token]) -> ModalResult<Expr> {
 }
 
 fn terminates_expr(input: &[Token]) -> bool {
-    matches!(peek_symbol(input), Some(";") | Some("}") | Some(")") | Some("]") | Some(","))
+    matches!(
+        peek_symbol(input),
+        Some(";") | Some("}") | Some(")") | Some("]") | Some(",")
+    )
 }

@@ -1051,7 +1051,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         | IntrinsicCallKind::TestCommandMockPush
         | IntrinsicCallKind::TestCommandMockTakeCalls
         | IntrinsicCallKind::TestCommandMockApply => None,
-        | IntrinsicCallKind::ShellExec
+        IntrinsicCallKind::ShellExec
         | IntrinsicCallKind::ShellFileCopy
         | IntrinsicCallKind::ShellFileTemplate
         | IntrinsicCallKind::ShellFileRsync => None,

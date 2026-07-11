@@ -368,8 +368,10 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
             "expected type path from invoke expression".to_string(),
         ));
     };
-    assert_eq!(path.segments.len(), 1);
-    let seg = &path.segments[0];
+    assert_eq!(path.segments.len(), 3);
+    assert_eq!(path.segments[0].name.as_str(), "std");
+    assert_eq!(path.segments[1].name.as_str(), "result");
+    let seg = &path.segments[2];
     assert_eq!(seg.name.as_str(), "Result");
     let args = seg.args.as_ref().ok_or_else(|| {
         crate::error::optimization_error("expected generic args on Result".to_string())

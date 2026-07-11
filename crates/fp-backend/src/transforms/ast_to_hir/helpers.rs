@@ -3,6 +3,77 @@ use fp_core::module::path::{parse_path, resolve_item_path, ParsedPath, PathPrefi
 use fp_core::module::resolution::resolve_symbol_path;
 
 impl HirGenerator {
+    fn resolved_name_to_hir_path(
+        &mut self,
+        resolved_name: &ast::ResolvedName,
+        locator: &Name,
+        scope: PathResolutionScope,
+    ) -> Result<Option<hir::Path>> {
+        let resolution_scope = match resolved_name.namespace {
+            ast::ResolvedNameNamespace::Value => PathResolutionScope::Value,
+            ast::ResolvedNameNamespace::Type => PathResolutionScope::Type,
+            ast::ResolvedNameNamespace::Module => {
+                return Ok(Some(hir::Path {
+                    segments: resolved_name
+                        .path
+                        .segments
+                        .iter()
+                        .map(|segment| self.make_path_segment(segment, None))
+                        .collect(),
+                    res: Some(hir::Res::Module(resolved_name.path.segments.clone())),
+                }));
+            }
+        };
+
+        if resolution_scope != scope {
+            return Ok(None);
+        }
+
+        let locator_args = self.locator_segment_args(locator)?;
+        let offset = resolved_name
+            .path
+            .segments
+            .len()
+            .saturating_sub(locator_args.len());
+        let segments = resolved_name
+            .path
+            .segments
+            .iter()
+            .enumerate()
+            .map(|(idx, segment)| {
+                let args = if idx >= offset {
+                    locator_args[idx - offset].clone()
+                } else {
+                    None
+                };
+                self.make_path_segment(segment, args)
+            })
+            .collect();
+        let mut res = self.lookup_global_res(&resolved_name.path, scope);
+        if res.is_none() && self.module_defs.contains(&resolved_name.path) {
+            res = Some(hir::Res::Module(resolved_name.path.segments.clone()));
+        }
+        Ok(Some(hir::Path { segments, res }))
+    }
+
+    fn locator_segment_args(&mut self, locator: &Name) -> Result<Vec<Option<hir::GenericArgs>>> {
+        match locator {
+            Name::Ident(_) => Ok(vec![None]),
+            Name::Path(path) => Ok(path.segments.iter().map(|_| None).collect()),
+            Name::ParameterPath(path) => path
+                .segments
+                .iter()
+                .map(|segment| {
+                    if segment.args.is_empty() {
+                        Ok(None)
+                    } else {
+                        self.convert_generic_args(&segment.args).map(Some)
+                    }
+                })
+                .collect(),
+        }
+    }
+
     pub(super) fn convert_generic_args(&mut self, args: &[ast::Ty]) -> Result<hir::GenericArgs> {
         let mut hir_args = Vec::new();
         for arg in args {
@@ -371,7 +442,16 @@ impl HirGenerator {
         scope: PathResolutionScope,
     ) -> Result<hir::Path> {
         match expr.kind() {
-            ast::ExprKind::Name(locator) => self.locator_to_hir_path_with_scope(locator, scope),
+            ast::ExprKind::Name(locator) => {
+                if let Some(resolved_name) = expr.resolved_name() {
+                    if let Some(path) =
+                        self.resolved_name_to_hir_path(resolved_name, locator, scope)?
+                    {
+                        return Ok(path);
+                    }
+                }
+                self.locator_to_hir_path_with_scope(locator, scope)
+            }
             ast::ExprKind::Select(select) => {
                 let mut base = self.ast_expr_to_hir_path(&select.obj, scope)?;
                 let seg = self.make_path_segment(&select.field.name, None);

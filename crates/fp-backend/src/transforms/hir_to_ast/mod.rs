@@ -93,9 +93,7 @@ fn lift_item(item: &hir::Item) -> Result<Item> {
             ty: Some(lift_type(&def.ty)),
             value: Box::new(lift_body_value(&def.body.value)?),
         })),
-        hir::ItemKind::Impl(_) => {
-            Item::from(ItemKind::Expr(ast::Expr::unit()))
-        }
+        hir::ItemKind::Impl(_) => Item::from(ItemKind::Expr(ast::Expr::unit())),
         hir::ItemKind::Query(query) => {
             return Err(fp_core::error::Error::Generic(eyre::eyre!(
                 "HIR->AST lifting for query item '{}' requires lift_program root handling",

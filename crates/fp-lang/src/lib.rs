@@ -126,7 +126,10 @@ impl LanguageFrontend for FerroFrontend {
         if try_expr_mode {
             self.ferro.clear_diagnostics();
             let expr_source = self.wrap_statement_like_expr_input(&cleaned);
-            if let Ok(expr) = self.ferro.parse_expr_ast_with_file(expr_source.as_ref(), file_id) {
+            if let Ok(expr) = self
+                .ferro
+                .parse_expr_ast_with_file(expr_source.as_ref(), file_id)
+            {
                 let expr = strip_async_block(expr);
                 let diagnostics = self.ferro.diagnostics();
                 let last = Node::expr(expr.clone());
@@ -150,10 +153,12 @@ impl LanguageFrontend for FerroFrontend {
 
         if path.is_some() {
             self.ferro.clear_diagnostics();
-            return match self
-                .ferro
-                .parse_file_ast_with_file(&cleaned, file_id, Some(&source_path), source_path.clone())
-            {
+            return match self.ferro.parse_file_ast_with_file(
+                &cleaned,
+                file_id,
+                Some(&source_path),
+                source_path.clone(),
+            ) {
                 Ok(file) => {
                     let diagnostics = self.ferro.diagnostics();
                     let last = Node::file(file);
@@ -189,7 +194,9 @@ impl LanguageFrontend for FerroFrontend {
                             let file = fp_core::ast::File {
                                 path: source_path.clone(),
                                 attrs: Vec::new(),
-                                items: vec![fp_core::ast::Item::from(fp_core::ast::ItemKind::Expr(expr))],
+                                items: vec![fp_core::ast::Item::from(
+                                    fp_core::ast::ItemKind::Expr(expr),
+                                )],
                             };
                             let diagnostics = self.ferro.diagnostics();
                             let last = Node::file(file);
@@ -219,8 +226,9 @@ impl LanguageFrontend for FerroFrontend {
                             })
                         }
                         Err(err) => {
-                            let mut diagnostic =
-                                Diagnostic::error(format!("failed to parse items (file mode): {err}"));
+                            let mut diagnostic = Diagnostic::error(format!(
+                                "failed to parse items (file mode): {err}"
+                            ));
                             if let Some(span) = self
                                 .ferro
                                 .diagnostics()

@@ -44,7 +44,9 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
     let visibility = parse_visibility(input)?;
     match input.first().map(|token| &token.kind) {
         Some(TokenKind::Keyword(Keyword::Use)) => parse_use_item(input, visibility, attrs),
-        Some(TokenKind::Keyword(Keyword::Extern)) => parse_extern_item(input, file, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Extern)) => {
+            parse_extern_item(input, file, visibility, attrs)
+        }
         Some(TokenKind::Keyword(Keyword::Const)) if starts_const_fn(*input) => {
             parse_fn_item(input, file, visibility, attrs, false)
         }
@@ -54,17 +56,29 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
         Some(TokenKind::Keyword(Keyword::Async)) if starts_async_fn(*input) => {
             parse_fn_item(input, file, visibility, attrs, false)
         }
-        Some(TokenKind::Keyword(Keyword::Const)) => parse_const_item(input, file, visibility, attrs),
-        Some(TokenKind::Keyword(Keyword::Static)) => parse_static_item(input, file, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Const)) => {
+            parse_const_item(input, file, visibility, attrs)
+        }
+        Some(TokenKind::Keyword(Keyword::Static)) => {
+            parse_static_item(input, file, visibility, attrs)
+        }
         Some(TokenKind::Keyword(Keyword::Type)) => parse_type_alias_item(input, visibility, attrs),
         Some(TokenKind::Keyword(Keyword::Struct)) => parse_struct_item(input, visibility, attrs),
         Some(TokenKind::Keyword(Keyword::Enum)) => parse_enum_item(input, visibility, attrs),
         Some(TokenKind::Keyword(Keyword::Mod)) => parse_mod_item(input, file, visibility, attrs),
-        Some(TokenKind::Keyword(Keyword::Opaque)) => parse_opaque_type_item(input, visibility, attrs),
-        Some(TokenKind::Keyword(Keyword::Trait)) => parse_trait_item(input, file, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Opaque)) => {
+            parse_opaque_type_item(input, visibility, attrs)
+        }
+        Some(TokenKind::Keyword(Keyword::Trait)) => {
+            parse_trait_item(input, file, visibility, attrs)
+        }
         Some(TokenKind::Keyword(Keyword::Impl)) => parse_impl_item(input, file, attrs),
-        Some(TokenKind::Keyword(Keyword::Fn)) => parse_fn_item(input, file, visibility, attrs, false),
-        Some(TokenKind::Keyword(Keyword::Quote)) => parse_fn_item(input, file, visibility, attrs, true),
+        Some(TokenKind::Keyword(Keyword::Fn)) => {
+            parse_fn_item(input, file, visibility, attrs, false)
+        }
+        Some(TokenKind::Keyword(Keyword::Quote)) => {
+            parse_fn_item(input, file, visibility, attrs, true)
+        }
         Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) if looks_like_item_macro(*input) => {
             parse_item_macro(input, attrs)
         }
@@ -436,6 +450,16 @@ fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) ->
     })))
 }
 
+fn type_to_name(ty: &Ty) -> Option<Name> {
+    match ty {
+        Ty::Expr(expr) => match expr.kind() {
+            ExprKind::Name(name) => Some(name.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn parse_fn_params(input: &mut &[Token]) -> ModalResult<Vec<FunctionParam>> {
     let (_, params) = parse_fn_params_with_receiver(input)?;
     Ok(params)
@@ -648,7 +672,8 @@ fn parse_extern_item(
 fn parse_extern_abi(input: &mut &[Token]) -> ModalResult<fp_core::ast::Abi> {
     expect_keyword(input, Keyword::Extern)?;
     let abi = token_kind(input, TokenKind::StringLiteral)?;
-    let cleaned = decode_string_literal(&abi.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    let cleaned =
+        decode_string_literal(&abi.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
     Ok(fp_core::ast::Abi::Named(cleaned))
 }
 
@@ -708,7 +733,13 @@ fn parse_extern_block_items(input: &mut &[Token], file: FileId) -> ModalResult<V
         let attrs = parse_outer_attrs(input, file)?;
         let visibility = parse_visibility(input)?;
         if peek_keyword(*input, Keyword::Fn) {
-            items.push(parse_abi_fn_item(input, file, visibility, attrs, abi.clone())?);
+            items.push(parse_abi_fn_item(
+                input,
+                file,
+                visibility,
+                attrs,
+                abi.clone(),
+            )?);
             continue;
         }
         return Err(ErrMode::Cut(ContextError::new()));
@@ -919,6 +950,12 @@ fn parse_visibility(input: &mut &[Token]) -> ModalResult<Visibility> {
     Ok(visibility)
 }
 
+fn single_segment_path(segment: fp_core::ast::ItemImportTree) -> fp_core::ast::ItemImportPath {
+    let mut path = fp_core::ast::ItemImportPath::new();
+    path.push(segment);
+    path
+}
+
 fn parse_outer_attrs(input: &mut &[Token], file: FileId) -> ModalResult<Vec<Attribute>> {
     parse_attrs(input, file, false)
 }
@@ -954,7 +991,11 @@ fn parse_attrs(input: &mut &[Token], file: FileId, inner: bool) -> ModalResult<V
         expect_symbol(&mut probe, "]")?;
         *input = probe;
         attrs.push(Attribute {
-            style: if inner { AttrStyle::Inner } else { AttrStyle::Outer },
+            style: if inner {
+                AttrStyle::Inner
+            } else {
+                AttrStyle::Outer
+            },
             meta,
         });
     }
@@ -969,7 +1010,7 @@ fn const_struct_attr() -> Attribute {
 }
 
 fn parse_attr_meta_direct(input: &mut &[Token], file: FileId) -> ModalResult<AttrMeta> {
-    let name = parse_attr_path_direct(input)?;
+    let name = parse_module_path(input)?;
     if expect_symbol(input, "=").is_ok() {
         let value = parse_expr_winnow_no_struct(input, file)?;
         return Ok(AttrMeta::NameValue(AttrMetaNameValue {
@@ -989,16 +1030,6 @@ fn parse_attr_meta_direct(input: &mut &[Token], file: FileId) -> ModalResult<Att
         return Ok(AttrMeta::List(AttrMetaList { name, items }));
     }
     Ok(AttrMeta::Path(name))
-}
-
-fn parse_attr_path_direct(input: &mut &[Token]) -> ModalResult<Path> {
-    let saw_root = expect_symbol(input, "::").is_ok();
-    let mut segments = vec![ident_like(input)?];
-    while expect_symbol(input, "::").is_ok() {
-        segments.push(ident_like(input)?);
-    }
-    let (prefix, segments) = split_path_prefix(segments, saw_root);
-    Ok(Path::new(prefix, segments))
 }
 
 fn looks_like_item_macro(input: &[Token]) -> bool {

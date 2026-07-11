@@ -10,7 +10,7 @@ execution modes.
 ## 2. Core Semantic Invariant
 
 FerroPhase must preserve identical observable semantics across all representations
-(CST/LAST/AST/HIR/MIR/LIR) and across all execution modes (interpreter, bytecode
+(LAST/AST/HIR/MIR/LIR) and across all execution modes (interpreter, bytecode
 VM, compiled backends). Any semantic divergence is a correctness bug.
 
 Observable semantics includes:

@@ -8,11 +8,11 @@ use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer, NormalizeOutco
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
-use crate::ast::lower_common::{
-    macro_token_trees_to_lexemes, macro_tokens_file_id,
-};
-use crate::macro_parser::{macro_token_trees_to_tokens, tokens_to_top_level_slices, wrap_tokens_in_group};
+use crate::ast::lower_common::{macro_token_trees_to_lexemes, macro_tokens_file_id};
 use crate::lexer::lexeme::LexemeKind;
+use crate::macro_parser::{
+    macro_token_trees_to_tokens, tokens_to_top_level_slices, wrap_tokens_in_group,
+};
 
 /// FerroPhase intrinsic normalizer that adds `t!` macro lowering for type expressions,
 /// delegating all other macros to the Rust normalizer.
@@ -293,8 +293,8 @@ fn parse_macro_tokens_with_type_args(
                 }
                 Err(_) => {
                     let slice = lexeme_slice_to_tokens(&lexemes[idx..]);
-                    let (expr, consumed) =
-                        parse_expr_prefix_tokens(slice.as_slice(), file_id).map_err(|err| {
+                    let (expr, consumed) = parse_expr_prefix_tokens(slice.as_slice(), file_id)
+                        .map_err(|err| {
                             fp_core::error::Error::from(format!("assert macro parse error: {err}"))
                         })?;
                     args.push(Expr::value(Value::Type(Ty::Expr(expr.into()))));
@@ -303,8 +303,8 @@ fn parse_macro_tokens_with_type_args(
             }
         } else {
             let slice = lexeme_slice_to_tokens(&lexemes[idx..]);
-            let (expr, consumed) = parse_expr_prefix_tokens(slice.as_slice(), file_id)
-                .map_err(|err| {
+            let (expr, consumed) =
+                parse_expr_prefix_tokens(slice.as_slice(), file_id).map_err(|err| {
                     fp_core::error::Error::from(format!("assert macro parse error: {err}"))
                 })?;
             args.push(expr);
@@ -315,7 +315,9 @@ fn parse_macro_tokens_with_type_args(
     Ok(args)
 }
 
-fn lexeme_slice_to_tokens(lexemes: &[crate::lexer::lexeme::Lexeme]) -> Vec<crate::lexer::tokenizer::Token> {
+fn lexeme_slice_to_tokens(
+    lexemes: &[crate::lexer::lexeme::Lexeme],
+) -> Vec<crate::lexer::tokenizer::Token> {
     lexemes
         .iter()
         .filter(|lex| lex.kind == LexemeKind::Token)
@@ -334,7 +336,10 @@ fn lexeme_slice_to_tokens(lexemes: &[crate::lexer::lexeme::Lexeme]) -> Vec<crate
         .collect()
 }
 
-fn parse_expr_prefix_tokens(tokens: &[crate::lexer::tokenizer::Token], file_id: fp_core::span::FileId) -> Result<(Expr, usize)> {
+fn parse_expr_prefix_tokens(
+    tokens: &[crate::lexer::tokenizer::Token],
+    file_id: fp_core::span::FileId,
+) -> Result<(Expr, usize)> {
     let mut best = None;
     for end in 1..=tokens.len() {
         match crate::ast::parse_expr_tokens(&tokens[..end], file_id) {

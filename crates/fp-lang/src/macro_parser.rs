@@ -2,9 +2,7 @@ use fp_core::ast::{Expr, MacroExpansionParser, MacroTokenTree, Ty};
 use fp_core::error::Result;
 use fp_core::span::Span;
 
-use crate::ast::lower_common::{
-    lex_span_from_span, lex_spans_for_group, macro_tokens_file_id,
-};
+use crate::ast::lower_common::{lex_span_from_span, lex_spans_for_group, macro_tokens_file_id};
 use crate::lexer::tokenizer::{classify_and_normalize_lexeme, Token, TokenKind};
 use crate::lexer::Span as TokSpan;
 
@@ -118,16 +116,8 @@ pub(crate) fn wrap_tokens_in_group(
 ) -> Vec<Token> {
     let (open_span, close_span) = lex_spans_for_group(span);
     let mut out = Vec::with_capacity(inner.len() + 2);
-    out.push(make_token(
-        TokenKind::Symbol,
-        open.to_string(),
-        open_span,
-    ));
+    out.push(make_token(TokenKind::Symbol, open.to_string(), open_span));
     out.extend_from_slice(inner);
-    out.push(make_token(
-        TokenKind::Symbol,
-        close.to_string(),
-        close_span,
-    ));
+    out.push(make_token(TokenKind::Symbol, close.to_string(), close_span));
     out
 }

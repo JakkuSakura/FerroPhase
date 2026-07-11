@@ -8,7 +8,7 @@ pub struct ParsedPath {
     pub segments: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct QualifiedPath {
     pub segments: Vec<String>,
 }

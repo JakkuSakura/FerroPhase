@@ -19,7 +19,10 @@ pub fn roundtrip_ast_file_via_hir(
     let mut generator = transforms::ast_to_hir::HirGenerator::with_file(&file.path);
     generator.set_cfg_filtering(false);
     let program = generator.transform_file(file)?;
-    Ok(transforms::hir_to_ast::lift_program(&program, file.path.clone())?)
+    Ok(transforms::hir_to_ast::lift_program(
+        &program,
+        file.path.clone(),
+    )?)
 }
 
 pub fn roundtrip_ast_file_via_hir_dce(
@@ -29,7 +32,10 @@ pub fn roundtrip_ast_file_via_hir_dce(
     generator.set_cfg_filtering(false);
     let mut program = generator.transform_file(file)?;
     optimizer::hir::eliminate_dead_code(&mut program);
-    Ok(transforms::hir_to_ast::lift_program(&program, file.path.clone())?)
+    Ok(transforms::hir_to_ast::lift_program(
+        &program,
+        file.path.clone(),
+    )?)
 }
 
 #[cfg(test)]
@@ -76,7 +82,7 @@ mod tests {
             ],
         };
 
-        let lowered = roundtrip_ast_file_via_hir(&file).expect("roundtrip should succeed");
+        let lowered = roundtrip_ast_file_via_hir_dce(&file).expect("roundtrip should succeed");
         let NodeKind::File(file) = lowered.kind() else {
             panic!("expected file node");
         };

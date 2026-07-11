@@ -127,7 +127,8 @@ pub fn compile_source_with_options(
 
     // Re-insert pre-HIR items (HIR strips #[command] attrs, const-evaluates fn bodies)
     if let NodeKind::File(f) = lowered.kind_mut() {
-        f.items.extend(shell_materializer::flatten_keep_externs(pre_hir_items));
+        f.items
+            .extend(shell_materializer::flatten_keep_externs(pre_hir_items));
     }
     validate_extern_decls(&lowered, target).map_err(ShellError::Lower)?;
 
@@ -892,8 +893,6 @@ fn name_to_segments(name: &Name) -> Vec<String> {
         .map(|ident| ident.as_str().to_string())
         .collect()
 }
-
-
 
 fn validate_extern_decls(node: &Node, target: ScriptTarget) -> Result<(), String> {
     match node.kind() {

@@ -1,9 +1,9 @@
+use fp_core::Result;
 use fp_core::ast::{
-    BlockStmt, Expr, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind,
-    File, FunctionSignature, Item, ItemKind, Name, NodeKind, Value,
+    BlockStmt, Expr, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, File,
+    FunctionSignature, Item, ItemKind, Name, NodeKind, Value,
 };
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicMaterializer};
-use fp_core::Result;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -226,16 +226,14 @@ fn fill_args(invoke: &mut ExprInvoke, sigs: &HashMap<String, FunctionSignature>)
         let idx = invoke.args.len();
         let param = &sig.params[idx];
         // Try kwarg first
-        if let Some(kw) = invoke
-            .kwargs
-            .iter()
-            .find(|k| k.name == param.name.as_str())
-        {
+        if let Some(kw) = invoke.kwargs.iter().find(|k| k.name == param.name.as_str()) {
             invoke.args.push(kw.value.clone());
             continue;
         }
         if param.is_context {
-            invoke.args.push(Expr::value(Value::string("localhost".into())));
+            invoke
+                .args
+                .push(Expr::value(Value::string("localhost".into())));
         } else if let Some(d) = &param.default {
             invoke.args.push(Expr::value(d.clone()));
         } else {
@@ -258,8 +256,12 @@ fn try_rewrite_to_intrinsic(invoke: &mut ExprInvoke) -> Option<Expr> {
     let kind = match name.as_str() {
         "std::ops::server::shell" | "std::ops::server::shell_local" => IntrinsicCallKind::ShellExec,
         "std::ops::files::copy" | "std::ops::files::copy_local" => IntrinsicCallKind::ShellFileCopy,
-        "std::ops::files::template" | "std::ops::files::template_local" => IntrinsicCallKind::ShellFileTemplate,
-        "std::ops::files::rsync" | "std::ops::files::rsync_local" | "std::ops::files::rsync_remote" => IntrinsicCallKind::ShellFileRsync,
+        "std::ops::files::template" | "std::ops::files::template_local" => {
+            IntrinsicCallKind::ShellFileTemplate
+        }
+        "std::ops::files::rsync"
+        | "std::ops::files::rsync_local"
+        | "std::ops::files::rsync_remote" => IntrinsicCallKind::ShellFileRsync,
         _ => {
             if name.starts_with("__fp_") {
                 return None; // Already materialized, skip
@@ -287,15 +289,14 @@ fn string_val(expr: &Expr) -> Option<String> {
 
 fn invoke_target_name(target: &ExprInvokeTarget) -> Option<String> {
     match target {
-        ExprInvokeTarget::Function(name) => {
-            name.to_path()
-                .segments
-                .iter()
-                .map(|s| s.as_str().to_string())
-                .collect::<Vec<_>>()
-                .join("::")
-                .into()
-        }
+        ExprInvokeTarget::Function(name) => name
+            .to_path()
+            .segments
+            .iter()
+            .map(|s| s.as_str().to_string())
+            .collect::<Vec<_>>()
+            .join("::")
+            .into(),
         ExprInvokeTarget::Method(select) => {
             let obj = invoke_target_name(&ExprInvokeTarget::Expr(select.obj.clone()))?;
             Some(format!("{}::{}", obj, select.field))
@@ -355,11 +356,7 @@ fn scan_all_signatures(file: &File) -> HashMap<String, FunctionSignature> {
     sigs
 }
 
-fn scan_sigs(
-    items: &[Item],
-    path: &[String],
-    out: &mut HashMap<String, FunctionSignature>,
-) {
+fn scan_sigs(items: &[Item], path: &[String], out: &mut HashMap<String, FunctionSignature>) {
     for item in items {
         match item.kind() {
             ItemKind::DefFunction(f) => {

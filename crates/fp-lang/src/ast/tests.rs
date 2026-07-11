@@ -1,9 +1,10 @@
 use super::*;
 use fp_core::ast::{
-    AttrMeta, AttrStyle, BlockStmt, ExprKind, ItemKind, MacroDelimiter, PatternKind, QuoteItemKind,
-    Value,
+    AttrMeta, AttrStyle, BlockStmt, ExprKind, ItemKind, MacroDelimiter, Name, PatternKind,
+    QuoteItemKind, Value,
 };
 use fp_core::ast::{QuoteFragmentKind, Ty};
+use fp_core::module::path::PathPrefix;
 use fp_core::ops::BinOpKind;
 
 #[test]
@@ -31,7 +32,7 @@ fn parses_quote_and_splice() {
 }
 
 #[test]
-fn cst_printer_roundtrips_source_text() {
+fn direct_parser_accepts_emit_macro_source() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let src = "fn main() { emit! { let generated = 42; generated } }\n";
@@ -69,6 +70,49 @@ fn parser_handles_raw_identifiers_and_strings() {
     let expr_src = r####"r#type + "hi\\nthere" + r#"hello world"# + br##"bin data"## + b"abc""####;
     let expr = parser.parse_expr_ast(expr_src).unwrap();
     assert!(matches!(expr.kind(), ExprKind::BinOp(_)));
+}
+
+#[test]
+fn parse_expr_ast_strips_prefix_from_parameter_path_segments() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("super::super::Foo<Bar>").unwrap();
+    match expr.kind() {
+        ExprKind::Name(Name::ParameterPath(path)) => {
+            assert_eq!(path.prefix, PathPrefix::Super(2));
+            assert_eq!(path.segments.len(), 1);
+            assert_eq!(path.segments[0].ident.as_str(), "Foo");
+            assert_eq!(path.segments[0].args.len(), 1);
+        }
+        other => panic!("expected parameter path expr, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_type_alias_strips_prefix_from_parameter_path_segments() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("type Alias = crate::module::Foo<Bar>;")
+        .unwrap();
+    let ItemKind::DefType(def) = items[0].kind() else {
+        panic!("expected type alias");
+    };
+    let Ty::Expr(expr) = &def.value else {
+        panic!("expected parameterized locator, got {:?}", def.value);
+    };
+    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        panic!("expected parameterized locator expr, got {:?}", expr);
+    };
+    assert_eq!(path.prefix, PathPrefix::Crate);
+    assert_eq!(
+        path.segments
+            .iter()
+            .map(|segment| segment.ident.as_str())
+            .collect::<Vec<_>>(),
+        vec!["module", "Foo"]
+    );
+    assert_eq!(path.segments[1].args.len(), 1);
 }
 
 #[test]
@@ -215,6 +259,13 @@ fn parse_expr_ast_handles_macro_invocation() {
         }
         other => panic!("expected macro invocation, got {:?}", other),
     }
+}
+
+#[test]
+fn parse_expr_ast_rejects_dotted_macro_path_as_module_path() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    assert!(parser.parse_expr_ast("self.foo!()").is_err());
 }
 
 #[test]
@@ -960,9 +1011,7 @@ fn parse_expr_ast_handles_match_with_path_tuple_patterns() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser
-        .parse_expr_ast(
-            "match self { Result::Ok(_) => true, Result::Err(_) => false }",
-        )
+        .parse_expr_ast("match self { Result::Ok(_) => true, Result::Err(_) => false }")
         .unwrap();
     assert!(matches!(expr.kind(), ExprKind::Match(_)));
 }

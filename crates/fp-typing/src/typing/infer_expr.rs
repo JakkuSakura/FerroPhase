@@ -448,7 +448,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
                 ExprKind::Name(locator) => {
-                    let var = self.lookup_locator(locator)?;
+                    let (var, resolved_name) = self.lookup_locator_with_resolution(locator)?;
+                    if let Some(resolved_name) = resolved_name {
+                        expr.set_resolved_name(resolved_name);
+                    }
                     if let Some(ty) = existing_ty.as_ref() {
                         let annot = self.type_from_ast_ty(ty)?;
                         self.unify(var, annot)?;

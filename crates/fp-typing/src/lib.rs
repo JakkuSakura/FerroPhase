@@ -3220,8 +3220,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn lookup_locator(&mut self, locator: &Name) -> Result<TypeVarId> {
+        self.lookup_locator_with_resolution(locator)
+            .map(|(var, _)| var)
+    }
+
+    fn lookup_locator_with_resolution(
+        &mut self,
+        locator: &Name,
+    ) -> Result<(TypeVarId, Option<ResolvedName>)> {
         if self.check_unimplemented_locator(locator) {
-            return Ok(self.error_type_var());
+            return Ok((self.error_type_var(), None));
         }
         if let Name::Path(path) = locator {
             if path.segments.len() >= 2 {
@@ -3244,7 +3252,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         {
                             let var = self.fresh_type_var();
                             self.bind(var, TypeTerm::Enum(enum_def));
-                            return Ok(var);
+                            let qualified = enum_key.with_segment(variant_name.to_string());
+                            return Ok((
+                                var,
+                                Some(ResolvedName {
+                                    namespace: ResolvedNameNamespace::Value,
+                                    path: qualified,
+                                }),
+                            ));
                         }
                     }
                 }
@@ -3253,12 +3268,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if let Some(ident) = locator.as_ident() {
             let name = ident.as_str();
             if let Some(var) = self.lookup_env_var(name) {
-                return Ok(var);
+                return Ok((var, None));
             }
             if !self.module_path.is_empty() {
                 let qualified = self.module_path.with_segment(name.to_string());
                 if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
-                    return Ok(var);
+                    return Ok((
+                        var,
+                        Some(ResolvedName {
+                            namespace: ResolvedNameNamespace::Value,
+                            path: qualified,
+                        }),
+                    ));
                 }
             }
         }
@@ -3266,19 +3287,31 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Some(key) => key,
             None => {
                 self.emit_error(format!("unresolved symbol: {}", locator));
-                return Ok(self.error_type_var());
+                return Ok((self.error_type_var(), None));
             }
         };
         if self.struct_defs.contains_key(&key) || self.enum_defs.contains_key(&key) {
             let var = self.fresh_type_var();
             self.bind(var, TypeTerm::Custom(Ty::Type(TypeType::new(Span::null()))));
-            return Ok(var);
+            return Ok((
+                var,
+                Some(ResolvedName {
+                    namespace: ResolvedNameNamespace::Type,
+                    path: key,
+                }),
+            ));
         }
         if let Some(var) = self.lookup_env_var(&key.to_key()) {
-            return Ok(var);
+            return Ok((
+                var,
+                Some(ResolvedName {
+                    namespace: ResolvedNameNamespace::Value,
+                    path: key,
+                }),
+            ));
         }
         self.emit_error(format!("unresolved symbol: {}", key.to_key()));
-        Ok(self.error_type_var())
+        Ok((self.error_type_var(), None))
     }
 
     fn resolve_alias_locator(&self, locator: &Name) -> Option<QualifiedPath> {

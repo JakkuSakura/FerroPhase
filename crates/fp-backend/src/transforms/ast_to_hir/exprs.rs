@@ -57,8 +57,8 @@ impl HirGenerator {
 
         let kind = match ast_expr.kind() {
             ExprKind::Value(value) => self.transform_value_to_hir(value)?,
-            ExprKind::Name(locator) => hir::ExprKind::Path(
-                self.locator_to_hir_path_with_scope(locator, PathResolutionScope::Value)?,
+            ExprKind::Name(_) => hir::ExprKind::Path(
+                self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value)?,
             ),
             ExprKind::BinOp(binop) => self.transform_binop_to_hir(binop)?,
             ExprKind::UnOp(unop) => self.transform_unop_to_hir(unop)?,

@@ -2,6 +2,7 @@ use crate::ast::{
     get_threadlocal_serializer, BItem, BValue, ExprMacro, Ident, MacroInvocation, Name, Path, Ty,
     TySlot, Value, ValueUnit,
 };
+use crate::module::path::QualifiedPath;
 use crate::span::Span;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
@@ -19,6 +20,21 @@ pub use value::*;
 
 pub type ExprId = u64;
 pub type BExpr = Box<Expr>;
+
+common_enum! {
+    pub enum ResolvedNameNamespace {
+        Value,
+        Type,
+        Module,
+    }
+}
+
+common_struct! {
+    pub struct ResolvedName {
+        pub namespace: ResolvedNameNamespace,
+        pub path: QualifiedPath,
+    }
+}
 
 common_enum! {
     /// Expr is an expression that returns a value, note that a Type is also a Value
@@ -85,6 +101,8 @@ common_struct! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ty: TySlot,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub resolved_name: Option<ResolvedName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         pub span: Option<Span>,
         #[serde(flatten)]
         pub kind: ExprKind,
@@ -95,6 +113,7 @@ impl Expr {
     pub fn new(kind: ExprKind) -> Self {
         Self {
             ty: None,
+            resolved_name: None,
             span: None,
             kind,
         }
@@ -103,6 +122,7 @@ impl Expr {
     pub fn with_ty(kind: ExprKind, ty: TySlot) -> Self {
         Self {
             ty,
+            resolved_name: None,
             span: None,
             kind,
         }
@@ -118,6 +138,14 @@ impl Expr {
 
     pub fn set_ty(&mut self, ty: Ty) {
         self.ty = Some(ty);
+    }
+
+    pub fn resolved_name(&self) -> Option<&ResolvedName> {
+        self.resolved_name.as_ref()
+    }
+
+    pub fn set_resolved_name(&mut self, resolved_name: ResolvedName) {
+        self.resolved_name = Some(resolved_name);
     }
 
     pub fn span(&self) -> Span {
@@ -144,6 +172,7 @@ impl Expr {
     pub fn from_parts(ty: TySlot, kind: ExprKind) -> Self {
         Self {
             ty,
+            resolved_name: None,
             span: None,
             kind,
         }
