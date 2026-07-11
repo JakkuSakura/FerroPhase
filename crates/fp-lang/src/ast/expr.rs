@@ -270,6 +270,23 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
         .into());
     }
     let mut probe = *input;
+    if let Ok(emit_token) = expect_keyword(&mut probe, Keyword::Emit) {
+        let emit_span = token_span_to_span(&emit_token);
+        expect_symbol(&mut probe, "!")?;
+        let block = parse_balanced_quote_block(&mut probe)?;
+        *input = probe;
+        let quote_expr = Expr::new(ExprKind::Quote(ExprQuote {
+            span: block.span,
+            block,
+            kind: None,
+        }));
+        return Ok(ExprKind::Splice(ExprSplice {
+            span: emit_span,
+            token: Box::new(quote_expr),
+        })
+        .into());
+    }
+    let mut probe = *input;
     if expect_keyword(&mut probe, Keyword::Await).is_ok() {
         let base = parse_prefix(&mut probe, file)?;
         *input = probe;
@@ -329,6 +346,23 @@ fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Exp
         return Ok(ExprKind::Splice(ExprSplice {
             span: span_from_expr(&token),
             token: Box::new(token),
+        })
+        .into());
+    }
+    let mut probe = *input;
+    if let Ok(emit_token) = expect_keyword(&mut probe, Keyword::Emit) {
+        let emit_span = token_span_to_span(&emit_token);
+        expect_symbol(&mut probe, "!")?;
+        let block = parse_balanced_quote_block(&mut probe)?;
+        *input = probe;
+        let quote_expr = Expr::new(ExprKind::Quote(ExprQuote {
+            span: block.span,
+            block,
+            kind: None,
+        }));
+        return Ok(ExprKind::Splice(ExprSplice {
+            span: emit_span,
+            token: Box::new(quote_expr),
         })
         .into());
     }
