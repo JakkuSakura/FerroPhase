@@ -163,7 +163,6 @@ impl FerroPhaseParser {
     }
 }
 
-use bigdecimal::BigDecimal;
 use eyre::Result;
 use fp_core::ast::{
     Attribute, AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, BlockStmt, BlockStmtExpr,
@@ -383,112 +382,11 @@ fn peek_symbol(input: &[Token]) -> Option<&str> {
     }
 }
 
-fn parse_call_args(
-    input: &mut &[Token],
-    file: FileId,
-    terminator: &str,
-) -> ModalResult<(Vec<Expr>, Vec<ExprKwArg>)> {
-    let mut args = Vec::new();
-    let mut kwargs = Vec::new();
-    let mut saw_kwarg = false;
-    if peek_symbol(input) == Some(terminator) {
-        return Ok((args, kwargs));
-    }
-    loop {
-        let mut probe = *input;
-        if let Ok(name) = parse_kwarg_name(&mut probe) {
-            if expect_symbol(&mut probe, "=").is_ok() {
-                let value = parse_expr_winnow(&mut probe, file)?;
-                *input = probe;
-                if kwargs.iter().any(|existing| existing.name == name) {
-                    return Err(ErrMode::Cut(ContextError::new()));
-                }
-                kwargs.push(ExprKwArg { name, value });
-                saw_kwarg = true;
-            } else {
-                if saw_kwarg {
-                    return Err(ErrMode::Cut(ContextError::new()));
-                }
-                let expr = parse_expr_winnow(input, file)?;
-                args.push(expr);
-            }
-        } else {
-            if saw_kwarg {
-                return Err(ErrMode::Cut(ContextError::new()));
-            }
-            let expr = parse_expr_winnow(input, file)?;
-            args.push(expr);
-        }
-        let mut comma_probe = *input;
-        if expect_symbol(&mut comma_probe, ",").is_err() {
-            break;
-        }
-        *input = comma_probe;
-        if peek_symbol(input) == Some(terminator) {
-            break;
-        }
-    }
-    Ok((args, kwargs))
-}
-
-fn parse_kwarg_name(input: &mut &[Token]) -> ModalResult<String> {
-    let ident = ident_like(input)?;
-    Ok(ident.name)
-}
-
-fn peek_keyword(input: &[Token], keyword: Keyword) -> bool {
-    matches!(input.first(), Some(token) if token.kind == TokenKind::Keyword(keyword))
-}
-
-fn expect_ident_like_text(input: &mut &[Token], text: &str) -> ModalResult<()> {
-    let mut probe = *input;
-    let ident = ident_like(&mut probe)?;
-    if ident.as_str() != text {
-        return Err(ErrMode::Backtrack(ContextError::new()));
-    }
-    *input = probe;
-    Ok(())
-}
-
-fn peek_two_stars(input: &[Token]) -> bool {
-    matches!(input, [first, second, ..] if first.kind == TokenKind::Symbol && first.lexeme == "*" && second.kind == TokenKind::Symbol && second.lexeme == "*")
-}
-
-fn skip_where_clause(input: &mut &[Token]) -> ModalResult<()> {
-    while !input.is_empty() {
-        if peek_symbol(input) == Some("{") {
-            return Ok(());
-        }
-        *input = &input[1..];
-    }
-    Err(ErrMode::Cut(ContextError::new()))
-}
-
-fn looks_like_item_macro(input: &[Token]) -> bool {
-    matches!(input, [first, second, ..] if matches!(first.kind, TokenKind::Ident | TokenKind::Keyword(_)) && second.kind == TokenKind::Symbol && second.lexeme == "!")
-}
-
 fn type_to_expr(ty: &Ty) -> Expr {
     match ty {
         Ty::Expr(expr) => (**expr).clone(),
         other => Expr::value(Value::Type(other.clone())),
     }
-}
-
-fn type_to_name(ty: &Ty) -> Option<Name> {
-    match ty {
-        Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(name) => Some(name.clone()),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn single_segment_path(segment: fp_core::ast::ItemImportTree) -> fp_core::ast::ItemImportPath {
-    let mut path = fp_core::ast::ItemImportPath::new();
-    path.push(segment);
-    path
 }
 
 fn peek_ident_like(input: &[Token]) -> Option<&str> {

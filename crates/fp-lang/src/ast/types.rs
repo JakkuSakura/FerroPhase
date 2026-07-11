@@ -291,7 +291,7 @@ fn type_to_expr(ty: &Ty) -> Expr {
     }
 }
 
-fn type_to_name(ty: &Ty) -> Option<Name> {
+pub(crate) fn type_to_name(ty: &Ty) -> Option<Name> {
     match ty {
         Ty::Expr(expr) => match expr.kind() {
             ExprKind::Name(name) => Some(name.clone()),
@@ -301,7 +301,9 @@ fn type_to_name(ty: &Ty) -> Option<Name> {
     }
 }
 
-fn single_segment_path(segment: fp_core::ast::ItemImportTree) -> fp_core::ast::ItemImportPath {
+pub(crate) fn single_segment_path(
+    segment: fp_core::ast::ItemImportTree,
+) -> fp_core::ast::ItemImportPath {
     let mut path = fp_core::ast::ItemImportPath::new();
     path.push(segment);
     path
