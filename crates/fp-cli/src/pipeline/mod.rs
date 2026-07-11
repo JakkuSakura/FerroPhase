@@ -2337,9 +2337,9 @@ fn main() {
     fn ferro_pipeline_promotes_query_after_frontend_parse() {
         let mut pipeline = Pipeline::new();
         let ast = pipeline
-            .parse_source_with_path_for_tests(
+            .parse_source_public(
                 "from(ticks).where(symbol == \"AAPL\").select(value)",
-                Path::new("unit_query.fp"),
+                None,
             )
             .expect("parse");
         assert!(matches!(ast.kind(), ast::NodeKind::Query(_)));

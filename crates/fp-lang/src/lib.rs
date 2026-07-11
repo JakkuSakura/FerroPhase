@@ -7,7 +7,7 @@ mod normalization;
 mod serializer;
 use crate::macro_parser::FerroMacroExpansionParser;
 use crate::normalization::FerroIntrinsicNormalizer;
-use fp_core::ast::{Expr, ExprKind, Node};
+use fp_core::ast::{AstSerializer, Node};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::IntrinsicNormalizer;
@@ -42,25 +42,6 @@ impl FerroFrontend {
         }
     }
 
-    fn prefer_expr_mode_for_file_input(&self, source: &str) -> bool {
-        let trimmed = source.trim_start();
-        trimmed.starts_with('{')
-            || trimmed.starts_with('(')
-            || trimmed.starts_with('[')
-            || trimmed.starts_with("let ")
-            || trimmed.starts_with("if ")
-            || trimmed.starts_with("match ")
-            || trimmed.starts_with("async ")
-            || trimmed.starts_with("const ")
-            || trimmed.starts_with("while ")
-            || trimmed.starts_with("for ")
-            || trimmed.starts_with("loop ")
-            || trimmed.starts_with("with ")
-            || trimmed.starts_with("quote ")
-            || trimmed.starts_with("quote<")
-            || trimmed.starts_with("splice ")
-    }
-
     fn wrap_statement_like_expr_input<'a>(&self, source: &'a str) -> std::borrow::Cow<'a, str> {
         let trimmed = source.trim_start();
         if trimmed.starts_with("let ") || trimmed.starts_with("defer ") {
@@ -69,35 +50,34 @@ impl FerroFrontend {
         std::borrow::Cow::Borrowed(source)
     }
 
-    fn looks_like_item_file_input(&self, source: &str) -> bool {
-        let trimmed = source.trim_start();
-        trimmed.starts_with("#!")
-            || trimmed.starts_with("#[")
-            || trimmed.starts_with("pub ")
-            || trimmed.starts_with("use ")
-            || trimmed.starts_with("extern ")
-            || trimmed.starts_with("fn ")
-            || trimmed.starts_with("const ")
-            || trimmed.starts_with("static ")
-            || trimmed.starts_with("type ")
-            || trimmed.starts_with("struct ")
-            || trimmed.starts_with("enum ")
-            || trimmed.starts_with("mod ")
-            || trimmed.starts_with("opaque ")
-            || trimmed.starts_with("trait ")
-            || trimmed.starts_with("impl ")
-            || trimmed.starts_with("quote fn ")
-            || trimmed.starts_with("async fn ")
+    fn setup(
+        &self,
+    ) -> (
+        Arc<dyn AstSerializer>,
+        Arc<dyn IntrinsicNormalizer>,
+        Arc<FerroMacroExpansionParser>,
+    ) {
+        (
+            Arc::new(PrettyAstSerializer::new()),
+            Arc::new(FerroIntrinsicNormalizer::default()),
+            Arc::new(FerroMacroExpansionParser::new()),
+        )
     }
-}
 
-fn strip_async_block(expr: Expr) -> Expr {
-    if let ExprKind::Async(async_expr) = expr.kind() {
-        if let ExprKind::Block(_) = async_expr.expr.kind() {
-            return (*async_expr.expr).clone();
+    fn diagnostic_err(&self, message: String) -> fp_core::error::Error {
+        let mut diagnostic = Diagnostic::error(message);
+        if let Some(span) = self
+            .ferro
+            .diagnostics()
+            .get_diagnostics()
+            .iter()
+            .find_map(|diag| diag.span)
+        {
+            diagnostic = diagnostic.with_span(span);
         }
+        fp_core::error::Error::diagnostic(diagnostic)
     }
-    expr
+
 }
 
 impl LanguageFrontend for FerroFrontend {
@@ -109,201 +89,63 @@ impl LanguageFrontend for FerroFrontend {
         &["fp", "ferro", "rs", "rust", "ferrophase"]
     }
 
-    fn parse(&self, source: &str, path: Option<&Path>) -> CoreResult<FrontendResult> {
+    fn parse_expr(&self, source: &str) -> CoreResult<FrontendResult> {
         let cleaned = self.clean_source(source);
-        let serializer = Arc::new(PrettyAstSerializer::new());
-        let intrinsic_normalizer: Arc<dyn IntrinsicNormalizer> =
-            Arc::new(FerroIntrinsicNormalizer::default());
-        let macro_parser = Arc::new(FerroMacroExpansionParser::new());
-        let source_path = match path {
-            Some(path) => path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
-            None => PathBuf::from("<expr>"),
-        };
-        let file_id = register_source(source_path.clone(), &cleaned);
-        let source_path_display = source_path.clone();
-
-        let try_expr_mode = path.is_none() || self.prefer_expr_mode_for_file_input(&cleaned);
-        if try_expr_mode {
-            self.ferro.clear_diagnostics();
-            let expr_source = self.wrap_statement_like_expr_input(&cleaned);
-            if let Ok(expr) = self
-                .ferro
-                .parse_expr_ast_with_file(expr_source.as_ref(), file_id)
-            {
-                let expr = strip_async_block(expr);
-                let diagnostics = self.ferro.diagnostics();
-                let last = Node::expr(expr.clone());
-                let mut ast = last.clone();
-                fp_core::intrinsics::normalize_intrinsics_with(
-                    &mut ast,
-                    intrinsic_normalizer.as_ref(),
-                )
-                .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-                return Ok(FrontendResult {
-                    last,
-                    ast,
-                    serializer,
-                    intrinsic_normalizer: Some(intrinsic_normalizer),
-                    macro_parser: Some(macro_parser.clone()),
-                    snapshot: None,
-                    diagnostics,
-                });
-            }
-        }
-
-        if path.is_some() {
-            self.ferro.clear_diagnostics();
-            return match self.ferro.parse_file_ast_with_file(
-                &cleaned,
-                file_id,
-                Some(&source_path),
-                source_path.clone(),
-            ) {
-                Ok(file) => {
-                    let diagnostics = self.ferro.diagnostics();
-                    let last = Node::file(file);
-                    let mut ast = last.clone();
-                    fp_core::intrinsics::normalize_intrinsics_with(
-                        &mut ast,
-                        intrinsic_normalizer.as_ref(),
-                    )
-                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-                    let snapshot = FrontendSnapshot {
-                        language: self.language().to_string(),
-                        description: format!(
-                            "FerroPhase LAST for {}",
-                            source_path_display.display()
-                        ),
-                        serialized: None,
-                    };
-
-                    Ok(FrontendResult {
-                        last,
-                        ast,
-                        serializer,
-                        intrinsic_normalizer: Some(intrinsic_normalizer.clone()),
-                        macro_parser: Some(macro_parser.clone()),
-                        snapshot: Some(snapshot),
-                        diagnostics,
-                    })
-                }
-                Err(_) if !self.looks_like_item_file_input(&cleaned) => {
-                    self.ferro.clear_diagnostics();
-                    match self.ferro.parse_expr_ast_with_file(&cleaned, file_id) {
-                        Ok(expr) => {
-                            let file = fp_core::ast::File {
-                                path: source_path.clone(),
-                                attrs: Vec::new(),
-                                items: vec![fp_core::ast::Item::from(
-                                    fp_core::ast::ItemKind::Expr(expr),
-                                )],
-                            };
-                            let diagnostics = self.ferro.diagnostics();
-                            let last = Node::file(file);
-                            let mut ast = last.clone();
-                            fp_core::intrinsics::normalize_intrinsics_with(
-                                &mut ast,
-                                intrinsic_normalizer.as_ref(),
-                            )
-                            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-                            let snapshot = FrontendSnapshot {
-                                language: self.language().to_string(),
-                                description: format!(
-                                    "FerroPhase LAST for {}",
-                                    source_path_display.display()
-                                ),
-                                serialized: None,
-                            };
-
-                            Ok(FrontendResult {
-                                last,
-                                ast,
-                                serializer,
-                                intrinsic_normalizer: Some(intrinsic_normalizer.clone()),
-                                macro_parser: Some(macro_parser.clone()),
-                                snapshot: Some(snapshot),
-                                diagnostics,
-                            })
-                        }
-                        Err(err) => {
-                            let mut diagnostic = Diagnostic::error(format!(
-                                "failed to parse items (file mode): {err}"
-                            ));
-                            if let Some(span) = self
-                                .ferro
-                                .diagnostics()
-                                .get_diagnostics()
-                                .iter()
-                                .find_map(|diag| diag.span)
-                            {
-                                diagnostic = diagnostic.with_span(span);
-                            }
-                            Err(fp_core::error::Error::diagnostic(diagnostic))
-                        }
-                    }
-                }
-                Err(err) => {
-                    let mut diagnostic =
-                        Diagnostic::error(format!("failed to parse items (file mode): {err}"));
-                    if let Some(span) = self
-                        .ferro
-                        .diagnostics()
-                        .get_diagnostics()
-                        .iter()
-                        .find_map(|diag| diag.span)
-                    {
-                        diagnostic = diagnostic.with_span(span);
-                    }
-                    Err(fp_core::error::Error::diagnostic(diagnostic))
-                }
-            };
-        }
+        let file_id = register_source(PathBuf::from("<expr>"), &cleaned);
+        let (serializer, intrinsic_normalizer, macro_parser) = self.setup();
 
         self.ferro.clear_diagnostics();
-        match self
+        let expr_source = self.wrap_statement_like_expr_input(&cleaned);
+        let expr = self
             .ferro
-            .parse_items_ast_with_file(&cleaned, file_id, Some(&source_path))
-        {
-            Ok(items) => {
-                let file = fp_core::ast::File {
-                    path: Path::new("<expr>").to_path_buf(),
-                    attrs: Vec::new(),
-                    items,
-                };
-                let diagnostics = self.ferro.diagnostics();
-                let last = Node::file(file);
-                let mut ast = last.clone();
-                fp_core::intrinsics::normalize_intrinsics_with(
-                    &mut ast,
-                    intrinsic_normalizer.as_ref(),
-                )
-                .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-                Ok(FrontendResult {
-                    last,
-                    ast,
-                    serializer,
-                    intrinsic_normalizer: Some(intrinsic_normalizer),
-                    macro_parser: Some(macro_parser.clone()),
-                    snapshot: None,
-                    diagnostics,
-                })
-            }
-            Err(err) => {
-                let mut diagnostic = Diagnostic::error(format!(
-                    "failed to parse source as expression or items: {err}"
-                ));
-                if let Some(span) = self
-                    .ferro
-                    .diagnostics()
-                    .get_diagnostics()
-                    .iter()
-                    .find_map(|diag| diag.span)
-                {
-                    diagnostic = diagnostic.with_span(span);
-                }
-                Err(fp_core::error::Error::diagnostic(diagnostic))
-            }
-        }
+            .parse_expr_ast_with_file(expr_source.as_ref(), file_id)
+            .map_err(|err| self.diagnostic_err(format!("failed to parse expression: {err}")))?;
+        let diagnostics = self.ferro.diagnostics();
+        let last = Node::expr(expr.clone());
+        let mut ast = last.clone();
+        fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+        Ok(FrontendResult {
+            last,
+            ast,
+            serializer,
+            intrinsic_normalizer: Some(intrinsic_normalizer),
+            macro_parser: Some(macro_parser),
+            snapshot: None,
+            diagnostics,
+        })
+    }
+
+    fn parse_file(&self, source: &str, path: &Path) -> CoreResult<FrontendResult> {
+        let cleaned = self.clean_source(source);
+        let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let file_id = register_source(source_path.clone(), &cleaned);
+        let (serializer, intrinsic_normalizer, macro_parser) = self.setup();
+
+        self.ferro.clear_diagnostics();
+        let file = self
+            .ferro
+            .parse_file_ast_with_file(&cleaned, file_id, Some(&source_path), source_path.clone())
+            .map_err(|err| self.diagnostic_err(format!("failed to parse file: {err}")))?;
+        let diagnostics = self.ferro.diagnostics();
+        let last = Node::file(file);
+        let mut ast = last.clone();
+        fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+        let snapshot = FrontendSnapshot {
+            language: self.language().to_string(),
+            description: format!("FerroPhase LAST for {}", source_path.display()),
+            serialized: None,
+        };
+        Ok(FrontendResult {
+            last,
+            ast,
+            serializer,
+            intrinsic_normalizer: Some(intrinsic_normalizer),
+            macro_parser: Some(macro_parser),
+            snapshot: Some(snapshot),
+            diagnostics,
+        })
     }
 }
 
@@ -429,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn query_file_stays_as_host_ast_until_feature_pass() {
+    fn query_file_without_items_fails_as_file_input() {
         let frontend = FerroFrontend::new();
         let dir = std::env::temp_dir().join(format!("fp-lang-query-pass-{}", std::process::id()));
         fs::create_dir_all(&dir).expect("create temp dir");
@@ -440,27 +282,29 @@ mod tests {
         )
         .expect("write temp source");
 
-        let result = frontend
-            .parse(&fs::read_to_string(&path).expect("read"), Some(&path))
-            .expect("parse");
-        assert!(matches!(result.ast.kind(), NodeKind::File(_)));
+        let result = frontend.parse_file(
+            &fs::read_to_string(&path).expect("read"),
+            &path,
+        );
+        assert!(
+            result.is_err(),
+            "query syntax is not valid file input"
+        );
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(&dir);
     }
 
     #[test]
-    fn file_backed_if_expression_stays_expr_mode() {
+    fn file_backed_expression_without_items_fails() {
         let frontend = FerroFrontend::new();
         let dir = std::env::temp_dir().join(format!("fp-lang-if-expr-{}", std::process::id()));
         fs::create_dir_all(&dir).expect("create temp dir");
         let path = dir.join("if_expr.fp");
         fs::write(&path, "if a > b { a } else { b }").expect("write temp source");
 
-        let result = frontend
-            .parse(&fs::read_to_string(&path).expect("read"), Some(&path))
-            .expect("parse");
-        assert!(matches!(result.ast.kind(), NodeKind::Expr(_)));
+        let result = frontend.parse(&fs::read_to_string(&path).expect("read"), Some(&path));
+        assert!(result.is_err(), "expression-only file is not valid file input");
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(&dir);
@@ -470,4 +314,3 @@ mod tests {
 pub mod ast;
 pub mod embedded_std;
 pub mod lexer;
-pub(crate) mod tokens;

@@ -47,7 +47,24 @@ pub struct FrontendResult {
 pub trait LanguageFrontend: Send + Sync {
     fn language(&self) -> &'static str;
     fn extensions(&self) -> &'static [&'static str];
-    fn parse(&self, source: &str, path: Option<&Path>) -> Result<FrontendResult>;
+
+    /// Parse source as a standalone expression.
+    fn parse_expr(&self, source: &str) -> Result<FrontendResult> {
+        self.parse(source, None)
+    }
+
+    /// Parse source as a file (items).
+    fn parse_file(&self, source: &str, path: &Path) -> Result<FrontendResult> {
+        self.parse(source, Some(path))
+    }
+
+    /// Parse source, dispatching to parse_expr or parse_file based on path.
+    fn parse(&self, source: &str, path: Option<&Path>) -> Result<FrontendResult> {
+        match path {
+            Some(p) => self.parse_file(source, p),
+            None => self.parse_expr(source),
+        }
+    }
 
     fn parse_mode(&self) -> FrontendParseMode {
         FrontendParseMode::default()
