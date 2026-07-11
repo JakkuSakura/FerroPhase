@@ -1,4 +1,4 @@
-use super::lexeme::{Lexeme, LexemeKind};
+use super::lexeme::Lexeme;
 use super::winnow::{
     backtrack_err, block_comment, is_ident_continue, is_ident_start, line_comment,
     parse_byte_char_literal, parse_char_literal, parse_cooked_string_literal, parse_lifetime,
@@ -281,6 +281,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
         input = &source[offset..];
     }
     let mut tokens = Vec::new();
+    let mut angle_depth = 0u32;
     while !input.is_empty() {
         ws.parse_next(&mut input).map_err(LexerError::from)?;
         if input.is_empty() {
@@ -299,6 +300,33 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
         };
         let end = source.len() - input.len();
         let mut lexeme = source[start..end].to_string();
+
+        // Split >> into two > tokens when inside angle brackets (nested generics).
+        // The lexer normally emits >> as a single token for the shift operator.
+        if lexeme == ">>" && angle_depth > 0 {
+            tokens.push(Token {
+                kind: TokenKind::Symbol,
+                lexeme: ">".to_string(),
+                span: Span {
+                    start,
+                    end: start + 1,
+                },
+            });
+            angle_depth -= 1;
+            input = &source[start + 1..];
+            continue;
+        }
+
+        match lexeme.as_str() {
+            "<" => angle_depth += 1,
+            ">" => {
+                if angle_depth > 0 {
+                    angle_depth -= 1;
+                }
+            }
+            _ => {}
+        }
+
         let kind = match kind {
             TokenKind::Ident => {
                 if let Some(keyword) = Keyword::from_lexeme(&lexeme) {
@@ -327,6 +355,7 @@ pub fn lex_lexemes(source: &str) -> Result<Vec<Lexeme>, LexerError> {
         input = &source[offset..];
     }
     let mut out = Vec::new();
+    let mut angle_depth = 0u32;
     while !input.is_empty() {
         let before = input;
         let start = source.len() - before.len();
@@ -364,57 +393,31 @@ pub fn lex_lexemes(source: &str) -> Result<Vec<Lexeme>, LexerError> {
             LexerError::with_span(err.to_string(), span)
         })?;
         let end = source.len() - input.len();
-        out.push(Lexeme::token(
-            source[start..end].to_string(),
-            Span { start, end },
-        ));
-    }
-    Ok(normalize_lexemes(out))
-}
+        let text = source[start..end].to_string();
 
-fn normalize_lexemes(lexemes: Vec<Lexeme>) -> Vec<Lexeme> {
-    let mut out: Vec<Lexeme> = Vec::with_capacity(lexemes.len());
-    let mut i = 0usize;
-    while i < lexemes.len() {
-        let lexeme = &lexemes[i];
-        if lexeme.kind == LexemeKind::Token && lexeme.text == "." {
-            let prev_idx = out.len().checked_sub(1);
-            let prev_is_number = prev_idx.and_then(|idx| out.get(idx)).is_some_and(|prev| {
-                prev.kind == LexemeKind::Token
-                    && prev.span.end == lexeme.span.start
-                    && classify_and_normalize_lexeme(&prev.text)
-                        .is_some_and(|(kind, _)| kind == TokenKind::Number)
-            });
-
-            let next_non_trivia = lexemes[i + 1..]
-                .iter()
-                .find(|next| next.kind == LexemeKind::Token);
-            let next_raw = next_non_trivia.map(|next| next.text.as_str());
-            let next_kind = next_non_trivia
-                .and_then(|next| classify_and_normalize_lexeme(&next.text).map(|(kind, _)| kind));
-            let next_is_field_like = matches!(
-                next_kind,
-                Some(TokenKind::Ident | TokenKind::Number | TokenKind::Keyword(_))
-            );
-            let next_is_dot = next_raw.is_some_and(|raw| raw.starts_with('.'));
-
-            if prev_is_number && !next_is_field_like && !next_is_dot {
-                if let Some(prev_idx) = prev_idx {
-                    if let Some(prev) = out.get_mut(prev_idx) {
-                        prev.text.push('.');
-                        prev.span.end = lexeme.span.end;
-                        i += 1;
-                        continue;
-                    }
-                }
-            }
+        if text == ">>" && angle_depth > 0 {
+            out.push(Lexeme::token(
+                ">".to_string(),
+                Span { start, end: start + 1 },
+            ));
+            angle_depth -= 1;
+            input = &source[start + 1..];
+            continue;
         }
 
-        out.push(lexeme.clone());
-        i += 1;
-    }
+        match text.as_str() {
+            "<" => angle_depth += 1,
+            ">" => {
+                if angle_depth > 0 {
+                    angle_depth -= 1;
+                }
+            }
+            _ => {}
+        }
 
-    out
+        out.push(Lexeme::token(text, Span { start, end }));
+    }
+    Ok(out)
 }
 
 fn frontmatter_end_offset(source: &str) -> Option<usize> {
@@ -637,6 +640,7 @@ fn single_punct_token(input: &mut &str) -> ModalResult<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lexer::lexeme::LexemeKind;
 
     fn snapshot_from_lexemes(src: &str) -> Vec<(TokenKind, String)> {
         lex_lexemes(src)

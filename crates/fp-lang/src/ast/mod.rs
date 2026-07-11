@@ -116,7 +116,6 @@ impl FerroPhaseParser {
             }
             eyre::eyre!(err)
         })?;
-        let tokens = crate::tokens::rewrite::lower_tokens(tokens);
         crate::ast::parse_items_tokens(&tokens, file).map_err(|err| {
             if let Some(span) = err.span() {
                 self.record_error_with_span(format!("failed to parse items: {err}"), span);
@@ -144,7 +143,6 @@ impl FerroPhaseParser {
             }
             eyre::eyre!(err)
         })?;
-        let tokens = crate::tokens::rewrite::lower_tokens(tokens);
         let (attrs, items) = crate::ast::parse_file_tokens(&tokens, file_id).map_err(|err| {
             if let Some(span) = err.span() {
                 self.record_error_with_span(format!("failed to parse file: {err}"), span);
