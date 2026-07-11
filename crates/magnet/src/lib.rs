@@ -29,6 +29,7 @@
 //! - `commands`: CLI command implementations
 
 // Public modules
+pub mod cli;
 pub mod commands;
 pub mod configs;
 pub mod generator;
@@ -38,6 +39,8 @@ pub mod registry;
 pub mod resolver;
 pub mod utils;
 pub mod workspace_graph;
+
+pub use cli::MagnetCli;
 
 // Export version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

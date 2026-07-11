@@ -3,16 +3,17 @@ use eyre::{Context, Result};
 use std::path::PathBuf;
 use tracing::{debug, info};
 
-// Use local utils module instead of common crate
+use magnet::MagnetCli;
 use magnet::commands::{
-    self, BenchOptions, BuildOptions, LockOptions, RunMode, RunOptions, TestOptions, UpdateOptions,
-    generate::GenerateOptions,
+    BenchOptions, BuildOptions, LockOptions, RunMode, RunOptions, TestOptions, UpdateOptions,
+    export::ExportOptions, generate::GenerateOptions,
 };
 use magnet::utils::{LogLevel, setup_logs};
 
 /// CLI entry point
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let magnet_cli = MagnetCli::new();
 
     // Setup logging based on verbosity
     let log_level = match cli.verbose {
@@ -31,7 +32,7 @@ fn main() -> Result<()> {
 
     // Execute the appropriate subcommand
     match cli.command {
-        Some(Commands::Init { path, from_cargo }) => commands::init(&path, from_cargo),
+        Some(Commands::Init { path, from_cargo }) => magnet_cli.init(&path, from_cargo),
         Some(Commands::Generate {
             config,
             clean,
@@ -46,11 +47,11 @@ fn main() -> Result<()> {
                 include_cargo_dir,
                 symlink_cargo_dir,
             };
-            commands::generate(&options)
+            magnet_cli.generate(&options)
         }
-        Some(Commands::Check { config }) => commands::check(&config),
-        Some(Commands::Tree { config }) => commands::tree(&config),
-        Some(Commands::Graph { config, output }) => commands::graph(&config, output.as_deref()),
+        Some(Commands::Check { config }) => magnet_cli.check(&config),
+        Some(Commands::Tree { config }) => magnet_cli.tree(&config),
+        Some(Commands::Graph { config, output }) => magnet_cli.graph(&config, output.as_deref()),
         Some(Commands::Lock {
             path,
             offline,
@@ -63,7 +64,7 @@ fn main() -> Result<()> {
                 cache_dir,
                 fetch,
             };
-            commands::lock(&options)
+            magnet_cli.lock(&options)
         }
         Some(Commands::Update {
             path,
@@ -77,7 +78,7 @@ fn main() -> Result<()> {
                 cache_dir,
                 fetch,
             };
-            commands::update(&options)
+            magnet_cli.update(&options)
         }
         Some(Commands::Export {
             package,
@@ -88,7 +89,7 @@ fn main() -> Result<()> {
             export_dir,
             crates_dir,
         }) => {
-            let options = commands::export::ExportOptions {
+            let options = ExportOptions {
                 package_path: package,
                 clean,
                 copy_lock,
@@ -97,20 +98,20 @@ fn main() -> Result<()> {
                 export_dir,
                 crates_dir,
             };
-            commands::export(&options)
+            magnet_cli.export(&options)
         }
         Some(Commands::Submodule {
             action,
             path,
             remote,
         }) => match action {
-            SubmoduleAction::Init => commands::submodule_init(&path),
-            SubmoduleAction::Update => commands::submodule_update(&path, remote),
+            SubmoduleAction::Init => magnet_cli.submodule_init(&path),
+            SubmoduleAction::Update => magnet_cli.submodule_update(&path, remote),
             SubmoduleAction::Deinit { submodule_path } => {
-                commands::submodule_deinit(&path, &submodule_path)
+                magnet_cli.submodule_deinit(&path, &submodule_path)
             }
-            SubmoduleAction::List => commands::submodule_list(&path),
-            SubmoduleAction::Switch { rev } => commands::submodule_switch(&path, &rev),
+            SubmoduleAction::List => magnet_cli.submodule_list(&path),
+            SubmoduleAction::Switch { rev } => magnet_cli.submodule_switch(&path, &rev),
         },
         Some(Commands::Run {
             path,
@@ -140,7 +141,7 @@ fn main() -> Result<()> {
                 cache_dir,
                 fetch,
             };
-            commands::run(&options)
+            magnet_cli.run(&options)
         }
         Some(Commands::Build {
             path,
@@ -170,7 +171,7 @@ fn main() -> Result<()> {
                 cache_dir,
                 fetch,
             };
-            commands::build(&options)
+            magnet_cli.build(&options)
         }
         Some(Commands::Test {
             path,
@@ -194,7 +195,7 @@ fn main() -> Result<()> {
                 examples,
                 args,
             };
-            commands::test(&options)
+            magnet_cli.test(&options)
         }
         Some(Commands::Bench {
             path,
@@ -218,7 +219,7 @@ fn main() -> Result<()> {
                 examples,
                 args,
             };
-            commands::bench(&options)
+            magnet_cli.bench(&options)
         }
         None => {
             info!("No command specified. Run with --help for usage information.");
