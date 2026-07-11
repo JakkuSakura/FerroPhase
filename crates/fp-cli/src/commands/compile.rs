@@ -54,13 +54,6 @@ use tracing::{info, warn};
 
 use clap::{ArgAction, Args, ValueEnum};
 
-#[allow(dead_code)]
-fn disabled_feature_error(feature: &str, capability: &str) -> CliError {
-    CliError::MissingDependency(format!(
-        "Feature '{feature}' is disabled; enable it to use {capability}."
-    ))
-}
-
 /// Arguments for the compile command (also used by Clap)
 #[derive(Debug, Clone, Args)]
 pub struct CompileArgs {

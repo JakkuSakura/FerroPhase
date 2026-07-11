@@ -316,13 +316,45 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         segments.push(ParameterPathSegment::new(next, args));
     }
     let has_args = segments.iter().any(|segment| !segment.args.is_empty());
-    let idents: Vec<Ident> = segments.iter().map(|segment| segment.ident.clone()).collect();
+    let idents: Vec<Ident> = segments
+        .iter()
+        .map(|segment| segment.ident.clone())
+        .collect();
     let (prefix, plain_segments) = split_path_prefix(idents, saw_root);
     if has_args {
+        let stripped_len = plain_segments.len();
+        let segments = segments
+            .into_iter()
+            .rev()
+            .take(stripped_len)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
         Ok(Name::parameter_path(ParameterPath::new(prefix, segments)))
     } else {
         Ok(Name::path(Path::new(prefix, plain_segments)))
     }
+}
+
+pub(crate) fn parse_module_path(input: &mut &[Token]) -> ModalResult<Path> {
+    let saw_root = opt(|input: &mut &[Token]| expect_symbol(input, "::"))
+        .parse_next(input)?
+        .is_some();
+    let mut segments = vec![ident_like(input)?];
+    loop {
+        let mut probe = *input;
+        if expect_symbol(&mut probe, "::").is_err() {
+            break;
+        }
+        let Ok(next) = ident_like(&mut probe) else {
+            break;
+        };
+        *input = probe;
+        segments.push(next);
+    }
+    let (prefix, segments) = split_path_prefix(segments, saw_root);
+    Ok(Path::new(prefix, segments))
 }
 
 fn token_kind(input: &mut &[Token], kind: TokenKind) -> ModalResult<Token> {
