@@ -12,7 +12,7 @@ use fp_core::ast::{
 };
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::error::{Error as CoreError, Result as CoreResult};
-use fp_core::frontend::{FrontendResult, LanguageFrontend};
+use fp_core::frontend::{FrontendParseMode, FrontendResult, LanguageFrontend};
 use swc_common::input::StringInput;
 use swc_common::{sync::Lrc, FileName, SourceMap, DUMMY_SP};
 use swc_ecma_ast::EsVersion;
@@ -94,6 +94,10 @@ impl TypeScriptFrontend {
         *self.parse_mode.read().unwrap()
     }
 
+    pub fn set_parse_mode_ts(&self, mode: TsParseMode) {
+        *self.parse_mode.write().unwrap() = mode;
+    }
+
     pub fn parse_dependencies(
         &self,
         path: &Path,
@@ -140,6 +144,20 @@ impl LanguageFrontend for TypeScriptFrontend {
         EXTENSIONS
     }
 
+    fn parse_mode(&self) -> FrontendParseMode {
+        match self.parse_mode() {
+            TsParseMode::Strict => FrontendParseMode::Strict,
+            TsParseMode::Loose => FrontendParseMode::Loose,
+        }
+    }
+
+    fn set_parse_mode(&self, mode: FrontendParseMode) {
+        let ts_mode = match mode {
+            FrontendParseMode::Strict => TsParseMode::Strict,
+            FrontendParseMode::Loose => TsParseMode::Loose,
+        };
+        self.set_parse_mode_ts(ts_mode);
+    }
     fn parse(&self, source: &str, path: Option<&Path>) -> CoreResult<FrontendResult> {
         let diagnostics = Arc::new(DiagnosticManager::new());
         let mode = self.parse_mode();

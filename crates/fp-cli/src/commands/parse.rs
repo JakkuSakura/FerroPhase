@@ -1,5 +1,6 @@
 use crate::{Result, cli::CliConfig, pipeline::Pipeline};
 use clap::{ArgAction, Args, ValueEnum, ValueHint};
+use fp_core::frontend::FrontendParseMode;
 use fp_core::pretty::{PrettyOptions, pretty};
 #[cfg(feature = "lang-typescript")]
 use fp_typescript::frontend::TsParseMode;
@@ -19,6 +20,15 @@ impl From<ParseModeArg> for TsParseMode {
         match value {
             ParseModeArg::Strict => TsParseMode::Strict,
             ParseModeArg::Loose => TsParseMode::Loose,
+        }
+    }
+}
+
+impl From<ParseModeArg> for FrontendParseMode {
+    fn from(value: ParseModeArg) -> Self {
+        match value {
+            ParseModeArg::Strict => FrontendParseMode::Strict,
+            ParseModeArg::Loose => FrontendParseMode::Loose,
         }
     }
 }
@@ -65,7 +75,7 @@ pub async fn parse_command(mut args: ParseArgs, _config: &CliConfig) -> Result<(
             ));
         }
         let mut pipeline = Pipeline::new();
-        pipeline.set_typescript_parse_mode(args.parse_mode.into());
+        pipeline.set_parse_mode(args.parse_mode.into());
         return parse_expression(&mut pipeline, expr, args.snapshot.take());
     }
 
@@ -78,7 +88,7 @@ pub async fn parse_command(mut args: ParseArgs, _config: &CliConfig) -> Result<(
     crate::commands::validate_paths_exist(&args.files, true, "parse")?;
 
     let mut pipeline = Pipeline::new();
-    pipeline.set_typescript_parse_mode(args.parse_mode.into());
+    pipeline.set_parse_mode(args.parse_mode.into());
     let mut snapshot = args.snapshot.take();
     for (index, path) in args.files.into_iter().enumerate() {
         let snapshot_for_file = if index == 0 { snapshot.take() } else { None };
@@ -121,7 +131,7 @@ fn parse_expression(
 fn parse_path(
     path: &Path,
     pipeline: &mut Pipeline,
-    mode: TsParseMode,
+    mode: FrontendParseMode,
     resolve_imports: bool,
     snapshot: Option<PathBuf>,
 ) -> Result<()> {
@@ -137,7 +147,7 @@ fn parse_path(
 fn parse_file(
     path: &Path,
     pipeline: &mut Pipeline,
-    mode: TsParseMode,
+    mode: FrontendParseMode,
     resolve_imports: bool,
     snapshot: Option<PathBuf>,
 ) -> Result<()> {
@@ -151,7 +161,7 @@ fn parse_file(
     let ast = match pipeline.parse_source_public(&source, Some(path)) {
         Ok(ast) => ast,
         Err(err) => {
-            if matches!(mode, TsParseMode::Loose) {
+            if matches!(mode, FrontendParseMode::Loose) {
                 eprintln!(
                     "Warning: failed to parse {} ({}). Skipping.",
                     path.display(),

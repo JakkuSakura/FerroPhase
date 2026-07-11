@@ -23,7 +23,7 @@ use crate::languages::frontend::TypeScriptFrontend;
 #[cfg(feature = "lang-wit")]
 use crate::languages::frontend::WitFrontend;
 use crate::languages::frontend::{
-    FerroFrontend, FrontendResult, FrontendSnapshot, LanguageFrontend,
+    FerroFrontend, FrontendParseMode, FrontendResult, FrontendSnapshot, LanguageFrontend,
 };
 use crate::languages::{self, detect_source_language};
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
@@ -130,10 +130,7 @@ pub struct Pipeline {
     frontend_snapshot: Option<FrontendSnapshot>,
     last_const_eval: Option<ConstEvalOutcome>,
     last_resolved_names: ResolvedNameTable,
-    #[cfg(feature = "lang-typescript")]
-    typescript_frontend: Option<Arc<TypeScriptFrontend>>,
-    #[cfg(feature = "lang-typescript")]
-    typescript_parse_mode: TsParseMode,
+    parse_mode: FrontendParseMode,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -161,10 +158,8 @@ impl Pipeline {
             register(wit_frontend);
         }
         #[cfg(feature = "lang-typescript")]
-        let ts_frontend_concrete = Arc::new(TypeScriptFrontend::new(TsParseMode::Loose));
-        #[cfg(feature = "lang-typescript")]
         {
-            let ts_frontend: Arc<dyn LanguageFrontend> = ts_frontend_concrete.clone();
+            let ts_frontend: Arc<dyn LanguageFrontend> = Arc::new(TypeScriptFrontend::new(TsParseMode::Loose));
             register(ts_frontend);
         }
         #[cfg(feature = "lang-sql")]
@@ -224,10 +219,7 @@ impl Pipeline {
             frontend_snapshot: None,
             last_const_eval: None,
             last_resolved_names: ResolvedNameTable::new(),
-            #[cfg(feature = "lang-typescript")]
-            typescript_frontend: Some(ts_frontend_concrete),
-            #[cfg(feature = "lang-typescript")]
-            typescript_parse_mode: TsParseMode::Loose,
+            parse_mode: FrontendParseMode::default(),
         }
     }
 
@@ -252,22 +244,15 @@ impl Pipeline {
         self.last_const_eval.as_ref()
     }
 
-    #[cfg(feature = "lang-typescript")]
-    pub fn set_typescript_parse_mode(&mut self, mode: TsParseMode) {
-        if let Some(frontend) = &self.typescript_frontend {
+    pub fn set_parse_mode(&mut self, mode: FrontendParseMode) {
+        self.parse_mode = mode;
+        for frontend in self.frontends.values() {
             frontend.set_parse_mode(mode);
         }
-        self.typescript_parse_mode = mode;
     }
 
-    #[cfg(feature = "lang-typescript")]
-    pub fn typescript_parse_mode(&self) -> TsParseMode {
-        self.typescript_parse_mode
-    }
-
-    #[cfg(feature = "lang-typescript")]
-    pub fn typescript_frontend(&self) -> Option<Arc<TypeScriptFrontend>> {
-        self.typescript_frontend.as_ref().map(Arc::clone)
+    pub fn parse_mode(&self) -> FrontendParseMode {
+        self.parse_mode
     }
 
     pub fn take_last_const_eval_stdout(&mut self) -> Option<Vec<String>> {
@@ -317,18 +302,8 @@ impl Pipeline {
             .iter()
             .any(|diag| diag.level == DiagnosticLevel::Error);
 
-        let treat_as_errors = if language_key == languages::TYPESCRIPT {
-            #[cfg(feature = "lang-typescript")]
-            {
-                !matches!(self.typescript_parse_mode, TsParseMode::Loose) && has_errors
-            }
-            #[cfg(not(feature = "lang-typescript"))]
-            {
-                has_errors
-            }
-        } else {
-            has_errors
-        };
+        let treat_as_errors = has_errors
+            && !matches!(self.parse_mode, FrontendParseMode::Loose);
 
         if treat_as_errors {
             return Err(CliError::Compilation(

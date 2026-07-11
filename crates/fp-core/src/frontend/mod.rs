@@ -5,6 +5,21 @@ use crate::intrinsics::IntrinsicNormalizer;
 use std::path::Path;
 use std::sync::Arc;
 
+/// Controls how a frontend treats parse errors.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FrontendParseMode {
+    /// Parse failures are fatal errors.
+    Strict,
+    /// Parse failures are downgraded to warnings so processing can continue.
+    Loose,
+}
+
+impl Default for FrontendParseMode {
+    fn default() -> Self {
+        Self::Strict
+    }
+}
+
 /// Snapshot of the language-specific AST (LAST) produced by a frontend stage.
 ///
 /// Records provenance as well as an optional serialised representation that downstream
@@ -33,4 +48,10 @@ pub trait LanguageFrontend: Send + Sync {
     fn language(&self) -> &'static str;
     fn extensions(&self) -> &'static [&'static str];
     fn parse(&self, source: &str, path: Option<&Path>) -> Result<FrontendResult>;
+
+    fn parse_mode(&self) -> FrontendParseMode {
+        FrontendParseMode::default()
+    }
+
+    fn set_parse_mode(&self, _mode: FrontendParseMode) {}
 }
