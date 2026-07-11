@@ -291,24 +291,6 @@ fn type_to_expr(ty: &Ty) -> Expr {
     }
 }
 
-pub(crate) fn type_to_name(ty: &Ty) -> Option<Name> {
-    match ty {
-        Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(name) => Some(name.clone()),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-pub(crate) fn single_segment_path(
-    segment: fp_core::ast::ItemImportTree,
-) -> fp_core::ast::ItemImportPath {
-    let mut path = fp_core::ast::ItemImportPath::new();
-    path.push(segment);
-    path
-}
-
 pub(crate) fn parse_use_tree(input: &mut &[Token]) -> ModalResult<fp_core::ast::ItemImportTree> {
     let mut path = parse_use_path(input)?;
     if expect_keyword(input, Keyword::As).is_ok() {
