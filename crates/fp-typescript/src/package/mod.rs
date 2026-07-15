@@ -58,12 +58,9 @@ impl TypeScriptPackageProvider {
     }
 
     fn read_manifest(&self) -> ProviderResult<PackageJson> {
-        let manifest_path = self.package_manifest();
-        let contents = fs::read_to_string(&manifest_path).map_err(|err| {
-            ProviderError::metadata(format!("{}: {err}", manifest_path.display()))
-        })?;
-        serde_json::from_str(&contents)
-            .map_err(|err| ProviderError::metadata(format!("{}: {err}", manifest_path.display())))
+        read_package_json(&self.package_manifest()).map_err(|err| {
+            ProviderError::metadata(format!("{}: {err}", self.package_manifest().display()))
+        })
     }
 
     fn convert_dependencies(
@@ -300,25 +297,32 @@ where
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct PackageJson {
-    name: String,
+#[derive(Debug, Clone, Deserialize)]
+pub struct PackageJson {
+    pub name: String,
     #[serde(default)]
-    version: Option<String>,
+    pub version: Option<String>,
     #[serde(default)]
-    description: Option<String>,
+    pub description: Option<String>,
     #[serde(default)]
-    license: Option<String>,
+    pub license: Option<String>,
     #[serde(default)]
-    authors: Option<Vec<String>>,
+    pub authors: Option<Vec<String>>,
     #[serde(default)]
-    keywords: Option<Vec<String>>,
+    pub keywords: Option<Vec<String>>,
     #[serde(rename = "dependencies")]
-    dependencies: Option<HashMap<String, serde_json::Value>>,
+    pub dependencies: Option<HashMap<String, serde_json::Value>>,
     #[serde(rename = "devDependencies")]
-    dev_dependencies: Option<HashMap<String, serde_json::Value>>,
+    pub dev_dependencies: Option<HashMap<String, serde_json::Value>>,
     #[serde(rename = "optionalDependencies")]
-    optional_dependencies: Option<HashMap<String, serde_json::Value>>,
+    pub optional_dependencies: Option<HashMap<String, serde_json::Value>>,
+}
+
+pub fn read_package_json(path: &Path) -> Result<PackageJson, ProviderError> {
+    let contents = fs::read_to_string(path)
+        .map_err(|err| ProviderError::metadata(format!("{}: {err}", path.display())))?;
+    serde_json::from_str(&contents)
+        .map_err(|err| ProviderError::metadata(format!("{}: {err}", path.display())))
 }
 
 fn is_typescript_source(path: &Path) -> bool {
@@ -390,6 +394,18 @@ mod tests {
 
         let module = provider.load_module_descriptor(&module_ids[0])?;
         assert_eq!(module.language, ModuleLanguage::TypeScript);
+        Ok(())
+    }
+
+    #[test]
+    fn reads_package_json_manifest() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("package.json");
+        fs::write(&path, r#"{"name": "example", "version": "1.0.0"}"#)?;
+
+        let manifest = read_package_json(&path).map_err(|err| eyre::eyre!(err.to_string()))?;
+        assert_eq!(manifest.name, "example");
+        assert_eq!(manifest.version.as_deref(), Some("1.0.0"));
         Ok(())
     }
 }

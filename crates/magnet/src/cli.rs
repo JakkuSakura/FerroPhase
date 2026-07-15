@@ -6,7 +6,8 @@ use crate::commands::{
     self, BenchOptions, BuildOptions, LockOptions, RunOptions, TestOptions, UpdateOptions,
     export::ExportOptions, generate::GenerateOptions,
 };
-use crate::models::ManifestModel;
+use crate::models::{IdentityCandidate, ManifestModel, PackageModel, ProjectIdentity};
+use crate::resolver::identity;
 use crate::resolver::project::load_manifest;
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -22,7 +23,23 @@ impl MagnetCli {
     }
 
     pub fn package_name(&self, path: &Path) -> Result<String> {
+        let identity = self.resolve_identity(path)?;
+        if let Some(candidate) = identity.primary_package() {
+            return Ok(candidate.name.clone());
+        }
         Ok(self.load_manifest(path)?.name())
+    }
+
+    pub fn resolve_identity(&self, path: &Path) -> Result<ProjectIdentity> {
+        identity::resolve_identity(path)
+    }
+
+    pub fn resolve_packages(&self, identity: &ProjectIdentity) -> Result<Vec<PackageModel>> {
+        identity::resolve_packages(identity)
+    }
+
+    pub fn resolve_package(&self, candidate: &IdentityCandidate) -> Result<PackageModel> {
+        identity::resolve_package(candidate)
     }
 
     pub fn init(&self, path: &Path, from_cargo: bool) -> Result<()> {

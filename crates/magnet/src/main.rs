@@ -52,6 +52,11 @@ fn main() -> Result<()> {
         Some(Commands::Check { config }) => magnet_cli.check(&config),
         Some(Commands::Tree { config }) => magnet_cli.tree(&config),
         Some(Commands::Graph { config, output }) => magnet_cli.graph(&config, output.as_deref()),
+        Some(Commands::Identity { path }) => {
+            let identity = magnet_cli.resolve_identity(&path)?;
+            println!("{}", serde_json::to_string_pretty(&identity)?);
+            Ok(())
+        }
         Some(Commands::Lock {
             path,
             offline,
@@ -298,6 +303,12 @@ enum Commands {
         /// Output path for the DOT file (default: target/dependencies.dot)
         #[arg(short, long)]
         output: Option<PathBuf>,
+    },
+    /// Resolve project/package identity for a path
+    Identity {
+        /// Path to a directory, source file, or manifest
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
     /// Resolve dependencies and generate Magnet.lock
     Lock {

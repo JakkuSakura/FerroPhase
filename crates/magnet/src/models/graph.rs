@@ -422,7 +422,8 @@ impl PackageGraph {
             return Self::from_typescript_manifest(manifest_path);
         }
 
-        let manifest = read_package_json(manifest_path)?;
+        let manifest = fp_typescript::read_package_json(manifest_path)
+            .map_err(|err| eyre::eyre!("{}: {err}", manifest_path.display()))?;
         let dependencies = flatten_package_json_dependencies(&manifest);
         let node = PackageNode {
             name: manifest.name,
@@ -451,27 +452,21 @@ impl PackageGraph {
             .parent()
             .ok_or_else(|| eyre::eyre!("pyproject.toml has no parent directory"))?
             .to_path_buf();
-        let manifest = read_pyproject(manifest_path)?;
-        let dependencies = manifest
-            .dependencies
-            .into_iter()
-            .map(|dep| DependencyEdge {
-                name: dep.name,
-                package: None,
-                version: dep.version,
-                resolved_version: None,
-                checksum: None,
-                source: None,
-                path: None,
-                git: None,
-                rev: None,
-                branch: None,
-                tag: None,
-                workspace: None,
-                optional: None,
-                features: None,
-            })
-            .collect();
+        let manifest = fp_python::read_pyproject(manifest_path)
+            .map_err(|err| eyre::eyre!("{}: {err}", manifest_path.display()))?;
+        let mut dependencies = Vec::new();
+        dependencies.extend(
+            manifest
+                .dependencies
+                .iter()
+                .filter_map(|dep| parse_python_dependency(dep, false)),
+        );
+        for deps in manifest.optional_dependencies.values() {
+            dependencies.extend(
+                deps.iter()
+                    .filter_map(|dep| parse_python_dependency(dep, true)),
+            );
+        }
 
         let node = PackageNode {
             name: manifest.name,
@@ -833,28 +828,7 @@ fn dependency_descriptor_to_edge(dep: &DependencyDescriptor) -> DependencyEdge {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct PackageJsonManifest {
-    name: String,
-    #[serde(default)]
-    version: Option<String>,
-    #[serde(default)]
-    dependencies: Option<HashMap<String, serde_json::Value>>,
-    #[serde(rename = "devDependencies", default)]
-    dev_dependencies: Option<HashMap<String, serde_json::Value>>,
-    #[serde(rename = "optionalDependencies", default)]
-    optional_dependencies: Option<HashMap<String, serde_json::Value>>,
-}
-
-fn read_package_json(path: &Path) -> Result<PackageJsonManifest> {
-    let contents =
-        std::fs::read_to_string(path).map_err(|err| eyre::eyre!("{}: {err}", path.display()))?;
-    let manifest: PackageJsonManifest =
-        serde_json::from_str(&contents).map_err(|err| eyre::eyre!("{}: {err}", path.display()))?;
-    Ok(manifest)
-}
-
-fn flatten_package_json_dependencies(manifest: &PackageJsonManifest) -> Vec<DependencyEdge> {
+fn flatten_package_json_dependencies(manifest: &fp_typescript::PackageJson) -> Vec<DependencyEdge> {
     let mut deps = Vec::new();
     deps.extend(dependencies_from_map(&manifest.dependencies));
     deps.extend(dependencies_from_map(&manifest.dev_dependencies));
@@ -893,94 +867,45 @@ fn dependencies_from_map(map: &Option<HashMap<String, serde_json::Value>>) -> Ve
     deps
 }
 
-#[derive(Debug)]
-struct PyProjectManifest {
-    name: String,
-    version: Option<String>,
-    dependencies: Vec<PyDependency>,
-}
-
-#[derive(Debug)]
-struct PyDependency {
-    name: String,
-    version: Option<String>,
-}
-
-fn read_pyproject(path: &Path) -> Result<PyProjectManifest> {
-    let contents =
-        std::fs::read_to_string(path).map_err(|err| eyre::eyre!("{}: {err}", path.display()))?;
-    let value: toml::Value =
-        toml::from_str(&contents).map_err(|err| eyre::eyre!("{}: {err}", path.display()))?;
-    let project = value
-        .get("project")
-        .and_then(|p| p.as_table())
-        .ok_or_else(|| eyre::eyre!("{}: missing [project] table", path.display()))?;
-    let name = project
-        .get("name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| eyre::eyre!("{}: missing project.name", path.display()))?
-        .to_string();
-    let version = project
-        .get("version")
-        .and_then(|v| v.as_str())
-        .map(|v| v.to_string());
-    let dependencies = project
-        .get("dependencies")
-        .and_then(|v| v.as_array())
-        .map(parse_python_dependencies)
-        .unwrap_or_default();
-    Ok(PyProjectManifest {
+fn parse_python_dependency(raw: &str, optional: bool) -> Option<DependencyEdge> {
+    let mut name = String::new();
+    let mut version = String::new();
+    for ch in raw.chars() {
+        if version.is_empty() && is_python_name_char(ch) {
+            name.push(ch);
+        } else {
+            version.push(ch);
+        }
+    }
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let version = if version.trim().is_empty() {
+        None
+    } else {
+        Some(version.trim().to_string())
+    };
+    Some(DependencyEdge {
         name,
+        package: None,
         version,
-        dependencies,
+        resolved_version: None,
+        checksum: None,
+        source: None,
+        path: None,
+        git: None,
+        rev: None,
+        branch: None,
+        tag: None,
+        workspace: None,
+        optional: optional.then_some(true),
+        features: None,
     })
 }
 
-fn parse_python_dependencies(values: &Vec<toml::Value>) -> Vec<PyDependency> {
-    values
-        .iter()
-        .filter_map(|value| value.as_str())
-        .map(|raw| {
-            let mut name = String::new();
-            let mut version = String::new();
-            for ch in raw.chars() {
-                if name.is_empty() {
-                    if ch.is_whitespace() || is_version_marker(ch) {
-                        continue;
-                    }
-                    if is_name_char(ch) {
-                        name.push(ch);
-                    }
-                    continue;
-                }
-                if version.is_empty() {
-                    if is_name_char(ch) {
-                        name.push(ch);
-                    } else {
-                        version.push(ch);
-                    }
-                } else {
-                    version.push(ch);
-                }
-            }
-            let name = name.trim().to_string();
-            let version = if version.trim().is_empty() {
-                None
-            } else {
-                Some(version.trim().to_string())
-            };
-            PyDependency { name, version }
-        })
-        .filter(|dep| !dep.name.is_empty())
-        .collect()
-}
-
-fn is_version_marker(ch: char) -> bool {
-    matches!(ch, '<' | '>' | '=' | '!' | '~' | '^')
-}
-
-fn is_name_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'
+fn is_python_name_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.'
 }
 
 fn manifest_root_path(manifest: &ManifestModel) -> PathBuf {
