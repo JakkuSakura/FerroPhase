@@ -108,7 +108,7 @@ impl Keyword {
         }
     }
 }
-
+// FIXME: seems like [start, end). what span should I really use?
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
@@ -398,7 +398,10 @@ pub fn lex_lexemes(source: &str) -> Result<Vec<Lexeme>, LexerError> {
         if text == ">>" && angle_depth > 0 {
             out.push(Lexeme::token(
                 ">".to_string(),
-                Span { start, end: start + 1 },
+                Span {
+                    start,
+                    end: start + 1,
+                },
             ));
             angle_depth -= 1;
             input = &source[start + 1..];
