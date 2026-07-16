@@ -99,7 +99,6 @@ impl FerroFrontend {
         }
         fp_core::error::Error::diagnostic(diagnostic)
     }
-
 }
 
 impl LanguageFrontend for FerroFrontend {
@@ -338,14 +337,8 @@ mod tests {
         )
         .expect("write temp source");
 
-        let result = frontend.parse_file(
-            &fs::read_to_string(&path).expect("read"),
-            &path,
-        );
-        assert!(
-            result.is_err(),
-            "query syntax is not valid file input"
-        );
+        let result = frontend.parse_file(&fs::read_to_string(&path).expect("read"), &path);
+        assert!(result.is_err(), "query syntax is not valid file input");
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(&dir);
@@ -360,7 +353,10 @@ mod tests {
         fs::write(&path, "if a > b { a } else { b }").expect("write temp source");
 
         let result = frontend.parse(&fs::read_to_string(&path).expect("read"), Some(&path));
-        assert!(result.is_err(), "expression-only file is not valid file input");
+        assert!(
+            result.is_err(),
+            "expression-only file is not valid file input"
+        );
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(&dir);

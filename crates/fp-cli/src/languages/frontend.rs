@@ -1,4 +1,6 @@
-pub use fp_core::frontend::{FrontendParseMode, FrontendResult, FrontendSnapshot, LanguageFrontend};
+pub use fp_core::frontend::{
+    FrontendParseMode, FrontendResult, FrontendSnapshot, LanguageFrontend,
+};
 #[cfg(feature = "lang-flatbuffers")]
 pub use fp_flatbuffers::FlatbuffersFrontend;
 #[cfg(feature = "lang-golang")]

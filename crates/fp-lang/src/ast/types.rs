@@ -249,7 +249,9 @@ fn parse_structural_type_body(input: &mut &[Token]) -> ModalResult<Ty> {
         }
     }
     expect_symbol(input, "}")?;
-    Ok(Ty::Structural(fp_core::ast::TypeStructural { fields }.into()))
+    Ok(Ty::Structural(
+        fp_core::ast::TypeStructural { fields }.into(),
+    ))
 }
 
 fn type_binary_op(symbol: &str) -> Option<(u8, TypeBinaryOpKind)> {
@@ -295,11 +297,14 @@ fn parse_type_arg(input: &mut &[Token]) -> ModalResult<Ty> {
         if expect_symbol(&mut assign_probe, "=").is_ok() {
             let value = parse_type_expr(&mut assign_probe)?;
             *input = assign_probe;
-            return Ok(Ty::Expr(Box::new(ExprKind::Assign(ExprAssign {
-                span: Span::null(),
-                target: Box::new(Expr::name(Name::path(Path::plain(vec![ident])))),
-                value: Box::new(type_to_expr(&value)),
-            }).into())));
+            return Ok(Ty::Expr(Box::new(
+                ExprKind::Assign(ExprAssign {
+                    span: Span::null(),
+                    target: Box::new(Expr::name(Name::path(Path::plain(vec![ident])))),
+                    value: Box::new(type_to_expr(&value)),
+                })
+                .into(),
+            )));
         }
     }
     parse_type_expr(input)
@@ -332,10 +337,9 @@ pub(crate) fn parse_use_tree(input: &mut &[Token]) -> ModalResult<fp_core::ast::
             Some(fp_core::ast::ItemImportTree::Ident(from)) => from,
             _ => return Err(ErrMode::Cut(ContextError::new())),
         };
-        path.push(fp_core::ast::ItemImportTree::Rename(fp_core::ast::ItemImportRename {
-            from,
-            to: rename,
-        }));
+        path.push(fp_core::ast::ItemImportTree::Rename(
+            fp_core::ast::ItemImportRename { from, to: rename },
+        ));
     }
     Ok(fp_core::ast::ItemImportTree::Path(path))
 }
@@ -385,7 +389,9 @@ fn parse_use_group(input: &mut &[Token]) -> ModalResult<fp_core::ast::ItemImport
     Ok(group)
 }
 
-pub(crate) fn parse_optional_generic_params(input: &mut &[Token]) -> ModalResult<Vec<fp_core::ast::GenericParam>> {
+pub(crate) fn parse_optional_generic_params(
+    input: &mut &[Token],
+) -> ModalResult<Vec<fp_core::ast::GenericParam>> {
     let mut probe = *input;
     if expect_symbol(&mut probe, "<").is_err() {
         return Ok(Vec::new());
@@ -399,10 +405,7 @@ pub(crate) fn parse_optional_generic_params(input: &mut &[Token]) -> ModalResult
             } else {
                 fp_core::ast::TypeBounds::any()
             };
-            params.push(fp_core::ast::GenericParam {
-                name,
-                bounds,
-            });
+            params.push(fp_core::ast::GenericParam { name, bounds });
             if expect_symbol(&mut probe, ",").is_err() {
                 break;
             }

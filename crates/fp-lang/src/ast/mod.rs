@@ -157,7 +157,7 @@ impl FerroPhaseParser {
 
 use eyre::Result;
 use fp_core::ast::{
-    Attribute, AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, BlockStmt, BlockStmtExpr,
+    AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BlockStmt, BlockStmtExpr,
     DecimalType, EnumTypeVariant, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprAwait,
     ExprBinOp, ExprBlock, ExprBreak, ExprCast, ExprClosure, ExprConstBlock, ExprContinue,
     ExprField, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
@@ -489,13 +489,18 @@ fn parse_numeric_literal_local(raw: &str) -> std::result::Result<(Value, Option<
                 return Err(());
             }
             let value = parse_big_int_literal(&normalized).ok_or(())?;
-            Ok((Value::big_int(value), Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt)))))
+            Ok((
+                Value::big_int(value),
+                Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
+            ))
         }
         "fb" => {
             let value = normalized.parse::<f64>().map_err(|_| ())?;
             Ok((
                 Value::decimal(value),
-                Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::BigDecimal))),
+                Some(Ty::Primitive(TypePrimitive::Decimal(
+                    DecimalType::BigDecimal,
+                ))),
             ))
         }
         "i8" | "i16" | "i32" | "i64" | "isize" => {
@@ -509,14 +514,20 @@ fn parse_numeric_literal_local(raw: &str) -> std::result::Result<(Value, Option<
                 "i32" => TypeInt::I32,
                 _ => TypeInt::I64,
             };
-            Ok((Value::int(value), Some(Ty::Primitive(TypePrimitive::Int(ty)))))
+            Ok((
+                Value::int(value),
+                Some(Ty::Primitive(TypePrimitive::Int(ty))),
+            ))
         }
         "i128" => {
             if normalized.contains('.') {
                 return Err(());
             }
             let value = parse_big_int_literal(&normalized).ok_or(())?;
-            Ok((Value::big_int(value), Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I128)))))
+            Ok((
+                Value::big_int(value),
+                Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I128))),
+            ))
         }
         "u8" | "u16" | "u32" | "u64" | "usize" => {
             if normalized.contains('.') {
@@ -529,14 +540,20 @@ fn parse_numeric_literal_local(raw: &str) -> std::result::Result<(Value, Option<
                 "u32" => TypeInt::U32,
                 _ => TypeInt::U64,
             };
-            Ok((Value::uint(value), Some(Ty::Primitive(TypePrimitive::Int(ty)))))
+            Ok((
+                Value::uint(value),
+                Some(Ty::Primitive(TypePrimitive::Int(ty))),
+            ))
         }
         "u128" => {
             if normalized.contains('.') {
                 return Err(());
             }
             let value = parse_big_int_literal(&normalized).ok_or(())?;
-            Ok((Value::big_int(value), Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U128)))))
+            Ok((
+                Value::big_int(value),
+                Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U128))),
+            ))
         }
         "f32" | "f64" => {
             let value = normalized.parse::<f64>().map_err(|_| ())?;
@@ -545,7 +562,10 @@ fn parse_numeric_literal_local(raw: &str) -> std::result::Result<(Value, Option<
             } else {
                 DecimalType::F64
             };
-            Ok((Value::decimal(value), Some(Ty::Primitive(TypePrimitive::Decimal(ty)))))
+            Ok((
+                Value::decimal(value),
+                Some(Ty::Primitive(TypePrimitive::Decimal(ty))),
+            ))
         }
         _ => {
             if normalized.contains('.') {
@@ -555,7 +575,10 @@ fn parse_numeric_literal_local(raw: &str) -> std::result::Result<(Value, Option<
                 Ok((Value::int(i), None))
             } else {
                 let big = parse_big_int_literal(&normalized).ok_or(())?;
-                Ok((Value::big_int(big), Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt)))))
+                Ok((
+                    Value::big_int(big),
+                    Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
+                ))
             }
         }
     }

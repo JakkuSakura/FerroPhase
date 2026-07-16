@@ -88,8 +88,7 @@ impl Pipeline {
         match self.run_pipeline_stage(stage_label, stage, context, options) {
             Ok((next_ast, resolved_names)) => {
                 *ast = next_ast;
-                self.last_resolved_names
-                    .extend(resolved_names.into_iter());
+                self.last_resolved_names.extend(resolved_names.into_iter());
                 Ok(())
             }
             Err(err) => {

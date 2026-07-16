@@ -159,7 +159,8 @@ impl Pipeline {
         }
         #[cfg(feature = "lang-typescript")]
         {
-            let ts_frontend: Arc<dyn LanguageFrontend> = Arc::new(TypeScriptFrontend::new(TsParseMode::Loose));
+            let ts_frontend: Arc<dyn LanguageFrontend> =
+                Arc::new(TypeScriptFrontend::new(TsParseMode::Loose));
             register(ts_frontend);
         }
         #[cfg(feature = "lang-sql")]
@@ -302,8 +303,7 @@ impl Pipeline {
             .iter()
             .any(|diag| diag.level == DiagnosticLevel::Error);
 
-        let treat_as_errors = has_errors
-            && !matches!(self.parse_mode, FrontendParseMode::Loose);
+        let treat_as_errors = has_errors && !matches!(self.parse_mode, FrontendParseMode::Loose);
 
         if treat_as_errors {
             return Err(CliError::Compilation(
@@ -2337,10 +2337,7 @@ fn main() {
     fn ferro_pipeline_promotes_query_after_frontend_parse() {
         let mut pipeline = Pipeline::new();
         let ast = pipeline
-            .parse_source_public(
-                "from(ticks).where(symbol == \"AAPL\").select(value)",
-                None,
-            )
+            .parse_source_public("from(ticks).where(symbol == \"AAPL\").select(value)", None)
             .expect("parse");
         assert!(matches!(ast.kind(), ast::NodeKind::Query(_)));
     }
