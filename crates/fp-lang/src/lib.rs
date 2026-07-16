@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::ast::FerroPhaseParser;
 mod macro_parser;
+pub mod module_path;
 mod normalization;
 mod serializer;
 use crate::macro_parser::FerroMacroExpansionParser;

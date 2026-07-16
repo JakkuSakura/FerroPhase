@@ -31,6 +31,7 @@ futures-util = "0.3"
 cfg-expr = { version = "0.20", features = ["targets"] }
 target-lexicon = "0.13"
 fp-core = { path = "../fp-core" }
+fp-lang = { path = "../fp-lang" }
 fp-typescript = { path = "../fp-typescript" }
 fp-python = { path = "../fp-python" }
 fp-golang = { path = "../fp-golang" }

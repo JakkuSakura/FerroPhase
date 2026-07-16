@@ -335,6 +335,37 @@ fn is_typescript_source(path: &Path) -> bool {
     }
 }
 
+pub fn default_module_roots(root: &Path) -> Vec<PathBuf> {
+    let src = root.join("src");
+    if src.is_dir() {
+        vec![src]
+    } else {
+        vec![root.to_path_buf()]
+    }
+}
+
+pub fn estimate_module_path(root: &Path, file_path: &Path) -> Vec<String> {
+    estimate_module_path_with_roots(root, &default_module_roots(root), file_path)
+}
+
+pub fn estimate_module_path_with_roots(
+    root: &Path,
+    module_roots: &[PathBuf],
+    file_path: &Path,
+) -> Vec<String> {
+    let module_root = module_roots
+        .iter()
+        .filter(|candidate| file_path.starts_with(candidate))
+        .max_by_key(|candidate| candidate.components().count())
+        .cloned()
+        .unwrap_or_else(|| root.to_path_buf());
+    let rel = file_path
+        .strip_prefix(&module_root)
+        .or_else(|_| file_path.strip_prefix(root))
+        .unwrap_or(file_path);
+    module_path_from_file(rel)
+}
+
 fn module_path_from_file(path: &Path) -> Vec<String> {
     let mut components = path
         .components()
@@ -345,6 +376,13 @@ fn module_path_from_file(path: &Path) -> Vec<String> {
             *last = stripped.to_string();
         } else if let Some(stripped) = last.strip_suffix(".ts") {
             *last = stripped.to_string();
+        } else if let Some(stripped) = last.strip_suffix(".jsx") {
+            *last = stripped.to_string();
+        } else if let Some(stripped) = last.strip_suffix(".js") {
+            *last = stripped.to_string();
+        }
+        if last == "index" {
+            components.pop();
         }
     }
     components
@@ -407,5 +445,13 @@ mod tests {
         assert_eq!(manifest.name, "example");
         assert_eq!(manifest.version.as_deref(), Some("1.0.0"));
         Ok(())
+    }
+
+    #[test]
+    fn estimates_typescript_index_module_path() {
+        assert_eq!(
+            estimate_module_path(Path::new("/proj"), Path::new("/proj/src/features/index.ts")),
+            vec!["features".to_string()]
+        );
     }
 }

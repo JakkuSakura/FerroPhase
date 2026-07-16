@@ -2818,6 +2818,7 @@ dependencies = [
  "flate2",
  "fp-core",
  "fp-golang",
+ "fp-lang",
  "fp-python",
  "fp-typescript",
  "futures-util",

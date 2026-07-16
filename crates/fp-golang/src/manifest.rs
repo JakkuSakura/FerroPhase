@@ -1,5 +1,5 @@
 use eyre::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct GoDependency {
@@ -71,6 +71,48 @@ pub fn read_go_mod(path: impl AsRef<Path>) -> Result<GoModManifest> {
     })
 }
 
+pub fn default_module_roots(root: &Path) -> Vec<PathBuf> {
+    let src = root.join("src");
+    if src.is_dir() {
+        vec![src, root.to_path_buf()]
+    } else {
+        vec![root.to_path_buf()]
+    }
+}
+
+pub fn estimate_module_path(root: &Path, file_path: &Path) -> Vec<String> {
+    estimate_module_path_with_roots(root, &default_module_roots(root), file_path)
+}
+
+pub fn estimate_module_path_with_roots(
+    root: &Path,
+    module_roots: &[PathBuf],
+    file_path: &Path,
+) -> Vec<String> {
+    let module_root = module_roots
+        .iter()
+        .filter(|candidate| file_path.starts_with(candidate))
+        .max_by_key(|candidate| candidate.components().count())
+        .cloned()
+        .unwrap_or_else(|| root.to_path_buf());
+    let rel = file_path
+        .strip_prefix(&module_root)
+        .or_else(|_| file_path.strip_prefix(root))
+        .unwrap_or(file_path);
+    rel.parent()
+        .unwrap_or(Path::new(""))
+        .components()
+        .filter_map(|component| {
+            let segment = component.as_os_str().to_str()?;
+            if segment == "." || segment == ".." {
+                None
+            } else {
+                Some(segment.to_string())
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +139,13 @@ require (
         assert_eq!(manifest.dependencies.len(), 1);
         assert_eq!(manifest.dependencies[0].name, "github.com/foo/bar");
         Ok(())
+    }
+
+    #[test]
+    fn estimates_go_module_path_from_directory() {
+        assert_eq!(
+            estimate_module_path(Path::new("/proj"), Path::new("/proj/internal/service/http.go")),
+            vec!["internal".to_string(), "service".to_string()]
+        );
     }
 }

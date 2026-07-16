@@ -42,6 +42,11 @@ impl MagnetCli {
         identity::resolve_package(candidate)
     }
 
+    pub fn resolve_module_path(&self, path: &Path) -> Result<Vec<String>> {
+        let identity = self.resolve_identity(path)?;
+        crate::module_path::resolve_project_module_path(&identity, path)
+    }
+
     pub fn init(&self, path: &Path, from_cargo: bool) -> Result<()> {
         commands::init(path, from_cargo)
     }

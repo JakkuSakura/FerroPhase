@@ -34,6 +34,7 @@ pub mod commands;
 pub mod configs;
 pub mod generator;
 pub mod manager;
+pub mod module_path;
 pub mod models;
 pub mod registry;
 pub mod resolver;
