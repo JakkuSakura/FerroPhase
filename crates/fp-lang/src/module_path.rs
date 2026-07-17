@@ -1,16 +1,11 @@
 use std::path::{Path, PathBuf};
 
 pub fn default_module_roots(root: &Path) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    for dir in ["src", "examples", "tests", "benches"] {
-        let candidate = root.join(dir);
-        if candidate.is_dir() {
-            roots.push(candidate);
-        }
-    }
-    if roots.is_empty() {
-        roots.push(root.to_path_buf());
-    }
+    let mut roots = ["src", "examples", "tests", "benches"]
+        .into_iter()
+        .map(|dir| root.join(dir))
+        .collect::<Vec<_>>();
+    roots.push(root.to_path_buf());
     roots
 }
 
@@ -29,9 +24,17 @@ pub fn estimate_module_path_with_roots(
         .max_by_key(|candidate| candidate.components().count())
         .cloned()
         .unwrap_or_else(|| root.to_path_buf());
+    let source_root = if module_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("src")
+    {
+        module_root.as_path()
+    } else {
+        root
+    };
     let rel = file_path
-        .strip_prefix(&module_root)
-        .or_else(|_| file_path.strip_prefix(root))
+        .strip_prefix(source_root)
         .unwrap_or(file_path);
     let mut parts = rel
         .parent()
@@ -74,6 +77,18 @@ mod tests {
         assert_eq!(
             estimate_module_path(Path::new("/proj"), Path::new("/proj/examples/demo.rs")),
             vec!["examples".to_string(), "demo".to_string()]
+        );
+    }
+
+    #[test]
+    fn rust_style_module_paths_keep_non_src_roots() {
+        assert_eq!(
+            estimate_module_path(Path::new("/proj"), Path::new("/proj/tests/integration/api.rs")),
+            vec![
+                "tests".to_string(),
+                "integration".to_string(),
+                "api".to_string()
+            ]
         );
     }
 }

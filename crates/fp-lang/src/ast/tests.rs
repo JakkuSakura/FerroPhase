@@ -445,6 +445,258 @@ fn parse_expr_ast_handles_macro_invocation() {
 }
 
 #[test]
+fn parse_items_ast_supports_visible_struct_fields() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            pub struct ProjectConfig {
+                pub root: PathBuf,
+                pub kind: ProjectKind,
+            }
+            "#,
+        )
+        .unwrap();
+    let ItemKind::DefStruct(def) = items[0].kind() else {
+        panic!("expected struct item");
+    };
+    assert_eq!(def.value.fields.len(), 2);
+    assert_eq!(def.value.fields[0].name.as_str(), "root");
+    assert_eq!(def.value.fields[1].name.as_str(), "kind");
+}
+
+#[test]
+fn parse_items_ast_supports_reference_lifetimes() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            pub struct Indexer<'a> {
+                db: &'a DataFlowDb,
+                project_scope: String,
+            }
+            "#,
+        )
+        .unwrap();
+    let ItemKind::DefStruct(def) = items[0].kind() else {
+        panic!("expected struct item");
+    };
+    let Ty::Reference(reference) = &def.value.fields[0].value else {
+        panic!("expected reference type");
+    };
+    assert_eq!(
+        reference
+            .lifetime
+            .as_ref()
+            .map(Ident::as_str),
+        Some("'a")
+    );
+}
+
+#[test]
+fn parse_items_ast_supports_static_reference_return_type() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("pub(crate) fn as_str(self) -> &'static str { value }")
+        .unwrap();
+    let ItemKind::DefFunction(function) = items[0].kind() else {
+        panic!("expected function item");
+    };
+    let Some(Ty::Reference(reference)) = function.sig.ret_ty.as_ref() else {
+        panic!("expected reference return type");
+    };
+    assert_eq!(
+        reference
+            .lifetime
+            .as_ref()
+            .map(Ident::as_str),
+        Some("'static")
+    );
+}
+
+#[test]
+fn parse_items_ast_supports_dyn_trait_object_type_args() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("pub struct FrontendHolder { inner: Option<Box<dyn LanguageFrontend>>, }")
+        .unwrap();
+    let ItemKind::DefStruct(def) = items[0].kind() else {
+        panic!("expected struct item");
+    };
+    let Ty::Expr(expr) = &def.value.fields[0].value else {
+        panic!("expected path type");
+    };
+    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        panic!("expected parameter path type");
+    };
+    let Some(box_arg) = path.segments[0].args.first() else {
+        panic!("expected Option type arg");
+    };
+    let Ty::Expr(box_expr) = box_arg else {
+        panic!("expected Box path type");
+    };
+    let ExprKind::Name(Name::ParameterPath(box_path)) = box_expr.kind() else {
+        panic!("expected parameter path type");
+    };
+    let Some(Ty::TypeBounds(bounds)) = box_path.segments[0].args.first() else {
+        panic!("expected dyn trait bounds");
+    };
+    assert_eq!(bounds.bounds.len(), 1);
+}
+
+#[test]
+fn parse_items_ast_supports_dyn_trait_object_with_multiple_bounds() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            "pub struct ErrorHolder { inner: Box<dyn std::error::Error + Send + Sync>, }",
+        )
+        .unwrap();
+    let ItemKind::DefStruct(def) = items[0].kind() else {
+        panic!("expected struct item");
+    };
+    let Ty::Expr(expr) = &def.value.fields[0].value else {
+        panic!("expected path type");
+    };
+    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        panic!("expected parameter path type");
+    };
+    let Some(Ty::TypeBounds(bounds)) = path.segments[0].args.first() else {
+        panic!("expected dyn trait bounds");
+    };
+    assert_eq!(bounds.bounds.len(), 3);
+}
+
+#[test]
+fn parse_items_ast_supports_struct_field_attributes() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            pub struct GraphNodeData {
+                #[serde(rename = "edgeCount")]
+                pub edge_count: i64,
+            }
+            "#,
+        )
+        .unwrap();
+    let ItemKind::DefStruct(def) = items[0].kind() else {
+        panic!("expected struct item");
+    };
+    assert_eq!(def.value.fields.len(), 1);
+    assert_eq!(def.value.fields[0].name.as_str(), "edge_count");
+}
+
+#[test]
+fn parse_items_ast_supports_destructured_function_params() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            "async fn graph_data(State(state): State<Arc<GraphState>>) -> Result<Json<GraphData>, HttpStatus> { state }",
+        )
+        .unwrap();
+    let ItemKind::DefFunction(function) = items[0].kind() else {
+        panic!("expected function item");
+    };
+    assert_eq!(function.sig.params.len(), 1);
+    assert_eq!(function.sig.params[0].name.as_str(), "state");
+}
+
+#[test]
+fn parse_expr_ast_supports_if_let_condition() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("if let Some(cfg) = Self::try_detect(root) { cfg } else { other }")
+        .unwrap();
+    let ExprKind::If(expr_if) = expr.kind() else {
+        panic!("expected if expr");
+    };
+    assert!(matches!(expr_if.cond.kind(), ExprKind::Let(_)));
+}
+
+#[test]
+fn parse_items_ast_supports_enum_variant_attributes() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            pub enum GraphError {
+                #[error("database error: {0}")]
+                Db(#[from] rusqlite::Error),
+            }
+            "#,
+        )
+        .unwrap();
+    let ItemKind::DefEnum(def) = items[0].kind() else {
+        panic!("expected enum item");
+    };
+    assert_eq!(def.value.variants.len(), 1);
+    assert_eq!(def.value.variants[0].name.as_str(), "Db");
+}
+
+#[test]
+fn parse_expr_ast_supports_literal_match_patterns() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("match ext { \"rs\" => rust, _ => other }")
+        .unwrap();
+    let ExprKind::Match(match_expr) = expr.kind() else {
+        panic!("expected match expr");
+    };
+    assert_eq!(match_expr.cases.len(), 2);
+}
+
+#[test]
+fn parse_expr_ast_supports_destructured_closure_params() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("|Json(body)| body.path").unwrap();
+    let ExprKind::Closure(closure) = expr.kind() else {
+        panic!("expected closure expr");
+    };
+    assert_eq!(closure.params.len(), 1);
+    assert_eq!(closure.params[0].as_ident().map(Ident::as_str), Some("body"));
+}
+
+#[test]
+fn parse_expr_ast_supports_match_or_patterns() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("match ext { \"rs\" | \"rust\" => rust, _ => other }")
+        .unwrap();
+    let ExprKind::Match(match_expr) = expr.kind() else {
+        panic!("expected match expr");
+    };
+    assert_eq!(match_expr.cases.len(), 2);
+}
+
+#[test]
+fn parse_items_ast_supports_impl_trait_bounds_in_params() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            "fn run<T>(f: impl FnOnce(&DataFlowDb) -> Result<T, GraphError> + Send + 'static) -> bool { true }",
+        )
+        .unwrap();
+    let ItemKind::DefFunction(function) = items[0].kind() else {
+        panic!("expected function item");
+    };
+    assert!(matches!(function.sig.params[0].ty, Ty::ImplTraits(_)));
+}
+
+#[test]
 fn parse_expr_ast_rejects_dotted_macro_path_as_module_path() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

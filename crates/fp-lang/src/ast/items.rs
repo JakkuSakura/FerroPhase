@@ -167,7 +167,7 @@ fn parse_struct_item(
     expect_symbol(input, "{")?;
     let mut fields = Vec::new();
     while peek_symbol(input) != Some("}") {
-        let _field_attrs = parse_outer_attrs(input, 0)?;
+        skip_outer_attrs_for_field(input)?;
         let _field_visibility = parse_visibility(input)?;
         let field_name = ident_like(input)?;
         let is_optional = expect_symbol(input, "?").is_ok();
@@ -561,7 +561,7 @@ fn parse_fn_param_core(input: &mut &[Token]) -> ModalResult<FunctionParam> {
     let is_const = expect_keyword(input, Keyword::Const).is_ok();
     let is_context = expect_ident_like_text(input, "context").is_ok();
     let _is_mut = expect_keyword(input, Keyword::Mut).is_ok();
-    let name = ident_like(input)?;
+    let name = parse_fn_param_name(input)?;
     expect_symbol(input, ":")?;
     let ty = parse_type_expr(input)?;
     let mut param = FunctionParam::new(name, ty);
@@ -577,6 +577,20 @@ fn parse_fn_param_core(input: &mut &[Token]) -> ModalResult<FunctionParam> {
     Ok(param)
 }
 
+fn parse_fn_param_name(input: &mut &[Token]) -> ModalResult<Ident> {
+    let mut probe = *input;
+    let simple_name = ident_like(&mut probe)?;
+    let mut destructured = probe;
+    if expect_symbol(&mut destructured, "(").is_ok() {
+        let inner_name = ident_like(&mut destructured)?;
+        expect_symbol(&mut destructured, ")")?;
+        *input = destructured;
+        return Ok(inner_name);
+    }
+    *input = probe;
+    Ok(simple_name)
+}
+
 fn expect_ident_like_text(input: &mut &[Token], text: &str) -> ModalResult<()> {
     let mut probe = *input;
     let ident = ident_like(&mut probe)?;
@@ -585,6 +599,36 @@ fn expect_ident_like_text(input: &mut &[Token], text: &str) -> ModalResult<()> {
     }
     *input = probe;
     Ok(())
+}
+
+fn skip_outer_attrs_for_field(input: &mut &[Token]) -> ModalResult<()> {
+    loop {
+        let mut probe = *input;
+        if expect_symbol(&mut probe, "#").is_err() {
+            return Ok(());
+        }
+        expect_symbol(&mut probe, "[")?;
+        let mut depth = 1usize;
+        while let Some((token, rest)) = probe.split_first() {
+            probe = rest;
+            if token.kind == TokenKind::Symbol {
+                match token.lexeme.as_str() {
+                    "[" => depth += 1,
+                    "]" => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if depth != 0 {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        *input = probe;
+    }
 }
 
 fn peek_two_stars(input: &[Token]) -> bool {
@@ -809,14 +853,13 @@ fn parse_enum_item(
     expect_symbol(input, "{")?;
     let mut variants = Vec::new();
     while peek_symbol(input) != Some("}") {
-        let _variant_attrs = parse_outer_attrs(input, 0)?;
+        skip_outer_attrs_for_field(input)?;
         let variant_name = ident_like(input)?;
         let value = if expect_symbol(input, "(").is_ok() {
             let mut tys = Vec::new();
             if peek_symbol(input) != Some(")") {
                 loop {
-                    let _field_attrs = parse_outer_attrs(input, 0)?;
-                    let _field_visibility = parse_visibility(input)?;
+                    skip_outer_attrs_for_field(input)?;
                     tys.push(parse_type_expr(input)?);
                     if expect_symbol(input, ",").is_err() {
                         break;
@@ -1015,15 +1058,7 @@ fn const_struct_attr() -> Attribute {
 }
 
 fn parse_attr_meta_direct(input: &mut &[Token], file: FileId) -> ModalResult<AttrMeta> {
-    let mut probe = *input;
-    let Ok(name) = parse_module_path(&mut probe) else {
-        let value = parse_expr_winnow_no_struct(input, file)?;
-        return Ok(AttrMeta::NameValue(AttrMetaNameValue {
-            name: Path::plain(vec![Ident::new("value")]),
-            value: Box::new(value),
-        }));
-    };
-    *input = probe;
+    let name = parse_module_path(input)?;
     if expect_symbol(input, "=").is_ok() {
         let value = parse_expr_winnow_no_struct(input, file)?;
         return Ok(AttrMeta::NameValue(AttrMetaNameValue {

@@ -1,4 +1,5 @@
 use super::*;
+use fp_core::ast::ImplTraits;
 
 pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     if expect_keyword(input, Keyword::Impl).is_ok() {
@@ -64,14 +65,22 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             .into(),
         ));
     }
+    if expect_keyword(input, Keyword::Impl).is_ok() {
+        let bounds = parse_dyn_type_bounds(input)?;
+        return Ok(Ty::ImplTraits(ImplTraits { bounds }));
+    }
     if expect_symbol(input, "&").is_ok() {
+        let lifetime = match peek_ident_like(*input) {
+            Some(ident) if ident.starts_with('\'') => Some(ident_like(input)?),
+            _ => None,
+        };
         let mutability = expect_keyword(input, Keyword::Mut).is_ok();
         let inner = parse_type_expr(input)?;
         return Ok(Ty::Reference(
             TypeReference {
                 ty: Box::new(inner),
                 mutability: mutability.then_some(true),
-                lifetime: None,
+                lifetime,
             }
             .into(),
         ));
@@ -104,6 +113,11 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         return Ok(Ty::Slice(TypeSlice {
             elem: Box::new(inner),
         }));
+    }
+    if peek_ident_like(*input) == Some("dyn") {
+        let _ = ident_like(input)?;
+        let bounds = parse_dyn_type_bounds(input)?;
+        return Ok(Ty::TypeBounds(bounds));
     }
     let name = parse_name(input)?;
     if expect_symbol(input, "(").is_ok() {
@@ -189,6 +203,39 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         return Ok(Ty::path(path.clone()));
     }
     Ok(Ty::locator(name))
+}
+
+fn parse_dyn_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds> {
+    let mut bounds = Vec::new();
+    loop {
+        bounds.push(parse_trait_bound_expr(input)?);
+        if expect_symbol(input, "+").is_err() {
+            break;
+        }
+    }
+    Ok(TypeBounds { bounds })
+}
+
+fn parse_trait_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
+    let name = parse_name(input)?;
+    if expect_symbol(input, "(").is_ok() {
+        if peek_symbol(input) != Some(")") {
+            loop {
+                let _ = parse_type_expr(input)?;
+                if expect_symbol(input, ",").is_err() {
+                    break;
+                }
+                if peek_symbol(input) == Some(")") {
+                    break;
+                }
+            }
+        }
+        expect_symbol(input, ")")?;
+        if expect_symbol(input, "->").is_ok() {
+            let _ = parse_type_expr(input)?;
+        }
+    }
+    Ok(Expr::name(name))
 }
 
 pub(crate) fn parse_type_expr(input: &mut &[Token]) -> ModalResult<Ty> {
