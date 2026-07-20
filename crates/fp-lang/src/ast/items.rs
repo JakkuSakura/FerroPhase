@@ -167,6 +167,8 @@ fn parse_struct_item(
     expect_symbol(input, "{")?;
     let mut fields = Vec::new();
     while peek_symbol(input) != Some("}") {
+        let _field_attrs = parse_outer_attrs(input, 0)?;
+        let _field_visibility = parse_visibility(input)?;
         let field_name = ident_like(input)?;
         let is_optional = expect_symbol(input, "?").is_ok();
         expect_symbol(input, ":")?;
@@ -807,11 +809,14 @@ fn parse_enum_item(
     expect_symbol(input, "{")?;
     let mut variants = Vec::new();
     while peek_symbol(input) != Some("}") {
+        let _variant_attrs = parse_outer_attrs(input, 0)?;
         let variant_name = ident_like(input)?;
         let value = if expect_symbol(input, "(").is_ok() {
             let mut tys = Vec::new();
             if peek_symbol(input) != Some(")") {
                 loop {
+                    let _field_attrs = parse_outer_attrs(input, 0)?;
+                    let _field_visibility = parse_visibility(input)?;
                     tys.push(parse_type_expr(input)?);
                     if expect_symbol(input, ",").is_err() {
                         break;
@@ -1010,7 +1015,15 @@ fn const_struct_attr() -> Attribute {
 }
 
 fn parse_attr_meta_direct(input: &mut &[Token], file: FileId) -> ModalResult<AttrMeta> {
-    let name = parse_module_path(input)?;
+    let mut probe = *input;
+    let Ok(name) = parse_module_path(&mut probe) else {
+        let value = parse_expr_winnow_no_struct(input, file)?;
+        return Ok(AttrMeta::NameValue(AttrMetaNameValue {
+            name: Path::plain(vec![Ident::new("value")]),
+            value: Box::new(value),
+        }));
+    };
+    *input = probe;
     if expect_symbol(input, "=").is_ok() {
         let value = parse_expr_winnow_no_struct(input, file)?;
         return Ok(AttrMeta::NameValue(AttrMetaNameValue {

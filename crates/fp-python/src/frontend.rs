@@ -7,10 +7,12 @@ use std::sync::Arc;
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprBreak,
     ExprContinue, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
-    ExprKind, ExprKwArg, ExprReturn, ExprSelect, ExprSelectType, ExprStringTemplate, ExprTuple,
-    ExprUnOp, ExprWhile, File, FormatTemplatePart, FunctionParam, FunctionSignature, Ident, Item,
-    ItemDefFunction, ItemKind, Name, Node, NodeKind, Pattern, PatternIdent, PatternKind,
-    PatternTuple, Ty, Value, ValueBytes, ValueMap, ValueTuple,
+    ExprKind, ExprKwArg, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect, ExprSelectType,
+    ExprSplatDict, ExprStringTemplate, ExprTuple, ExprUnOp, ExprWhile, ExprWith, File,
+    FormatTemplatePart, FunctionParam, FunctionSignature, Ident, Item, ItemDefFunction,
+    ItemDefStruct, ItemKind, Module, Name, Node, NodeKind, Pattern, PatternIdent, PatternKind,
+    PatternTuple, ReprOptions, StructuralField, Ty, TypeStruct, Value, ValueBytes, ValueMap,
+    ValueTuple,
 };
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
@@ -115,12 +117,21 @@ fn lower_stmt_to_items(stmt: &PyStmt) -> CoreResult<Vec<Item>> {
             let func = lower_function_def(def)?;
             Ok(vec![Item::from(ItemKind::DefFunction(func))])
         }
+        PyStmt::AsyncFunctionDef(def) => {
+            let func = lower_async_function_def(def)?;
+            Ok(vec![Item::from(ItemKind::DefFunction(func))])
+        }
+        PyStmt::ClassDef(class) => Ok(lower_class_def(class)?),
         PyStmt::Expr(expr_stmt) => {
             let expr = lower_expr(&expr_stmt.value)?;
             Ok(vec![Item::from(ItemKind::Expr(expr))])
         }
         PyStmt::Assign(assign) => {
             let expr = lower_assign(assign)?;
+            Ok(vec![Item::from(ItemKind::Expr(expr))])
+        }
+        PyStmt::AnnAssign(assign) => {
+            let expr = lower_ann_assign(assign)?;
             Ok(vec![Item::from(ItemKind::Expr(expr))])
         }
         PyStmt::If(stmt_if) => {
@@ -159,6 +170,7 @@ fn lower_stmt_to_items(stmt: &PyStmt) -> CoreResult<Vec<Item>> {
             let item = lower_import_from(import)?;
             Ok(vec![Item::from(ItemKind::Import(item))])
         }
+        PyStmt::Global(_) | PyStmt::Nonlocal(_) => Ok(Vec::new()),
         _ => Err(CoreError::from(format!(
             "unsupported python statement: {:?}",
             stmt
@@ -172,12 +184,31 @@ fn lower_stmt_to_block_stmt(stmt: &PyStmt) -> CoreResult<BlockStmt> {
             let func = lower_function_def(def)?;
             Ok(BlockStmt::item(Item::from(ItemKind::DefFunction(func))))
         }
+        PyStmt::AsyncFunctionDef(def) => {
+            let func = lower_async_function_def(def)?;
+            Ok(BlockStmt::item(Item::from(ItemKind::DefFunction(func))))
+        }
+        PyStmt::ClassDef(class) => {
+            let items = lower_class_def(class)?;
+            let block = items
+                .into_iter()
+                .map(BlockStmt::item)
+                .collect::<Vec<_>>();
+            Ok(BlockStmt::Expr(BlockStmtExpr::new(Expr::block(ExprBlock {
+                span: Span::null(),
+                stmts: block,
+            }))))
+        }
         PyStmt::Expr(expr_stmt) => {
             let expr = lower_expr(&expr_stmt.value)?;
             Ok(BlockStmt::Expr(BlockStmtExpr::new(expr)))
         }
         PyStmt::Assign(assign) => {
             let expr = lower_assign(assign)?;
+            Ok(BlockStmt::Expr(BlockStmtExpr::new(expr)))
+        }
+        PyStmt::AnnAssign(assign) => {
+            let expr = lower_ann_assign(assign)?;
             Ok(BlockStmt::Expr(BlockStmtExpr::new(expr)))
         }
         PyStmt::If(stmt_if) => {
@@ -206,6 +237,15 @@ fn lower_stmt_to_block_stmt(stmt: &PyStmt) -> CoreResult<BlockStmt> {
             ExprKind::Continue(ExprContinue { span: Span::null() }),
         )))),
         PyStmt::Pass(_) => Ok(BlockStmt::Noop),
+        PyStmt::Global(_) | PyStmt::Nonlocal(_) => Ok(BlockStmt::Noop),
+        PyStmt::With(stmt_with) => {
+            let expr = lower_with(stmt_with)?;
+            Ok(BlockStmt::Expr(BlockStmtExpr::new(expr)))
+        }
+        PyStmt::AsyncWith(stmt_with) => {
+            let expr = lower_async_with(stmt_with)?;
+            Ok(BlockStmt::Expr(BlockStmtExpr::new(expr)))
+        }
         _ => Err(CoreError::from(format!(
             "unsupported python statement in block: {:?}",
             stmt
@@ -222,9 +262,6 @@ fn lower_block(stmts: &[PyStmt]) -> CoreResult<ExprBlock> {
 }
 
 fn lower_function_def(def: &py_ast::StmtFunctionDef<TextRange>) -> CoreResult<ItemDefFunction> {
-    if !def.decorator_list.is_empty() {
-        return Err(CoreError::from("python decorators are not supported"));
-    }
     let name = Ident::new(def.name.as_str());
     let sig = lower_function_signature(&def.args, Some(name.clone()))?;
     let body = lower_block(&def.body)?;
@@ -238,6 +275,68 @@ fn lower_function_def(def: &py_ast::StmtFunctionDef<TextRange>) -> CoreResult<It
         body: Expr::block(body).into(),
         visibility: fp_core::ast::Visibility::Public,
     })
+}
+
+fn lower_async_function_def(
+    def: &py_ast::StmtAsyncFunctionDef<TextRange>,
+) -> CoreResult<ItemDefFunction> {
+    let name = Ident::new(def.name.as_str());
+    let sig = lower_function_signature(&def.args, Some(name.clone()))?;
+    let body = lower_block(&def.body)?;
+
+    Ok(ItemDefFunction {
+        ty_annotation: None,
+        attrs: Vec::new(),
+        name,
+        ty: None,
+        sig,
+        body: Expr::block(body).into(),
+        visibility: fp_core::ast::Visibility::Public,
+    })
+}
+
+fn lower_class_def(class: &py_ast::StmtClassDef<TextRange>) -> CoreResult<Vec<Item>> {
+    let mut items = Vec::new();
+    let mut fields = Vec::new();
+
+    for stmt in &class.body {
+        match stmt {
+            PyStmt::Assign(assign) if assign.targets.len() == 1 => {
+                if let PyExpr::Name(name) = &assign.targets[0] {
+                    fields.push(StructuralField::new(Ident::new(name.id.as_str()), Ty::ANY));
+                    items.push(Item::from(ItemKind::Expr(lower_assign(assign)?)));
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        items.extend(lower_stmt_to_items(stmt)?);
+    }
+
+    if !fields.is_empty() {
+        items.insert(
+            0,
+            Item::from(ItemKind::DefStruct(ItemDefStruct {
+                attrs: Vec::new(),
+                visibility: fp_core::ast::Visibility::Public,
+                name: Ident::new(class.name.as_str()),
+                value: TypeStruct {
+                    name: Ident::new(class.name.as_str()),
+                    generics_params: Vec::new(),
+                    repr: ReprOptions::default(),
+                    fields,
+                },
+            })),
+        );
+    }
+
+    Ok(vec![Item::from(ItemKind::Module(Module {
+        attrs: Vec::new(),
+        name: Ident::new(class.name.as_str()),
+        items,
+        visibility: fp_core::ast::Visibility::Public,
+        is_external: false,
+    }))])
 }
 
 fn lower_function_signature(
@@ -304,6 +403,19 @@ fn lower_assign(assign: &py_ast::StmtAssign<TextRange>) -> CoreResult<Expr> {
     })))
 }
 
+fn lower_ann_assign(assign: &py_ast::StmtAnnAssign<TextRange>) -> CoreResult<Expr> {
+    let target = lower_expr(&assign.target)?;
+    let value = match &assign.value {
+        Some(value) => lower_expr(value)?,
+        None => Expr::unit(),
+    };
+    Ok(Expr::new(ExprKind::Assign(ExprAssign {
+        span: Span::null(),
+        target: target.into(),
+        value: value.into(),
+    })))
+}
+
 fn lower_if(stmt_if: &py_ast::StmtIf<TextRange>) -> CoreResult<Expr> {
     let cond = lower_expr(&stmt_if.test)?;
     let then_block = lower_block(&stmt_if.body)?;
@@ -349,6 +461,41 @@ fn lower_for(stmt_for: &py_ast::StmtFor<TextRange>) -> CoreResult<Expr> {
     })))
 }
 
+fn lower_with(stmt_with: &py_ast::StmtWith<TextRange>) -> CoreResult<Expr> {
+    let context = lower_with_context(&stmt_with.items)?;
+    let body = Expr::block(lower_block(&stmt_with.body)?);
+    Ok(Expr::new(ExprKind::With(ExprWith {
+        span: Span::null(),
+        context: Box::new(context),
+        body: Box::new(body),
+    })))
+}
+
+fn lower_async_with(stmt_with: &py_ast::StmtAsyncWith<TextRange>) -> CoreResult<Expr> {
+    let context = lower_with_context(&stmt_with.items)?;
+    let body = Expr::block(lower_block(&stmt_with.body)?);
+    Ok(Expr::new(ExprKind::With(ExprWith {
+        span: Span::null(),
+        context: Box::new(context),
+        body: Box::new(body),
+    })))
+}
+
+fn lower_with_context(items: &[py_ast::WithItem<TextRange>]) -> CoreResult<Expr> {
+    let mut values = Vec::with_capacity(items.len());
+    for item in items {
+        values.push(lower_expr(&item.context_expr)?);
+    }
+    Ok(if values.len() == 1 {
+        values.into_iter().next().unwrap()
+    } else {
+        Expr::new(ExprKind::Tuple(ExprTuple {
+            span: Span::null(),
+            values,
+        }))
+    })
+}
+
 fn lower_return(stmt_return: &py_ast::StmtReturn<TextRange>) -> CoreResult<Expr> {
     let value = match &stmt_return.value {
         Some(expr) => Some(lower_expr(expr)?),
@@ -391,12 +538,28 @@ fn lower_expr(expr: &PyExpr) -> CoreResult<Expr> {
             select: ExprSelectType::Field,
         }))),
         PyExpr::Subscript(subscript) => {
-            let index_expr = lower_expr(&subscript.slice)?;
-            Ok(Expr::new(ExprKind::Index(ExprIndex {
-                span: Span::null(),
-                obj: Box::new(lower_expr(&subscript.value)?),
-                index: index_expr.into(),
-            })))
+            let obj = lower_expr(&subscript.value)?;
+            match &*subscript.slice {
+                PyExpr::Slice(slice) => Ok(Expr::new(ExprKind::Index(ExprIndex {
+                    span: Span::null(),
+                    obj: Box::new(obj),
+                    index: Box::new(Expr::new(ExprKind::Range(ExprRange {
+                        span: Span::null(),
+                        start: lower_optional_expr(slice.lower.as_deref())?.map(Box::new),
+                        limit: ExprRangeLimit::Exclusive,
+                        end: lower_optional_expr(slice.upper.as_deref())?.map(Box::new),
+                        step: lower_optional_expr(slice.step.as_deref())?.map(Box::new),
+                    }))),
+                }))),
+                _ => {
+                    let index_expr = lower_expr(&subscript.slice)?;
+                    Ok(Expr::new(ExprKind::Index(ExprIndex {
+                        span: Span::null(),
+                        obj: Box::new(obj),
+                        index: index_expr.into(),
+                    })))
+                }
+            }
         }
         PyExpr::BinOp(bin) => {
             let kind = lower_operator(&bin.op)?;
@@ -459,6 +622,13 @@ fn lower_expr(expr: &PyExpr) -> CoreResult<Expr> {
         }
         PyExpr::JoinedStr(joined) => lower_joined_str(joined),
         PyExpr::FormattedValue(formatted) => lower_formatted_value(formatted),
+        PyExpr::Slice(slice) => Ok(Expr::new(ExprKind::Range(ExprRange {
+            span: Span::null(),
+            start: lower_optional_expr(slice.lower.as_deref())?.map(Box::new),
+            limit: ExprRangeLimit::Exclusive,
+            end: lower_optional_expr(slice.upper.as_deref())?.map(Box::new),
+            step: lower_optional_expr(slice.step.as_deref())?.map(Box::new),
+        }))),
         _ => Err(CoreError::from(format!(
             "unsupported python expression: {:?}",
             expr
@@ -482,15 +652,18 @@ fn lower_call(call: &py_ast::ExprCall<TextRange>) -> CoreResult<Expr> {
 
     let mut kwargs = Vec::new();
     for keyword in &call.keywords {
-        let name = keyword
-            .arg
-            .as_ref()
-            .ok_or_else(|| CoreError::from("python **kwargs is not supported"))?;
         let value = lower_expr(&keyword.value)?;
-        kwargs.push(ExprKwArg {
-            name: name.as_str().to_string(),
-            value,
-        });
+        if let Some(name) = &keyword.arg {
+            kwargs.push(ExprKwArg {
+                name: name.as_str().to_string(),
+                value,
+            });
+        } else {
+            args.push(Expr::new(ExprKind::SplatDict(ExprSplatDict {
+                span: Span::null(),
+                dict: Box::new(value),
+            })));
+        }
     }
 
     Ok(Expr::new(ExprKind::Invoke(ExprInvoke {
@@ -536,7 +709,11 @@ fn lower_compare(compare: &py_ast::ExprCompare<TextRange>) -> CoreResult<Expr> {
         PyCmpOp::LtE => BinOpKind::Le,
         PyCmpOp::Gt => BinOpKind::Gt,
         PyCmpOp::GtE => BinOpKind::Ge,
-        _ => return Err(CoreError::from("python comparison operator unsupported")),
+        PyCmpOp::Is => BinOpKind::Eq,
+        PyCmpOp::IsNot => BinOpKind::Ne,
+        PyCmpOp::In | PyCmpOp::NotIn => {
+            return Ok(lower_membership_compare(compare, matches!(op, PyCmpOp::NotIn))?)
+        }
     };
     Ok(Expr::new(ExprKind::BinOp(ExprBinOp {
         span: Span::null(),
@@ -544,6 +721,38 @@ fn lower_compare(compare: &py_ast::ExprCompare<TextRange>) -> CoreResult<Expr> {
         lhs: Box::new(lower_expr(&compare.left)?),
         rhs: Box::new(lower_expr(&compare.comparators[0])?),
     })))
+}
+
+fn lower_membership_compare(
+    compare: &py_ast::ExprCompare<TextRange>,
+    invert: bool,
+) -> CoreResult<Expr> {
+    let item = lower_expr(&compare.left)?;
+    let container = lower_expr(&compare.comparators[0])?;
+    let contains = Expr::new(ExprKind::Invoke(ExprInvoke {
+        span: Span::null(),
+        target: ExprInvokeTarget::expr(Expr::new(ExprKind::Select(ExprSelect {
+            span: Span::null(),
+            obj: Box::new(container),
+            field: Ident::new("contains"),
+            select: ExprSelectType::Field,
+        }))),
+        args: vec![item],
+        kwargs: Vec::new(),
+    }));
+    if invert {
+        Ok(Expr::new(ExprKind::UnOp(ExprUnOp {
+            span: Span::null(),
+            op: UnOpKind::Not,
+            val: Box::new(contains),
+        })))
+    } else {
+        Ok(contains)
+    }
+}
+
+fn lower_optional_expr(expr: Option<&PyExpr>) -> CoreResult<Option<Expr>> {
+    expr.map(lower_expr).transpose()
 }
 
 fn lower_operator(op: &PyOperator) -> CoreResult<BinOpKind> {

@@ -232,6 +232,189 @@ fn parse_items_ast_supports_quote_fn() {
 }
 
 #[test]
+fn parse_items_ast_handles_struct_field_attrs_and_visibility() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            #[derive(Clone)]
+            pub struct Cli {
+                #[arg(default_value = ".")]
+                pub repo: String,
+                /// help text
+                port: Option<u16>,
+            }
+            "#,
+        )
+        .unwrap();
+    let ItemKind::DefStruct(def) = items.first().expect("struct item").kind() else {
+        panic!("expected struct item");
+    };
+    assert_eq!(def.value.fields.len(), 2);
+    assert_eq!(def.value.fields[0].name.as_str(), "repo");
+    assert_eq!(def.value.fields[1].name.as_str(), "port");
+}
+
+#[test]
+fn parse_items_ast_handles_pub_struct_fields() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("pub struct GraphData { pub nodes: Vec<Node>, pub edges: Vec<Edge> }")
+        .unwrap();
+    let ItemKind::DefStruct(def) = items.first().expect("struct item").kind() else {
+        panic!("expected struct item");
+    };
+    assert_eq!(def.value.fields.len(), 2);
+}
+
+#[test]
+fn parse_items_ast_handles_enum_variant_field_attrs() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            pub enum GraphError {
+                #[error("database error: {0}")]
+                Db(#[from] rusqlite::Error),
+                Other(String),
+            }
+            "#,
+        )
+        .unwrap();
+    let ItemKind::DefEnum(def) = items.first().expect("enum item").kind() else {
+        panic!("expected enum item");
+    };
+    assert_eq!(def.value.variants.len(), 2);
+}
+
+#[test]
+fn parse_expr_ast_handles_let_else_stmt_in_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            "{ let Ok(mut stream) = connect().await else { return false; }; stream }",
+        )
+        .unwrap();
+    let ExprKind::Block(block) = expr.kind() else {
+        panic!("expected block expr");
+    };
+    let Some(BlockStmt::Let(stmt)) = block.stmts.first() else {
+        panic!("expected let stmt");
+    };
+    assert!(stmt.init.is_some());
+    assert!(stmt.diverge.is_some());
+}
+
+#[test]
+fn parse_expr_ast_handles_nested_mut_pattern() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("{ let Ok(mut stream) = connect() else { return false; }; stream }")
+        .unwrap();
+    let ExprKind::Block(block) = expr.kind() else {
+        panic!("expected block expr");
+    };
+    let Some(BlockStmt::Let(stmt)) = block.stmts.first() else {
+        panic!("expected let stmt");
+    };
+    assert!(stmt.diverge.is_some());
+}
+
+#[test]
+fn parse_items_ast_handles_attr_literal_args() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            #[error("database error: {0}")]
+            pub enum GraphError {
+                Db(String),
+            }
+            "#,
+        )
+        .unwrap();
+    let ItemKind::DefEnum(def) = items.first().expect("enum item").kind() else {
+        panic!("expected enum item");
+    };
+    assert_eq!(def.value.variants.len(), 1);
+}
+
+#[test]
+fn parse_expr_ast_handles_block_use_item() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("{ use tokio::io::AsyncWriteExt; true }")
+        .unwrap();
+    let ExprKind::Block(block) = expr.kind() else {
+        panic!("expected block expr");
+    };
+    assert!(matches!(block.stmts.first(), Some(BlockStmt::Item(_))));
+}
+
+#[test]
+fn parse_expr_ast_handles_char_literal() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("'\\n'").unwrap();
+    match expr.kind() {
+        ExprKind::Value(value) => match value.as_ref() {
+            Value::String(text) => assert_eq!(text.value, "\n"),
+            other => panic!("expected string literal value, got {:?}", other),
+        },
+        other => panic!("expected literal expr, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_expr_ast_handles_reference_pattern_in_for_loop() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("{ for &b in data { b } }").unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_tuple_pattern_closure_param() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("{ values.map(|(id, name)| { id; name }) }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_impl_trait_return_type() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            "fn f() -> impl std::future::Future<Output = Result<T, E>> + Send { x }",
+        )
+        .unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_expr_ast_handles_struct_update_syntax() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            "{ PrettyOptions { show_spans: false, show_types: false, ..PrettyOptions::default() } }",
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
 fn parse_expr_ast_handles_splice_of_quote() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

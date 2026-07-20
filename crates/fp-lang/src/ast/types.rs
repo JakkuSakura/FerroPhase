@@ -1,6 +1,10 @@
 use super::*;
 
 pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
+    if expect_keyword(input, Keyword::Impl).is_ok() {
+        let bounds = parse_type_bounds(input)?;
+        return Ok(Ty::ImplTraits(fp_core::ast::ImplTraits { bounds }));
+    }
     if expect_keyword(input, Keyword::Struct).is_ok() {
         return parse_structural_type_body(input);
     }
@@ -102,6 +106,35 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         }));
     }
     let name = parse_name(input)?;
+    if expect_symbol(input, "(").is_ok() {
+        let mut params = Vec::new();
+        if peek_symbol(input) != Some(")") {
+            loop {
+                params.push(parse_type_expr(input)?);
+                if expect_symbol(input, ",").is_err() {
+                    break;
+                }
+                if peek_symbol(input) == Some(")") {
+                    break;
+                }
+            }
+        }
+        expect_symbol(input, ")")?;
+        let ret_ty = if expect_symbol(input, "->").is_ok() {
+            Some(Box::new(parse_type_expr(input)?))
+        } else {
+            None
+        };
+        let _ = name;
+        return Ok(Ty::Function(
+            TypeFunction {
+                params,
+                generics_params: Vec::new(),
+                ret_ty,
+            }
+            .into(),
+        ));
+    }
     if let Name::ParameterPath(parameter_path) = &name {
         if parameter_path.prefix == PathPrefix::Plain
             && parameter_path.segments.len() == 1

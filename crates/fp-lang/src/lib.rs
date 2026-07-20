@@ -50,6 +50,28 @@ impl FerroFrontend {
         std::borrow::Cow::Borrowed(source)
     }
 
+    fn looks_like_item_source(&self, source: &str) -> bool {
+        let trimmed = source.trim_start();
+        [
+            "fn ",
+            "async fn ",
+            "const fn ",
+            "mod ",
+            "pub ",
+            "use ",
+            "struct ",
+            "enum ",
+            "trait ",
+            "impl ",
+            "type ",
+            "static ",
+            "extern ",
+            "quote ",
+        ]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+    }
+
     fn setup(
         &self,
     ) -> (
@@ -96,24 +118,58 @@ impl LanguageFrontend for FerroFrontend {
 
         self.ferro.clear_diagnostics();
         let expr_source = self.wrap_statement_like_expr_input(&cleaned);
-        let expr = self
+        let expr_result = self
             .ferro
-            .parse_expr_ast_with_file(expr_source.as_ref(), file_id)
-            .map_err(|err| self.diagnostic_err(format!("failed to parse expression: {err}")))?;
-        let diagnostics = self.ferro.diagnostics();
-        let last = Node::expr(expr.clone());
-        let mut ast = last.clone();
-        fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
-            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-        Ok(FrontendResult {
-            last,
-            ast,
-            serializer,
-            intrinsic_normalizer: Some(intrinsic_normalizer),
-            macro_parser: Some(macro_parser),
-            snapshot: None,
-            diagnostics,
-        })
+            .parse_expr_ast_with_file(expr_source.as_ref(), file_id);
+
+        if let Ok(expr) = expr_result {
+            let diagnostics = self.ferro.diagnostics();
+            let last = Node::expr(expr.clone());
+            let mut ast = last.clone();
+            fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
+                .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+            return Ok(FrontendResult {
+                last,
+                ast,
+                serializer,
+                intrinsic_normalizer: Some(intrinsic_normalizer),
+                macro_parser: Some(macro_parser),
+                snapshot: None,
+                diagnostics,
+            });
+        }
+
+        if self.looks_like_item_source(&cleaned) {
+            self.ferro.clear_diagnostics();
+            let source_path = PathBuf::from("<file>");
+            let file_id = register_source(source_path.clone(), &cleaned);
+            let file_path = source_path.clone();
+            let file = self
+                .ferro
+                .parse_file_ast_with_file(&cleaned, file_id, Some(&file_path), source_path)
+                .map_err(|err| self.diagnostic_err(format!("failed to parse file: {err}")))?;
+            let diagnostics = self.ferro.diagnostics();
+            let last = Node::file(file);
+            let mut ast = last.clone();
+            fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
+                .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+            return Ok(FrontendResult {
+                last,
+                ast,
+                serializer,
+                intrinsic_normalizer: Some(intrinsic_normalizer),
+                macro_parser: Some(macro_parser),
+                snapshot: Some(FrontendSnapshot {
+                    language: self.language().to_string(),
+                    description: "FerroPhase LAST for <file>".to_string(),
+                    serialized: None,
+                }),
+                diagnostics,
+            });
+        }
+
+        let err = expr_result.expect_err("expression parse failed");
+        Err(self.diagnostic_err(format!("failed to parse expression: {err}")).into())
     }
 
     fn parse_file(&self, source: &str, path: &Path) -> CoreResult<FrontendResult> {

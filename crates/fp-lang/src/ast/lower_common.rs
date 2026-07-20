@@ -65,11 +65,19 @@ pub(crate) fn decode_string_literal(raw: &str) -> Option<String> {
     }
 
     let raw = raw.strip_prefix('c').unwrap_or(raw);
+    if raw.starts_with('\'') && raw.ends_with('\'') && raw.len() >= 2 {
+        let inner = &raw[1..raw.len() - 1];
+        return unescape_cooked(inner);
+    }
     if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
         let inner = &raw[1..raw.len() - 1];
         return unescape_cooked(inner);
     }
     if let Some(rest) = raw.strip_prefix('b') {
+        if rest.starts_with('\'') && rest.ends_with('\'') && rest.len() >= 2 {
+            let inner = &rest[1..rest.len() - 1];
+            return unescape_cooked(inner);
+        }
         if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
             let inner = &rest[1..rest.len() - 1];
             return unescape_cooked(inner);
