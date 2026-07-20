@@ -164,8 +164,47 @@ fn parse_struct_item(
     expect_keyword(input, Keyword::Struct)?;
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
-    expect_symbol(input, "{")?;
     let mut fields = Vec::new();
+    if expect_symbol(input, ";").is_ok() {
+        return Ok(Item::from(ItemKind::DefStruct(ItemDefStruct {
+            attrs,
+            visibility,
+            name: name.clone(),
+            value: TypeStruct {
+                name,
+                generics_params,
+                repr: ReprOptions::default(),
+                fields,
+            },
+        })));
+    }
+    if expect_symbol(input, "(").is_ok() {
+        let mut index = 0usize;
+        while peek_symbol(input) != Some(")") {
+            skip_outer_attrs_for_field(input)?;
+            let _field_visibility = parse_visibility(input)?;
+            let value = parse_type_expr(input)?;
+            fields.push(StructuralField::new(Ident::new(index.to_string()), value));
+            index += 1;
+            if expect_symbol(input, ",").is_err() {
+                break;
+            }
+        }
+        expect_symbol(input, ")")?;
+        expect_symbol(input, ";")?;
+        return Ok(Item::from(ItemKind::DefStruct(ItemDefStruct {
+            attrs,
+            visibility,
+            name: name.clone(),
+            value: TypeStruct {
+                name,
+                generics_params,
+                repr: ReprOptions::default(),
+                fields,
+            },
+        })));
+    }
+    expect_symbol(input, "{")?;
     while peek_symbol(input) != Some("}") {
         skip_outer_attrs_for_field(input)?;
         let _field_visibility = parse_visibility(input)?;
@@ -438,7 +477,11 @@ fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) ->
     while peek_symbol(input) != Some("}") {
         let member_attrs = parse_outer_attrs(input, file)?;
         let visibility = parse_visibility(input)?;
-        let member = parse_fn_item_core(input, file, visibility, member_attrs, false)?;
+        let member = if peek_keyword(*input, Keyword::Type) {
+            parse_type_alias_item(input, visibility, member_attrs)?
+        } else {
+            parse_fn_item_core(input, file, visibility, member_attrs, false)?
+        };
         items.push(member);
     }
     expect_symbol(input, "}")?;
@@ -541,12 +584,28 @@ fn parse_fn_param_after_star(input: &mut &[Token]) -> ModalResult<FunctionParam>
 fn parse_receiver(input: &mut &[Token]) -> ModalResult<Option<FunctionParamReceiver>> {
     let mut probe = *input;
     let by_ref = expect_symbol(&mut probe, "&").is_ok();
+    if by_ref {
+        let _lifetime = match peek_ident_like(probe) {
+            Some(ident) if ident.starts_with('\'') => Some(ident_like(&mut probe)?),
+            _ => None,
+        };
+    }
     let mutable = expect_keyword(&mut probe, Keyword::Mut).is_ok();
     let ident = peek_ident_like(probe);
     if ident != Some("self") {
         return Ok(None);
     }
     let _ = ident_like(&mut probe)?;
+    if expect_symbol(&mut probe, ":").is_ok() {
+        let _ = parse_type_expr(&mut probe)?;
+        *input = probe;
+        return Ok(Some(match (by_ref, mutable) {
+            (true, true) => FunctionParamReceiver::RefMut,
+            (true, false) => FunctionParamReceiver::Ref,
+            (false, true) => FunctionParamReceiver::MutValue,
+            (false, false) => FunctionParamReceiver::Value,
+        }));
+    }
     *input = probe;
     let receiver = match (by_ref, mutable) {
         (true, true) => FunctionParamReceiver::RefMut,
@@ -855,7 +914,36 @@ fn parse_enum_item(
     while peek_symbol(input) != Some("}") {
         skip_outer_attrs_for_field(input)?;
         let variant_name = ident_like(input)?;
-        let value = if expect_symbol(input, "(").is_ok() {
+        let value = if expect_symbol(input, "{").is_ok() {
+            let mut fields = Vec::new();
+            while peek_symbol(input) != Some("}") {
+                skip_outer_attrs_for_field(input)?;
+                let _field_visibility = parse_visibility(input)?;
+                let field_name = ident_like(input)?;
+                let is_optional = expect_symbol(input, "?").is_ok();
+                expect_symbol(input, ":")?;
+                let mut value = parse_type_expr(input)?;
+                if is_optional {
+                    value = Ty::TypeBinaryOp(
+                        TypeBinaryOp {
+                            kind: TypeBinaryOpKind::Union,
+                            lhs: Box::new(value),
+                            rhs: Box::new(Ty::value(Value::None(ValueNone))),
+                        }
+                        .into(),
+                    );
+                }
+                fields.push(StructuralField::new(field_name, value));
+                if expect_symbol(input, ",").is_err() {
+                    break;
+                }
+                if peek_symbol(input) == Some("}") {
+                    break;
+                }
+            }
+            expect_symbol(input, "}")?;
+            Ty::Structural(fp_core::ast::TypeStructural { fields }.into())
+        } else if expect_symbol(input, "(").is_ok() {
             let mut tys = Vec::new();
             if peek_symbol(input) != Some(")") {
                 loop {

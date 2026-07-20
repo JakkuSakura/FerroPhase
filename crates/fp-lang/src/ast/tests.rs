@@ -616,10 +616,10 @@ fn parse_expr_ast_supports_if_let_condition() {
     let expr = parser
         .parse_expr_ast("if let Some(cfg) = Self::try_detect(root) { cfg } else { other }")
         .unwrap();
-    let ExprKind::If(expr_if) = expr.kind() else {
-        panic!("expected if expr");
+    let ExprKind::Match(match_expr) = expr.kind() else {
+        panic!("expected match expr");
     };
-    assert!(matches!(expr_if.cond.kind(), ExprKind::Let(_)));
+    assert!(match_expr.cases.len() >= 2);
 }
 
 #[test]
@@ -750,11 +750,29 @@ fn parse_expr_ast_handles_match_guard_and_wildcard() {
 }
 
 #[test]
+fn parse_expr_ast_handles_match_tuple_and_range_patterns() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("match pair { (Mode::Ssh { host }, Backend::Tmux) => host, _ => fallback }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Match(_)));
+
+    let expr = parser
+        .parse_expr_ast("match b { b'A'..=b'Z' | b'a'..=b'z' => 1, _ => 0 }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Match(_)));
+}
+
+#[test]
 fn parse_expr_ast_handles_range() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("1..=2").unwrap();
     assert!(matches!(expr.kind(), ExprKind::Range(_)));
+
+    let expr = parser.parse_expr_ast("buf[..n]").unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Index(_)));
 }
 
 #[test]
@@ -797,6 +815,32 @@ fn parse_expr_ast_handles_closure() {
 }
 
 #[test]
+fn parse_expr_ast_handles_move_closure() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("move || 1").unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Closure(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_tuple_field_access() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("self.0").unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Select(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_raw_ref_identifier_binding() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("{ let r#ref = value; &r#ref }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
 fn parse_expr_ast_supports_turbofish_method_call() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
@@ -809,6 +853,24 @@ fn parse_expr_ast_handles_typed_and_mut_closure_params() {
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("|mut x: i32| x").unwrap();
     assert!(matches!(expr.kind(), ExprKind::Closure(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_ref_str_closure_params() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("|s: &str| s.len()").unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Closure(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_call_with_typed_closure_arg() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("foo(|s: &str| s.len() >= 7 && s.len() <= 40)")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Invoke(_)));
 }
 
 #[test]
@@ -870,6 +932,59 @@ fn parse_items_ast_handles_opaque_type() {
         Some(ItemKind::OpaqueType(item)) => assert_eq!(item.name.as_str(), "Session"),
         other => panic!("expected opaque type item, got {:?}", other),
     }
+}
+
+#[test]
+fn parse_items_ast_handles_unit_and_tuple_structs() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("struct FrontendAssets; struct TempDir(std::path::PathBuf, i32);")
+        .unwrap();
+
+    let ItemKind::DefStruct(unit) = items[0].kind() else {
+        panic!("expected unit struct");
+    };
+    assert!(unit.value.fields.is_empty());
+
+    let ItemKind::DefStruct(tuple) = items[1].kind() else {
+        panic!("expected tuple struct");
+    };
+    assert_eq!(tuple.value.fields.len(), 2);
+    assert_eq!(tuple.value.fields[0].name.as_str(), "0");
+    assert_eq!(tuple.value.fields[1].name.as_str(), "1");
+}
+
+#[test]
+fn parse_expr_ast_handles_local_item_with_attributes() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("{ #[derive(Clone)] struct TempDir(std::path::PathBuf); TempDir(path) }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_unsafe_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("unsafe { libc::openpty(a, b, c, d, e) }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_unsafe_block_with_pre_exec_closure() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            "unsafe { command.pre_exec(|| { if libc::setsid() == -1 { return Err(std::io::Error::last_os_error()); } if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY.into(), 0) == -1 { return Err(std::io::Error::last_os_error()); } Ok(()) }); }",
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
 }
 
 #[test]
@@ -1524,6 +1639,20 @@ fn parse_items_ast_handles_enum_item() {
 }
 
 #[test]
+fn parse_items_ast_handles_enum_struct_variants() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("enum E { Named { path: String, code: i64 }, Unit }")
+        .unwrap();
+    let ItemKind::DefEnum(item) = items[0].kind() else {
+        panic!("expected enum item");
+    };
+    let named = &item.value.variants[0];
+    assert!(matches!(named.value, Ty::Structural(_)));
+}
+
+#[test]
 fn parse_items_ast_handles_module_item() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
@@ -1583,6 +1712,30 @@ fn parse_items_ast_handles_trait_impl_item() {
     parser.clear_diagnostics();
     let items = parser
         .parse_items_ast("impl Foo for Bar { fn f() {} }")
+        .unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::Impl(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_impl_associated_type() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("impl FromStr for RefNode { type Err = CoreError; fn from_str() {} }")
+        .unwrap();
+    let ItemKind::Impl(item) = items[0].kind() else {
+        panic!("expected impl item");
+    };
+    assert!(matches!(item.items[0].kind(), ItemKind::DefType(_)));
+    assert!(matches!(item.items[1].kind(), ItemKind::DefFunction(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_lifetime_self_receiver() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("impl Foo { fn resolve<'a>(&'a self) -> &'a Self { self } }")
         .unwrap();
     assert!(matches!(items[0].kind(), ItemKind::Impl(_)));
 }

@@ -46,7 +46,7 @@ pub fn lower_program(
                         }
                         methods.push(method);
                     }
-                    Err(err) if function.name.to_string() != "main" => continue,
+                    Err(_err) if function.name.to_string() != "main" => continue,
                     Err(err) => return Err(err),
                 }
             }
