@@ -13,7 +13,7 @@ Required fixed inputs:
 - `Ferrophase.lock`
 - `workspace-graph.json`
 - Toolchain version
-- Build options (features, optimization, const-eval policy)
+- Build options (features, optimization, comptime policy)
 
 Environmental constraints:
 - Use a fixed environment variable allowlist.

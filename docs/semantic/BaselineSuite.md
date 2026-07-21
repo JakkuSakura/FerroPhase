@@ -6,7 +6,7 @@ across frontends, IR paths, and execution modes.
 ## Scope
 
 - Cross-frontend equivalence.
-- Cross-IR equivalence (LAST/AST/HIR/MIR/LIR).
+- Cross-IR equivalence (AST, typed annotations, HIR, MIR, LIR).
 - Cross-mode equivalence (interpreter, bytecode VM, native backends).
 
 ## Matrix Coverage
@@ -40,7 +40,7 @@ Coverage requirements:
 BaselineTestId: sem/obs/01
 SemanticPointId: L0-OBS-01
 Frontends: [ferro, typescript]
-IRPaths: [AST->HIR, AST->MIR]
+IRPaths: [typed AST->HIR, typed AST->MIR]
 Modes: [interpreter, bytecode, native]
 Fixtures:
   - tests/fixtures/semantic/obs/01.fp

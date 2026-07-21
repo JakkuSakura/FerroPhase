@@ -17,7 +17,8 @@ policy, and gate is documented.
 
 3. Ownership/borrowing/lifetime + zero-cost abstraction constraints
 - Contract statement: `docs/Language.md`
-- Pipeline/Design embedding points: `docs/Design.md`, `docs/Pipeline.md`
+- Compiler design points: `docs/Design.md`, `docs/Compiler.md`,
+  `docs/Pipeline.md`
 
 4. Release gates (must-pass, non-bypassable)
 - Gate policy and evidence: `docs/QualityAssurance.md`
@@ -36,7 +37,7 @@ policy, and gate is documented.
 - Build options & artifacts: `docs/BuildOptions.md`, `docs/Compile.md`
 - Audit logs: `docs/Logging.md`
 
-8. Minimum DX (LSP/formatter/diagnostics/staged debugging)
+8. Minimum DX (LSP/formatter/diagnostics/work debugging)
 - Minimum DX bar: `docs/DeveloperExperience.md`
 - Release gates tie-in: `docs/Language.md`, `docs/QualityAssurance.md`
 

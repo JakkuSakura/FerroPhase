@@ -15,11 +15,13 @@ FerroPhase toolchain. It does not change language semantics.
 
 3. Diagnostics Quality
 - Error categories and codes must be stable.
-- Messages must be actionable and reference the failing stage.
+- Messages must be actionable and reference the failing work item, request, or
+  artefact.
 
-4. Staged Debugging
-- Ability to persist intermediates by stage (AST, typed AST, HIR, MIR, LIR).
-- Ability to disable a stage for isolation when supported.
+4. Work Debugging
+- Ability to persist requested artefacts (AST, typed AST annotations, HIR, MIR,
+  LIR, bytecode, native objects).
+- Ability to isolate a work kind or request when supported.
 
 ## Release Gate Tie-in
 

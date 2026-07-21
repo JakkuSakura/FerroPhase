@@ -1,8 +1,8 @@
 # Compile Mode Quickstart
 
-This guide walks through compiling a FerroPhase project to a native target using the current toolchain. It assumes the
-codebase matches the architecture described in `docs/Design.md` and that const evaluation behaves as detailed in
-`docs/ConstEval.md`.
+This guide walks through compiling a FerroPhase project to a native target using
+the intended scheduler-based compiler design. See `docs/Design.md`,
+`docs/Compiler.md`, and `docs/ConstEval.md` for the architecture.
 
 ## Prerequisites
 
@@ -38,7 +38,8 @@ my_project/
 
 ## Writing Code
 
-Example `src/main.fp` demonstrating const evaluation, quoting, and a simple entry point:
+Example `src/main.fp` demonstrating comptime generation, quoting, and a simple
+entry point:
 
 ```ferrophase
 const API_NAME: str = "FerroPhase";
@@ -58,47 +59,47 @@ fn main() {
 ```
 
 Highlights:
-- `API_NAME` is computed at compile time.
+- `API_NAME` is answered by comptime work.
 - `quote`/`splice` demonstrate structured metaprogramming (see `docs/Quoting.md`). `quote` yields an AST token whose
   type is inferred by the compiler.
 - `main` is a standard entry point.
 
-## Running Const Evaluation
+## Inspecting Comptime Work
 
-To inspect const-eval output and verify the typed AST, run:
+To inspect scheduler-produced AST and typed artefacts, run:
 
 ```bash
-$ fp compile src/main.fp --emit ast --emit east
+$ fp compile src/main.fp --emit ast --emit ast-typed --emit hir
 ```
 
 Artifacts (paths depend on your configuration):
-- `target/ast/src_main.ast` – Normalised AST snapshot
-- `target/ast/src_main.ast-typed` – Typed AST (`ASTᵗ`)
-- `target/ast/src_main.ast-eval` – Post-const-eval AST (`ASTᵗ′`)
-- `target/hir/src_main.hir` – HIR emitted from the current type-enrichment stage
+- `target/ast/src_main.ast` - canonical AST state after applied answers
+- `target/ast/src_main.ast-typed` - typed AST annotations
+- `target/hir/src_main.hir` - HIR for requested lowered scopes
 
 ## Building to Native (LLVM target)
 
-> ⚠️ The native backend is temporarily unavailable while the typed AST/HIR
+> The native backend may be temporarily unavailable while the typed AST/HIR
 > refactor lands. The CLI currently stops after producing the typed AST and
-> HIR snapshots.
+> HIR artefacts.
 
 Common flags (still accepted for future use):
 - `--opt {0|1|2|3}` – Optimisation level (default: 2)
 - `--debug` – Include debug info
-- `--emit {ast,ast-typed,ast-eval,hir}` – Persist intermediates for inspection
+- `--emit {ast,ast-typed,hir,mir,lir}` - Persist intermediates for inspection
 - `--save-intermediates` – Shortcut to emit all intermediates
 
 ## Inspecting Intermediates
 
 ```bash
-$ fp compile src/main.fp --emit ast-typed --emit ast-eval --emit hir
+$ fp compile src/main.fp --emit ast-typed --emit hir
 $ cat target/ast/src_main.ast-typed
-$ cat target/ast/src_main.ast-eval
+$ cat target/hir/src_main.hir
 ```
 
-- The typed AST shows the solver’s view before evaluation.
-- The evaluated AST includes const-folded expressions and generated items.
+- The typed AST shows annotations applied to canonical AST state.
+- HIR shows requested scopes after comptime answers needed by lowering were
+  applied.
 
 ## Inspecting Produced Artifacts
 
@@ -118,7 +119,9 @@ $ fp inspect target/main --hex --max-bytes 128
 
 Current scope:
 - FerroPhase can inspect and transcode its own bytecode representation.
-- Native executables can be inspected structurally, but there is not yet a reverse pipeline from machine code back into MIR/AST, so high-level decompilation is intentionally out of scope for now.
+- Native executables can be inspected structurally, but there is not yet a
+  reverse compiler path from machine code back into MIR/AST, so high-level
+  decompilation is intentionally out of scope for now.
 
 ## Textual Backends
 
@@ -171,11 +174,13 @@ The release record is required for reproducibility audits.
 
 - **Missing LLVM tools**: `fp compile` reports if `llc`/`clang` are unavailable. Install via your package manager or set
   `FP_LLVM_PATH`.
-- **Const eval errors**: Review the `ast-eval` artefact. Diagnostics map back to original spans.
-- **Target mismatch**: Ensure `docs/Design.md` cross-stage guarantees hold—the evaluated AST should match quoted/spliced code.
+- **Comptime errors**: Review diagnostics by `RequestId` and original span.
+- **Target mismatch**: Ensure `docs/Design.md` consistency rules hold; quoted
+  and spliced code should be applied to canonical AST before affected scopes are
+  lowered or emitted.
 
 ## Next Steps
 
 - Explore bytecode mode: `fp bytecode src/main.fp --emit bytecode`
-- Generate Rust output (currently disabled while the new pipeline lands)
+- Generate Rust output when AST target emission is enabled
 - Extend the project with modules and custom targets; update `FerroPhase.toml` accordingly.

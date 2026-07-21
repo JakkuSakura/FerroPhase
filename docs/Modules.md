@@ -2,8 +2,8 @@
 
 The FerroPhase toolchain treats *modules* as the canonical unit of
 namespacing, compilation, and binding generation. A module corresponds to one
-or more source files under a package and is preserved all the way through the
-typed AST pipeline, optimization passes, and language-specific backends. This
+or more source files under a package and is preserved all the way through typed
+AST annotations, scoped lowering, optimization, and language-specific backends. This
 document captures the rules for defining, resolving, and consuming modules
 across the multi-language ecosystem.
 
@@ -65,7 +65,7 @@ aliases in the AST so other packages can import `physics::step` directly.
 - `use package_name::physics::solvers::*;`
 - Relative paths: `use super::solvers::broyden;`
 
-Imports are resolved during the AST normalisation stage. The resolver consults
+Imports are resolved during AST normalization work. The resolver consults
 the package manifest (`Ferrophase.toml`) to ensure the dependency graph permits
 cross-package references and records feature requirements for each edge.
 
@@ -75,12 +75,12 @@ cross-package references and records feature requirements for each edge.
 module at type-check time. The expansion is cached per feature set so const
 evaluation and transpiled outputs stay in sync.
 
-### Qualified Names in Const Eval
+### Qualified Names in Comptime
 
-During const evaluation the interpreter stores results under their fully
-qualified module path (e.g. `physics::solvers::newton::STEP_SIZE`). This allows
-other modules – including bindings – to access results without worrying about
-evaluation order.
+During comptime work, request answers are stored under their fully qualified
+module path (e.g. `physics::solvers::newton::STEP_SIZE`). This allows other
+modules, including bindings, to access results without depending on scheduler
+order.
 
 ## Module Metadata
 
@@ -184,10 +184,9 @@ crates/
 ## Module Initialisation
 
 - `const` items evaluated at compile time populate module-level constants before
-  downstream compilation or transpilation.
-- `static` items remain runtime initialised; the interpreter records their
-  default expressions for backends that need them (e.g. Python defers
-  evaluation until import).
+  dependent scopes are lowered or emitted.
+- `static` items remain runtime initialized; execution artefacts record their
+  default expressions for targets that need deferred initialization.
 - Strict intrinsics are defined in `std::intrinsic` via `#[lang]` items; other
   intrinsic helpers are normalized to canonical `std` symbols by the frontend
   and resolved through the shared registry.
@@ -216,9 +215,9 @@ provide migration guidance before removal.
   in language-appropriate formats.
 - Prefer `pub(crate)` for package-internal APIs so accidental exports do not
   leak into bindings.
-- Ensure const evaluation of module-level items has no side effects; results are
-  cached and shared across targets.
+- Ensure comptime work for module-level items has no side effects unless an
+  explicit capability allows them; answers are cached and shared across targets.
 
 Modules are the backbone of the multi-language story: design them carefully and
-the rest of the pipeline – const evaluation, optimization, and bindings – will
-slot neatly into place.
+the rest of the compiler work, including comptime requests, optimization, and
+bindings, will fit around stable module identities.

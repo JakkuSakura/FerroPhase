@@ -1,7 +1,7 @@
 # Build Options and Build Blocks
 
 FerroPhase build-time generation relies on quoted fragments and `splice` to
-insert items or expressions into the AST during const evaluation. This document
+insert items or expressions into canonical AST during comptime work. This document
 captures the build-block pattern using typed quotes and expression-driven
 splicing.
 
@@ -73,8 +73,9 @@ only; item fragments must be emitted at module scope.
 
 - `quote<item>` is intended for module-level generation.
 - `quote<expr>` is intended for expression splicing inside const blocks.
-- `splice` evaluates its token expression during const evaluation, so normal
-  control flow (`if`/`else`, loops) is supported.
+- `splice` evaluates its token expression through comptime requests, so normal
+  control flow (`if`/`else`, loops) is supported when the required execution
+  capability exists.
 
 ## Reproducibility Signals
 

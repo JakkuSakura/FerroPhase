@@ -1,59 +1,52 @@
-# Logging & Tracing Guide
+# Logging And Tracing Guide
 
-This document outlines the current logging/tracing architecture for the FerroPhase compiler CLI and references planned
-work captured in `specs/003-compile/tasks.md` (T027).
+Logging should make dynamic compiler work visible without implying a fixed
+pipeline. Trace spans should identify work items, requests, artefacts,
+dependencies, and modes.
 
 ## Goals
 
-- Provide operators and developers with visibility into each pipeline stage (parse → type inference → const eval → HIRᵗ → MIR → LIR → backend).
-- Maintain deterministic logs across modes to preserve cross-stage guarantees (`docs/Design.md:158`).
-- Ensure tracing output is opt-in and environment-configurable.
+- Show scheduler activity and scoped compiler work.
+- Correlate diagnostics with `RequestId`, source span, and dependency edge.
+- Preserve deterministic logs for semantic consistency checks.
+- Keep tracing opt-in and environment-configurable.
 
 ## Logging Infrastructure
 
-- Base logging uses `tracing` crate configured in `crates/fp-cli/src/main.rs`.
-- Default level: `info`; set `FP_LOG=debug` (or `trace`) to increase verbosity.
-- Formatters:
-  - Human-readable console output (`tracing_subscriber::fmt`)
-  - Optional JSON output controlled by `FP_LOG_FORMAT=json` (planned)
+- Base logging uses the `tracing` crate configured by the CLI.
+- Default level: `info`; set `FP_LOG=debug` or `FP_LOG=trace` for more detail.
+- `FP_LOG_FORMAT=json` should produce machine-readable spans for tests and
+  release evidence.
 
-## Build Records (Release Evidence)
+## Instrumentation Points
 
-Release builds must emit a build record that captures the same inputs required by
-`docs/ReleaseArtifacts.md`:
+| Work | Suggested span | Notes |
+|------|----------------|-------|
+| Parse | `compiler.parse` | Source path, frontend, module count |
+| Normalize | `compiler.normalize` | Canonical symbols, frontend provenance |
+| Schedule work | `compiler.work` | Work kind, request id, dependency key |
+| Type scope | `compiler.type` | Scope id, constraints, blockers |
+| Register need | `compiler.request.need` | `CompileTimeNeed`, blocked node |
+| Answer request | `compiler.request.answer` | Answer kind, invalidated artefacts |
+| Scoped lowering | `compiler.lower` | HIR/MIR/LIR artefact keys |
+| Execute scope | `compiler.execute` | Runtime/comptime mode, capabilities |
+| Emit target | `compiler.emit` | Backend, output path, target features |
 
-- Toolchain version and backend selection.
-- Build options and feature flags.
-- Snapshot/hash references produced by semantic gates.
+## Build Records
 
-These records can be stored alongside QA evidence for auditability.
+Release builds must emit a build record with:
 
-### Key Instrumentation Points
+- source revision and package graph;
+- compiler options and feature flags;
+- requested modes and final artefacts;
+- request/dependency hashes used for semantic gates;
+- output paths defined in [ReleaseArtifacts](ReleaseArtifacts.md).
 
-| Stage            | Location                                             | Notes                                     |
-|------------------|------------------------------------------------------|-------------------------------------------|
-| Parsing          | `crates/fp-cli/src/pipeline.rs:parse_source`                | Emits source path and module count        |
-| Type Enrichment  | `crates/fp-cli/src/pipeline.rs:run_type_enrichment_stage`   | Logs typed AST cloning and HIR output     |
-| Const Evaluation | `crates/fp-cli/src/pipeline.rs:run_const_eval_stage`        | Logs stubbed const-eval (AST focus)       |
-| HIR Emission     | `crates/fp-backend/src/transforms/ast_to_hir/mod.rs`        | Span-preserving logs, TODO for modules    |
-| Future Backends  | _pending rewrite_                                    | MIR/LIR/LLVM hooks will return once ready |
+## Roadmap
 
-## Tracing Roadmap (T027)
-
-1. **Structured Spans** – Introduce span guards for each pipeline step so nested operations (e.g., module lowering) are visible.
-2. **File/Module Attribution** – Include module names and `NodeId` references in logs for easier correlation with typed AST/HIR outputs.
-3. **Error Correlation** – Ensure errors recorded through `tracing::error!` map back to TAST spans, matching the cross-stage guarantees.
-4. **CLI Flags** – Added `--log {error|warn|info|debug|trace}` and `--log-format {pretty,json}` flags with sensible defaults.
-5. **Test Hooks** – Provide utilities in `fp-backend/tests` to assert log spans when running pipeline tests.
-
-## Current Status
-
-- T027 is **in progress**: pipeline stages now emit `tracing` spans (`pipeline.const_eval`, `pipeline.lower.*`,
-  `pipeline.codegen`, etc.) with debug events for persisted intermediates.
-- Remaining work: propagate span context into optimisation crates.
-
-## Next Steps
-
-- Implement span-based tracing in `fp-cli/src/pipeline.rs` and propagate span handles to transformation passes.
-- Harden logging hooks in `fp-backend` so tests can consume structured events.
-- Document environment variables and CLI options once implemented.
+1. Introduce structured spans for scheduler work items.
+2. Include module names, scope ids, `NodeId`s, and `RequestId`s in logs.
+3. Correlate diagnostics with source spans and dependency edges.
+4. Provide CLI flags `--log {error|warn|info|debug|trace}` and
+   `--log-format {pretty,json}`.
+5. Add test hooks that assert request ordering and artefact invalidation events.

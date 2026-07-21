@@ -1,195 +1,136 @@
-# Pipeline Architecture
+# Compiler Workflow
 
-FerroPhase's pipeline is organised as a share-nothing driver that threads
-diagnostics between functional stages while the `Pipeline` struct caches the
-frontend serializer, detected language, and snapshot metadata. The frontend
-produces a language-specific AST (LAST) snapshot alongside the canonical AST so
-multi-language inputs flow through the same normalisation passes. The new
-design removes THIR entirely: type inference now annotates the canonical AST in
-place, the interpreter operates directly on that typed AST, and the remaining
-lowerings consume the already-typed structures.
+This file keeps the historical `Pipeline.md` name because tools and docs still
+link to it. The intended design is no longer a fixed pipeline. FerroPhase should
+use the dynamic scoped compiler described in [Compiler](Compiler.md): source
+work, typing work, comptime work, lowering work, execution work, and emission
+work are coordinated by `CompilerWorkScheduler`.
 
-## Stage Overview
+The scheduler owns ordering. Individual compiler components own semantics.
 
-> See also: [Glossary](Glossary.md) for shared domain terminology.
+## Scheduler Overview
 
-1. **Frontend (Source → LAST → Annotated AST)**
-   - Each `LanguageFrontend` normalises source into a language-specific LAST
-     snapshot and the canonical AST (`fp_core::ast::Node`).
-   - Annotation captures language metadata (imports, attributes, serializer)
-     so later tooling can recover front-end specifics.
-   - The frontend stores provenance (`FrontendSnapshot`) on the pipeline so
-     later tooling can persist or inspect LAST data without re-parsing.
+```mermaid
+flowchart LR
+    SourceInput[SourceInput] -->|SourceText| Parser[Parser]
+    Parser -->|raw AST| AstNormalizer[AstNormalizer]
+    AstNormalizer -->|AST| CompilerWorkScheduler[CompilerWorkScheduler]
+    CompilerWorkScheduler -->|PendingAst| TypeEngine[TypeEngine]
+    TypeEngine -->|TypedAst| ScopedLowering[ScopedLowering]
+    TypeEngine -->|CompileTimeNeed| RequestRegistry[RequestRegistry]
+    RequestRegistry -->|RequestId| CompilerWorkScheduler
+    ScopedLowering -->|HIR| HirStore[HirStore]
+    HirStore -->|HIR| MirLowering[MirLowering]
+    MirLowering -->|MIR| LirLowering[LirLowering]
+    LirLowering -->|LIR| ArtefactStore[ArtefactStore]
+    ArtefactStore -->|LIR| ExecutionEngine[ExecutionEngine]
+    ExecutionEngine -->|RequestAnswer| CompilerWorkScheduler
+    ArtefactStore -->|LIR| TargetEmitter[TargetEmitter]
+```
 
-2. **Parsing & Normalisation (AST → AST)**
-   - The parser records macros as AST (`ExprKind::Macro`) without lowering.
-   - A dedicated normalization pass then lowers builtin macros (e.g., `emit!`)
-     and rewrites intrinsic forms. Builtins are compiler-reserved sugar and do
-     not change staging/scoping rules or query types.
-   - Annotation and canonical std remapping execute during normalization while
-     spans are preserved.
-   - The output is the normalized AST that every downstream mode consumes.
+## Work Responsibilities
 
-3. **Type Enrichment (AST → ASTᵗ, incremental)**
-   - The Algorithm W inferencer supports incremental queries. It can predeclare
-     items up front and later infer expressions on demand, writing inferred
-     types back onto AST nodes (`ast::Expr.ty`, `ast::Pattern.ty`, …).
-   - The output is the same structural AST enriched with optional type slots
-     (`ASTᵗ`). No HIR/THIR projection occurs during typing.
+| Work | Consumes | Produces |
+|------|----------|----------|
+| Parse | source text, frontend choice | raw AST, provenance |
+| Normalize | raw AST | canonical AST |
+| Type scope | AST scope, symbol state | typed AST annotations, constraints, `CompileTimeNeed` |
+| Register request | compile-time need | `RequestId`, dependency edge |
+| Scoped lowering | typed AST scope | HIR, MIR, LIR artefacts |
+| Execute scope | executable LIR, environment | runtime value or comptime `RequestAnswer` |
+| Emit target | LIR or evaluated AST artefact | bytecode, native object, target source, metadata |
+| Revalidate | changed AST or answer state | invalidated artefacts and follow-up work |
 
-4. **Typed Interpretation (ASTᵗ → ASTᵗ′, interleaved)**
-   - Compile-time and runtime interpretation operate on the typed AST and can
-     request missing types lazily as expressions are evaluated.
-   - Const evaluation may mutate the AST in place (folding expressions,
-     synthesising declarations, materialising intrinsic calls). The interpreter
-     registers new items with the typer so later expressions see newly
-     materialised types. The resulting `ASTᵗ′` snapshot becomes the source of
-     truth for subsequent stages.
+## Frontends
 
-   Keywords vs builtins in this phase
-   - Keywords (`const`, `quote`, `splice`) affect staging/behaviour and are
-     recognised by the parser.
-   - Builtins like `emit!` are sugar only; by this phase they have expanded to
-     equivalent keyword forms (e.g., `splice ( quote { … } )`).
+Frontends parse language-specific input and preserve provenance, but the shared
+compiler consumes canonical AST. LAST-like frontend data may still be stored for
+tooling and target emission, but it is not a semantic checkpoint in the shared
+compiler design.
 
-5. **Typed Projection (ASTᵗ′ → HIRᵗ)**
-   - `HirGenerator` consumes the evaluated typed AST and produces a
-     type-aware HIR (`HIRᵗ`). Because the AST already carries principal types,
-     this step focuses on structural desugaring and borrow checking hooks while
-     preserving the attached type metadata.
-   - This is the primary mapping point for ownership/borrowing/lifetime rules.
-     Frontends that cannot fully preserve the model must apply explicit
-     degradation rules and emit explanatory diagnostics.
+Shipped frontends include:
 
-6. **Backend Lowering**
-   - `hir_to_mir` lowers typed HIR into MIR while surfacing diagnostics for
-     unsupported constructs. MIR is then converted into LIR and LLVM IR so
-     native backends share a single SSA pipeline.
+- `FerroFrontend` for FerroPhase/Rust syntax (`.fp`, `.rs`);
+- `TypeScriptFrontend` for TypeScript/JavaScript families;
+- `WitFrontend` for WebAssembly Interface Types;
+- `SqlFrontend` for `.sql` query documents;
+- `PrqlFrontend` for `.prql` query documents;
+- `JsonSchemaFrontend` for validation schemas;
+- `FlatbuffersFrontend` for `.fbs` type IDL.
 
-Each step updates the shared `DiagnosticManager`, returning either the produced
-artefact (or a placeholder when tolerance is enabled) or a stage failure. The
-pipeline maintains its cached serializer/language metadata in place, printing
-diagnostics after each stage while also retaining them for aggregate reporting.
+Each frontend must document semantic degradation in
+`docs/semantic/Matrix.md` when its source language cannot preserve a FerroPhase
+semantic point.
 
-Semantic contract validation points:
-- The pipeline must be able to map stage outputs to baseline suite checks.
-- Any change that affects semantic points must update the semantic matrix and
-  baseline suite definitions (see `docs/semantic/Matrix.md` and
-  `docs/semantic/BaselineSuite.md`).
+## Typing And Requests
 
-7. **Binary Emission**
-   - The LLVM bridge writes `*.ll` artefacts and invokes `clang` to link final
-     executables when native targets are selected.
+`TypeEngine` annotates canonical AST nodes in place. If it can type a scope, it
+hands the typed scope to scoped lowering. If it cannot continue because a value,
+type, declaration, generic identity, or generated fragment must be known first,
+it emits `CompileTimeNeed`.
 
-## Context Boundaries (DDD lens)
+`RequestRegistry` assigns a `RequestId` and records the blocked AST node. The
+scheduler resumes the blocked work only after an answer has been applied.
 
-- **Frontend Context**: owns LAST/AST production and provenance.
-- **Typing Context**: owns AST typing (ASTᵗ) and type queries.
-- **Interpretation Context**: owns const/runtime evaluation (ASTᵗ′).
-- **Lowering Context**: owns HIR/MIR/LIR and backend emission.
-- **Tooling/CLI Context**: hosts orchestration and diagnostics output.
+## Scoped Lowering
 
-## Pipeline State
+Scoped lowering is the shared refinement path:
 
-`Pipeline` now owns the lightweight metadata that previously lived inside a
-`CompilationContext`:
+```text
+typed AST -> HIR -> MIR -> LIR
+```
 
-- `serializer: Option<Arc<dyn AstSerializer>>` – reused by type inference and
-  interpretation to serialise typed AST fragments/values.
-- `source_language: Option<String>` – records the detected or user-specified
-  language for diagnostics and downstream tooling.
-- `frontend_snapshot: Option<FrontendSnapshot>` – keeps LAST provenance handy
-  for emitters or persistence features.
+It is performed for the smallest useful scope: function, item, block, const
+body, generated fragment, or requested specialization. Lowering may stop and
+submit a new request if it discovers a comptime dependency.
 
-These fields are reset at the start of `execute_with_options` and repopulated
-after parsing so subsequent stages can access them without threading an
-explicit context object.
+## Modes
+
+Modes request different final artefacts:
+
+| Mode | Final artefact |
+|------|----------------|
+| `run` / `eval` | executed LIR result |
+| `bytecode` | serialized bytecode |
+| native / LLVM / Wasm / JVM / CIL / .NET / eBPF | target object or module |
+| AST target emit | evaluated canonical AST plus target printer output |
+
+Mode branching belongs at the artefact boundary. Typing, comptime, intrinsic
+resolution, async semantics, and scoped lowering should stay shared.
 
 ## Diagnostics
 
-`PipelineDiagnostic` captures stage, severity, message, optional span, and
-suggestions. Stages append diagnostics even when they recover with placeholder
-IR (when `ErrorToleranceOptions` allows). `emit_diagnostics` honours verbose
-flags for informational entries but always surfaces warnings and errors.
+Diagnostics are attached to work item identity, `RequestId`, dependency edge,
+source span, and requested mode. The CLI can still print them in a familiar
+order, but diagnostic ownership should follow the work that produced the error.
 
-## Multi-Language Frontends
+## Intermediates
 
-Multi-frontend semantic mapping:
-- Each frontend must declare its semantic mapping and any degradation rules in
-  `docs/semantic/matrix/<frontend>.md`.
-- New frontends must update the matrix in the same change as the frontend code.
+When `--save-intermediates` is enabled, the compiler should persist artefacts
+that were actually requested or produced:
 
-- Frontends are wired through `crates/fp-cli/src/languages/frontend.rs` and simple
-  file-extension detection (e.g. `detect_language_source_by_path`). The CLI re-exports
-  concrete frontends (`FerroFrontend`, `TypeScriptFrontend`, `WitFrontend`, etc.) for
-  use by the pipeline without keeping a runtime registry.
-- Shipped frontends:
-  - `FerroFrontend` for FerroPhase/Rust syntax (`.fp`, `.rs`).
-  - `TypeScriptFrontend` for TypeScript/JavaScript families.
-  - `WitFrontend` for WebAssembly Interface Types (service + type IDL).
-  - `SqlFrontend` for `.sql` sources (query documents).
-  - `PrqlFrontend` for `.prql` pipelines (query documents).
-  - `JsonSchemaFrontend` for `.jsonschema` files (validation schemas → `NodeKind::Schema`).
-  - `FlatbuffersFrontend` for `.fbs` files (type IDL lowered into struct/enum items).
-- `NodeKind::Query` carries query documents, while `NodeKind::Schema` captures validation schemas.
-  All other IDL data is normalised into the existing `Item`/`Expr` tree so runtime code generation stays uniform.
+- `.ast` for canonical AST state;
+- `.ast-typed` for type annotations;
+- `.hir`, `.mir`, `.lir` for scoped lowered artefacts;
+- `.bytecode`, `.ll`, object files, assembly, or target AST output for emitted
+  artefacts.
 
-### Terminology cheat sheet
-
-Use the following vocabulary when talking about cross-language specifications:
-
-| Term | What it contains | Examples | Notes |
-| ---- | ---------------- | -------- | ----- |
-| **Service IDL** | Operations/endpoints, signatures, errors/streams | WIT interfaces/worlds, Thrift/Proto services, JSON-RPC method catalogs | Describes callable APIs. Lower these into items (e.g. functions) or keep side metadata. |
-| **Type IDL** | Portable data shapes (records, enums, options/results) | WIT type blocks, FlatBuffers tables, Thrift/Proto messages considered abstractly | We normalise these into struct/enum items which later become runtime types per target language. |
-| **Runtime types** | Concrete per-language definitions | `struct Foo { … }` in Rust, Python `class Baz`, C# records, TS interfaces | Generated or handwritten code; lives in the usual AST `Item`/`Expr` hierarchy. |
-| **Validation schema** | JSON-specific constraints, validation rules | JSON Schema files, OpenAPI component schemas | Captured via `NodeKind::Schema`; never conflated with IDL. |
-| **Protocol spec** | Wire format, envelopes, transport mapping | JSON-RPC framing over ZMQ, FlatBuffers envelopes, MsgPack contracts | Track separately when documenting/onboarding but out-of-scope for the AST today. |
-
-When updating existing material, migrate language like “WIT interface” → *Service IDL*, “WIT types” → *Type IDL*, “Rust struct Foo” → *Runtime type*, “JSON schema” → *Validation schema*, and reserve “Protocol spec” for transport-level descriptions.
-- `PipelineOptions.source_language` allows callers to override detection when an
-  expression lacks a file extension.
-- Additional frontends should implement `LanguageFrontend::parse`, returning a
-  LAST snapshot and serializer tailored to the language. LAST provenance is
-  stored on the pipeline so future tooling can persist or inspect it alongside
-  canonical AST artefacts.
-
-### CLI integration
-
-- The `fp compile` command now accepts `--lang <identifier>` (alias `--language`)
-  to feed `PipelineOptions.source_language`. Use it when file extensions are
-  ambiguous (e.g., stdin or embedded expressions) or when forcing a particular
-  frontend during experiments.
-- `--save-intermediates` persists stage outputs (including the cached LAST
-  snapshot) regardless of the selected language.
-
-## Intermediates & Persistence
-
-When `save_intermediates` is enabled, each completed stage writes its artefact
-into the `base_path` with a conventional extension (`.ast`, `.ast-typed`,
-`.ast-eval`, `.hir`). Backends will add their own intermediates once they are
-re-enabled.
+There is no separate evaluated AST family. Comptime answers are applied to the
+canonical AST state and invalidate dependent artefacts.
 
 ## Error Tolerance
 
-Stages cooperate with `ErrorToleranceOptions`. If tolerance is enabled and the
-stage can produce a placeholder artefact, it returns it while emitting
-`DiagnosticLevel::Error` entries. Fatal failures surface as `CliError::Compilation`.
+Error tolerance belongs to work scheduling. A work item may emit diagnostics and
+produce a placeholder artefact only when the placeholder has a declared
+dependency and capability contract. Fatal errors block dependent requests.
 
-## Runtime & Interpretation
-
-Interpretation (interactive `run`/`eval`) now drives the same
-`AST → ASTᵗ → ASTᵗ′` pipeline. The CLI invokes the shared AST interpreter in
-runtime mode after const evaluation completes.
-
-## Extending the Pipeline
+## Extending The Compiler
 
 To add a new source language:
 
-1. Implement `LanguageFrontend` for the language, producing LAST metadata and a serializer.
-2. Add/extend extension detection in `crates/fp-cli/src/languages/frontend.rs` so the CLI can pick it by path.
-3. Ensure the new frontend maps its standard library to the canonical `std` vocabulary before returning the AST.
-4. Optionally persist the LAST snapshot (`FrontendSnapshot::serialized`) for debugging tooling.
-
-With extension detection in place, the pipeline automatically picks the frontend
-based on `PipelineOptions.source_language` (override) or the input file extension.
+1. Implement `LanguageFrontend` for the language.
+2. Normalize source constructs into canonical AST and canonical `std` symbols.
+3. Preserve frontend provenance for diagnostics and target emission.
+4. Update `docs/semantic/Matrix.md` for any semantic degradation.
+5. Add scheduler tests for parse, type, comptime, lowering, and requested modes
+   that the frontend supports.

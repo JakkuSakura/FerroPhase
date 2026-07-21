@@ -4,8 +4,8 @@ Packages define distribution, dependency management, and multi-language build
 targets for FerroPhase projects. They wrap module trees, generated bindings, and
 metadata that the toolchain uses to assemble reproducible builds across the
 Rust, TypeScript/JavaScript, Python, and C/LLVM ecosystems. This guide explains
-how packages are structured, how manifests are authored, and how the pipeline
-interacts with them.
+how packages are structured, how manifests are authored, and how the user-facing
+build command interacts with them. Compiler internals are scheduler-driven.
 
 ## Anatomy of a Package
 
@@ -99,7 +99,7 @@ publish = true
   - `package` – rename the dependency within the package namespace.
 - `[features]` – feature flag graph. Values list other features or dependency
   flags to enable.
-- `[build]` – pipeline configuration: toolchain pinning, const-eval policy,
+- `[build]` - compiler configuration: toolchain pinning, comptime policy,
   optimisation mode, codegen flags.
 - `[bindings.<lang>]` – metadata used when publishing to external registries.
 
@@ -171,7 +171,8 @@ fp resolves modules and symbols via a language-specific strategy:
   Magnet, with default/named exports.
 
 Each strategy maps imports to `ModuleId` and resolves symbols within a module.
-The shared fp pipeline only orchestrates resolution and diagnostics.
+The shared compiler scheduler coordinates resolution, diagnostics, and follow-up
+work.
 
 ## Workspaces
 
@@ -214,16 +215,15 @@ that fp consumes:
   in the graph.
 - fp assumes the graph is consistent (no cycles, compatible versions).
 
-## Build Pipeline
+## Build Work
 
-1. **Frontend** – parse FerroPhase sources into the canonical AST.
-2. **Type Inference** – annotate modules with principal types.
-3. **Const Evaluation** – execute compile-time code, caching results per module
-   and feature set.
-4. **Optimization & Codegen** – lower to HIR/MIR/LIR and emit backend artefacts
-   (LLVM IR, transpiled sources, FFI shims).
-5. **Binding Generation** – materialise language-specific packages under
-   `bindings/`.
+1. **Parse and normalize** source modules into canonical AST.
+2. **Type requested scopes** and record `CompileTimeNeed` blockers.
+3. **Answer comptime requests** for const values, generated declarations,
+   explicit comptime arguments, and requested specializations.
+4. **Lower requested scopes** through typed AST, HIR, MIR, and LIR.
+5. **Emit requested artefacts** such as LLVM IR, bytecode, transpiled sources,
+   FFI shims, and language bindings.
 
 The CLI stores intermediate artefacts under `target/<lang>/` so repeated builds
 reuse previous work when inputs, feature sets, and toolchain versions match.
@@ -242,7 +242,7 @@ reuse previous work when inputs, feature sets, and toolchain versions match.
 FerroPhase intentionally mirrors the Cargo model: the package manager (Magnet or
 an equivalent standalone CLI) orchestrates dependency resolution, registry
 interaction, and workspace coordination, while the FerroPhase compiler focuses on
-AST processing, const evaluation, and code generation. Keeping the package
+AST processing, comptime requests, and code generation. Keeping the package
 manager separate provides several advantages:
 
 1. **Isolation of responsibilities** – registry credentials, lockfile semantics,
@@ -291,13 +291,14 @@ commands.
 
 - Keep manifests declarative; avoid custom build scripts until absolutely
   necessary.
-- Leverage features to gate expensive const-eval paths or optional bindings.
+- Leverage features to gate expensive comptime request paths or optional
+  bindings.
 - Use workspaces for mono-repos: they shorten build times by sharing caches and
   lockfiles.
 - Document supported targets in the README and expose CI badges per language.
 - Run `fp audit` regularly to verify dependency integrity and license
   compliance.
 
-Packages provide the contract between FerroPhase’s typed AST world and the
+Packages provide the contract between FerroPhase compiler artefacts and the
 language ecosystems you target. A well-authored manifest and clean module tree
 make multi-language distribution straightforward.

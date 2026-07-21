@@ -1,127 +1,191 @@
-# Design Brief: AST-Centric Multi-Mode Execution
+# Design Brief: Dynamic Scoped Compiler
 
 ## Overview
 
-FerroPhase now centres every frontend, mode, and backend on a single typed AST.
-Frontends emit a canonical AST; Algorithm W inference annotates it in place; the
-interpreter, const evaluator, and backend lowerings consume that same structure.
-By eliminating THIR we reduce the number of intermediate projections while still
-supporting multi-language inputs and multiple execution modes (compile, run,
-AST-target emission, bytecode).
+FerroPhase should be organized around a shared compiler state and a
+`CompilerWorkScheduler`, not a fixed linear pipeline and not a separate
+tree-walker interpreter semantics. Every mode asks the scheduler for the
+artefacts it needs. The scheduler refines concrete scopes, records dependencies,
+answers requests, and resubmits affected work when compile-time execution or
+generated code changes the program state.
 
+The source of truth is the canonical AST plus attached semantic artefacts.
+Typing, compile-time execution, lowering, interpretation, bytecode, and native
+emission should reuse the same scoped work model. A mode changes the requested
+final artefact; it must not change language semantics.
+
+> See also: [Compiler](Compiler.md) for the work scheduler model and
+> [Glossary](Glossary.md) for shared terminology.
+
+## Compiler Shape
+
+The compiler arranges work as requests and answers. A request may parse source,
+type a scope, resolve a compile-time need, lower a scope, execute lowered code,
+or emit a target artefact. When work discovers a new dependency, it submits
+another request instead of switching to a private control flow.
+
+```mermaid
+flowchart LR
+    SourceFile[SourceFile] -->|SourceText| Parser[Parser]
+    Parser -->|raw AST| AstNormalizer[AstNormalizer]
+    AstNormalizer -->|AST| CompilerWorkScheduler[CompilerWorkScheduler]
+    CompilerWorkScheduler -->|PendingAst| TypeEngine[TypeEngine]
+    TypeEngine -->|TypedAst| HirLowering[HirLowering]
+    TypeEngine -->|CompileTimeNeed| RequestRegistry[RequestRegistry]
+    RequestRegistry -->|RequestId| CompilerWorkScheduler
+    HirLowering -->|HIR| MirLowering[MirLowering]
+    MirLowering -->|MIR| LirLowering[LirLowering]
+    LirLowering -->|LIR| ExecutionEngine[ExecutionEngine]
+    ExecutionEngine -->|RequestAnswer| CompilerWorkScheduler
+    LirLowering -->|LIR| BytecodeEmitter[BytecodeEmitter]
+    LirLowering -->|LIR| NativeEmitter[NativeEmitter]
+    BytecodeEmitter -->|Bytecode| OutputFile[OutputFile]
+    NativeEmitter -->|ObjectCode| OutputFile
 ```
-SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ → HIRᵗ → MIR → LIR → AsmIR/native backend
+
+## Core Components
+
+| Component | Responsibility |
+|-----------|----------------|
+| `Parser` | Parses source or generated fragments into raw AST. |
+| `AstNormalizer` | Produces canonical AST and records provenance. |
+| `CompilerWorkScheduler` | Owns request scheduling, dependency ordering, and answer delivery. It may use a stack internally. |
+| `RequestRegistry` | Assigns `RequestId`s, tracks blockers, and maps answers back to AST nodes. |
+| `TypeEngine` | Types AST scopes, records constraints, and reports `CompileTimeNeed` when typing cannot continue. |
+| `HirLowering` | Projects typed AST scopes into HIR after required semantic needs are answered. |
+| `MirLowering` | Lowers HIR into MIR for optimization and control-flow structure. |
+| `LirLowering` | Lowers MIR into target-neutral LIR shared by execution and emitters. |
+| `ExecutionEngine` | Executes LIR for runtime interpretation, comptime answers, and JIT-backed execution when available. |
+| `BytecodeEmitter` | Serializes LIR-derived bytecode. |
+| `NativeEmitter` | Emits target-native object code, assembly, or backend-specific artefacts. |
+
+## Requests And Comptime
+
+A compile-time need is any value, type, declaration, code fragment, or
+specialization identity that must be known before the current work can continue.
+When a need blocks progress, the compiler replaces the blocked AST position with
+a `RequestId` and submits the requested work to `CompilerWorkScheduler`.
+
+Nested needs use the same mechanism. A comptime block that calls another const
+function, instantiates a generic, or produces code does not enter a special
+interpreter session. It submits more requests to the same scheduler and resumes
+only after the relevant answers are applied.
+
+`AST` and `typed AST` are states of the same canonical AST, not separate program
+sets. Applying a request answer mutates or annotates the canonical AST and
+invalidates only the affected typed, lowered, executed, and emitted artefacts.
+
+## Generics And Comptime
+
+Generics and comptime interact, but they are not the same feature.
+
+Generic arguments may be inferred from uses. Comptime arguments must be
+explicitly requested by syntax or semantics, but can compute values, types,
+declarations, and AST-producing results. Both can contribute to a request
+identity once the compiler knows enough AST and semantic context.
+
+`FullyQualifiedPath` is the resolved identity and already includes resolved
+generic and comptime arguments that affect identity.
+
+Examples:
+
+```text
+Vec::<i32>      -> std::vec::Vec#{type i32}
+foo(4)          -> crate::foo#{const 4}
+bar::<T, 8>()   -> crate::bar#{type T, const 8}
 ```
 
-- `ASTᵗ` is the AST annotated with principal types.
-- `ASTᵗ′` is the post-evaluation AST (const-folded, intrinsic rewrites applied).
-- `HIRᵗ` is the typed high-level IR used by optimisation backends; it focuses on
-  structural desugaring and borrow analysis while preserving type metadata.
+If a const parameter can produce a different AST shape, that parameter is
+encoded in the fully qualified path, dependency key, cache key, and lowered
+artefact key. The scheduler handles this by compiling the concrete resolved
+identity, not by forking a new language mode.
 
-## Stage Responsibilities
+## Scoped Lowering
 
-> See also: [Glossary](Glossary.md) for shared domain terminology.
+Scoped lowering is the shared `typed AST -> HIR -> MIR -> LIR` path for a
+specific function, item, block, const body, or generated fragment. It is gradual:
+the compiler lowers the smallest scope demanded by a consumer, caches the
+result, and records dependencies.
 
-| Stage | Responsibilities |
-|-------|------------------|
-| **Frontend** | Parse source into LAST, produce canonical AST, record serializer + provenance. |
-| **Normalisation** | Macro expansion, std remapping, intrinsic detection, producing a clean AST. |
-| **Type Enrichment** | Algorithm W inference attaches types directly to AST nodes (expressions, patterns, declarations). |
-| **Interpretation** | Runs on the typed AST; const mode mutates the tree, runtime mode reads it without changes. Shares intrinsic registry across modes. |
-| **Typed Projection** | Converts evaluated AST into `HIRᵗ`, handling desugaring, ownership bookkeeping, and preparing for optimisation passes. |
-| **Optimisation & Codegen** | Lowers `HIRᵗ` → `MIR` → `LIR` → target backends (`AsmIR`/native, LLVM, bytecode). |
-
-Ownership/borrowing/lifetime embedding point:
-- Ownership and borrowing rules are mapped during `ASTᵗ → HIRᵗ`. Lifecycle
-  constraints are attached to HIR reference and binding nodes. If a frontend
-  cannot preserve the full model, it must apply explicit degradation rules and
-  emit diagnostics that explain the substitution and impact.
-
-## Bounded Contexts (at a glance)
-
-- **Frontend Context**: parsing + LAST + canonical AST + provenance.
-- **Typing Context**: Algorithm W inference and AST annotation (ASTᵗ).
-- **Interpretation Context**: const/runtime evaluation and intrinsic execution (ASTᵗ′).
-- **Lowering/Backend Context**: HIRᵗ → MIR → LIR → backend artifacts.
-- **Tooling/CLI Context**: orchestration + diagnostics (no domain rules).
-
-## Intrinsic Handling
-
-1. **AST Normaliser** rewrites language-specific helpers into canonical `std::`
-   symbols before type inference.
-2. **Resolver** maps `(symbol, backend flavour)` to a declarative
-   `ResolvedIntrinsic` (AST rewrite, HIR hook, or unsupported diagnostic).
-3. **Interpreter** uses the resolver's identity flavour to execute intrinsics in
-   both const and runtime modes.
-4. **Backends** call the resolver during projection/lowering to materialise the
-   intrinsic into runtime calls, target constructs, or inline code.
-
-## Evaluation Engine
-
-- Located in `crates/fp-interpret/src/ast`.
-- Shared `InterpreterContext` holds intrinsic registry, environment bindings,
-  caches, and diagnostic sinks.
-- `InterpreterConfig` toggles const vs runtime semantics and feature flags
-  (e.g., allow side effects, IO shims).
-- Returns `InterpreterOutcome` capturing produced values, diagnostics, and AST
-  mutations.
-
-## Type Inference
-
-- Ported Algorithm W solver operates on AST nodes directly, using in-place
-  substitution to fill optional `ty` slots.
-- Exposes query APIs: `expr_ty(node_id)`, `pattern_ty(node_id)`, etc., so tooling
-  and backends can read principal types without repeating inference.
-- Works hand-in-hand with intrinsic normalisation: canonical symbols simplify
-  constraint generation.
-- Provides two explicit hooks for interpreter inter-op:
-  - **Resolution hook**: lazily materialises missing symbols during incremental
-    typing.
-  - **Type-eval bridge**: evaluates type-level expressions/functions that
-    require execution, while keeping type inference as the authority.
-- **Zero-cost abstraction boundary**: inferred type information must enable
-  lowering and optimization to erase high-level abstractions without altering
-  observable semantics. Any frontend feature that cannot preserve this must
-  document the degradation and emit diagnostics.
+Lowering may discover that more semantic work is required. For example, a splice
+producer may need compile-time execution before the surrounding function can be
+fully lowered. In that case, lowering submits the required request and stops
+until the answer is available.
 
 ## Multi-Mode Support
 
-| Mode | Flow | Notes |
-|------|------|-------|
-| **Compile** | AST → ASTᵗ → ASTᵗ′ (const) → HIRᵗ → MIR → LIR → LLVM / AsmIR | Const evaluation folds code before optimisation; `LIR` stays target-neutral while `AsmIR` captures target-aware machine structure when needed. |
-| **Run (Interpreter)** | AST → ASTᵗ → Interpreter (runtime) | Shares evaluator with const mode; no MIR generation. |
-| **Bytecode** | AST → ASTᵗ → ASTᵗ′ → HIRᵗ → MIR → LIR → VM bytecode | Bytecode generator reuses the same typed IR pipeline. |
-| **AST Target Emit** | AST → ASTᵗ → ASTᵗ′ → HIRᵗ → target AST | Typed metadata is preserved for optional annotation in the output language. |
+| Mode | Requested final artefact | Shared path |
+|------|--------------------------|-------------|
+| Interpret | executed LIR scope and resulting values | parse, normalize, type, satisfy comptime needs, lower to executable LIR |
+| Compile native / LLVM / eBPF / JVM / CIL / .NET / Wasm | target object, assembly, module, or binary | parse, normalize, type, satisfy comptime needs, scoped lowering, target emission |
+| Bytecode | serialized bytecode | parse, normalize, type, satisfy comptime needs, scoped lowering, bytecode emission |
+| AST target emit | evaluated canonical AST and printer output | parse, normalize, type, satisfy comptime needs, apply AST-producing answers |
 
-Cross-mode consistency:
-- Modes must preserve identical observable semantics; differences are limited to
-  performance and diagnostics detail. See `docs/Language.md` for the semantic
-  contract and baseline suite mapping.
+Mode branching should happen at the requested artefact boundary. Earlier
+differences should be represented as scheduler requests, target capabilities, or
+diagnostics attached to the same semantic path.
 
-## `AsmIR` Boundary
+## Intrinsic Handling
 
-- `LIR` remains the common target-neutral low-level IR.
-- `AsmIR` is the new target-aware machine/assembly layer for native backends and binary tooling.
-- `AsmIR` exists to model physical registers, machine opcodes, addressing modes, relocations, and instruction encodings without polluting `LIR` with ISA-specific details.
-- Native instruction selection should lower `LIR` into `AsmIR`; disassembly/binary lifting should target `AsmIR`, not `LIR`, unless a semantic recovery step is intentionally performed later.
+Intrinsic handling should be declarative and shared:
 
-## Diagnostics
+1. `AstNormalizer` rewrites language-specific helpers into canonical symbols.
+2. Resolution maps `(symbol, target capability)` to a `ResolvedIntrinsic`.
+3. `TypeEngine` uses that identity during constraint generation.
+4. `ExecutionEngine` and emitters consume the same resolved identity.
 
-- Stages push diagnostics directly into the shared `DiagnosticManager`; the CLI
-  emits contextual messages (`span`, `intrinsic`, mode) after each stage.
-- Saving intermediates now writes `.ast`, `.ast-typed`, `.ast-eval`, `.hir`, `.mir`,
-  `.lir`, `.ll` artefacts.
+An intrinsic unsupported by one mode should produce the same semantic diagnostic
+as any other mode with the same missing capability. It should not silently fall
+back to a different interpreter behavior.
 
-## Outstanding Tasks
+## Async Semantics
 
-1. Expand `hir_to_mir` to cover richer control flow, method dispatch, and
-   runtime array operations.
-2. Harden intrinsic materialisation across backends with regression coverage for
-   interpreter, MIR/LIR, and target outputs.
-3. Deduplicate CLI pipeline target handling so `binary`, `llvm`, and `bytecode`
-   share the same staged driver.
-4. Continue updating tooling/docs as the AST-centric pipeline stabilises.
+Async support should be implemented through lowered executable artefacts, not
+through explicit suspension state in a tree-walker interpreter. Comptime `await`
+and runtime `await` should share one execution contract where the constructs
+overlap.
 
-This design keeps the pipeline leaner while still supporting the breadth of
-FerroPhase targets and surface languages. Every mode benefits from a single
-source of truth: the typed AST.
+If a construct has a lowered LIR form, interpretation should execute that form.
+If it cannot be lowered for the requested mode, the compiler should report the
+same unsupported diagnostic that compiled targets would see.
+
+## Diagnostics And Artefacts
+
+Diagnostics should be tied to work items, `RequestId`s, source spans, and
+dependency edges. This makes errors stable even when the scheduler resumes work
+in a different order.
+
+Saving intermediates should write the artefacts that actually exist for the
+requested work:
+
+- `.ast` for canonical AST state;
+- `.ast-typed` for typed AST annotations;
+- `.hir`, `.mir`, and `.lir` for scoped lowered artefacts;
+- `.bytecode`, `.ll`, object files, assembly, or target AST output when those
+  artefacts are requested.
+
+## Invalidation
+
+Generated code and compile-time execution are normal mutations of compiler
+state. When they change AST, symbol, or request-answer state, the compiler
+invalidates:
+
+- type artefacts for affected expressions, items, and dependent users;
+- HIR, MIR, and LIR artefacts for affected scopes;
+- execution artefacts that captured stale environments;
+- emitted target artefacts derived from invalidated lowering.
+
+Invalidation should prefer scope-level precision. Whole-program invalidation is
+acceptable as an early fallback, but it is not the design target.
+
+## Outstanding Design Work
+
+1. Define concrete `CompilerWorkScheduler`, `RequestRegistry`, dependency graph,
+   and artefact cache APIs.
+2. Move comptime execution toward scoped lowering plus `ExecutionEngine` reuse.
+3. Align interpreter mode with lowered execution so it stops owning separate
+   AST-only semantics.
+4. Define request identity rules for inferred generics, explicit comptime
+   arguments, generated declarations, and AST-producing comptime results.
+5. Extend HIR/MIR/LIR lowering to cover async, method dispatch, richer control
+   flow, ownership checks, and runtime array operations.

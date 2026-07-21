@@ -9,9 +9,9 @@ execution modes.
 
 ## 2. Core Semantic Invariant
 
-FerroPhase must preserve identical observable semantics across all representations
-(LAST/AST/HIR/MIR/LIR) and across all execution modes (interpreter, bytecode
-VM, compiled backends). Any semantic divergence is a correctness bug.
+FerroPhase must preserve identical observable semantics across canonical AST,
+typed annotations, HIR, MIR, LIR, and all execution modes (interpreter,
+bytecode VM, compiled backends). Any semantic divergence is a correctness bug.
 
 Observable semantics includes:
 - User-visible outputs and side effects.
@@ -29,21 +29,29 @@ for correctness validation.
 ## 3. Language Model
 
 - Multi-frontend, single semantic contract.
-- Staged pipeline with canonical typed AST.
+- Dynamic scoped compiler with canonical AST plus typed/lowered artefacts.
+- Scheduler requests for comptime, generics, lowering, execution, and emission.
 - Multiple execution modes that must remain semantically equivalent.
 
-Pipeline overview:
+Compiler overview:
 
-```
-SOURCE -> LAST -> AST -> AST^t -> AST^t' -> HIR^t -> MIR -> LIR -> backend
+```mermaid
+flowchart LR
+    SourceInput[SourceInput] -->|SourceText| Parser[Parser]
+    Parser -->|AST| CompilerWorkScheduler[CompilerWorkScheduler]
+    CompilerWorkScheduler -->|PendingAst| TypeEngine[TypeEngine]
+    TypeEngine -->|TypedAst| ScopedLowering[ScopedLowering]
+    TypeEngine -->|CompileTimeNeed| CompilerWorkScheduler
+    ScopedLowering -->|LIR| ExecutionEngine[ExecutionEngine]
+    ScopedLowering -->|LIR| TargetEmitter[TargetEmitter]
 ```
 
 Mode entry points:
 
-- Interpreter: AST^t -> runtime evaluation
-- Bytecode: AST^t' -> HIR^t -> MIR -> LIR -> VM
-- Native backends: AST^t' -> HIR^t -> MIR -> LIR -> AsmIR/LLVM
-- AST target emit: AST^t' -> HIR^t -> target AST
+- Interpreter: request executable LIR and runtime values.
+- Bytecode: request bytecode emitted from shared lowered scopes.
+- Native backends: request target artefacts from shared lowered scopes.
+- AST target emit: request evaluated canonical AST and target printer output.
 
 ## 4. Semantic Contract Levels
 

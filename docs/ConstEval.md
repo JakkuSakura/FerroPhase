@@ -1,22 +1,32 @@
-# FerroPhase Const Evaluation (AST)
+# Compile-Time Evaluation
 
-Const evaluation now operates directly on the typed AST. The interpreter runs in
-const mode over the same structures used by runtime execution and backend
-lowerings, requesting types lazily as it evaluates expressions. When a type
-expression requires execution (e.g., a type-level function), the typer can ask
-the interpreter to evaluate it through the type-eval bridge.
+Compile-time evaluation is not a separate AST interpreter pass. It is the
+compile-time use of the same scheduler, typing, scoped lowering, and execution
+services used by other modes.
 
+A comptime construct may produce values, types, declarations, generated AST, or
+specialized code. When a current work item cannot continue without one of those
+results, it emits `CompileTimeNeed`. The compiler records a `RequestId`, places
+that request on `CompilerWorkScheduler`, and resumes blocked work after the
+answer is applied.
+
+## Request Flow
+
+```mermaid
+flowchart LR
+    AstScope[AstScope] -->|PendingAst| TypeEngine[TypeEngine]
+    TypeEngine -->|CompileTimeNeed| RequestRegistry[RequestRegistry]
+    RequestRegistry -->|RequestId| CompilerWorkScheduler[CompilerWorkScheduler]
+    CompilerWorkScheduler -->|RequestedAst| TypeEngine
+    TypeEngine -->|TypedAst| ScopedLowering[ScopedLowering]
+    ScopedLowering -->|LIR| ExecutionEngine[ExecutionEngine]
+    ExecutionEngine -->|RequestAnswer| CompilerWorkScheduler
+    CompilerWorkScheduler -->|AppliedAnswer| AstScope
 ```
-Source → LAST → AST → ASTᵗ → (Const Evaluation) → ASTᵗ′
-```
 
-- `ASTᵗ` is the canonical AST annotated with types by the Algorithm W inferencer.
-- Const evaluation mutates the AST when necessary (constant folding, generated
-  declarations, intrinsic rewrites) and returns `ASTᵗ′`. The interpreter can
-  infer missing types on demand, evaluate type-level expressions via the bridge,
-  and registers any generated items with the incremental typer.
-- `ASTᵗ′` is the authoritative programme for all downstream stages (HIRᵗ, MIR,
-  LIR, transpilers).
+Nested comptime uses the same graph. A comptime block that calls a const
+function, instantiates a generic, awaits another comptime result, or emits code
+submits more requests instead of entering a special evaluator session.
 
 ## Const Block Semantics
 
@@ -28,139 +38,71 @@ const RESULT: i32 = {
 };
 ```
 
-- Blocks execute during compilation using the AST interpreter in const mode.
-- Evaluation observes principal types (`expr.ty`) inferred earlier.
-- Intrinsics route through the shared registry and consult the
-  `TypeQueryEngine` without synthesising intermediate representations.
-- Structural edits (new structs, impls, generated functions) update the AST and
-  promote any provisional `mut type` tokens to concrete entries.
+- The block is represented as compiler work for a concrete AST scope.
+- It is typed through `TypeEngine`.
+- If executable code is needed, it is lowered through HIR, MIR, and LIR.
+- `ExecutionEngine` executes the lowered artefact and returns a
+  `RequestAnswer`.
+- The answer is applied to the canonical AST state.
 
-### Compile-time Generation (overview)
+## Compile-Time Generation
 
-Const evaluation may synthesize runtime code based on compile-time data. The
-language provides dedicated keywords for quoting and splicing code, and a
-convenience macro for emission. See `docs/Quoting.md` for full syntax and
-semantics of `quote`, `splice`, and `emit!`.
+Compile-time execution may synthesize runtime code based on compile-time data.
+`quote`, `splice`, and `emit!` produce or apply AST-shaped answers. See
+[Quoting](Quoting.md) for their surface syntax.
 
-### Advanced Patterns
+Generated declarations are not a second AST set. They update the canonical AST
+state, then invalidate affected typed, lowered, executed, and emitted artefacts.
 
-```rust
-const DEBUG_CONFIG: Config = {
-    let mut cfg = Config::new();
+## Generics And Comptime
 
-    if cfg!(debug_assertions) {
-        cfg.log_level = LogLevel::Debug;
-        cfg.enable_tracing = true;
-    }
+Generics and comptime can both contribute to request identity, but they remain
+different language features:
 
-    cfg
-};
-```
+- generic arguments may be inferred;
+- comptime arguments must be explicitly requested by syntax or semantics;
+- comptime can produce values, types, declarations, and AST fragments.
 
-```rust
-const STRUCT_INFO: StructInfo = {
-    StructInfo {
-        size: sizeof!(Point),
-        field_count: field_count!(Point),
-        has_z: hasfield!(Point, "z"),
-    }
-};
-```
+`FullyQualifiedPath` is the resolved identity and already contains resolved
+generic and comptime arguments that affect identity.
 
-```rust
-const GENERATED: Type = {
-    struct GeneratedPoint { x: f64, y: f64 }
+If a comptime argument changes generated AST shape, it is part of the request
+identity by being encoded in the fully qualified path, and therefore part of the
+dependency key.
 
-    if ENABLE_3D {
-        struct GeneratedPoint { z: f64 }
-    }
+## Determinism
 
-    impl GeneratedPoint {
-        fn magnitude(&self) -> f64 {
-            (self.x * self.x + self.y * self.y).sqrt()
-        }
-    }
+- Request answers must be deterministic for the same source, request identity,
+  compiler options, and allowed capabilities.
+- Cycles in request dependencies are compile-time errors.
+- Applying an answer invalidates only dependent artefacts where possible.
+- Whole-program invalidation is allowed as an implementation fallback, but not
+  as the design target.
 
-    GeneratedPoint
-};
-```
+## Async
 
-## Evaluation Pipeline
+Comptime async uses the shared execution contract. `await` does not require a
+tree-walker suspension implementation. It requests executable scoped work and
+resumes through scheduler answers.
 
-1. **Type foundation**
-   - Parse and normalise the AST, then initialize the incremental type
-     environment (predeclare items, prepare query hooks).
-   - The interpreter requests type info as needed, using the same Algorithm W
-     solver, can resolve missing symbols by materialising const-generated
-     items, and can execute type-level expressions via the bridge when the
-     typer needs runtime assistance.
-
-2. **Const execution**
-   - Build dependency order from the typed AST (const items, const blocks,
-     generated symbols).
-   - Execute blocks using the AST interpreter in const mode.
-   - Promote `mut type` tokens and persist structural edits.
-
-3. **Commit**
-   - Merge evaluated values back into the AST.
-   - Emit diagnostics using the shared `DiagnosticManager`.
-   - Persist `.ast-eval` artefacts when `--save-intermediates` is enabled.
-
-## Emission and Quoting
-
-For emission and quoting/splicing semantics (context, captures, control flow,
-diagnostics), see `docs/Quoting.md`. Const evaluation executes those operations
-and commits the resulting `ASTᵗ′` but does not redefine their behaviour here.
-
-## Quoting and Splicing (pointer)
-
-- `quote` captures code as a hygienic AST value (compile-time only).
-- `splice` inserts a previously quoted fragment into the current AST.
-- Both contribute to `ASTᵗ′` during const evaluation.
-
-Full details and examples: `docs/Quoting.md`.
-
-Use `emit!` for simple “write this block into the runtime body.” Use
-`quote`/`splice` when you need to treat code as data (store, transform, compose
-fragments) before insertion. See `docs/Quoting.md` for full semantics.
-
-## Determinism and Staging
-
-- All const expressions and structural edits must be acyclic. The interpreter
-  evaluates const items/blocks in a topologically sorted order derived from
-  their dependencies (names and types they reference).
-- An emission or splice cannot reference results from a later stage; such
-  cross‑stage references produce a compile‑time diagnostic.
-- Repeated evaluation with identical inputs yields identical `ASTᵗ′` snapshots.
-
-## Diagnostics
-
-- Cycle or cross‑stage reference during const evaluation → error with a cycle
-  report.
-- Illegal side effects or capability violations during const execution →
-  compile‑time diagnostics from the interpreter.
-
-## Comparison
-
-| Aspect             | Const Block (ASTᵗ)               | Regular Code                  |
-|--------------------|----------------------------------|-------------------------------|
-| Execution time     | Compile time                     | Runtime                       |
-| Allowed functions  | Pure / const-compatible          | All                           |
-| Structural edits   | Written into ASTᵗ′               | N/A                           |
-| Scope              | Block-local                      | Module/function               |
-| Type information   | Inferred AST annotations          | Runtime reflection (if any)   |
-| Failure handling   | Compile-time diagnostics         | Runtime errors/exceptions     |
+If async lowering or execution is unsupported for a requested mode, the compiler
+should emit the same diagnostic that a compiled target would emit.
 
 ## Artefacts
 
-With `--save-intermediates`, const evaluation writes the post-eval snapshot as
-`*.ast-eval`. Downstream tooling will consume this snapshot directly once the
-new typed HIR/MIR pipeline is reinstated.
+With `--save-intermediates`, comptime work may contribute to:
+
+- `.ast` canonical AST state after answers are applied;
+- `.ast-typed` annotations for affected scopes;
+- `.hir`, `.mir`, `.lir` for scopes lowered to execute or emit;
+- target artefacts requested by the selected mode.
+
+There is no authoritative `.ast-eval` program separate from canonical AST.
 
 ## Summary
 
-- Const evaluation and runtime interpretation share the same AST interpreter with
-  different configuration flags.
-- The typed AST is the single source of truth; THIR is no longer produced.
-- Intrinsic handling and type queries operate through shared resolver/query
-  infrastructure, with a bridge for type-level evaluation when required.
+- Comptime is scheduler work plus request answers.
+- Runtime interpretation and comptime execution share lowered executable
+  artefacts where constructs overlap.
+- Generated code mutates canonical AST state and triggers dependency
+  invalidation.

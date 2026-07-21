@@ -18,7 +18,7 @@ matrix under `docs/semantic/matrix/<frontend>.md`.
 - ContractLevel: L0/L1/L2/L3.
 - FrontendMapping: keep / opt-out / opt-in.
 - DegradationRule: Required when not fully preserved.
-- IRModeVariance: allowed or forbidden.
+- IRModeVariance: allowed or forbidden across requested IR artefacts and modes.
 - BaselineTestId: Links to baseline suite tests.
 - OwnershipBorrowingModel: full / conservative / degraded.
 - LifetimeRuleSource: inferred / explicit / degraded.

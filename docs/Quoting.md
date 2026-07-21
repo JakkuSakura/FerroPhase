@@ -62,30 +62,33 @@ const {
 ```
 
 - `CASES` and `BODY` are compile-time values (QuoteTokens) and can only exist as
-  consts. Splicing inserts their contents into the typed AST during const eval.
+  consts. Splicing applies their contents to canonical AST through comptime
+  request answers.
 
 ## Compile-time Integration
 
-During const evaluation:
+During comptime work:
 
-1. `quote` captures the code as a hygienic AST value (QuoteToken) with:
+1. `quote` captures the code as a hygienic AST value (`QuoteToken`) with:
    - Inferred `Ty` annotations for nodes inside the fragment
    - Hygiene metadata (scope ids, span provenance)
    - References to any provisional `mut type` tokens created within
-2. `splice` inserts the fragment into the current AST as a structural edit:
+2. `splice` answers a compiler request by applying the fragment to canonical
+   AST:
    - New declarations are introduced via provisional `mut type` tokens and
      promoted during commit
-   - The `ASTᵗ′` snapshot retains provenance for diagnostics
+   - The updated AST retains provenance for diagnostics
 
-Determinism: identical inputs produce identical `ASTᵗ′` after splicing. The
-const interpreter evaluates splices in topological order respecting dependencies.
+Determinism: identical inputs produce identical request answers and canonical
+AST updates after splicing. `CompilerWorkScheduler` orders splice-producing
+work by dependencies.
 
 ## Type Handling
 
 - Quoted fragments retain their `Ty` annotations. When spliced, the existing `mut type` promotion rules apply and
   ConcreteType entries are generated during commit.
-- The Hindley–Milner solver sees spliced code the same way it sees handwritten AST—they are indistinguishable after
-  promotion to TAST and subsequent HIR lowering.
+- The type solver sees spliced code the same way it sees handwritten AST after
+  the request answer is applied and affected scopes are retyped.
 
 ## Hygiene & Scoping
 
@@ -97,7 +100,7 @@ const interpreter evaluates splices in topological order respecting dependencies
 
 - Quoted fragments are parsed/validated immediately; syntax errors surface at the `quote` call site.
 - Splicing a fragment into an incompatible context (e.g., inserting statements where expressions are required) raises a
-  comptime error, preserving the cross-stage guarantees.
+  comptime error, preserving consistency guarantees.
 
 ## Interaction with Modes
 
@@ -105,33 +108,34 @@ const interpreter evaluates splices in topological order respecting dependencies
   injected code.
 - **Static transpile**: the typed AST lift recognises quoted fragments and re-sugars them based on the stored
   provenance.
-- **Bytecode/compile**: typed HIR lowering consumes spliced fragments after const evaluation; no special casing
-  required.
+- **Bytecode/compile**: scoped lowering consumes spliced fragments after
+  comptime answers are applied; no special casing is required.
 
 ## Relation to `emit!`
 
 - `emit! { … }` is a builtin macro that desugars to `splice ( quote { … } )`.
-- It is only valid inside `const { … }` (enforced by the const interpreter).
+- It is only valid inside `const { ... }` (enforced by comptime request rules).
 - `emit!` does not change staging rules; it is ergonomics sugar.
 
 ### `emit!` Semantics
 
 - Context: `emit! { … }` may appear only inside a `const { … }` region. Using
-  it elsewhere is a compile‑time error.
-- Effect: during const eval, the interpreter serializes the block into AST
-  statements and appends them to the surrounding function/module body in
-  `ASTᵗ′`, preserving order.
+  it elsewhere is a compile-time error.
+- Effect: during comptime work, the compiler serializes the block into AST
+  statements and applies them to the surrounding function/module body,
+  preserving order.
 - Captures: references to compile‑time constants are literalized; references to
   runtime variables remain as normal name refs. Non‑serializable const values
   cannot be captured (diagnostic is emitted).
 - Control flow: `return`, `break`, and `continue` inside `emit!` target the
   runtime scopes they would have targeted if the code had been written inline.
-  They do not terminate const evaluation; they become part of the emitted code.
-- Typing: after emission, the mutated nodes are (re‑)typed as part of the
-  `ASTᵗ′` commit so downstream stages see a fully typed tree.
+  They do not terminate comptime execution; they become part of the emitted
+  code.
+- Typing: after emission, affected nodes are retyped before downstream scoped
+  lowering consumes them.
 - Side effects: the body of `emit!` is never executed at compile time; it is
   only materialized. Any attempt to execute side effects in const code still
-  follows the const interpreter’s capability rules.
+  follows comptime capability rules.
 
 Example (specialization via unrolling):
 
@@ -146,13 +150,14 @@ fn first_gt(const xs: [i32], ys: [i32]) -> i32 {
 }
 ```
 
-After const evaluation, this becomes straight‑line checks using the literal
+After comptime answers are applied, this becomes straight-line checks using the literal
 values from `xs`.
 
-## Macro Stage and Restrictions
+## Macro Expansion Restrictions
 
-- Builtin macros expand immediately after parsing, before type inference.
-- They cannot query types or const-eval state and may not change staging rules.
+- Builtin macros expand during normalization, before type inference.
+- They cannot query types or comptime request state and may not change staging
+  rules.
 - `quote` and `splice` are keywords; they are not macros and are recognised by
   the parser directly.
 
@@ -164,7 +169,7 @@ values from `xs`.
 ## Diagnostics
 
 - `emit!` used outside a const region → error: “emit! is only valid in const
-  context”.
+  context".
 - Emitting statements where an expression is required (or vice versa) → error
   with a span to the offending block.
 - Attempting to capture non‑serializable const values → error: literalization
@@ -205,5 +210,5 @@ Within `quote { … }`, a future anti-quote form may allow inline splicing (e.g.
 - Macros for `quote`/`splice`
   - Decision: `quote` and `splice` are keywords, not macros.
   - Rationale: these affect staging, scope hygiene, and type-checking sites.
-    They must be enforced pre‑expansion; the macro system is not a suitable
+    They must be enforced before expansion; the macro system is not a suitable
     enforcement layer for staging rules or type‑driven placement checks.

@@ -20,12 +20,14 @@ Applies to:
 ## Quick Start (Actionable)
 
 1) Classify risk: `low | medium | high`
-2) Select gates based on impacted compiler stages.
+2) Select gates based on impacted compiler work and artefacts.
 3) Run gates via the unified entrypoint: `scripts/qa_local.sh --risk <risk>`
 4) Collect evidence under `qa/evidence/` and finalize the decision.
 
 Notes:
-- `scripts/qa_local.sh` is the primary local gate runner. It orchestrates stage-appropriate checks and is the default path for both CI and local verification.
+- `scripts/qa_local.sh` is the primary local gate runner. It orchestrates
+  work-appropriate checks and is the default path for both CI and local
+  verification.
 - Evidence is mandatory: if an applicable gate is missing or evidence is missing, the change is blocked.
 
 ## Gate Entrypoints (Authoritative)
@@ -51,21 +53,24 @@ Production releases must satisfy **all** of the following:
 | Risk | Required Gates |
 |------|----------------|
 | Low | Build + lint + unit tests |
-| Medium | Low + integration + stage-specific gates |
+| Medium | Low + integration + compiler-work gates |
 | High | Medium + runtime fixtures + bootstrap + perf |
 
 If risk is unknown, treat as High. Evidence must reflect the chosen risk level and its required gates.
 
-## Stage-Specific Gates (Compiler)
+## Compiler Work Gates
 
 Select only the gates that match the change:
 
-- **Parsing/AST**: parser tests, AST snapshots, round‑trip tests.
+- **Parsing/AST**: parser tests, AST artefacts, round-trip tests.
 - **Typing**: inference tests, negative cases, ambiguity checks.
-- **Lowering (AST→HIR→MIR→LIR)**: IR snapshots, structural invariants.
-- **Const eval**: const-folding tests and parity vs runtime.
-- **Diagnostics**: UI/snapshot tests for messages/spans/codes.
-- **Codegen/Backend**: IR/ASM snapshots, executable fixtures.
+- **Requests/comptime**: `CompileTimeNeed`, `RequestId`, generated AST, and
+  parity vs runtime where constructs overlap.
+- **Lowering (typed AST -> HIR -> MIR -> LIR)**: IR artefacts, structural
+  invariants, dependency invalidation.
+- **Diagnostics**: UI/artefact tests for messages, spans, request ids, and
+  codes.
+- **Codegen/Backend**: IR/ASM artefacts, executable fixtures.
 - **Optimization**: pass unit tests, semantic equivalence checks.
 - **Bootstrap**: self-host build if supported.
 - **Performance**: compile‑time and runtime benchmarks for hot paths.
@@ -117,7 +122,7 @@ qa/evidence/<change-id>.yaml
 change_id: <unique id>
 intent: <short description>
 risk: <low|medium|high>
-stages: [parser, typing, lowering, ...]
+work: [parser, typing, lowering, ...]
 invariants: [ ... ]
 expected_behavior: [ ... ]
 checks:
@@ -125,7 +130,7 @@ checks:
   lint: pass
   unit: pass
   integration: pass
-  stage_gates: pass
+  compiler_work_gates: pass
   runtime_fixtures: pass
   bootstrap: pass
   perf: pass

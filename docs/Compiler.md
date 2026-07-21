@@ -88,10 +88,13 @@ type, code, or declaration parts of the need.
 
 When a need blocks progress, the compiler assigns a `RequestId` and replaces the
 blocked AST node with that request. The scheduler later answers the request and
-the compiler applies the answer back to AST:
+the compiler applies the answer back to AST.
+
+`FullyQualifiedPath` is the resolved identity. It already contains resolved
+generic and comptime arguments that affect identity:
 
 ```text
-RequestId = FullyQualifiedPath + PendingGenericArgs + PendingComptimeArgs
+ResolvedIdentity = FullyQualifiedPath
 ```
 
 Examples:
@@ -107,12 +110,12 @@ omitted or partially known and then resolved by inference. Comptime arguments
 must be explicit, but can be produced by compile-time execution and can describe
 more than ordinary type parameters.
 
-Once all identity-forming needs are resolved, the answered request becomes a
-concrete specialization of the referenced block, function, or item.
-Specialization belongs to that request identity, not runtime call identity. If a
-const parameter can produce a different AST shape, that parameter is part of the
-request identity and therefore part of the cache key, dependency key, and
-lowered artefact key.
+Before resolution, `RequestId` names the blocked need and its source position.
+Once identity-forming needs are resolved, the answer maps to the fully qualified
+path for the concrete block, function, or item. Specialization belongs to that
+resolved path, not runtime call identity. If a const parameter can produce a
+different AST shape, that parameter is encoded in the fully qualified path and
+therefore in the cache key, dependency key, and lowered artefact key.
 
 ## Work Items
 

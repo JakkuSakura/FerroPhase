@@ -18,9 +18,13 @@ Approximate line counts (for scale):
 ## 2) File Reviews and Refactor Steps
 
 - `crates/fp-cli/src/pipeline/mod.rs`
-  - Problem: Still large; mixes frontend selection, stage orchestration, diagnostics, workspace replay/merge, snapshot I/O, and linking.
+  - Problem: Still large; mixes frontend selection, scheduler-like
+    orchestration, diagnostics, workspace replay/merge, artefact I/O, and
+    linking.
   - Refactor:
-    - Continue splitting into: `mod.rs` (API), `input.rs`, `frontend.rs`, `stages.rs`, `workspace.rs`, `diagnostics.rs`, `blocking.rs`, `artifacts.rs`.
+    - Continue splitting into: `mod.rs` (API), `input.rs`, `frontend.rs`,
+      `scheduler.rs`, `requests.rs`, `workspace.rs`, `diagnostics.rs`,
+      `blocking.rs`, `artifacts.rs`.
     - Fix visibility: artifacts are `pub(crate)` or hidden behind the API.
 
 - `crates/fp-backend/src/transforms/hir_to_mir/expr.rs`
@@ -46,7 +50,9 @@ Approximate line counts (for scale):
 
 ## 3) Phased Plan (no behavior changes)
 
-- Phase 1: Split fp‑cli pipeline (extract `workspace.rs`, `diagnostics.rs`, `artifacts.rs`, `blocking.rs`), fix visibility.
+- Phase 1: Split fp-cli orchestration (extract `workspace.rs`,
+  `diagnostics.rs`, `artifacts.rs`, `blocking.rs`, request/scheduler helpers),
+  fix visibility.
 - Phase 2: Submodule HIR→MIR (start with `calls.rs` and `body.rs`), add targeted unit tests.
 - Phase 3: Split LLVM codegen and add determinism tests.
 - Phase 4: Parser cleanup (move macro desugar into normalization pass).
@@ -61,4 +67,3 @@ Approximate line counts (for scale):
 ## 5) Terminology
 
 - Use “Container/ContainerOperation” consistently (replace remaining “Collection” names in code, docs, and tests).
-

@@ -1,94 +1,112 @@
-# Domain-Driven Design (DDD) Lens for FerroPhase
+# Domain-Driven Design Lens For FerroPhase
 
-> FerroPhase is a compiler/toolchain. The “domain” here is compilation itself.
-> DDD helps us make the technical domain explicit, stable, and shared across docs, code, and tests.
+FerroPhase is a compiler/toolchain. The domain language should describe the
+intended dynamic scoped compiler, not the older fixed pipeline model.
 
-## 1) Ubiquitous Language (Technical Domain)
+## Ubiquitous Language
 
-These terms should be used consistently across docs, code, and diagnostics:
+- **Work item**: A scheduled unit of compiler work, such as parsing a file,
+  typing a scope, lowering a scope, executing LIR, or emitting a target.
+- **Request**: A need for an artefact or answer that can block other work.
+- **Request answer**: The value, type, declaration, AST edit, lowered artefact,
+  or emitted output that satisfies a request.
+- **Artefact**: Persisted or cached compiler data such as AST, typed
+  annotations, HIR, MIR, LIR, bytecode, object code, or target AST output.
+- **Compiler work scheduler**: The orchestrator that orders work items, records
+  dependencies, and delivers request answers.
+- **Compile-time need**: A value, type, declaration, code fragment, or
+  specialization identity required before current work can continue.
+- **Intrinsic**: A compiler-recognized capability resolved once and consumed by
+  typing, execution, and target emission.
+- **Module**: The canonical unit of namespacing and compilation, rooted at a
+  package path.
+- **Package**: A dependency boundary that provides modules and optional
+  bindings.
 
-- **Stage**: A named step in the compilation pipeline (Frontend → Normalization → Typing → Eval → Lowering).
-- **Snapshot**: A persisted or cached artifact produced by a stage (LAST, AST, ASTᵗ, HIRᵗ, MIR, LIR).
-- **Intrinsic**: A compiler-recognized capability resolved via the intrinsic registry; may lower to runtime or be executed at const time.
-- **Module**: The canonical unit of namespacing and compilation, rooted at a package path.
-- **Package**: A dependency boundary that provides modules and optional bindings.
-- **Query Document**: A query frontend artifact (SQL/PRQL) normalized into the AST.
-- **Pipeline**: The orchestrator that threads artifacts and diagnostics through stages.
-
-## 2) Bounded Contexts (Compiler as Domain)
-
-Each context has clear responsibilities and owns its invariants.
+## Bounded Contexts
 
 - **Frontend Context**
-  - Owns parsing, LAST capture, serializer selection, and language detection.
-  - Outputs: LAST + canonical AST + FrontendSnapshot.
+  - Owns parsing, frontend provenance, serializer selection, and language
+    detection.
+  - Produces raw AST and canonical AST.
+
+- **Scheduling Context**
+  - Owns `CompilerWorkScheduler`, `RequestRegistry`, dependency edges,
+    artefact keys, and invalidation.
+  - Does not own language semantics.
 
 - **Typing Context**
-  - Owns Algorithm W inference and type annotation of AST nodes.
-  - Outputs: ASTᵗ (typed AST).
+  - Owns type inference, type queries, constraints, and typed AST annotations.
+  - Produces typed scopes or `CompileTimeNeed`.
 
-- **Interpretation / ConstEval Context**
-  - Owns evaluation (const/runtime) and intrinsic execution at AST level.
-  - Outputs: ASTᵗ′ (evaluated AST) + Diagnostics.
+- **Comptime / Execution Context**
+  - Owns execution of lowered artefacts for comptime answers and runtime
+    interpretation.
+  - Produces request answers, runtime values, diagnostics, and side-effect
+    records.
 
 - **Lowering / Backend Context**
-  - Owns ASTᵗ′ → HIRᵗ → MIR → LIR → Backend IR (LLVM/VM/Transpilers).
-  - Outputs: Backend artifacts + backend diagnostics.
+  - Owns typed AST -> HIR -> MIR -> LIR and target emission.
+  - Produces lowered artefacts, bytecode, native artefacts, and target AST
+    output.
 
 - **Tooling / CLI Context**
-  - Owns orchestration, flags, logging, and user-facing diagnostics.
-  - Does not own domain rules; it should call into domain contexts.
+  - Owns flags, logging, saved artefacts, and user-facing diagnostics.
+  - Calls domain contexts instead of embedding compiler rules.
 
-## 3) Aggregates & Invariants
+## Aggregates And Invariants
 
-- **Pipeline (Aggregate)**
-  - Invariants: stage ordering is monotonic; diagnostics are preserved; snapshots are immutable once persisted.
+- **Compiler session**
+  - Invariants: request identity is stable; dependency edges are recorded;
+    answers are applied before blocked work resumes.
 
-- **Module (Aggregate)**
-  - Invariants: module paths resolve deterministically; exports are stable for bindings.
+- **Module**
+  - Invariants: module paths resolve deterministically; exports are stable for
+    bindings.
 
-- **Package (Aggregate)**
+- **Package**
   - Invariants: dependency graph is valid; bindings respect declared targets.
 
-- **Query Document (Aggregate)**
-  - Invariants: input is normalized into AST with dialect metadata preserved.
+- **Artefact cache**
+  - Invariants: artefacts are keyed by request identity and dependencies;
+    invalidated artefacts are not reused.
 
-## 4) Domain Events (Internal)
+## Domain Events
 
-These are internal events useful for logging, tests, and boundary enforcement:
-
-- `FrontendParsed`
+- `SourceParsed`
 - `AstNormalized`
-- `AstTyped`
-- `AstEvaluated`
-- `HirGenerated`
-- `MirGenerated`
-- `LirGenerated`
-- `BackendEmitted`
+- `WorkRequested`
+- `CompileTimeNeedRecorded`
+- `RequestAnswered`
+- `AstAnswerApplied`
+- `ScopeTyped`
+- `ScopeLowered`
+- `ScopeExecuted`
+- `TargetEmitted`
+- `ArtefactInvalidated`
 - `DiagnosticEmitted`
 
-Treat them as checkpoints: each event should only occur once per pipeline run.
+Events may occur many times in one compiler session because work is scoped and
+request-driven.
 
-## 5) Context Map (Integration)
+## Context Map
 
+```mermaid
+flowchart LR
+    FrontendContext[FrontendContext] -->|AST| SchedulingContext[SchedulingContext]
+    SchedulingContext -->|PendingAst| TypingContext[TypingContext]
+    TypingContext -->|CompileTimeNeed| SchedulingContext
+    TypingContext -->|TypedAst| LoweringContext[LoweringContext]
+    LoweringContext -->|LIR| ExecutionContext[ExecutionContext]
+    ExecutionContext -->|RequestAnswer| SchedulingContext
+    LoweringContext -->|TargetArtefact| ToolingContext[ToolingContext]
+    SchedulingContext -->|Diagnostics| ToolingContext
 ```
-Frontend ──► Typing ──► Interpretation ──► Lowering/Backend
-   ▲                                      │
-   └────────────── Tooling / CLI ─────────┘
-```
 
-- Tooling is the host/adapter; it should not contain domain logic.
-- Lowering should not reach into frontend structures except via typed AST.
+## Refactor Guidance
 
-## 6) How This Guides Refactors
-
-1. **Boundary enforcement**: move utilities to the context that owns them.
-2. **Encapsulation**: make stage transitions explicit (e.g. constructor checks).
-3. **Diagnostics**: attach context + stage info so errors are traceable to the domain.
-4. **Tests**: add invariant tests per aggregate (pipeline ordering, module resolution).
-
-## 7) Next Steps
-
-- Add a glossary section to key docs (Design.md, Pipeline.md) referencing this file.
-- Introduce small boundary checks in constructors for Pipeline/Module/Package.
-- Add tests that assert invariants (stage ordering, module path resolution).
+1. Move orchestration into scheduler and request registry APIs.
+2. Keep typing, lowering, execution, and emission semantics out of CLI code.
+3. Attach diagnostics to work item identity and source spans.
+4. Add invariant tests for request identity, dependency invalidation, module
+   resolution, and mode consistency.

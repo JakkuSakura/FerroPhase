@@ -1,113 +1,92 @@
-# FerroPhase Type System Overview (AST-Centric)
+# FerroPhase Type System Overview
 
-The FerroPhase type system now revolves around the canonical AST. Algorithm W
-inference annotates the AST in place, and every stage—const evaluation, runtime
-interpretation, HIR projection, MIR/LIR lowering—reads the same typed
-structures. This document summarises the representations, flows, and guarantees
-in the new architecture.
+The FerroPhase type system annotates canonical AST state and cooperates with the
+compiler scheduler. Typing is not one-way work before a separate const
+evaluator. `TypeEngine` types the current scope, records constraints, and emits
+`CompileTimeNeed` when a type depends on compile-time execution, generic
+identity, generated declarations, or AST-producing results.
 
 ## Type Representations
 
-- **`Ty`** – Syntax-oriented type declarations attached to AST nodes before
-  inference. Supports unknowns, generics, and provisional `mut type` tokens.
-- **`TypedAst` annotations** – Optional `ty: Option<Ty>` fields on expressions,
-  patterns, and declarations populated by the inferencer. These hold principal
-  types after substitutions are applied.
-- **`ConcreteType`** – Fully resolved, layout-aware types consumed by
-  optimisation backends (HIRᵗ, MIR, LIR) and persisted for tooling.
-- **`IntermediateType` (optional)** – Backend adapters derived from
-  `ConcreteType` when a target needs additional metadata (bytecode VMs, FFI
-  descriptors, etc.).
+- **`Ty`** - syntax-oriented type declarations attached to AST nodes before
+  inference. Supports unknowns, generics, and provisional compile-time type
+  tokens.
+- **Typed AST annotations** - optional type fields on expressions, patterns,
+  and declarations populated by `TypeEngine`.
+- **`ConcreteType`** - fully resolved, layout-aware type information consumed by
+  lowering, execution, emitters, tooling, and FFI adapters.
+- **`IntermediateType`** - optional target adapter derived from `ConcreteType`
+  when a bytecode VM, FFI boundary, or backend needs additional metadata.
 
-### Structural vs Dynamic Dictionaries
+## Typing Flow
 
-- **Structural dictionaries**: Produced when const evaluation or intrinsic
-  builders synthesise record shapes. Once promoted they live in the shared type
-  tables as `ConcreteType` entries and reuse the same tokens for all downstream
-  stages.
-- **Dynamic dictionaries**: Runtime-only values represented by
-  `Value::Structural`. They remain untyped (`Ty::Any`/`Ty::Unknown`) until a
-  promotion step proves a stable shape. Evaluation treats them as opaque maps.
+```mermaid
+flowchart LR
+    AstScope[AstScope] -->|PendingAst| TypeEngine[TypeEngine]
+    TypeEngine -->|TypedAst| TypedStore[TypedAstStore]
+    TypeEngine -->|CompileTimeNeed| RequestRegistry[RequestRegistry]
+    RequestRegistry -->|RequestId| CompilerWorkScheduler[CompilerWorkScheduler]
+    CompilerWorkScheduler -->|RequestAnswer| TypeEngine
+    TypedStore -->|TypedAst| ScopedLowering[ScopedLowering]
+    TypeEngine -->|ConcreteType| TypeStore[TypeStore]
+    TypeStore -->|LayoutType| ScopedLowering
+```
 
-### `mut type` Tokens
+`AST` and typed AST are states of the same canonical tree. Applying a request
+answer may add nodes, annotate nodes, or resolve symbols, then invalidates
+dependent typed and lowered artefacts.
 
-Const evaluation can create provisional types via `let mut T = struct { … }`. The
-inferencer records these tokens with:
+## Structural And Dynamic Dictionaries
 
-- The syntactic `Ty` form (fields, generics, trait impl hints).
-- Enough metadata to emit a `ConcreteType` when promoted.
-- A monotonic revision counter so cached queries remain valid.
+- **Structural dictionaries** are produced by comptime or intrinsic builders
+  that synthesize stable record shapes. Once committed, they live in shared type
+  tables as `ConcreteType` entries.
+- **Dynamic dictionaries** are runtime values. They stay opaque unless a
+  compile-time promotion proves a stable shape.
 
-Tokens promote atomically when the owning const block succeeds. Failed blocks
-discard the provisional entries.
+## Compile-Time Type Tokens
+
+Comptime can create provisional types. `TypeEngine` records:
+
+- the syntactic type form;
+- enough metadata to emit `ConcreteType` after promotion;
+- dependency edges from the producing request;
+- a revision so cached queries can be invalidated.
+
+Tokens promote atomically when the producing request succeeds. Failed requests
+discard provisional entries and report diagnostics.
 
 ## Query Infrastructure
 
-The `TypeQueryEngine` exposes memoised queries over the shared type tables:
+`TypeQueryEngine` exposes memoized queries over canonical AST annotations and
+the committed type store:
 
-- Inputs: the typed AST plus the current `ConcreteType` registry.
-- Queries: `sizeof`, `hasfield`, trait resolution, layout calculators.
-- Safety: queries observe only committed promotions; const blocks stage their
-  effects until they complete.
-- Diagnostics: failures produce structured messages reused across evaluation and
-  lowering.
+- `expr_ty` and `pattern_ty` for tooling and lowering;
+- `sizeof`, `hasfield`, trait resolution, and layout queries for intrinsics;
+- capability-aware diagnostics shared by execution and emitters.
 
-## Type-Eval Bridge
-
-Some type expressions require execution (for example, type-level functions that
-compute a type from values). The typer delegates those cases to a narrow
-type-eval bridge:
-
-- The typer initiates evaluation when it encounters `Ty::Expr` that cannot be
-  resolved purely from the current symbol/type environment.
-- The interpreter implements the bridge and evaluates the expression in a
-  constrained, compile-time-only context.
-- Results are cached by the typer and re-used across incremental queries.
-- The bridge does not replace whole-program typing; it provides a controlled
-  escape hatch for type-level computation.
-
-## Flow Through the Pipeline
-
-```
-SOURCE → LAST → AST → ASTᵗ → ASTᵗ′ → HIRᵗ → MIR → LIR → backend
-```
-
-- **ASTᵗ** carries principal types in place.
-- **ASTᵗ′** is the evaluated AST (const-folded, intrinsic rewrites applied).
-- **HIRᵗ** preserves type metadata while desugaring structures for optimisation.
-- **MIR/LIR** operate on `ConcreteType` (and optional `IntermediateType`) for
-  code generation.
+Queries observe committed request answers. If a query needs execution, it
+returns or triggers `CompileTimeNeed` rather than calling a private interpreter
+path.
 
 ## Guarantees
 
-- **Single source of truth**: All stages read the typed AST produced by the
-  inferencer.
-- **Deterministic promotions**: `mut type` tokens promote in a stable order.
-- **Span fidelity**: Type annotations and diagnostics reuse original AST spans.
-- **Backend isolation**: Consumers never access raw type tokens; they receive
-  shaped representations (`ConcreteType`, typed annotations) via stable APIs.
-- **Cross-IR consistency**: For semantic points defined in the Semantic
-  Contract (`docs/semantic/Matrix.md`), the typed AST → HIRᵗ → MIR → LIR flow
-  preserves observable type behavior unless the matrix declares an explicit
-  frontend/mode-specific deviation with evidence.
-- **Cross-mode consistency**: Interpret/bytecode/native backends must agree on
-  type observable behavior for covered semantic points. Deviations require a
-  declared matrix entry and a baseline test mapping (`docs/semantic/BaselineSuite.md`).
-
-## Shared Solver
-
-The Hindley–Milner solver lives in a dedicated crate and offers:
-
-- In-place annotation of AST nodes.
-- Query APIs (`expr_ty`, `pattern_ty`) for tooling.
-- Incremental hooks so the interpreter can resolve missing symbols during
-  const evaluation, plus a type-eval bridge for executing type-level
-  expressions when the typer needs runtime support.
+- **Single semantic path**: interpret, bytecode, and native modes observe the
+  same type answers for covered constructs.
+- **Deterministic promotions**: compile-time type-producing requests promote in
+  dependency order.
+- **Span fidelity**: annotations and diagnostics preserve source spans.
+- **Backend isolation**: consumers read type information through stable queries,
+  not raw frontend tokens.
+- **Cross-IR consistency**: semantic points are preserved across typed AST, HIR,
+  MIR, and LIR unless `docs/semantic/Matrix.md` declares a deviation.
+- **Cross-mode consistency**: interpret, bytecode, native, and FFI modes agree
+  on observable type behavior unless a declared deviation has baseline evidence.
 
 ## Future Work
 
-- Define concrete encodings for persisting typed AST snapshots (`.ast-typed`).
-- Extend `TypeQueryEngine` with batch operations for performance-sensitive
-  intrinsics.
-- Formalise how promotions surface in tooling (e.g., language server protocol
-  responses) using the same typed AST annotations.
+1. Define the persisted encoding for `.ast-typed` artefacts.
+2. Define concrete request invalidation rules for generated type declarations.
+3. Extend `TypeQueryEngine` with batch operations for performance-sensitive
+   intrinsics.
+4. Expose request-aware type diagnostics to IDE tooling.
