@@ -305,6 +305,7 @@ mod tests {
             return;
         };
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let path = Path::new(&path);
         let source = fs::read_to_string(path).expect("read std source");
         let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
@@ -317,9 +318,10 @@ mod tests {
         );
         assert!(
             result.is_ok(),
-            "failed to parse AST-only {}: {:?}",
+            "failed to parse AST-only {}: {:?}\ndiagnostics: {:?}",
             path.display(),
-            result.err()
+            result.err(),
+            parser.diagnostics().get_diagnostics()
         );
     }
 

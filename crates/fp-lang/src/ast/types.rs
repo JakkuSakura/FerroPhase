@@ -1,5 +1,6 @@
 use super::*;
 use fp_core::ast::ImplTraits;
+use fp_core::ast::TypeNothing;
 
 pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     let _is_unsafe = expect_keyword(input, Keyword::Unsafe).is_ok();
@@ -19,6 +20,21 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     }
     if peek_symbol(input) == Some("{") {
         return parse_structural_type_body(input);
+    }
+    if expect_symbol(input, "!").is_ok() {
+        let mut probe = *input;
+        if let Ok(name) = parse_name(&mut probe) {
+            *input = probe;
+            return Ok(Ty::Expr(Box::new(
+                ExprKind::UnOp(ExprUnOp {
+                    span: Span::null(),
+                    op: UnOpKind::Not,
+                    val: Box::new(Expr::name(name)),
+                })
+                .into(),
+            )));
+        }
+        return Ok(Ty::Nothing(TypeNothing));
     }
     if expect_symbol(input, "(").is_ok() {
         if expect_symbol(input, ")").is_ok() {
@@ -156,6 +172,14 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         let bounds = parse_dyn_type_bounds(input)?;
         return Ok(Ty::TypeBounds(bounds));
     }
+    if matches!(input.first(), Some(token) if token.kind == TokenKind::Keyword(Keyword::Const))
+        || looks_like_type_expr_macro(*input)
+        || matches!(input.first(), Some(token) if token.kind == TokenKind::Number || token.kind == TokenKind::StringLiteral)
+        || matches!(peek_ident_like(*input), Some("true" | "false" | "null"))
+    {
+        let expr = parse_expr_winnow_no_struct(input, 0)?;
+        return Ok(Ty::Expr(Box::new(expr)));
+    }
     let name = parse_name(input)?;
     if expect_symbol(input, "(").is_ok() {
         let mut params = Vec::new();
@@ -220,6 +244,38 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     if let Some(path) = path {
         if path.prefix == PathPrefix::Plain && path.segments.len() == 1 {
             match path.segments[0].as_str() {
+                "item" => {
+                    return Ok(Ty::Quote(TypeQuote {
+                        span: Span::null(),
+                        kind: QuoteFragmentKind::Item,
+                        item: None,
+                        inner: None,
+                    }));
+                }
+                "expr" => {
+                    return Ok(Ty::Quote(TypeQuote {
+                        span: Span::null(),
+                        kind: QuoteFragmentKind::Expr,
+                        item: None,
+                        inner: None,
+                    }));
+                }
+                "stmt" => {
+                    return Ok(Ty::Quote(TypeQuote {
+                        span: Span::null(),
+                        kind: QuoteFragmentKind::Stmt,
+                        item: None,
+                        inner: None,
+                    }));
+                }
+                "type" => {
+                    return Ok(Ty::Quote(TypeQuote {
+                        span: Span::null(),
+                        kind: QuoteFragmentKind::Type,
+                        item: None,
+                        inner: None,
+                    }));
+                }
                 "bool" => return Ok(Ty::Primitive(TypePrimitive::Bool)),
                 "str" | "string" => return Ok(Ty::Primitive(TypePrimitive::String)),
                 "i8" => return Ok(Ty::Primitive(TypePrimitive::Int(TypeInt::I8))),
@@ -237,9 +293,32 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                 _ => {}
             }
         }
-        return Ok(Ty::path(path.clone()));
+        let mut ty = Ty::path(path.clone());
+        if expect_symbol(input, "?").is_ok() {
+            ty = Ty::TypeBinaryOp(
+                TypeBinaryOp {
+                    kind: TypeBinaryOpKind::Union,
+                    lhs: Box::new(ty),
+                    rhs: Box::new(Ty::value(Value::None(ValueNone))),
+                }
+                .into(),
+            );
+        }
+        return Ok(ty);
     }
     Ok(Ty::locator(name))
+}
+
+fn looks_like_type_expr_macro(input: &[Token]) -> bool {
+    matches!(
+        input,
+        [first, second, third, ..]
+            if matches!(first.kind, TokenKind::Ident | TokenKind::Keyword(_))
+                && second.kind == TokenKind::Symbol
+                && second.lexeme == "!"
+                && third.kind == TokenKind::Symbol
+                && matches!(third.lexeme.as_str(), "(" | "[" | "{")
+    )
 }
 
 fn parse_dyn_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds> {

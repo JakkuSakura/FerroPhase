@@ -426,6 +426,13 @@ pub fn lex_lexemes(source: &str) -> Result<Vec<Lexeme>, LexerError> {
 fn frontmatter_end_offset(source: &str) -> Option<usize> {
     let first_line_end = source.find('\n').unwrap_or(source.len());
     let first_line = source[..first_line_end].trim_end_matches('\r');
+    if first_line.starts_with("#!") && !first_line.starts_with("#![") {
+        return Some(if first_line_end < source.len() {
+            first_line_end + 1
+        } else {
+            first_line_end
+        });
+    }
     if first_line != "---" {
         return None;
     }

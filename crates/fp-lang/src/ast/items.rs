@@ -19,7 +19,7 @@ pub(crate) fn parse_items_tokens(
             items.extend(parsed);
             continue;
         }
-        let item = parse_item_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
+        let item = parse_item_or_expr_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
         items.push(item);
     }
     Ok(items)
@@ -45,10 +45,22 @@ pub(crate) fn parse_file_tokens(
             items.extend(parsed);
             continue;
         }
-        let item = parse_item_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
+        let item = parse_item_or_expr_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
         items.push(item);
     }
     Ok((attrs, items))
+}
+
+fn parse_item_or_expr_winnow(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
+    let mut probe = *input;
+    if let Ok(item) = parse_item_winnow(&mut probe, file) {
+        *input = probe;
+        return Ok(item);
+    }
+
+    let expr = parse_expr_winnow(input, file)?;
+    let _ = expect_symbol(input, ";");
+    Ok(Item::from(ItemKind::Expr(expr)))
 }
 
 pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
@@ -67,6 +79,9 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
         }
         Some(TokenKind::Keyword(Keyword::Unsafe)) if starts_unsafe_fn(*input) => {
             parse_fn_item(input, file, visibility, attrs, false)
+        }
+        Some(TokenKind::Keyword(Keyword::Unsafe)) if starts_unsafe_impl(*input) => {
+            parse_impl_item(input, file, attrs)
         }
         Some(TokenKind::Keyword(Keyword::Async)) if starts_async_fn(*input) => {
             parse_fn_item(input, file, visibility, attrs, false)
@@ -492,6 +507,7 @@ fn peek_keyword(input: &[Token], keyword: Keyword) -> bool {
 }
 
 fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) -> ModalResult<Item> {
+    let _is_unsafe = expect_keyword(input, Keyword::Unsafe).is_ok();
     expect_keyword(input, Keyword::Impl)?;
     let generics_params = parse_optional_generic_params(input)?;
     let first_ty = parse_type_expr(input)?;
@@ -711,16 +727,6 @@ fn parse_fn_param_name(input: &mut &[Token]) -> ModalResult<Ident> {
     Ok(simple_name)
 }
 
-fn expect_ident_like_text(input: &mut &[Token], text: &str) -> ModalResult<()> {
-    let mut probe = *input;
-    let ident = ident_like(&mut probe)?;
-    if ident.as_str() != text {
-        return Err(ErrMode::Backtrack(ContextError::new()));
-    }
-    *input = probe;
-    Ok(())
-}
-
 fn skip_outer_attrs_for_field(input: &mut &[Token]) -> ModalResult<()> {
     loop {
         let mut probe = *input;
@@ -761,6 +767,15 @@ fn starts_unsafe_fn(input: &[Token]) -> bool {
         [first, second, ..]
             if first.kind == TokenKind::Keyword(Keyword::Unsafe)
                 && second.kind == TokenKind::Keyword(Keyword::Fn)
+    )
+}
+
+fn starts_unsafe_impl(input: &[Token]) -> bool {
+    matches!(
+        input,
+        [first, second, ..]
+            if first.kind == TokenKind::Keyword(Keyword::Unsafe)
+                && second.kind == TokenKind::Keyword(Keyword::Impl)
     )
 }
 

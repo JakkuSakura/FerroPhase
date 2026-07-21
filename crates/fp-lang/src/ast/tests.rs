@@ -1018,6 +1018,363 @@ fn parse_expr_ast_handles_while_condition_before_block() {
 }
 
 #[test]
+fn parse_expr_ast_handles_shift_assignment_in_loop() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("loop { value >>= 7; if value == 0 { break; } }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Loop(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_labeled_for_loop() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("'search: for item in items { if done { break 'search; } }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::For(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_with_identifier_context() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("with host { std::ops::server::shell(\"uptime\"); }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::With(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_slice_pattern_with_rest_prefix() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("match target.as_slice() { [.., owner, method] if owner == \"HashMap\" && method == \"from\" => {}, _ => {} }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Match(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_while_let_with_char_patterns() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let source = r#"while let Some(ch) = chars.next() {
+                if let Some(active) = quote {
+                    if ch == active {
+                        quote = None;
+                    } else if ch == '\\' {
+                        if let Some(next) = chars.next() {
+                            current.push(next);
+                        }
+                    } else {
+                        current.push(ch);
+                    }
+                    continue;
+                }
+
+                match ch {
+                    '"' | '\'' => quote = Some(ch),
+                    '\\' => {
+                        if let Some(next) = chars.next() {
+                            current.push(next);
+                        }
+                    }
+                    ch if ch.is_ascii_whitespace() => {
+                        if !current.is_empty() {
+                            args.push(std::mem::take(&mut current));
+                        }
+                    }
+                    _ => current.push(ch),
+                }
+            }"#;
+    let expr = parser.parse_expr_ast(source).unwrap_or_else(|err| {
+        panic!(
+            "{err:?}\ndiagnostics: {:?}",
+            parser.diagnostics().get_diagnostics()
+        )
+    });
+    assert!(matches!(expr.kind(), ExprKind::Loop(_) | ExprKind::While(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_if_let_with_else_if_and_continue() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let source = r#"if let Some(active) = quote {
+                if ch == active {
+                    quote = None;
+                } else if ch == '\\' {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    }
+                } else {
+                    current.push(ch);
+                }
+                continue;
+            }"#;
+    let expr = parser.parse_expr_ast(source).unwrap_or_else(|err| {
+        panic!(
+            "{err:?}\ndiagnostics: {:?}",
+            parser.diagnostics().get_diagnostics()
+        )
+    });
+    assert!(matches!(expr.kind(), ExprKind::Match(_) | ExprKind::If(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_if_else_if_chain_with_nested_if_let() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let source = r#"if ch == active {
+                quote = None;
+            } else if ch == '\\' {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            } else {
+                current.push(ch);
+            }"#;
+    let expr = parser.parse_expr_ast(source).unwrap_or_else(|err| {
+        panic!(
+            "{err:?}\ndiagnostics: {:?}",
+            parser.diagnostics().get_diagnostics()
+        )
+    });
+    assert!(matches!(expr.kind(), ExprKind::If(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_if_let_with_continue_only() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let source = r#"if let Some(active) = quote {
+                continue;
+            }"#;
+    let expr = parser.parse_expr_ast(source).unwrap_or_else(|err| {
+        panic!(
+            "{err:?}\ndiagnostics: {:?}",
+            parser.diagnostics().get_diagnostics()
+        )
+    });
+    assert!(matches!(expr.kind(), ExprKind::Match(_) | ExprKind::If(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_command_attribute_parser_function() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"fn parse_command_attribute(input: &str) -> std::result::Result<Vec<String>, String> {
+                let mut args = Vec::new();
+                let mut current = String::new();
+                let mut chars = input.chars();
+                let mut quote: Option<char> = None;
+
+                while let Some(ch) = chars.next() {
+                    if let Some(active) = quote {
+                        if ch == active {
+                            quote = None;
+                        } else if ch == '\\' {
+                            if let Some(next) = chars.next() {
+                                current.push(next);
+                            }
+                        } else {
+                            current.push(ch);
+                        }
+                        continue;
+                    }
+
+                    match ch {
+                        '"' | '\'' => quote = Some(ch),
+                        '\\' => {
+                            if let Some(next) = chars.next() {
+                                current.push(next);
+                            }
+                        }
+                        ch if ch.is_ascii_whitespace() => {
+                            if !current.is_empty() {
+                                args.push(std::mem::take(&mut current));
+                            }
+                        }
+                        _ => current.push(ch),
+                    }
+                }
+
+                if quote.is_some() {
+                    return Err("unterminated quoted segment".to_string());
+                }
+                if !current.is_empty() {
+                    args.push(current);
+                }
+                Ok(args)
+            }"#,
+        )
+        .unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::DefFunction(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_command_attribute_signature_only() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"fn parse_command_attribute(input: &str) -> std::result::Result<Vec<String>, String> {
+                Ok(Vec::new())
+            }"#,
+        )
+        .unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::DefFunction(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_command_attribute_body_only() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let source = r#"fn parse_command_attribute(input: &str) -> Result<(), String> {
+                let mut args = Vec::new();
+                let mut current = String::new();
+                let mut chars = input.chars();
+                let mut quote: Option<char> = None;
+
+                while let Some(ch) = chars.next() {
+                    if let Some(active) = quote {
+                        if ch == active {
+                            quote = None;
+                        } else if ch == '\\' {
+                            if let Some(next) = chars.next() {
+                                current.push(next);
+                            }
+                        } else {
+                            current.push(ch);
+                        }
+                        continue;
+                    }
+
+                    match ch {
+                        '"' | '\'' => quote = Some(ch),
+                        '\\' => {
+                            if let Some(next) = chars.next() {
+                                current.push(next);
+                            }
+                        }
+                        ch if ch.is_ascii_whitespace() => {
+                            if !current.is_empty() {
+                                args.push(std::mem::take(&mut current));
+                            }
+                        }
+                        _ => current.push(ch),
+                    }
+                }
+
+                if quote.is_some() {
+                    return Err("unterminated quoted segment".to_string());
+                }
+                if !current.is_empty() {
+                    args.push(current);
+                }
+                Ok(())
+            }"#;
+    let items = parser.parse_items_ast(source).unwrap_or_else(|err| {
+        panic!(
+            "{err:?}\ndiagnostics: {:?}",
+            parser.diagnostics().get_diagnostics()
+        )
+    });
+    assert!(matches!(items[0].kind(), ItemKind::DefFunction(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_struct_literal_fields_with_cfg_attrs() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            r#"Self {
+                #[cfg(feature = "llvm")]
+                strategy: Box::new(LlvmRuntimeIntrinsicMaterializer),
+                #[cfg(not(feature = "llvm"))]
+                strategy: Box::new(NoopIntrinsicMaterializer),
+            }"#,
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Struct(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_never_return_type() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"fn fail_with_error(&self, stage: &str, err: CliError) -> ! {
+                panic!("{} must succeed: {:?}", stage, err);
+            }"#,
+        )
+        .unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::DefFunction(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_match_arms_with_cfg_attrs() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            r#"match ext.as_str() {
+                #[cfg(feature = "lang-typescript")]
+                "ts" | "tsx" | "mts" | "cts" => Some(LanguageSource::TypeScript),
+                "rs" => Some(LanguageSource::Rust),
+                _ => None,
+            }"#,
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Match(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_array_elements_with_cfg_attrs() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            r#"[
+                Language {
+                    name: RUST,
+                    extensions: &["rs"],
+                    ast_target_supported: true,
+                },
+                #[cfg(feature = "lang-typescript")]
+                Language {
+                    name: TYPESCRIPT,
+                    extensions: &["ts", "tsx"],
+                    ast_target_supported: true,
+                },
+            ]"#,
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Array(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_unsafe_impl() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"unsafe impl Send for TsPrinter {}
+               unsafe impl Sync for TsPrinter {}"#,
+        )
+        .unwrap();
+    assert_eq!(items.len(), 2);
+    assert!(items.iter().all(|item| matches!(item.kind(), ItemKind::Impl(_))));
+}
+
+#[test]
 fn parse_expr_ast_handles_for_loop_syntax() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
@@ -1548,6 +1905,180 @@ fn parse_items_ast_handles_bench_quote_item_function() {
 }
 
 #[test]
+fn parse_items_ast_handles_type_alias_const_block_expr() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        type Config = const {
+            TypeBuilder::new("Config")
+                .with_field("id", i64)
+                .build()
+        };
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_type_alias_macro_expr() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        type Foo = t! {
+            struct {
+                a: i64,
+            }
+        };
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_quote_fn_with_if_generated_items() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        quote fn build_items_2(flag: bool) -> item {
+            if flag {
+                struct Alpha {
+                    id: i64
+                }
+            } else {
+                struct Beta {
+                    id: i64
+                }
+            }
+        }
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_local_type_alias_const_block_expr() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        fn main() {
+            type Base = const {
+                TypeBuilder::new("Base")
+                    .with_field("id", i64)
+                    .build()
+            };
+        }
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_bare_quote_fragment_types() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        const SCORE_EXPR: expr = quote<expr> { (2 + 3) * 4 };
+        const FN_GROUP: [item] = quote<[item]> {
+            fn alpha() {}
+            fn beta(x: i64) -> i64 { x + 1 }
+        };
+        const STEP_STMT: stmt = quote<stmt> {
+            let step = 7 * 3;
+        };
+        const BANNER_ITEM: item = quote<item> {
+            struct Banner {
+                title: &'static str,
+                rank: i64,
+            }
+        };
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_top_level_splice_statements() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        const fn build_items(flag: bool) -> item {
+            quote<item> {
+                if flag {
+                    struct Alpha {
+                        id: i64
+                    }
+                } else {
+                    struct Beta {
+                        id: i64
+                    }
+                }
+            }
+        }
+        splice build_items(true);
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_negative_trait_bound() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        use std::fmt::Display;
+        fn print_display<T: Display + !Clone>(value: T) {}
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_clone_struct_macro_in_const_type_alias() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        fn main() {
+            type ConfigClone = const { clone_struct!(Config) };
+        }
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_type_metadata_contains_calls() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = r#"
+        fn main() {
+            println!("{}", type(Config).fields.contains("mode"));
+        }
+    "#;
+    let items = parser.parse_items_ast(src).unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_expr_ast_handles_type_value_call_arg_static_str_ref() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(r#"TypeBuilder::new("Base").with_field("name", &'static str).build()"#)
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Invoke(_) | ExprKind::Select(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_struct_update_before_explicit_fields() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("FooPlusBar { ..base_foo, bar: 6 }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Struct(_)));
+}
+
+#[test]
 fn parse_expr_ast_handles_bench_run_body_block() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
@@ -1748,6 +2279,29 @@ fn parse_items_ast_handles_tuple_variant_negative_literal_pattern() {
                     _ => return Ok(None),
                 };
                 Ok(Some(fd))
+            }
+            "#,
+        )
+        .unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::DefFunction(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_nested_or_pattern_inside_tuple() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            fn default_abi_for_target(arch: &AsmArchitecture, format: &AsmObjectFormat) -> Option<Abi> {
+                match (arch, format) {
+                    (AsmArchitecture::X86_64, AsmObjectFormat::Coff | AsmObjectFormat::Pe) => {
+                        Some(Abi::X86_64Win64)
+                    }
+                    (AsmArchitecture::X86_64, _) => Some(Abi::X86_64SysV),
+                    (AsmArchitecture::Aarch64, _) => Some(Abi::Aarch64Aapcs64),
+                    _ => None,
+                }
             }
             "#,
         )
