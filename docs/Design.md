@@ -19,10 +19,11 @@ final artefact; it must not change language semantics.
 
 ## Compiler Shape
 
-The compiler arranges work as requests and answers. A request may parse source,
-type a scope, resolve a compile-time need, lower a scope, execute lowered code,
-or emit a target artefact. When work discovers a new dependency, it submits
-another request instead of switching to a private control flow.
+The compiler arranges scheduled work as requests and answers after source has
+been parsed and normalized into canonical AST. Scheduled work may type a scope,
+resolve a compile-time need, lower a scope, execute lowered code, or emit a
+target artefact. When work discovers a new dependency, it submits another
+request instead of switching to a private control flow.
 
 ```mermaid
 flowchart LR
@@ -49,7 +50,7 @@ flowchart LR
 |-----------|----------------|
 | `Parser` | Parses source or generated fragments into raw AST. |
 | `AstNormalizer` | Produces canonical AST and records provenance. |
-| `CompilerWorkScheduler` | Owns request scheduling, dependency ordering, and answer delivery. It may use a stack internally. |
+| `CompilerWorkScheduler` | Owns request scheduling, dependency ordering, and answer delivery. It may use a stack internally, but it is not a renamed pipeline. |
 | `RequestRegistry` | Assigns `RequestId`s, tracks blockers, and maps answers back to AST nodes. |
 | `TypeEngine` | Types AST scopes, records constraints, and reports `CompileTimeNeed` when typing cannot continue. |
 | `HirLowering` | Projects typed AST scopes into HIR after required semantic needs are answered. |

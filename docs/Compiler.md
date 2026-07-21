@@ -1,38 +1,47 @@
 # Compiler Design
 
 FerroPhase should be modelled as a dynamic scoped compiler, not as a fixed
-linear pipeline. The compiler owns a shared semantic state and a work scheduler.
-Each work item refines a scope, records the artefacts it produced, and may
-submit follow-up work when it discovers generated code, missing types, deferred
-lowering, or compile-time execution. The scheduler may use a stack internally,
-but its public role is request/answer coordination.
+linear pipeline. Source is parsed and normalized into canonical AST, then the
+compiler submits AST work to a scheduler. Each work item refines a scope,
+records the artefacts it produced, and may submit follow-up work when it
+discovers generated code, missing types, deferred lowering, or compile-time
+execution.
+
+The scheduler may use a stack internally, but its public role is
+request/answer coordination. It should be a clean compiler component, not a
+1:1 rename of the current CLI pipeline or its stages.
 
 This design keeps interpretation, compile-time evaluation, bytecode, native
 codegen, and AST-target emission on the same semantic path. A mode changes the
 required final artefacts; it should not introduce a separate language
 semantics.
 
-## Happy Path
+## Full Work Path
 
-The happy path is the scheduler progression when each unit can make progress.
+This graph shows the full work path when each unit can make progress. It is a
+work graph, not a staged pipeline. The front edge builds canonical AST. After
+that, `CompilerScheduler` coordinates pending AST work, comptime requests,
+generic identity work, lowering, execution, and emission.
+
 Mode selection branches only after shared typed and lowered artefacts are
-available.
+available. A branch in this graph means a consumer requested a different final
+artefact, not that earlier semantics changed.
 
 ```mermaid
 flowchart LR
     SOURCE[SOURCE] -->|parse| rawAST[raw AST]
     rawAST -->|normalize| AST[AST]
-    AST -->|submit work| CompilerWorkScheduler[CompilerWorkScheduler]
-    CompilerWorkScheduler -->|next request| PendingAST[Pending AST]
+    AST -->|submit AST work| CompilerScheduler[CompilerScheduler]
+    CompilerScheduler -->|next AST request| PendingAST[Pending AST]
     PendingAST -->|type, if can type| typedAST[typed AST]
     PendingAST -->|if cannot type| CompileTimeNeed[CompileTimeNeed]
-    CompileTimeNeed -->|replace node with RequestId and submit work| CompilerWorkScheduler
-    typedAST -->|submit generic work| CompilerWorkScheduler
+    CompileTimeNeed -->|replace node with RequestId| CompilerScheduler
+    typedAST -->|if identity needs work| CompilerScheduler
     typedAST -->|project| HIR[HIR]
     HIR -->|lower| MIR[MIR]
     MIR -->|lower| LIR[LIR]
     LIR -->|if runtime or comptime| Interpret[Interpret]
-    Interpret -->|if comptime, answer request| CompilerWorkScheduler
+    Interpret -->|if comptime, answer request| CompilerScheduler
     Interpret -->|if runtime, print| Stdout[Stdout]
     LIR -->|serialize| Bytecode[Bytecode]
     Bytecode -->|save| OutputFile[File]
@@ -40,6 +49,15 @@ flowchart LR
     ISANative -->|save| OutputFile
     ISANative -->|JIT| Interpret
 ```
+
+`Pending AST` means the pending AST scope or node that the scheduler selected
+for work. `typed AST` is the same canonical AST state with type information
+attached. `CompileTimeNeed` is the blocked point where typing cannot continue
+until a request is answered.
+
+The `typed AST --> if identity needs work` edge does not mean generics use a
+separate compiler path. It means typed AST may reveal a generic or comptime
+identity that requires more work from the same scheduler.
 
 ## Comptime Blocks
 
@@ -132,6 +150,37 @@ therefore in the cache key, dependency key, and lowered artefact key.
 Work items must declare their input dependencies and output artefacts. If an
 input changes, the compiler invalidates dependent artefacts and submits the
 smallest affected scopes back to `CompilerWorkScheduler`.
+
+## Migration Direction
+
+The implementation should not migrate by renaming existing pipeline terms. A
+`PipelineStage` renamed into a scheduler handler would still preserve the old
+fixed ordering. The migration target is a clean `CompilerScheduler` design that
+models work as requests and answers.
+
+The old CLI pipeline can remain as an adapter while the new scheduler is built.
+It should submit initial AST work and requested final artefacts, then receive
+answers. Over time, old stage functions can become private implementation
+details behind scheduler work, and then disappear when scoped handlers are
+ready.
+
+The first useful implementation slice is:
+
+```text
+SOURCE -> raw AST -> AST -> CompilerScheduler -> typed AST -> HIR
+```
+
+After that, add blockers and answers:
+
+```text
+Pending AST -> CompileTimeNeed -> RequestId -> CompilerScheduler
+CompilerScheduler -> lowered comptime work -> Interpret -> answer
+answer -> AST update -> affected work resubmitted
+```
+
+Only then should runtime interpretation be moved onto the same execution path.
+This avoids treating the current AST interpreter as the semantic authority while
+the scheduler is still incomplete.
 
 ## Consistency Rules
 
