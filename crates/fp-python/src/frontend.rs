@@ -6,11 +6,12 @@ use std::sync::Arc;
 
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprBreak,
-    ExprContinue, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
-    ExprKind, ExprKwArg, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect, ExprSelectType,
-    ExprStringTemplate, ExprTuple, ExprUnOp, ExprWhile, ExprWith, File, FormatTemplatePart,
-    FunctionParam, FunctionSignature, Ident, Item, ItemDefFunction, ItemDefStruct, ItemKind, Name,
-    Node, NodeKind, Pattern, PatternIdent, PatternKind, PatternTuple, ReprOptions,
+    ExprClosure, ExprContinue, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprKwArg, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect,
+    ExprSelectType, ExprStringTemplate, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile,
+    ExprWith, File, FormatTemplatePart, FunctionParam, FunctionSignature, Ident, Item,
+    ItemDefFunction, ItemDefStruct, ItemKind, Name, Node, NodeKind, Pattern, PatternIdent,
+    PatternKind, PatternTuple, ReprOptions,
     StructuralField, Ty, TypeStruct, Value, ValueBytes, ValueMap, ValueTuple,
 };
 use fp_core::diagnostics::DiagnosticManager;
@@ -101,6 +102,7 @@ type PyUnaryOp = py_ast::UnaryOp;
 type PyCmpOp = py_ast::CmpOp;
 
 type PyAlias = py_ast::Alias<TextRange>;
+type PyComprehension = py_ast::Comprehension<TextRange>;
 
 fn lower_suite(stmts: &[PyStmt]) -> CoreResult<Vec<Item>> {
     let mut items = Vec::new();
@@ -136,6 +138,10 @@ fn lower_stmt_to_items(stmt: &PyStmt) -> CoreResult<Vec<Item>> {
             let expr = lower_ann_assign(assign)?;
             Ok(vec![Item::from(ItemKind::Expr(expr))])
         }
+        PyStmt::AugAssign(assign) => {
+            let expr = lower_aug_assign(assign)?;
+            Ok(vec![Item::from(ItemKind::Expr(expr))])
+        }
         PyStmt::If(stmt_if) => {
             let expr = lower_if(stmt_if)?;
             Ok(vec![Item::from(ItemKind::Expr(expr))])
@@ -152,8 +158,16 @@ fn lower_stmt_to_items(stmt: &PyStmt) -> CoreResult<Vec<Item>> {
             let expr = lower_with(stmt_with)?;
             Ok(vec![Item::from(ItemKind::Expr(expr))])
         }
+        PyStmt::Try(stmt_try) => {
+            let expr = lower_try(stmt_try)?;
+            Ok(vec![Item::from(ItemKind::Expr(expr))])
+        }
         PyStmt::Return(stmt_return) => {
             let expr = lower_return(stmt_return)?;
+            Ok(vec![Item::from(ItemKind::Expr(expr))])
+        }
+        PyStmt::Raise(stmt_raise) => {
+            let expr = lower_raise(stmt_raise)?;
             Ok(vec![Item::from(ItemKind::Expr(expr))])
         }
         PyStmt::Break(_) => {
@@ -210,6 +224,10 @@ fn lower_stmt_to_block_stmt(stmt: &PyStmt) -> CoreResult<BlockStmt> {
             let expr = lower_ann_assign(assign)?;
             Ok(BlockStmt::Expr(BlockStmtExpr::new(expr)))
         }
+        PyStmt::AugAssign(assign) => {
+            let expr = lower_aug_assign(assign)?;
+            Ok(BlockStmt::Expr(BlockStmtExpr::new(expr)))
+        }
         PyStmt::If(stmt_if) => {
             let expr = lower_if(stmt_if)?;
             Ok(BlockStmt::Expr(BlockStmtExpr::new(expr)))
@@ -226,8 +244,16 @@ fn lower_stmt_to_block_stmt(stmt: &PyStmt) -> CoreResult<BlockStmt> {
             let expr = lower_with(stmt_with)?;
             Ok(BlockStmt::Expr(BlockStmtExpr::new(expr)))
         }
+        PyStmt::Try(stmt_try) => {
+            let expr = lower_try(stmt_try)?;
+            Ok(BlockStmt::Expr(BlockStmtExpr::new(expr)))
+        }
         PyStmt::Return(stmt_return) => {
             let expr = lower_return(stmt_return)?;
+            Ok(BlockStmt::Expr(BlockStmtExpr::new(expr)))
+        }
+        PyStmt::Raise(stmt_raise) => {
+            let expr = lower_raise(stmt_raise)?;
             Ok(BlockStmt::Expr(BlockStmtExpr::new(expr)))
         }
         PyStmt::Break(_) => Ok(BlockStmt::Expr(BlockStmtExpr::new(Expr::new(
@@ -388,6 +414,23 @@ fn lower_assign(assign: &py_ast::StmtAssign<TextRange>) -> CoreResult<Expr> {
     })))
 }
 
+fn lower_aug_assign(assign: &py_ast::StmtAugAssign<TextRange>) -> CoreResult<Expr> {
+    let target = lower_expr(&assign.target)?;
+    let lhs = lower_expr(&assign.target)?;
+    let rhs = lower_expr(&assign.value)?;
+    let value = Expr::new(ExprKind::BinOp(ExprBinOp {
+        span: Span::null(),
+        kind: lower_operator(&assign.op)?,
+        lhs: lhs.into(),
+        rhs: rhs.into(),
+    }));
+    Ok(Expr::new(ExprKind::Assign(ExprAssign {
+        span: Span::null(),
+        target: target.into(),
+        value: value.into(),
+    })))
+}
+
 fn lower_if(stmt_if: &py_ast::StmtIf<TextRange>) -> CoreResult<Expr> {
     let cond = lower_expr(&stmt_if.test)?;
     let then_block = lower_block(&stmt_if.body)?;
@@ -444,6 +487,17 @@ fn lower_return(stmt_return: &py_ast::StmtReturn<TextRange>) -> CoreResult<Expr>
     })))
 }
 
+fn lower_raise(stmt_raise: &py_ast::StmtRaise<TextRange>) -> CoreResult<Expr> {
+    let mut args = Vec::new();
+    if let Some(exc) = &stmt_raise.exc {
+        args.push(lower_expr(exc)?);
+    }
+    if let Some(cause) = &stmt_raise.cause {
+        args.push(lower_expr(cause)?);
+    }
+    Ok(py_synthetic_call("__py_raise__", args))
+}
+
 fn lower_with(stmt_with: &py_ast::StmtWith<TextRange>) -> CoreResult<Expr> {
     if stmt_with.items.is_empty() {
         return Err(CoreError::from("python with statement has no items"));
@@ -461,6 +515,51 @@ fn lower_with(stmt_with: &py_ast::StmtWith<TextRange>) -> CoreResult<Expr> {
                 body: Box::new(body),
             })))
         })
+}
+
+fn lower_try(stmt_try: &py_ast::StmtTry<TextRange>) -> CoreResult<Expr> {
+    let body = Expr::block(lower_block(&stmt_try.body)?);
+    let catches = stmt_try
+        .handlers
+        .iter()
+        .map(lower_except_handler)
+        .collect::<CoreResult<Vec<_>>>()?;
+    let elze = if stmt_try.orelse.is_empty() {
+        None
+    } else {
+        Some(Expr::block(lower_block(&stmt_try.orelse)?).into())
+    };
+    let finally = if stmt_try.finalbody.is_empty() {
+        None
+    } else {
+        Some(Expr::block(lower_block(&stmt_try.finalbody)?).into())
+    };
+
+    Ok(Expr::new(ExprKind::Try(ExprTry {
+        span: Span::null(),
+        expr: body.into(),
+        catches,
+        elze,
+        finally,
+    })))
+}
+
+fn lower_except_handler(handler: &py_ast::ExceptHandler<TextRange>) -> CoreResult<ExprTryCatch> {
+    match handler {
+        py_ast::ExceptHandler::ExceptHandler(handler) => {
+            let pat = handler.name.as_ref().map(|name| {
+                Pattern::from(PatternKind::Ident(PatternIdent::new(Ident::new(
+                    name.as_str(),
+                ))))
+            });
+            let body = Expr::block(lower_block(&handler.body)?);
+            Ok(ExprTryCatch {
+                span: Span::null(),
+                pat: pat.map(Box::new),
+                body: body.into(),
+            })
+        }
+    }
 }
 
 fn lower_pattern(expr: &PyExpr) -> CoreResult<Pattern> {
@@ -582,6 +681,19 @@ fn lower_expr(expr: &PyExpr) -> CoreResult<Expr> {
             }
             Ok(Expr::value(Value::Map(ValueMap::from_pairs(entries))))
         }
+        PyExpr::ListComp(list_comp) => lower_comprehension_call(
+            "__py_list_comp__",
+            &list_comp.elt,
+            &list_comp.generators,
+        ),
+        PyExpr::DictComp(dict_comp) => {
+            let elt = Expr::new(ExprKind::Tuple(ExprTuple {
+                span: Span::null(),
+                values: vec![lower_expr(&dict_comp.key)?, lower_expr(&dict_comp.value)?],
+            }));
+            lower_comprehension_call_expr("__py_dict_comp__", elt, &dict_comp.generators)
+        }
+        PyExpr::GeneratorExp(generator) => lower_generator_exp(generator),
         PyExpr::JoinedStr(joined) => lower_joined_str(joined),
         PyExpr::FormattedValue(formatted) => lower_formatted_value(formatted),
         _ => Err(CoreError::from(format!(
@@ -589,6 +701,86 @@ fn lower_expr(expr: &PyExpr) -> CoreResult<Expr> {
             expr
         ))),
     }
+}
+
+fn lower_generator_exp(generator: &py_ast::ExprGeneratorExp<TextRange>) -> CoreResult<Expr> {
+    lower_comprehension_call(
+        "__py_generator__",
+        &generator.elt,
+        &generator.generators,
+    )
+}
+
+fn lower_comprehension_call(
+    name: &str,
+    elt: &PyExpr,
+    generators: &[PyComprehension],
+) -> CoreResult<Expr> {
+    let elt = lower_expr(elt)?;
+    lower_comprehension_call_expr(name, elt, generators)
+}
+
+fn lower_comprehension_call_expr(
+    name: &str,
+    elt: Expr,
+    generators: &[PyComprehension],
+) -> CoreResult<Expr> {
+    if generators.len() != 1 {
+        return Err(CoreError::from(
+            "python comprehensions with multiple clauses are not supported",
+        ));
+    }
+
+    let clause = &generators[0];
+    if clause.is_async {
+        return Err(CoreError::from("python async comprehensions are not supported"));
+    }
+
+    let iter = lower_expr(&clause.iter)?;
+    let pat = lower_pattern(&clause.target)?;
+    let body = lower_generator_body(elt, &clause.ifs)?;
+    let closure = Expr::new(ExprKind::Closure(ExprClosure {
+        span: Span::null(),
+        params: vec![pat],
+        ret_ty: None,
+        movability: None,
+        body: body.into(),
+    }));
+
+    Ok(py_synthetic_call(name, vec![iter, closure]))
+}
+
+fn lower_generator_body(elt: Expr, ifs: &[PyExpr]) -> CoreResult<Expr> {
+    if ifs.is_empty() {
+        return Ok(elt);
+    }
+
+    let mut iter = ifs.iter();
+    let first = lower_expr(iter.next().expect("non-empty"))?;
+    let cond = iter.try_fold(first, |acc, next| -> CoreResult<Expr> {
+        Ok(Expr::new(ExprKind::BinOp(ExprBinOp {
+            span: Span::null(),
+            kind: BinOpKind::And,
+            lhs: Box::new(acc),
+            rhs: Box::new(lower_expr(next)?),
+        })))
+    })?;
+
+    Ok(Expr::new(ExprKind::If(ExprIf {
+        span: Span::null(),
+        cond: cond.into(),
+        then: elt.into(),
+        elze: Some(Expr::unit().into()),
+    })))
+}
+
+fn py_synthetic_call(name: &str, args: Vec<Expr>) -> Expr {
+    Expr::new(ExprKind::Invoke(ExprInvoke {
+        span: Span::null(),
+        target: ExprInvokeTarget::expr(Expr::name(Name::ident(name))),
+        args,
+        kwargs: Vec::new(),
+    }))
 }
 
 fn lower_call(call: &py_ast::ExprCall<TextRange>) -> CoreResult<Expr> {
@@ -978,5 +1170,39 @@ mod tests {
         let source = "def health(model, result):\n    return model is not None and \"yes\" in result\n";
         let frontend = PythonFrontend::new();
         frontend.parse(source, None).expect("parse comparison ops");
+    }
+
+    #[test]
+    fn parses_raise_statement_in_function() {
+        let source = "def parse(raw_arg):\n    raise ValueError(f\"unable to parse function arg: {raw_arg}\")\n";
+        let frontend = PythonFrontend::new();
+        frontend.parse(source, None).expect("parse raise statement");
+    }
+
+    #[test]
+    fn parses_generator_expression_argument() {
+        let source = "def has_ext(name, exts):\n    return any(name.endswith(ext) for ext in exts)\n";
+        let frontend = PythonFrontend::new();
+        frontend
+            .parse(source, None)
+            .expect("parse generator expression");
+    }
+
+    #[test]
+    fn parses_aug_assign_and_list_comprehension() {
+        let source = "def check(expected, actual):\n    signature = \"fn\"\n    signature += \" -> int\"\n    missing = [k for k in expected.keys() if k not in actual]\n    return missing\n";
+        let frontend = PythonFrontend::new();
+        frontend
+            .parse(source, None)
+            .expect("parse augmented assignment and list comprehension");
+    }
+
+    #[test]
+    fn parses_try_except_and_dict_comprehension() {
+        let source = "def main(backend_hashes):\n    try:\n        bindings = run_bindgen()\n    except RuntimeError as exc:\n        return 1\n    actual = {k: {\"hashes\": v} for k, v in backend_hashes.items()}\n    return actual\n";
+        let frontend = PythonFrontend::new();
+        frontend
+            .parse(source, None)
+            .expect("parse try except and dict comprehension");
     }
 }

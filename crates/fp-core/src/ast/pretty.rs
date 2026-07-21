@@ -554,9 +554,10 @@ impl PrettyPrintable for ast::Item {
             ast::ItemKind::DefType(def) => ctx.writeln(
                 f,
                 format!(
-                    "{}type {} = {}{}",
+                    "{}type {}{} = {}{}",
                     visibility_prefix(&def.visibility),
                     def.name,
+                    render_generic_params(&def.generics_params),
                     render_ty_brief(&def.value),
                     suffix
                 ),
@@ -628,8 +629,12 @@ impl PrettyPrintable for ast::Item {
             }
             ast::ItemKind::DefTrait(def) => {
                 let bounds = render_type_bounds(&def.bounds);
-                let mut header =
-                    format!("{}trait {}", visibility_prefix(&def.visibility), def.name);
+                let mut header = format!(
+                    "{}trait {}{}",
+                    visibility_prefix(&def.visibility),
+                    def.name,
+                    render_generic_params(&def.generics_params)
+                );
                 if !bounds.is_empty() {
                     header.push_str(": ");
                     header.push_str(&bounds);

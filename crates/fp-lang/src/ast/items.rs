@@ -13,7 +13,22 @@ pub(crate) fn parse_items_tokens(
             items.extend(parsed);
             continue;
         }
-        let item = parse_item_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
+        if starts_unsafe_extern_block(input) {
+            let parsed = parse_prefixed_unsafe_extern_block_items(&mut input, file)
+                .map_err(|err| map_err(err, input))?;
+            items.extend(parsed);
+            continue;
+        }
+        let item = parse_item_winnow(&mut input, file).map_err(|err| {
+            let mapped = map_err(err, input);
+            #[cfg(test)]
+            eprintln!(
+                "parse_items_tokens stopped at token {:?}",
+                input.first()
+                    .map(|token| (&token.kind, token.lexeme.as_str(), token.span.start, token.span.end))
+            );
+            mapped
+        })?;
         items.push(item);
     }
     Ok(items)
@@ -33,7 +48,22 @@ pub(crate) fn parse_file_tokens(
             items.extend(parsed);
             continue;
         }
-        let item = parse_item_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
+        if starts_unsafe_extern_block(input) {
+            let parsed = parse_prefixed_unsafe_extern_block_items(&mut input, file)
+                .map_err(|err| map_err(err, input))?;
+            items.extend(parsed);
+            continue;
+        }
+        let item = parse_item_winnow(&mut input, file).map_err(|err| {
+            let mapped = map_err(err, input);
+            #[cfg(test)]
+            eprintln!(
+                "parse_file_tokens stopped at token {:?}",
+                input.first()
+                    .map(|token| (&token.kind, token.lexeme.as_str(), token.span.start, token.span.end))
+            );
+            mapped
+        })?;
         items.push(item);
     }
     Ok((attrs, items))
@@ -52,6 +82,9 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
         }
         Some(TokenKind::Keyword(Keyword::Const)) if starts_const_struct(*input) => {
             parse_const_struct_item(input, visibility, attrs)
+        }
+        Some(TokenKind::Keyword(Keyword::Unsafe)) if starts_unsafe_fn(*input) => {
+            parse_fn_item(input, file, visibility, attrs, false)
         }
         Some(TokenKind::Keyword(Keyword::Async)) if starts_async_fn(*input) => {
             parse_fn_item(input, file, visibility, attrs, false)
@@ -145,6 +178,10 @@ fn parse_type_alias_item(
 ) -> ModalResult<Item> {
     expect_keyword(input, Keyword::Type)?;
     let name = ident_like(input)?;
+    let generics_params = parse_optional_generic_params(input)?;
+    if expect_keyword(input, Keyword::Where).is_ok() {
+        skip_where_clause(input)?;
+    }
     expect_symbol(input, "=")?;
     let value = parse_type_expr(input)?;
     expect_symbol(input, ";")?;
@@ -152,6 +189,7 @@ fn parse_type_alias_item(
         attrs,
         visibility,
         name,
+        generics_params,
         value,
     })))
 }
@@ -164,6 +202,9 @@ fn parse_struct_item(
     expect_keyword(input, Keyword::Struct)?;
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
+    if expect_keyword(input, Keyword::Where).is_ok() {
+        skip_where_clause(input)?;
+    }
     let mut fields = Vec::new();
     if expect_symbol(input, ";").is_ok() {
         return Ok(Item::from(ItemKind::DefStruct(ItemDefStruct {
@@ -268,6 +309,7 @@ fn parse_fn_item_core(
     attrs: Vec<Attribute>,
     quoted: bool,
 ) -> ModalResult<Item> {
+    let _is_unsafe = expect_keyword(input, Keyword::Unsafe).is_ok();
     let is_async = expect_keyword(input, Keyword::Async).is_ok();
     let is_const = expect_keyword(input, Keyword::Const).is_ok();
     if quoted {
@@ -275,6 +317,13 @@ fn parse_fn_item_core(
     }
     expect_keyword(input, Keyword::Fn)?;
     let name = ident_like(input)?;
+    #[cfg(test)]
+    eprintln!(
+        "parse_fn_item_core entering {:?} at {:?}",
+        name.name,
+        input.first()
+            .map(|token| (&token.kind, token.lexeme.as_str(), token.span.start, token.span.end))
+    );
     let generics_params = parse_optional_generic_params(input)?;
     expect_symbol(input, "(")?;
     let (receiver, params) = parse_fn_params_with_receiver(input)?;
@@ -287,7 +336,43 @@ fn parse_fn_item_core(
     if expect_keyword(input, Keyword::Where).is_ok() {
         skip_where_clause(input)?;
     }
-    let body = parse_block_expr(input, file)?;
+    #[cfg(test)]
+    eprintln!(
+        "parse_fn_item_core body start {:?} at {:?}",
+        name.name,
+        input.first()
+            .map(|token| (&token.kind, token.lexeme.as_str(), token.span.start, token.span.end))
+    );
+    let body = match parse_block_expr(input, file) {
+        Ok(body) => {
+            #[cfg(test)]
+            eprintln!(
+                "parse_fn_item_core body done {:?} next {:?}",
+                name.name,
+                input.first().map(|token| (
+                    &token.kind,
+                    token.lexeme.as_str(),
+                    token.span.start,
+                    token.span.end
+                ))
+            );
+            body
+        }
+        Err(err) => {
+            #[cfg(test)]
+            eprintln!(
+                "parse_fn_item_core body failed {:?} at {:?}",
+                name.name,
+                input.first().map(|token| (
+                    &token.kind,
+                    token.lexeme.as_str(),
+                    token.span.start,
+                    token.span.end
+                ))
+            );
+            return Err(err);
+        }
+    };
     let body = if is_async {
         ExprKind::Async(fp_core::ast::ExprAsync {
             span: body.span(),
@@ -335,6 +420,7 @@ fn parse_trait_item(
 ) -> ModalResult<Item> {
     expect_keyword(input, Keyword::Trait)?;
     let name = ident_like(input)?;
+    let generics_params = parse_optional_generic_params(input)?;
     let bounds = if expect_symbol(input, ":").is_ok() {
         parse_type_bounds(input)?
     } else {
@@ -349,6 +435,7 @@ fn parse_trait_item(
     Ok(Item::from(ItemKind::DefTrait(ItemDefTrait {
         attrs,
         name,
+        generics_params,
         bounds,
         items,
         visibility,
@@ -403,16 +490,19 @@ fn parse_trait_fn_member(
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
     expect_symbol(input, "(")?;
-    let params = parse_fn_params(input)?;
+    let (receiver, params) = parse_fn_params_with_receiver(input)?;
     expect_symbol(input, ")")?;
     let ret_ty = if expect_symbol(input, "->").is_ok() {
         Some(parse_type_expr(input)?)
     } else {
         None
     };
+    if expect_keyword(input, Keyword::Where).is_ok() {
+        skip_where_clause(input)?;
+    }
     let mut sig = FunctionSignature {
         name: Some(name.clone()),
-        receiver: None,
+        receiver,
         params,
         generics_params,
         is_const: false,
@@ -472,13 +562,32 @@ fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) ->
     } else {
         (None, type_to_expr(&first_ty))
     };
+    if expect_keyword(input, Keyword::Where).is_ok() {
+        skip_where_clause(input)?;
+    }
     expect_symbol(input, "{")?;
     let mut items = Vec::new();
     while peek_symbol(input) != Some("}") {
+        #[cfg(test)]
+        eprintln!(
+            "parse_impl_item member starts at {:?}",
+            input.first()
+                .map(|token| (&token.kind, token.lexeme.as_str(), token.span.start, token.span.end))
+        );
         let member_attrs = parse_outer_attrs(input, file)?;
         let visibility = parse_visibility(input)?;
         let member = if peek_keyword(*input, Keyword::Type) {
             parse_type_alias_item(input, visibility, member_attrs)?
+        } else if peek_keyword(*input, Keyword::Const) && starts_const_fn(*input) {
+            parse_fn_item(input, file, visibility, member_attrs, false)?
+        } else if peek_keyword(*input, Keyword::Unsafe) && starts_unsafe_fn(*input) {
+            parse_fn_item(input, file, visibility, member_attrs, false)?
+        } else if peek_keyword(*input, Keyword::Async) && starts_async_fn(*input) {
+            parse_fn_item(input, file, visibility, member_attrs, false)?
+        } else if peek_keyword(*input, Keyword::Const) {
+            parse_const_item(input, file, visibility, member_attrs)?
+        } else if peek_keyword(*input, Keyword::Static) {
+            parse_static_item(input, file, visibility, member_attrs)?
         } else {
             parse_fn_item_core(input, file, visibility, member_attrs, false)?
         };
@@ -618,7 +727,10 @@ fn parse_receiver(input: &mut &[Token]) -> ModalResult<Option<FunctionParamRecei
 
 fn parse_fn_param_core(input: &mut &[Token]) -> ModalResult<FunctionParam> {
     let is_const = expect_keyword(input, Keyword::Const).is_ok();
-    let is_context = expect_ident_like_text(input, "context").is_ok();
+    let is_context = starts_context_param_marker(*input);
+    if is_context {
+        let _ = ident_like(input)?;
+    }
     let _is_mut = expect_keyword(input, Keyword::Mut).is_ok();
     let name = parse_fn_param_name(input)?;
     expect_symbol(input, ":")?;
@@ -634,6 +746,22 @@ fn parse_fn_param_core(input: &mut &[Token]) -> ModalResult<FunctionParam> {
         param.default = Some((**value).clone());
     }
     Ok(param)
+}
+
+fn starts_context_param_marker(input: &[Token]) -> bool {
+    matches!(
+        input,
+        [
+            first,
+            second,
+            third,
+            ..
+        ] if first.kind == TokenKind::Ident
+            && first.lexeme == "context"
+            && matches!(second.kind, TokenKind::Ident | TokenKind::Keyword(_))
+            && third.kind == TokenKind::Symbol
+            && third.lexeme == ":"
+    )
 }
 
 fn parse_fn_param_name(input: &mut &[Token]) -> ModalResult<Ident> {
@@ -692,6 +820,15 @@ fn skip_outer_attrs_for_field(input: &mut &[Token]) -> ModalResult<()> {
 
 fn peek_two_stars(input: &[Token]) -> bool {
     matches!(input, [first, second, ..] if first.kind == TokenKind::Symbol && first.lexeme == "*" && second.kind == TokenKind::Symbol && second.lexeme == "*")
+}
+
+fn starts_unsafe_fn(input: &[Token]) -> bool {
+    matches!(
+        input,
+        [first, second, ..]
+            if first.kind == TokenKind::Keyword(Keyword::Unsafe)
+                && second.kind == TokenKind::Keyword(Keyword::Fn)
+    )
 }
 
 fn skip_where_clause(input: &mut &[Token]) -> ModalResult<()> {
@@ -851,6 +988,19 @@ fn parse_extern_block_items(input: &mut &[Token], file: FileId) -> ModalResult<V
     }
     expect_symbol(input, "}")?;
     Ok(items)
+}
+
+fn parse_unsafe_extern_block_items(input: &mut &[Token], file: FileId) -> ModalResult<Vec<Item>> {
+    expect_keyword(input, Keyword::Unsafe)?;
+    parse_extern_block_items(input, file)
+}
+
+fn parse_prefixed_unsafe_extern_block_items(
+    input: &mut &[Token],
+    file: FileId,
+) -> ModalResult<Vec<Item>> {
+    let _ = parse_outer_attrs(input, file)?;
+    parse_unsafe_extern_block_items(input, file)
 }
 
 fn parse_abi_fn_item(
@@ -1052,6 +1202,7 @@ fn parse_item_macro(input: &mut &[Token], _attrs: Vec<Attribute>) -> ModalResult
         None
     };
     let (delimiter, group_span, token_trees, text) = parse_macro_group(input)?;
+    let _ = expect_symbol(input, ";");
     Ok(Item::from(ItemKind::Macro(ItemMacro {
         invocation: MacroInvocation::new(path, delimiter, text)
             .with_token_trees(token_trees)
@@ -1092,7 +1243,7 @@ fn single_segment_path(segment: fp_core::ast::ItemImportTree) -> fp_core::ast::I
     path
 }
 
-fn parse_outer_attrs(input: &mut &[Token], file: FileId) -> ModalResult<Vec<Attribute>> {
+pub(crate) fn parse_outer_attrs(input: &mut &[Token], file: FileId) -> ModalResult<Vec<Attribute>> {
     parse_attrs(input, file, false)
 }
 
@@ -1157,7 +1308,19 @@ fn parse_attr_meta_direct(input: &mut &[Token], file: FileId) -> ModalResult<Att
     if expect_symbol(input, "(").is_ok() {
         let mut items = Vec::new();
         while peek_symbol(input) != Some(")") {
-            items.push(parse_attr_meta_direct(input, file)?);
+            let mut item_probe = *input;
+            if let Ok(item) = parse_attr_meta_direct(&mut item_probe, file) {
+                *input = item_probe;
+                items.push(item);
+            } else {
+                let mut literal_probe = *input;
+                let value = parse_expr_winnow_no_struct(&mut literal_probe, file)?;
+                *input = literal_probe;
+                items.push(AttrMeta::NameValue(AttrMetaNameValue {
+                    name: Path::from_ident(Ident::new(format!("__arg{}", items.len()))),
+                    value: Box::new(value),
+                }));
+            }
             if expect_symbol(input, ",").is_err() {
                 break;
             }
@@ -1169,5 +1332,24 @@ fn parse_attr_meta_direct(input: &mut &[Token], file: FileId) -> ModalResult<Att
 }
 
 fn looks_like_item_macro(input: &[Token]) -> bool {
-    matches!(input, [first, second, ..] if matches!(first.kind, TokenKind::Ident | TokenKind::Keyword(_)) && second.kind == TokenKind::Symbol && second.lexeme == "!")
+    let mut saw_segment = false;
+    let mut rest = input;
+    while let [first, second, tail @ ..] = rest {
+        if matches!(first.kind, TokenKind::Ident | TokenKind::Keyword(_))
+            && second.kind == TokenKind::Symbol
+            && second.lexeme == "!"
+        {
+            return true;
+        }
+        if matches!(first.kind, TokenKind::Ident | TokenKind::Keyword(_))
+            && second.kind == TokenKind::Symbol
+            && second.lexeme == "::"
+        {
+            saw_segment = true;
+            rest = tail;
+            continue;
+        }
+        break;
+    }
+    saw_segment
 }

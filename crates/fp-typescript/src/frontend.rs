@@ -641,6 +641,7 @@ fn lower_type_alias(
         attrs: Vec::new(),
         visibility,
         name: ident,
+        generics_params: Vec::new(),
         value: ty,
     };
     vec![Item::from(def)]
@@ -703,6 +704,7 @@ fn lower_interface_decl(
                 attrs: Vec::new(),
                 visibility,
                 name: ident,
+                generics_params: Vec::new(),
                 value: Ty::ident(base_ident.clone()),
             };
             return vec![Item::from(def)];
@@ -726,6 +728,7 @@ fn lower_interface_decl(
                 attrs: Vec::new(),
                 visibility,
                 name: ident,
+                generics_params: Vec::new(),
                 value: Ty::ident(base_ident.clone()),
             };
             return vec![Item::from(def)];

@@ -115,6 +115,7 @@ common_struct! {
         pub zero: bool,
         pub width: Option<usize>,
         pub precision: Option<usize>,
+        pub dynamic_precision: bool,
         pub ty: Option<char>,
     }
 }
@@ -723,6 +724,7 @@ fn parse_rust_format_spec(raw: &str) -> Result<RustFormatSpec, String> {
             zero: false,
             width: None,
             precision: None,
+            dynamic_precision: false,
             ty: None,
         });
     }
@@ -777,14 +779,20 @@ fn parse_rust_format_spec(raw: &str) -> Result<RustFormatSpec, String> {
     idx = next;
 
     let mut precision = None;
+    let mut dynamic_precision = false;
     if idx < bytes.len() && bytes[idx] == b'.' {
         idx += 1;
-        let (parsed, next_idx) = parse_decimal(bytes, idx)?;
-        if parsed.is_none() {
-            return Err("format precision requires digits".to_string());
+        if idx < bytes.len() && bytes[idx] == b'*' {
+            dynamic_precision = true;
+            idx += 1;
+        } else {
+            let (parsed, next_idx) = parse_decimal(bytes, idx)?;
+            if parsed.is_none() {
+                return Err("format precision requires digits".to_string());
+            }
+            precision = parsed;
+            idx = next_idx;
         }
-        precision = parsed;
-        idx = next_idx;
     }
 
     let mut ty = None;
@@ -811,6 +819,7 @@ fn parse_rust_format_spec(raw: &str) -> Result<RustFormatSpec, String> {
         zero,
         width,
         precision,
+        dynamic_precision,
         ty,
     })
 }

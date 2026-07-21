@@ -2,6 +2,14 @@ use super::*;
 use fp_core::ast::ImplTraits;
 
 pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
+    let _is_unsafe = expect_keyword(input, Keyword::Unsafe).is_ok();
+    let abi = if expect_keyword(input, Keyword::Extern).is_ok() {
+        let abi = token_kind(input, TokenKind::StringLiteral)?;
+        let _ = decode_string_literal(&abi.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        true
+    } else {
+        false
+    };
     if expect_keyword(input, Keyword::Impl).is_ok() {
         let bounds = parse_type_bounds(input)?;
         return Ok(Ty::ImplTraits(fp_core::ast::ImplTraits { bounds }));
@@ -36,7 +44,12 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         expect_symbol(input, ")")?;
         return Ok(first);
     }
-    if expect_keyword(input, Keyword::Fn).is_ok() {
+    if abi || expect_keyword(input, Keyword::Fn).is_ok() {
+        if !abi {
+            // already consumed `fn` in the branch condition above
+        } else {
+            expect_keyword(input, Keyword::Fn)?;
+        }
         expect_symbol(input, "(")?;
         let mut params = Vec::new();
         if peek_symbol(input) != Some(")") {
@@ -68,6 +81,30 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     if expect_keyword(input, Keyword::Impl).is_ok() {
         let bounds = parse_dyn_type_bounds(input)?;
         return Ok(Ty::ImplTraits(ImplTraits { bounds }));
+    }
+    if expect_symbol(input, "&&").is_ok() {
+        let lifetime = match peek_ident_like(*input) {
+            Some(ident) if ident.starts_with('\'') => Some(ident_like(input)?),
+            _ => None,
+        };
+        let mutability = expect_keyword(input, Keyword::Mut).is_ok();
+        let inner = parse_type_expr(input)?;
+        let inner = Ty::Reference(
+            TypeReference {
+                ty: Box::new(inner),
+                mutability: mutability.then_some(true),
+                lifetime,
+            }
+            .into(),
+        );
+        return Ok(Ty::Reference(
+            TypeReference {
+                ty: Box::new(inner),
+                mutability: None,
+                lifetime: None,
+            }
+            .into(),
+        ));
     }
     if expect_symbol(input, "&").is_ok() {
         let lifetime = match peek_ident_like(*input) {
@@ -327,6 +364,10 @@ pub(crate) fn parse_optional_type_args(input: &mut &[Token]) -> ModalResult<Vec<
             if expect_symbol(&mut comma_probe, ",").is_err() {
                 break;
             }
+            if peek_symbol(comma_probe) == Some(">") {
+                probe = comma_probe;
+                break;
+            }
             probe = comma_probe;
         }
     }
@@ -446,12 +487,23 @@ pub(crate) fn parse_optional_generic_params(
     let mut params = Vec::new();
     if peek_symbol(probe) != Some(">") {
         loop {
+            let is_const = expect_keyword(&mut probe, Keyword::Const).is_ok();
             let name = ident_like(&mut probe)?;
-            let bounds = if expect_symbol(&mut probe, ":").is_ok() {
+            let bounds = if expect_symbol(&mut probe, ":").is_ok() && !is_const {
                 parse_type_bounds(&mut probe)?
+            } else if is_const {
+                let _ = parse_type_expr(&mut probe)?;
+                fp_core::ast::TypeBounds::any()
             } else {
                 fp_core::ast::TypeBounds::any()
             };
+            if expect_symbol(&mut probe, "=").is_ok() {
+                if is_const {
+                    let _ = parse_expr_winnow_no_struct(&mut probe, 0)?;
+                } else {
+                    let _ = parse_type_expr(&mut probe)?;
+                }
+            }
             params.push(fp_core::ast::GenericParam { name, bounds });
             if expect_symbol(&mut probe, ",").is_err() {
                 break;

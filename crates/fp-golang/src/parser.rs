@@ -211,6 +211,7 @@ fn parse_type_spec(node: TsNode, source: &str) -> Result<Item> {
                 attrs: Vec::new(),
                 visibility,
                 name: name.clone(),
+                generics_params: Vec::new(),
                 value: ty,
             };
             Ok(Item::new(ItemKind::DefType(def)))

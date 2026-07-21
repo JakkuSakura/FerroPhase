@@ -116,6 +116,27 @@ fn parse_type_alias_strips_prefix_from_parameter_path_segments() {
 }
 
 #[test]
+fn parse_type_args_accept_trailing_comma_before_close_angle() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            "type Alias = std::collections::HashMap<String, Option<CallingConvention>,>;",
+        )
+        .unwrap();
+    let ItemKind::DefType(def) = items[0].kind() else {
+        panic!("expected type alias");
+    };
+    let Ty::Expr(expr) = &def.value else {
+        panic!("expected parameterized locator, got {:?}", def.value);
+    };
+    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        panic!("expected parameterized locator expr, got {:?}", expr);
+    };
+    assert_eq!(path.segments.last().unwrap().args.len(), 2);
+}
+
+#[test]
 fn parse_byte_string_literal_as_string_value() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
@@ -267,6 +288,247 @@ fn parse_items_ast_handles_pub_struct_fields() {
         panic!("expected struct item");
     };
     assert_eq!(def.value.fields.len(), 2);
+}
+
+#[test]
+fn parse_items_ast_handles_async_move_block_statement() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            fn run() {
+                let value = async move {
+                    task().await?;
+                    result()
+                };
+                value
+            }
+            "#,
+        )
+        .unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_outer_attrs_on_block_statement() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            fn run() {
+                #[cfg(feature = "x")]
+                {
+                    do_work();
+                }
+            }
+            "#,
+        )
+        .unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_emit_method_body_snippet() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            pub fn emit(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+                let _ = source_file;
+
+                if let Some(parent) = self.config.output_path.parent() {
+                    std::fs::create_dir_all(parent).map_err(fp_core::error::Error::from)?;
+                }
+
+                self.emit_impl(&lir_program)
+            }
+            "#,
+        )
+        .unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_items_ast_handles_emit_impl_tuple_let_snippet() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            fn emit_impl(&self, lir_program: &LirProgram) -> Result<PathBuf> {
+                let out = self.config.output_path.clone();
+                resolve_native_target(
+                    self.config.native_target,
+                    self.config.target_triple.as_deref(),
+                )?;
+
+                let (format, arch) = detect_target(self.config.target_triple.as_deref())?;
+
+                let plan = emit::emit_plan(lir_program, format, arch)?;
+                if let Some(path) = self.config.asm_dump.as_ref() {
+                    emit::dump_asm(path, &plan)?;
+                }
+
+                Ok(out)
+            }
+            "#,
+        )
+        .unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn parse_expr_ast_handles_tuple_let_with_try_in_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            r#"
+            {
+                resolve_native_target(
+                    self.config.native_target,
+                    self.config.target_triple.as_deref(),
+                )?;
+
+                let (format, arch) = detect_target(self.config.target_triple.as_deref())?;
+
+                let plan = emit::emit_plan(lir_program, format, arch)?;
+                if let Some(path) = self.config.asm_dump.as_ref() {
+                    emit::dump_asm(path, &plan)?;
+                }
+
+                Ok(out)
+            }
+            "#,
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_tuple_let_pattern() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("{ let (format, arch) = detect_target(); format }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_field_call_let_initializer() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("{ let out = self.config.output_path.clone(); out }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_try_statement_in_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            r#"
+            {
+                resolve_native_target(
+                    self.config.native_target,
+                    self.config.target_triple.as_deref(),
+                )?;
+                Ok(out)
+            }
+            "#,
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_try_then_tuple_let_in_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            r#"
+            {
+                resolve_native_target(
+                    self.config.native_target,
+                    self.config.target_triple.as_deref(),
+                )?;
+
+                let (format, arch) = detect_target(self.config.target_triple.as_deref())?;
+                format
+            }
+            "#,
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_native_emitter_impl_snippet() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            impl NativeEmitter {
+                pub fn new(config: NativeConfig) -> Self {
+                    Self { config }
+                }
+
+                /// Emit LIR into an object or executable.
+                pub fn emit(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+                    let _ = source_file;
+
+                    // Ensure output directory exists.
+                    if let Some(parent) = self.config.output_path.parent() {
+                        std::fs::create_dir_all(parent).map_err(fp_core::error::Error::from)?;
+                    }
+
+                    self.emit_impl(&lir_program)
+                }
+
+                /// Back-compat for older callers.
+                pub fn compile(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+                    self.emit(lir_program, source_file)
+                }
+
+                fn emit_impl(&self, lir_program: &LirProgram) -> Result<PathBuf> {
+                    let out = self.config.output_path.clone();
+                    resolve_native_target(
+                        self.config.native_target,
+                        self.config.target_triple.as_deref(),
+                    )?;
+
+                    let (format, arch) = detect_target(self.config.target_triple.as_deref())?;
+
+                    let plan = emit::emit_plan(lir_program, format, arch)?;
+                    if let Some(path) = self.config.asm_dump.as_ref() {
+                        emit::dump_asm(path, &plan)?;
+                    }
+
+                    match self.config.emit {
+                        EmitKind::Object => emit::write_object(&out, &plan)?,
+                        EmitKind::Executable => emit::write_executable(&out, &plan)?,
+                        EmitKind::AssemblyText => {
+                            return Err(fp_core::error::Error::from(
+                                "fp-native does not support textual assembly emission",
+                            ));
+                        }
+                    }
+                    Ok(out)
+                }
+            }
+            "#,
+        )
+        .unwrap();
+    assert!(!items.is_empty());
 }
 
 #[test]
@@ -669,6 +931,16 @@ fn parse_expr_ast_supports_destructured_closure_params() {
 }
 
 #[test]
+fn parse_expr_ast_supports_while_let_slice_bind_rest_pattern() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("while let [first, second, tail @ ..] = rest { first }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Loop(_)));
+}
+
+#[test]
 fn parse_expr_ast_supports_match_or_patterns() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
@@ -871,6 +1143,38 @@ fn parse_expr_ast_handles_call_with_typed_closure_arg() {
         .parse_expr_ast("foo(|s: &str| s.len() >= 7 && s.len() <= 40)")
         .unwrap();
     assert!(matches!(expr.kind(), ExprKind::Invoke(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_method_chain_in_closure_body() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("self.inner.get(key).map(|entry| entry.value().clone())")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Invoke(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_self_new_internal_with_turbofish_arg() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("Some(Self::new_internal(true, Vec::<String>::new()))")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Invoke(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_return_if_expression() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            "{ return if self.absolute { Some(Self::new_internal(true, Vec::<String>::new())) } else { None }; }",
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Block(_)));
 }
 
 #[test]
@@ -1567,11 +1871,35 @@ fn parse_expr_ast_handles_match_with_path_tuple_patterns() {
 }
 
 #[test]
+fn parse_expr_ast_handles_match_guard_with_ref_tuple_pattern() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("match iter.peek() { Some(&(idx, ch)) if ch.is_ascii_digit() => idx, _ => 0 }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Match(_)));
+}
+
+#[test]
 fn parse_expr_ast_handles_wildcard_let_stmt_in_block() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("{ let _ = self; _ }");
     assert!(expr.is_ok(), "{:?}", expr.err());
+}
+
+#[test]
+fn parse_expr_ast_handles_uninitialized_let_stmt_in_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("{ let mut end; end }").unwrap();
+    let ExprKind::Block(block) = expr.kind() else {
+        panic!("expected block expr");
+    };
+    let Some(BlockStmt::Let(stmt)) = block.stmts.first() else {
+        panic!("expected let stmt");
+    };
+    assert!(stmt.init.is_none());
 }
 
 #[test]
@@ -1696,6 +2024,54 @@ fn parse_items_ast_handles_trait_item() {
     parser.clear_diagnostics();
     let items = parser.parse_items_ast("trait T { fn f(); }").unwrap();
     assert!(matches!(items[0].kind(), ItemKind::DefTrait(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_trait_generics() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser.parse_items_ast("pub trait TryConv<T> { fn try_conv(self) -> T; }").unwrap();
+    let ItemKind::DefTrait(trait_item) = items[0].kind() else {
+        panic!("expected trait item");
+    };
+    assert_eq!(trait_item.generics_params.len(), 1);
+    assert_eq!(trait_item.generics_params[0].name.as_str(), "T");
+}
+
+#[test]
+fn parse_items_ast_handles_trait_receiver_and_self_assoc_type() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            "trait PipelineStage: Send + Sync { type SrcCtx; type DstCtx; fn name(&self) -> &'static str; fn run(&self, context: Self::SrcCtx, diagnostics: &mut PipelineDiagnostics) -> Result<Self::DstCtx, PipelineError>; }",
+        )
+        .unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::DefTrait(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_return_if_with_self_and_turbofish() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            "impl VirtualPath { fn parent(&self) -> Option<Self> { if self.segments.is_empty() { return if self.absolute { Some(Self::new_internal(true, Vec::<String>::new())) } else { None }; } Some(self) } }",
+        )
+        .unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::Impl(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_for_loop_with_let_else_body() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            "fn raise_implicit_call_arguments(function: &mut AsmFunction, abi: Abi) { let arg_regs = abi_int_arg_registers(abi); for block in &mut function.basic_blocks { for inst in &mut block.instructions { let AsmInstructionKind::Call { args, .. } = &mut inst.kind else { continue; }; if !args.is_empty() { continue; } *args = arg_regs.iter().map(|name| AsmValue::PhysicalRegister(abi_register(name))).collect(); } } }",
+        )
+        .unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::DefFunction(_)));
 }
 
 #[test]

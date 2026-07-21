@@ -296,6 +296,43 @@ fn looks_like_extern_block(input: &[Token]) -> bool {
     )
 }
 
+fn looks_like_unsafe_extern_block(input: &[Token]) -> bool {
+    matches!(
+        input,
+        [first, second, third, fourth, ..]
+            if first.kind == TokenKind::Keyword(Keyword::Unsafe)
+                && second.kind == TokenKind::Keyword(Keyword::Extern)
+                && third.kind == TokenKind::StringLiteral
+                && fourth.kind == TokenKind::Symbol
+                && fourth.lexeme == "{"
+    )
+}
+
+fn starts_unsafe_extern_block(input: &[Token]) -> bool {
+    match input {
+        [first, second, third, fourth, ..]
+            if first.kind == TokenKind::Keyword(Keyword::Unsafe)
+                && second.kind == TokenKind::Keyword(Keyword::Extern)
+                && third.kind == TokenKind::StringLiteral
+                && fourth.kind == TokenKind::Symbol
+                && fourth.lexeme == "{"
+        => true,
+        [first, ..] if first.kind == TokenKind::Symbol && first.lexeme == "#" => {
+            let mut probe = input;
+            while matches!(probe.first(), Some(token) if token.kind == TokenKind::Symbol && token.lexeme == "#")
+            {
+                let mut attr_probe = probe;
+                if crate::ast::items::parse_outer_attrs(&mut attr_probe, 0).is_err() {
+                    return false;
+                }
+                probe = attr_probe;
+            }
+            looks_like_unsafe_extern_block(probe)
+        }
+        _ => false,
+    }
+}
+
 fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
     let saw_root = opt(|input: &mut &[Token]| expect_symbol(input, "::"))
         .parse_next(input)?
@@ -415,11 +452,9 @@ fn type_to_expr(ty: &Ty) -> Expr {
 
 fn peek_ident_like(input: &[Token]) -> Option<&str> {
     match input.first() {
-        Some(Token {
-            kind: TokenKind::Ident | TokenKind::Keyword(_),
-            lexeme,
-            ..
-        }) => Some(lexeme.as_str()),
+        Some(token) if matches!(token.kind, TokenKind::Ident | TokenKind::Keyword(_)) => {
+            Some(token.lexeme.as_str())
+        }
         _ => None,
     }
 }

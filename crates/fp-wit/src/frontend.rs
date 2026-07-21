@@ -151,6 +151,7 @@ fn lower_type(ty: &WitType) -> Item {
             attrs: Vec::new(),
             visibility: Visibility::Public,
             name: ty.name.clone(),
+            generics_params: Vec::new(),
             value: other.clone(),
         }),
     }
