@@ -557,9 +557,7 @@ fn parse_expr_ast_handles_let_else_stmt_in_block() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser
-        .parse_expr_ast(
-            "{ let Ok(mut stream) = connect().await else { return false; }; stream }",
-        )
+        .parse_expr_ast("{ let Ok(mut stream) = connect().await else { return false; }; stream }")
         .unwrap();
     let ExprKind::Block(block) = expr.kind() else {
         panic!("expected block expr");
@@ -657,9 +655,7 @@ fn parse_items_ast_handles_impl_trait_return_type() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let items = parser
-        .parse_items_ast(
-            "fn f() -> impl std::future::Future<Output = Result<T, E>> + Send { x }",
-        )
+        .parse_items_ast("fn f() -> impl std::future::Future<Output = Result<T, E>> + Send { x }")
         .unwrap();
     assert!(!items.is_empty());
 }
@@ -748,13 +744,7 @@ fn parse_items_ast_supports_reference_lifetimes() {
     let Ty::Reference(reference) = &def.value.fields[0].value else {
         panic!("expected reference type");
     };
-    assert_eq!(
-        reference
-            .lifetime
-            .as_ref()
-            .map(Ident::as_str),
-        Some("'a")
-    );
+    assert_eq!(reference.lifetime.as_ref().map(Ident::as_str), Some("'a"));
 }
 
 #[test]
@@ -771,10 +761,7 @@ fn parse_items_ast_supports_static_reference_return_type() {
         panic!("expected reference return type");
     };
     assert_eq!(
-        reference
-            .lifetime
-            .as_ref()
-            .map(Ident::as_str),
+        reference.lifetime.as_ref().map(Ident::as_str),
         Some("'static")
     );
 }
@@ -927,7 +914,10 @@ fn parse_expr_ast_supports_destructured_closure_params() {
         panic!("expected closure expr");
     };
     assert_eq!(closure.params.len(), 1);
-    assert_eq!(closure.params[0].as_ident().map(Ident::as_str), Some("body"));
+    assert_eq!(
+        closure.params[0].as_ident().map(Ident::as_str),
+        Some("body")
+    );
 }
 
 #[test]
@@ -993,6 +983,38 @@ fn parse_expr_ast_handles_if_with_comparison_and_block_branches() {
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("if a > b { a } else { b }").unwrap();
     assert!(matches!(expr.kind(), ExprKind::If(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_if_condition_with_casts_and_or_chain() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            "if start < 0 || end < 0 || end as usize >= STACK_SIZE || start as usize >= STACK_SIZE { return Err(err); }",
+        )
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::If(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_for_iter_before_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("for stmt in statements { out.push(stmt); }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::For(_)));
+}
+
+#[test]
+fn parse_expr_ast_handles_while_condition_before_block() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("while cursor < end { cursor += 1; }")
+        .unwrap();
+    assert!(matches!(expr.kind(), ExprKind::While(_)));
 }
 
 #[test]
@@ -1618,6 +1640,122 @@ fn parse_expr_ast_handles_bench_report_struct_literal_shorthand() {
 }
 
 #[test]
+fn parse_items_ast_handles_tail_struct_literal() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            fn read_insn(bytes: &[u8]) -> RawInsn {
+                RawInsn {
+                    code: bytes[0],
+                    dst: bytes[1] & 0x0f,
+                    src: (bytes[1] >> 4) & 0x0f,
+                    off: i16::from_le_bytes([bytes[2], bytes[3]]),
+                    imm: i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+                }
+            }
+            "#,
+        )
+        .unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::DefFunction(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_tail_struct_literal_after_impl() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            impl Runtime {
+                fn run(&mut self) {
+                    loop {
+                        match instruction {
+                            DecodedInstruction::Exit => break,
+                        }
+                    }
+                }
+            }
+
+            fn read_insn(bytes: &[u8]) -> RawInsn {
+                RawInsn {
+                    code: bytes[0],
+                    dst: bytes[1] & 0x0f,
+                    src: (bytes[1] >> 4) & 0x0f,
+                    off: i16::from_le_bytes([bytes[2], bytes[3]]),
+                    imm: i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+                }
+            }
+            "#,
+        )
+        .unwrap();
+    assert_eq!(items.len(), 2);
+}
+
+#[test]
+fn parse_items_ast_handles_nested_fn_with_tuple_variant_match() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            fn outer() {
+                fn rewrite_terminator(terminator: &mut AsmTerminator) {
+                    match terminator {
+                        AsmTerminator::Return(value) => {
+                            rewrite_value(value);
+                        }
+                        AsmTerminator::CondBr { condition, .. } => rewrite_value(condition),
+                        AsmTerminator::Resume(value)
+                        | AsmTerminator::CleanupRet {
+                            cleanup_pad: value, ..
+                        }
+                        | AsmTerminator::CatchRet {
+                            catch_pad: value, ..
+                        } => rewrite_value(value),
+                        AsmTerminator::Br(..) | AsmTerminator::Unreachable => {}
+                    }
+                }
+                fn mapped_x86_write_operand(operands: &[AsmOperand]) {
+                    operands.iter().find_map(|operand| match operand {
+                        AsmOperand::Register {
+                            access: OperandAccess::Write | OperandAccess::ReadWrite,
+                            ..
+                        } => Some(operand),
+                        _ => None,
+                    });
+                }
+            }
+            "#,
+        )
+        .unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::DefFunction(_)));
+}
+
+#[test]
+fn parse_items_ast_handles_tuple_variant_negative_literal_pattern() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            fn std_handle(handle_code: Option<i64>) -> Result<Option<u64>> {
+                let fd = match handle_code {
+                    Some(-10) => 0u64,
+                    Some(-11) => 1u64,
+                    Some(-12) => 2u64,
+                    _ => return Ok(None),
+                };
+                Ok(Some(fd))
+            }
+            "#,
+        )
+        .unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::DefFunction(_)));
+}
+
+#[test]
 fn parse_expr_ast_handles_multiline_println_call() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
@@ -1875,7 +2013,9 @@ fn parse_expr_ast_handles_match_guard_with_ref_tuple_pattern() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser
-        .parse_expr_ast("match iter.peek() { Some(&(idx, ch)) if ch.is_ascii_digit() => idx, _ => 0 }")
+        .parse_expr_ast(
+            "match iter.peek() { Some(&(idx, ch)) if ch.is_ascii_digit() => idx, _ => 0 }",
+        )
         .unwrap();
     assert!(matches!(expr.kind(), ExprKind::Match(_)));
 }
@@ -2030,7 +2170,9 @@ fn parse_items_ast_handles_trait_item() {
 fn parse_items_ast_handles_trait_generics() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
-    let items = parser.parse_items_ast("pub trait TryConv<T> { fn try_conv(self) -> T; }").unwrap();
+    let items = parser
+        .parse_items_ast("pub trait TryConv<T> { fn try_conv(self) -> T; }")
+        .unwrap();
     let ItemKind::DefTrait(trait_item) = items[0].kind() else {
         panic!("expected trait item");
     };

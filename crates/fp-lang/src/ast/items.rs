@@ -19,16 +19,7 @@ pub(crate) fn parse_items_tokens(
             items.extend(parsed);
             continue;
         }
-        let item = parse_item_winnow(&mut input, file).map_err(|err| {
-            let mapped = map_err(err, input);
-            #[cfg(test)]
-            eprintln!(
-                "parse_items_tokens stopped at token {:?}",
-                input.first()
-                    .map(|token| (&token.kind, token.lexeme.as_str(), token.span.start, token.span.end))
-            );
-            mapped
-        })?;
+        let item = parse_item_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
         items.push(item);
     }
     Ok(items)
@@ -54,16 +45,7 @@ pub(crate) fn parse_file_tokens(
             items.extend(parsed);
             continue;
         }
-        let item = parse_item_winnow(&mut input, file).map_err(|err| {
-            let mapped = map_err(err, input);
-            #[cfg(test)]
-            eprintln!(
-                "parse_file_tokens stopped at token {:?}",
-                input.first()
-                    .map(|token| (&token.kind, token.lexeme.as_str(), token.span.start, token.span.end))
-            );
-            mapped
-        })?;
+        let item = parse_item_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
         items.push(item);
     }
     Ok((attrs, items))
@@ -317,13 +299,6 @@ fn parse_fn_item_core(
     }
     expect_keyword(input, Keyword::Fn)?;
     let name = ident_like(input)?;
-    #[cfg(test)]
-    eprintln!(
-        "parse_fn_item_core entering {:?} at {:?}",
-        name.name,
-        input.first()
-            .map(|token| (&token.kind, token.lexeme.as_str(), token.span.start, token.span.end))
-    );
     let generics_params = parse_optional_generic_params(input)?;
     expect_symbol(input, "(")?;
     let (receiver, params) = parse_fn_params_with_receiver(input)?;
@@ -336,43 +311,7 @@ fn parse_fn_item_core(
     if expect_keyword(input, Keyword::Where).is_ok() {
         skip_where_clause(input)?;
     }
-    #[cfg(test)]
-    eprintln!(
-        "parse_fn_item_core body start {:?} at {:?}",
-        name.name,
-        input.first()
-            .map(|token| (&token.kind, token.lexeme.as_str(), token.span.start, token.span.end))
-    );
-    let body = match parse_block_expr(input, file) {
-        Ok(body) => {
-            #[cfg(test)]
-            eprintln!(
-                "parse_fn_item_core body done {:?} next {:?}",
-                name.name,
-                input.first().map(|token| (
-                    &token.kind,
-                    token.lexeme.as_str(),
-                    token.span.start,
-                    token.span.end
-                ))
-            );
-            body
-        }
-        Err(err) => {
-            #[cfg(test)]
-            eprintln!(
-                "parse_fn_item_core body failed {:?} at {:?}",
-                name.name,
-                input.first().map(|token| (
-                    &token.kind,
-                    token.lexeme.as_str(),
-                    token.span.start,
-                    token.span.end
-                ))
-            );
-            return Err(err);
-        }
-    };
+    let body = parse_block_expr(input, file)?;
     let body = if is_async {
         ExprKind::Async(fp_core::ast::ExprAsync {
             span: body.span(),
@@ -568,12 +507,6 @@ fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) ->
     expect_symbol(input, "{")?;
     let mut items = Vec::new();
     while peek_symbol(input) != Some("}") {
-        #[cfg(test)]
-        eprintln!(
-            "parse_impl_item member starts at {:?}",
-            input.first()
-                .map(|token| (&token.kind, token.lexeme.as_str(), token.span.start, token.span.end))
-        );
         let member_attrs = parse_outer_attrs(input, file)?;
         let visibility = parse_visibility(input)?;
         let member = if peek_keyword(*input, Keyword::Type) {

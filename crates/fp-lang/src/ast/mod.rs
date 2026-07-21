@@ -315,8 +315,10 @@ fn starts_unsafe_extern_block(input: &[Token]) -> bool {
                 && second.kind == TokenKind::Keyword(Keyword::Extern)
                 && third.kind == TokenKind::StringLiteral
                 && fourth.kind == TokenKind::Symbol
-                && fourth.lexeme == "{"
-        => true,
+                && fourth.lexeme == "{" =>
+        {
+            true
+        }
         [first, ..] if first.kind == TokenKind::Symbol && first.lexeme == "#" => {
             let mut probe = input;
             while matches!(probe.first(), Some(token) if token.kind == TokenKind::Symbol && token.lexeme == "#")
@@ -457,6 +459,41 @@ fn peek_ident_like(input: &[Token]) -> Option<&str> {
         }
         _ => None,
     }
+}
+
+fn peek_binary_op(input: &[Token]) -> Option<(&str, u8, BinOpKind)> {
+    if matches!(
+        input,
+        [first, second, ..]
+            if first.kind == TokenKind::Symbol
+                && first.lexeme == ">"
+                && second.kind == TokenKind::Symbol
+                && second.lexeme == ">"
+    ) {
+        let (prec, kind) = binary_op(">>")?;
+        return Some((">>", prec, kind));
+    }
+    let op = peek_symbol(input)?;
+    let (prec, kind) = binary_op(op)?;
+    Some((op, prec, kind))
+}
+
+fn consume_binary_op(input: &mut &[Token], op: &str) -> ModalResult<()> {
+    if op == ">>"
+        && matches!(
+            *input,
+            [first, second, ..]
+                if first.kind == TokenKind::Symbol
+                    && first.lexeme == ">"
+                    && second.kind == TokenKind::Symbol
+                    && second.lexeme == ">"
+        )
+    {
+        *input = &input[2..];
+        return Ok(());
+    }
+    expect_symbol(input, op)?;
+    Ok(())
 }
 
 fn binary_op(symbol: &str) -> Option<(u8, BinOpKind)> {
