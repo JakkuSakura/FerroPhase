@@ -14,6 +14,10 @@ common_struct! {
     }
 }
 
+common_struct! {
+    pub struct TypeError;
+}
+
 /// Comprehensive Quote inner type (ADT replacing flat kind + inner).
 /// For gradual migration: use in new code, convert via constructors.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -47,7 +51,9 @@ impl QuoteInner {
                     item: None,
                     inner: elem.to_legacy(),
                 });
-                Some(Box::new(Ty::Slice(TypeSlice { elem: Box::new(inner_ty) })))
+                Some(Box::new(Ty::Slice(TypeSlice {
+                    elem: Box::new(inner_ty),
+                })))
             }
             _ => None,
         }
@@ -61,7 +67,9 @@ impl QuoteInner {
             (QuoteFragmentKind::Type, _) => QuoteInner::Type,
         }
     }
-    pub fn is_slice(&self) -> bool { matches!(self, QuoteInner::Slice(_)) }
+    pub fn is_slice(&self) -> bool {
+        matches!(self, QuoteInner::Slice(_))
+    }
 }
 
 common_struct! {
@@ -126,6 +134,7 @@ common_enum! {
         GenericVar(TypeGenericVar),
         Unknown(TypeUnknown),
         Nothing(TypeNothing),
+        ErrorType(TypeError),
         Type(TypeType),
         Reference(TypeReference),
         Slice(TypeSlice),
@@ -154,6 +163,7 @@ impl Ty {
         Ty::GenericVar(TypeGenericVar { index })
     }
     pub const UNKNOWN: Ty = Ty::Unknown(TypeUnknown);
+    pub const ERROR: Ty = Ty::ErrorType(TypeError);
     pub fn is_any(&self) -> bool {
         matches!(self, Ty::Any(_))
     }

@@ -402,6 +402,7 @@ fn normalize_ty(ty: &mut Ty, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
         | Ty::GenericVar(_)
         | Ty::Unknown(_)
         | Ty::Nothing(_)
+        | Ty::ErrorType(_)
         | Ty::Type(_)
         | Ty::AnyBox(_)
         | Ty::InferVar(_) => {}

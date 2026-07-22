@@ -18,12 +18,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn ensure_numeric(&mut self, var: TypeVarId, context: &str) -> Result<()> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. } | TypeVarKind::Bound(_) => Ok(()),
-            TypeVarKind::Link(next) => self.ensure_numeric(next, context),
-            TypeVarKind::Error => {
+            TypeVarKind::Bound(Ty::ErrorType(_)) => {
                 self.emit_error(format!("expected numeric value for {}", context));
                 Err(typing_error("expected numeric type, found error"))
             }
+            TypeVarKind::Unbound { .. } | TypeVarKind::Bound(_) => Ok(()),
+            TypeVarKind::Link(next) => self.ensure_numeric(next, context),
         }
     }
 
@@ -37,10 +37,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.type_vars[root].kind = TypeVarKind::Bound(Ty::Primitive(TypePrimitive::Bool));
                 Ok(())
             }
+            TypeVarKind::Bound(Ty::ErrorType(_)) => Ok(()),
             TypeVarKind::Bound(ty) if primitive_ty(&ty) == Some(TypePrimitive::Bool) => Ok(()),
             TypeVarKind::Bound(ty) if is_any_ty(&ty) => Ok(()),
             TypeVarKind::Link(next) => self.ensure_bool(next, context),
-            TypeVarKind::Error => Ok(()),
             other => {
                 tracing::debug!("ensure_bool failure: context={} type={:?}", context, other);
                 self.emit_error(format!("expected boolean for {}", context));
@@ -66,7 +66,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(())
             }
             TypeVarKind::Link(next) => self.ensure_integer(next, context),
-            TypeVarKind::Error => {
+            TypeVarKind::Bound(Ty::ErrorType(_)) => {
                 self.type_vars[root].kind =
                     TypeVarKind::Bound(Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
                 Ok(())
@@ -134,7 +134,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(super::super::FunctionTypeInfo { params, ret })
             }
             TypeVarKind::Link(next) => self.ensure_function(next, arity),
-            TypeVarKind::Error => {
+            TypeVarKind::Bound(Ty::ErrorType(_)) => {
                 let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
                 let ret = self.error_type_var();
                 self.type_vars[root].kind = TypeVarKind::Bound(Ty::Function(TypeFunction {

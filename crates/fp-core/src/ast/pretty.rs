@@ -1010,6 +1010,7 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
         }
         ast::Ty::TypeBinaryOp(_) => "TypeBinaryOp".into(),
         ast::Ty::AnyBox(_) => "AnyBox".into(),
+        ast::Ty::ErrorType(_) => "Error".into(),
         ast::Ty::InferVar(v) => format!("?{}", v.id),
     }
 }

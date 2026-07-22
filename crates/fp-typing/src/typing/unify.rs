@@ -53,7 +53,6 @@ pub(crate) enum TypeVarKind {
     Unbound { level: usize },
     Link(TypeVarId),
     Bound(Ty),
-    Error,
 }
 
 #[derive(Clone, Debug)]
@@ -529,10 +528,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         .error_with_current_span("unresolved type variable during generalization"))
                 }
             }
-            TypeVarKind::Bound(ty) => self.lower_infer_vars_in_ty(ty, mapping, next),
-            TypeVarKind::Error => {
+            TypeVarKind::Bound(Ty::ErrorType(_)) => {
                 Err(self.error_with_current_span("error type variable during generalization"))
             }
+            TypeVarKind::Bound(ty) => self.lower_infer_vars_in_ty(ty, mapping, next),
             TypeVarKind::Link(next_var) => self.build_generalized_ty(next_var, mapping, next),
         }
     }
@@ -733,8 +732,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn bind_error(&mut self, var: TypeVarId) {
-        let root = self.find(var);
-        self.type_vars[root].kind = TypeVarKind::Error;
+        self.bind(var, Ty::ErrorType(TypeError));
     }
 
     pub(crate) fn find(&mut self, var: TypeVarId) -> TypeVarId {
@@ -807,10 +805,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.merge_trait_bounds_into(b_root, a_root, false);
                 Ok(())
             }
+            (TypeVarKind::Bound(Ty::ErrorType(_)), _)
+            | (_, TypeVarKind::Bound(Ty::ErrorType(_))) => Ok(()),
             (TypeVarKind::Bound(ty_a), TypeVarKind::Bound(ty_b)) => {
                 self.unify_concrete_tys(ty_a, ty_b)
             }
-            (TypeVarKind::Error, _) | (_, TypeVarKind::Error) => Ok(()),
             (TypeVarKind::Link(next), _) => self.unify(next, b_root),
             (_, TypeVarKind::Link(next)) => self.unify(a_root, next),
         }
@@ -1105,8 +1104,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeVarKind::Unbound { .. } => {
                 Err(self.error_with_current_span("unresolved type variable"))
             }
+            TypeVarKind::Bound(Ty::ErrorType(_)) => {
+                Err(self.error_with_current_span("error type variable"))
+            }
             TypeVarKind::Bound(ty) => self.resolve_infer_vars_in_ty(ty),
-            TypeVarKind::Error => Err(self.error_with_current_span("error type variable")),
             TypeVarKind::Link(next) => self.resolve_to_ty(next),
         }
     }
@@ -1119,6 +1120,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::GenericVar(_) => return Ok(var),
             Ty::Nothing(_) => self.bind(var, Ty::Nothing(TypeNothing)),
             Ty::Any(_) => self.bind(var, Ty::Any(TypeAny)),
+            Ty::ErrorType(_) => self.bind_error(var),
             Ty::InferVar(infer) => return Ok(infer.id),
             Ty::TypeBinaryOp(op) => {
                 let op = op.as_ref();
