@@ -7,6 +7,56 @@ use std::hash::Hash;
 
 pub type TypeId = u64;
 pub type BType = Box<Ty>;
+/// Comprehensive Quote inner type (ADT replacing flat kind + inner).
+/// For gradual migration: use in new code, convert via constructors.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum QuoteInner {
+    Item,
+    Expr,
+    Stmt,
+    Type,
+    ExprWith(Box<Ty>),
+    Slice(Box<QuoteInner>),
+}
+
+impl QuoteInner {
+    pub fn kind(&self) -> QuoteFragmentKind {
+        match self {
+            QuoteInner::Item | QuoteInner::Slice(_) => QuoteFragmentKind::Item,
+            QuoteInner::Expr | QuoteInner::ExprWith(_) => QuoteFragmentKind::Expr,
+            QuoteInner::Stmt => QuoteFragmentKind::Stmt,
+            QuoteInner::Type => QuoteFragmentKind::Type,
+        }
+    }
+    /// Convert to an `Option<Box<Ty>>` for backward-compat with old `inner` field.
+    pub fn to_legacy(&self) -> Option<Box<Ty>> {
+        match self {
+            QuoteInner::ExprWith(ty) => Some(ty.clone()),
+            QuoteInner::Slice(elem) => {
+                // Nest: Slice(Item) → Ty::Slice(Ty::Quote(TypeQuote{kind: Item, ...}))
+                let inner_ty = Ty::Quote(TypeQuote {
+                    span: Span::null(),
+                    kind: elem.kind(),
+                    item: None,
+                    inner: elem.to_legacy(),
+                });
+                Some(Box::new(Ty::Slice(TypeSlice { elem: Box::new(inner_ty) })))
+            }
+            _ => None,
+        }
+    }
+    pub fn from_legacy(kind: &QuoteFragmentKind, inner: &Option<Box<Ty>>) -> Self {
+        match (kind, inner) {
+            (_, Some(inner_ty)) => QuoteInner::ExprWith(inner_ty.clone()),
+            (QuoteFragmentKind::Item, _) => QuoteInner::Item,
+            (QuoteFragmentKind::Expr, _) => QuoteInner::Expr,
+            (QuoteFragmentKind::Stmt, _) => QuoteInner::Stmt,
+            (QuoteFragmentKind::Type, _) => QuoteInner::Type,
+        }
+    }
+    pub fn is_slice(&self) -> bool { matches!(self, QuoteInner::Slice(_)) }
+}
+
 common_struct! {
     /// Type of a quoted fragment token.
     /// - `kind` records the fragment kind (expr/stmt/item/type).
