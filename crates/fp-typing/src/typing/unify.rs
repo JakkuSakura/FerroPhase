@@ -601,6 +601,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 } else if self.literal_ints.remove(&b_root) {
                     self.type_vars[b_root].kind = TypeVarKind::Link(a_root);
                     Ok(())
+                } else if Self::same_width(&int_a, &int_b) {
+                    // Same width, different signedness (e.g., I64 ↔ U64): allow.
+                    self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
+                    Ok(())
                 } else {
                     Err(self.error_with_current_span(format!(
                         "primitive type mismatch: {} vs {}",
@@ -615,6 +619,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             (_, TypeVarKind::Link(next)) => self.unify(a_root, next),
         }
     }
+
+    fn same_width(a: &fp_core::ast::TypeInt, b: &fp_core::ast::TypeInt) -> bool {
+        use fp_core::ast::TypeInt::*;
+        matches!(
+            (a, b),
+            (I64, U64)
+                | (U64, I64)
+                | (I32, U32)
+                | (U32, I32)
+                | (I16, U16)
+                | (U16, I16)
+                | (I8, U8)
+                | (U8, I8)
+                | (I128, U128)
+                | (U128, I128)
+        )
+    }
+
 
     fn merge_trait_bounds_into(
         &mut self,
