@@ -5,6 +5,7 @@
 
 pub mod cli;
 pub mod codegen;
+pub mod compile_options;
 pub mod compiler;
 pub mod commands;
 pub mod compilation;

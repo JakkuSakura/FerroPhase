@@ -10,7 +10,7 @@ use fp_core::{
     ast::register_threadlocal_serializer,
     ast::{Node, Value},
     diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager},
-    frontend::{FrontendParseMode, FrontendResult, LanguageFrontend},
+    frontend::{FrontendParseMode, FrontendResult, FrontendSnapshot, LanguageFrontend},
     lang::{collect_lang_items, register_threadlocal_lang_items},
 };
 use fp_interpret::const_eval::ConstEvaluationOrchestrator;
@@ -198,6 +198,28 @@ pub struct CraneliftCompileOptions {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LossyCompileOptions {
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct FrontendBundle {
+    pub source_language: String,
+    pub ast: Node,
+    pub frontend_snapshot: Option<FrontendSnapshot>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MirBundle {
+    pub frontend: FrontendBundle,
+    pub hir_program: fp_core::hir::Program,
+    pub mir_program: fp_core::mir::Program,
+}
+
+#[derive(Debug, Clone)]
+pub struct LirBundle {
+    pub frontend: FrontendBundle,
+    pub hir_program: fp_core::hir::Program,
+    pub mir_program: fp_core::mir::Program,
+    pub lir_program: fp_core::lir::LirProgram,
 }
 
 pub fn compile_native_file(
@@ -833,6 +855,30 @@ pub fn parse_ast_target_file(path: &Path, source_language: Option<&str>) -> Resu
     parse_file(path, source_language, LossyCompileOptions::default())
 }
 
+pub fn compile_file_to_lir_bundle(
+    path: &Path,
+    source_language: Option<&str>,
+    lossy: LossyCompileOptions,
+) -> Result<LirBundle> {
+    let parsed = parse_file_with_context(path, source_language, FrontendParseMode::Strict, lossy)?;
+    let frontend = FrontendBundle {
+        source_language: parsed.source_language.clone(),
+        ast: parsed.ast.clone(),
+        frontend_snapshot: parsed.frontend_snapshot.clone(),
+    };
+    let identity = CompilerIdentity::for_file(path);
+    let path_key = identity.path.to_key();
+    let mut driver = lower_ast(parsed.ast, &identity, path, Vec::new(), None, lossy)?;
+    drain_driver(&mut driver, lossy)?;
+    let lowered = LoweredProgram { driver, path_key };
+    Ok(LirBundle {
+        frontend,
+        hir_program: lowered.hir()?,
+        mir_program: lowered.mir()?,
+        lir_program: lowered.lir()?,
+    })
+}
+
 pub fn parse_file_with_mode(
     path: &Path,
     source_language: Option<&str>,
@@ -895,6 +941,7 @@ fn parse_file_with_context(
     let source = std::fs::read_to_string(path).map_err(CliError::Io)?;
     let FrontendResult {
         ast,
+        snapshot,
         serializer,
         intrinsic_normalizer,
         macro_parser,
@@ -906,6 +953,8 @@ fn parse_file_with_context(
     emit_frontend_diagnostics(&diagnostics.get_diagnostics(), lossy)?;
     Ok(ParsedAst {
         ast,
+        source_language: frontend.language().to_string(),
+        frontend_snapshot: snapshot,
         serializer,
         intrinsic_normalizer,
         macro_parser,
@@ -1019,12 +1068,22 @@ struct LoweredProgram {
 
 struct ParsedAst {
     ast: Node,
+    source_language: String,
+    frontend_snapshot: Option<FrontendSnapshot>,
     serializer: Arc<dyn fp_core::ast::AstSerializer>,
     intrinsic_normalizer: Option<Arc<dyn fp_core::intrinsics::IntrinsicNormalizer>>,
     macro_parser: Option<Arc<dyn fp_core::ast::MacroExpansionParser>>,
 }
 
 impl LoweredProgram {
+    fn hir(&self) -> Result<fp_core::hir::Program> {
+        self.driver
+            .state
+            .hir(&fp_compiler::HirId::new(format!("hir:{}", self.path_key)))
+            .map(|program| program.clone())
+            .map_err(|err| CliError::Compilation(err.to_string()))
+    }
+
     fn mir(&self) -> Result<fp_core::mir::Program> {
         self.driver
             .state

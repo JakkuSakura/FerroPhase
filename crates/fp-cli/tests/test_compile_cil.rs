@@ -2,7 +2,7 @@ use std::fs;
 
 use fp_cli::cli::CliConfig;
 use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
-use fp_cli::pipeline::BackendKind;
+use fp_cli::compile_options::BackendKind;
 use tempfile::TempDir;
 
 #[tokio::test]

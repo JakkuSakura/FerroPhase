@@ -1,7 +1,7 @@
 use crate::cli::CliConfig;
 use crate::commands::compile::{CompileArgs, EmitterKind};
 use crate::error::{CliError, Result};
-use crate::pipeline::BackendKind;
+use crate::compile_options::BackendKind;
 use fp_core::container::ContainerReader as _;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

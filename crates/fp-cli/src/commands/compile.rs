@@ -6,7 +6,7 @@ use crate::compiler::{
     JvmCompileOptions, LlvmCompileOptions, NativeCompileOptions, NativeEmitterKind,
     WasmCompileOptions,
 };
-use crate::pipeline::BackendKind;
+use crate::compile_options::BackendKind;
 use crate::{
     CliError, Result,
     cli::CliConfig,

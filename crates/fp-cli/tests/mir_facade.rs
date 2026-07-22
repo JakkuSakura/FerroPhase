@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::thread;
 
+use fp_cli::compiler;
 use fp_cli::languages;
-use fp_cli::pipeline::{BackendKind, Pipeline, PipelineOptions};
 use fp_core::{hir, lir};
 
 fn examples_root() -> PathBuf {
@@ -171,11 +171,11 @@ fn assert_query_bundle(name: &'static str, expected_language: &'static str) {
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             let path = examples_root().join(name);
-            let mut pipeline = Pipeline::new();
-            let mut options = PipelineOptions::default();
-            options.target = BackendKind::Bytecode;
-            let bundle = pipeline
-                .compile_file_to_lir(path.as_path(), options)
+            let bundle = compiler::compile_file_to_lir_bundle(
+                path.as_path(),
+                None,
+                compiler::LossyCompileOptions::default(),
+            )
                 .expect("compile example to lir");
             assert_eq!(bundle.frontend.source_language, expected_language);
             assert!(
@@ -194,11 +194,11 @@ fn assert_host_query_bundle(name: &'static str) {
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             let path = examples_root().join(name);
-            let mut pipeline = Pipeline::new();
-            let mut options = PipelineOptions::default();
-            options.target = BackendKind::Bytecode;
-            let bundle = pipeline
-                .compile_file_to_lir(path.as_path(), options)
+            let bundle = compiler::compile_file_to_lir_bundle(
+                path.as_path(),
+                None,
+                compiler::LossyCompileOptions::default(),
+            )
                 .expect("compile host example to lir");
             assert_eq!(bundle.frontend.source_language, languages::FERROPHASE);
             assert!(
