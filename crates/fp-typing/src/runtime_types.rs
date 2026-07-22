@@ -187,6 +187,14 @@ pub fn builtin_type_bindings() -> HashMap<String, Ty> {
     bindings.insert("bool".to_string(), Ty::Primitive(TypePrimitive::Bool));
     bindings.insert("char".to_string(), Ty::Primitive(TypePrimitive::Char));
     bindings.insert("str".to_string(), Ty::Primitive(TypePrimitive::String));
+    bindings.insert(
+        "&str".to_string(),
+        Ty::Reference(TypeReference {
+            ty: Box::new(Ty::Primitive(TypePrimitive::String)),
+            mutability: None,
+            lifetime: None,
+        }),
+    );
     bindings.insert("String".to_string(), Ty::Primitive(TypePrimitive::String));
     bindings
 }
@@ -202,7 +210,11 @@ pub fn infer_value_ty(value: &Value) -> Option<Ty> {
         ))),
         Value::Bool(_) => Some(Ty::Primitive(TypePrimitive::Bool)),
         Value::Char(_) => Some(Ty::Primitive(TypePrimitive::Char)),
-        Value::String(_) => Some(Ty::Primitive(TypePrimitive::String)),
+        Value::String(_) => Some(Ty::Reference(TypeReference {
+            ty: Box::new(Ty::Primitive(TypePrimitive::String)),
+            mutability: None,
+            lifetime: None,
+        })),
         Value::List(_) => Some(Ty::Primitive(TypePrimitive::List)),
         Value::Struct(struct_value) => Some(Ty::Struct(struct_value.ty.clone())),
         Value::TokenStream(_) => Some(Ty::TokenStream(TypeTokenStream)),

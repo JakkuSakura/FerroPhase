@@ -542,19 +542,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     } else {
                         self.fresh_type_var()
                     };
-                    let slice_var = self.fresh_type_var();
-                    self.bind_slice_term(slice_var, elem_var);
-                    let slice_ty = self.resolve_to_ty(slice_var)?;
-                    expr.set_ty(slice_ty);
-                    slice_var
+                    let array_var = self.fresh_type_var();
+                    let len = Expr::value(Value::int(array.values.len() as i64)).into();
+                    self.bind_array_term(array_var, elem_var, Some(len));
+                    let array_ty = self.resolve_to_ty(array_var)?;
+                    expr.set_ty(array_ty);
+                    array_var
                 }
                 ExprKind::ArrayRepeat(array_repeat) => {
                     let elem_var = self.infer_expr(array_repeat.elem.as_mut())?;
-                    let slice_var = self.fresh_type_var();
-                    self.bind_slice_term(slice_var, elem_var);
-                    let slice_ty = self.resolve_to_ty(slice_var)?;
-                    expr.set_ty(slice_ty);
-                    slice_var
+                    let array_var = self.fresh_type_var();
+                    self.bind_array_term(array_var, elem_var, Some(array_repeat.len.clone()));
+                    let array_ty = self.resolve_to_ty(array_var)?;
+                    expr.set_ty(array_ty);
+                    array_var
                 }
                 ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 ExprKind::FormatString(_) => {
@@ -917,7 +918,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if let Ok(obj_ty) = self.resolve_to_ty(object_var) {
             match Self::peel_reference(obj_ty) {
                 Ty::Primitive(TypePrimitive::String) => {
-                    return self.type_from_ast_ty(&Ty::Primitive(TypePrimitive::String));
+                    return self.type_from_ast_ty(&Ty::Reference(TypeReference {
+                        ty: Box::new(Ty::Primitive(TypePrimitive::String)),
+                        mutability: None,
+                        lifetime: None,
+                    }));
                 }
                 Ty::Vec(vec) => {
                     if is_string_like(vec.ty.as_ref()) {
@@ -1762,8 +1767,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     return Ok(self.error_type_var());
                                 }
                                 let arg_var = self.infer_expr(&mut invoke.args[0])?;
-                                let string_var = self.fresh_type_var();
-                                self.bind(string_var, Ty::Primitive(TypePrimitive::String));
+                                let string_var = self.borrowed_string_var();
                                 self.unify(arg_var, string_var)?;
                                 let result_var = self.fresh_type_var();
                                 self.bind(result_var, Ty::Primitive(TypePrimitive::Bool));
@@ -1775,8 +1779,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     return Ok(self.error_type_var());
                                 }
                                 let arg_var = self.infer_expr(&mut invoke.args[0])?;
-                                let string_var = self.fresh_type_var();
-                                self.bind(string_var, Ty::Primitive(TypePrimitive::String));
+                                let string_var = self.borrowed_string_var();
                                 self.unify(arg_var, string_var)?;
                                 let result_var = self.fresh_type_var();
                                 self.bind(result_var, Ty::Primitive(TypePrimitive::Bool));
@@ -1815,9 +1818,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 let int_var = self.fresh_type_var();
                                 self.bind(int_var, Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
                                 self.unify(arg_var, int_var)?;
-                                let result_var = self.fresh_type_var();
-                                self.bind(result_var, Ty::Primitive(TypePrimitive::String));
-                                return Ok(result_var);
+                                return Ok(self.borrowed_string_var());
                             }
                             "field_type" => {
                                 if invoke.args.len() != 1 {
@@ -1825,8 +1826,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     return Ok(self.error_type_var());
                                 }
                                 let arg_var = self.infer_expr(&mut invoke.args[0])?;
-                                let string_var = self.fresh_type_var();
-                                self.bind(string_var, Ty::Primitive(TypePrimitive::String));
+                                let string_var = self.borrowed_string_var();
                                 self.unify(arg_var, string_var)?;
                                 let result_var = self.fresh_type_var();
                                 self.bind(result_var, Ty::Type(TypeType::new(Span::null())));
@@ -1844,9 +1844,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     self.emit_error("type_name expects no arguments");
                                     return Ok(self.error_type_var());
                                 }
-                                let result_var = self.fresh_type_var();
-                                self.bind(result_var, Ty::Primitive(TypePrimitive::String));
-                                return Ok(result_var);
+                                return Ok(self.borrowed_string_var());
                             }
                             _ => {}
                         }
@@ -3502,11 +3500,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 .name
                 .as_str()
             {
-                "name" => {
-                    let var = self.fresh_type_var();
-                    self.bind(var, Ty::Primitive(TypePrimitive::String));
-                    Ok(var)
-                }
+                "name" => Ok(self.borrowed_string_var()),
                 "value" | "fn" => {
                     if matches!(quote.item, Some(QuoteItemKind::Function) | None) {
                         let fn_ty = Ty::Function(TypeFunction {
@@ -3530,15 +3524,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             },
             Ty::Type(_) if field.name.as_str() == "fields" => self.type_fields_list_var(),
-            Ty::Type(_) if field.name.as_str() == "name" => {
-                let result_var = self.fresh_type_var();
-                self.bind(result_var, Ty::Primitive(TypePrimitive::String));
-                Ok(result_var)
-            }
+            Ty::Type(_) if field.name.as_str() == "name" => Ok(self.borrowed_string_var()),
             Ty::Type(_) if field.name.as_str() == "methods" => {
                 let result_var = self.fresh_type_var();
-                let elem_var = self.fresh_type_var();
-                self.bind(elem_var, Ty::Primitive(TypePrimitive::String));
+                let elem_var = self.borrowed_string_var();
                 self.bind_vec_term(result_var, elem_var);
                 Ok(result_var)
             }
@@ -3707,13 +3696,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn type_fields_list_var(&mut self) -> Result<TypeVarId> {
         let result_var = self.fresh_type_var();
-        let string_ref = Ty::Reference(TypeReference {
-            ty: Box::new(Ty::Primitive(TypePrimitive::String)),
-            mutability: None,
-            lifetime: None,
-        });
         let fields = vec![
-            StructuralField::new(Ident::new("name".to_string()), string_ref),
+            StructuralField::new(Ident::new("name".to_string()), Self::borrowed_string_ty()),
             StructuralField::new(
                 Ident::new("ty".to_string()),
                 Ty::Type(TypeType::new(Span::null())),
@@ -3724,6 +3708,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.bind(elem_var, Ty::Structural(struct_ty));
         self.bind_vec_term(result_var, elem_var);
         Ok(result_var)
+    }
+
+    fn borrowed_string_ty() -> Ty {
+        Ty::Reference(TypeReference {
+            ty: Box::new(Ty::Primitive(TypePrimitive::String)),
+            mutability: None,
+            lifetime: None,
+        })
+    }
+
+    fn borrowed_string_var(&mut self) -> TypeVarId {
+        let string_var = self.fresh_type_var();
+        self.bind(string_var, Ty::Primitive(TypePrimitive::String));
+        let ref_var = self.fresh_type_var();
+        self.bind_reference_term(ref_var, string_var);
+        ref_var
     }
 
     fn resolve_struct_literal_as_enum_variant(

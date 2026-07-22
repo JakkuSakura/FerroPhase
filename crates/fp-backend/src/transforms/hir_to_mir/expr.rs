@@ -5814,7 +5814,11 @@ impl MirLowering {
 
     fn const_len_from_constant(&self, constant: &mir::Constant) -> Option<u64> {
         match &constant.literal {
+            mir::ConstantKind::Str(value) => Some(value.len() as u64),
             mir::ConstantKind::Val(mir::ConstValue::List { elements, .. }, _) => {
+                Some(elements.len() as u64)
+            }
+            mir::ConstantKind::Val(mir::ConstValue::Array(elements), _) => {
                 Some(elements.len() as u64)
             }
             mir::ConstantKind::Val(mir::ConstValue::Map { entries, .. }, _) => {
@@ -5845,6 +5849,22 @@ impl MirLowering {
                 let value = elements.get(idx)?;
                 let constant = self.const_value_to_constant(span, value, elem_ty);
                 Some((constant, elem_ty.clone()))
+            }
+            mir::ConstantKind::Val(mir::ConstValue::Array(elements), ty) => {
+                let idx = match key {
+                    mir::ConstValue::Int(value) if value >= 0 => value as usize,
+                    mir::ConstValue::UInt(value) => value as usize,
+                    _ => {
+                        self.emit_error(span, "array index must be a non-negative integer");
+                        return None;
+                    }
+                };
+                let TyKind::Array(elem_ty, _) = &ty.kind else {
+                    return None;
+                };
+                let value = elements.get(idx)?;
+                let constant = self.const_value_to_constant(span, value, elem_ty);
+                Some((constant, (*elem_ty.clone()).clone()))
             }
             mir::ConstantKind::Val(
                 mir::ConstValue::Map {
@@ -5898,6 +5918,49 @@ impl MirLowering {
             span,
             user_ty: None,
             literal,
+        }
+    }
+
+    fn const_constant_from_expr(
+        &mut self,
+        program: &hir::Program,
+        expr: &hir::Expr,
+    ) -> Option<mir::Constant> {
+        match &expr.kind {
+            hir::ExprKind::Literal(lit) => Some(mir::Constant {
+                span: expr.span,
+                user_ty: None,
+                literal: self.lower_literal(lit),
+            }),
+            hir::ExprKind::Block(block) if block.stmts.is_empty() => {
+                self.const_constant_from_expr(program, block.expr.as_deref()?)
+            }
+            hir::ExprKind::Reference(reference) => {
+                self.const_constant_from_expr(program, &reference.expr)
+            }
+            hir::ExprKind::Unary(hir::UnOp::Deref, inner) => {
+                self.const_constant_from_expr(program, inner)
+            }
+            hir::ExprKind::Path(path) => {
+                let hir::Res::Def(def_id) = path.res.as_ref()? else {
+                    return None;
+                };
+                if let Some(const_info) = self.const_values.get(def_id) {
+                    return Some(const_info.value.clone());
+                }
+                let item = program.def_map.get(def_id)?;
+                let hir::ItemKind::Const(konst) = &item.kind else {
+                    return None;
+                };
+                let ty = self.lower_type_expr(&konst.ty);
+                self.lower_const_expr(program, &konst.body.value, Some(&ty), None)
+            }
+            hir::ExprKind::Index(base, index) => {
+                let constant = self.const_constant_from_expr(program, base)?;
+                self.const_index_value(program, expr.span, &constant, index)
+                    .map(|(constant, _)| constant)
+            }
+            _ => None,
         }
     }
 
@@ -17342,6 +17405,31 @@ impl<'a> BodyBuilder<'a> {
                 }
 
                 if method_name.as_str() == "len" && args.is_empty() {
+                    if let Some(constant) =
+                        self.lowering.const_constant_from_expr(self.program, receiver)
+                    {
+                        if let Some(len) = self.lowering.const_len_from_constant(&constant) {
+                            let len_ty = Ty {
+                                kind: TyKind::Uint(UintTy::Usize),
+                            };
+                            if (place.local as usize) < self.locals.len() {
+                                self.locals[place.local as usize].ty = len_ty.clone();
+                            }
+                            let statement = mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    place,
+                                    mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
+                                        span: expr.span,
+                                        user_ty: None,
+                                        literal: mir::ConstantKind::UInt(len),
+                                    })),
+                                ),
+                            };
+                            self.push_statement(statement);
+                            return Ok(());
+                        }
+                    }
                     if let Some(local_id) = self.local_id_from_expr(receiver) {
                         if let Some(kind) = self.container_locals.get(&local_id).cloned() {
                             let len_ty = Ty {

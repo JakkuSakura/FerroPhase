@@ -1033,8 +1033,37 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(())
             }
             (left, right) if left == right || quote_item_compatible(&left, &right) => Ok(()),
-            (left, right) => Err(self
-                .error_with_current_span(format!("concrete type mismatch: {} vs {}", left, right))),
+            (left, right) => Err(self.error_with_current_span(format!(
+                "concrete type mismatch: {} vs {}{}",
+                left,
+                right,
+                self.easy_fix_hint_for_mismatch(&left, &right)
+            ))),
+        }
+    }
+
+    fn easy_fix_hint_for_mismatch(&self, left: &Ty, right: &Ty) -> String {
+        match (left, right) {
+            (Ty::Reference(reference), other) if reference.ty.as_ref() == other => {
+                " (hint: references do not coerce implicitly here; add `&`/`&mut` on the value or remove the reference annotation)".to_string()
+            }
+            (other, Ty::Reference(reference)) if other == reference.ty.as_ref() => {
+                " (hint: references do not coerce implicitly here; add `&`/`&mut` on the value or remove the reference annotation)".to_string()
+            }
+            (Ty::Reference(reference), Ty::Primitive(TypePrimitive::String))
+                if matches!(reference.ty.as_ref(), Ty::Primitive(TypePrimitive::String)) =>
+            {
+                " (hint: use `str` consistently instead of mixing `str` and `&str`)".to_string()
+            }
+            (Ty::Primitive(TypePrimitive::String), Ty::Reference(reference))
+                if matches!(reference.ty.as_ref(), Ty::Primitive(TypePrimitive::String)) =>
+            {
+                " (hint: use `str` consistently instead of mixing `str` and `&str`)".to_string()
+            }
+            (Ty::Slice(_), Ty::Vec(_)) | (Ty::Vec(_), Ty::Slice(_)) => {
+                " (hint: Vec and Slice are distinct under the strict solver; declare the exact collection type you want)".to_string()
+            }
+            _ => String::new(),
         }
     }
 
@@ -1285,7 +1314,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     Value::Int(_) => Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
                     Value::Bool(_) => Ty::Primitive(TypePrimitive::Bool),
                     Value::Decimal(_) => Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64)),
-                    Value::String(_) => Ty::Primitive(TypePrimitive::String),
+                    Value::String(_) => Ty::Reference(TypeReference {
+                        ty: Box::new(Ty::Primitive(TypePrimitive::String)),
+                        mutability: None,
+                        lifetime: None,
+                    }),
                     Value::Char(_) => Ty::Primitive(TypePrimitive::Char),
                     Value::Unit(_) => Ty::Unit(TypeUnit),
                     Value::Null(_) | Value::None(_) => Ty::Nothing(TypeNothing),
@@ -1617,6 +1650,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             return Ok(existing);
                         }
                     }
+                    if name == "&str" {
+                        let inner = self.fresh_type_var();
+                        self.bind(inner, Ty::Primitive(TypePrimitive::String));
+                        self.bind_reference_term(var, inner);
+                        return Ok(var);
+                    }
                     if let Some(prim) = primitive_from_name(&name) {
                         self.bind(var, Ty::Primitive(prim));
                         return Ok(var);
@@ -1805,7 +1844,7 @@ fn primitive_from_name(name: &str) -> Option<TypePrimitive> {
         "usize" => Some(Int(TypeInt::U64)),
         "bool" => Some(TypePrimitive::Bool),
         "char" => Some(TypePrimitive::Char),
-        "str" | "&str" => Some(TypePrimitive::String),
+        "str" => Some(TypePrimitive::String),
         "f32" => Some(TypePrimitive::Decimal(DecimalType::F32)),
         "f64" => Some(TypePrimitive::Decimal(DecimalType::F64)),
         _ => None,

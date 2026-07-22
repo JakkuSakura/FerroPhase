@@ -760,8 +760,13 @@ fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     }
     let value =
         decode_string_literal(&token.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    let ty = Ty::Reference(TypeReference {
+        ty: Box::new(Ty::Primitive(TypePrimitive::String)),
+        mutability: None,
+        lifetime: None,
+    });
     Ok(Expr::value(Value::string(value))
-        .with_ty_slot(Some(Ty::Primitive(TypePrimitive::String)))
+        .with_ty_slot(Some(ty))
         .with_span(token_span_to_span(&token)))
 }
 

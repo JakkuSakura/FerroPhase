@@ -2,7 +2,7 @@ mod vm;
 
 use std::collections::HashMap;
 
-use fp_core::ast::Value;
+use fp_core::ast::{Value, ValueList, ValueString, ValueTuple};
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirInstruction, LirInstructionKind,
     LirProgram, LirTerminator, LirType, LirValue, RegisterId,
@@ -18,12 +18,14 @@ type LirResult<T> = Result<T, VmError>;
 
 pub struct LirInterpreter {
     state: ThreadState,
+    register_types: HashMap<RegisterId, LirType>,
 }
 
 impl LirInterpreter {
     pub fn new() -> Self {
         Self {
             state: ThreadState::new(),
+            register_types: HashMap::new(),
         }
     }
 
@@ -44,6 +46,7 @@ impl LirInterpreter {
         args: &[Value],
     ) -> LirResult<Value> {
         self.state.push_frame(func.name.as_str().to_string());
+        self.register_types.clear();
         for local in &func.locals {
             if !local.is_argument {
                 let (bits, _) = lir_type_info(&local.ty);
@@ -105,7 +108,7 @@ impl LirInterpreter {
 
     fn exec_instruction(&mut self, instr: &LirInstruction) -> LirResult<()> {
         let dst = instr.id;
-        match &instr.kind {
+        let result = match &instr.kind {
             LirInstructionKind::Add(a, b) => self.binop(dst, a, b, |x, y| x.wrapping_add(y)),
             LirInstructionKind::Sub(a, b) => self.binop(dst, a, b, |x, y| x.wrapping_sub(y)),
             LirInstructionKind::Mul(a, b) => self.binop(dst, a, b, |x, y| x.wrapping_mul(y)),
@@ -184,10 +187,14 @@ impl LirInterpreter {
             | LirInstructionKind::FPToSI(v, _)
             | LirInstructionKind::UIToFP(v, _)
             | LirInstructionKind::SIToFP(v, _) => self.unary(dst, v, |x| x),
-            LirInstructionKind::ExtractValue { aggregate, .. } => self.unary(dst, aggregate, |x| x),
-            LirInstructionKind::InsertValue { .. } => {
-                Err(VmError::Runtime("InsertValue not supported".into()))
+            LirInstructionKind::ExtractValue { aggregate, indices } => {
+                self.extract_value(dst, aggregate, indices, instr.type_hint.as_ref())
             }
+            LirInstructionKind::InsertValue {
+                aggregate,
+                element,
+                indices,
+            } => self.insert_value(dst, aggregate, element, indices, instr.type_hint.as_ref()),
             LirInstructionKind::Call { function, args, .. } => {
                 self.handle_call(dst, function, args)
             }
@@ -200,7 +207,13 @@ impl LirInterpreter {
             | LirInstructionKind::Freeze(_)
             | LirInstructionKind::ExecQuery(_) => Err(VmError::Runtime("unsupported".into())),
             _ => Err(VmError::Runtime("unimplemented".into())),
+        };
+        if result.is_ok() {
+            if let Some(ty) = instr.type_hint.as_ref() {
+                self.register_types.insert(dst, ty.clone());
+            }
         }
+        result
     }
 
     fn wr(&mut self, dst: u32, val: u64) {
@@ -238,8 +251,273 @@ impl LirInterpreter {
         match val {
             LirValue::Constant(c) => const_ty(c),
             LirValue::Global(_, ty) => ty.clone(),
+            LirValue::Register(id) => self.register_types.get(id).cloned().unwrap_or(LirType::I64),
             _ => LirType::I64,
         }
+    }
+
+    fn insert_value(
+        &mut self,
+        dst: u32,
+        aggregate: &LirValue,
+        element: &LirValue,
+        indices: &[u32],
+        aggregate_ty: Option<&LirType>,
+    ) -> LirResult<()> {
+        let aggregate_ty = aggregate_ty
+            .cloned()
+            .unwrap_or_else(|| self.infer_type(aggregate));
+        let element_ty = self.aggregate_element_type(&aggregate_ty, indices)?;
+        let mut aggregate_value = self.resolve_aggregate_value(aggregate, &aggregate_ty)?;
+        let element_value = self.resolve_runtime_value(element, &element_ty)?;
+        Self::aggregate_insert(&mut aggregate_value, &element_ty, indices, element_value)?;
+        self.store_runtime_value(dst, &aggregate_ty, aggregate_value)
+    }
+
+    fn extract_value(
+        &mut self,
+        dst: u32,
+        aggregate: &LirValue,
+        indices: &[u32],
+        result_ty: Option<&LirType>,
+    ) -> LirResult<()> {
+        let aggregate_ty = self.infer_type(aggregate);
+        let aggregate_value = self.resolve_aggregate_value(aggregate, &aggregate_ty)?;
+        let element_ty = if let Some(result_ty) = result_ty {
+            result_ty.clone()
+        } else {
+            self.aggregate_element_type(&aggregate_ty, indices)?
+        };
+        let value = Self::aggregate_extract(&aggregate_value, indices)?;
+        self.store_runtime_value(dst, &element_ty, value)
+    }
+
+    fn store_runtime_value(&mut self, dst: u32, ty: &LirType, value: Value) -> LirResult<()> {
+        if Self::is_aggregate_runtime_type(ty) {
+            let handle = self.state.objects.len() as u64;
+            self.state.objects.push(value);
+            self.wr(dst, handle);
+            return Ok(());
+        }
+        if matches!(ty, LirType::Ptr(_)) {
+            match value {
+                Value::String(_)
+                | Value::List(_)
+                | Value::Tuple(_)
+                | Value::Struct(_)
+                | Value::Structural(_)
+                | Value::Bytes(_)
+                | Value::Pointer(_) => {
+                    let handle = self.state.objects.len() as u64;
+                    self.state.objects.push(value);
+                    self.wr(dst, handle);
+                }
+                Value::Null(_) | Value::Undefined(_) => self.wr(dst, 0),
+                other => self.wr(dst, value_to_raw(&other)),
+            }
+            return Ok(());
+        }
+        self.wr(dst, value_to_raw(&value));
+        Ok(())
+    }
+
+    fn resolve_runtime_value(&self, val: &LirValue, ty: &LirType) -> LirResult<Value> {
+        if Self::is_aggregate_runtime_type(ty) {
+            return self.resolve_aggregate_value(val, ty);
+        }
+        if matches!(ty, LirType::Ptr(_)) {
+            return match val {
+                LirValue::Constant(LirConstant::String(text)) => {
+                    Ok(Value::String(ValueString::new_ref(text.clone())))
+                }
+                LirValue::Constant(LirConstant::Null(_)) | LirValue::Null(_) => Ok(Value::null()),
+                _ => Ok(Value::uint(self.resolve_raw(val)?)),
+            };
+        }
+        let raw = self.resolve_raw(val)?;
+        let (bits, signed) = lir_type_info(ty);
+        Ok(raw_to_value(raw, signed, bits))
+    }
+
+    fn resolve_aggregate_value(&self, val: &LirValue, ty: &LirType) -> LirResult<Value> {
+        match val {
+            LirValue::Register(id) => {
+                let idx = self.state.regs.read(*id) as usize;
+                let value = self
+                    .state
+                    .objects
+                    .get(idx)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling object handle {idx}")))?;
+                if Self::is_aggregate_runtime_type(ty) && matches!(value, Value::Unit(_)) {
+                    Ok(Self::default_value_for_type(ty))
+                } else {
+                    Ok(value)
+                }
+            }
+            LirValue::Constant(LirConstant::Undef(_))
+            | LirValue::Constant(LirConstant::Null(_))
+            | LirValue::Undef(_)
+            | LirValue::Null(_) => Ok(Self::default_value_for_type(ty)),
+            LirValue::Constant(constant) => Self::constant_to_value(constant),
+            _ => Err(VmError::Runtime(format!(
+                "expected aggregate value for {ty:?}, found {val:?}"
+            ))),
+        }
+    }
+
+    fn constant_to_value(constant: &LirConstant) -> LirResult<Value> {
+        Ok(match constant {
+            LirConstant::Int(v, _) => Value::int(*v),
+            LirConstant::UInt(v, _) => Value::uint(*v),
+            LirConstant::Float(v, _) => Value::decimal(*v),
+            LirConstant::Bool(v) => Value::bool(*v),
+            LirConstant::String(text) => Value::String(ValueString::new_ref(text.clone())),
+            LirConstant::Array(values, _) => Value::List(ValueList::new(
+                values
+                    .iter()
+                    .map(Self::constant_to_value)
+                    .collect::<LirResult<Vec<_>>>()?,
+            )),
+            LirConstant::Struct(values, _) => Value::Tuple(ValueTuple::new(
+                values
+                    .iter()
+                    .map(Self::constant_to_value)
+                    .collect::<LirResult<Vec<_>>>()?,
+            )),
+            LirConstant::Null(_) => Value::null(),
+            LirConstant::Undef(ty) => Self::default_value_for_type(ty),
+            LirConstant::GlobalRef(_, _, _) | LirConstant::FunctionRef(_, _) => Value::uint(0),
+        })
+    }
+
+    fn default_value_for_type(ty: &LirType) -> Value {
+        match ty {
+            LirType::Array(elem, len) => Value::List(ValueList::new(
+                (0..*len)
+                    .map(|_| Self::default_value_for_type(elem))
+                    .collect::<Vec<_>>(),
+            )),
+            LirType::Vector(elem, len) => Value::List(ValueList::new(
+                (0..*len)
+                    .map(|_| Self::default_value_for_type(elem))
+                    .collect::<Vec<_>>(),
+            )),
+            LirType::Struct { fields, .. } => Value::Tuple(ValueTuple::new(
+                fields
+                    .iter()
+                    .map(Self::default_value_for_type)
+                    .collect::<Vec<_>>(),
+            )),
+            LirType::Ptr(_) => Value::uint(0),
+            LirType::Void => Value::unit(),
+            _ => {
+                let (bits, signed) = lir_type_info(ty);
+                raw_to_value(0, signed, bits)
+            }
+        }
+    }
+
+    fn aggregate_element_type(&self, ty: &LirType, indices: &[u32]) -> LirResult<LirType> {
+        let mut current = ty.clone();
+        for index in indices {
+            current = match current {
+                LirType::Struct { fields, .. } => fields.get(*index as usize).cloned().ok_or(
+                    VmError::Runtime(format!("struct index {index} out of range")),
+                )?,
+                LirType::Array(elem, len) => {
+                    if (*index as u64) >= len {
+                        return Err(VmError::Runtime(format!(
+                            "array index {index} out of range"
+                        )));
+                    }
+                    *elem
+                }
+                LirType::Vector(elem, len) => {
+                    if *index >= len {
+                        return Err(VmError::Runtime(format!(
+                            "vector index {index} out of range"
+                        )));
+                    }
+                    *elem
+                }
+                other => {
+                    return Err(VmError::Runtime(format!(
+                        "cannot index into non-aggregate type {other:?}"
+                    )));
+                }
+            };
+        }
+        Ok(current)
+    }
+
+    fn aggregate_insert(
+        aggregate: &mut Value,
+        element_ty: &LirType,
+        indices: &[u32],
+        element: Value,
+    ) -> LirResult<()> {
+        let Some((first, rest)) = indices.split_first() else {
+            *aggregate = element;
+            return Ok(());
+        };
+        match aggregate {
+            Value::List(list) => {
+                let idx = *first as usize;
+                let slot = list.values.get_mut(idx).ok_or_else(|| {
+                    VmError::Runtime(format!("aggregate index {} out of range", first))
+                })?;
+                if rest.is_empty() {
+                    *slot = element;
+                    return Ok(());
+                }
+                if matches!(slot, Value::Null(_) | Value::Undefined(_)) {
+                    *slot = Self::default_value_for_type(element_ty);
+                }
+                Self::aggregate_insert(slot, element_ty, rest, element)
+            }
+            Value::Tuple(tuple) => {
+                let idx = *first as usize;
+                let slot = tuple.values.get_mut(idx).ok_or_else(|| {
+                    VmError::Runtime(format!("aggregate index {} out of range", first))
+                })?;
+                if rest.is_empty() {
+                    *slot = element;
+                    return Ok(());
+                }
+                if matches!(slot, Value::Null(_) | Value::Undefined(_)) {
+                    *slot = Self::default_value_for_type(element_ty);
+                }
+                Self::aggregate_insert(slot, element_ty, rest, element)
+            }
+            other => Err(VmError::Runtime(format!(
+                "InsertValue expects aggregate, found {other:?}"
+            ))),
+        }
+    }
+
+    fn aggregate_extract(aggregate: &Value, indices: &[u32]) -> LirResult<Value> {
+        let mut current = aggregate;
+        for index in indices {
+            current = match current {
+                Value::List(list) => list.values.get(*index as usize).ok_or_else(|| {
+                    VmError::Runtime(format!("aggregate index {} out of range", index))
+                })?,
+                Value::Tuple(tuple) => tuple.values.get(*index as usize).ok_or_else(|| {
+                    VmError::Runtime(format!("aggregate index {} out of range", index))
+                })?,
+                other => {
+                    return Err(VmError::Runtime(format!(
+                        "ExtractValue expects aggregate, found {other:?}"
+                    )));
+                }
+            };
+        }
+        Ok(current.clone())
+    }
+
+    fn is_aggregate_runtime_type(ty: &LirType) -> bool {
+        matches!(ty, LirType::Struct { .. } | LirType::Array(..) | LirType::Vector(..))
     }
 
     fn binop(
@@ -568,6 +846,106 @@ mod tests {
         assert_eq!(
             LirInterpreter::new().run_main(&cond_br_f(false)).unwrap(),
             Value::int(9)
+        );
+    }
+
+    #[test]
+    fn insert_and_extract_struct_field() {
+        let slice_ty = LirType::Struct {
+            fields: vec![LirType::Ptr(Box::new(LirType::I8)), LirType::I64],
+            packed: false,
+            name: Some("slice".into()),
+        };
+        let f = LirFunction {
+            name: Name::new("main"),
+            signature: sig(&[], LirType::I64),
+            basic_blocks: vec![bb(
+                0,
+                vec![
+                    LirInstruction {
+                        id: 0,
+                        kind: LirInstructionKind::InsertValue {
+                            aggregate: LirValue::Constant(LirConstant::Undef(slice_ty.clone())),
+                            element: LirValue::Constant(LirConstant::UInt(0x1234, LirType::I64)),
+                            indices: vec![0],
+                        },
+                        type_hint: Some(slice_ty.clone()),
+                        debug_info: None,
+                    },
+                    LirInstruction {
+                        id: 1,
+                        kind: LirInstructionKind::InsertValue {
+                            aggregate: reg(0),
+                            element: int(5),
+                            indices: vec![1],
+                        },
+                        type_hint: Some(slice_ty),
+                        debug_info: None,
+                    },
+                    i(
+                        2,
+                        LirInstructionKind::ExtractValue {
+                            aggregate: reg(1),
+                            indices: vec![1],
+                        },
+                    ),
+                ],
+                ret(reg(2)),
+            )],
+            locals: vec![],
+            stack_slots: vec![],
+            calling_convention: CallingConvention::C,
+            linkage: fp_core::lir::Linkage::Internal,
+            is_declaration: false,
+        };
+
+        assert_eq!(
+            LirInterpreter::new().run_main(&make(f)).unwrap(),
+            Value::int(5)
+        );
+    }
+
+    #[test]
+    fn extract_string_pointer_from_aggregate() {
+        let array_ty = LirType::Array(Box::new(LirType::Ptr(Box::new(LirType::I8))), 1);
+        let f = LirFunction {
+            name: Name::new("main"),
+            signature: sig(&[], LirType::Ptr(Box::new(LirType::I8))),
+            basic_blocks: vec![bb(
+                0,
+                vec![
+                    LirInstruction {
+                        id: 0,
+                        kind: LirInstructionKind::InsertValue {
+                            aggregate: LirValue::Constant(LirConstant::Undef(array_ty.clone())),
+                            element: LirValue::Constant(LirConstant::String("abc".into())),
+                            indices: vec![0],
+                        },
+                        type_hint: Some(array_ty),
+                        debug_info: None,
+                    },
+                    LirInstruction {
+                        id: 1,
+                        kind: LirInstructionKind::ExtractValue {
+                            aggregate: reg(0),
+                            indices: vec![0],
+                        },
+                        type_hint: Some(LirType::Ptr(Box::new(LirType::I8))),
+                        debug_info: None,
+                    },
+                ],
+                ret(reg(1)),
+            )],
+            locals: vec![],
+            stack_slots: vec![],
+            calling_convention: CallingConvention::C,
+            linkage: fp_core::lir::Linkage::Internal,
+            is_declaration: false,
+        };
+
+        assert_eq!(
+            LirInterpreter::new().run_main(&make(f)).unwrap(),
+            Value::String(ValueString::new_ref("abc"))
         );
     }
 }
