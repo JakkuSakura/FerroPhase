@@ -12,6 +12,7 @@ pub mod compilation;
 pub mod container;
 pub mod diagnostics;
 pub mod languages;
+pub mod materialize;
 pub mod pipeline;
 pub mod utils;
 

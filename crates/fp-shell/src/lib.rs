@@ -122,7 +122,7 @@ pub fn compile_source_with_options(
         }
     };
     let materializer = shell_materializer::ShellMaterializer::new(options.inventory.as_ref());
-    lowered = fp_cli::pipeline::stages::materialize::materialize_node(lowered, &materializer)
+    lowered = fp_cli::materialize::materialize_node(lowered, &materializer)
         .map_err(|err| ShellError::Lower(err.to_string()))?;
 
     // Re-insert pre-HIR items (HIR strips #[command] attrs, const-evaluates fn bodies)
