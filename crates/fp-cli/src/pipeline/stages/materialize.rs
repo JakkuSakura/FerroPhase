@@ -5,7 +5,7 @@ use fp_core::intrinsics::IntrinsicMaterializer;
 use fp_core::span::Span;
 #[cfg(feature = "llvm")]
 use fp_llvm::runtime::LlvmRuntimeIntrinsicMaterializer;
-use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+use crate::pipeline::framework::{PipelineDiagnostics, PipelineError, PipelineStage};
 
 pub(crate) struct MaterializeContext {
     pub ast: Node,

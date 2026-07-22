@@ -1,7 +1,7 @@
 use super::super::*;
 use fp_core::ast::{File, ItemKind, Node, NodeKind};
 use fp_lang::embedded_std;
-use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+use crate::pipeline::framework::{PipelineDiagnostics, PipelineError, PipelineStage};
 use std::path::Path;
 use std::sync::Arc;
 

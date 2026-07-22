@@ -6,7 +6,7 @@ use fp_core::config;
 use fp_core::mir;
 #[cfg(feature = "llvm")]
 use fp_llvm::target::{OptimizationLevel, TargetConfig};
-use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+use crate::pipeline::framework::{PipelineDiagnostics, PipelineError, PipelineStage};
 use std::sync::Arc;
 
 pub(crate) struct HirToMirContext {

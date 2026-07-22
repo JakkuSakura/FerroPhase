@@ -1,6 +1,6 @@
 use super::super::*;
 use fp_core::config;
-use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+use crate::pipeline::framework::{PipelineDiagnostics, PipelineError, PipelineStage};
 use fp_typing::ResolvedNameTable;
 
 pub(crate) struct TypingContext {

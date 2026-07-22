@@ -52,7 +52,7 @@ use fp_jvm;
 use fp_lang::embedded_std;
 #[cfg(feature = "llvm")]
 use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
-use fp_pipeline::{PipelineBuilder, PipelineDiagnostics, PipelineError, PipelineStage};
+use crate::pipeline::framework::{PipelineBuilder, PipelineDiagnostics, PipelineError, PipelineStage};
 #[cfg(feature = "lang-typescript")]
 use fp_typescript::frontend::TsParseMode;
 use fp_typing::{ResolvedNameTable, TypingDiagnosticLevel};
@@ -66,6 +66,7 @@ use tracing::{debug, info, info_span};
 // Begin internal submodules extracted for clarity
 mod artifacts;
 mod diagnostics;
+mod framework;
 mod options;
 pub mod stages;
 use self::diagnostics as diag;

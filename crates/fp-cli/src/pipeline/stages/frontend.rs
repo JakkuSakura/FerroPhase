@@ -1,5 +1,5 @@
 use super::super::*;
-use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+use crate::pipeline::framework::{PipelineDiagnostics, PipelineError, PipelineStage};
 use fp_typing::ResolvedNameTable;
 use tracing::warn;
 

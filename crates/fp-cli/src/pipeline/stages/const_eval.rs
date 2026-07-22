@@ -1,7 +1,9 @@
 use super::super::*;
 use fp_core::ast::{File, ItemKind, Node, NodeKind};
+use fp_core::context::SharedScopedContext;
+use fp_core::lang::{collect_lang_items, register_threadlocal_lang_items};
 use fp_interpret::const_eval::{
-    ConstEvalContext, ConstEvalOptions, ConstEvalOutcome, ConstEvalResult, ConstEvalStage,
+    ConstEvalOptions, ConstEvalOutcome, ConstEvaluationOrchestrator,
 };
 use fp_lang::embedded_std;
 use std::path::Path;
@@ -90,42 +92,78 @@ impl Pipeline {
             }
         }
 
-        let stage = ConstEvalStage;
-        let context = ConstEvalContext {
-            ast: ast.clone(),
-            options: ConstEvalOptions {
-                release: options.release,
-                execute_main: options.execute_main,
-            },
-            serializer: self.serializer.clone(),
-            macro_parser: self.macro_parser.clone(),
-            intrinsic_normalizer: self.intrinsic_normalizer.clone(),
-            std_modules,
-        };
         let mut diagnostics = PipelineDiagnostics::default();
         diagnostics.set_display_options(diag::display_options(options));
-        let pipeline = PipelineBuilder::<ConstEvalContext, ConstEvalContext>::new()
-            .add_stage(stage)
-            .build();
-        match pipeline.run(context, &mut diagnostics) {
-            Ok(ConstEvalResult {
-                ast: next_ast,
-                outcome,
-            }) => {
-                *ast = next_ast;
-                if !diagnostics.items.is_empty() {
-                    diagnostics.emit_stage(STAGE_CONST_EVAL);
-                }
-                if outcome.has_errors {
-                    return Err(Self::stage_failure(STAGE_CONST_EVAL));
-                }
-                Ok(outcome)
-            }
-            Err(_) => {
+        let mut working_ast = ast.clone();
+        for std_node in std_modules {
+            working_ast = merge_std_module(
+                working_ast,
+                std_node,
+                &options.target,
+                &mut diagnostics,
+                STAGE_CONST_EVAL,
+            )
+            .map_err(|_| {
                 diagnostics.emit_stage(STAGE_CONST_EVAL);
-                Err(Self::stage_failure(STAGE_CONST_EVAL))
-            }
+                Self::stage_failure(STAGE_CONST_EVAL)
+            })?;
         }
+
+        let lang_items = collect_lang_items(&working_ast);
+        register_threadlocal_lang_items(lang_items);
+        let normalization = if let Some(normalizer) = self.intrinsic_normalizer.as_ref() {
+            fp_core::intrinsics::normalize_intrinsics_with(&mut working_ast, normalizer.as_ref())
+        } else {
+            fp_core::intrinsics::normalize_intrinsics(&mut working_ast)
+        };
+        if let Err(err) = normalization {
+            diagnostics.push(
+                Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
+                    .with_source_context(STAGE_CONST_EVAL),
+            );
+            diagnostics.emit_stage(STAGE_CONST_EVAL);
+            return Err(Self::stage_failure(STAGE_CONST_EVAL));
+        }
+
+        let serializer = self.serializer.clone().ok_or_else(|| {
+            Pipeline::emit_stage_error(
+                STAGE_CONST_EVAL,
+                options,
+                "No serializer registered for const-eval",
+            )
+        })?;
+        let shared_context = SharedScopedContext::new();
+        let mut orchestrator = ConstEvaluationOrchestrator::new(serializer);
+        let eval_options = ConstEvalOptions {
+            release: options.release,
+            execute_main: options.execute_main,
+        };
+        orchestrator.set_debug_assertions(!eval_options.release);
+        orchestrator.set_execute_main(eval_options.execute_main);
+        let outcome = orchestrator
+            .evaluate(
+                &mut working_ast,
+                &shared_context,
+                self.macro_parser.clone(),
+                self.intrinsic_normalizer.clone(),
+            )
+            .map_err(|err| {
+                diagnostics.push(
+                    Diagnostic::error(format!("Const evaluation failed: {}", err))
+                        .with_source_context(STAGE_CONST_EVAL),
+                );
+                diagnostics.emit_stage(STAGE_CONST_EVAL);
+                Self::stage_failure(STAGE_CONST_EVAL)
+            })?;
+        diagnostics.extend(outcome.diagnostics.clone());
+        *ast = working_ast;
+        if !diagnostics.items.is_empty() {
+            diagnostics.emit_stage(STAGE_CONST_EVAL);
+        }
+        if outcome.has_errors {
+            return Err(Self::stage_failure(STAGE_CONST_EVAL));
+        }
+        Ok(outcome)
     }
 }
 

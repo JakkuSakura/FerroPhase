@@ -33,7 +33,6 @@ fp-json = { path = "../fp-json", optional = true }
 fp-flatbuffers = { path = "../fp-flatbuffers", optional = true }
 fp-toml = { path = "../fp-toml", optional = true }
 fp-hcl = { path = "../fp-hcl", optional = true }
-fp-pipeline = { path = "../fp-pipeline" }
 fp-bytecode = { path = "../fp-bytecode" }
 fp-jvm = { path = "../fp-jvm" }
 fp-stackvm = { path = "../fp-stackvm" }
