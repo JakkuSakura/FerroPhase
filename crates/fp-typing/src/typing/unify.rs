@@ -63,9 +63,6 @@ pub(crate) struct FunctionTerm {
 
 #[derive(Clone, Debug)]
 pub(crate) enum TypeTerm {
-    Primitive(TypePrimitive),
-    Unit,
-    Nothing,
     Tuple(Vec<TypeVarId>),
     Function(FunctionTerm),
     Concrete(Ty),
@@ -79,8 +76,42 @@ pub(crate) enum TypeTerm {
     Reference(TypeVarId),
     RawPtr(TypeVarId, Option<bool>),
     Boxed(TypeVarId),
-    Any,
     Unknown,
+}
+
+impl TypeTerm {
+    #[allow(non_snake_case)]
+    pub(crate) fn Primitive(primitive: TypePrimitive) -> Self {
+        Self::Concrete(Ty::Primitive(primitive))
+    }
+
+    #[allow(non_upper_case_globals)]
+    pub(crate) const Unit: Self = Self::Concrete(Ty::Unit(TypeUnit));
+
+    #[allow(non_upper_case_globals)]
+    pub(crate) const Nothing: Self = Self::Concrete(Ty::Nothing(TypeNothing));
+
+    #[allow(non_upper_case_globals)]
+    pub(crate) const Any: Self = Self::Concrete(Ty::Any(TypeAny));
+
+    pub(crate) fn is_unit(&self) -> bool {
+        matches!(self, Self::Concrete(Ty::Unit(_)))
+    }
+
+    pub(crate) fn is_nothing(&self) -> bool {
+        matches!(self, Self::Concrete(Ty::Nothing(_)))
+    }
+
+    pub(crate) fn is_any(&self) -> bool {
+        matches!(self, Self::Concrete(Ty::Any(_)))
+    }
+
+    pub(crate) fn primitive_ty(&self) -> Option<TypePrimitive> {
+        match self {
+            Self::Concrete(Ty::Primitive(primitive)) => Some(*primitive),
+            _ => None,
+        }
+    }
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -313,10 +344,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         next: &mut u32,
     ) -> Result<Ty> {
         Ok(match term {
-            TypeTerm::Primitive(prim) => Ty::Primitive(prim),
-            TypeTerm::Unit => Ty::Unit(TypeUnit),
-            TypeTerm::Nothing => Ty::Nothing(TypeNothing),
-            TypeTerm::Any => Ty::Any(TypeAny),
             TypeTerm::Concrete(ty) => ty,
             TypeTerm::Union(lhs, rhs) => {
                 let lhs = self.build_generalized_ty(lhs, mapping, next)?;
@@ -562,6 +589,33 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if a_root == b_root {
             return Ok(());
         }
+        let a_prim = match &self.type_vars[a_root].kind {
+            TypeVarKind::Bound(term) => term.primitive_ty(),
+            _ => None,
+        };
+        let b_prim = match &self.type_vars[b_root].kind {
+            TypeVarKind::Bound(term) => term.primitive_ty(),
+            _ => None,
+        };
+        if let (Some(TypePrimitive::Int(int_a)), Some(TypePrimitive::Int(int_b))) = (a_prim, b_prim) {
+            return if int_a == int_b {
+                Ok(())
+            } else if self.literal_ints.remove(&a_root) {
+                self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
+                Ok(())
+            } else if self.literal_ints.remove(&b_root) {
+                self.type_vars[b_root].kind = TypeVarKind::Link(a_root);
+                Ok(())
+            } else if Self::same_width(&int_a, &int_b) {
+                self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
+                Ok(())
+            } else {
+                Err(self.error_with_current_span(format!(
+                    "primitive type mismatch: {} vs {}",
+                    int_a, int_b
+                )))
+            };
+        }
         match (
             self.type_vars[a_root].kind.clone(),
             self.type_vars[b_root].kind.clone(),
@@ -596,29 +650,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.type_vars[b_root].kind = TypeVarKind::Bound(term);
                 self.merge_trait_bounds_into(b_root, a_root, false);
                 Ok(())
-            }
-            (
-                TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(int_a))),
-                TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(int_b))),
-            ) => {
-                if int_a == int_b {
-                    Ok(())
-                } else if self.literal_ints.remove(&a_root) {
-                    self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
-                    Ok(())
-                } else if self.literal_ints.remove(&b_root) {
-                    self.type_vars[b_root].kind = TypeVarKind::Link(a_root);
-                    Ok(())
-                } else if Self::same_width(&int_a, &int_b) {
-                    // Same width, different signedness (e.g., I64 ↔ U64): allow.
-                    self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
-                    Ok(())
-                } else {
-                    Err(self.error_with_current_span(format!(
-                        "primitive type mismatch: {} vs {}",
-                        int_a, int_b
-                    )))
-                }
             }
             (TypeVarKind::Bound(term_a), TypeVarKind::Bound(term_b)) => {
                 self.unify_terms(term_a, term_b)
@@ -714,40 +745,29 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn unify_terms(&mut self, a: TypeTerm, b: TypeTerm) -> Result<()> {
         match (a, b) {
-            (TypeTerm::Primitive(TypePrimitive::String), TypeTerm::Reference(inner))
+            (left, right) if left.is_unit() && right.is_unit() => Ok(()),
+            (left, right) if left.is_any() && right.is_any() => Ok(()),
+            (TypeTerm::Unknown, TypeTerm::Unknown) => Ok(()),
+            (left, _) if left.is_nothing() => Ok(()),
+            (_, right) if right.is_nothing() => Ok(()),
+            (TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)), TypeTerm::Reference(inner))
                 if self.is_cstr_var(inner) =>
             {
                 Ok(())
             }
-            (TypeTerm::Reference(inner), TypeTerm::Primitive(TypePrimitive::String))
+            (TypeTerm::Reference(inner), TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)))
                 if self.is_cstr_var(inner) =>
             {
                 Ok(())
             }
-            (TypeTerm::Primitive(TypePrimitive::String), TypeTerm::Concrete(Ty::Struct(struct_ty)))
-                if struct_ty.name.as_str() == "CStr" =>
-            {
-                Ok(())
-            }
-            (TypeTerm::Concrete(Ty::Struct(struct_ty)), TypeTerm::Primitive(TypePrimitive::String))
-                if struct_ty.name.as_str() == "CStr" =>
-            {
-                Ok(())
-            }
-            (TypeTerm::Primitive(pa), TypeTerm::Primitive(pb)) => {
-                if pa == pb {
-                    Ok(())
-                } else {
-                    Err(self.error_with_current_span(format!(
-                        "primitive type mismatch: {} vs {}",
-                        pa, pb
-                    )))
-                }
-            }
-            (TypeTerm::Unit, TypeTerm::Unit)
-            | (TypeTerm::Any, TypeTerm::Any)
-            | (TypeTerm::Unknown, TypeTerm::Unknown) => Ok(()),
-            (TypeTerm::Nothing, _) | (_, TypeTerm::Nothing) => Ok(()),
+            (
+                TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)),
+                TypeTerm::Concrete(Ty::Struct(struct_ty)),
+            ) if struct_ty.name.as_str() == "CStr" => Ok(()),
+            (
+                TypeTerm::Concrete(Ty::Struct(struct_ty)),
+                TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)),
+            ) if struct_ty.name.as_str() == "CStr" => Ok(()),
             (TypeTerm::Concrete(a), TypeTerm::Concrete(b)) => self.unify_concrete_tys(a, b),
             (TypeTerm::Union(a_lhs, a_rhs), TypeTerm::Union(b_lhs, b_rhs)) => {
                 self.unify_union_pair(a_lhs, a_rhs, b_lhs, b_rhs)
@@ -819,12 +839,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             (TypeTerm::Slice(a), TypeTerm::Vec(b)) | (TypeTerm::Vec(a), TypeTerm::Slice(b)) => {
                 self.unify(a, b)
             }
-            (TypeTerm::Reference(inner), TypeTerm::Primitive(TypePrimitive::String)) => {
+            (TypeTerm::Reference(inner), TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String))) => {
                 let temp = self.fresh_type_var();
                 self.bind(temp, TypeTerm::Primitive(TypePrimitive::String));
                 self.unify(inner, temp)
             }
-            (TypeTerm::Primitive(TypePrimitive::String), TypeTerm::Reference(inner)) => {
+            (TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)), TypeTerm::Reference(inner)) => {
                 let temp = self.fresh_type_var();
                 self.bind(temp, TypeTerm::Primitive(TypePrimitive::String));
                 self.unify(inner, temp)
@@ -840,7 +860,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.unify(inner, other_var)
             }
             (TypeTerm::Unknown, _other) | (_other, TypeTerm::Unknown) => Ok(()),
-            (TypeTerm::Any, _other) | (_other, TypeTerm::Any) => Ok(()),
+            (left, _other) if left.is_any() => Ok(()),
+            (_other, right) if right.is_any() => Ok(()),
             (left, right) => {
                 Err(self
                     .error_with_current_span(format!("type mismatch: {:?} vs {:?}", left, right)))
@@ -1056,10 +1077,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn term_to_ty(&mut self, term: TypeTerm) -> Result<Ty> {
         Ok(match term {
-            TypeTerm::Primitive(prim) => Ty::Primitive(prim),
-            TypeTerm::Unit => Ty::Unit(TypeUnit),
-            TypeTerm::Nothing => Ty::Nothing(TypeNothing),
-            TypeTerm::Any => Ty::Any(TypeAny),
             TypeTerm::Concrete(ty) => ty,
             TypeTerm::Union(lhs, rhs) => {
                 let lhs_ty = self.resolve_to_ty(lhs)?;

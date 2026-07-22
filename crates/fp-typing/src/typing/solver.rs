@@ -8,11 +8,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. }
-            | TypeVarKind::Bound(TypeTerm::Any)
             | TypeVarKind::Bound(TypeTerm::Unknown)
             | TypeVarKind::Bound(TypeTerm::Concrete(_)) => Ok(()),
-            TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(_)))
-            | TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Decimal(_))) => Ok(()),
+            TypeVarKind::Bound(term)
+                if matches!(
+                    term.primitive_ty(),
+                    Some(TypePrimitive::Int(_)) | Some(TypePrimitive::Decimal(_))
+                ) =>
+            {
+                Ok(())
+            }
             TypeVarKind::Link(next) => self.ensure_numeric(next, context),
             other => {
                 self.emit_error(format!("expected numeric value for {}", context));
@@ -35,8 +40,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Bool));
                 Ok(())
             }
-            TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Bool)) => Ok(()),
-            TypeVarKind::Bound(TypeTerm::Any) | TypeVarKind::Bound(TypeTerm::Unknown) => Ok(()),
+            TypeVarKind::Bound(term) if term.primitive_ty() == Some(TypePrimitive::Bool) => Ok(()),
+            TypeVarKind::Bound(TypeTerm::Unknown) => Ok(()),
+            TypeVarKind::Bound(term) if term.is_any() => Ok(()),
             TypeVarKind::Link(next) => self.ensure_bool(next, context),
             other => {
                 tracing::debug!("ensure_bool failure: context={} type={:?}", context, other);
@@ -50,13 +56,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. }
-            | TypeVarKind::Bound(TypeTerm::Any)
             | TypeVarKind::Bound(TypeTerm::Unknown) => {
                 self.type_vars[root].kind =
                     TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
                 Ok(())
             }
-            TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(_))) => Ok(()),
+            TypeVarKind::Bound(term) if term.is_any() => {
+                self.type_vars[root].kind =
+                    TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
+                Ok(())
+            }
+            TypeVarKind::Bound(term) if matches!(term.primitive_ty(), Some(TypePrimitive::Int(_))) => Ok(()),
             TypeVarKind::Link(next) => self.ensure_integer(next, context),
             other => {
                 self.emit_error(format!("expected integer value for {}", context));
@@ -81,7 +91,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }));
                 Ok(super::super::FunctionTypeInfo { params, ret })
             }
-            TypeVarKind::Bound(TypeTerm::Any) | TypeVarKind::Bound(TypeTerm::Unknown) => {
+            TypeVarKind::Bound(TypeTerm::Unknown) => {
+                let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
+                let ret = self.fresh_type_var();
+                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
+                    params: params.clone(),
+                    ret,
+                }));
+                Ok(super::super::FunctionTypeInfo { params, ret })
+            }
+            TypeVarKind::Bound(term) if term.is_any() => {
                 let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
                 let ret = self.fresh_type_var();
                 self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
