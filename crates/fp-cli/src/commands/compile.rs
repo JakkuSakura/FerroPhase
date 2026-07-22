@@ -900,11 +900,14 @@ async fn compile_ast_target(
 
     let mut ast = compiler::parse_ast_target_file(input, args.source_language.as_deref())?;
     if !is_wit_input && !is_typescript_input {
+        if args.const_eval {
+            warn!("--const-eval is ignored: AST const evaluation has been removed");
+        }
         compiler::prepare_ast_target(
             &mut ast,
             input,
             args.source_language.as_deref(),
-            args.const_eval,
+            false,
         )?;
     }
 

@@ -11,9 +11,7 @@ use fp_core::{
     ast::{Node, Value},
     diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager},
     frontend::{FrontendParseMode, FrontendResult, FrontendSnapshot, LanguageFrontend},
-    lang::{collect_lang_items, register_threadlocal_lang_items},
 };
-use fp_ast_interpret::const_eval::ConstEvaluationOrchestrator;
 use fp_lang::FerroFrontend;
 use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
 use fp_goasm::config::GoAsmTarget;
@@ -892,7 +890,7 @@ pub fn prepare_ast_target(
     ast: &mut Node,
     path: &Path,
     source_language: Option<&str>,
-    run_const_eval: bool,
+    _run_const_eval: bool,
 ) -> Result<()> {
     let parsed = parse_file_with_context(
         path,
@@ -909,24 +907,6 @@ pub fn prepare_ast_target(
         fp_core::intrinsics::normalize_intrinsics(ast)
             .map_err(|err| CliError::Compilation(format!("Intrinsic normalization failed: {err}")))?;
     }
-
-    if !run_const_eval {
-        return Ok(());
-    }
-
-    let lang_items = collect_lang_items(ast);
-    register_threadlocal_lang_items(lang_items);
-    let shared_context = fp_core::context::SharedScopedContext::new();
-    let mut orchestrator = ConstEvaluationOrchestrator::new(parsed.serializer);
-    let outcome = orchestrator
-        .evaluate(
-            ast,
-            &shared_context,
-            parsed.macro_parser,
-            parsed.intrinsic_normalizer,
-        )
-        .map_err(|err| CliError::Compilation(format!("Const evaluation failed: {err}")))?;
-    emit_frontend_diagnostics(&outcome.diagnostics, LossyCompileOptions::default())?;
     Ok(())
 }
 
@@ -944,7 +924,6 @@ fn parse_file_with_context(
         snapshot,
         serializer,
         intrinsic_normalizer,
-        macro_parser,
         diagnostics,
         ..
     } = frontend
@@ -957,7 +936,6 @@ fn parse_file_with_context(
         frontend_snapshot: snapshot,
         serializer,
         intrinsic_normalizer,
-        macro_parser,
     })
 }
 
@@ -1072,7 +1050,6 @@ struct ParsedAst {
     frontend_snapshot: Option<FrontendSnapshot>,
     serializer: Arc<dyn fp_core::ast::AstSerializer>,
     intrinsic_normalizer: Option<Arc<dyn fp_core::intrinsics::IntrinsicNormalizer>>,
-    macro_parser: Option<Arc<dyn fp_core::ast::MacroExpansionParser>>,
 }
 
 impl LoweredProgram {
