@@ -1,6 +1,7 @@
 //! Compilation command implementation
 
 use crate::commands::{setup_progress_bar, validate_paths_exist};
+use crate::compiler::{self, BytecodeCompileOptions, NativeCompileOptions, NativeEmitterKind};
 use crate::pipeline::{
     AstPreparationOptions, BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
 };
@@ -489,6 +490,11 @@ async fn compile_file(
         CompileTarget::Ast(_) => unreachable!("AST target should return early"),
     };
 
+    if let Some(artifact) = try_compile_with_compiler(input, output, args, backend, &module_resolution)?
+    {
+        return Ok(Some(artifact));
+    }
+
     // Configure pipeline for compilation with new options
     let target = match backend {
         BackendKind::TextBytecode => BackendKind::Bytecode,
@@ -602,6 +608,70 @@ async fn compile_file(
     };
 
     Ok(artifact)
+}
+
+fn try_compile_with_compiler(
+    input: &Path,
+    output: &Path,
+    args: &CompileArgs,
+    backend: BackendKind,
+    module_resolution: &Option<ModuleResolutionContext>,
+) -> Result<Option<PathBuf>> {
+    if module_resolution.is_some()
+        || args.lossy
+        || !args.disable_stage.is_empty()
+        || args.source_language.is_some()
+        || !is_ferrophase_source(input)
+    {
+        return Ok(None);
+    }
+
+    match backend {
+        BackendKind::Binary => {
+            let emitter = match args.emitter {
+                EmitterKind::Native => NativeEmitterKind::Native,
+                EmitterKind::Goasm => NativeEmitterKind::GoAsm,
+                EmitterKind::Urcl => NativeEmitterKind::Urcl,
+                EmitterKind::Llvm | EmitterKind::Cranelift => return Ok(None),
+            };
+            let artifact = compiler::compile_native_file(
+                input,
+                &NativeCompileOptions {
+                    emitter,
+                    output: output.to_path_buf(),
+                    target_triple: args.target_triple.clone(),
+                    target_cpu: args.target_cpu.clone(),
+                    native_target: args.native_target.clone(),
+                    target_features: args.target_features.clone(),
+                    target_sysroot: args.target_sysroot.clone(),
+                    linker: Some(args.linker.clone()),
+                    target_linker: args.target_linker.clone(),
+                    release: args.release,
+                    save_intermediates: args.save_intermediates,
+                },
+            )?;
+            Ok(Some(artifact))
+        }
+        BackendKind::Bytecode | BackendKind::TextBytecode => {
+            let artifact = compiler::compile_bytecode_file(
+                input,
+                &BytecodeCompileOptions {
+                    output: output.to_path_buf(),
+                    emit_text: matches!(backend, BackendKind::TextBytecode),
+                    save_intermediates: args.save_intermediates,
+                },
+            )?;
+            Ok(Some(artifact))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn is_ferrophase_source(input: &Path) -> bool {
+    matches!(
+        input.extension().and_then(|ext| ext.to_str()),
+        Some("fp" | "ferro" | "ferrophase")
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

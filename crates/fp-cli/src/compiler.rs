@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use fp_compiler::{
-    AstId, CompilerDriver, CompilerWork, ConstValueId, ExecutionMode, FullyQualifiedPath,
-    LirConsumer, RuntimeValueId, ScopeId,
+    AstId, CompilerDriver, CompilerWork, ConstValueId, ExecutionMode, FullyQualifiedPath, LirId,
+    LirConsumer, MirId, RuntimeValueId, ScopeId,
 };
 use fp_core::{
     ast::{Node, Value},
@@ -11,6 +11,7 @@ use fp_core::{
 };
 use fp_lang::FerroFrontend;
 use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
+use fp_goasm::config::GoAsmTarget;
 
 use crate::{CliError, Result};
 
@@ -47,22 +48,128 @@ pub fn interpret_file(path: &Path) -> Result<Value> {
     execute_ast(ast, CompilerIdentity::for_file(path), ExecutionMode::Runtime)
 }
 
+pub struct NativeCompileOptions {
+    pub emitter: NativeEmitterKind,
+    pub output: PathBuf,
+    pub target_triple: Option<String>,
+    pub target_cpu: Option<String>,
+    pub native_target: Option<String>,
+    pub target_features: Option<String>,
+    pub target_sysroot: Option<PathBuf>,
+    pub linker: Option<String>,
+    pub target_linker: Option<PathBuf>,
+    pub release: bool,
+    pub save_intermediates: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeEmitterKind {
+    Native,
+    GoAsm,
+    Urcl,
+}
+
+pub struct BytecodeCompileOptions {
+    pub output: PathBuf,
+    pub emit_text: bool,
+    pub save_intermediates: bool,
+}
+
+pub fn compile_native_file(path: &Path, options: &NativeCompileOptions) -> Result<PathBuf> {
+    let lowered = lower_file(path)?;
+    let lir = lowered.lir()?;
+
+    match options.emitter {
+        NativeEmitterKind::Native => {
+            let native_target =
+                match options.native_target.as_deref() {
+                    Some(value) => Some(fp_native::config::NativeTarget::resolve(
+                        value,
+                        options.target_triple.as_deref(),
+                    )
+                    .ok_or_else(|| {
+                        CliError::Compilation(format!("Unsupported fp-native target: {}", value))
+                    })?),
+                    None => None,
+                };
+
+            let mut cfg = fp_native::config::NativeConfig::executable(&options.output)
+                .with_target_triple(options.target_triple.clone())
+                .with_target_cpu(options.target_cpu.clone())
+                .with_native_target(native_target)
+                .with_target_features(options.target_features.clone())
+                .with_sysroot(options.target_sysroot.clone())
+                .with_fuse_ld(options.target_linker.clone())
+                .with_linker_driver(options.linker.clone())
+                .with_release(options.release);
+            if options.save_intermediates {
+                cfg = cfg.with_asm_dump(Some(options.output.with_extension("asm")));
+            }
+            fp_native::NativeEmitter::new(cfg)
+                .emit(lir, None)
+                .map_err(|err| CliError::Compilation(err.to_string()))
+        }
+        NativeEmitterKind::GoAsm => {
+            let target = Some(GoAsmTarget::resolve(options.target_triple.as_deref()));
+            let cfg = fp_goasm::config::GoAsmConfig::new(&options.output)
+                .with_target(target)
+                .with_target_triple(options.target_triple.clone());
+            fp_goasm::GoAsmEmitter::new(cfg)
+                .emit(lir, None)
+                .map_err(|err| CliError::Compilation(err.to_string()))
+        }
+        NativeEmitterKind::Urcl => fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(
+            &options.output,
+        ))
+        .emit(lir, None)
+        .map_err(|err| CliError::Compilation(err.to_string())),
+    }
+}
+
+pub fn compile_bytecode_file(path: &Path, options: &BytecodeCompileOptions) -> Result<PathBuf> {
+    let lowered = lower_file(path)?;
+    let mir = lowered.mir()?;
+    let bytecode = fp_bytecode::lower_program(&mir)
+        .map_err(|err| CliError::Compilation(format!("MIR→Bytecode lowering failed: {}", err)))?;
+
+    if let Some(parent) = options.output.parent() {
+        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
+
+    let wants_text =
+        options.emit_text || options.output.extension().and_then(|ext| ext.to_str()) == Some("ftbc");
+
+    if options.save_intermediates || wants_text {
+        let rendered = fp_bytecode::format_program(&bytecode);
+        let text_path = if wants_text {
+            options.output.clone()
+        } else {
+            options.output.with_extension("ftbc")
+        };
+        std::fs::write(&text_path, rendered).map_err(CliError::Io)?;
+    }
+
+    if !wants_text || options.save_intermediates {
+        let bytes = fp_bytecode::encode_file(&bytecode)
+            .map_err(|err| CliError::Compilation(format!("Bytecode encoding failed: {}", err)))?;
+        let binary_path = if wants_text {
+            options.output.with_extension("fbc")
+        } else {
+            options.output.clone()
+        };
+        std::fs::write(binary_path, bytes).map_err(CliError::Io)?;
+    }
+
+    Ok(options.output.clone())
+}
+
 fn execute_ast(ast: Node, identity: CompilerIdentity, mode: ExecutionMode) -> Result<Value> {
     let value_key = identity.path.to_key();
-    let ast_id = identity.ast_id.clone();
-    let scope_id = identity.scope_id();
-    let path = identity.path.clone();
-    let mut driver = CompilerDriver::new();
-    driver.state.insert_ast(ast_id.clone(), ast);
-    driver.scheduler.submit(CompilerWork::TypeAst {
-        ast: ast_id,
-        scope: scope_id,
-        path,
-        consumers: vec![match mode {
-            ExecutionMode::Comptime => LirConsumer::ExecuteComptime,
-            ExecutionMode::Runtime => LirConsumer::ExecuteRuntime,
-        }],
-    });
+    let consumer = match mode {
+        ExecutionMode::Comptime => LirConsumer::ExecuteComptime,
+        ExecutionMode::Runtime => LirConsumer::ExecuteRuntime,
+    };
+    let mut driver = lower_ast(ast, &identity, vec![consumer])?;
     drain_driver(&mut driver)?;
 
     match mode {
@@ -77,6 +184,34 @@ fn execute_ast(ast: Node, identity: CompilerIdentity, mode: ExecutionMode) -> Re
             .map(|value| value.clone())
             .map_err(|err| CliError::Compilation(err.to_string())),
     }
+}
+
+fn lower_file(path: &Path) -> Result<LoweredProgram> {
+    let ast = parse_file(path)?;
+    let identity = CompilerIdentity::for_file(path);
+    let path_key = identity.path.to_key();
+    let mut driver = lower_ast(ast, &identity, Vec::new())?;
+    drain_driver(&mut driver)?;
+    Ok(LoweredProgram { driver, path_key })
+}
+
+fn lower_ast(
+    ast: Node,
+    identity: &CompilerIdentity,
+    consumers: Vec<LirConsumer>,
+) -> Result<CompilerDriver> {
+    let ast_id = identity.ast_id.clone();
+    let scope_id = identity.scope_id();
+    let path = identity.path.clone();
+    let mut driver = CompilerDriver::new();
+    driver.state.insert_ast(ast_id.clone(), ast);
+    driver.scheduler.submit(CompilerWork::TypeAst {
+        ast: ast_id,
+        scope: scope_id,
+        path,
+        consumers,
+    });
+    Ok(driver)
 }
 
 fn drain_driver(driver: &mut CompilerDriver) -> Result<()> {
@@ -163,6 +298,29 @@ fn as_core_diagnostic(diagnostic: &TypingDiagnostic) -> Diagnostic<String> {
 struct CompilerIdentity {
     path: FullyQualifiedPath,
     ast_id: AstId,
+}
+
+struct LoweredProgram {
+    driver: CompilerDriver,
+    path_key: String,
+}
+
+impl LoweredProgram {
+    fn mir(&self) -> Result<fp_core::mir::Program> {
+        self.driver
+            .state
+            .mir(&MirId::new(format!("mir:{}", self.path_key)))
+            .map(|program| program.clone())
+            .map_err(|err| CliError::Compilation(err.to_string()))
+    }
+
+    fn lir(&self) -> Result<fp_core::lir::LirProgram> {
+        self.driver
+            .state
+            .lir(&LirId::new(format!("lir:{}", self.path_key)))
+            .map(|program| program.clone())
+            .map_err(|err| CliError::Compilation(err.to_string()))
+    }
 }
 
 impl CompilerIdentity {
