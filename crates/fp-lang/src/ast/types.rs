@@ -216,15 +216,36 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             && parameter_path.segments[0].ident.as_str() == "quote"
             && parameter_path.segments[0].args.len() == 1
         {
-            let kind = match &parameter_path.segments[0].args[0] {
+            let (kind, inner_ty) = match &parameter_path.segments[0].args[0] {
                 Ty::Expr(expr) => match expr.kind() {
-                    ExprKind::Name(name) => match name.as_ident().map(Ident::as_str) {
-                        Some("item") => QuoteFragmentKind::Item,
-                        Some("expr") => QuoteFragmentKind::Expr,
-                        Some("stmt") => QuoteFragmentKind::Stmt,
-                        Some("type") => QuoteFragmentKind::Type,
-                        _ => return Err(ErrMode::Cut(ContextError::new())),
-                    },
+                    ExprKind::Name(name) => {
+                        let k = match name.as_ident().map(Ident::as_str) {
+                            Some("item") => QuoteFragmentKind::Item,
+                            Some("expr") => QuoteFragmentKind::Expr,
+                            Some("stmt") => QuoteFragmentKind::Stmt,
+                            Some("type") => QuoteFragmentKind::Type,
+                            _ => return Err(ErrMode::Cut(ContextError::new())),
+                        };
+                        (k, None)
+                    }
+                    ExprKind::Invoke(invoke) => {
+                        let target_name = match &invoke.target {
+                            ExprInvokeTarget::Function(locator) => {
+                                locator.as_ident().map(Ident::as_str)
+                            }
+                            _ => None,
+                        };
+                        let k = match target_name {
+                            Some("item") => QuoteFragmentKind::Item,
+                            Some("expr") => QuoteFragmentKind::Expr,
+                            Some("stmt") => QuoteFragmentKind::Stmt,
+                            Some("type") => QuoteFragmentKind::Type,
+                            _ => return Err(ErrMode::Cut(ContextError::new())),
+                        };
+                        let inner_ty = invoke.args.first().cloned();
+                        let inner = inner_ty.map(|e| Box::new(Ty::Expr(Box::new(e))));
+                        (k, inner)
+                    }
                     _ => return Err(ErrMode::Cut(ContextError::new())),
                 },
                 Ty::Slice(slice) => match slice.elem.as_ref() {
@@ -262,7 +283,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                 span: Span::null(),
                 kind,
                 item: None,
-                inner: None,
+                inner: inner_ty,
             }));
         }
     }
