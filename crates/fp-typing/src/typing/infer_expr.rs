@@ -855,8 +855,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         if idx_non_integer || idx_is_string_literal {
             let map_var = self.fresh_type_var();
             let map_ty = self.make_hashmap_struct();
-            self.bind(map_var, TypeTerm::Struct(map_ty));
-            if self.unify(object_var, map_var).is_ok() {
+            self.bind(map_var, TypeTerm::Concrete(Ty::Struct(map_ty)));            if self.unify(object_var, map_var).is_ok() {
                 let any_var = self.fresh_type_var();
                 self.bind(any_var, TypeTerm::Any);
                 return Ok(any_var);
@@ -864,8 +863,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
 
             let map_var = self.fresh_type_var();
             let map_ty = self.make_hashmap_struct();
-            self.bind(map_var, TypeTerm::Struct(map_ty));
-            let ref_var = self.fresh_type_var();
+            self.bind(map_var, TypeTerm::Concrete(Ty::Struct(map_ty)));            let ref_var = self.fresh_type_var();
             self.bind(ref_var, TypeTerm::Reference(map_var));
             if self.unify(object_var, ref_var).is_ok() {
                 let any_var = self.fresh_type_var();
@@ -1263,8 +1261,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 ];
                 let struct_ty = TypeStructural { fields };
                 let elem_var = self.fresh_type_var();
-                self.bind(elem_var, TypeTerm::Structural(struct_ty));
-                self.bind(result_var, TypeTerm::Vec(elem_var));
+                self.bind(elem_var, TypeTerm::Concrete(Ty::Structural(struct_ty)));                self.bind(result_var, TypeTerm::Vec(elem_var));
             }
             IntrinsicCallKind::CreateStruct
             | IntrinsicCallKind::CloneStruct
@@ -2062,8 +2059,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         let concrete = self.apply_generic_args_to_enum(enum_def, &args);
         self.exit_scope();
         let enum_var = self.fresh_type_var();
-        self.bind(enum_var, TypeTerm::Enum(concrete));
-        self.unify(enum_var, ret_var)?;
+        self.bind(enum_var, TypeTerm::Concrete(Ty::Enum(concrete)));        self.unify(enum_var, ret_var)?;
         Ok(())
     }
 
@@ -2308,8 +2304,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         let value_var = self.fresh_type_var();
         let map_var = self.fresh_type_var();
         let map_ty = self.make_hashmap_struct();
-        self.bind(map_var, TypeTerm::Struct(map_ty));
-        self.record_hashmap_args(map_var, key_var, value_var);
+        self.bind(map_var, TypeTerm::Concrete(Ty::Struct(map_ty)));        self.record_hashmap_args(map_var, key_var, value_var);
         Ok(map_var)
     }
 
@@ -2332,8 +2327,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         let value_var = self.fresh_type_var();
         let map_var = self.fresh_type_var();
         let map_ty = self.make_hashmap_struct();
-        self.bind(map_var, TypeTerm::Struct(map_ty));
-        self.record_hashmap_args(map_var, key_var, value_var);
+        self.bind(map_var, TypeTerm::Concrete(Ty::Struct(map_ty)));        self.record_hashmap_args(map_var, key_var, value_var);
         Ok(map_var)
     }
 
@@ -2410,8 +2404,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         }
         let map_var = self.fresh_type_var();
         let map_ty = self.make_hashmap_struct();
-        self.bind(map_var, TypeTerm::Struct(map_ty));
-        self.record_hashmap_args(map_var, key_var, value_var);
+        self.bind(map_var, TypeTerm::Concrete(Ty::Struct(map_ty)));        self.record_hashmap_args(map_var, key_var, value_var);
         Ok(map_var)
     }
 
@@ -2558,8 +2551,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 }
                 let map_var = self.fresh_type_var();
                 let map_ty = self.make_hashmap_struct();
-                self.bind(map_var, TypeTerm::Struct(map_ty));
-                Ok(map_var)
+                self.bind(map_var, TypeTerm::Concrete(Ty::Struct(map_ty)));                Ok(map_var)
             }
         }
     }
@@ -2605,8 +2597,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             Value::Unit(_) => self.bind(var, TypeTerm::Unit),
             Value::Null(_) | Value::None(_) => self.bind(var, TypeTerm::Nothing),
             Value::Struct(struct_val) => {
-                self.bind(var, TypeTerm::Struct(struct_val.ty.clone()));
-            }
+                self.bind(var, TypeTerm::Concrete(Ty::Struct(struct_val.ty.clone())));            }
             Value::Structural(structural) => {
                 let mut fields = Vec::with_capacity(structural.fields.len());
                 for field in &structural.fields {
@@ -2614,8 +2605,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     let field_ty = self.resolve_to_ty(field_var)?;
                     fields.push(StructuralField::new(field.name.clone(), field_ty));
                 }
-                self.bind(var, TypeTerm::Structural(TypeStructural { fields }));
-            }
+                self.bind(var, TypeTerm::Concrete(Ty::Structural(TypeStructural { fields })));            }
             Value::Tuple(tuple) => {
                 let mut vars = Vec::new();
                 for elem in &tuple.values {
@@ -2629,8 +2619,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     let _ = self.infer_value(&entry.value)?;
                 }
                 let map_ty = self.make_hashmap_struct();
-                self.bind(var, TypeTerm::Struct(map_ty));
-            }
+                self.bind(var, TypeTerm::Concrete(Ty::Struct(map_ty)));            }
             Value::Function(func) => {
                 let fn_ty = self.ty_from_function_signature(&func.sig)?;
                 let fn_var = self.type_from_ast_ty(&fn_ty)?;
@@ -2759,8 +2748,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     });
                 let struct_var = self.fresh_type_var();
                 if let Some(struct_def) = self.struct_defs.get(&struct_name).cloned() {
-                    self.bind(struct_var, TypeTerm::Struct(struct_def.clone()));
-                    let mut bindings = Vec::new();
+                    self.bind(struct_var, TypeTerm::Concrete(Ty::Struct(struct_def.clone())));                    let mut bindings = Vec::new();
                     for field in &mut struct_pat.fields {
                         if let Some(rename) = field.rename.as_mut() {
                             let child = self.infer_pattern(rename)?;
@@ -2876,8 +2864,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                                 let concrete = self.apply_generic_args_to_enum(&enum_def, &args);
                                 self.exit_scope();
                                 let enum_var = self.fresh_type_var();
-                                self.bind(enum_var, TypeTerm::Enum(concrete));
-                                return Ok(PatternInfo {
+                                self.bind(enum_var, TypeTerm::Concrete(Ty::Enum(concrete)));                                return Ok(PatternInfo {
                                     var: enum_var,
                                     bindings,
                                 });
@@ -2994,8 +2981,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                                                 let concrete = self
                                                     .apply_generic_args_to_enum(&enum_def, &args);
                                                 self.exit_scope();
-                                                self.bind(enum_var, TypeTerm::Enum(concrete));
-                                                return Ok(PatternInfo {
+                                                self.bind(enum_var, TypeTerm::Concrete(Ty::Enum(concrete)));                                                return Ok(PatternInfo {
                                                     var: enum_var,
                                                     bindings,
                                                 });
@@ -3003,8 +2989,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                                         }
                                     }
 
-                                    self.bind(enum_var, TypeTerm::Enum(enum_def.clone()));
-                                    return Ok(PatternInfo::new(enum_var));
+                                    self.bind(enum_var, TypeTerm::Concrete(Ty::Enum(enum_def.clone())));                                    return Ok(PatternInfo::new(enum_var));
                                 }
                             }
                         }
@@ -3028,8 +3013,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                         if let Some(struct_name) = struct_name {
                             if let Some(struct_def) = self.struct_defs.get(&struct_name).cloned() {
                                 let struct_var = self.fresh_type_var();
-                                self.bind(struct_var, TypeTerm::Struct(struct_def.clone()));
-
+                                self.bind(struct_var, TypeTerm::Concrete(Ty::Struct(struct_def.clone())));
                                 if let Some(inner) = variant.pattern.as_mut() {
                                     if let PatternKind::Structural(pat) = inner.kind_mut() {
                                         let mut bindings = Vec::new();
@@ -3755,8 +3739,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             })
         {
             let var = self.fresh_type_var();
-            self.bind(var, TypeTerm::Struct(def.clone()));
-            for field in &mut struct_expr.fields {
+            self.bind(var, TypeTerm::Concrete(Ty::Struct(def.clone())));            for field in &mut struct_expr.fields {
                 if let Some(value) = field.value.as_mut() {
                     let value_var = self.infer_expr(value)?;
                     if let Some(struct_field) = def.fields.iter().find(|f| f.name == field.name) {
@@ -3814,8 +3797,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                                         }
                                     }
                                     let var = self.fresh_type_var();
-                                    self.bind(var, TypeTerm::Enum(enum_def));
-                                    return Ok(var);
+                                    self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_def)));                                    return Ok(var);
                                 }
                             }
                         }
@@ -3847,8 +3829,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         ];
         let struct_ty = TypeStructural { fields };
         let elem_var = self.fresh_type_var();
-        self.bind(elem_var, TypeTerm::Structural(struct_ty));
-        self.bind(result_var, TypeTerm::Vec(elem_var));
+        self.bind(elem_var, TypeTerm::Concrete(Ty::Structural(struct_ty)));        self.bind(result_var, TypeTerm::Vec(elem_var));
         Ok(result_var)
     }
 
@@ -3912,7 +3893,6 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         }
 
         let var = self.fresh_type_var();
-        self.bind(var, TypeTerm::Enum(enum_ty.clone()));
-        Ok(Some(var))
+        self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_ty.clone())));        Ok(Some(var))
     }
 }

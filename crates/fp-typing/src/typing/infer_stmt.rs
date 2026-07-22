@@ -203,8 +203,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             || !matches!(scrutinee_ty_initial, Some(Ty::Enum(_)))
                         {
                             let enum_var = self.fresh_type_var();
-                            self.bind(enum_var, TypeTerm::Enum(enum_ty.clone()));
-                            self.unify(enum_var, scrutinee_var)?;
+                            self.bind(enum_var, TypeTerm::Concrete(Ty::Enum(enum_ty.clone())));                            self.unify(enum_var, scrutinee_var)?;
                         }
                         qualify_enum_variant_pattern(pat, enum_ty);
                     }

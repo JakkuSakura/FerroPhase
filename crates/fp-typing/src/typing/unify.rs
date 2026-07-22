@@ -73,32 +73,14 @@ pub(crate) enum TypeTerm {
     Union(TypeVarId, TypeVarId),
     Slice(TypeVarId),
     Vec(TypeVarId),
-    // NOTE(jakku): Array terms now keep the element var plus the length expr
-    // (if known). This avoids forcing arrays through TypeTerm::Custom, which
-    // caused mismatches when arrays fell back through opaque concrete types.
+    // Array terms keep the element var plus the length expr so array/slice
+    // unification does not fall back through opaque concrete types.
     Array(TypeVarId, Option<BExpr>),
     Reference(TypeVarId),
     RawPtr(TypeVarId, Option<bool>),
     Boxed(TypeVarId),
     Any,
     Unknown,
-}
-
-impl TypeTerm {
-    #[allow(non_snake_case)]
-    pub(crate) fn Struct(struct_ty: TypeStruct) -> Self {
-        Self::Concrete(Ty::Struct(struct_ty))
-    }
-
-    #[allow(non_snake_case)]
-    pub(crate) fn Structural(structural: TypeStructural) -> Self {
-        Self::Concrete(Ty::Structural(structural))
-    }
-
-    #[allow(non_snake_case)]
-    pub(crate) fn Enum(enum_ty: TypeEnum) -> Self {
-        Self::Concrete(Ty::Enum(enum_ty))
-    }
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -1215,8 +1197,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 merged.push(rhs_field);
                             }
                         }
-                        self.bind(var, TypeTerm::Structural(TypeStructural { fields: merged }));
-                    }
+                        self.bind(var, TypeTerm::Concrete(Ty::Structural(TypeStructural { fields: merged })));                    }
                     TypeBinaryOpKind::Intersect => {
                         let lhs_var = self.type_from_ast_ty(&op.lhs)?;
                         let rhs_var = self.type_from_ast_ty(&op.rhs)?;
@@ -1258,8 +1239,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             }
                         }
 
-                        self.bind(var, TypeTerm::Structural(TypeStructural { fields: merged }));
-                    }
+                        self.bind(var, TypeTerm::Concrete(Ty::Structural(TypeStructural { fields: merged })));                    }
                     TypeBinaryOpKind::Union => {
                         let lhs_var = self.type_from_ast_ty(&op.lhs)?;
                         let rhs_var = self.type_from_ast_ty(&op.rhs)?;
@@ -1298,8 +1278,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .filter(|f| !to_remove.contains(f.name.as_str()))
                             .collect();
 
-                        self.bind(var, TypeTerm::Structural(TypeStructural { fields: merged }));
-                    }
+                        self.bind(var, TypeTerm::Concrete(Ty::Structural(TypeStructural { fields: merged })));                    }
                 }
             }
             Ty::AnyBox(_) => {
@@ -1311,11 +1290,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             Ty::Struct(struct_ty) => {
                 self.insert_struct_def(&struct_ty.name, struct_ty.clone());
-                self.bind(var, TypeTerm::Struct(struct_ty.clone()));
-            }
-            Ty::Structural(structural) => self.bind(var, TypeTerm::Structural(structural.clone())),
-            Ty::Enum(enum_ty) => self.bind(var, TypeTerm::Enum(enum_ty.clone())),
-            Ty::Value(value_ty) => {
+                self.bind(var, TypeTerm::Concrete(Ty::Struct(struct_ty.clone())));            }
+            Ty::Structural(structural) => self.bind(var, TypeTerm::Concrete(Ty::Structural(structural.clone()))),            Ty::Enum(enum_ty) => self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_ty.clone()))),            Ty::Value(value_ty) => {
                 let term = match value_ty.value.as_ref() {
                     Value::Int(_) => TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
                     Value::Bool(_) => TypeTerm::Primitive(TypePrimitive::Bool),
@@ -1388,15 +1364,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         let map_var = self.fresh_type_var();
                         if let Some(key) = self.resolve_locator_key(loc) {
                             if let Some(struct_ty) = self.struct_defs.get(&key) {
-                                self.bind(map_var, TypeTerm::Struct(struct_ty.clone()));
-                            } else {
+                                self.bind(map_var, TypeTerm::Concrete(Ty::Struct(struct_ty.clone())));                            } else {
                                 let map_ty = self.make_hashmap_struct();
-                                self.bind(map_var, TypeTerm::Struct(map_ty));
-                            }
+                                self.bind(map_var, TypeTerm::Concrete(Ty::Struct(map_ty)));                            }
                         } else {
                             let map_ty = self.make_hashmap_struct();
-                            self.bind(map_var, TypeTerm::Struct(map_ty));
-                        }
+                            self.bind(map_var, TypeTerm::Concrete(Ty::Struct(map_ty)));                        }
                         self.record_hashmap_args(map_var, key_var, value_var);
                         return Ok(map_var);
                     }
@@ -1455,8 +1428,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                 enum_ty,
                                                 &concrete_args,
                                             );
-                                            self.bind(var, TypeTerm::Enum(concrete));
-                                            handled = true;
+                                            self.bind(var, TypeTerm::Concrete(Ty::Enum(concrete)));                                            handled = true;
                                         }
                                     }
                                     if !handled {
@@ -1468,8 +1440,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                     struct_ty,
                                                     &concrete_args,
                                                 );
-                                                self.bind(var, TypeTerm::Struct(concrete));
-                                                handled = true;
+                                                self.bind(var, TypeTerm::Concrete(Ty::Struct(concrete)));                                                handled = true;
                                             }
                                         }
                                     }
@@ -1481,8 +1452,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     if enum_ty.generics_params.len() == concrete_args.len() {
                                         let concrete = self
                                             .apply_generic_args_to_enum(&enum_ty, &concrete_args);
-                                        self.bind(var, TypeTerm::Enum(concrete));
-                                        return Ok(var);
+                                        self.bind(var, TypeTerm::Concrete(Ty::Enum(concrete)));                                        return Ok(var);
                                     }
                                 }
                                 if name == "Option" && concrete_args.len() == 1 {
@@ -1494,8 +1464,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     if let Some(enum_ty) = self.enum_defs.get(&std_option) {
                                         let concrete = self
                                             .apply_generic_args_to_enum(enum_ty, &concrete_args);
-                                        self.bind(var, TypeTerm::Enum(concrete));
-                                        return Ok(var);
+                                        self.bind(var, TypeTerm::Concrete(Ty::Enum(concrete)));                                        return Ok(var);
                                     }
                                 }
                                 if name == "Result" && concrete_args.len() == 2 {
@@ -1507,8 +1476,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     if let Some(enum_ty) = self.enum_defs.get(&std_result) {
                                         let concrete = self
                                             .apply_generic_args_to_enum(enum_ty, &concrete_args);
-                                        self.bind(var, TypeTerm::Enum(concrete));
-                                        return Ok(var);
+                                        self.bind(var, TypeTerm::Concrete(Ty::Enum(concrete)));                                        return Ok(var);
                                     }
                                 }
                                 if let Some((_, struct_ty)) = self.lookup_struct_def_by_name(name) {
@@ -1517,8 +1485,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                             &struct_ty,
                                             &concrete_args,
                                         );
-                                        self.bind(var, TypeTerm::Struct(concrete));
-                                        return Ok(var);
+                                        self.bind(var, TypeTerm::Concrete(Ty::Struct(concrete)));                                        return Ok(var);
                                     }
                                 }
                                 if name == "Option" && concrete_args.len() == 1 {
@@ -1539,8 +1506,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                             },
                                         ],
                                     };
-                                    self.bind(var, TypeTerm::Enum(enum_ty));
-                                    return Ok(var);
+                                    self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_ty)));                                    return Ok(var);
                                 }
                                 if name == "Result" && concrete_args.len() == 2 {
                                     let enum_ty = TypeEnum {
@@ -1560,8 +1526,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                             },
                                         ],
                                     };
-                                    self.bind(var, TypeTerm::Enum(enum_ty));
-                                    return Ok(var);
+                                    self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_ty)));                                    return Ok(var);
                                 }
                             }
                         }
@@ -1588,12 +1553,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         if let Some(ctx) = self.impl_stack.last().and_then(|ctx| ctx.as_ref()) {
                             match &ctx.self_ty {
                                 Ty::Struct(struct_ty) => {
-                                    self.bind(var, TypeTerm::Struct(struct_ty.clone()));
-                                    return Ok(var);
+                                    self.bind(var, TypeTerm::Concrete(Ty::Struct(struct_ty.clone())));                                    return Ok(var);
                                 }
                                 Ty::Enum(enum_ty) => {
-                                    self.bind(var, TypeTerm::Enum(enum_ty.clone()));
-                                    return Ok(var);
+                                    self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_ty.clone())));                                    return Ok(var);
                                 }
                                 _ => {}
                             }
@@ -1616,21 +1579,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     if let Some(key) = resolved.clone() {
                         if let Some(struct_ty) = self.struct_defs.get(&key) {
-                            self.bind(var, TypeTerm::Struct(struct_ty.clone()));
-                            return Ok(var);
+                            self.bind(var, TypeTerm::Concrete(Ty::Struct(struct_ty.clone())));                            return Ok(var);
                         }
                         if let Some(enum_ty) = self.enum_defs.get(&key) {
-                            self.bind(var, TypeTerm::Enum(enum_ty.clone()));
-                            return Ok(var);
+                            self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_ty.clone())));                            return Ok(var);
                         }
                         if let Some(stripped) = Self::strip_std_prefix(&key) {
                             if let Some(struct_ty) = self.struct_defs.get(&stripped) {
-                                self.bind(var, TypeTerm::Struct(struct_ty.clone()));
-                                return Ok(var);
+                                self.bind(var, TypeTerm::Concrete(Ty::Struct(struct_ty.clone())));                                return Ok(var);
                             }
                             if let Some(enum_ty) = self.enum_defs.get(&stripped) {
-                                self.bind(var, TypeTerm::Enum(enum_ty.clone()));
-                                return Ok(var);
+                                self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_ty.clone())));                                return Ok(var);
                             }
                         }
                     }
@@ -1647,28 +1606,23 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                         for candidate in &candidates {
                             if let Some(struct_ty) = self.struct_defs.get(candidate) {
-                                self.bind(var, TypeTerm::Struct(struct_ty.clone()));
-                                return Ok(var);
+                                self.bind(var, TypeTerm::Concrete(Ty::Struct(struct_ty.clone())));                                return Ok(var);
                             }
                         }
                         for candidate in &candidates {
                             if let Some(enum_ty) = self.enum_defs.get(candidate) {
-                                self.bind(var, TypeTerm::Enum(enum_ty.clone()));
-                                return Ok(var);
+                                self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_ty.clone())));                                return Ok(var);
                             }
                         }
                     }
                     if let Some((_, struct_ty)) = self.lookup_struct_def_by_name(&name) {
-                        self.bind(var, TypeTerm::Struct(struct_ty));
-                        return Ok(var);
+                        self.bind(var, TypeTerm::Concrete(Ty::Struct(struct_ty)));                        return Ok(var);
                     }
                     if let Some((_, enum_ty)) = self.lookup_enum_def_by_name(&name) {
-                        self.bind(var, TypeTerm::Enum(enum_ty));
-                        return Ok(var);
+                        self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_ty)));                        return Ok(var);
                     }
                     if name == "HashMap" {
-                        self.bind(var, TypeTerm::Struct(self.make_hashmap_struct()));
-                        return Ok(var);
+                        self.bind(var, TypeTerm::Concrete(Ty::Struct(self.make_hashmap_struct())));                        return Ok(var);
                     }
                 }
                 if let ExprKind::Invoke(invoke) = expr.kind() {
@@ -1680,8 +1634,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 repr: ReprOptions::default(),
                                 fields: Vec::new(),
                             };
-                            self.bind(var, TypeTerm::Struct(struct_ty));
-                            return Ok(var);
+                            self.bind(var, TypeTerm::Concrete(Ty::Struct(struct_ty)));                            return Ok(var);
                         }
                     }
                 }
@@ -1965,12 +1918,12 @@ mod tests {
         let func_var = typer.fresh_type_var();
         typer.bind(
             struct_var,
-            TypeTerm::Struct(TypeStruct {
+            TypeTerm::Concrete(Ty::Struct(TypeStruct {
                 name: Ident::new("Parser".to_string()),
                 generics_params: Vec::new(),
                 repr: Default::default(),
                 fields: Vec::new(),
-            }),
+            })),
         );
         let ret_var = typer.unit_type_var();
         typer.bind(

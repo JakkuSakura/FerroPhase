@@ -3315,8 +3315,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .any(|v| v.name.as_str() == variant_name)
                         {
                             let var = self.fresh_type_var();
-                            self.bind(var, TypeTerm::Enum(enum_def));
-                            let qualified = enum_key.with_segment(variant_name.to_string());
+                            self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_def)));                            let qualified = enum_key.with_segment(variant_name.to_string());
                             return Ok((
                                 var,
                                 Some(ResolvedName {
