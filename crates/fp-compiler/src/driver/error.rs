@@ -22,4 +22,7 @@ pub enum CompilerDriverError {
     MissingConstValue(ConstValueId),
     #[error("unsupported compiler work: {0}")]
     UnsupportedWork(String),
+    #[error("unresolvable comptime cycle for {0}")]
+    UnresolvableComptime(AstId),
 }
+// appended

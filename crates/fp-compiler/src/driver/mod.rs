@@ -84,6 +84,18 @@ impl CompilerDriver {
             .collect();
 
         if !self.state.comptime_seeded.contains(ast_id) {
+            let comptime_count = all_requests.iter().filter(|r| matches!(r, TypingRequest::Comptime(_))).count();
+            if comptime_count > 0 {
+                self.state.comptime_pending.insert(ast_id.clone(), comptime_count);
+            }
+            self.state.comptime_seeded.insert(ast_id.clone());
+        } else if self.state.comptime_pending.get(ast_id).copied().unwrap_or(0) == 0
+            && all_requests.iter().any(|r| matches!(r, TypingRequest::Comptime(_)))
+        {
+            return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
+        }
+
+        if !self.state.comptime_seeded.contains(ast_id) {
             let comptime_count = all_requests
                 .iter()
                 .filter(|r| matches!(r, TypingRequest::Comptime(_)))
