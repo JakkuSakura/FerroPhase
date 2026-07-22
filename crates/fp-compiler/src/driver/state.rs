@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use fp_core::{ast::Node, ast::Value, hir, lir, mir};
 use fp_typing::TypingDiagnostic;
@@ -16,6 +16,8 @@ pub struct CompilerState {
     const_values: BTreeMap<ConstValueId, Value>,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
     typing_diagnostics: Vec<TypingDiagnostic>,
+    /// AST IDs whose comptime needs have been resolved.
+    pub(crate) comptime_resolved: HashSet<AstId>,
 }
 
 impl CompilerState {

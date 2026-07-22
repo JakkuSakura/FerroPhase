@@ -1441,6 +1441,7 @@ dependencies = [
  "fp-backend",
  "fp-core",
  "fp-interpret",
+ "fp-lang",
  "fp-typing",
  "serde",
  "thiserror 2.0.17",
