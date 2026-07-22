@@ -1,7 +1,8 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall, ExprKind,
-    ExprStringTemplate, ExprUnOp, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart,
-    Ident, MacroTokenTree, StmtLet, Ty, Value,
+    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall,
+    ExprInvoke, ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprUnOp, FormatArgRef,
+    FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name, Path, StmtLet,
+    Ty, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer, NormalizeOutcome};
@@ -45,7 +46,16 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             if macro_name == "vec" {
                 let expr =
                     parse_vec_macro_tokens(&macro_expr.invocation.token_trees, macro_expr.span())?;
-                let replacement = expr.with_ty_slot(ty_slot);
+                let invoke = ExprInvoke {
+                    target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
+                        Ident::new("Vec"),
+                        Ident::new("from"),
+                    ]))),
+                    args: vec![expr],
+                    kwargs: vec![],
+                    span: macro_expr.span(),
+                };
+                let replacement = Expr::from(ExprKind::Invoke(invoke)).with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "assert" {
