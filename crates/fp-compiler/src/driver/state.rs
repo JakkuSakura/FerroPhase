@@ -18,6 +18,7 @@ pub struct CompilerState {
     const_values: BTreeMap<ConstValueId, Value>,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
     typing_diagnostics: Vec<TypingDiagnostic>,
+    lossy: bool,
     module_resolver: Option<Arc<dyn CompilerModuleResolver>>,
     module_resolutions: BTreeMap<AstId, ModuleResolutionContext>,
     /// Per-AST count of unresolved comptime needs. Decremented on each resolve.
@@ -89,6 +90,10 @@ impl CompilerState {
         self.typing_diagnostics.extend(diagnostics);
     }
 
+    pub fn set_lossy(&mut self, lossy: bool) {
+        self.lossy = lossy;
+    }
+
     pub fn ast(&self, ast_id: &AstId) -> Result<&Node, CompilerDriverError> {
         self.ast
             .get(ast_id)
@@ -135,6 +140,10 @@ impl CompilerState {
         &self.typing_diagnostics
     }
 
+    pub fn lossy(&self) -> bool {
+        self.lossy
+    }
+
     pub fn module_resolution(&self, ast_id: &AstId) -> Option<&ModuleResolutionContext> {
         self.module_resolutions.get(ast_id)
     }
@@ -171,6 +180,7 @@ impl Default for CompilerState {
             const_values: BTreeMap::new(),
             runtime_values: BTreeMap::new(),
             typing_diagnostics: Vec::new(),
+            lossy: false,
             module_resolver: None,
             module_resolutions: BTreeMap::new(),
             comptime_pending: HashMap::new(),

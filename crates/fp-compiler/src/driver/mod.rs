@@ -5,6 +5,7 @@ pub use error::CompilerDriverError;
 pub use state::CompilerState;
 
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
+use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::ast::{NodeKind, Value};
 use fp_typing::{
     annotate, annotate_with_module_resolution, PendingTypingRequest, PendingTypingRequestKind,
@@ -168,7 +169,23 @@ impl CompilerDriver {
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let hir = self.state.hir(hir_id)?.clone();
         let mut lowering = MirLowering::new();
-        let mir = lowering.transform(hir)?;
+        lowering.set_lossy(self.state.lossy());
+        let mir = lowering.transform(hir);
+        let (diagnostics, had_errors) = lowering.take_diagnostics();
+        let mir = match (mir, had_errors, self.state.lossy()) {
+            (Ok(program), false, _) => program,
+            (Ok(_), true, true) => fp_core::mir::Program::new(),
+            (Err(_), _, true) => fp_core::mir::Program::new(),
+            (Ok(_), true, false) => {
+                let message = diagnostics
+                    .iter()
+                    .find(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
+                    .map(|diagnostic| diagnostic.message.clone())
+                    .unwrap_or_else(|| "HIR→MIR lowering reported errors".to_string());
+                return Err(CompilerDriverError::UnsupportedWork(message));
+            }
+            (Err(err), _, false) => return Err(err.into()),
+        };
         let mir_id = MirId::new(format!("mir:{}", path.to_key()));
         if let Some(typed_ast) = self.state.hir_to_typed_ast.get(hir_id).cloned() {
             self.state

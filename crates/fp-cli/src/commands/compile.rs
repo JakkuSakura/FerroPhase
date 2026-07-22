@@ -7,12 +7,12 @@ use crate::compiler::{
     WasmCompileOptions,
 };
 use crate::pipeline::{
-    AstPreparationOptions, BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
+    AstPreparationOptions, BackendKind,
 };
 use crate::{
     CliError, Result,
     cli::CliConfig,
-    pipeline::{Pipeline, PipelineInput, PipelineOutput},
+    pipeline::Pipeline,
 };
 use console::style;
 use fp_core::ast::{AstTarget, AstTargetOutput, Node};
@@ -51,7 +51,7 @@ use fp_zig::ZigSerializer;
 use object::Object as _;
 use semver::Version;
 use std::collections::HashSet;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::{fs as async_fs, process::Command};
@@ -497,128 +497,14 @@ async fn compile_file(
         CompileTarget::Ast(_) => unreachable!("AST target should return early"),
     };
 
-    if let Some(artifact) =
-        try_compile_with_compiler(input, output, args, backend, module_resolution.clone())?
-    {
-        return Ok(Some(artifact));
+    if !args.disable_stage.is_empty() {
+        warn!(
+            "--disable-stage is ignored on the fp-compiler compile path: {}",
+            args.disable_stage.join(", ")
+        );
     }
 
-    // Configure pipeline for compilation with new options
-    let target = match backend {
-        BackendKind::TextBytecode => BackendKind::Bytecode,
-        other => other,
-    };
-
-    let execute_const_main = false;
-
-    let mut disabled_stages = args.disable_stage.clone();
-    if !disabled_stages
-        .iter()
-        .any(|stage| stage == "ast→typed(post-closure)")
-    {
-        disabled_stages.push("ast→typed(post-closure)".to_string());
-    }
-
-    let lossy_mode = config::lossy_mode();
-    let pipeline_options = PipelineOptions {
-        target,
-        backend: Some(args.emitter.as_str().to_string()),
-        target_triple: args.target_triple.clone(),
-        target_cpu: args.target_cpu.clone(),
-        native_target: args.native_target.clone(),
-        target_features: args.target_features.clone(),
-        target_sysroot: args.target_sysroot.clone(),
-        linker: Some(args.linker.clone()),
-        target_linker: args.target_linker.clone(),
-        runtime: RuntimeConfig {
-            runtime_type: "literal".to_string(),
-            options: std::collections::HashMap::new(),
-        },
-        source_language: args.source_language.clone(),
-        optimization_level: args.opt_level,
-        save_intermediates: args.save_intermediates,
-        base_path: Some(output.to_path_buf()),
-        debug: DebugOptions {
-            print_ast: false,
-            print_passes: false,
-            verbose: args.debug,
-        },
-        lossy: LossyOptions {
-            enabled: args.lossy || lossy_mode,
-            max_errors: if args.max_errors == 0 {
-                50
-            } else {
-                args.max_errors
-            }, // Default cap
-            show_all_errors: true,
-            continue_on_error: true,
-        },
-        release: args.release,
-        execute_main: execute_const_main,
-        disabled_stages,
-        module_resolution: match module_resolution.as_ref() {
-            Some(state) => Some(state.context_for_input(input)?),
-            None => None,
-        },
-        jit: None,
-    };
-
-    // Execute pipeline with new options
-    let mut pipeline = Pipeline::new();
-    let pipeline_output = pipeline
-        .execute_with_options(PipelineInput::File(input.to_path_buf()), pipeline_options)
-        .await?;
-
-    if execute_const_main {
-        if let Some(stdout_chunks) = pipeline.take_last_const_eval_stdout() {
-            for chunk in stdout_chunks {
-                print!("{}", chunk);
-            }
-            let _ = io::stdout().flush();
-        }
-    }
-
-    // Write output to file.
-    let artifact = match pipeline_output {
-        PipelineOutput::Code(code) => {
-            if let Some(parent) = output.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| CliError::Io(e))?;
-            }
-
-            std::fs::write(output, &code).map_err(|e| CliError::Io(e))?;
-
-            info!("Generated code: {}", output.display());
-            Some(output.to_path_buf())
-        }
-        PipelineOutput::Binary(path) => {
-            let binary_path = path;
-            if binary_path != *output {
-                if let Some(parent) = output.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| CliError::Io(e))?;
-                }
-                async_fs::copy(&binary_path, output)
-                    .await
-                    .map_err(|e| CliError::Io(e))?;
-                if !args.save_intermediates {
-                    let _ = async_fs::remove_file(&binary_path).await;
-                }
-            }
-            info!("Generated binary: {}", output.display());
-            Some(output.to_path_buf())
-        }
-        PipelineOutput::Value(_) => {
-            // For interpret target or binary target (already compiled), we don't write to file
-            info!("Operation completed");
-            None
-        }
-        PipelineOutput::RuntimeValue(_) => {
-            // For runtime interpretation, we don't write to file
-            info!("Runtime interpretation completed");
-            None
-        }
-    };
-
-    Ok(artifact)
+    try_compile_with_compiler(input, output, args, backend, module_resolution)
 }
 
 fn try_compile_with_compiler(
@@ -628,10 +514,9 @@ fn try_compile_with_compiler(
     backend: BackendKind,
     module_resolution: Option<Arc<ModuleResolutionState>>,
 ) -> Result<Option<PathBuf>> {
-    if args.lossy || !args.disable_stage.is_empty() {
-        return Ok(None);
-    }
-
+    let lossy = compiler::LossyCompileOptions {
+        enabled: args.lossy || config::lossy_mode(),
+    };
     let resolver = module_resolution.map(|state| state as Arc<dyn CompilerModuleResolver>);
 
     match backend {
@@ -645,6 +530,7 @@ fn try_compile_with_compiler(
                         input,
                         args.source_language.as_deref(),
                         resolver.clone(),
+                        lossy,
                         &LlvmCompileOptions {
                             output: output.to_path_buf(),
                             target_triple: args.target_triple.clone(),
@@ -670,6 +556,7 @@ fn try_compile_with_compiler(
                         input,
                         args.source_language.as_deref(),
                         resolver.clone(),
+                        lossy,
                         &CraneliftCompileOptions {
                             output: output.to_path_buf(),
                             target_triple: args.target_triple.clone(),
@@ -689,6 +576,7 @@ fn try_compile_with_compiler(
                 input,
                 args.source_language.as_deref(),
                 resolver,
+                lossy,
                 &NativeCompileOptions {
                     emitter,
                     output: output.to_path_buf(),
@@ -710,6 +598,7 @@ fn try_compile_with_compiler(
                 input,
                 args.source_language.as_deref(),
                 resolver,
+                lossy,
                 &BytecodeCompileOptions {
                     output: output.to_path_buf(),
                     emit_text: matches!(backend, BackendKind::TextBytecode),
@@ -727,6 +616,7 @@ fn try_compile_with_compiler(
                 input,
                 args.source_language.as_deref(),
                 resolver,
+                lossy,
                 &JvmCompileOptions {
                     output: output.to_path_buf(),
                     save_intermediates: args.save_intermediates,
@@ -740,6 +630,7 @@ fn try_compile_with_compiler(
                 input,
                 args.source_language.as_deref(),
                 resolver,
+                lossy,
                 &WasmCompileOptions {
                     output: output.to_path_buf(),
                 },
@@ -751,6 +642,7 @@ fn try_compile_with_compiler(
                 input,
                 args.source_language.as_deref(),
                 resolver,
+                lossy,
                 &EbpfCompileOptions {
                     output: output.to_path_buf(),
                 },
@@ -770,6 +662,7 @@ fn try_compile_with_compiler(
                 input,
                 args.source_language.as_deref(),
                 resolver,
+                lossy,
                 output,
                 args.save_intermediates,
             )?;
@@ -780,6 +673,7 @@ fn try_compile_with_compiler(
                 input,
                 args.source_language.as_deref(),
                 resolver,
+                lossy,
                 &LlvmCompileOptions {
                     output: output.to_path_buf(),
                     target_triple: args.target_triple.clone(),
@@ -800,7 +694,10 @@ fn try_compile_with_compiler(
             )?;
             Ok(Some(artifact))
         }
-        _ => Ok(None),
+        _ => Err(CliError::Compilation(format!(
+            "fp-compiler does not support backend {} on this path",
+            backend.as_str()
+        ))),
     }
 }
 

@@ -46,14 +46,16 @@ pub fn check_path(
     path: &Path,
     syntax_only: bool,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    lossy: LossyCompileOptions,
 ) -> Result<()> {
-    let ast = parse_file(path, None)?;
+    let ast = parse_file(path, None, lossy)?;
     if syntax_only {
         return Ok(());
     }
 
     let identity = CompilerIdentity::for_file(path);
     let mut driver = CompilerDriver::new();
+    driver.state.set_lossy(lossy.enabled);
     if let Some(resolver) = resolver {
         driver.state.set_module_resolver(resolver);
         driver
@@ -68,7 +70,7 @@ pub fn check_path(
         path: identity.path.clone(),
         consumers: Vec::new(),
     });
-    drain_driver(&mut driver)
+    drain_driver(&mut driver, lossy)
 }
 
 pub fn eval_expr(source: &str) -> Result<Value> {
@@ -79,6 +81,7 @@ pub fn eval_expr(source: &str) -> Result<Value> {
         ExecutionMode::Comptime,
         Path::new("<eval>"),
         None,
+        LossyCompileOptions::default(),
     )
 }
 
@@ -86,16 +89,30 @@ pub fn eval_file(
     path: &Path,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
 ) -> Result<Value> {
-    let ast = parse_file(path, None)?;
-    execute_ast(ast, CompilerIdentity::for_file(path), ExecutionMode::Runtime, path, resolver)
+    let ast = parse_file(path, None, LossyCompileOptions::default())?;
+    execute_ast(
+        ast,
+        CompilerIdentity::for_file(path),
+        ExecutionMode::Runtime,
+        path,
+        resolver,
+        LossyCompileOptions::default(),
+    )
 }
 
 pub fn interpret_file(
     path: &Path,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
 ) -> Result<Value> {
-    let ast = parse_file(path, None)?;
-    execute_ast(ast, CompilerIdentity::for_file(path), ExecutionMode::Runtime, path, resolver)
+    let ast = parse_file(path, None, LossyCompileOptions::default())?;
+    execute_ast(
+        ast,
+        CompilerIdentity::for_file(path),
+        ExecutionMode::Runtime,
+        path,
+        resolver,
+        LossyCompileOptions::default(),
+    )
 }
 
 pub struct NativeCompileOptions {
@@ -165,13 +182,19 @@ pub struct CraneliftCompileOptions {
     pub save_intermediates: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LossyCompileOptions {
+    pub enabled: bool,
+}
+
 pub fn compile_native_file(
     path: &Path,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    lossy: LossyCompileOptions,
     options: &NativeCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language, resolver)?;
+    let lowered = lower_file(path, source_language, resolver, lossy)?;
     let lir = lowered.lir()?;
 
     match options.emitter {
@@ -225,9 +248,10 @@ pub fn compile_bytecode_file(
     path: &Path,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    lossy: LossyCompileOptions,
     options: &BytecodeCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language, resolver)?;
+    let lowered = lower_file(path, source_language, resolver, lossy)?;
     let mir = lowered.mir()?;
     let bytecode = fp_bytecode::lower_program(&mir)
         .map_err(|err| CliError::Compilation(format!("MIR→Bytecode lowering failed: {}", err)))?;
@@ -267,9 +291,10 @@ pub fn compile_jvm_file(
     path: &Path,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    lossy: LossyCompileOptions,
     options: &JvmCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language, resolver)?;
+    let lowered = lower_file(path, source_language, resolver, lossy)?;
     let mir = lowered.mir()?;
     let class_stem = options
         .class_name_hint
@@ -327,9 +352,10 @@ pub fn compile_wasm_file(
     path: &Path,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    lossy: LossyCompileOptions,
     options: &WasmCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language, resolver)?;
+    let lowered = lower_file(path, source_language, resolver, lossy)?;
     let lir = lowered.lir()?;
     let wasm_bytes = fp_wasm::emit_wasm(&lir)
         .map_err(|err| CliError::Compilation(format!("Failed to emit wasm: {}", err)))?;
@@ -344,9 +370,10 @@ pub fn compile_ebpf_file(
     path: &Path,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    lossy: LossyCompileOptions,
     options: &EbpfCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language, resolver)?;
+    let lowered = lower_file(path, source_language, resolver, lossy)?;
     let lir = lowered.lir()?;
     if let Some(parent) = options.output.parent() {
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
@@ -364,7 +391,7 @@ pub fn compile_ebpf_file(
 }
 
 pub fn compile_cil_file(path: &Path) -> Result<String> {
-    let ast = parse_file(path, None)?;
+    let ast = parse_file(path, None, LossyCompileOptions::default())?;
     compile_cil_ast(&ast)
 }
 
@@ -372,10 +399,11 @@ pub fn compile_dotnet_file(
     path: &Path,
     source_language: Option<&str>,
     _resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    lossy: LossyCompileOptions,
     output: &Path,
     save_intermediates: bool,
 ) -> Result<PathBuf> {
-    let ast = parse_file(path, source_language)?;
+    let ast = parse_file(path, source_language, lossy)?;
     compile_dotnet_ast(&ast, output, save_intermediates)
 }
 
@@ -383,11 +411,12 @@ pub fn compile_llvm_file(
     path: &Path,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    lossy: LossyCompileOptions,
     options: &LlvmCompileOptions,
 ) -> Result<PathBuf> {
     #[cfg(feature = "llvm")]
     {
-        let lowered = lower_file(path, source_language, resolver)?;
+        let lowered = lower_file(path, source_language, resolver, lossy)?;
         let lir = lowered.lir()?;
         let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let llvm_output = if options.output.extension().and_then(|ext| ext.to_str()) == Some("ll") {
@@ -461,11 +490,12 @@ pub fn compile_cranelift_file(
     path: &Path,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    lossy: LossyCompileOptions,
     options: &CraneliftCompileOptions,
 ) -> Result<PathBuf> {
     #[cfg(feature = "cranelift")]
     {
-        let lowered = lower_file(path, source_language, resolver)?;
+        let lowered = lower_file(path, source_language, resolver, lossy)?;
         let lir = lowered.lir()?;
         let object_path = options.output.with_extension(if is_windows_target(options.target_triple.as_deref()) {
             "obj"
@@ -693,14 +723,15 @@ fn execute_ast(
     mode: ExecutionMode,
     source_path: &Path,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    lossy: LossyCompileOptions,
 ) -> Result<Value> {
     let value_key = identity.path.to_key();
     let consumer = match mode {
         ExecutionMode::Comptime => LirConsumer::ExecuteComptime,
         ExecutionMode::Runtime => LirConsumer::ExecuteRuntime,
     };
-    let mut driver = lower_ast(ast, &identity, source_path, vec![consumer], resolver)?;
-    drain_driver(&mut driver)?;
+    let mut driver = lower_ast(ast, &identity, source_path, vec![consumer], resolver, lossy)?;
+    drain_driver(&mut driver, lossy)?;
 
     match mode {
         ExecutionMode::Comptime => driver
@@ -720,12 +751,13 @@ fn lower_file(
     path: &Path,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    lossy: LossyCompileOptions,
 ) -> Result<LoweredProgram> {
-    let ast = parse_file(path, source_language)?;
+    let ast = parse_file(path, source_language, lossy)?;
     let identity = CompilerIdentity::for_file(path);
     let path_key = identity.path.to_key();
-    let mut driver = lower_ast(ast, &identity, path, Vec::new(), resolver)?;
-    drain_driver(&mut driver)?;
+    let mut driver = lower_ast(ast, &identity, path, Vec::new(), resolver, lossy)?;
+    drain_driver(&mut driver, lossy)?;
     Ok(LoweredProgram { driver, path_key })
 }
 
@@ -735,11 +767,13 @@ fn lower_ast(
     source_path: &Path,
     consumers: Vec<LirConsumer>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    lossy: LossyCompileOptions,
 ) -> Result<CompilerDriver> {
     let ast_id = identity.ast_id.clone();
     let scope_id = identity.scope_id();
     let path = identity.path.clone();
     let mut driver = CompilerDriver::new();
+    driver.state.set_lossy(lossy.enabled);
     if let Some(resolver) = resolver {
         driver.state.set_module_resolver(resolver);
         driver
@@ -757,13 +791,13 @@ fn lower_ast(
     Ok(driver)
 }
 
-fn drain_driver(driver: &mut CompilerDriver) -> Result<()> {
+fn drain_driver(driver: &mut CompilerDriver, lossy: LossyCompileOptions) -> Result<()> {
     while driver
         .run_next()
         .map_err(|err| CliError::Compilation(err.to_string()))?
         .is_some()
     {}
-    emit_typing_diagnostics(driver.state.typing_diagnostics())
+    emit_typing_diagnostics(driver.state.typing_diagnostics(), lossy)
 }
 
 fn parse_expr(source: &str) -> Result<Node> {
@@ -773,11 +807,11 @@ fn parse_expr(source: &str) -> Result<Node> {
     } = frontend
         .parse_expr(source)
         .map_err(|err| CliError::Compilation(err.to_string()))?;
-    emit_frontend_diagnostics(&diagnostics.get_diagnostics())?;
+    emit_frontend_diagnostics(&diagnostics.get_diagnostics(), LossyCompileOptions::default())?;
     Ok(ast)
 }
 
-fn parse_file(path: &Path, source_language: Option<&str>) -> Result<Node> {
+fn parse_file(path: &Path, source_language: Option<&str>, lossy: LossyCompileOptions) -> Result<Node> {
     let frontend = select_frontend(path, source_language)?;
     let source = std::fs::read_to_string(path).map_err(CliError::Io)?;
     let FrontendResult {
@@ -785,7 +819,7 @@ fn parse_file(path: &Path, source_language: Option<&str>) -> Result<Node> {
     } = frontend
         .parse_file(&source, path)
         .map_err(|err| CliError::Compilation(err.to_string()))?;
-    emit_frontend_diagnostics(&diagnostics.get_diagnostics())?;
+    emit_frontend_diagnostics(&diagnostics.get_diagnostics(), lossy)?;
     Ok(ast)
 }
 
@@ -830,13 +864,14 @@ fn select_frontend(path: &Path, source_language: Option<&str>) -> Result<Box<dyn
     }
 }
 
-fn emit_frontend_diagnostics(diagnostics: &[Diagnostic]) -> Result<()> {
+fn emit_frontend_diagnostics(diagnostics: &[Diagnostic], lossy: LossyCompileOptions) -> Result<()> {
     DiagnosticManager::emit(
         diagnostics,
         Some("frontend"),
         &DiagnosticDisplayOptions::default(),
     );
-    if diagnostics
+    if !lossy.enabled
+        && diagnostics
         .iter()
         .any(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
     {
@@ -847,14 +882,18 @@ fn emit_frontend_diagnostics(diagnostics: &[Diagnostic]) -> Result<()> {
     Ok(())
 }
 
-fn emit_typing_diagnostics(diagnostics: &[TypingDiagnostic]) -> Result<()> {
+fn emit_typing_diagnostics(
+    diagnostics: &[TypingDiagnostic],
+    lossy: LossyCompileOptions,
+) -> Result<()> {
     let rendered: Vec<Diagnostic<String>> = diagnostics.iter().map(as_core_diagnostic).collect();
     DiagnosticManager::emit(
         &rendered,
         Some("typing"),
         &DiagnosticDisplayOptions::default(),
     );
-    if diagnostics
+    if !lossy.enabled
+        && diagnostics
         .iter()
         .any(|diagnostic| matches!(diagnostic.level, TypingDiagnosticLevel::Error))
     {
