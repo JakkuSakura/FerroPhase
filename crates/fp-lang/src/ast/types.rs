@@ -6,7 +6,8 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     let _is_unsafe = expect_keyword(input, Keyword::Unsafe).is_ok();
     let abi = if expect_keyword(input, Keyword::Extern).is_ok() {
         let abi = token_kind(input, TokenKind::StringLiteral)?;
-        let _ = decode_string_literal(&abi.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        let _ =
+            decode_string_literal(&abi.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
         true
     } else {
         false
@@ -268,7 +269,9 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                                 span: Span::null(),
                                 kind: inner_kind,
                                 item: None,
-                                inner: Some(Box::new(Ty::Slice(TypeSlice { elem: Box::new(item_quote) }))),
+                                inner: Some(Box::new(Ty::Slice(TypeSlice {
+                                    elem: Box::new(item_quote),
+                                }))),
                             }));
                         }
                         _ => return Err(ErrMode::Cut(ContextError::new())),

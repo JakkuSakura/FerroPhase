@@ -10,8 +10,8 @@ pub use frontend::{
     TypeScriptFrontend,
 };
 pub use package::{
-    PackageJson, default_module_roots, estimate_module_path, estimate_module_path_with_roots,
-    read_package_json,
+    default_module_roots, estimate_module_path, estimate_module_path_with_roots, read_package_json,
+    PackageJson,
 };
 pub use package::{TypeScriptModuleProvider, TypeScriptPackageProvider};
 pub use resolution::{is_typescript_like_source, resolve_imports, ResolveOutcome, ResolvedModule};

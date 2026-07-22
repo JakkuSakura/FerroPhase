@@ -8,7 +8,11 @@ pub fn resolve_project_module_path(identity: &ProjectIdentity, path: &Path) -> R
     let candidate = identity
         .packages()
         .find(|candidate| candidate.contains_path(&path))
-        .or_else(|| identity.primary().filter(|candidate| candidate.contains_path(&path)))
+        .or_else(|| {
+            identity
+                .primary()
+                .filter(|candidate| candidate.contains_path(&path))
+        })
         .ok_or_else(|| eyre!("No identity candidate found for {}", path.display()))?;
     resolve_candidate_module_path(candidate, &path)
 }
@@ -22,7 +26,11 @@ pub fn resolve_candidate_module_path(
     Ok(dispatch_module_path(candidate.language, &package, &path))
 }
 
-fn dispatch_module_path(language: LanguageKind, package: &PackageModel, path: &Path) -> Vec<String> {
+fn dispatch_module_path(
+    language: LanguageKind,
+    package: &PackageModel,
+    path: &Path,
+) -> Vec<String> {
     match language {
         LanguageKind::Magnet | LanguageKind::Rust => {
             fp_lang::module_path::estimate_module_path(&package.root_path, path)

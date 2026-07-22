@@ -24,18 +24,12 @@ pub fn estimate_module_path_with_roots(
         .max_by_key(|candidate| candidate.components().count())
         .cloned()
         .unwrap_or_else(|| root.to_path_buf());
-    let source_root = if module_root
-        .file_name()
-        .and_then(|name| name.to_str())
-        == Some("src")
-    {
+    let source_root = if module_root.file_name().and_then(|name| name.to_str()) == Some("src") {
         module_root.as_path()
     } else {
         root
     };
-    let rel = file_path
-        .strip_prefix(source_root)
-        .unwrap_or(file_path);
+    let rel = file_path.strip_prefix(source_root).unwrap_or(file_path);
     let mut parts = rel
         .parent()
         .unwrap_or(Path::new(""))
@@ -83,7 +77,10 @@ mod tests {
     #[test]
     fn rust_style_module_paths_keep_non_src_roots() {
         assert_eq!(
-            estimate_module_path(Path::new("/proj"), Path::new("/proj/tests/integration/api.rs")),
+            estimate_module_path(
+                Path::new("/proj"),
+                Path::new("/proj/tests/integration/api.rs")
+            ),
             vec![
                 "tests".to_string(),
                 "integration".to_string(),

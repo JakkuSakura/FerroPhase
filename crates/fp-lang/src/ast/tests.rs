@@ -1096,7 +1096,10 @@ fn parse_expr_ast_handles_while_let_with_char_patterns() {
             parser.diagnostics().get_diagnostics()
         )
     });
-    assert!(matches!(expr.kind(), ExprKind::Loop(_) | ExprKind::While(_)));
+    assert!(matches!(
+        expr.kind(),
+        ExprKind::Loop(_) | ExprKind::While(_)
+    ));
 }
 
 #[test]
@@ -1371,7 +1374,9 @@ fn parse_items_ast_handles_unsafe_impl() {
         )
         .unwrap();
     assert_eq!(items.len(), 2);
-    assert!(items.iter().all(|item| matches!(item.kind(), ItemKind::Impl(_))));
+    assert!(items
+        .iter()
+        .all(|item| matches!(item.kind(), ItemKind::Impl(_))));
 }
 
 #[test]
@@ -2065,7 +2070,10 @@ fn parse_expr_ast_handles_type_value_call_arg_static_str_ref() {
     let expr = parser
         .parse_expr_ast(r#"TypeBuilder::new("Base").with_field("name", &'static str).build()"#)
         .unwrap();
-    assert!(matches!(expr.kind(), ExprKind::Invoke(_) | ExprKind::Select(_)));
+    assert!(matches!(
+        expr.kind(),
+        ExprKind::Invoke(_) | ExprKind::Select(_)
+    ));
 }
 
 #[test]

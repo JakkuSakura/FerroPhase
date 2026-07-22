@@ -11,8 +11,8 @@ use fp_core::ast::{
     ExprSelectType, ExprStringTemplate, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile,
     ExprWith, File, FormatTemplatePart, FunctionParam, FunctionSignature, Ident, Item,
     ItemDefFunction, ItemDefStruct, ItemKind, Name, Node, NodeKind, Pattern, PatternIdent,
-    PatternKind, PatternTuple, ReprOptions,
-    StructuralField, Ty, TypeStruct, Value, ValueBytes, ValueMap, ValueTuple,
+    PatternKind, PatternTuple, ReprOptions, StructuralField, Ty, TypeStruct, Value, ValueBytes,
+    ValueMap, ValueTuple,
 };
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
@@ -503,18 +503,14 @@ fn lower_with(stmt_with: &py_ast::StmtWith<TextRange>) -> CoreResult<Expr> {
         return Err(CoreError::from("python with statement has no items"));
     }
     let body = Expr::block(lower_block(&stmt_with.body)?);
-    stmt_with
-        .items
-        .iter()
-        .rev()
-        .try_fold(body, |body, item| {
-            let context = lower_expr(&item.context_expr)?;
-            Ok(Expr::new(ExprKind::With(ExprWith {
-                span: Span::null(),
-                context: Box::new(context),
-                body: Box::new(body),
-            })))
-        })
+    stmt_with.items.iter().rev().try_fold(body, |body, item| {
+        let context = lower_expr(&item.context_expr)?;
+        Ok(Expr::new(ExprKind::With(ExprWith {
+            span: Span::null(),
+            context: Box::new(context),
+            body: Box::new(body),
+        })))
+    })
 }
 
 fn lower_try(stmt_try: &py_ast::StmtTry<TextRange>) -> CoreResult<Expr> {
@@ -681,11 +677,9 @@ fn lower_expr(expr: &PyExpr) -> CoreResult<Expr> {
             }
             Ok(Expr::value(Value::Map(ValueMap::from_pairs(entries))))
         }
-        PyExpr::ListComp(list_comp) => lower_comprehension_call(
-            "__py_list_comp__",
-            &list_comp.elt,
-            &list_comp.generators,
-        ),
+        PyExpr::ListComp(list_comp) => {
+            lower_comprehension_call("__py_list_comp__", &list_comp.elt, &list_comp.generators)
+        }
         PyExpr::DictComp(dict_comp) => {
             let elt = Expr::new(ExprKind::Tuple(ExprTuple {
                 span: Span::null(),
@@ -704,11 +698,7 @@ fn lower_expr(expr: &PyExpr) -> CoreResult<Expr> {
 }
 
 fn lower_generator_exp(generator: &py_ast::ExprGeneratorExp<TextRange>) -> CoreResult<Expr> {
-    lower_comprehension_call(
-        "__py_generator__",
-        &generator.elt,
-        &generator.generators,
-    )
+    lower_comprehension_call("__py_generator__", &generator.elt, &generator.generators)
 }
 
 fn lower_comprehension_call(
@@ -733,7 +723,9 @@ fn lower_comprehension_call_expr(
 
     let clause = &generators[0];
     if clause.is_async {
-        return Err(CoreError::from("python async comprehensions are not supported"));
+        return Err(CoreError::from(
+            "python async comprehensions are not supported",
+        ));
     }
 
     let iter = lower_expr(&clause.iter)?;
@@ -1124,7 +1116,8 @@ mod tests {
 
     #[test]
     fn parses_global_statement_in_function() {
-        let source = "model = None\n\ndef load_model():\n    global model\n    model = create_model()\n";
+        let source =
+            "model = None\n\ndef load_model():\n    global model\n    model = create_model()\n";
         let frontend = PythonFrontend::new();
         let result = frontend.parse(source, None).expect("parse python");
         let fp_core::ast::NodeKind::File(file) = result.ast.kind() else {
@@ -1167,7 +1160,8 @@ mod tests {
 
     #[test]
     fn parses_comparison_operators_is_not_and_in() {
-        let source = "def health(model, result):\n    return model is not None and \"yes\" in result\n";
+        let source =
+            "def health(model, result):\n    return model is not None and \"yes\" in result\n";
         let frontend = PythonFrontend::new();
         frontend.parse(source, None).expect("parse comparison ops");
     }
@@ -1181,7 +1175,8 @@ mod tests {
 
     #[test]
     fn parses_generator_expression_argument() {
-        let source = "def has_ext(name, exts):\n    return any(name.endswith(ext) for ext in exts)\n";
+        let source =
+            "def has_ext(name, exts):\n    return any(name.endswith(ext) for ext in exts)\n";
         let frontend = PythonFrontend::new();
         frontend
             .parse(source, None)

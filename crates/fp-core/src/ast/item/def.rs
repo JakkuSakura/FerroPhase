@@ -1,7 +1,7 @@
 use crate::ast::{
-    Attribute, BExpr, FunctionParam, FunctionParamReceiver, FunctionSignature, GenericParam,
-    Ident, ItemChunk, ReprOptions, StructuralField, Ty, TySlot, TypeBounds, TypeEnum,
-    TypeFunction, TypeStruct, TypeStructural, ValueFunction, Visibility,
+    Attribute, BExpr, FunctionParam, FunctionParamReceiver, FunctionSignature, GenericParam, Ident,
+    ItemChunk, ReprOptions, StructuralField, Ty, TySlot, TypeBounds, TypeEnum, TypeFunction,
+    TypeStruct, TypeStructural, ValueFunction, Visibility,
 };
 use crate::common_struct;
 use crate::span::Span;

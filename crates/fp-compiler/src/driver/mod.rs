@@ -236,13 +236,13 @@ impl CompilerDriver {
         &mut self,
         blocked: RequestId,
     ) -> Result<(), CompilerDriverError> {
-        let ast_id = self
-            .scheduler
-            .answered(blocked)
-            .and_then(|completed| match &completed.request.work {
-                CompilerWork::TypeAst { ast, .. } => Some(ast.clone()),
-                _ => None,
-            });
+        let ast_id =
+            self.scheduler
+                .answered(blocked)
+                .and_then(|completed| match &completed.request.work {
+                    CompilerWork::TypeAst { ast, .. } => Some(ast.clone()),
+                    _ => None,
+                });
 
         let Some(ast_id) = ast_id else {
             return Ok(());

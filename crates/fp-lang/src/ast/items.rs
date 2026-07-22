@@ -19,7 +19,8 @@ pub(crate) fn parse_items_tokens(
             items.extend(parsed);
             continue;
         }
-        let item = parse_item_or_expr_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
+        let item =
+            parse_item_or_expr_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
         items.push(item);
     }
     Ok(items)
@@ -45,7 +46,8 @@ pub(crate) fn parse_file_tokens(
             items.extend(parsed);
             continue;
         }
-        let item = parse_item_or_expr_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
+        let item =
+            parse_item_or_expr_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
         items.push(item);
     }
     Ok((attrs, items))

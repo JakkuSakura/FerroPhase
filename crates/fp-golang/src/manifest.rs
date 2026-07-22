@@ -144,7 +144,10 @@ require (
     #[test]
     fn estimates_go_module_path_from_directory() {
         assert_eq!(
-            estimate_module_path(Path::new("/proj"), Path::new("/proj/internal/service/http.go")),
+            estimate_module_path(
+                Path::new("/proj"),
+                Path::new("/proj/internal/service/http.go")
+            ),
             vec!["internal".to_string(), "service".to_string()]
         );
     }

@@ -1,8 +1,7 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall,
-    ExprInvoke, ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprUnOp, FormatArgRef,
-    FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name, Path, StmtLet,
-    Ty, Value,
+    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall, ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprUnOp, FormatArgRef, FormatPlaceholder,
+    FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name, Path, StmtLet, Ty, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer, NormalizeOutcome};

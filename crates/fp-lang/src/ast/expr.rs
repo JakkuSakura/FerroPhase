@@ -989,7 +989,11 @@ fn parse_call_args(
     Ok((args, kwargs))
 }
 
-fn parse_expr_or_type_value(input: &mut &[Token], file: FileId, terminator: &str) -> ModalResult<Expr> {
+fn parse_expr_or_type_value(
+    input: &mut &[Token],
+    file: FileId,
+    terminator: &str,
+) -> ModalResult<Expr> {
     let mut probe = *input;
     if let Ok(expr) = parse_expr_winnow(&mut probe, file) {
         let next = peek_symbol(probe);
@@ -2550,40 +2554,39 @@ fn parse_labeled_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
 
-    let expr =
-        if matches!(probe.first(), Some(token) if token.kind == TokenKind::Keyword(Keyword::Loop))
-        {
-            let mut loop_probe = probe;
-            let mut expr = parse_loop_expr(&mut loop_probe, file)?;
-            if let ExprKind::Loop(loop_expr) = expr.kind_mut() {
-                loop_expr.label = Some(Ident::new(label));
-            }
-            probe = loop_probe;
-            expr
-        } else if matches!(
-            probe.first(),
-            Some(token) if token.kind == TokenKind::Keyword(Keyword::While)
-        ) {
-            let mut while_probe = probe;
-            let expr = parse_while_expr(&mut while_probe, file)?;
-            probe = while_probe;
-            expr
-        } else if matches!(
-            probe.first(),
-            Some(token) if token.kind == TokenKind::Keyword(Keyword::For)
-        ) {
-            let mut for_probe = probe;
-            let expr = parse_for_expr(&mut for_probe, file)?;
-            probe = for_probe;
-            expr
-        } else if peek_symbol(probe) == Some("{") {
-            let mut block_probe = probe;
-            let expr = parse_block_expr(&mut block_probe, file)?;
-            probe = block_probe;
-            expr
-        } else {
-            return Err(ErrMode::Backtrack(ContextError::new()));
-        };
+    let expr = if matches!(probe.first(), Some(token) if token.kind == TokenKind::Keyword(Keyword::Loop))
+    {
+        let mut loop_probe = probe;
+        let mut expr = parse_loop_expr(&mut loop_probe, file)?;
+        if let ExprKind::Loop(loop_expr) = expr.kind_mut() {
+            loop_expr.label = Some(Ident::new(label));
+        }
+        probe = loop_probe;
+        expr
+    } else if matches!(
+        probe.first(),
+        Some(token) if token.kind == TokenKind::Keyword(Keyword::While)
+    ) {
+        let mut while_probe = probe;
+        let expr = parse_while_expr(&mut while_probe, file)?;
+        probe = while_probe;
+        expr
+    } else if matches!(
+        probe.first(),
+        Some(token) if token.kind == TokenKind::Keyword(Keyword::For)
+    ) {
+        let mut for_probe = probe;
+        let expr = parse_for_expr(&mut for_probe, file)?;
+        probe = for_probe;
+        expr
+    } else if peek_symbol(probe) == Some("{") {
+        let mut block_probe = probe;
+        let expr = parse_block_expr(&mut block_probe, file)?;
+        probe = block_probe;
+        expr
+    } else {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    };
 
     *input = probe;
     Ok(expr)
