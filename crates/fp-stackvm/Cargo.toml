@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 fp-bytecode = { path = "../fp-bytecode" }
+fp-core = { path = "../fp-core" }
 thiserror = "2.0.17"

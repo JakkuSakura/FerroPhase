@@ -1,3 +1,5 @@
+pub mod lowering;
+
 use fp_bytecode::{
     BytecodeBinOp, BytecodeCallee, BytecodeConst, BytecodeInstr, BytecodePlace, BytecodePlaceElem,
     BytecodeProgram, BytecodeTerminator, BytecodeUnOp, IntrinsicCallKind,
