@@ -3564,7 +3564,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn error_type_var(&mut self) -> TypeVarId {
         let var = self.fresh_type_var();
-        self.bind(var, TypeTerm::Unknown);
+        self.bind(var, TypeTerm::Any);
         var
     }
 

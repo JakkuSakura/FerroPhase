@@ -7,9 +7,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn ensure_numeric(&mut self, var: TypeVarId, context: &str) -> Result<()> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. }
-            | TypeVarKind::Bound(TypeTerm::Unknown)
-            | TypeVarKind::Bound(TypeTerm::Concrete(_)) => Ok(()),
+            TypeVarKind::Unbound { .. } | TypeVarKind::Bound(TypeTerm::Concrete(_)) => Ok(()),
             TypeVarKind::Bound(term)
                 if matches!(
                     term.primitive_ty(),
@@ -41,7 +39,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(())
             }
             TypeVarKind::Bound(term) if term.primitive_ty() == Some(TypePrimitive::Bool) => Ok(()),
-            TypeVarKind::Bound(TypeTerm::Unknown) => Ok(()),
             TypeVarKind::Bound(term) if term.is_any() => Ok(()),
             TypeVarKind::Link(next) => self.ensure_bool(next, context),
             other => {
@@ -55,8 +52,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn ensure_integer(&mut self, var: TypeVarId, context: &str) -> Result<()> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. }
-            | TypeVarKind::Bound(TypeTerm::Unknown) => {
+            TypeVarKind::Unbound { .. } => {
                 self.type_vars[root].kind =
                     TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
                 Ok(())
@@ -83,15 +79,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. } => {
-                let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
-                let ret = self.fresh_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
-                    params: params.clone(),
-                    ret,
-                }));
-                Ok(super::super::FunctionTypeInfo { params, ret })
-            }
-            TypeVarKind::Bound(TypeTerm::Unknown) => {
                 let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
                 let ret = self.fresh_type_var();
                 self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {

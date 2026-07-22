@@ -76,7 +76,6 @@ pub(crate) enum TypeTerm {
     Reference(TypeVarId),
     RawPtr(TypeVarId, Option<bool>),
     Boxed(TypeVarId),
-    Unknown,
 }
 
 impl TypeTerm {
@@ -329,7 +328,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         Ok(Ty::generic_var(idx))
                     }
                 } else {
-                    Ok(Ty::Unknown(TypeUnknown))
+                    Err(self.error_with_current_span("unresolved type variable during generalization"))
                 }
             }
             TypeVarKind::Bound(term) => self.generalize_term(term, mapping, next),
@@ -357,7 +356,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     .into(),
                 )
             }
-            TypeTerm::Unknown => Ty::Unknown(TypeUnknown),
             TypeTerm::Tuple(elements) => {
                 let mut converted = Vec::new();
                 for elem in elements {
@@ -480,7 +478,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(var, TypeTerm::Union(lhs_var, rhs_var));
                 var
             }
-            Ty::Unknown(_) => self.fresh_type_var(),
+            Ty::Unknown(_) => {
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Concrete(Ty::Unknown(TypeUnknown)));
+                var
+            }
             Ty::Tuple(elements) => {
                 let mut vars = Vec::new();
                 for elem in &elements.types {
@@ -620,16 +622,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.type_vars[a_root].kind.clone(),
             self.type_vars[b_root].kind.clone(),
         ) {
-            (TypeVarKind::Bound(TypeTerm::Unknown), _) => {
-                self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
-                self.merge_trait_bounds_into(b_root, a_root, true);
-                Ok(())
-            }
-            (_, TypeVarKind::Bound(TypeTerm::Unknown)) => {
-                self.type_vars[b_root].kind = TypeVarKind::Link(a_root);
-                self.merge_trait_bounds_into(a_root, b_root, true);
-                Ok(())
-            }
             (TypeVarKind::Unbound { .. }, TypeVarKind::Unbound { .. }) => {
                 self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
                 self.merge_trait_bounds_into(b_root, a_root, true);
@@ -747,7 +739,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         match (a, b) {
             (left, right) if left.is_unit() && right.is_unit() => Ok(()),
             (left, right) if left.is_any() && right.is_any() => Ok(()),
-            (TypeTerm::Unknown, TypeTerm::Unknown) => Ok(()),
             (left, _) if left.is_nothing() => Ok(()),
             (_, right) if right.is_nothing() => Ok(()),
             (TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)), TypeTerm::Reference(inner))
@@ -859,7 +850,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(other_var, other);
                 self.unify(inner, other_var)
             }
-            (TypeTerm::Unknown, _other) | (_other, TypeTerm::Unknown) => Ok(()),
             (left, _other) if left.is_any() => Ok(()),
             (_other, right) if right.is_any() => Ok(()),
             (left, right) => {
@@ -1069,7 +1059,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn resolve_to_ty(&mut self, var: TypeVarId) -> Result<Ty> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. } => Ok(Ty::Unknown(TypeUnknown)),
+            TypeVarKind::Unbound { .. } => {
+                Err(self.error_with_current_span("unresolved type variable"))
+            }
             TypeVarKind::Bound(term) => self.term_to_ty(term),
             TypeVarKind::Link(next) => self.resolve_to_ty(next),
         }
@@ -1090,7 +1082,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     .into(),
                 )
             }
-            TypeTerm::Unknown => Ty::Unknown(TypeUnknown),
             TypeTerm::Tuple(elements) => {
                 let types = elements
                     .into_iter()
@@ -1317,7 +1308,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     Value::String(_) => TypeTerm::Primitive(TypePrimitive::String),
                     Value::Char(_) => TypeTerm::Primitive(TypePrimitive::Char),
-                    Value::Unit(_) => TypeTerm::Unknown,
+                    Value::Unit(_) => TypeTerm::Unit,
                     Value::Null(_) | Value::None(_) => TypeTerm::Nothing,
                     _ => TypeTerm::Concrete(ty.clone()),
                 };
@@ -1331,7 +1322,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(var, TypeTerm::Any);
             }
             // No Ty::Custom in current AST types; treat all remaining cases via fallback below
-            Ty::Unknown(_) => self.bind(var, TypeTerm::Unknown),
+            Ty::Unknown(_) => self.bind(var, TypeTerm::Concrete(Ty::Unknown(TypeUnknown))),
             Ty::Tuple(tuple) => {
                 let mut vars = Vec::new();
                 for elem in &tuple.types {
