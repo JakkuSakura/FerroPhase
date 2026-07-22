@@ -1,4 +1,4 @@
-use crate::{Result, cli::CliConfig, pipeline::Pipeline};
+use crate::{Result, cli::CliConfig, compiler};
 use clap::{ArgAction, Args, ValueEnum, ValueHint};
 use fp_core::frontend::FrontendParseMode;
 use fp_core::pretty::{PrettyOptions, pretty};
@@ -74,9 +74,7 @@ pub async fn parse_command(mut args: ParseArgs, _config: &CliConfig) -> Result<(
                 "Cannot specify both --expr and file paths".to_string(),
             ));
         }
-        let mut pipeline = Pipeline::new();
-        pipeline.set_parse_mode(args.parse_mode.into());
-        return parse_expression(&mut pipeline, expr, args.snapshot.take());
+        return parse_expression(expr, args.parse_mode.into(), args.snapshot.take());
     }
 
     if args.files.is_empty() {
@@ -87,18 +85,10 @@ pub async fn parse_command(mut args: ParseArgs, _config: &CliConfig) -> Result<(
 
     crate::commands::validate_paths_exist(&args.files, true, "parse")?;
 
-    let mut pipeline = Pipeline::new();
-    pipeline.set_parse_mode(args.parse_mode.into());
     let mut snapshot = args.snapshot.take();
     for (index, path) in args.files.into_iter().enumerate() {
         let snapshot_for_file = if index == 0 { snapshot.take() } else { None };
-        parse_path(
-            &path,
-            &mut pipeline,
-            args.parse_mode.into(),
-            args.resolve_imports,
-            snapshot_for_file,
-        )?;
+        parse_path(&path, args.parse_mode.into(), args.resolve_imports, snapshot_for_file)?;
     }
     Ok(())
 }
@@ -110,12 +100,8 @@ pub async fn parse_command(_args: ParseArgs, _config: &CliConfig) -> Result<()> 
     ))
 }
 
-fn parse_expression(
-    pipeline: &mut Pipeline,
-    expr: String,
-    snapshot: Option<PathBuf>,
-) -> Result<()> {
-    let ast = pipeline.parse_source_public(&expr, None)?;
+fn parse_expression(expr: String, mode: FrontendParseMode, snapshot: Option<PathBuf>) -> Result<()> {
+    let ast = compiler::parse_expr_with_mode(&expr, mode)?;
     let print_ast = snapshot.is_none();
     persist_snapshot(&ast, snapshot.as_deref())?;
     let mut pretty_opts = PrettyOptions::default();
@@ -130,7 +116,6 @@ fn parse_expression(
 #[cfg(feature = "lang-typescript")]
 fn parse_path(
     path: &Path,
-    pipeline: &mut Pipeline,
     mode: FrontendParseMode,
     resolve_imports: bool,
     snapshot: Option<PathBuf>,
@@ -140,25 +125,22 @@ fn parse_path(
             "fp parse only accepts source files; use magnet for package manifests".to_string(),
         ));
     }
-    parse_file(path, pipeline, mode, resolve_imports, snapshot)
+    parse_file(path, mode, resolve_imports, snapshot)
 }
 
 #[cfg(feature = "lang-typescript")]
 fn parse_file(
     path: &Path,
-    pipeline: &mut Pipeline,
     mode: FrontendParseMode,
     resolve_imports: bool,
     snapshot: Option<PathBuf>,
 ) -> Result<()> {
-    let source = fs::read_to_string(path).map_err(|err| {
-        crate::CliError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Failed to read file {}: {err}", path.display()),
-        ))
-    })?;
-
-    let ast = match pipeline.parse_source_public(&source, Some(path)) {
+    let ast = match compiler::parse_file_with_mode(
+        path,
+        None,
+        mode,
+        compiler::LossyCompileOptions::default(),
+    ) {
         Ok(ast) => ast,
         Err(err) => {
             if matches!(mode, FrontendParseMode::Loose) {

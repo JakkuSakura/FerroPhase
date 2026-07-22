@@ -7,10 +7,13 @@ use fp_compiler::{
     FullyQualifiedPath, LirConsumer, LirId, MirId, RuntimeValueId, ScopeId,
 };
 use fp_core::{
+    ast::register_threadlocal_serializer,
     ast::{Node, Value},
     diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager},
-    frontend::{FrontendResult, LanguageFrontend},
+    frontend::{FrontendParseMode, FrontendResult, LanguageFrontend},
+    lang::{collect_lang_items, register_threadlocal_lang_items},
 };
+use fp_interpret::const_eval::ConstEvaluationOrchestrator;
 use fp_lang::FerroFrontend;
 use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
 use fp_goasm::config::GoAsmTarget;
@@ -74,7 +77,7 @@ pub fn check_path(
 }
 
 pub fn eval_expr(source: &str) -> Result<Value> {
-    let ast = parse_expr(source)?;
+    let ast = parse_expr_with_mode(source, FrontendParseMode::Strict)?;
     execute_ast(
         ast,
         CompilerIdentity::for_expr(),
@@ -89,7 +92,12 @@ pub fn eval_file(
     path: &Path,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
 ) -> Result<Value> {
-    let ast = parse_file(path, None, LossyCompileOptions::default())?;
+    let ast = parse_file_with_mode(
+        path,
+        None,
+        FrontendParseMode::Strict,
+        LossyCompileOptions::default(),
+    )?;
     execute_ast(
         ast,
         CompilerIdentity::for_file(path),
@@ -104,7 +112,12 @@ pub fn interpret_file(
     path: &Path,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
 ) -> Result<Value> {
-    let ast = parse_file(path, None, LossyCompileOptions::default())?;
+    let ast = parse_file_with_mode(
+        path,
+        None,
+        FrontendParseMode::Strict,
+        LossyCompileOptions::default(),
+    )?;
     execute_ast(
         ast,
         CompilerIdentity::for_file(path),
@@ -800,8 +813,9 @@ fn drain_driver(driver: &mut CompilerDriver, lossy: LossyCompileOptions) -> Resu
     emit_typing_diagnostics(driver.state.typing_diagnostics(), lossy)
 }
 
-fn parse_expr(source: &str) -> Result<Node> {
+pub fn parse_expr_with_mode(source: &str, parse_mode: FrontendParseMode) -> Result<Node> {
     let frontend = FerroFrontend::new();
+    frontend.set_parse_mode(parse_mode);
     let FrontendResult {
         ast, diagnostics, ..
     } = frontend
@@ -812,15 +826,90 @@ fn parse_expr(source: &str) -> Result<Node> {
 }
 
 fn parse_file(path: &Path, source_language: Option<&str>, lossy: LossyCompileOptions) -> Result<Node> {
+    parse_file_with_mode(path, source_language, FrontendParseMode::Strict, lossy)
+}
+
+pub fn parse_ast_target_file(path: &Path, source_language: Option<&str>) -> Result<Node> {
+    parse_file(path, source_language, LossyCompileOptions::default())
+}
+
+pub fn parse_file_with_mode(
+    path: &Path,
+    source_language: Option<&str>,
+    parse_mode: FrontendParseMode,
+    lossy: LossyCompileOptions,
+) -> Result<Node> {
+    parse_file_with_context(path, source_language, parse_mode, lossy).map(|parsed| parsed.ast)
+}
+
+pub fn prepare_ast_target(
+    ast: &mut Node,
+    path: &Path,
+    source_language: Option<&str>,
+    run_const_eval: bool,
+) -> Result<()> {
+    let parsed = parse_file_with_context(
+        path,
+        source_language,
+        FrontendParseMode::Strict,
+        LossyCompileOptions::default(),
+    )?;
+    register_threadlocal_serializer(parsed.serializer.clone());
+
+    if let Some(normalizer) = parsed.intrinsic_normalizer.as_ref() {
+        fp_core::intrinsics::normalize_intrinsics_with(ast, normalizer.as_ref())
+            .map_err(|err| CliError::Compilation(format!("Intrinsic normalization failed: {err}")))?;
+    } else {
+        fp_core::intrinsics::normalize_intrinsics(ast)
+            .map_err(|err| CliError::Compilation(format!("Intrinsic normalization failed: {err}")))?;
+    }
+
+    if !run_const_eval {
+        return Ok(());
+    }
+
+    let lang_items = collect_lang_items(ast);
+    register_threadlocal_lang_items(lang_items);
+    let shared_context = fp_core::context::SharedScopedContext::new();
+    let mut orchestrator = ConstEvaluationOrchestrator::new(parsed.serializer);
+    let outcome = orchestrator
+        .evaluate(
+            ast,
+            &shared_context,
+            parsed.macro_parser,
+            parsed.intrinsic_normalizer,
+        )
+        .map_err(|err| CliError::Compilation(format!("Const evaluation failed: {err}")))?;
+    emit_frontend_diagnostics(&outcome.diagnostics, LossyCompileOptions::default())?;
+    Ok(())
+}
+
+fn parse_file_with_context(
+    path: &Path,
+    source_language: Option<&str>,
+    parse_mode: FrontendParseMode,
+    lossy: LossyCompileOptions,
+) -> Result<ParsedAst> {
     let frontend = select_frontend(path, source_language)?;
+    frontend.set_parse_mode(parse_mode);
     let source = std::fs::read_to_string(path).map_err(CliError::Io)?;
     let FrontendResult {
-        ast, diagnostics, ..
+        ast,
+        serializer,
+        intrinsic_normalizer,
+        macro_parser,
+        diagnostics,
+        ..
     } = frontend
         .parse_file(&source, path)
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     emit_frontend_diagnostics(&diagnostics.get_diagnostics(), lossy)?;
-    Ok(ast)
+    Ok(ParsedAst {
+        ast,
+        serializer,
+        intrinsic_normalizer,
+        macro_parser,
+    })
 }
 
 fn select_frontend(path: &Path, source_language: Option<&str>) -> Result<Box<dyn LanguageFrontend>> {
@@ -926,6 +1015,13 @@ struct CompilerIdentity {
 struct LoweredProgram {
     driver: CompilerDriver,
     path_key: String,
+}
+
+struct ParsedAst {
+    ast: Node,
+    serializer: Arc<dyn fp_core::ast::AstSerializer>,
+    intrinsic_normalizer: Option<Arc<dyn fp_core::intrinsics::IntrinsicNormalizer>>,
+    macro_parser: Option<Arc<dyn fp_core::ast::MacroExpansionParser>>,
 }
 
 impl LoweredProgram {

@@ -6,13 +6,10 @@ use crate::compiler::{
     JvmCompileOptions, LlvmCompileOptions, NativeCompileOptions, NativeEmitterKind,
     WasmCompileOptions,
 };
-use crate::pipeline::{
-    AstPreparationOptions, BackendKind,
-};
+use crate::pipeline::BackendKind;
 use crate::{
     CliError, Result,
     cli::CliConfig,
-    pipeline::Pipeline,
 };
 use console::style;
 use fp_core::ast::{AstTarget, AstTargetOutput, Node};
@@ -893,7 +890,6 @@ async fn compile_ast_target(
         ));
     }
 
-    let mut pipeline = Pipeline::new();
     use crate::languages::frontend::{LanguageSource, detect_language_source_by_path};
     let detected = detect_language_source_by_path(input);
     let is_wit_input = matches!(detected, Some(LanguageSource::Wit));
@@ -902,16 +898,14 @@ async fn compile_ast_target(
         Some(LanguageSource::TypeScript | LanguageSource::JavaScript)
     );
 
-    let source = std::fs::read_to_string(input).map_err(CliError::Io)?;
-    let mut ast = pipeline.parse_source_public(&source, Some(input))?;
-
-    let prep_options = AstPreparationOptions {
-        run_const_eval: args.const_eval,
-        save_intermediates: false,
-        base_path: None,
-    };
+    let mut ast = compiler::parse_ast_target_file(input, args.source_language.as_deref())?;
     if !is_wit_input && !is_typescript_input {
-        pipeline.prepare_for_ast_target(&mut ast, &prep_options)?;
+        compiler::prepare_ast_target(
+            &mut ast,
+            input,
+            args.source_language.as_deref(),
+            args.const_eval,
+        )?;
     }
 
     let result = emit_ast_target(&ast, target, args.type_defs, input, args.single_world)?;
