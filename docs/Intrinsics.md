@@ -26,7 +26,7 @@ flowchart LR
     IntrinsicResolver -->|ResolvedIntrinsic| TypeEngine[TypeEngine]
     IntrinsicResolver -->|ResolvedIntrinsic| ExecutionEngine[ExecutionEngine]
     IntrinsicResolver -->|ResolvedIntrinsic| TargetEmitter[TargetEmitter]
-    TypeEngine -->|CompileTimeNeed| RequestRegistry[RequestRegistry]
+    TypeEngine -->|CompileTimeNeed| CompilerWorkScheduler[CompilerWorkScheduler]
 ```
 
 ## Canonical Forms

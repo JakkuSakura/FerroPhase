@@ -5,8 +5,8 @@ pub mod runtime_types;
 pub mod typing;
 pub use runtime_types::{materialize_type_with_hooks, type_from_value, TypeMaterializeHooks};
 pub use typing::types::{
-    ExprId, ResolvedName, ResolvedNameNamespace, ResolvedNameTable, TypingDiagnostic,
-    TypingDiagnosticLevel, TypingOutcome,
+    ExprId, PendingTypingRequest, PendingTypingRequestKind, ResolvedName, ResolvedNameNamespace,
+    ResolvedNameTable, TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome,
 };
 
 use crate::typing::scheme::TypeScheme;
@@ -325,6 +325,8 @@ pub struct AstTypeInferencer<'ctx> {
     current_span: Option<Span>,
     resolution_hook: Option<Box<dyn TypeResolutionHook + 'ctx>>,
     resolved_names: ResolvedNameTable,
+    generic_type_vars: HashMap<TypeVarId, String>,
+    saw_comptime: bool,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -451,6 +453,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             resolution_hook: None,
             unimplemented_symbols: HashSet::new(),
             resolved_names: HashMap::new(),
+            generic_type_vars: HashMap::new(),
+            saw_comptime: false,
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -669,11 +673,59 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn finish(&mut self) -> TypingOutcome {
+        let pending_requests = self.collect_pending_requests();
         TypingOutcome {
             diagnostics: std::mem::take(&mut self.diagnostics),
             has_errors: std::mem::replace(&mut self.has_errors, false),
             resolved_names: std::mem::take(&mut self.resolved_names),
+            pending_requests,
         }
+    }
+
+    fn collect_pending_requests(&mut self) -> Vec<PendingTypingRequest> {
+        let mut requests = Vec::new();
+
+        for diagnostic in &self.diagnostics {
+            if Self::diagnostic_is_unknown_type(diagnostic) {
+                requests.push(PendingTypingRequest::unknown_type(
+                    diagnostic.message.clone(),
+                ));
+            }
+        }
+
+        let generic_vars: Vec<(TypeVarId, String)> = self
+            .generic_type_vars
+            .iter()
+            .map(|(var, name)| (*var, name.clone()))
+            .collect();
+        for (var, name) in generic_vars {
+            let unresolved = self
+                .resolve_to_ty(var)
+                .map(|ty| matches!(ty, Ty::Unknown(_)))
+                .unwrap_or(true);
+            if unresolved {
+                requests.push(PendingTypingRequest::generic(format!(
+                    "generic parameter {} remains unresolved after typing",
+                    name
+                )));
+            }
+        }
+
+        if self.saw_comptime {
+            requests.push(PendingTypingRequest::comptime(
+                "comptime or const work remains after typing",
+            ));
+        }
+
+        requests
+    }
+
+    fn diagnostic_is_unknown_type(diagnostic: &TypingDiagnostic) -> bool {
+        let TypingDiagnosticLevel::Error = diagnostic.level else {
+            return false;
+        };
+        let message = diagnostic.message.to_ascii_lowercase();
+        message.contains("unknown") || message.contains("unresolved")
     }
 
     fn expr_id(&self, expr: &Expr) -> ExprId {
@@ -2401,6 +2453,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     ty
                 }
                 ItemKind::DefConst(def) => {
+                    self.saw_comptime = true;
                     let placeholder = self.symbol_var(&def.name);
                     if let Some(annot) = def.ty.as_ref() {
                         def.value.set_ty(annot.clone());
@@ -2438,6 +2491,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ItemKind::DefFunction(func) => self.infer_function(func)?,
                 ItemKind::DeclConst(decl) => {
+                    self.saw_comptime = true;
                     let ty = decl.ty.clone();
                     decl.ty_annotation = Some(ty.clone());
                     ty
@@ -3040,6 +3094,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn register_generic_param(&mut self, name: &str) -> TypeVarId {
         let var = self.fresh_type_var();
         self.insert_env(name.to_string(), EnvEntry::Mono(var));
+        self.generic_type_vars.insert(var, name.to_string());
         if let Some(scope) = self.generic_scopes.last_mut() {
             scope.insert(name.to_string());
         }

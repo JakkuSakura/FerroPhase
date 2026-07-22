@@ -5,17 +5,28 @@ intended dynamic scoped compiler, not the older fixed pipeline model.
 
 ## Ubiquitous Language
 
-- **Work item**: A scheduled unit of compiler work, such as parsing a file,
+- **Work item**: A scheduled piece of compiler work, such as parsing a file,
   typing a scope, lowering a scope, executing LIR, or emitting a target.
+- **Work subject**: The AST node, item, function, block, expression, generated
+  fragment, or resolved path that a work item is currently about. This is not a
+  code-unit abstraction.
 - **Request**: A need for an artefact or answer that can block other work.
 - **Request answer**: The value, type, declaration, AST edit, lowered artefact,
   or emitted output that satisfies a request.
-- **Artefact**: Persisted or cached compiler data such as AST, typed
-  annotations, HIR, MIR, LIR, bytecode, object code, or target AST output.
+- **Typed storage id**: Representation-specific identity for stored compiler
+  data, such as `AstId`, `TypedAstId`, `HirId`, `MirId`, `LirId`,
+  `ConstValueId`, `BytecodeId`, or `NativeObjectId`. These ids are storage
+  handles, not specialization identity.
+- **Artefact**: Persisted or emitted compiler data such as bytecode, object
+  code, saved IR, or target AST output.
 - **Compiler work scheduler**: The orchestrator that orders work items, records
   dependencies, and delivers request answers.
 - **Compile-time need**: A value, type, declaration, code fragment, or
-  specialization identity required before current work can continue.
+  identity-forming argument required before current work can continue.
+- **Type need**: A typing blocker such as an unknown or unresolved type.
+- **Generic work**: Scheduler work discovered by a completed typing pass for a
+  generic-bearing declaration or definition whose resolved path must be
+  tracked.
 - **Intrinsic**: A compiler-recognized capability resolved once and consumed by
   typing, execution, and target emission.
 - **Module**: The canonical unit of namespacing and compilation, rooted at a
@@ -31,23 +42,23 @@ intended dynamic scoped compiler, not the older fixed pipeline model.
   - Produces raw AST and canonical AST.
 
 - **Scheduling Context**
-  - Owns `CompilerWorkScheduler`, `RequestRegistry`, dependency edges,
-    artefact keys, and invalidation.
+  - Owns `CompilerWorkScheduler`, request state, dependency edges,
+    typed storage ids, and invalidation.
   - Does not own language semantics.
 
 - **Typing Context**
   - Owns type inference, type queries, constraints, and typed AST annotations.
-  - Produces typed scopes or `CompileTimeNeed`.
+  - Produces typed scopes, `TypeNeed`, or `CompileTimeNeed`.
 
 - **Comptime / Execution Context**
-  - Owns execution of lowered artefacts for comptime answers and runtime
+  - Owns execution of lowered LIR for comptime answers and runtime
     interpretation.
   - Produces request answers, runtime values, diagnostics, and side-effect
     records.
 
 - **Lowering / Backend Context**
   - Owns typed AST -> HIR -> MIR -> LIR and target emission.
-  - Produces lowered artefacts, bytecode, native artefacts, and target AST
+  - Produces typed lowering storage, bytecode, native outputs, and target AST
     output.
 
 - **Tooling / CLI Context**
@@ -67,9 +78,10 @@ intended dynamic scoped compiler, not the older fixed pipeline model.
 - **Package**
   - Invariants: dependency graph is valid; bindings respect declared targets.
 
-- **Artefact cache**
-  - Invariants: artefacts are keyed by request identity and dependencies;
-    invalidated artefacts are not reused.
+- **Compiler object store**
+  - Invariants: stored objects are keyed by typed storage id, resolved work
+    subject, request identity when needed, and dependencies; invalidated objects
+    are not reused.
 
 ## Domain Events
 
@@ -95,17 +107,19 @@ request-driven.
 flowchart LR
     FrontendContext[FrontendContext] -->|AST| SchedulingContext[SchedulingContext]
     SchedulingContext -->|PendingAst| TypingContext[TypingContext]
+    TypingContext -->|TypeNeed| SchedulingContext
     TypingContext -->|CompileTimeNeed| SchedulingContext
     TypingContext -->|TypedAst| LoweringContext[LoweringContext]
     LoweringContext -->|LIR| ExecutionContext[ExecutionContext]
     ExecutionContext -->|RequestAnswer| SchedulingContext
+    SchedulingContext -->|RetryAst| TypingContext
     LoweringContext -->|TargetArtefact| ToolingContext[ToolingContext]
     SchedulingContext -->|Diagnostics| ToolingContext
 ```
 
 ## Refactor Guidance
 
-1. Move orchestration into scheduler and request registry APIs.
+1. Move orchestration into scheduler and request-state APIs.
 2. Keep typing, lowering, execution, and emission semantics out of CLI code.
 3. Attach diagnostics to work item identity and source spans.
 4. Add invariant tests for request identity, dependency invalidation, module

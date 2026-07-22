@@ -629,7 +629,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.nothing_type_var()
                     }
                 }
-                ExprKind::ConstBlock(const_block) => self.infer_expr(const_block.expr.as_mut())?,
+                ExprKind::ConstBlock(const_block) => {
+                    self.saw_comptime = true;
+                    self.infer_expr(const_block.expr.as_mut())?
+                }
                 ExprKind::For(for_expr) => {
                     let pat_info = self.infer_pattern(for_expr.pat.as_mut())?;
                     let iter_var = self.infer_expr(for_expr.iter.as_mut())?;

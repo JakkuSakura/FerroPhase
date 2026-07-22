@@ -2,7 +2,7 @@
 
 ## Goals
 
-- Treat JIT as a consumer of shared lowered artefacts.
+- Treat JIT as a consumer of shared lowered LIR/native objects.
 - Keep interpretation, comptime execution, bytecode, and native execution on the
   same semantic path.
 - Add low-latency in-process native execution for hot or requested scopes.
@@ -23,7 +23,7 @@ fp interpret --jit --jit-hot-threshold 64 path/to/main.fp
 
 ## High-Level Approach
 
-`fp-jit` receives LIR or native-ready artefacts produced by scoped lowering. It
+`fp-jit` receives LIR or native-ready objects produced by scoped lowering. It
 does not compile from a separate evaluated AST family and does not define
 interpreter semantics.
 
@@ -31,7 +31,7 @@ interpreter semantics.
 flowchart LR
     CompilerWorkScheduler[CompilerWorkScheduler] -->|ExecuteRequest| ExecutionEngine[ExecutionEngine]
     ExecutionEngine -->|HotScope| JitCompiler[JitCompiler]
-    ArtefactStore[ArtefactStore] -->|LIR| JitCompiler
+    CompilerObjectStore[CompilerObjectStore] -->|LirId| JitCompiler
     JitCompiler -->|JitEntry| JitCache[JitCache]
     JitCache -->|FpJitFn| ExecutionEngine
     ExecutionEngine -->|RuntimeValue| Caller[Caller]
@@ -44,7 +44,7 @@ directly, call a cached JIT entry, or request JIT compilation for a future call.
 
 - `crates/fp-jit`
   - Owns JIT session state, code cache, symbol resolution, and ABI glue.
-  - Consumes lowered artefacts from backend/lowering crates.
+  - Consumes lowered LIR/native objects from backend/lowering crates.
   - Integrates with execution dispatch.
 
 ## Execution Integration
@@ -52,7 +52,7 @@ directly, call a cached JIT entry, or request JIT compilation for a future call.
 At runtime call sites:
 
 1. Resolve the call target to a request identity.
-2. Query `ArtefactStore` for executable LIR or native-ready artefacts.
+2. Query `CompilerObjectStore` for executable LIR or native-ready objects.
 3. Check `JitCache` for a compiled entry.
 4. If present, invoke through the JIT ABI.
 5. If absent, execute the shared LIR path and update hotness counters.

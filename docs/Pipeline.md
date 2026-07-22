@@ -17,15 +17,16 @@ flowchart LR
     AstNormalizer -->|AST| CompilerWorkScheduler[CompilerWorkScheduler]
     CompilerWorkScheduler -->|PendingAst| TypeEngine[TypeEngine]
     TypeEngine -->|TypedAst| ScopedLowering[ScopedLowering]
-    TypeEngine -->|CompileTimeNeed| RequestRegistry[RequestRegistry]
-    RequestRegistry -->|RequestId| CompilerWorkScheduler
+    TypeEngine -->|TypeNeed| CompilerWorkScheduler
+    TypeEngine -->|CompileTimeNeed| CompilerWorkScheduler
     ScopedLowering -->|HIR| HirStore[HirStore]
     HirStore -->|HIR| MirLowering[MirLowering]
     MirLowering -->|MIR| LirLowering[LirLowering]
-    LirLowering -->|LIR| ArtefactStore[ArtefactStore]
-    ArtefactStore -->|LIR| ExecutionEngine[ExecutionEngine]
+    LirLowering -->|LirId| CompilerObjectStore[CompilerObjectStore]
+    CompilerObjectStore -->|LirId| ExecutionEngine[ExecutionEngine]
     ExecutionEngine -->|RequestAnswer| CompilerWorkScheduler
-    ArtefactStore -->|LIR| TargetEmitter[TargetEmitter]
+    CompilerWorkScheduler -->|RetryAst| TypeEngine
+    CompilerObjectStore -->|LirId| TargetEmitter[TargetEmitter]
 ```
 
 ## Work Responsibilities
@@ -34,7 +35,7 @@ flowchart LR
 |------|----------|----------|
 | Parse | source text, frontend choice | raw AST, provenance |
 | Normalize | raw AST | canonical AST |
-| Type scope | AST scope, symbol state | typed AST annotations, constraints, `CompileTimeNeed` |
+| Type scope | AST scope, symbol state | typed AST annotations, constraints, `TypeNeed`, `CompileTimeNeed` |
 | Register request | compile-time need | `RequestId`, dependency edge |
 | Scoped lowering | typed AST scope | HIR, MIR, LIR artefacts |
 | Execute scope | executable LIR, environment | runtime value or comptime `RequestAnswer` |
@@ -69,8 +70,10 @@ hands the typed scope to scoped lowering. If it cannot continue because a value,
 type, declaration, generic identity, or generated fragment must be known first,
 it emits `CompileTimeNeed`.
 
-`RequestRegistry` assigns a `RequestId` and records the blocked AST node. The
-scheduler resumes the blocked work only after an answer has been applied.
+`CompilerWorkScheduler` assigns a `RequestId`, records the blocked AST node,
+and requests answer-producing work. If the blocker requires execution, that
+work runs through typed AST, HIR, MIR, LIR, and the execution engine before the
+scheduler retries typing.
 
 ## Scoped Lowering
 
@@ -86,16 +89,16 @@ submit a new request if it discovers a comptime dependency.
 
 ## Modes
 
-Modes request different final artefacts:
+Modes request different final outputs:
 
-| Mode | Final artefact |
-|------|----------------|
+| Mode | Final output |
+|------|--------------|
 | `run` / `eval` | executed LIR result |
 | `bytecode` | serialized bytecode |
 | native / LLVM / Wasm / JVM / CIL / .NET / eBPF | target object or module |
 | AST target emit | evaluated canonical AST plus target printer output |
 
-Mode branching belongs at the artefact boundary. Typing, comptime, intrinsic
+Mode branching belongs at the output boundary. Typing, comptime, intrinsic
 resolution, async semantics, and scoped lowering should stay shared.
 
 ## Diagnostics
@@ -111,7 +114,7 @@ that were actually requested or produced:
 
 - `.ast` for canonical AST state;
 - `.ast-typed` for type annotations;
-- `.hir`, `.mir`, `.lir` for scoped lowered artefacts;
+- `.hir`, `.mir`, `.lir` for scoped lowered storage;
 - `.bytecode`, `.ll`, object files, assembly, or target AST output for emitted
   artefacts.
 

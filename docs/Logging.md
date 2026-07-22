@@ -27,8 +27,8 @@ dependencies, and modes.
 | Schedule work | `compiler.work` | Work kind, request id, dependency key |
 | Type scope | `compiler.type` | Scope id, constraints, blockers |
 | Register need | `compiler.request.need` | `CompileTimeNeed`, blocked node |
-| Answer request | `compiler.request.answer` | Answer kind, invalidated artefacts |
-| Scoped lowering | `compiler.lower` | HIR/MIR/LIR artefact keys |
+| Answer request | `compiler.request.answer` | Answer kind, invalidated storage ids |
+| Scoped lowering | `compiler.lower` | `HirId`, `MirId`, `LirId` |
 | Execute scope | `compiler.execute` | Runtime/comptime mode, capabilities |
 | Emit target | `compiler.emit` | Backend, output path, target features |
 
@@ -38,7 +38,7 @@ Release builds must emit a build record with:
 
 - source revision and package graph;
 - compiler options and feature flags;
-- requested modes and final artefacts;
+- requested modes and final outputs;
 - request/dependency hashes used for semantic gates;
 - output paths defined in [ReleaseArtifacts](ReleaseArtifacts.md).
 

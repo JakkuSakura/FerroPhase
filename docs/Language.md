@@ -29,7 +29,7 @@ for correctness validation.
 ## 3. Language Model
 
 - Multi-frontend, single semantic contract.
-- Dynamic scoped compiler with canonical AST plus typed/lowered artefacts.
+- Dynamic scoped compiler with canonical AST plus typed/lowered storage.
 - Scheduler requests for comptime, generics, lowering, execution, and emission.
 - Multiple execution modes that must remain semantically equivalent.
 

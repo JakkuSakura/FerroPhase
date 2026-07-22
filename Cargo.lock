@@ -1435,6 +1435,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-compiler"
+version = "0.1.0"
+dependencies = [
+ "fp-backend",
+ "fp-core",
+ "fp-interpret",
+ "fp-typing",
+ "serde",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "fp-core"
 version = "0.1.0"
 dependencies = [

@@ -52,6 +52,45 @@ pub struct TypingOutcome {
     pub diagnostics: Vec<TypingDiagnostic>,
     pub has_errors: bool,
     pub resolved_names: ResolvedNameTable,
+    /// Pending work discovered only after the full typing pass finishes.
+    pub pending_requests: Vec<PendingTypingRequest>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Work discovered by a completed typing pass.
+pub struct PendingTypingRequest {
+    pub kind: PendingTypingRequestKind,
+    pub description: String,
+}
+
+impl PendingTypingRequest {
+    pub fn unknown_type(description: impl Into<String>) -> Self {
+        Self {
+            kind: PendingTypingRequestKind::UnknownType,
+            description: description.into(),
+        }
+    }
+
+    pub fn generic(description: impl Into<String>) -> Self {
+        Self {
+            kind: PendingTypingRequestKind::Generic,
+            description: description.into(),
+        }
+    }
+
+    pub fn comptime(description: impl Into<String>) -> Self {
+        Self {
+            kind: PendingTypingRequestKind::Comptime,
+            description: description.into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingTypingRequestKind {
+    UnknownType,
+    Generic,
+    Comptime,
 }
 
 pub type ExprId = fp_core::ast::ExprId;

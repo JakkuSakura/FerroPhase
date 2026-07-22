@@ -185,7 +185,7 @@ crates/
 
 - `const` items evaluated at compile time populate module-level constants before
   dependent scopes are lowered or emitted.
-- `static` items remain runtime initialized; execution artefacts record their
+- `static` items remain runtime initialized; execution records store their
   default expressions for targets that need deferred initialization.
 - Strict intrinsics are defined in `std::intrinsic` via `#[lang]` items; other
   intrinsic helpers are normalized to canonical `std` symbols by the frontend

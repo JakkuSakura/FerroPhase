@@ -15,12 +15,12 @@ answer is applied.
 ```mermaid
 flowchart LR
     AstScope[AstScope] -->|PendingAst| TypeEngine[TypeEngine]
-    TypeEngine -->|CompileTimeNeed| RequestRegistry[RequestRegistry]
-    RequestRegistry -->|RequestId| CompilerWorkScheduler[CompilerWorkScheduler]
-    CompilerWorkScheduler -->|RequestedAst| TypeEngine
+    TypeEngine -->|CompileTimeNeed| CompilerWorkScheduler[CompilerWorkScheduler]
+    CompilerWorkScheduler -->|TypedAnswerWork| TypeEngine
     TypeEngine -->|TypedAst| ScopedLowering[ScopedLowering]
     ScopedLowering -->|LIR| ExecutionEngine[ExecutionEngine]
     ExecutionEngine -->|RequestAnswer| CompilerWorkScheduler
+    CompilerWorkScheduler -->|RetryAst| TypeEngine
     CompilerWorkScheduler -->|AppliedAnswer| AstScope
 ```
 

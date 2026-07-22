@@ -24,17 +24,20 @@ identity, generated declarations, or AST-producing results.
 flowchart LR
     AstScope[AstScope] -->|PendingAst| TypeEngine[TypeEngine]
     TypeEngine -->|TypedAst| TypedStore[TypedAstStore]
-    TypeEngine -->|CompileTimeNeed| RequestRegistry[RequestRegistry]
-    RequestRegistry -->|RequestId| CompilerWorkScheduler[CompilerWorkScheduler]
-    CompilerWorkScheduler -->|RequestAnswer| TypeEngine
-    TypedStore -->|TypedAst| ScopedLowering[ScopedLowering]
+    TypeEngine -->|TypeNeed| CompilerWorkScheduler[CompilerWorkScheduler]
+    TypeEngine -->|CompileTimeNeed| CompilerWorkScheduler
+    CompilerWorkScheduler -->|TypedAnswerWork| ScopedLowering[ScopedLowering]
+    ScopedLowering -->|LIR| ExecutionEngine[ExecutionEngine]
+    ExecutionEngine -->|RequestAnswer| CompilerWorkScheduler
+    CompilerWorkScheduler -->|RetryAst| TypeEngine
+    TypedStore -->|TypedAst| ScopedLowering
     TypeEngine -->|ConcreteType| TypeStore[TypeStore]
     TypeStore -->|LayoutType| ScopedLowering
 ```
 
 `AST` and typed AST are states of the same canonical tree. Applying a request
 answer may add nodes, annotate nodes, or resolve symbols, then invalidates
-dependent typed and lowered artefacts.
+dependent typed and lowered storage.
 
 ## Structural And Dynamic Dictionaries
 
@@ -66,8 +69,9 @@ the committed type store:
 - capability-aware diagnostics shared by execution and emitters.
 
 Queries observe committed request answers. If a query needs execution, it
-returns or triggers `CompileTimeNeed` rather than calling a private interpreter
-path.
+returns or triggers `CompileTimeNeed`. If execution is required, the scheduler
+lowers typed AST through HIR, MIR, and LIR before interpretation answers the
+request.
 
 ## Guarantees
 
