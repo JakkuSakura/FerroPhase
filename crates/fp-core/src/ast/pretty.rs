@@ -949,6 +949,7 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
         ),
         ast::Ty::Any(_) => "any".into(),
         ast::Ty::Unit(_) => "()".into(),
+        ast::Ty::GenericVar(var) => format!("'{}", var.index),
         ast::Ty::Unknown(_) => "unknown".into(),
         ast::Ty::Nothing(_) => "!".into(),
         ast::Ty::Type(_) => "type".into(),

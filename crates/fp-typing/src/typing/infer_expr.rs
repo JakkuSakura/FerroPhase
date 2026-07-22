@@ -393,7 +393,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         Ty::Quote(quote) if quote.kind == QuoteFragmentKind::Expr => {
                             if let Some(inner) = quote.inner.clone() {
                                 let var = self.fresh_type_var();
-                                self.bind(var, TypeTerm::Custom((*inner).clone()));
+                                self.bind(var, TypeTerm::Concrete((*inner).clone()));
                                 expr.set_ty(*inner);
                                 var
                             } else {
@@ -1241,7 +1241,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 }
                 self.bind(
                     result_var,
-                    TypeTerm::Custom(Ty::Type(TypeType::new(Span::null()))),
+                    TypeTerm::Concrete(Ty::Type(TypeType::new(Span::null()))),
                 );
             }
             IntrinsicCallKind::ReflectFields => {
@@ -1287,7 +1287,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 }
                 self.bind(
                     result_var,
-                    TypeTerm::Custom(Ty::Type(TypeType::new(Span::null()))),
+                    TypeTerm::Concrete(Ty::Type(TypeType::new(Span::null()))),
                 );
             }
             IntrinsicCallKind::GenerateMethod => {
@@ -1426,7 +1426,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     let type_var = self.fresh_type_var();
                     self.bind(
                         type_var,
-                        TypeTerm::Custom(Ty::Type(TypeType::new(Span::null()))),
+                        TypeTerm::Concrete(Ty::Type(TypeType::new(Span::null()))),
                     );
                     return Ok(type_var);
                 }
@@ -1880,7 +1880,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                                 let result_var = self.fresh_type_var();
                                 self.bind(
                                     result_var,
-                                    TypeTerm::Custom(Ty::Type(TypeType::new(Span::null()))),
+                                    TypeTerm::Concrete(Ty::Type(TypeType::new(Span::null()))),
                                 );
                                 return Ok(result_var);
                             }

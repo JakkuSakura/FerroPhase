@@ -9,7 +9,6 @@ pub use typing::types::{
     ResolvedNameTable, TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome,
 };
 
-use crate::typing::scheme::TypeScheme;
 use fp_core::ast::*;
 use fp_core::ast::{AttributesExt, Ident, Name};
 use fp_core::context::SharedScopedContext;
@@ -187,12 +186,10 @@ pub trait TypeResolutionHook {
 use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVar, TypeVarKind};
 use fp_core::module::resolution::ModuleResolutionContext;
 
-// TypeScheme moved to typing/scheme.rs
-
 #[derive(Clone, Debug)]
 struct MethodRecord {
     receiver_ty: Option<Ty>,
-    scheme: Option<TypeScheme>,
+    scheme: Option<Ty>,
 }
 
 #[derive(Clone, Debug)]
@@ -201,12 +198,10 @@ struct ImplContext {
     self_ty: Ty,
 }
 
-// SchemeType moved to typing/scheme.rs
-
 #[derive(Clone)]
 enum EnvEntry {
     Mono(TypeVarId),
-    Poly(TypeScheme),
+    Poly(Ty),
 }
 
 struct PatternBinding {
@@ -3052,7 +3047,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     // instantiate_scheme_type moved to typing/unify.rs
 
-    fn scheme_from_method_signature(&mut self, sig: &FunctionSignature) -> Result<TypeScheme> {
+    fn scheme_from_method_signature(&mut self, sig: &FunctionSignature) -> Result<Ty> {
         let fn_var = self.fresh_type_var();
         let mut param_vars = Vec::new();
         for param in &sig.params {
@@ -3361,7 +3356,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         };
         if self.struct_defs.contains_key(&key) || self.enum_defs.contains_key(&key) {
             let var = self.fresh_type_var();
-            self.bind(var, TypeTerm::Custom(Ty::Type(TypeType::new(Span::null()))));
+            self.bind(var, TypeTerm::Concrete(Ty::Type(TypeType::new(Span::null()))));
             return Ok((
                 var,
                 Some(ResolvedName {

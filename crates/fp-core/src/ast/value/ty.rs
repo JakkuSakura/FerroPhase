@@ -116,6 +116,7 @@ common_enum! {
         Array(TypeArray),
         Any(TypeAny),
         Unit(TypeUnit),
+        GenericVar(TypeGenericVar),
         Unknown(TypeUnknown),
         Nothing(TypeNothing),
         Type(TypeType),
@@ -140,6 +141,9 @@ impl Ty {
     pub const ANY: Ty = Ty::Any(TypeAny);
     pub const fn unknown() -> Ty {
         Ty::Unknown(TypeUnknown)
+    }
+    pub fn generic_var(index: u32) -> Ty {
+        Ty::GenericVar(TypeGenericVar { index })
     }
     pub const UNKNOWN: Ty = Ty::Unknown(TypeUnknown);
     pub fn is_any(&self) -> bool {
@@ -234,6 +238,7 @@ impl Ty {
             Ty::Reference(ty) => ty.span(),
             Ty::RawPtr(ty) => ty.span(),
             Ty::Slice(ty) => ty.span(),
+            Ty::GenericVar(_) => Span::null(),
             Ty::Expr(expr) => expr.span(),
             Ty::Quote(ty) => ty.span(),
             Ty::TypeBinaryOp(op) => op.span(),
@@ -535,6 +540,11 @@ macro_rules! plain_type {
 plain_type! { TypeAny }
 plain_type! { TypeTokenStream }
 plain_type! { TypeUnit }
+common_struct! {
+    pub struct TypeGenericVar {
+        pub index: u32,
+    }
+}
 plain_type! { TypeUnknown }
 plain_type! { TypeNothing }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

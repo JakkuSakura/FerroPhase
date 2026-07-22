@@ -399,6 +399,7 @@ fn normalize_ty(ty: &mut Ty, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
         | Ty::TokenStream(_)
         | Ty::Any(_)
         | Ty::Unit(_)
+        | Ty::GenericVar(_)
         | Ty::Unknown(_)
         | Ty::Nothing(_)
         | Ty::Type(_)

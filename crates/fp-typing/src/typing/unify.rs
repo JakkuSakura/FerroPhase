@@ -1,4 +1,3 @@
-use crate::typing::scheme::{SchemeType, TypeScheme};
 use crate::{AstTypeInferencer, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::{Error, Result};
@@ -69,23 +68,37 @@ pub(crate) enum TypeTerm {
     Nothing,
     Tuple(Vec<TypeVarId>),
     Function(FunctionTerm),
-    Struct(TypeStruct),
-    Structural(TypeStructural),
-    Enum(TypeEnum),
+    Concrete(Ty),
     // Compile-time union of two types from `A | B`.
     Union(TypeVarId, TypeVarId),
     Slice(TypeVarId),
     Vec(TypeVarId),
     // NOTE(jakku): Array terms now keep the element var plus the length expr
     // (if known). This avoids forcing arrays through TypeTerm::Custom, which
-    // caused mismatches with slice/array unification and generic substitution.
+    // caused mismatches when arrays fell back through opaque concrete types.
     Array(TypeVarId, Option<BExpr>),
     Reference(TypeVarId),
     RawPtr(TypeVarId, Option<bool>),
     Boxed(TypeVarId),
     Any,
-    Custom(Ty),
     Unknown,
+}
+
+impl TypeTerm {
+    #[allow(non_snake_case)]
+    pub(crate) fn Struct(struct_ty: TypeStruct) -> Self {
+        Self::Concrete(Ty::Struct(struct_ty))
+    }
+
+    #[allow(non_snake_case)]
+    pub(crate) fn Structural(structural: TypeStructural) -> Self {
+        Self::Concrete(Ty::Structural(structural))
+    }
+
+    #[allow(non_snake_case)]
+    pub(crate) fn Enum(enum_ty: TypeEnum) -> Self {
+        Self::Concrete(Ty::Enum(enum_ty))
+    }
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -278,189 +291,207 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    pub(crate) fn generalize(&mut self, var: TypeVarId) -> Result<TypeScheme> {
+    pub(crate) fn generalize(&mut self, var: TypeVarId) -> Result<Ty> {
         let mut mapping = std::collections::HashMap::new();
         let mut next = 0u32;
-        let body = self.build_scheme_type(var, &mut mapping, &mut next)?;
-        Ok(TypeScheme {
-            vars: next as usize,
-            body,
-        })
+        self.build_generalized_ty(var, &mut mapping, &mut next)
     }
 
-    fn build_scheme_type(
+    fn build_generalized_ty(
         &mut self,
         var: TypeVarId,
         mapping: &mut std::collections::HashMap<TypeVarId, u32>,
         next: &mut u32,
-    ) -> Result<SchemeType> {
+    ) -> Result<Ty> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { level } => {
                 if level > self.current_level {
                     if let Some(idx) = mapping.get(&root) {
-                        Ok(SchemeType::Var(*idx))
+                        Ok(Ty::generic_var(*idx))
                     } else {
                         let idx = *next;
                         mapping.insert(root, idx);
                         *next += 1;
-                        Ok(SchemeType::Var(idx))
+                        Ok(Ty::generic_var(idx))
                     }
                 } else {
-                    Ok(SchemeType::Unknown)
+                    Ok(Ty::Unknown(TypeUnknown))
                 }
             }
-            TypeVarKind::Bound(term) => self.scheme_from_term(term, mapping, next),
-            TypeVarKind::Link(next_var) => self.build_scheme_type(next_var, mapping, next),
+            TypeVarKind::Bound(term) => self.generalize_term(term, mapping, next),
+            TypeVarKind::Link(next_var) => self.build_generalized_ty(next_var, mapping, next),
         }
     }
 
-    fn scheme_from_term(
+    fn generalize_term(
         &mut self,
         term: TypeTerm,
         mapping: &mut std::collections::HashMap<TypeVarId, u32>,
         next: &mut u32,
-    ) -> Result<SchemeType> {
+    ) -> Result<Ty> {
         Ok(match term {
-            TypeTerm::Primitive(prim) => SchemeType::Primitive(prim),
-            TypeTerm::Unit => SchemeType::Unit,
-            TypeTerm::Nothing => SchemeType::Nothing,
-            TypeTerm::Any => SchemeType::Any,
-            TypeTerm::Struct(struct_ty) => SchemeType::Struct(struct_ty),
-            TypeTerm::Structural(structural) => SchemeType::Structural(structural),
-            TypeTerm::Enum(enum_ty) => SchemeType::Enum(enum_ty),
+            TypeTerm::Primitive(prim) => Ty::Primitive(prim),
+            TypeTerm::Unit => Ty::Unit(TypeUnit),
+            TypeTerm::Nothing => Ty::Nothing(TypeNothing),
+            TypeTerm::Any => Ty::Any(TypeAny),
+            TypeTerm::Concrete(ty) => ty,
             TypeTerm::Union(lhs, rhs) => {
-                let lhs = self.build_scheme_type(lhs, mapping, next)?;
-                let rhs = self.build_scheme_type(rhs, mapping, next)?;
-                SchemeType::Union(Box::new(lhs), Box::new(rhs))
+                let lhs = self.build_generalized_ty(lhs, mapping, next)?;
+                let rhs = self.build_generalized_ty(rhs, mapping, next)?;
+                Ty::TypeBinaryOp(
+                    TypeBinaryOp {
+                        kind: TypeBinaryOpKind::Union,
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                    }
+                    .into(),
+                )
             }
-            TypeTerm::Custom(ty) => SchemeType::Custom(ty),
-            TypeTerm::Unknown => SchemeType::Unknown,
+            TypeTerm::Unknown => Ty::Unknown(TypeUnknown),
             TypeTerm::Tuple(elements) => {
                 let mut converted = Vec::new();
                 for elem in elements {
-                    converted.push(self.build_scheme_type(elem, mapping, next)?);
+                    converted.push(self.build_generalized_ty(elem, mapping, next)?);
                 }
-                SchemeType::Tuple(converted)
+                Ty::Tuple(TypeTuple { types: converted })
             }
             TypeTerm::Function(function) => {
                 let mut converted = Vec::new();
                 for param in function.params {
-                    converted.push(self.build_scheme_type(param, mapping, next)?);
+                    converted.push(self.build_generalized_ty(param, mapping, next)?);
                 }
-                let ret = self.build_scheme_type(function.ret, mapping, next)?;
-                SchemeType::Function(converted, Box::new(ret))
+                let ret = self.build_generalized_ty(function.ret, mapping, next)?;
+                Ty::Function(TypeFunction {
+                    params: converted,
+                    generics_params: Vec::new(),
+                    ret_ty: Some(Box::new(ret)),
+                })
             }
             TypeTerm::Slice(elem) => {
-                let elem = self.build_scheme_type(elem, mapping, next)?;
-                SchemeType::Slice(Box::new(elem))
+                let elem = self.build_generalized_ty(elem, mapping, next)?;
+                Ty::Slice(TypeSlice {
+                    elem: Box::new(elem),
+                })
             }
             TypeTerm::Vec(elem) => {
-                let elem = self.build_scheme_type(elem, mapping, next)?;
-                SchemeType::Vec(Box::new(elem))
+                let elem = self.build_generalized_ty(elem, mapping, next)?;
+                Ty::Vec(TypeVec { ty: Box::new(elem) })
             }
-            TypeTerm::Array(elem, _) => {
-                let elem = self.build_scheme_type(elem, mapping, next)?;
-                SchemeType::Array(Box::new(elem))
+            TypeTerm::Array(elem, len) => {
+                let elem = self.build_generalized_ty(elem, mapping, next)?;
+                Ty::Array(TypeArray {
+                    elem: Box::new(elem),
+                    len: len.unwrap_or_else(|| Expr::value(Value::int(0)).into()),
+                })
             }
             TypeTerm::Reference(elem) => {
-                let elem = self.build_scheme_type(elem, mapping, next)?;
-                SchemeType::Reference(Box::new(elem))
+                let elem = self.build_generalized_ty(elem, mapping, next)?;
+                Ty::Reference(TypeReference {
+                    ty: Box::new(elem),
+                    mutability: None,
+                    lifetime: None,
+                })
             }
             TypeTerm::RawPtr(elem, mutability) => {
-                let elem = self.build_scheme_type(elem, mapping, next)?;
-                SchemeType::RawPtr(Box::new(elem), mutability)
+                let elem = self.build_generalized_ty(elem, mapping, next)?;
+                Ty::RawPtr(TypeRawPtr {
+                    ty: Box::new(elem),
+                    mutability,
+                })
             }
             TypeTerm::Boxed(elem) => {
-                let elem = self.build_scheme_type(elem, mapping, next)?;
-                SchemeType::Boxed(Box::new(elem))
+                let elem = self.build_generalized_ty(elem, mapping, next)?;
+                let segment = ParameterPathSegment::new(Ident::new("Box"), vec![elem]);
+                let path = ParameterPath::new(PathPrefix::Plain, vec![segment]);
+                Ty::locator(Name::ParameterPath(path))
             }
         })
     }
 
-    pub(crate) fn instantiate_scheme(&mut self, scheme: &TypeScheme) -> TypeVarId {
+    pub(crate) fn instantiate_scheme(&mut self, scheme: &Ty) -> TypeVarId {
         let mut mapping = std::collections::HashMap::new();
-        self.instantiate_scheme_type(&scheme.body, &mut mapping)
+        self.instantiate_poly_ty(scheme, &mut mapping)
     }
 
-    fn instantiate_scheme_type(
+    fn instantiate_poly_ty(
         &mut self,
-        scheme: &SchemeType,
+        scheme: &Ty,
         mapping: &mut std::collections::HashMap<u32, TypeVarId>,
     ) -> TypeVarId {
         match scheme {
-            SchemeType::Var(idx) => {
-                if let Some(var) = mapping.get(idx) {
+            Ty::GenericVar(generic) => {
+                if let Some(var) = mapping.get(&generic.index) {
                     *var
                 } else {
                     let var = self.fresh_type_var();
-                    mapping.insert(*idx, var);
+                    mapping.insert(generic.index, var);
                     var
                 }
             }
-            SchemeType::Primitive(prim) => {
+            Ty::Primitive(prim) => {
                 let var = self.fresh_type_var();
                 self.bind(var, TypeTerm::Primitive(*prim));
                 var
             }
-            SchemeType::Unit => {
+            Ty::Unit(_) => {
                 let var = self.fresh_type_var();
                 self.bind(var, TypeTerm::Unit);
                 var
             }
-            SchemeType::Nothing => {
+            Ty::Nothing(_) => {
                 let var = self.fresh_type_var();
                 self.bind(var, TypeTerm::Nothing);
                 var
             }
-            SchemeType::Any => {
+            Ty::Any(_) => {
                 let var = self.fresh_type_var();
                 self.bind(var, TypeTerm::Any);
                 var
             }
-            SchemeType::Struct(struct_ty) => {
+            Ty::Struct(struct_ty) => {
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Struct(struct_ty.clone()));
+                self.bind(var, TypeTerm::Concrete(Ty::Struct(struct_ty.clone())));
                 var
             }
-            SchemeType::Structural(structural) => {
+            Ty::Structural(structural) => {
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Structural(structural.clone()));
+                self.bind(var, TypeTerm::Concrete(Ty::Structural(structural.clone())));
                 var
             }
-            SchemeType::Enum(enum_ty) => {
+            Ty::Enum(enum_ty) => {
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Enum(enum_ty.clone()));
+                self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_ty.clone())));
                 var
             }
-            SchemeType::Union(lhs, rhs) => {
-                let lhs_var = self.instantiate_scheme_type(lhs, mapping);
-                let rhs_var = self.instantiate_scheme_type(rhs, mapping);
+            Ty::TypeBinaryOp(op) if op.kind == TypeBinaryOpKind::Union => {
+                let lhs_var = self.instantiate_poly_ty(&op.lhs, mapping);
+                let rhs_var = self.instantiate_poly_ty(&op.rhs, mapping);
                 let var = self.fresh_type_var();
                 self.bind(var, TypeTerm::Union(lhs_var, rhs_var));
                 var
             }
-            SchemeType::Custom(ty) => {
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Custom(ty.clone()));
-                var
-            }
-            SchemeType::Unknown => self.fresh_type_var(),
-            SchemeType::Tuple(elements) => {
+            Ty::Unknown(_) => self.fresh_type_var(),
+            Ty::Tuple(elements) => {
                 let mut vars = Vec::new();
-                for elem in elements {
-                    vars.push(self.instantiate_scheme_type(elem, mapping));
+                for elem in &elements.types {
+                    vars.push(self.instantiate_poly_ty(elem, mapping));
                 }
                 let var = self.fresh_type_var();
                 self.bind(var, TypeTerm::Tuple(vars));
                 var
             }
-            SchemeType::Function(params, ret) => {
-                let param_vars: Vec<_> = params
+            Ty::Function(function) => {
+                let param_vars: Vec<_> = function
+                    .params
                     .iter()
-                    .map(|param| self.instantiate_scheme_type(param, mapping))
+                    .map(|param| self.instantiate_poly_ty(param, mapping))
                     .collect();
-                let ret_var = self.instantiate_scheme_type(ret, mapping);
+                let ret_var = function
+                    .ret_ty
+                    .as_ref()
+                    .map(|ret| self.instantiate_poly_ty(ret, mapping))
+                    .unwrap_or_else(|| self.unit_type_var());
                 let var = self.fresh_type_var();
                 self.bind(
                     var,
@@ -471,42 +502,37 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 );
                 var
             }
-            SchemeType::Slice(elem) => {
-                let elem_var = self.instantiate_scheme_type(elem, mapping);
+            Ty::Slice(elem) => {
+                let elem_var = self.instantiate_poly_ty(&elem.elem, mapping);
                 let var = self.fresh_type_var();
                 self.bind(var, TypeTerm::Slice(elem_var));
                 var
             }
-            SchemeType::Vec(elem) => {
-                let elem_var = self.instantiate_scheme_type(elem, mapping);
+            Ty::Vec(elem) => {
+                let elem_var = self.instantiate_poly_ty(&elem.ty, mapping);
                 let var = self.fresh_type_var();
                 self.bind(var, TypeTerm::Vec(elem_var));
                 var
             }
-            SchemeType::Array(elem) => {
-                let elem_var = self.instantiate_scheme_type(elem, mapping);
+            Ty::Array(array) => {
+                let elem_var = self.instantiate_poly_ty(&array.elem, mapping);
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Array(elem_var, None));
+                self.bind(var, TypeTerm::Array(elem_var, Some(array.len.clone())));
                 var
             }
-            SchemeType::Reference(elem) => {
-                let elem_var = self.instantiate_scheme_type(elem, mapping);
+            Ty::Reference(elem) => {
+                let elem_var = self.instantiate_poly_ty(&elem.ty, mapping);
                 let var = self.fresh_type_var();
                 self.bind(var, TypeTerm::Reference(elem_var));
                 var
             }
-            SchemeType::RawPtr(elem, mutability) => {
-                let elem_var = self.instantiate_scheme_type(elem, mapping);
+            Ty::RawPtr(elem) => {
+                let elem_var = self.instantiate_poly_ty(&elem.ty, mapping);
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::RawPtr(elem_var, *mutability));
+                self.bind(var, TypeTerm::RawPtr(elem_var, elem.mutability));
                 var
             }
-            SchemeType::Boxed(elem) => {
-                let elem_var = self.instantiate_scheme_type(elem, mapping);
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Boxed(elem_var));
-                var
-            }
+            _ => self.type_from_ast_ty(scheme).unwrap_or_else(|_| self.error_type_var()),
         }
     }
 
@@ -696,8 +722,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn is_cstr_var(&mut self, var: TypeVarId) -> bool {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
-            TypeVarKind::Bound(TypeTerm::Struct(struct_ty)) => struct_ty.name.as_str() == "CStr",
-            TypeVarKind::Bound(TypeTerm::Custom(Ty::Struct(struct_ty))) => {
+            TypeVarKind::Bound(TypeTerm::Concrete(Ty::Struct(struct_ty))) => {
                 struct_ty.name.as_str() == "CStr"
             }
             TypeVarKind::Link(next) => self.is_cstr_var(next),
@@ -717,12 +742,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             {
                 Ok(())
             }
-            (TypeTerm::Primitive(TypePrimitive::String), TypeTerm::Struct(struct_ty))
+            (TypeTerm::Primitive(TypePrimitive::String), TypeTerm::Concrete(Ty::Struct(struct_ty)))
                 if struct_ty.name.as_str() == "CStr" =>
             {
                 Ok(())
             }
-            (TypeTerm::Struct(struct_ty), TypeTerm::Primitive(TypePrimitive::String))
+            (TypeTerm::Concrete(Ty::Struct(struct_ty)), TypeTerm::Primitive(TypePrimitive::String))
                 if struct_ty.name.as_str() == "CStr" =>
             {
                 Ok(())
@@ -741,68 +766,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             | (TypeTerm::Any, TypeTerm::Any)
             | (TypeTerm::Unknown, TypeTerm::Unknown) => Ok(()),
             (TypeTerm::Nothing, _) | (_, TypeTerm::Nothing) => Ok(()),
-            (TypeTerm::Struct(sa), TypeTerm::Struct(sb)) => {
-                if sa == sb {
-                    Ok(())
-                } else if sa.name == sb.name {
-                    self.unify_struct_fields(&sa, &sb)
-                } else {
-                    Err(self.error_with_current_span(format!(
-                        "struct type mismatch: {} vs {}",
-                        sa.name, sb.name
-                    )))
-                }
-            }
-            (TypeTerm::Structural(sa), TypeTerm::Structural(sb)) => {
-                if sa == sb {
-                    Ok(())
-                } else {
-                    Err(self.error_with_current_span("structural type mismatch"))
-                }
-            }
-            (TypeTerm::Enum(ae), TypeTerm::Enum(be)) => {
-                let ae_name = ae.name.as_str();
-                let be_name = be.name.as_str();
-                let ae_tail = ae_name.rsplit("::").next().unwrap_or(ae_name);
-                let be_tail = be_name.rsplit("::").next().unwrap_or(be_name);
-                if ae == be {
-                    Ok(())
-                } else if ae_tail == be_tail {
-                    match self.unify_enum_variants(&ae, &be) {
-                        Ok(()) => Ok(()),
-                        Err(err) => {
-                            let mut resolved = false;
-                            let mut resolved_a = ae.clone();
-                            let mut resolved_b = be.clone();
-                            if (resolved_a.variants.is_empty() || resolved_b.variants.is_empty())
-                                && self.lookup_enum_def_by_name(ae_tail).is_some()
-                            {
-                                if let Some((_, def)) = self.lookup_enum_def_by_name(ae_tail) {
-                                    if resolved_a.variants.is_empty() {
-                                        resolved_a = def.clone();
-                                        resolved = true;
-                                    }
-                                    if resolved_b.variants.is_empty() {
-                                        resolved_b = def;
-                                        resolved = true;
-                                    }
-                                }
-                            }
-                            if resolved {
-                                self.unify_enum_variants(&resolved_a, &resolved_b)
-                            } else if !ae.generics_params.is_empty()
-                                || !be.generics_params.is_empty()
-                            {
-                                Ok(())
-                            } else {
-                                Err(err)
-                            }
-                        }
-                    }
-                } else {
-                    Err(self.error_with_current_span("enum type mismatch"))
-                }
-            }
+            (TypeTerm::Concrete(a), TypeTerm::Concrete(b)) => self.unify_concrete_tys(a, b),
             (TypeTerm::Union(a_lhs, a_rhs), TypeTerm::Union(b_lhs, b_rhs)) => {
                 self.unify_union_pair(a_lhs, a_rhs, b_lhs, b_rhs)
             }
@@ -813,8 +777,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             | (TypeTerm::Slice(slice_elem), TypeTerm::Array(array_elem, _)) => {
                 self.unify(array_elem, slice_elem)
             }
-            (TypeTerm::Array(array_elem, _), TypeTerm::Custom(ty))
-            | (TypeTerm::Custom(ty), TypeTerm::Array(array_elem, _))
+            (TypeTerm::Array(array_elem, _), TypeTerm::Concrete(ty))
+            | (TypeTerm::Concrete(ty), TypeTerm::Array(array_elem, _))
                 if matches!(ty, Ty::Array(_)) =>
             {
                 if let Ty::Array(array_ty) = ty {
@@ -824,45 +788,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     Ok(())
                 }
             }
-            (TypeTerm::Custom(a), TypeTerm::Custom(b)) => {
-                if is_std_task_future_ty(&a) && is_std_task_future_ty(&b) {
-                    let a_inner = std_task_future_inner_ty(&a);
-                    let b_inner = std_task_future_inner_ty(&b);
-                    if let (Some(a_inner), Some(b_inner)) = (a_inner, b_inner) {
-                        if matches!(a_inner, Ty::Nothing(_)) || matches!(b_inner, Ty::Nothing(_)) {
-                            Ok(())
-                        } else {
-                            let a_var = self.type_from_ast_ty(&a_inner)?;
-                            let b_var = self.type_from_ast_ty(&b_inner)?;
-                            self.unify(a_var, b_var)
-                        }
-                    } else {
-                        Ok(())
-                    }
-                } else if a == b || quote_item_compatible(&a, &b) {
-                    Ok(())
-                } else if let (Ty::Array(a_arr), Ty::Array(b_arr)) = (&a, &b) {
-                    // Be permissive about array lengths during typing; const-eval
-                    // may normalize lengths into literals at different times.
-                    let a_elem = self.type_from_ast_ty(&a_arr.elem)?;
-                    let b_elem = self.type_from_ast_ty(&b_arr.elem)?;
-                    self.unify(a_elem, b_elem)
-                } else {
-                    Err(self
-                        .error_with_current_span(format!("custom type mismatch: {} vs {}", a, b)))
-                }
-            }
-            (TypeTerm::Custom(custom), TypeTerm::Struct(struct_ty))
-                if is_std_task_future_ty(&custom) && struct_ty.name.as_str() == "Future" =>
-            {
-                Ok(())
-            }
-            (TypeTerm::Struct(struct_ty), TypeTerm::Custom(custom))
-                if struct_ty.name.as_str() == "Future" && is_std_task_future_ty(&custom) =>
-            {
-                Ok(())
-            }
-            (TypeTerm::Custom(array_ty), TypeTerm::Slice(slice_elem))
+            (TypeTerm::Concrete(array_ty), TypeTerm::Slice(slice_elem))
                 if matches!(array_ty, Ty::Array(_)) =>
             {
                 if let Ty::Array(array_ty) = array_ty {
@@ -872,7 +798,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     Ok(())
                 }
             }
-            (TypeTerm::Slice(slice_elem), TypeTerm::Custom(array_ty))
+            (TypeTerm::Slice(slice_elem), TypeTerm::Concrete(array_ty))
                 if matches!(array_ty, Ty::Array(_)) =>
             {
                 if let Ty::Array(array_ty) = array_ty {
@@ -937,6 +863,107 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Err(self
                     .error_with_current_span(format!("type mismatch: {:?} vs {:?}", left, right)))
             }
+        }
+    }
+
+    fn unify_concrete_tys(&mut self, a: Ty, b: Ty) -> Result<()> {
+        match (a, b) {
+            (Ty::Struct(sa), Ty::Struct(sb)) => {
+                if sa == sb {
+                    Ok(())
+                } else if sa.name == sb.name {
+                    self.unify_struct_fields(&sa, &sb)
+                } else {
+                    Err(self.error_with_current_span(format!(
+                        "struct type mismatch: {} vs {}",
+                        sa.name, sb.name
+                    )))
+                }
+            }
+            (Ty::Structural(sa), Ty::Structural(sb)) => {
+                if sa == sb {
+                    Ok(())
+                } else {
+                    Err(self.error_with_current_span("structural type mismatch"))
+                }
+            }
+            (Ty::Enum(ae), Ty::Enum(be)) => {
+                let ae_name = ae.name.as_str();
+                let be_name = be.name.as_str();
+                let ae_tail = ae_name.rsplit("::").next().unwrap_or(ae_name);
+                let be_tail = be_name.rsplit("::").next().unwrap_or(be_name);
+                if ae == be {
+                    Ok(())
+                } else if ae_tail == be_tail {
+                    match self.unify_enum_variants(&ae, &be) {
+                        Ok(()) => Ok(()),
+                        Err(err) => {
+                            let mut resolved = false;
+                            let mut resolved_a = ae.clone();
+                            let mut resolved_b = be.clone();
+                            if (resolved_a.variants.is_empty() || resolved_b.variants.is_empty())
+                                && self.lookup_enum_def_by_name(ae_tail).is_some()
+                            {
+                                if let Some((_, def)) = self.lookup_enum_def_by_name(ae_tail) {
+                                    if resolved_a.variants.is_empty() {
+                                        resolved_a = def.clone();
+                                        resolved = true;
+                                    }
+                                    if resolved_b.variants.is_empty() {
+                                        resolved_b = def;
+                                        resolved = true;
+                                    }
+                                }
+                            }
+                            if resolved {
+                                self.unify_enum_variants(&resolved_a, &resolved_b)
+                            } else if !ae.generics_params.is_empty()
+                                || !be.generics_params.is_empty()
+                            {
+                                Ok(())
+                            } else {
+                                Err(err)
+                            }
+                        }
+                    }
+                } else {
+                    Err(self.error_with_current_span("enum type mismatch"))
+                }
+            }
+            (left, right) if is_std_task_future_ty(&left) && is_std_task_future_ty(&right) => {
+                let left_inner = std_task_future_inner_ty(&left);
+                let right_inner = std_task_future_inner_ty(&right);
+                if let (Some(left_inner), Some(right_inner)) = (left_inner, right_inner) {
+                    if matches!(left_inner, Ty::Nothing(_)) || matches!(right_inner, Ty::Nothing(_)) {
+                        Ok(())
+                    } else {
+                        let left_var = self.type_from_ast_ty(&left_inner)?;
+                        let right_var = self.type_from_ast_ty(&right_inner)?;
+                        self.unify(left_var, right_var)
+                    }
+                } else {
+                    Ok(())
+                }
+            }
+            (Ty::Struct(struct_ty), custom)
+                if struct_ty.name.as_str() == "Future" && is_std_task_future_ty(&custom) =>
+            {
+                Ok(())
+            }
+            (custom, Ty::Struct(struct_ty))
+                if is_std_task_future_ty(&custom) && struct_ty.name.as_str() == "Future" =>
+            {
+                Ok(())
+            }
+            (left, right) if left == right || quote_item_compatible(&left, &right) => Ok(()),
+            (Ty::Array(left_arr), Ty::Array(right_arr)) => {
+                let left_elem = self.type_from_ast_ty(&left_arr.elem)?;
+                let right_elem = self.type_from_ast_ty(&right_arr.elem)?;
+                self.unify(left_elem, right_elem)
+            }
+            (left, right) => Err(
+                self.error_with_current_span(format!("concrete type mismatch: {} vs {}", left, right))
+            ),
         }
     }
 
@@ -1051,9 +1078,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Unit => Ty::Unit(TypeUnit),
             TypeTerm::Nothing => Ty::Nothing(TypeNothing),
             TypeTerm::Any => Ty::Any(TypeAny),
-            TypeTerm::Struct(struct_ty) => Ty::Struct(struct_ty),
-            TypeTerm::Structural(structural) => Ty::Structural(structural),
-            TypeTerm::Enum(enum_ty) => Ty::Enum(enum_ty),
+            TypeTerm::Concrete(ty) => ty,
             TypeTerm::Union(lhs, rhs) => {
                 let lhs_ty = self.resolve_to_ty(lhs)?;
                 let rhs_ty = self.resolve_to_ty(rhs)?;
@@ -1066,7 +1091,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     .into(),
                 )
             }
-            TypeTerm::Custom(ty) => ty,
             TypeTerm::Unknown => Ty::Unknown(TypeUnknown),
             TypeTerm::Tuple(elements) => {
                 let types = elements
@@ -1137,6 +1161,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         match ty {
             Ty::Primitive(prim) => self.bind(var, TypeTerm::Primitive(*prim)),
             Ty::Unit(_) => self.bind(var, TypeTerm::Unit),
+            Ty::GenericVar(_) => return Ok(var),
             Ty::Nothing(_) => self.bind(var, TypeTerm::Nothing),
             Ty::Any(_) => self.bind(var, TypeTerm::Any),
             Ty::TypeBinaryOp(op) => {
@@ -1156,7 +1181,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             _ => {
                                 // Unsupported operand kinds fall back to a
                                 // symbolic custom type for now.
-                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                self.bind(var, TypeTerm::Concrete(ty.clone()));
                                 return Ok(var);
                             }
                         };
@@ -1164,7 +1189,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             Ty::Struct(ref s) => s.fields.clone(),
                             Ty::Structural(ref st) => st.fields.clone(),
                             _ => {
-                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                self.bind(var, TypeTerm::Concrete(ty.clone()));
                                 return Ok(var);
                             }
                         };
@@ -1202,7 +1227,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             Ty::Struct(ref s) => s.fields.clone(),
                             Ty::Structural(ref st) => st.fields.clone(),
                             _ => {
-                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                self.bind(var, TypeTerm::Concrete(ty.clone()));
                                 return Ok(var);
                             }
                         };
@@ -1210,7 +1235,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             Ty::Struct(ref s) => s.fields.clone(),
                             Ty::Structural(ref st) => st.fields.clone(),
                             _ => {
-                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                self.bind(var, TypeTerm::Concrete(ty.clone()));
                                 return Ok(var);
                             }
                         };
@@ -1250,7 +1275,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             Ty::Struct(ref s) => s.fields.clone(),
                             Ty::Structural(ref st) => st.fields.clone(),
                             _ => {
-                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                self.bind(var, TypeTerm::Concrete(ty.clone()));
                                 return Ok(var);
                             }
                         };
@@ -1258,7 +1283,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             Ty::Struct(ref s) => s.fields.clone(),
                             Ty::Structural(ref st) => st.fields.clone(),
                             _ => {
-                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                self.bind(var, TypeTerm::Concrete(ty.clone()));
                                 return Ok(var);
                             }
                         };
@@ -1282,7 +1307,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(var, TypeTerm::Any);
             }
             Ty::TokenStream(_) => {
-                self.bind(var, TypeTerm::Custom(ty.clone()));
+                self.bind(var, TypeTerm::Concrete(ty.clone()));
             }
             Ty::Struct(struct_ty) => {
                 self.insert_struct_def(&struct_ty.name, struct_ty.clone());
@@ -1301,12 +1326,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     Value::Char(_) => TypeTerm::Primitive(TypePrimitive::Char),
                     Value::Unit(_) => TypeTerm::Unknown,
                     Value::Null(_) | Value::None(_) => TypeTerm::Nothing,
-                    _ => TypeTerm::Custom(ty.clone()),
+                    _ => TypeTerm::Concrete(ty.clone()),
                 };
                 self.bind(var, term);
             }
             Ty::Type(_) => {
-                self.bind(var, TypeTerm::Custom(ty.clone()));
+                self.bind(var, TypeTerm::Concrete(ty.clone()));
             }
             Ty::TypeBounds(_) => {
                 // Higher-ranked or bounded types are treated as opaque for now.
@@ -1343,7 +1368,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             Ty::Quote(_) => {
                 // Quote tokens are currently opaque to the typer.
-                self.bind(var, TypeTerm::Custom(ty.clone()));
+                self.bind(var, TypeTerm::Concrete(ty.clone()));
             }
             Ty::Expr(expr) => {
                 if let ExprKind::Value(value) = expr.kind() {
@@ -1393,7 +1418,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 && path.segments[path.segments.len() - 3].ident.as_str() == "std"
                                 && path.segments[path.segments.len() - 2].ident.as_str() == "task"
                             {
-                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                self.bind(var, TypeTerm::Concrete(ty.clone()));
                                 return Ok(var);
                             }
                             if !segment.args.is_empty() {
@@ -1556,7 +1581,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     };
                     let resolved = self.resolve_locator_key(loc);
                     if is_token_stream_name(&name) {
-                        self.bind(var, TypeTerm::Custom(Ty::TokenStream(TypeTokenStream)));
+                        self.bind(var, TypeTerm::Concrete(Ty::TokenStream(TypeTokenStream)));
                         return Ok(var);
                     }
                     if name == "Self" {

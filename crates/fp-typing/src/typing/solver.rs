@@ -10,7 +10,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeVarKind::Unbound { .. }
             | TypeVarKind::Bound(TypeTerm::Any)
             | TypeVarKind::Bound(TypeTerm::Unknown)
-            | TypeVarKind::Bound(TypeTerm::Custom(_)) => Ok(()),
+            | TypeVarKind::Bound(TypeTerm::Concrete(_)) => Ok(()),
             TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(_)))
             | TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Decimal(_))) => Ok(()),
             TypeVarKind::Link(next) => self.ensure_numeric(next, context),
