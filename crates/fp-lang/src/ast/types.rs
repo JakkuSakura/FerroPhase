@@ -227,6 +227,19 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                     },
                     _ => return Err(ErrMode::Cut(ContextError::new())),
                 },
+                Ty::Slice(slice) => match slice.elem.as_ref() {
+                    Ty::Expr(expr) => match expr.kind() {
+                        ExprKind::Name(name) => match name.as_ident().map(Ident::as_str) {
+                            Some("item") => QuoteFragmentKind::Item,
+                            Some("expr") => QuoteFragmentKind::Expr,
+                            Some("stmt") => QuoteFragmentKind::Stmt,
+                            Some("type") => QuoteFragmentKind::Type,
+                            _ => return Err(ErrMode::Cut(ContextError::new())),
+                        },
+                        _ => return Err(ErrMode::Cut(ContextError::new())),
+                    },
+                    _ => return Err(ErrMode::Cut(ContextError::new())),
+                },
                 _ => return Err(ErrMode::Cut(ContextError::new())),
             };
             return Ok(Ty::Quote(TypeQuote {
