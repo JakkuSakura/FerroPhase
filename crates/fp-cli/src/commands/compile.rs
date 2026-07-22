@@ -2,8 +2,9 @@
 
 use crate::commands::{setup_progress_bar, validate_paths_exist};
 use crate::compiler::{
-    self, BytecodeCompileOptions, EbpfCompileOptions, JvmCompileOptions, NativeCompileOptions,
-    NativeEmitterKind, WasmCompileOptions,
+    self, BytecodeCompileOptions, CraneliftCompileOptions, EbpfCompileOptions,
+    JvmCompileOptions, LlvmCompileOptions, NativeCompileOptions, NativeEmitterKind,
+    WasmCompileOptions,
 };
 use crate::pipeline::{
     AstPreparationOptions, BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
@@ -623,8 +624,6 @@ fn try_compile_with_compiler(
     if module_resolution.is_some()
         || args.lossy
         || !args.disable_stage.is_empty()
-        || args.source_language.is_some()
-        || !is_ferrophase_source(input)
     {
         return Ok(None);
     }
@@ -635,10 +634,52 @@ fn try_compile_with_compiler(
                 EmitterKind::Native => NativeEmitterKind::Native,
                 EmitterKind::Goasm => NativeEmitterKind::GoAsm,
                 EmitterKind::Urcl => NativeEmitterKind::Urcl,
-                EmitterKind::Llvm | EmitterKind::Cranelift => return Ok(None),
+                EmitterKind::Llvm => {
+                    let artifact = compiler::compile_llvm_file(
+                        input,
+                        args.source_language.as_deref(),
+                        &LlvmCompileOptions {
+                            output: output.to_path_buf(),
+                            target_triple: args.target_triple.clone(),
+                            target_cpu: args.target_cpu.clone(),
+                            target_features: args.target_features.clone(),
+                            target_sysroot: args.target_sysroot.clone(),
+                            linker: Some(args.linker.clone()),
+                            target_linker: args.target_linker.clone(),
+                            release: args.release,
+                            debug_info: args.debug,
+                            module_name: input
+                                .file_stem()
+                                .and_then(|stem| stem.to_str())
+                                .unwrap_or("main")
+                                .to_string(),
+                            save_intermediates: args.save_intermediates,
+                        },
+                    )?;
+                    return Ok(Some(artifact));
+                }
+                EmitterKind::Cranelift => {
+                    let artifact = compiler::compile_cranelift_file(
+                        input,
+                        args.source_language.as_deref(),
+                        &CraneliftCompileOptions {
+                            output: output.to_path_buf(),
+                            target_triple: args.target_triple.clone(),
+                            target_cpu: args.target_cpu.clone(),
+                            target_features: args.target_features.clone(),
+                            target_sysroot: args.target_sysroot.clone(),
+                            linker: Some(args.linker.clone()),
+                            target_linker: args.target_linker.clone(),
+                            release: args.release,
+                            save_intermediates: args.save_intermediates,
+                        },
+                    )?;
+                    return Ok(Some(artifact));
+                }
             };
             let artifact = compiler::compile_native_file(
                 input,
+                args.source_language.as_deref(),
                 &NativeCompileOptions {
                     emitter,
                     output: output.to_path_buf(),
@@ -658,6 +699,7 @@ fn try_compile_with_compiler(
         BackendKind::Bytecode | BackendKind::TextBytecode => {
             let artifact = compiler::compile_bytecode_file(
                 input,
+                args.source_language.as_deref(),
                 &BytecodeCompileOptions {
                     output: output.to_path_buf(),
                     emit_text: matches!(backend, BackendKind::TextBytecode),
@@ -673,6 +715,7 @@ fn try_compile_with_compiler(
                 .map(|stem| stem.to_string());
             let artifact = compiler::compile_jvm_file(
                 input,
+                args.source_language.as_deref(),
                 &JvmCompileOptions {
                     output: output.to_path_buf(),
                     save_intermediates: args.save_intermediates,
@@ -684,6 +727,7 @@ fn try_compile_with_compiler(
         BackendKind::Wasm => {
             let artifact = compiler::compile_wasm_file(
                 input,
+                args.source_language.as_deref(),
                 &WasmCompileOptions {
                     output: output.to_path_buf(),
                 },
@@ -693,6 +737,7 @@ fn try_compile_with_compiler(
         BackendKind::Ebpf => {
             let artifact = compiler::compile_ebpf_file(
                 input,
+                args.source_language.as_deref(),
                 &EbpfCompileOptions {
                     output: output.to_path_buf(),
                 },
@@ -708,18 +753,40 @@ fn try_compile_with_compiler(
             Ok(Some(output.to_path_buf()))
         }
         BackendKind::Dotnet => {
-            let artifact = compiler::compile_dotnet_file(input, output, args.save_intermediates)?;
+            let artifact = compiler::compile_dotnet_file(
+                input,
+                args.source_language.as_deref(),
+                output,
+                args.save_intermediates,
+            )?;
+            Ok(Some(artifact))
+        }
+        BackendKind::Llvm => {
+            let artifact = compiler::compile_llvm_file(
+                input,
+                args.source_language.as_deref(),
+                &LlvmCompileOptions {
+                    output: output.to_path_buf(),
+                    target_triple: args.target_triple.clone(),
+                    target_cpu: args.target_cpu.clone(),
+                    target_features: args.target_features.clone(),
+                    target_sysroot: args.target_sysroot.clone(),
+                    linker: Some(args.linker.clone()),
+                    target_linker: args.target_linker.clone(),
+                    release: args.release,
+                    debug_info: args.debug,
+                    module_name: input
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or("main")
+                        .to_string(),
+                    save_intermediates: true,
+                },
+            )?;
             Ok(Some(artifact))
         }
         _ => Ok(None),
     }
-}
-
-fn is_ferrophase_source(input: &Path) -> bool {
-    matches!(
-        input.extension().and_then(|ext| ext.to_str()),
-        Some("fp" | "ferro" | "ferrophase")
-    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

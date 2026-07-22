@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use fp_compiler::{
     AstId, CompilerDriver, CompilerWork, ConstValueId, ExecutionMode, FullyQualifiedPath, LirId,
@@ -14,9 +15,34 @@ use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
 use fp_goasm::config::GoAsmTarget;
 
 use crate::{CliError, Result};
+use crate::languages::{self, detect_source_language};
+#[cfg(feature = "lang-flatbuffers")]
+use crate::languages::frontend::FlatbuffersFrontend;
+#[cfg(feature = "lang-golang")]
+use crate::languages::frontend::GoFrontend;
+#[cfg(feature = "lang-hcl")]
+use crate::languages::frontend::HclFrontend;
+#[cfg(feature = "lang-json")]
+use crate::languages::frontend::JsonFrontend;
+#[cfg(feature = "lang-jsonschema")]
+use crate::languages::frontend::JsonSchemaFrontend;
+#[cfg(feature = "lang-prql")]
+use crate::languages::frontend::PrqlFrontend;
+#[cfg(feature = "lang-python")]
+use crate::languages::frontend::PythonFrontend;
+#[cfg(feature = "lang-sql")]
+use crate::languages::frontend::SqlFrontend;
+#[cfg(feature = "lang-toml")]
+use crate::languages::frontend::TomlFrontend;
+#[cfg(feature = "lang-typescript")]
+use crate::languages::frontend::TypeScriptFrontend;
+#[cfg(feature = "lang-wit")]
+use crate::languages::frontend::WitFrontend;
+#[cfg(feature = "lang-typescript")]
+use fp_typescript::frontend::TsParseMode;
 
 pub fn check_path(path: &Path, syntax_only: bool) -> Result<()> {
-    let ast = parse_file(path)?;
+    let ast = parse_file(path, None)?;
     if syntax_only {
         return Ok(());
     }
@@ -39,12 +65,12 @@ pub fn eval_expr(source: &str) -> Result<Value> {
 }
 
 pub fn eval_file(path: &Path) -> Result<Value> {
-    let ast = parse_file(path)?;
+    let ast = parse_file(path, None)?;
     execute_ast(ast, CompilerIdentity::for_file(path), ExecutionMode::Runtime)
 }
 
 pub fn interpret_file(path: &Path) -> Result<Value> {
-    let ast = parse_file(path)?;
+    let ast = parse_file(path, None)?;
     execute_ast(ast, CompilerIdentity::for_file(path), ExecutionMode::Runtime)
 }
 
@@ -89,8 +115,38 @@ pub struct EbpfCompileOptions {
     pub output: PathBuf,
 }
 
-pub fn compile_native_file(path: &Path, options: &NativeCompileOptions) -> Result<PathBuf> {
-    let lowered = lower_file(path)?;
+pub struct LlvmCompileOptions {
+    pub output: PathBuf,
+    pub target_triple: Option<String>,
+    pub target_cpu: Option<String>,
+    pub target_features: Option<String>,
+    pub target_sysroot: Option<PathBuf>,
+    pub linker: Option<String>,
+    pub target_linker: Option<PathBuf>,
+    pub release: bool,
+    pub debug_info: bool,
+    pub module_name: String,
+    pub save_intermediates: bool,
+}
+
+pub struct CraneliftCompileOptions {
+    pub output: PathBuf,
+    pub target_triple: Option<String>,
+    pub target_cpu: Option<String>,
+    pub target_features: Option<String>,
+    pub target_sysroot: Option<PathBuf>,
+    pub linker: Option<String>,
+    pub target_linker: Option<PathBuf>,
+    pub release: bool,
+    pub save_intermediates: bool,
+}
+
+pub fn compile_native_file(
+    path: &Path,
+    source_language: Option<&str>,
+    options: &NativeCompileOptions,
+) -> Result<PathBuf> {
+    let lowered = lower_file(path, source_language)?;
     let lir = lowered.lir()?;
 
     match options.emitter {
@@ -140,8 +196,12 @@ pub fn compile_native_file(path: &Path, options: &NativeCompileOptions) -> Resul
     }
 }
 
-pub fn compile_bytecode_file(path: &Path, options: &BytecodeCompileOptions) -> Result<PathBuf> {
-    let lowered = lower_file(path)?;
+pub fn compile_bytecode_file(
+    path: &Path,
+    source_language: Option<&str>,
+    options: &BytecodeCompileOptions,
+) -> Result<PathBuf> {
+    let lowered = lower_file(path, source_language)?;
     let mir = lowered.mir()?;
     let bytecode = fp_bytecode::lower_program(&mir)
         .map_err(|err| CliError::Compilation(format!("MIR→Bytecode lowering failed: {}", err)))?;
@@ -177,8 +237,12 @@ pub fn compile_bytecode_file(path: &Path, options: &BytecodeCompileOptions) -> R
     Ok(options.output.clone())
 }
 
-pub fn compile_jvm_file(path: &Path, options: &JvmCompileOptions) -> Result<PathBuf> {
-    let lowered = lower_file(path)?;
+pub fn compile_jvm_file(
+    path: &Path,
+    source_language: Option<&str>,
+    options: &JvmCompileOptions,
+) -> Result<PathBuf> {
+    let lowered = lower_file(path, source_language)?;
     let mir = lowered.mir()?;
     let class_stem = options
         .class_name_hint
@@ -232,8 +296,12 @@ pub fn compile_jvm_file(path: &Path, options: &JvmCompileOptions) -> Result<Path
     Ok(output_path)
 }
 
-pub fn compile_wasm_file(path: &Path, options: &WasmCompileOptions) -> Result<PathBuf> {
-    let lowered = lower_file(path)?;
+pub fn compile_wasm_file(
+    path: &Path,
+    source_language: Option<&str>,
+    options: &WasmCompileOptions,
+) -> Result<PathBuf> {
+    let lowered = lower_file(path, source_language)?;
     let lir = lowered.lir()?;
     let wasm_bytes = fp_wasm::emit_wasm(&lir)
         .map_err(|err| CliError::Compilation(format!("Failed to emit wasm: {}", err)))?;
@@ -244,8 +312,12 @@ pub fn compile_wasm_file(path: &Path, options: &WasmCompileOptions) -> Result<Pa
     Ok(options.output.clone())
 }
 
-pub fn compile_ebpf_file(path: &Path, options: &EbpfCompileOptions) -> Result<PathBuf> {
-    let lowered = lower_file(path)?;
+pub fn compile_ebpf_file(
+    path: &Path,
+    source_language: Option<&str>,
+    options: &EbpfCompileOptions,
+) -> Result<PathBuf> {
+    let lowered = lower_file(path, source_language)?;
     let lir = lowered.lir()?;
     if let Some(parent) = options.output.parent() {
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
@@ -263,13 +335,158 @@ pub fn compile_ebpf_file(path: &Path, options: &EbpfCompileOptions) -> Result<Pa
 }
 
 pub fn compile_cil_file(path: &Path) -> Result<String> {
-    let ast = parse_file(path)?;
+    let ast = parse_file(path, None)?;
     compile_cil_ast(&ast)
 }
 
-pub fn compile_dotnet_file(path: &Path, output: &Path, save_intermediates: bool) -> Result<PathBuf> {
-    let ast = parse_file(path)?;
+pub fn compile_dotnet_file(
+    path: &Path,
+    source_language: Option<&str>,
+    output: &Path,
+    save_intermediates: bool,
+) -> Result<PathBuf> {
+    let ast = parse_file(path, source_language)?;
     compile_dotnet_ast(&ast, output, save_intermediates)
+}
+
+pub fn compile_llvm_file(
+    path: &Path,
+    source_language: Option<&str>,
+    options: &LlvmCompileOptions,
+) -> Result<PathBuf> {
+    #[cfg(feature = "llvm")]
+    {
+        let lowered = lower_file(path, source_language)?;
+        let lir = lowered.lir()?;
+        let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let llvm_output = if options.output.extension().and_then(|ext| ext.to_str()) == Some("ll") {
+            options.output.clone()
+        } else {
+            options.output.with_extension("ll")
+        };
+        if let Some(parent) = llvm_output.parent() {
+            std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+        }
+
+        let mut target = if let Some(triple) = options.target_triple.as_deref() {
+            fp_llvm::target::TargetConfig::for_triple(triple)
+        } else {
+            fp_llvm::target::TargetConfig::default()
+        };
+        if let Some(cpu) = options.target_cpu.as_deref() {
+            target = target.with_cpu(cpu);
+        }
+        if let Some(features) = options.target_features.as_deref() {
+            target = target.with_features(features);
+        }
+
+        let mut linker = fp_llvm::linking::LinkerConfig::executable(&llvm_output);
+        if options.release {
+            linker = linker.with_size_optimization();
+        }
+
+        let config = fp_llvm::LlvmConfig::new()
+            .with_target(target)
+            .with_linker(linker)
+            .with_debug_info(options.debug_info)
+            .with_module_name(options.module_name.clone());
+
+        let compiler = fp_llvm::LlvmCompiler::new(config);
+        let (_ir_path, ir_text) = compiler
+            .compile_to_string(lir, Some(&source_path))
+            .map_err(|err| CliError::Compilation(err.to_string()))?;
+
+        if options.output.extension().and_then(|ext| ext.to_str()) == Some("ll") {
+            return Ok(options.output.clone());
+        }
+
+        link_llvm_ir_with_clang(
+            &llvm_output,
+            &options.output,
+            &ir_text,
+            options.target_triple.as_deref(),
+            options.target_sysroot.as_deref(),
+            options.linker.as_deref(),
+            options.target_linker.as_deref(),
+            options.release,
+        )?;
+
+        if !options.save_intermediates {
+            let _ = std::fs::remove_file(&llvm_output);
+        }
+
+        Ok(options.output.clone())
+    }
+    #[cfg(not(feature = "llvm"))]
+    {
+        let _ = (path, source_language, options);
+        Err(CliError::MissingDependency(
+            "Feature 'llvm' is disabled; enable it to use the LLVM emitter.".to_string(),
+        ))
+    }
+}
+
+pub fn compile_cranelift_file(
+    path: &Path,
+    source_language: Option<&str>,
+    options: &CraneliftCompileOptions,
+) -> Result<PathBuf> {
+    #[cfg(feature = "cranelift")]
+    {
+        let lowered = lower_file(path, source_language)?;
+        let lir = lowered.lir()?;
+        let object_path = options.output.with_extension(if is_windows_target(options.target_triple.as_deref()) {
+            "obj"
+        } else {
+            "o"
+        });
+        if let Some(parent) = object_path.parent() {
+            std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+        }
+        let mut cfg = fp_cranelift::config::CraneliftConfig::object(&object_path)
+            .with_target_triple(options.target_triple.clone())
+            .with_target_cpu(options.target_cpu.clone())
+            .with_target_features(options.target_features.clone())
+            .with_sysroot(options.target_sysroot.clone())
+            .with_linker_driver(options.linker.clone())
+            .with_fuse_ld(options.target_linker.clone())
+            .with_release(options.release)
+            .with_keep_object(options.save_intermediates);
+        if options.save_intermediates {
+            cfg = cfg.with_asm_dump(Some(options.output.with_extension("clif")));
+        }
+
+        fp_cranelift::CraneliftEmitter::new(cfg)
+            .emit(lir, None)
+            .map_err(|err| CliError::Compilation(format!("fp-cranelift failed: {}", err)))?;
+
+        let runtime_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/fp-cranelift/runtime/fp_cranelift_runtime.c");
+        link_object_with_clang(
+            &object_path,
+            &options.output,
+            options.target_triple.as_deref(),
+            options.target_sysroot.as_deref(),
+            options.linker.as_deref(),
+            options.target_linker.as_deref(),
+            options.release,
+            &[runtime_path],
+        )?;
+
+        if !options.save_intermediates {
+            let _ = std::fs::remove_file(&object_path);
+        }
+
+        Ok(options.output.clone())
+    }
+    #[cfg(not(feature = "cranelift"))]
+    {
+        let _ = (path, source_language, options);
+        Err(CliError::MissingDependency(
+            "Feature 'cranelift' is disabled; enable it to use the Cranelift emitter."
+                .to_string(),
+        ))
+    }
 }
 
 fn compile_cil_ast(ast: &Node) -> Result<String> {
@@ -303,6 +520,141 @@ fn compile_dotnet_ast(ast: &Node, output: &Path, save_intermediates: bool) -> Re
     }
 }
 
+fn link_llvm_ir_with_clang(
+    llvm_ir_path: &Path,
+    binary_path: &Path,
+    llvm_ir_text: &str,
+    target_triple: Option<&str>,
+    sysroot: Option<&Path>,
+    linker: Option<&str>,
+    target_linker: Option<&Path>,
+    release: bool,
+) -> Result<()> {
+    if let Some(parent) = binary_path.parent() {
+        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
+
+    let requires_eh = llvm_ir_text.contains("landingpad") || llvm_ir_text.contains("invoke");
+    let default_linker = if requires_eh { "clang++" } else { "clang" };
+    let linker = match linker {
+        Some("clang") if requires_eh => "clang++",
+        Some(other) => other,
+        None => default_linker,
+    };
+
+    let mut cmd = Command::new(linker);
+    cmd.arg(llvm_ir_path);
+    if requires_eh {
+        let runtime_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/fp-llvm/runtime/fp_unwind.cc");
+        cmd.arg(runtime_path);
+        cmd.arg("-fexceptions");
+        if is_apple_target(target_triple) {
+            cmd.arg("-lc++");
+            cmd.arg("-lc++abi");
+        }
+    }
+    if let Some(target_triple) = target_triple {
+        cmd.arg("--target").arg(target_triple);
+    }
+    if let Some(sysroot) = sysroot {
+        cmd.arg("--sysroot").arg(sysroot);
+    }
+    if let Some(linker_path) = target_linker {
+        cmd.arg(format!("-fuse-ld={}", linker_path.display()));
+    }
+    cmd.arg("-o").arg(binary_path);
+    if release {
+        cmd.arg("-O2");
+    }
+
+    let output = cmd.output().map_err(CliError::Io)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut message = stderr.trim().to_string();
+        if message.is_empty() {
+            message = stdout.trim().to_string();
+        }
+        if message.is_empty() {
+            message = "clang failed without diagnostics".to_string();
+        }
+        return Err(CliError::Compilation(format!("clang failed: {}", message)));
+    }
+
+    Ok(())
+}
+
+fn link_object_with_clang(
+    object_path: &Path,
+    binary_path: &Path,
+    target_triple: Option<&str>,
+    sysroot: Option<&Path>,
+    linker: Option<&str>,
+    target_linker: Option<&Path>,
+    release: bool,
+    extra_inputs: &[PathBuf],
+) -> Result<()> {
+    if let Some(parent) = binary_path.parent() {
+        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
+
+    let linker = linker.unwrap_or("clang");
+    let mut cmd = Command::new(linker);
+    cmd.arg(object_path);
+    for input in extra_inputs {
+        cmd.arg(input);
+    }
+    if !extra_inputs.is_empty() {
+        cmd.arg("-lm");
+    }
+    if let Some(target_triple) = target_triple {
+        cmd.arg("--target").arg(target_triple);
+    }
+    if let Some(sysroot) = sysroot {
+        cmd.arg("--sysroot").arg(sysroot);
+    }
+    if let Some(linker_path) = target_linker {
+        cmd.arg(format!("-fuse-ld={}", linker_path.display()));
+    }
+    cmd.arg("-o").arg(binary_path);
+    if release {
+        cmd.arg("-O2");
+    }
+
+    let output = cmd.output().map_err(CliError::Io)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut message = stderr.trim().to_string();
+        if message.is_empty() {
+            message = stdout.trim().to_string();
+        }
+        if message.is_empty() {
+            message = "clang failed without diagnostics".to_string();
+        }
+        return Err(CliError::Compilation(format!("clang failed: {}", message)));
+    }
+
+    Ok(())
+}
+
+fn is_windows_target(target_triple: Option<&str>) -> bool {
+    let triple = match target_triple {
+        Some(triple) => triple,
+        None => return cfg!(target_os = "windows"),
+    };
+    triple.contains("windows") || triple.contains("msvc") || triple.contains("mingw")
+}
+
+fn is_apple_target(target_triple: Option<&str>) -> bool {
+    let triple = match target_triple {
+        Some(triple) => triple,
+        None => return cfg!(any(target_os = "macos", target_os = "ios")),
+    };
+    triple.contains("apple") || triple.contains("darwin") || triple.contains("macos")
+}
+
 fn execute_ast(ast: Node, identity: CompilerIdentity, mode: ExecutionMode) -> Result<Value> {
     let value_key = identity.path.to_key();
     let consumer = match mode {
@@ -326,8 +678,8 @@ fn execute_ast(ast: Node, identity: CompilerIdentity, mode: ExecutionMode) -> Re
     }
 }
 
-fn lower_file(path: &Path) -> Result<LoweredProgram> {
-    let ast = parse_file(path)?;
+fn lower_file(path: &Path, source_language: Option<&str>) -> Result<LoweredProgram> {
+    let ast = parse_file(path, source_language)?;
     let identity = CompilerIdentity::for_file(path);
     let path_key = identity.path.to_key();
     let mut driver = lower_ast(ast, &identity, Vec::new())?;
@@ -374,8 +726,8 @@ fn parse_expr(source: &str) -> Result<Node> {
     Ok(ast)
 }
 
-fn parse_file(path: &Path) -> Result<Node> {
-    let frontend = FerroFrontend::new();
+fn parse_file(path: &Path, source_language: Option<&str>) -> Result<Node> {
+    let frontend = select_frontend(path, source_language)?;
     let source = std::fs::read_to_string(path).map_err(CliError::Io)?;
     let FrontendResult {
         ast, diagnostics, ..
@@ -384,6 +736,47 @@ fn parse_file(path: &Path) -> Result<Node> {
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     emit_frontend_diagnostics(&diagnostics.get_diagnostics())?;
     Ok(ast)
+}
+
+fn select_frontend(path: &Path, source_language: Option<&str>) -> Result<Box<dyn LanguageFrontend>> {
+    let language = source_language
+        .map(|lang| lang.trim().to_ascii_lowercase())
+        .or_else(|| {
+            detect_source_language(path).map(|lang| lang.name.to_ascii_lowercase())
+        })
+        .unwrap_or_else(|| languages::FERROPHASE.to_string());
+
+    match language.as_str() {
+        value if value == languages::FERROPHASE => Ok(Box::new(FerroFrontend::new())),
+        #[cfg(feature = "lang-typescript")]
+        value if value == languages::TYPESCRIPT || value == languages::JAVASCRIPT => {
+            Ok(Box::new(TypeScriptFrontend::new(TsParseMode::Loose)))
+        }
+        #[cfg(feature = "lang-wit")]
+        value if value == languages::WIT => Ok(Box::new(WitFrontend::new())),
+        #[cfg(feature = "lang-python")]
+        value if value == languages::PYTHON => Ok(Box::new(PythonFrontend::new())),
+        #[cfg(feature = "lang-golang")]
+        value if value == languages::GO => Ok(Box::new(GoFrontend::new())),
+        #[cfg(feature = "lang-sql")]
+        value if value == languages::SQL => Ok(Box::new(SqlFrontend::new())),
+        #[cfg(feature = "lang-prql")]
+        value if value == languages::PRQL => Ok(Box::new(PrqlFrontend::new())),
+        #[cfg(feature = "lang-jsonschema")]
+        value if value == languages::JSONSCHEMA => Ok(Box::new(JsonSchemaFrontend::new())),
+        #[cfg(feature = "lang-json")]
+        value if value == languages::JSON => Ok(Box::new(JsonFrontend::new())),
+        #[cfg(feature = "lang-flatbuffers")]
+        value if value == languages::FLATBUFFERS => Ok(Box::new(FlatbuffersFrontend::new())),
+        #[cfg(feature = "lang-toml")]
+        value if value == languages::TOML => Ok(Box::new(TomlFrontend::new())),
+        #[cfg(feature = "lang-hcl")]
+        value if value == languages::HCL => Ok(Box::new(HclFrontend::new())),
+        other => Err(CliError::InvalidInput(format!(
+            "Unsupported source language for compiler path: {}",
+            other
+        ))),
+    }
 }
 
 fn emit_frontend_diagnostics(diagnostics: &[Diagnostic]) -> Result<()> {
