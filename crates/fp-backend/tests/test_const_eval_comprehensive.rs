@@ -11,7 +11,7 @@ use fp_core::context::SharedScopedContext;
 use fp_core::ops::BinOpKind;
 use fp_core::span::Span;
 use fp_core::Result;
-use fp_interpret::const_eval::ConstEvaluationOrchestrator;
+use fp_ast_interpret::const_eval::ConstEvaluationOrchestrator;
 
 #[test]
 fn const_eval_replaces_consts_and_records_results() -> Result<()> {

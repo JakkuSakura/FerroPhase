@@ -1,6 +1,6 @@
 use fp_core::ast::{Expr, Value};
 use fp_core::context::SharedScopedContext;
-use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use fp_ast_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
 
 #[test]
 fn stack_snapshot_tracks_const_values() {

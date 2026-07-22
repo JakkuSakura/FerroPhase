@@ -5,7 +5,7 @@ use fp_core::context::SharedScopedContext;
 use fp_core::ops::BinOpKind;
 use fp_core::span::Span;
 use fp_core::Result;
-use fp_interpret::engine::{
+use fp_ast_interpret::engine::{
     AstInterpreter, InterpreterCapability, InterpreterMode, InterpreterOptions, StdoutMode,
 };
 

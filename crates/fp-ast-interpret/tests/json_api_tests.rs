@@ -5,7 +5,7 @@ use fp_core::ast::{Ident, Item, ItemKind, Module, Node, NodeKind, Value, Visibil
 use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::Result;
-use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use fp_ast_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
 use fp_lang::FerroFrontend;
 
 fn interpret_and_run(source: &str) -> Result<i64> {

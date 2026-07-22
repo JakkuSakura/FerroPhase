@@ -1,10 +1,5 @@
-//! FerroPhase Interpreter
+//! FerroPhase LIR Interpreter
 //!
-//! This crate provides interpretation capabilities for FerroPhase IRs,
-//! supporting both compile-time (const evaluation) and runtime execution.
+//! This crate provides LIR-level interpretation for the compiler runtime.
 
-pub mod const_eval;
-pub mod engine;
-pub mod error;
-pub mod intrinsics;
 pub mod lir;

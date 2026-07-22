@@ -6,7 +6,7 @@ use fp_core::ast::{
 use fp_core::context::SharedScopedContext;
 use fp_core::error::Result;
 use fp_core::span::Span;
-use fp_interpret::engine::{
+use fp_ast_interpret::engine::{
     AstInterpreter, InterpreterCapability, InterpreterMode, InterpreterOptions, StdoutMode,
 };
 

@@ -5,7 +5,7 @@ use fp_core::ast::{
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::span::Span;
-use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use fp_ast_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
 
 fn mut_let_expr(name: &str, value: Value) -> Expr {
     let pat = Pattern::new(PatternKind::Ident(PatternIdent {

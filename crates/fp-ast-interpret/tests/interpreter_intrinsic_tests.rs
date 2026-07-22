@@ -8,7 +8,7 @@ use fp_core::context::SharedScopedContext;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::lang::{register_threadlocal_lang_items, LangItemRegistry};
 use fp_core::span::Span;
-use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use fp_ast_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
 use std::fs;
 
 fn intrinsic_args_expr(kind: IntrinsicCallKind, values: Vec<Value>) -> Expr {

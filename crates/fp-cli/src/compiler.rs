@@ -13,7 +13,7 @@ use fp_core::{
     frontend::{FrontendParseMode, FrontendResult, FrontendSnapshot, LanguageFrontend},
     lang::{collect_lang_items, register_threadlocal_lang_items},
 };
-use fp_interpret::const_eval::ConstEvaluationOrchestrator;
+use fp_ast_interpret::const_eval::ConstEvaluationOrchestrator;
 use fp_lang::FerroFrontend;
 use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
 use fp_goasm::config::GoAsmTarget;

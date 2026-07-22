@@ -1,0 +1,5707 @@
+use super::*;
+use fp_core::ast::{intrinsic_call_from_invoke, Name};
+use fp_core::module::path::{parse_path, PathPrefix};
+use std::io::{Read, Write};
+
+impl<'ctx> AstInterpreter<'ctx> {
+    /// Evaluate an expression in runtime-capable mode, returning structured control-flow.
+    pub(super) fn eval_expr_runtime(&mut self, expr: &mut Expr) -> RuntimeFlow {
+        if self.stack_eval_active {
+            let flow = self.eval_expr_runtime_inner(expr);
+            return flow;
+        }
+        if let Err(err) = self.begin_runtime_eval(expr) {
+            self.emit_error(err);
+            return RuntimeFlow::Value(Value::undefined());
+        }
+        let flow = match self.run_runtime_tasks_limit(usize::MAX) {
+            RuntimeStepOutcome::Yielded => RuntimeFlow::Value(Value::undefined()),
+            RuntimeStepOutcome::Complete(flow) => flow,
+        };
+        self.finish_active_eval();
+        flow
+    }
+
+    pub(super) fn run_runtime_tasks_limit(&mut self, max_steps: usize) -> RuntimeStepOutcome {
+        let mut steps = 0usize;
+        while steps < max_steps {
+            let Some(task) = self.runtime_tasks.pop() else {
+                break;
+            };
+            steps += 1;
+            match task {
+                RuntimeTask::Eval(expr_ptr) => {
+                    let expr = unsafe { &mut *expr_ptr };
+                    let _expr_guard = self.push_expr_frame(EvalMode::Runtime, expr);
+                    match expr.kind_mut() {
+                        ExprKind::Value(value) => {
+                            let value = match value.as_ref() {
+                                Value::Expr(inner) => {
+                                    let mut cloned = inner.as_ref().clone();
+                                    match self.eval_expr_runtime_inner(&mut cloned) {
+                                        RuntimeFlow::Value(value) => value,
+                                        other => {
+                                            return RuntimeStepOutcome::Complete(other);
+                                        }
+                                    }
+                                }
+                                other => other.clone(),
+                            };
+                            self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                        }
+                        ExprKind::Name(_locator) => {
+                            let flow = match self.eval_expr_runtime_inner(expr) {
+                                RuntimeFlow::Value(value) => RuntimeFlow::Value(value),
+                                other => other,
+                            };
+                            self.runtime_value_stack.push(flow);
+                        }
+                        ExprKind::BinOp(binop) => {
+                            self.runtime_tasks.push(RuntimeTask::ApplyBinOp(binop.kind));
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(binop.rhs.as_mut() as *mut Expr));
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(binop.lhs.as_mut() as *mut Expr));
+                        }
+                        ExprKind::UnOp(unop) => {
+                            self.runtime_tasks
+                                .push(RuntimeTask::ApplyUnOp(unop.op.clone()));
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(unop.val.as_mut() as *mut Expr));
+                        }
+                        ExprKind::If(if_expr) => {
+                            self.runtime_tasks.push(RuntimeTask::ApplyIf {
+                                then_expr: if_expr.then.as_mut() as *mut Expr,
+                                else_expr: if_expr
+                                    .elze
+                                    .as_mut()
+                                    .map(|expr| expr.as_mut() as *mut Expr),
+                            });
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(if_expr.cond.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Tuple(tuple) => {
+                            let len = tuple.values.len();
+                            self.runtime_tasks.push(RuntimeTask::ApplyCollect {
+                                len,
+                                kind: CollectKind::Tuple,
+                            });
+                            for expr in tuple.values.iter_mut().rev() {
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(expr as *mut Expr));
+                            }
+                        }
+                        ExprKind::Array(array) => {
+                            let len = array.values.len();
+                            self.runtime_tasks.push(RuntimeTask::ApplyCollect {
+                                len,
+                                kind: CollectKind::Array,
+                            });
+                            for expr in array.values.iter_mut().rev() {
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(expr as *mut Expr));
+                            }
+                        }
+                        ExprKind::Range(range) => {
+                            self.runtime_tasks.push(RuntimeTask::ApplyRange {
+                                inclusive: matches!(range.limit, ExprRangeLimit::Inclusive),
+                            });
+                            if let Some(expr) = range.end.as_mut() {
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(expr.as_mut() as *mut Expr));
+                            } else {
+                                self.runtime_tasks
+                                    .push(RuntimeTask::PushValue(Value::int(0)));
+                            }
+                            if let Some(expr) = range.start.as_mut() {
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(expr.as_mut() as *mut Expr));
+                            } else {
+                                self.runtime_tasks
+                                    .push(RuntimeTask::PushValue(Value::int(0)));
+                            }
+                        }
+                        ExprKind::Select(select) => {
+                            self.runtime_tasks.push(RuntimeTask::ApplySelect {
+                                field: select.field.name.clone(),
+                            });
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(select.obj.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Index(index_expr) => {
+                            if let ExprKind::Range(range) = index_expr.index.kind_mut() {
+                                let has_start = range.start.is_some();
+                                let has_end = range.end.is_some();
+                                self.runtime_tasks.push(RuntimeTask::ApplyIndex {
+                                    has_start,
+                                    has_end,
+                                    inclusive: matches!(range.limit, ExprRangeLimit::Inclusive),
+                                });
+                                if let Some(expr) = range.end.as_mut() {
+                                    self.runtime_tasks
+                                        .push(RuntimeTask::Eval(expr.as_mut() as *mut Expr));
+                                }
+                                if let Some(expr) = range.start.as_mut() {
+                                    self.runtime_tasks
+                                        .push(RuntimeTask::Eval(expr.as_mut() as *mut Expr));
+                                }
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(index_expr.obj.as_mut() as *mut Expr));
+                            } else {
+                                self.runtime_tasks.push(RuntimeTask::ApplyIndex {
+                                    has_start: true,
+                                    has_end: true,
+                                    inclusive: false,
+                                });
+                                self.runtime_tasks.push(RuntimeTask::Eval(
+                                    index_expr.index.as_mut() as *mut Expr,
+                                ));
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(index_expr.obj.as_mut() as *mut Expr));
+                            }
+                        }
+                        ExprKind::Paren(paren) => {
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(paren.expr.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Cast(cast) => {
+                            let ty = cast.ty.clone();
+                            self.runtime_tasks.push(RuntimeTask::ApplyCast { ty });
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(cast.expr.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Block(block) => {
+                            self.push_scope();
+                            self.block_stack.push(BlockFrame {
+                                last_value: Value::unit(),
+                                deferred: Vec::new(),
+                            });
+                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                block: block as *mut ExprBlock,
+                                idx: 0,
+                            });
+                        }
+                        _ => {
+                            let flow = self.eval_expr_runtime_inner(expr);
+                            self.runtime_value_stack.push(flow);
+                        }
+                    }
+                }
+                RuntimeTask::PushValue(value) => {
+                    self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                }
+                RuntimeTask::ApplyBinOp(op) => {
+                    let rhs = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(rhs_value) = rhs else {
+                        return RuntimeStepOutcome::Complete(rhs);
+                    };
+                    let lhs = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(lhs_value) = lhs else {
+                        return RuntimeStepOutcome::Complete(lhs);
+                    };
+                    let value = self.handle_result(self.evaluate_binop(op, lhs_value, rhs_value));
+                    self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                }
+                RuntimeTask::ApplyUnOp(op) => {
+                    let value_flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(value) = value_flow else {
+                        return RuntimeStepOutcome::Complete(value_flow);
+                    };
+                    let value = self.handle_result(self.evaluate_unary(op, value));
+                    self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                }
+                RuntimeTask::ApplyIf {
+                    then_expr,
+                    else_expr,
+                } => {
+                    let cond_flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(cond) = cond_flow else {
+                        return RuntimeStepOutcome::Complete(cond_flow);
+                    };
+                    match cond {
+                        Value::Bool(b) => {
+                            if b.value {
+                                self.runtime_tasks.push(RuntimeTask::Eval(then_expr));
+                            } else if let Some(elze) = else_expr {
+                                self.runtime_tasks.push(RuntimeTask::Eval(elze));
+                            } else {
+                                self.runtime_value_stack
+                                    .push(RuntimeFlow::Value(Value::unit()));
+                            }
+                        }
+                        _ => {
+                            self.emit_error("expected boolean condition in runtime expression");
+                            self.runtime_value_stack
+                                .push(RuntimeFlow::Value(Value::undefined()));
+                        }
+                    }
+                }
+                RuntimeTask::ApplyCollect { len, kind } => {
+                    let mut values = Vec::with_capacity(len);
+                    for _ in 0..len {
+                        let flow = match self.runtime_value_stack.pop() {
+                            Some(flow) => flow,
+                            None => RuntimeFlow::Value(Value::undefined()),
+                        };
+                        let RuntimeFlow::Value(value) = flow else {
+                            return RuntimeStepOutcome::Complete(flow);
+                        };
+                        values.push(value);
+                    }
+                    values.reverse();
+                    let value = match kind {
+                        CollectKind::Tuple => Value::Tuple(ValueTuple::new(values)),
+                        CollectKind::Array => Value::List(ValueList::new(values)),
+                    };
+                    self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                }
+                RuntimeTask::ApplyCast { ty } => {
+                    let flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(value) = flow else {
+                        return RuntimeStepOutcome::Complete(flow);
+                    };
+                    let result = self.cast_value_to_type(value, &ty);
+                    self.runtime_value_stack.push(RuntimeFlow::Value(result));
+                }
+                RuntimeTask::EvalBlock { block, idx } => {
+                    let block = unsafe { &mut *block };
+                    let block_ptr = block as *mut ExprBlock;
+                    if idx >= block.stmts.len() {
+                        let frame = self.block_stack.pop().unwrap_or(BlockFrame {
+                            last_value: Value::unit(),
+                            deferred: Vec::new(),
+                        });
+                        let flow = self.finalize_runtime_block_frame(frame);
+                        self.runtime_value_stack.push(flow);
+                        continue;
+                    }
+                    let stmt = &mut block.stmts[idx];
+                    match stmt {
+                        BlockStmt::Expr(expr_stmt) => {
+                            if self.in_const_region() {
+                                if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
+                                    if !self.pending_stmt_splices.is_empty() {
+                                        let Some(fragments) =
+                                            self.resolve_splice_fragments(splice.token.as_mut())
+                                        else {
+                                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                                block: block_ptr,
+                                                idx: idx + 1,
+                                            });
+                                            continue;
+                                        };
+                                        if fragments.iter().any(|fragment| {
+                                            matches!(fragment, QuotedFragment::Type(_))
+                                        }) {
+                                            self.emit_error(
+                                                "splice<type> is not valid in statement position",
+                                            );
+                                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                                block: block_ptr,
+                                                idx: idx + 1,
+                                            });
+                                            continue;
+                                        }
+                                        let mut to_append = Vec::new();
+                                        for fragment in fragments {
+                                            match fragment {
+                                                QuotedFragment::Stmts(stmts) => {
+                                                    to_append.extend(stmts);
+                                                }
+                                                QuotedFragment::Expr(e) => {
+                                                    let mut es = expr_stmt.clone();
+                                                    es.expr = e.into();
+                                                    es.semicolon = Some(true);
+                                                    to_append.push(BlockStmt::Expr(es));
+                                                }
+                                                QuotedFragment::Items(items) => {
+                                                    for item in items {
+                                                        to_append
+                                                            .push(BlockStmt::Item(Box::new(item)));
+                                                    }
+                                                }
+                                                QuotedFragment::Type(_) => {}
+                                            }
+                                        }
+                                        if !to_append.is_empty() {
+                                            if let Some(pending) =
+                                                self.pending_stmt_splices.last_mut()
+                                            {
+                                                pending.extend(to_append);
+                                            }
+                                            self.mark_mutated();
+                                        }
+                                        self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                            block: block_ptr,
+                                            idx: idx + 1,
+                                        });
+                                        continue;
+                                    }
+                                }
+                            }
+                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                block: block_ptr,
+                                idx: idx + 1,
+                            });
+                            self.runtime_tasks.push(RuntimeTask::ApplyBlockValue {
+                                has_value: expr_stmt.has_value(),
+                            });
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(expr_stmt.expr.as_mut() as *mut Expr));
+                        }
+                        BlockStmt::Let(stmt_let) => {
+                            if let Some(init) = stmt_let.init.as_mut() {
+                                self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                    block: block_ptr,
+                                    idx: idx + 1,
+                                });
+                                self.runtime_tasks.push(RuntimeTask::ApplyLet {
+                                    pat: stmt_let.pat.clone(),
+                                });
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(init as *mut Expr));
+                            } else {
+                                self.emit_error(
+                                    "let bindings without initializer are not supported in runtime",
+                                );
+                                self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                    block: block_ptr,
+                                    idx: idx + 1,
+                                });
+                            }
+                        }
+                        BlockStmt::Item(item) => {
+                            self.evaluate_item(item.as_mut());
+                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                block: block_ptr,
+                                idx: idx + 1,
+                            });
+                        }
+                        BlockStmt::Defer(stmt_defer) => {
+                            if let Some(frame) = self.block_stack.last_mut() {
+                                frame.deferred.push(stmt_defer.expr.as_ref().clone());
+                            }
+                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                block: block_ptr,
+                                idx: idx + 1,
+                            });
+                        }
+                        BlockStmt::Noop | BlockStmt::Any(_) => {
+                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                block: block_ptr,
+                                idx: idx + 1,
+                            });
+                        }
+                    }
+                }
+                RuntimeTask::ApplyBlockValue { has_value } => {
+                    let flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(value) = flow else {
+                        let flow = self.unwind_block_scopes_with_flow(flow);
+                        return RuntimeStepOutcome::Complete(flow);
+                    };
+                    if has_value {
+                        if let Some(frame) = self.block_stack.last_mut() {
+                            frame.last_value = value;
+                        }
+                    }
+                }
+                RuntimeTask::ApplyLet { pat } => {
+                    let flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(value) = flow else {
+                        let flow = self.unwind_block_scopes_with_flow(flow);
+                        return RuntimeStepOutcome::Complete(flow);
+                    };
+                    self.bind_pattern(&pat, value);
+                }
+                RuntimeTask::ApplyRange { inclusive } => {
+                    let end_flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(end) = end_flow else {
+                        return RuntimeStepOutcome::Complete(end_flow);
+                    };
+                    let start_flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(start) = start_flow else {
+                        return RuntimeStepOutcome::Complete(start_flow);
+                    };
+                    let start = match self.numeric_to_i64(&start, "range start") {
+                        Some(value) => value,
+                        None => {
+                            self.runtime_value_stack
+                                .push(RuntimeFlow::Value(Value::undefined()));
+                            continue;
+                        }
+                    };
+                    let end = match self.numeric_to_i64(&end, "range end") {
+                        Some(value) => value,
+                        None => {
+                            self.runtime_value_stack
+                                .push(RuntimeFlow::Value(Value::undefined()));
+                            continue;
+                        }
+                    };
+                    let mut values = Vec::new();
+                    let mut current = start;
+                    while if inclusive {
+                        current <= end
+                    } else {
+                        current < end
+                    } {
+                        values.push(Value::int(current));
+                        current += 1;
+                    }
+                    self.runtime_value_stack
+                        .push(RuntimeFlow::Value(Value::List(ValueList::new(values))));
+                }
+                RuntimeTask::ApplySelect { field } => {
+                    let target_flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(target) = target_flow else {
+                        return RuntimeStepOutcome::Complete(target_flow);
+                    };
+                    let value = self.evaluate_select(target, &field);
+                    self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                }
+                RuntimeTask::ApplyIndex {
+                    has_start,
+                    has_end,
+                    inclusive,
+                } => {
+                    if has_start && has_end {
+                        let index_flow = match self.runtime_value_stack.pop() {
+                            Some(flow) => flow,
+                            None => RuntimeFlow::Value(Value::undefined()),
+                        };
+                        let RuntimeFlow::Value(index_value) = index_flow else {
+                            return RuntimeStepOutcome::Complete(index_flow);
+                        };
+                        let target_flow = match self.runtime_value_stack.pop() {
+                            Some(flow) => flow,
+                            None => RuntimeFlow::Value(Value::undefined()),
+                        };
+                        let RuntimeFlow::Value(target) = target_flow else {
+                            return RuntimeStepOutcome::Complete(target_flow);
+                        };
+                        let value = self.evaluate_index(target, index_value);
+                        self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                    } else {
+                        let end = if has_end {
+                            let end_flow = match self.runtime_value_stack.pop() {
+                                Some(flow) => flow,
+                                None => RuntimeFlow::Value(Value::undefined()),
+                            };
+                            let RuntimeFlow::Value(end) = end_flow else {
+                                return RuntimeStepOutcome::Complete(end_flow);
+                            };
+                            match self.numeric_to_non_negative_usize(&end, "range end") {
+                                Some(value) => Some(value),
+                                None => None,
+                            }
+                        } else {
+                            None
+                        };
+                        let start = if has_start {
+                            let start_flow = match self.runtime_value_stack.pop() {
+                                Some(flow) => flow,
+                                None => RuntimeFlow::Value(Value::undefined()),
+                            };
+                            let RuntimeFlow::Value(start) = start_flow else {
+                                return RuntimeStepOutcome::Complete(start_flow);
+                            };
+                            match self.numeric_to_non_negative_usize(&start, "range start") {
+                                Some(value) => Some(value),
+                                None => None,
+                            }
+                        } else {
+                            None
+                        };
+                        let target_flow = match self.runtime_value_stack.pop() {
+                            Some(flow) => flow,
+                            None => RuntimeFlow::Value(Value::undefined()),
+                        };
+                        let RuntimeFlow::Value(target) = target_flow else {
+                            return RuntimeStepOutcome::Complete(target_flow);
+                        };
+                        let value = self.evaluate_range_index_slices(target, start, end, inclusive);
+                        self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                    }
+                }
+            }
+            if self.task_should_yield {
+                return RuntimeStepOutcome::Yielded;
+            }
+        }
+
+        if !self.runtime_tasks.is_empty() {
+            return RuntimeStepOutcome::Yielded;
+        }
+
+        match self.runtime_value_stack.pop() {
+            Some(flow) => RuntimeStepOutcome::Complete(flow),
+            None => RuntimeStepOutcome::Complete(RuntimeFlow::Value(Value::undefined())),
+        }
+    }
+
+    fn eval_expr_runtime_inner(&mut self, expr: &mut Expr) -> RuntimeFlow {
+        self.ensure_expr_typed(expr);
+        let expr_ty_snapshot = expr.ty().cloned();
+        match expr.kind_mut() {
+            ExprKind::IntrinsicContainer(collection) => {
+                let new_expr = collection.clone().into_const_expr();
+                *expr = new_expr;
+                self.eval_expr_runtime(expr)
+            }
+            ExprKind::Quote(quote) => {
+                if !self.in_const_region() {
+                    self.emit_error("quote is only supported in const regions");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let kind = quote.kind;
+                let fragment = self.build_quoted_fragment(quote);
+                RuntimeFlow::Value(self.quote_token_from_fragment_kind(fragment, kind))
+            }
+            ExprKind::Splice(_splice) => {
+                if !self.in_const_region() {
+                    self.emit_error("splice is only supported in const regions");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let ExprKind::Splice(splice) = expr.kind_mut() else {
+                    return RuntimeFlow::Value(Value::undefined());
+                };
+                let Some(mut fragments) = self.resolve_splice_fragments(splice.token.as_mut())
+                else {
+                    return RuntimeFlow::Value(Value::undefined());
+                };
+                if fragments.len() != 1 {
+                    self.emit_error("splice in expression position expects a single quote token");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                match fragments.remove(0) {
+                    QuotedFragment::Expr(mut quoted) => self.eval_expr_runtime(&mut quoted),
+                    QuotedFragment::Stmts(stmts) => {
+                        let mut block = ExprBlock::new_stmts(stmts);
+                        self.eval_block_runtime(&mut block)
+                    }
+                    QuotedFragment::Items(_) | QuotedFragment::Type(_) => {
+                        self.emit_error(
+                            "cannot splice non-expression token in expression position",
+                        );
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                }
+            }
+            ExprKind::Value(value) => match value.as_ref() {
+                Value::Expr(inner) => {
+                    let mut cloned = inner.as_ref().clone();
+                    self.eval_expr_runtime(&mut cloned)
+                }
+                other => RuntimeFlow::Value(other.clone()),
+            },
+            ExprKind::Name(locator) => {
+                self.apply_local_import_alias(locator);
+                if let Some(variant) = self.resolve_enum_variant(locator) {
+                    return RuntimeFlow::Value(variant);
+                }
+                if let Some(expected_ty) = expr_ty_snapshot.clone() {
+                    if matches!(expected_ty, Ty::Function(_)) {
+                        self.specialize_function_reference(locator, &expected_ty);
+                    }
+                }
+                if let Some(ident) = locator.as_ident() {
+                    if let Some(value) = self.lookup_value(ident.as_str()) {
+                        if let Some(placeholder) = self.imported_placeholder_value(value.clone()) {
+                            return RuntimeFlow::Value(placeholder);
+                        }
+                        return RuntimeFlow::Value(value);
+                    }
+                }
+                let simple_name = match locator {
+                    Name::Path(path)
+                        if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
+                    {
+                        Some(path.segments[0].as_str())
+                    }
+                    Name::ParameterPath(path)
+                        if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
+                    {
+                        Some(path.segments[0].ident.as_str())
+                    }
+                    _ => None,
+                };
+                if let Some(name) = simple_name {
+                    if let Some(value) = self.lookup_value(name) {
+                        if let Some(placeholder) = self.imported_placeholder_value(value.clone()) {
+                            return RuntimeFlow::Value(placeholder);
+                        }
+                        return RuntimeFlow::Value(value);
+                    }
+                }
+                if let Some(function) = self.functions.get(&locator.to_string()) {
+                    return RuntimeFlow::Value(Value::Function(ValueFunction {
+                        sig: function.sig.clone(),
+                        body: function.body.clone(),
+                    }));
+                }
+                let mut candidate_names = vec![locator.to_string()];
+                if let Some(ident) = locator.as_ident() {
+                    candidate_names.push(ident.as_str().to_string());
+                }
+                for name in candidate_names {
+                    if let Some(template) = self.generic_functions.get(&name) {
+                        return RuntimeFlow::Value(Value::Function(ValueFunction {
+                            sig: template.function.sig.clone(),
+                            body: template.function.body.clone(),
+                        }));
+                    }
+                }
+                RuntimeFlow::Value(self.resolve_qualified(locator.to_string()))
+            }
+            ExprKind::BinOp(binop) => {
+                let lhs = match self.eval_value_runtime(binop.lhs.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                let rhs = match self.eval_value_runtime(binop.rhs.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                RuntimeFlow::Value(self.handle_result(self.evaluate_binop(binop.kind, lhs, rhs)))
+            }
+            ExprKind::UnOp(unop) => {
+                let value = match self.eval_value_runtime(unop.val.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                RuntimeFlow::Value(self.handle_result(self.evaluate_unary(unop.op.clone(), value)))
+            }
+            ExprKind::If(if_expr) => {
+                let cond = match self.eval_value_runtime(if_expr.cond.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                match cond {
+                    Value::Bool(b) => {
+                        if b.value {
+                            self.eval_expr_runtime(if_expr.then.as_mut())
+                        } else if let Some(else_) = if_expr.elze.as_mut() {
+                            self.eval_expr_runtime(else_)
+                        } else {
+                            RuntimeFlow::Value(Value::unit())
+                        }
+                    }
+                    _ => {
+                        self.emit_error("expected boolean condition in runtime expression");
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                }
+            }
+            ExprKind::Match(expr_match) => {
+                if let Some(scrutinee) = expr_match.scrutinee.as_mut() {
+                    let scrutinee_value = match self.eval_value_runtime(scrutinee.as_mut()) {
+                        Ok(value) => value,
+                        Err(flow) => return flow,
+                    };
+                    for case in &mut expr_match.cases {
+                        self.push_scope();
+                        let pat_matches = case
+                            .pat
+                            .as_ref()
+                            .map(|pat| self.pattern_matches(pat, &scrutinee_value))
+                            .unwrap_or(false);
+
+                        if pat_matches {
+                            if let Some(guard) = case.guard.as_mut() {
+                                let guard_value = match self.eval_value_runtime(guard.as_mut()) {
+                                    Ok(value) => value,
+                                    Err(flow) => {
+                                        self.pop_scope();
+                                        return flow;
+                                    }
+                                };
+                                match guard_value {
+                                    Value::Bool(b) if b.value => {
+                                        let out = self.eval_expr_runtime(case.body.as_mut());
+                                        self.pop_scope();
+                                        return out;
+                                    }
+                                    Value::Bool(_) => {}
+                                    _ => {
+                                        self.emit_error(
+                                            "expected boolean match guard in runtime expression",
+                                        );
+                                        self.pop_scope();
+                                        return RuntimeFlow::Value(Value::undefined());
+                                    }
+                                }
+                            } else {
+                                let out = self.eval_expr_runtime(case.body.as_mut());
+                                self.pop_scope();
+                                return out;
+                            }
+                        }
+                        self.pop_scope();
+                    }
+                    return RuntimeFlow::Value(Value::unit());
+                }
+
+                for case in &mut expr_match.cases {
+                    let cond = match self.eval_value_runtime(case.cond.as_mut()) {
+                        Ok(value) => value,
+                        Err(flow) => return flow,
+                    };
+                    match cond {
+                        Value::Bool(b) => {
+                            if b.value {
+                                return self.eval_expr_runtime(case.body.as_mut());
+                            }
+                        }
+                        _ => {
+                            self.emit_error(
+                                "expected boolean match condition in runtime expression",
+                            );
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                    }
+                }
+                RuntimeFlow::Value(Value::unit())
+            }
+            ExprKind::Block(block) => self.eval_block_runtime(block),
+            ExprKind::With(expr_with) => {
+                let context_value = match self.eval_value_runtime(expr_with.context.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                let Some(context_ty) = expr_with.context.ty().cloned() else {
+                    self.emit_error("with context requires a resolved type");
+                    return RuntimeFlow::Value(Value::undefined());
+                };
+                self.push_scope();
+                if let Some(scope) = self.context_env.last_mut() {
+                    scope.push(RuntimeContextBinding {
+                        ty: context_ty,
+                        value: context_value,
+                    });
+                }
+                let flow = self.eval_expr_runtime(expr_with.body.as_mut());
+                self.pop_scope();
+                flow
+            }
+            ExprKind::Tuple(tuple) => {
+                let mut values = Vec::with_capacity(tuple.values.len());
+                for expr in tuple.values.iter_mut() {
+                    match self.eval_value_runtime(expr) {
+                        Ok(value) => values.push(value),
+                        Err(flow) => return flow,
+                    }
+                }
+                RuntimeFlow::Value(Value::Tuple(ValueTuple::new(values)))
+            }
+            ExprKind::Array(array) => {
+                let mut values = Vec::with_capacity(array.values.len());
+                for expr in array.values.iter_mut() {
+                    match self.eval_value_runtime(expr) {
+                        Ok(value) => values.push(value),
+                        Err(flow) => return flow,
+                    }
+                }
+                RuntimeFlow::Value(Value::List(ValueList::new(values)))
+            }
+            ExprKind::ArrayRepeat(repeat) => {
+                RuntimeFlow::Value(self.eval_array_repeat_runtime(repeat))
+            }
+            ExprKind::Range(range) => {
+                let start = match range.start.as_mut() {
+                    Some(expr) => match self.eval_value_runtime(expr) {
+                        Ok(value) => value,
+                        Err(flow) => return flow,
+                    },
+                    None => Value::int(0),
+                };
+                let end = match range.end.as_mut() {
+                    Some(expr) => match self.eval_value_runtime(expr) {
+                        Ok(value) => value,
+                        Err(flow) => return flow,
+                    },
+                    None => Value::int(0),
+                };
+                let start = match self.numeric_to_i64(&start, "range start") {
+                    Some(value) => value,
+                    None => return RuntimeFlow::Value(Value::undefined()),
+                };
+                let end = match self.numeric_to_i64(&end, "range end") {
+                    Some(value) => value,
+                    None => return RuntimeFlow::Value(Value::undefined()),
+                };
+                let mut values = Vec::new();
+                let mut current = start;
+                let inclusive = matches!(range.limit, fp_core::ast::ExprRangeLimit::Inclusive);
+                while if inclusive {
+                    current <= end
+                } else {
+                    current < end
+                } {
+                    values.push(Value::int(current));
+                    current += 1;
+                }
+                RuntimeFlow::Value(Value::List(ValueList::new(values)))
+            }
+            ExprKind::Struct(struct_expr) => {
+                RuntimeFlow::Value(self.evaluate_struct_literal_runtime(struct_expr))
+            }
+            ExprKind::Structural(struct_expr) => {
+                let mut fields = Vec::with_capacity(struct_expr.fields.len());
+                for field in struct_expr.fields.iter_mut() {
+                    let value = if let Some(expr) = field.value.as_mut() {
+                        match self.eval_value_runtime(expr) {
+                            Ok(value) => value,
+                            Err(flow) => return flow,
+                        }
+                    } else {
+                        self.lookup_value(field.name.as_str()).unwrap_or_else(|| {
+                            self.emit_error(format!(
+                                "missing initializer for field '{}' in structural literal",
+                                field.name
+                            ));
+                            Value::undefined()
+                        })
+                    };
+                    fields.push(ValueField::new(field.name.clone(), value));
+                }
+                RuntimeFlow::Value(Value::Structural(ValueStructural::new(fields)))
+            }
+            ExprKind::Select(select) => {
+                let target = match self.eval_value_runtime(select.obj.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                RuntimeFlow::Value(self.evaluate_select(target, &select.field.name))
+            }
+            ExprKind::Index(index_expr) => {
+                if let ExprKind::Range(range) = index_expr.index.kind_mut() {
+                    let target = match self.eval_value_runtime(index_expr.obj.as_mut()) {
+                        Ok(value) => value,
+                        Err(flow) => return flow,
+                    };
+                    let start = match range.start.as_mut() {
+                        Some(expr) => match self.eval_value_runtime(expr) {
+                            Ok(value) => Some(value),
+                            Err(flow) => return flow,
+                        },
+                        None => None,
+                    };
+                    let end = match range.end.as_mut() {
+                        Some(expr) => match self.eval_value_runtime(expr) {
+                            Ok(value) => Some(value),
+                            Err(flow) => return flow,
+                        },
+                        None => None,
+                    };
+                    let start_idx = match start {
+                        Some(value) => {
+                            match self.numeric_to_non_negative_usize(&value, "range start") {
+                                Some(value) => Some(value),
+                                None => return RuntimeFlow::Value(Value::undefined()),
+                            }
+                        }
+                        None => None,
+                    };
+                    let end_idx = match end {
+                        Some(value) => {
+                            match self.numeric_to_non_negative_usize(&value, "range end") {
+                                Some(value) => Some(value),
+                                None => return RuntimeFlow::Value(Value::undefined()),
+                            }
+                        }
+                        None => None,
+                    };
+                    return RuntimeFlow::Value(self.evaluate_range_index_slices(
+                        target,
+                        start_idx,
+                        end_idx,
+                        matches!(range.limit, ExprRangeLimit::Inclusive),
+                    ));
+                }
+
+                let target = match self.eval_value_runtime(index_expr.obj.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                let index_value = match self.eval_value_runtime(index_expr.index.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                RuntimeFlow::Value(self.evaluate_index(target, index_value))
+            }
+            ExprKind::IntrinsicCall(call) => self.eval_intrinsic_runtime(call),
+            ExprKind::Reference(reference) => {
+                if reference.mutable.unwrap_or(false) {
+                    match self.resolve_runtime_lvalue(reference.referee.as_mut()) {
+                        Ok(RuntimeLValue::Place(runtime_ref)) => {
+                            return RuntimeFlow::Value(Value::Any(AnyBox::new(runtime_ref)));
+                        }
+                        Ok(RuntimeLValue::Binding(locator)) => {
+                            self.emit_error(format!(
+                                "mutable reference requires mutable storage, not binding '{}'",
+                                locator
+                            ));
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                        Ok(RuntimeLValue::NotPlace) => {
+                            self.emit_error("mutable reference target is not assignable");
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                        Ok(RuntimeLValue::Undefined) => {
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                        Err(flow) => return flow,
+                    }
+                } else {
+                    if let ExprKind::Index(index_expr) = reference.referee.kind() {
+                        let mut obj_expr = index_expr.obj.clone();
+                        let base_value = match self.eval_value_runtime(obj_expr.as_mut()) {
+                            Ok(value) => value,
+                            Err(flow) => return flow,
+                        };
+                        let mut index_expr_value = index_expr.index.clone();
+                        let index_value = match self.eval_value_runtime(index_expr_value.as_mut()) {
+                            Ok(value) => value,
+                            Err(flow) => return flow,
+                        };
+                        if let Value::List(list) = base_value {
+                            if let Some(index) =
+                                self.numeric_to_non_negative_usize(&index_value, "index")
+                            {
+                                let slice_ref = fp_native::ffi::FfiSliceRef {
+                                    values: list.values.clone(),
+                                    index,
+                                };
+                                return RuntimeFlow::Value(Value::Any(AnyBox::new(slice_ref)));
+                            }
+                        }
+                    }
+                    self.eval_expr_runtime(reference.referee.as_mut())
+                }
+            }
+            ExprKind::Dereference(deref) => {
+                let target = match self.eval_expr_runtime(deref.referee.as_mut()) {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                if let Value::Any(any) = target {
+                    if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                        let value = self.runtime_ref_value(runtime_ref);
+                        return RuntimeFlow::Value(value);
+                    }
+                    if let Some(runtime_box) = any.downcast_ref::<RuntimeBox>() {
+                        return RuntimeFlow::Value(runtime_box.value.clone());
+                    }
+                }
+                self.emit_error("cannot dereference non-reference value");
+                RuntimeFlow::Value(Value::undefined())
+            }
+            ExprKind::Paren(paren) => self.eval_expr_runtime(paren.expr.as_mut()),
+            ExprKind::Assign(assign) => self.eval_assign_runtime(assign),
+            ExprKind::Let(expr_let) => {
+                let value = match self.eval_value_runtime(expr_let.expr.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                self.bind_pattern(&expr_let.pat, value.clone());
+                RuntimeFlow::Value(value)
+            }
+            ExprKind::Return(ret) => {
+                let value = if let Some(expr) = ret.value.as_mut() {
+                    let flow = self.eval_expr_runtime(expr);
+                    Some(self.finish_runtime_flow(flow))
+                } else {
+                    None
+                };
+                RuntimeFlow::Return(value)
+            }
+            ExprKind::Break(brk) => {
+                let value = if let Some(expr) = brk.value.as_mut() {
+                    let flow = self.eval_expr_runtime(expr);
+                    Some(self.finish_runtime_flow(flow))
+                } else {
+                    None
+                };
+                RuntimeFlow::Break(value)
+            }
+            ExprKind::Continue(_) => RuntimeFlow::Continue,
+            ExprKind::ConstBlock(const_block) => {
+                self.enter_const_region();
+                let result = self.eval_expr(const_block.expr.as_mut());
+                self.exit_const_region();
+                RuntimeFlow::Value(result)
+            }
+            ExprKind::Invoke(invoke) => self.eval_invoke_runtime_flow(invoke),
+            ExprKind::Macro(macro_expr) => {
+                self.emit_error_at(
+                    macro_expr.invocation.span,
+                    format!(
+                        "macro `{}` should have been lowered before runtime evaluation",
+                        macro_expr.invocation.path
+                    ),
+                );
+                RuntimeFlow::Value(Value::undefined())
+            }
+            ExprKind::Closure(closure) => {
+                RuntimeFlow::Value(self.capture_runtime_closure(closure, expr_ty_snapshot.clone()))
+            }
+            ExprKind::Closured(closured) => {
+                let mut inner = closured.expr.as_ref().clone();
+                self.eval_expr_runtime(&mut inner)
+            }
+            ExprKind::Async(async_expr) => {
+                let future = self.capture_runtime_future(async_expr.expr.as_ref());
+                RuntimeFlow::Value(self.make_future_runtime_value(future))
+            }
+            ExprKind::Await(await_expr) => {
+                let flow = self.eval_expr_runtime(await_expr.base.as_mut());
+                let value = self.finish_runtime_flow(flow);
+                self.await_runtime_value(value)
+            }
+            ExprKind::Cast(cast) => {
+                let target_ty = cast.ty.clone();
+                let value = match self.eval_value_runtime(cast.expr.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                let result = self.cast_value_to_type(value, &target_ty);
+                expr.set_ty(target_ty);
+                RuntimeFlow::Value(result)
+            }
+            ExprKind::Loop(loop_expr) => self.eval_loop_runtime(loop_expr),
+            ExprKind::While(while_expr) => self.eval_while_runtime(while_expr),
+            ExprKind::For(for_expr) => self.eval_for_runtime(for_expr),
+            ExprKind::Try(expr_try) => {
+                if expr_try.catches.is_empty()
+                    && expr_try.elze.is_none()
+                    && expr_try.finally.is_none()
+                {
+                    let mode = self.current_exception_return_mode();
+                    if !matches!(
+                        mode,
+                        ExceptionReturnMode::AutoResult | ExceptionReturnMode::ExplicitResult
+                    ) {
+                        self.emit_error("`?` is only allowed in exception-enabled functions");
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                    let body_flow = self.eval_expr_runtime(expr_try.expr.as_mut());
+                    return match body_flow {
+                        RuntimeFlow::Value(value) => match self.match_result_value(&value) {
+                            Some(Ok(ok)) => RuntimeFlow::Value(ok),
+                            Some(Err(_)) => RuntimeFlow::Return(Some(value)),
+                            None => {
+                                self.emit_error("`?` expects a Result value");
+                                RuntimeFlow::Value(Value::undefined())
+                            }
+                        },
+                        other => other,
+                    };
+                }
+
+                let body_flow = self.eval_expr_runtime(expr_try.expr.as_mut());
+                let mut flow = match body_flow {
+                    RuntimeFlow::Panic(panic) => {
+                        let mut handled = None;
+                        for catch in &mut expr_try.catches {
+                            self.push_scope();
+                            if let Some(pat) = catch.pat.as_ref() {
+                                self.bind_pattern(pat.as_ref(), panic.clone());
+                            }
+                            let catch_flow = self.eval_expr_runtime(catch.body.as_mut());
+                            self.pop_scope();
+                            handled = Some(catch_flow);
+                            if !matches!(handled, Some(RuntimeFlow::Panic(_))) {
+                                break;
+                            }
+                        }
+                        handled.unwrap_or(RuntimeFlow::Panic(panic))
+                    }
+                    RuntimeFlow::Value(value) => {
+                        if self.exception_mode {
+                            if let Some(result) = self.match_result_value(&value) {
+                                match result {
+                                    Ok(ok) => {
+                                        if let Some(elze) = expr_try.elze.as_mut() {
+                                            self.eval_expr_runtime(elze.as_mut())
+                                        } else {
+                                            RuntimeFlow::Value(ok)
+                                        }
+                                    }
+                                    Err(err) => {
+                                        let panic_value = match &err {
+                                            Value::String(text) => {
+                                                Value::string(text.value.clone())
+                                            }
+                                            Value::Struct(struct_value)
+                                                if struct_value.ty.name.as_str() == "Error" =>
+                                            {
+                                                let message = struct_value
+                                                    .structural
+                                                    .get_field(&Ident::new("message".to_string()))
+                                                    .and_then(|field| match &field.value {
+                                                        Value::String(text) => {
+                                                            Some(text.value.clone())
+                                                        }
+                                                        _ => None,
+                                                    });
+                                                let message = message.unwrap_or_else(|| {
+                                                    self.render_panic_value(&err)
+                                                });
+                                                Value::string(message)
+                                            }
+                                            Value::Structural(structural) => {
+                                                let message = structural
+                                                    .get_field(&Ident::new("message".to_string()))
+                                                    .and_then(|field| match &field.value {
+                                                        Value::String(text) => {
+                                                            Some(text.value.clone())
+                                                        }
+                                                        _ => None,
+                                                    });
+                                                let message = message.unwrap_or_else(|| {
+                                                    self.render_panic_value(&err)
+                                                });
+                                                Value::string(message)
+                                            }
+                                            _ => Value::string(self.render_panic_value(&err)),
+                                        };
+                                        RuntimeFlow::Panic(panic_value)
+                                    }
+                                }
+                            } else if let Some(elze) = expr_try.elze.as_mut() {
+                                self.eval_expr_runtime(elze.as_mut())
+                            } else {
+                                RuntimeFlow::Value(value)
+                            }
+                        } else if let Some(elze) = expr_try.elze.as_mut() {
+                            self.eval_expr_runtime(elze.as_mut())
+                        } else {
+                            RuntimeFlow::Value(value)
+                        }
+                    }
+                    other => other,
+                };
+
+                if let Some(finally) = expr_try.finally.as_mut() {
+                    let finally_flow = self.eval_expr_runtime(finally.as_mut());
+                    if !matches!(finally_flow, RuntimeFlow::Value(_)) {
+                        flow = finally_flow;
+                    }
+                }
+
+                flow
+            }
+            ExprKind::FormatString(template) => {
+                let mut args = Vec::new();
+                let mut kwargs = Vec::new();
+                if let Ok(output) =
+                    self.render_format_template_runtime(template, &mut args, &mut kwargs)
+                {
+                    if !output.is_empty() {
+                        self.emit_stdout_fragment(output);
+                    }
+                }
+                RuntimeFlow::Value(Value::unit())
+            }
+            ExprKind::Any(_any) => {
+                self.emit_error(
+                    "expression not supported in runtime interpretation: unsupported Raw expression",
+                );
+                RuntimeFlow::Value(Value::undefined())
+            }
+            other => {
+                self.emit_error(format!(
+                    "expression not supported in runtime interpretation: {:?}",
+                    other
+                ));
+                RuntimeFlow::Value(Value::undefined())
+            }
+        }
+    }
+
+    fn eval_value_runtime(&mut self, expr: &mut Expr) -> std::result::Result<Value, RuntimeFlow> {
+        match self.eval_expr_runtime(expr) {
+            RuntimeFlow::Value(value) => Ok(value),
+            other => Err(other),
+        }
+    }
+
+    pub(super) fn eval_expr(&mut self, expr: &mut Expr) -> Value {
+        if self.stack_eval_active {
+            return self.eval_expr_inner(expr);
+        }
+        if let Err(err) = self.begin_const_eval(expr) {
+            self.emit_error(err);
+            return Value::undefined();
+        }
+        let value = match self.run_const_tasks_limit(usize::MAX) {
+            EvalStepOutcome::Yielded => Value::undefined(),
+            EvalStepOutcome::Complete(value) => value,
+        };
+        self.finish_active_eval();
+        value
+    }
+
+    pub(super) fn run_const_tasks_limit(&mut self, max_steps: usize) -> EvalStepOutcome {
+        let mut steps = 0usize;
+        while steps < max_steps {
+            let Some(task) = self.const_tasks.pop() else {
+                break;
+            };
+            steps += 1;
+            match task {
+                ConstTask::Eval(expr_ptr) => {
+                    let expr = unsafe { &mut *expr_ptr };
+                    let _expr_guard = self.push_expr_frame(EvalMode::Const, expr);
+                    match expr.kind_mut() {
+                        ExprKind::Value(value) => {
+                            let value = match value.as_ref() {
+                                Value::Expr(inner) => {
+                                    let mut cloned = inner.as_ref().clone();
+                                    self.eval_expr_inner(&mut cloned)
+                                }
+                                other => other.clone(),
+                            };
+                            self.const_value_stack.push(value);
+                        }
+                        ExprKind::Name(_) => {
+                            let value = self.eval_expr_inner(expr);
+                            self.const_value_stack.push(value);
+                        }
+                        ExprKind::BinOp(binop) => {
+                            self.const_tasks.push(ConstTask::ApplyBinOp(binop.kind));
+                            self.const_tasks
+                                .push(ConstTask::Eval(binop.rhs.as_mut() as *mut Expr));
+                            self.const_tasks
+                                .push(ConstTask::Eval(binop.lhs.as_mut() as *mut Expr));
+                        }
+                        ExprKind::UnOp(unop) => {
+                            self.const_tasks.push(ConstTask::ApplyUnOp(unop.op.clone()));
+                            self.const_tasks
+                                .push(ConstTask::Eval(unop.val.as_mut() as *mut Expr));
+                        }
+                        ExprKind::If(if_expr) => {
+                            self.const_tasks.push(ConstTask::ApplyIf {
+                                then_expr: if_expr.then.as_mut() as *mut Expr,
+                                else_expr: if_expr
+                                    .elze
+                                    .as_mut()
+                                    .map(|expr| expr.as_mut() as *mut Expr),
+                            });
+                            self.const_tasks
+                                .push(ConstTask::Eval(if_expr.cond.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Tuple(tuple) => {
+                            let len = tuple.values.len();
+                            self.const_tasks.push(ConstTask::ApplyCollect {
+                                len,
+                                kind: CollectKind::Tuple,
+                            });
+                            for expr in tuple.values.iter_mut().rev() {
+                                self.const_tasks.push(ConstTask::Eval(expr as *mut Expr));
+                            }
+                        }
+                        ExprKind::Array(array) => {
+                            let len = array.values.len();
+                            self.const_tasks.push(ConstTask::ApplyCollect {
+                                len,
+                                kind: CollectKind::Array,
+                            });
+                            for expr in array.values.iter_mut().rev() {
+                                self.const_tasks.push(ConstTask::Eval(expr as *mut Expr));
+                            }
+                        }
+                        ExprKind::Range(range) => {
+                            self.const_tasks.push(ConstTask::ApplyRange {
+                                inclusive: matches!(range.limit, ExprRangeLimit::Inclusive),
+                            });
+                            if let Some(expr) = range.end.as_mut() {
+                                self.const_tasks
+                                    .push(ConstTask::Eval(expr.as_mut() as *mut Expr));
+                            } else {
+                                self.const_tasks.push(ConstTask::PushValue(Value::int(0)));
+                            }
+                            if let Some(expr) = range.start.as_mut() {
+                                self.const_tasks
+                                    .push(ConstTask::Eval(expr.as_mut() as *mut Expr));
+                            } else {
+                                self.const_tasks.push(ConstTask::PushValue(Value::int(0)));
+                            }
+                        }
+                        ExprKind::Select(select) => {
+                            self.const_tasks.push(ConstTask::ApplySelect {
+                                field: select.field.name.clone(),
+                            });
+                            self.const_tasks
+                                .push(ConstTask::Eval(select.obj.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Index(index_expr) => {
+                            if let ExprKind::Range(range) = index_expr.index.kind_mut() {
+                                let has_start = range.start.is_some();
+                                let has_end = range.end.is_some();
+                                self.const_tasks.push(ConstTask::ApplyIndex {
+                                    has_start,
+                                    has_end,
+                                    inclusive: matches!(range.limit, ExprRangeLimit::Inclusive),
+                                });
+                                if let Some(expr) = range.end.as_mut() {
+                                    self.const_tasks
+                                        .push(ConstTask::Eval(expr.as_mut() as *mut Expr));
+                                }
+                                if let Some(expr) = range.start.as_mut() {
+                                    self.const_tasks
+                                        .push(ConstTask::Eval(expr.as_mut() as *mut Expr));
+                                }
+                                self.const_tasks
+                                    .push(ConstTask::Eval(index_expr.obj.as_mut() as *mut Expr));
+                            } else {
+                                self.const_tasks.push(ConstTask::ApplyIndex {
+                                    has_start: true,
+                                    has_end: true,
+                                    inclusive: false,
+                                });
+                                self.const_tasks
+                                    .push(ConstTask::Eval(index_expr.index.as_mut() as *mut Expr));
+                                self.const_tasks
+                                    .push(ConstTask::Eval(index_expr.obj.as_mut() as *mut Expr));
+                            }
+                        }
+                        ExprKind::Paren(paren) => {
+                            self.const_tasks
+                                .push(ConstTask::Eval(paren.expr.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Cast(cast) => {
+                            let ty = cast.ty.clone();
+                            self.const_tasks.push(ConstTask::ApplyCast { ty });
+                            self.const_tasks
+                                .push(ConstTask::Eval(cast.expr.as_mut() as *mut Expr));
+                        }
+                        _ => {
+                            let value = self.eval_expr_inner(expr);
+                            self.const_value_stack.push(value);
+                        }
+                    }
+                }
+                ConstTask::PushValue(value) => {
+                    self.const_value_stack.push(value);
+                }
+                ConstTask::ApplyBinOp(op) => {
+                    let rhs = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
+                    let lhs = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
+                    let value = self.handle_result(self.evaluate_binop(op, lhs, rhs));
+                    self.const_value_stack.push(value);
+                }
+                ConstTask::ApplyUnOp(op) => {
+                    let value = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
+                    let value = self.handle_result(self.evaluate_unary(op, value));
+                    self.const_value_stack.push(value);
+                }
+                ConstTask::ApplyIf {
+                    then_expr,
+                    else_expr,
+                } => {
+                    let cond = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
+                    match cond {
+                        Value::Bool(b) => {
+                            if b.value {
+                                self.const_tasks.push(ConstTask::Eval(then_expr));
+                            } else if let Some(elze) = else_expr {
+                                self.const_tasks.push(ConstTask::Eval(elze));
+                            } else {
+                                self.const_value_stack.push(Value::unit());
+                            }
+                        }
+                        _ => {
+                            self.emit_error("expected boolean condition in const expression");
+                            self.const_value_stack.push(Value::undefined());
+                        }
+                    }
+                }
+                ConstTask::ApplyCollect { len, kind } => {
+                    let mut values = Vec::with_capacity(len);
+                    for _ in 0..len {
+                        values.push(
+                            self.const_value_stack
+                                .pop()
+                                .unwrap_or_else(Value::undefined),
+                        );
+                    }
+                    values.reverse();
+                    let value = match kind {
+                        CollectKind::Tuple => Value::Tuple(ValueTuple::new(values)),
+                        CollectKind::Array => Value::List(ValueList::new(values)),
+                    };
+                    self.const_value_stack.push(value);
+                }
+                ConstTask::ApplyCast { ty } => {
+                    let value = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
+                    let result = self.cast_value_to_type(value, &ty);
+                    self.const_value_stack.push(result);
+                }
+                ConstTask::ApplyRange { inclusive } => {
+                    let end = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
+                    let start = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
+                    let start = match self.numeric_to_i64(&start, "range start") {
+                        Some(value) => value,
+                        None => {
+                            self.const_value_stack.push(Value::undefined());
+                            continue;
+                        }
+                    };
+                    let end = match self.numeric_to_i64(&end, "range end") {
+                        Some(value) => value,
+                        None => {
+                            self.const_value_stack.push(Value::undefined());
+                            continue;
+                        }
+                    };
+                    let mut values = Vec::new();
+                    let mut current = start;
+                    while if inclusive {
+                        current <= end
+                    } else {
+                        current < end
+                    } {
+                        values.push(Value::int(current));
+                        current += 1;
+                    }
+                    self.const_value_stack
+                        .push(Value::List(ValueList::new(values)));
+                }
+                ConstTask::ApplySelect { field } => {
+                    let target = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
+                    let value = self.evaluate_select(target, &field);
+                    self.const_value_stack.push(value);
+                }
+                ConstTask::ApplyIndex {
+                    has_start,
+                    has_end,
+                    inclusive,
+                } => {
+                    if has_start && has_end {
+                        let index_value = self
+                            .const_value_stack
+                            .pop()
+                            .unwrap_or_else(Value::undefined);
+                        let target = self
+                            .const_value_stack
+                            .pop()
+                            .unwrap_or_else(Value::undefined);
+                        let value = self.evaluate_index(target, index_value);
+                        self.const_value_stack.push(value);
+                    } else {
+                        let end = if has_end {
+                            let end = self
+                                .const_value_stack
+                                .pop()
+                                .unwrap_or_else(Value::undefined);
+                            self.numeric_to_non_negative_usize(&end, "range end")
+                        } else {
+                            None
+                        };
+                        let start = if has_start {
+                            let start = self
+                                .const_value_stack
+                                .pop()
+                                .unwrap_or_else(Value::undefined);
+                            self.numeric_to_non_negative_usize(&start, "range start")
+                        } else {
+                            None
+                        };
+                        let target = self
+                            .const_value_stack
+                            .pop()
+                            .unwrap_or_else(Value::undefined);
+                        let value = self.evaluate_range_index_slices(target, start, end, inclusive);
+                        self.const_value_stack.push(value);
+                    }
+                }
+            }
+        }
+
+        if !self.const_tasks.is_empty() {
+            return EvalStepOutcome::Yielded;
+        }
+
+        match self.const_value_stack.pop() {
+            Some(value) => EvalStepOutcome::Complete(value),
+            None => EvalStepOutcome::Complete(Value::undefined()),
+        }
+    }
+
+    fn eval_expr_inner(&mut self, expr: &mut Expr) -> Value {
+        let _guard = self.push_span(expr.span);
+        self.ensure_expr_typed(expr);
+        let expr_ty_snapshot = expr.ty().cloned();
+
+        // Check if we need to specialize a function reference before matching
+        let should_specialize_fn_ref = if let ExprKind::Name(_) = expr.kind() {
+            expr_ty_snapshot
+                .as_ref()
+                .map_or(false, |ty| matches!(ty, Ty::Function(_)))
+        } else {
+            false
+        };
+
+        match expr.kind_mut() {
+            ExprKind::IntrinsicContainer(collection) => {
+                let new_expr = collection.clone().into_const_expr();
+                *expr = new_expr;
+                return self.eval_expr(expr);
+            }
+            ExprKind::Quote(_quote) => {
+                if matches!(self.mode, InterpreterMode::Comptime) {
+                    if let ExprKind::Quote(quote) = expr.kind() {
+                        let kind = quote.kind;
+                        let fragment = self.build_quoted_fragment(quote);
+                        return self.quote_token_from_fragment_kind(fragment, kind);
+                    }
+                    return Value::undefined();
+                }
+                self.emit_error("quote cannot be evaluated at runtime");
+                return Value::undefined();
+            }
+            ExprKind::Splice(_splice) => {
+                if !self.in_const_region() && !matches!(self.mode, InterpreterMode::Comptime) {
+                    self.emit_error("splice is only supported during const evaluation");
+                    return Value::undefined();
+                }
+                let ExprKind::Splice(splice) = expr.kind_mut() else {
+                    return Value::undefined();
+                };
+                let Some(fragments) = self.resolve_splice_fragments(splice.token.as_mut()) else {
+                    return Value::undefined();
+                };
+                if fragments.len() != 1 {
+                    self.emit_error("splice in expression position expects a single fragment");
+                    return Value::undefined();
+                }
+                match fragments.into_iter().next().unwrap() {
+                    QuotedFragment::Expr(mut quoted) => self.eval_expr(&mut quoted),
+                    QuotedFragment::Stmts(stmts) => {
+                        let mut block = ExprBlock::new_stmts(stmts);
+                        self.eval_block(&mut block)
+                    }
+                    QuotedFragment::Type(ty) => Value::Type(ty),
+                    QuotedFragment::Items(_) => {
+                        self.emit_error("splice<item> is not valid in expression position");
+                        Value::undefined()
+                    }
+                }
+            }
+            ExprKind::Value(value) => match value.as_ref() {
+                Value::Expr(inner) => {
+                    let mut cloned = inner.as_ref().clone();
+                    self.eval_expr(&mut cloned)
+                }
+                Value::Type(ty) => Value::Type(self.materialize_const_type(ty.clone())),
+                other => other.clone(),
+            },
+            ExprKind::Name(locator) => {
+                self.apply_local_import_alias(locator);
+                // First, try to specialize generic function reference if we have type info
+                if should_specialize_fn_ref {
+                    if let Some(expected_ty) = &expr_ty_snapshot {
+                        tracing::debug!(
+                            "Attempting to specialize function reference {} with type {:?}",
+                            locator,
+                            expected_ty
+                        );
+                        if let Some(_specialized) =
+                            self.specialize_function_reference(locator, expected_ty)
+                        {
+                            tracing::debug!("Successfully specialized {} to {}", locator, locator);
+                            // Name has been updated to point to specialized function
+                            // Return unit for now, the reference will be used by caller
+                            return Value::unit();
+                        } else {
+                            tracing::debug!("Failed to specialize {}", locator);
+                        }
+                    }
+                }
+
+                if let Some(ident) = locator.as_ident() {
+                    if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                        let value = stored.value();
+                        if let Some(placeholder) = self.imported_placeholder_value(value.clone()) {
+                            return placeholder;
+                        }
+                        if matches!(value, Value::List(_) | Value::Map(_))
+                            || matches!(stored, StoredValue::Shared(_))
+                            || self.loop_depth > 0
+                        {
+                            return value;
+                        }
+                        let mut replacement = Expr::value(value.clone());
+                        replacement.ty = expr.ty.clone();
+                        // Type is already copied from original expr, no need to re-infer
+                        *expr = replacement;
+                        value
+                    } else if let Some(closure) = self.lookup_closure(ident.as_str()) {
+                        self.pending_closure = Some(closure);
+                        Value::unit()
+                    } else if let Some(ty) = self.lookup_type(ident.as_str()) {
+                        Value::Type(ty)
+                    } else {
+                        let mut candidate_names =
+                            vec![locator.to_string(), ident.as_str().to_string()];
+                        candidate_names.sort();
+                        candidate_names.dedup();
+                        for name in candidate_names {
+                            if let Some(template) = self.generic_functions.get(&name) {
+                                return Value::Function(ValueFunction {
+                                    sig: template.function.sig.clone(),
+                                    body: template.function.body.clone(),
+                                });
+                            }
+                        }
+                        self.resolve_qualified(locator.to_string())
+                    }
+                } else {
+                    if let Some(template) = self.generic_functions.get(&locator.to_string()) {
+                        return Value::Function(ValueFunction {
+                            sig: template.function.sig.clone(),
+                            body: template.function.body.clone(),
+                        });
+                    }
+                    self.resolve_qualified(locator.to_string())
+                }
+            }
+            ExprKind::BinOp(binop) => {
+                let lhs = self.eval_expr(binop.lhs.as_mut());
+                let rhs = self.eval_expr(binop.rhs.as_mut());
+                self.handle_result(self.evaluate_binop(binop.kind, lhs, rhs))
+            }
+            ExprKind::UnOp(unop) => {
+                let value = self.eval_expr(unop.val.as_mut());
+                self.handle_result(self.evaluate_unary(unop.op.clone(), value))
+            }
+            ExprKind::If(if_expr) => {
+                let cond = self.eval_expr(if_expr.cond.as_mut());
+                match cond {
+                    Value::Bool(b) => {
+                        if b.value {
+                            self.eval_expr(if_expr.then.as_mut())
+                        } else if let Some(else_) = if_expr.elze.as_mut() {
+                            self.eval_expr(else_)
+                        } else {
+                            Value::unit()
+                        }
+                    }
+                    _ => {
+                        self.emit_error("expected boolean condition in const expression");
+                        Value::undefined()
+                    }
+                }
+            }
+            ExprKind::Match(expr_match) => {
+                if let Some(scrutinee) = expr_match.scrutinee.as_mut() {
+                    let scrutinee_value = self.eval_expr(scrutinee.as_mut());
+                    for case in &mut expr_match.cases {
+                        self.push_scope();
+
+                        let pat_matches = case
+                            .pat
+                            .as_ref()
+                            .map(|pat| self.pattern_matches(pat, &scrutinee_value))
+                            .unwrap_or(false);
+
+                        if pat_matches {
+                            if let Some(guard) = case.guard.as_mut() {
+                                let guard_value = self.eval_expr(guard.as_mut());
+                                match guard_value {
+                                    Value::Bool(b) if b.value => {
+                                        let out = self.eval_expr(case.body.as_mut());
+                                        self.pop_scope();
+                                        return out;
+                                    }
+                                    Value::Bool(_) => {
+                                        // Guard failed; fall through.
+                                    }
+                                    _ => {
+                                        self.emit_error(
+                                            "expected boolean match guard in const expression",
+                                        );
+                                        self.pop_scope();
+                                        return Value::undefined();
+                                    }
+                                }
+                            } else {
+                                let out = self.eval_expr(case.body.as_mut());
+                                self.pop_scope();
+                                return out;
+                            }
+                        }
+
+                        self.pop_scope();
+                    }
+                    return Value::unit();
+                }
+
+                // Legacy lowering: boolean conditions.
+                for case in &mut expr_match.cases {
+                    let cond = self.eval_expr(case.cond.as_mut());
+                    match cond {
+                        Value::Bool(b) => {
+                            if b.value {
+                                return self.eval_expr(case.body.as_mut());
+                            }
+                        }
+                        _ => {
+                            self.emit_error("expected boolean match condition in const expression");
+                            return Value::undefined();
+                        }
+                    }
+                }
+                Value::unit()
+            }
+            ExprKind::Block(block) => self.eval_block(block),
+            ExprKind::With(expr_with) => {
+                let context_value = self.eval_expr(expr_with.context.as_mut());
+                let Some(context_ty) = expr_with.context.ty().cloned() else {
+                    self.emit_error("with context requires a resolved type");
+                    return Value::undefined();
+                };
+                self.push_scope();
+                if let Some(scope) = self.context_env.last_mut() {
+                    scope.push(RuntimeContextBinding {
+                        ty: context_ty,
+                        value: context_value,
+                    });
+                }
+                let result = self.eval_expr(expr_with.body.as_mut());
+                self.pop_scope();
+                result
+            }
+            ExprKind::Tuple(tuple) => {
+                let values = tuple
+                    .values
+                    .iter_mut()
+                    .map(|expr| self.eval_expr(expr))
+                    .collect();
+                Value::Tuple(ValueTuple::new(values))
+            }
+            ExprKind::Array(array) => {
+                let values = array
+                    .values
+                    .iter_mut()
+                    .map(|expr| self.eval_expr(expr))
+                    .collect();
+                Value::List(ValueList::new(values))
+            }
+            ExprKind::ArrayRepeat(repeat) => self.eval_array_repeat(repeat),
+            ExprKind::Struct(struct_expr) => self.evaluate_struct_literal(struct_expr),
+            ExprKind::Structural(struct_expr) => {
+                let fields = struct_expr
+                    .fields
+                    .iter_mut()
+                    .map(|field| {
+                        let value = field
+                            .value
+                            .as_mut()
+                            .map(|expr| self.eval_expr(expr))
+                            .unwrap_or_else(|| {
+                                self.lookup_value(field.name.as_str()).unwrap_or_else(|| {
+                                    self.emit_error(format!(
+                                        "missing initializer for field '{}' in structural literal",
+                                        field.name
+                                    ));
+                                    Value::undefined()
+                                })
+                            });
+                        ValueField::new(field.name.clone(), value)
+                    })
+                    .collect();
+                Value::Structural(ValueStructural::new(fields))
+            }
+            ExprKind::Select(select) => {
+                let target = self.eval_expr(select.obj.as_mut());
+                self.evaluate_select(target, &select.field.name)
+            }
+            ExprKind::Index(index_expr) => {
+                let target = self.eval_expr(index_expr.obj.as_mut());
+                if let ExprKind::Range(range) = index_expr.index.kind_mut() {
+                    return self.evaluate_range_index(target, range);
+                }
+                let index_value = self.eval_expr(index_expr.index.as_mut());
+                self.evaluate_index(target, index_value)
+            }
+            ExprKind::IntrinsicCall(call) => {
+                let kind = call.kind;
+                let mut assign_target: Option<String> = None;
+                if matches!(kind, IntrinsicCallKind::AddField) {
+                    if let Some(first) = call.args.first() {
+                        if let ExprKind::Name(locator) = first.kind() {
+                            if let Some(ident) = locator.as_ident() {
+                                assign_target = Some(ident.as_str().to_string());
+                            }
+                        }
+                    }
+                }
+                let value = self.eval_intrinsic(call);
+                if let Some(name) = assign_target {
+                    if let Some(stored) = self.lookup_stored_value_mut(&name) {
+                        if stored.assign(value.clone()) {
+                            self.mark_mutated();
+                        }
+                    }
+                }
+                if self.should_replace_intrinsic_with_value(kind, &value) {
+                    let mut replacement = Expr::value(value.clone());
+                    replacement.ty = expr.ty.clone();
+                    // Type is already copied from original expr, no need to re-infer
+                    *expr = replacement;
+                    self.mark_mutated();
+                    return value;
+                }
+                value
+            }
+            ExprKind::Reference(reference) => {
+                if reference.mutable.unwrap_or(false) {
+                    if let ExprKind::Name(locator) = reference.referee.kind() {
+                        if let Some(ident) = locator.as_ident() {
+                            if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                                if let Some(shared) = stored.shared_handle() {
+                                    return Value::Any(AnyBox::new(RuntimeRef {
+                                        target: RuntimeRefTarget::Whole(shared),
+                                    }));
+                                }
+                                self.emit_error(format!(
+                                    "mutable reference requires mutable binding for '{}'",
+                                    ident.as_str()
+                                ));
+                                return Value::undefined();
+                            }
+                        }
+                    }
+                    if let ExprKind::Select(select) = reference.referee.kind() {
+                        if let ExprKind::Name(locator) = select.obj.kind() {
+                            if let Some(ident) = locator.as_ident() {
+                                if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                                    if let Some(shared) = stored.shared_handle() {
+                                        return Value::Any(AnyBox::new(RuntimeRef::field(
+                                            RuntimeRef::whole(shared),
+                                            select.field.as_str().to_string(),
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let ExprKind::Index(index_expr) = reference.referee.kind() {
+                        if let ExprKind::Name(locator) = index_expr.obj.kind() {
+                            if let Some(ident) = locator.as_ident() {
+                                if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                                    if let Some(shared) = stored.shared_handle() {
+                                        if let ExprKind::Range(range) = index_expr.index.kind() {
+                                            let mut start_expr = range
+                                                .start
+                                                .as_ref()
+                                                .map(|expr| expr.as_ref().clone());
+                                            let start = start_expr
+                                                .as_mut()
+                                                .map(|expr| self.eval_expr(expr));
+                                            let mut end_expr = range
+                                                .end
+                                                .as_ref()
+                                                .map(|expr| expr.as_ref().clone());
+                                            let end =
+                                                end_expr.as_mut().map(|expr| self.eval_expr(expr));
+                                            let start_idx = match start {
+                                                Some(value) => match self
+                                                    .numeric_to_non_negative_usize(
+                                                        &value,
+                                                        "range start",
+                                                    ) {
+                                                    Some(value) => value,
+                                                    None => return Value::undefined(),
+                                                },
+                                                None => 0,
+                                            };
+                                            let end_idx = match end {
+                                                Some(value) => match self
+                                                    .numeric_to_non_negative_usize(
+                                                        &value,
+                                                        "range end",
+                                                    ) {
+                                                    Some(value) => {
+                                                        if matches!(
+                                                            range.limit,
+                                                            ExprRangeLimit::Inclusive
+                                                        ) {
+                                                            value.saturating_add(1)
+                                                        } else {
+                                                            value
+                                                        }
+                                                    }
+                                                    None => return Value::undefined(),
+                                                },
+                                                None => {
+                                                    self.emit_error(
+                                                        "mutable slice reference requires an explicit end bound",
+                                                    );
+                                                    return Value::undefined();
+                                                }
+                                            };
+                                            return Value::Any(AnyBox::new(RuntimeRef::slice(
+                                                RuntimeRef::whole(shared),
+                                                start_idx,
+                                                end_idx,
+                                            )));
+                                        }
+                                        let mut index_expr_value =
+                                            index_expr.index.as_ref().clone();
+                                        let index_value = self.eval_expr(&mut index_expr_value);
+                                        if let Some(index) = self
+                                            .numeric_to_non_negative_usize(&index_value, "index")
+                                        {
+                                            return Value::Any(AnyBox::new(RuntimeRef::index(
+                                                RuntimeRef::whole(shared),
+                                                index,
+                                            )));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.emit_error("mutable reference target must be a named binding");
+                    Value::undefined()
+                } else {
+                    self.eval_expr(reference.referee.as_mut())
+                }
+            }
+            ExprKind::Dereference(deref) => {
+                let target = self.eval_expr(deref.referee.as_mut());
+                if let Value::Any(any) = target {
+                    if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                        return self.runtime_ref_value(runtime_ref);
+                    }
+                    if let Some(runtime_box) = any.downcast_ref::<RuntimeBox>() {
+                        return runtime_box.value.clone();
+                    }
+                }
+                self.emit_error("cannot dereference non-reference value");
+                Value::undefined()
+            }
+            ExprKind::Paren(paren) => self.eval_expr(paren.expr.as_mut()),
+            ExprKind::Assign(assign) => {
+                let flow = self.eval_assign_runtime(assign);
+                self.finish_runtime_flow(flow)
+            }
+            ExprKind::Let(expr_let) => {
+                let value = self.eval_expr(expr_let.expr.as_mut());
+                self.bind_pattern(&expr_let.pat, value.clone());
+                value
+            }
+            ExprKind::Return(_) => {
+                self.emit_error("`return` is not supported during const evaluation");
+                Value::undefined()
+            }
+            ExprKind::Break(_) => {
+                self.emit_error("`break` is not supported during const evaluation");
+                Value::undefined()
+            }
+            ExprKind::Continue(_) => {
+                self.emit_error("`continue` is not supported during const evaluation");
+                Value::undefined()
+            }
+            ExprKind::ConstBlock(const_block) => {
+                self.enter_const_region();
+                let value = self.eval_expr(const_block.expr.as_mut());
+                self.exit_const_region();
+                value
+            }
+            ExprKind::Invoke(invoke) => {
+                let result = self.eval_invoke(invoke);
+                if let Some(ty) = self.pending_expr_ty.take() {
+                    expr.set_ty(ty);
+                }
+                result
+            }
+            ExprKind::Macro(macro_expr) => {
+                let parser = match self.macro_parser.clone() {
+                    Some(parser) => parser,
+                    None => {
+                        self.emit_error_at(
+                            macro_expr.invocation.span,
+                            "macro expansion requires a parser hook",
+                        );
+                        return Value::undefined();
+                    }
+                };
+                if self.macro_depth > 64 {
+                    self.emit_error_at(
+                        macro_expr.invocation.span,
+                        "macro expansion exceeded recursion limit",
+                    );
+                    return Value::undefined();
+                }
+                self.macro_depth += 1;
+                let expanded = self
+                    .expand_macro_invocation(&macro_expr.invocation, MacroExpansionContext::Expr)
+                    .and_then(|tokens| parser.parse_expr(&tokens));
+                self.macro_depth = self.macro_depth.saturating_sub(1);
+                match expanded {
+                    Ok(mut new_expr) => {
+                        if let Err(err) = self.normalize_macro_expansion_expr(&mut new_expr) {
+                            self.emit_error_at(macro_expr.invocation.span, err.to_string());
+                            return Value::undefined();
+                        }
+                        if let Some(ty) = expr_ty_snapshot.clone() {
+                            new_expr.ty = Some(ty);
+                        }
+                        *expr = new_expr;
+                        self.mark_mutated();
+                        self.eval_expr(expr)
+                    }
+                    Err(err) => {
+                        self.emit_error_at(macro_expr.invocation.span, err.to_string());
+                        Value::undefined()
+                    }
+                }
+            }
+            ExprKind::Closure(closure) => {
+                if let Some(Ty::Function(ref fn_sig)) = expr_ty_snapshot.as_ref() {
+                    Self::annotate_expr_closure(closure, fn_sig);
+                }
+                let captured = self.capture_closure(closure, expr_ty_snapshot.clone());
+                self.pending_closure = Some(captured.clone());
+                Value::Any(AnyBox::new(captured))
+            }
+            ExprKind::Closured(closured) => {
+                let mut inner = closured.expr.as_ref().clone();
+                self.eval_expr(&mut inner)
+            }
+            ExprKind::Cast(cast) => {
+                let target_ty = cast.ty.clone();
+                let value = self.eval_expr(cast.expr.as_mut());
+                let result = self.cast_value_to_type(value, &target_ty);
+                expr.set_ty(target_ty);
+                result
+            }
+            ExprKind::Loop(loop_expr) => {
+                let flow = self.eval_loop_runtime(loop_expr);
+                self.finish_runtime_flow(flow)
+            }
+            ExprKind::While(while_expr) => {
+                let flow = self.eval_while_runtime(while_expr);
+                self.finish_runtime_flow(flow)
+            }
+            ExprKind::For(for_expr) => {
+                let flow = self.eval_for_runtime(for_expr);
+                self.finish_runtime_flow(flow)
+            }
+            ExprKind::Any(_any) => {
+                self.emit_error(
+                    "expression not supported in AST interpretation: unsupported Raw expression",
+                );
+                Value::undefined()
+            }
+            other => {
+                self.emit_error(format!(
+                    "expression not supported in AST interpretation: {:?}",
+                    other
+                ));
+                Value::undefined()
+            }
+        }
+    }
+
+    pub(super) fn eval_invoke(&mut self, invoke: &mut ExprInvoke) -> Value {
+        if let Some(mut call) = intrinsic_call_from_invoke(invoke) {
+            return self.eval_intrinsic(&mut call);
+        }
+        if self.in_const_region() {
+            return self.eval_invoke_compile_time(invoke);
+        }
+        match self.mode {
+            InterpreterMode::Comptime => self.eval_invoke_compile_time(invoke),
+            InterpreterMode::Runtime => self.eval_invoke_runtime(invoke),
+        }
+    }
+
+    pub(super) fn eval_invoke_compile_time(&mut self, invoke: &mut ExprInvoke) -> Value {
+        if let ExprInvokeTarget::Function(locator) = &invoke.target {
+            if let Some(ident) = locator.as_ident() {
+                if ident.as_str() == "panic" {
+                    let mut call = ExprIntrinsicCall::new(
+                        IntrinsicCallKind::Panic,
+                        std::mem::take(&mut invoke.args),
+                        std::mem::take(&mut invoke.kwargs),
+                    );
+                    return self.eval_intrinsic(&mut call);
+                }
+                if ident.as_str() == "import" {
+                    self.emit_error("dynamic import is only supported in interpret mode");
+                    return Value::undefined();
+                }
+            }
+        }
+        if !invoke.kwargs.is_empty() {
+            match invoke.target {
+                ExprInvokeTarget::Function(_) => {}
+                _ => {
+                    self.emit_error("keyword arguments are only supported on function calls");
+                    return Value::undefined();
+                }
+            }
+        }
+        if let ExprInvokeTarget::Method(select) = &mut invoke.target {
+            let method_name = select.field.name.as_str();
+            if matches!(
+                method_name,
+                "has_field"
+                    | "has_method"
+                    | "fields"
+                    | "method_count"
+                    | "field_name_at"
+                    | "field_type"
+                    | "type_name"
+                    | "struct_size"
+            ) {
+                let receiver_value = self.eval_expr(select.obj.as_mut());
+                let args = self.evaluate_args(&mut invoke.args);
+                if let Some(value) = self.eval_type_method_call(receiver_value, method_name, args) {
+                    return value;
+                }
+            }
+            if method_name == "contains" && invoke.args.len() == 1 {
+                let receiver_value = self.eval_expr(select.obj.as_mut());
+                let needle = self.eval_expr(&mut invoke.args[0]);
+                let Value::List(list) = receiver_value else {
+                    self.emit_error("contains expects a list receiver");
+                    return Value::undefined();
+                };
+                let found = list.values.iter().any(|value| match value {
+                    Value::Structural(structural) => {
+                        if let Some(field) = structural.get_field(&Ident::new("name".to_string())) {
+                            field.value == needle
+                        } else {
+                            *value == needle
+                        }
+                    }
+                    _ => *value == needle,
+                });
+                return Value::bool(found);
+            }
+            if method_name == "join" && invoke.args.len() == 1 {
+                let receiver_value = self.eval_expr(select.obj.as_mut());
+                let separator = self.eval_expr(&mut invoke.args[0]);
+                let Value::List(list) = receiver_value else {
+                    self.emit_error("join expects a list receiver");
+                    return Value::undefined();
+                };
+                let separator = match separator {
+                    Value::String(text) => text.value,
+                    other => {
+                        self.emit_error(format!(
+                            "join expects a string separator, found {:?}",
+                            other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                let mut parts = Vec::with_capacity(list.values.len());
+                for value in &list.values {
+                    match value {
+                        Value::String(text) => parts.push(text.value.clone()),
+                        Value::Char(ch) => parts.push(ch.value.to_string()),
+                        other => {
+                            self.emit_error(format!(
+                                "join expects string list items, found {:?}",
+                                other
+                            ));
+                            return Value::undefined();
+                        }
+                    }
+                }
+                return Value::string(parts.join(&separator));
+            }
+            if select.field.name.as_str() == "push" && invoke.args.len() == 1 {
+                let value = self.eval_expr(&mut invoke.args[0]);
+                if let ExprKind::Name(locator) = select.obj.kind() {
+                    let binding = match locator {
+                        Name::Ident(ident) => Some(ident.as_str().to_string()),
+                        Name::Path(path) => path
+                            .segments
+                            .last()
+                            .map(|segment| segment.as_str().to_string()),
+                        Name::ParameterPath(path) => path
+                            .segments
+                            .last()
+                            .map(|segment| segment.ident.as_str().to_string()),
+                    };
+                    if let Some(name) = binding {
+                        if let Some(stored) = self.lookup_stored_value_mut(&name) {
+                            if let Some(shared) = stored.shared_handle() {
+                                match shared.lock() {
+                                    Ok(mut guard) => match &mut *guard {
+                                        Value::List(list) => {
+                                            list.values.push(value);
+                                            self.update_mutable_constant(
+                                                &name,
+                                                Value::List(list.clone()),
+                                            );
+                                            self.mark_mutated();
+                                            self.set_pending_expr_ty(Some(Ty::unit()));
+                                            return Value::unit();
+                                        }
+                                        other => {
+                                            self.emit_error(format!(
+                                                "push expects a mutable list, found {}",
+                                                other
+                                            ));
+                                            return Value::undefined();
+                                        }
+                                    },
+                                    Err(err) => {
+                                        let mut guard = err.into_inner();
+                                        match &mut *guard {
+                                            Value::List(list) => {
+                                                list.values.push(value);
+                                                self.update_mutable_constant(
+                                                    &name,
+                                                    Value::List(list.clone()),
+                                                );
+                                                self.mark_mutated();
+                                                self.set_pending_expr_ty(Some(Ty::unit()));
+                                                return Value::unit();
+                                            }
+                                            other => {
+                                                self.emit_error(format!(
+                                                    "push expects a mutable list, found {}",
+                                                    other
+                                                ));
+                                                return Value::undefined();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            self.emit_error("push requires a mutable binding");
+                            return Value::undefined();
+                        }
+                    }
+                }
+                self.emit_error("push requires a mutable list binding");
+                return Value::undefined();
+            }
+
+            if select.field.name.as_str() == "len" && invoke.args.is_empty() {
+                let value = self.eval_expr(select.obj.as_mut());
+                self.set_pending_expr_ty(Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))));
+                return match value {
+                    Value::List(list) => Value::int(list.values.len() as i64),
+                    Value::Map(map) => Value::int(map.len() as i64),
+                    Value::String(text) => Value::int(text.value.chars().count() as i64),
+                    Value::QuoteToken(token) => match token.value {
+                        QuoteTokenValue::Items(items) => Value::int(items.len() as i64),
+                        _ => {
+                            self.emit_error(format!(
+                                "'len' is only supported on compile-time arrays, lists, and maps, found {:?}",
+                                Value::QuoteToken(token)
+                            ));
+                            Value::undefined()
+                        }
+                    },
+                    other => {
+                        self.emit_error(format!(
+                            "'len' is only supported on compile-time arrays, lists, and maps, found {:?}",
+                            other
+                        ));
+                        Value::undefined()
+                    }
+                };
+            }
+
+            if matches!(
+                select.field.name.as_str(),
+                "starts_with" | "ends_with" | "contains"
+            ) && invoke.args.len() == 1
+            {
+                let value = self.eval_expr(select.obj.as_mut());
+                let arg = self.eval_expr(&mut invoke.args[0]);
+                let hay = match value {
+                    Value::String(text) => text.value,
+                    other => {
+                        self.emit_error(format!(
+                            "string method '{}' expects a string receiver, found {:?}",
+                            select.field.name, other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                let needle = match arg {
+                    Value::String(text) => text.value,
+                    Value::Char(ch) => ch.value.to_string(),
+                    other => {
+                        self.emit_error(format!(
+                            "string method '{}' expects a string argument, found {:?}",
+                            select.field.name, other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                self.set_pending_expr_ty(Some(Ty::Primitive(TypePrimitive::Bool)));
+                let result = match select.field.name.as_str() {
+                    "starts_with" => hay.starts_with(&needle),
+                    "ends_with" => hay.ends_with(&needle),
+                    "contains" => hay.contains(&needle),
+                    _ => false,
+                };
+                return Value::bool(result);
+            }
+
+            if select.field.name.as_str() == "replace" && invoke.args.len() == 2 {
+                let value = self.eval_expr(select.obj.as_mut());
+                let from = self.eval_expr(&mut invoke.args[0]);
+                let to = self.eval_expr(&mut invoke.args[1]);
+                let hay = match value {
+                    Value::String(text) => text.value,
+                    other => {
+                        self.emit_error(format!(
+                            "string method 'replace' expects a string receiver, found {:?}",
+                            other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                let from = match from {
+                    Value::String(text) => text.value,
+                    Value::Char(ch) => ch.value.to_string(),
+                    other => {
+                        self.emit_error(format!(
+                            "string method 'replace' expects a string needle, found {:?}",
+                            other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                let to = match to {
+                    Value::String(text) => text.value,
+                    Value::Char(ch) => ch.value.to_string(),
+                    other => {
+                        self.emit_error(format!(
+                            "string method 'replace' expects a string replacement, found {:?}",
+                            other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                self.set_pending_expr_ty(Some(Ty::Primitive(TypePrimitive::String)));
+                return Value::string(hay.replace(&from, &to));
+            }
+
+            if select.field.name.as_str() == "to_string" && invoke.args.is_empty() {
+                let value = self.eval_expr(select.obj.as_mut());
+                self.set_pending_expr_ty(Some(Ty::Primitive(TypePrimitive::String)));
+                return match value {
+                    Value::String(_) => value,
+                    Value::Int(int_val) => Value::string(int_val.value.to_string()),
+                    Value::Decimal(dec_val) => Value::string(dec_val.value.to_string()),
+                    Value::BigInt(int_val) => Value::string(int_val.value.to_string()),
+                    Value::BigDecimal(dec_val) => Value::string(dec_val.value.to_string()),
+                    Value::Bool(bool_val) => Value::string(bool_val.value.to_string()),
+                    Value::Char(char_val) => Value::string(char_val.value.to_string()),
+                    other => {
+                        self.emit_error(format!(
+                            "'to_string' is only supported on primitive compile-time values, found {:?}",
+                            other
+                        ));
+                        Value::undefined()
+                    }
+                };
+            }
+
+            if select.field.name.as_str() == "iter" && invoke.args.is_empty() {
+                let value = self.eval_expr(select.obj.as_mut());
+                return match value {
+                    Value::List(list) => Value::List(list),
+                    other => {
+                        self.emit_error(format!(
+                            "'iter' is only supported on compile-time arrays and lists, found {:?}",
+                            other
+                        ));
+                        Value::undefined()
+                    }
+                };
+            }
+
+            if select.field.name.as_str() == "enumerate" && invoke.args.is_empty() {
+                let value = self.eval_expr(select.obj.as_mut());
+                return match value {
+                    Value::List(list) => {
+                        let values = list
+                            .values
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, value)| {
+                                Value::Tuple(ValueTuple::new(vec![Value::int(idx as i64), value]))
+                            })
+                            .collect();
+                        Value::List(ValueList::new(values))
+                    }
+                    other => {
+                        self.emit_error(format!(
+                            "'enumerate' is only supported on compile-time arrays and lists, found {:?}",
+                            other
+                        ));
+                        Value::undefined()
+                    }
+                };
+            }
+
+            let flow = self.eval_invoke_runtime_flow(invoke);
+            return self.finish_runtime_flow(flow);
+        }
+
+        match &mut invoke.target {
+            ExprInvokeTarget::Function(locator) => {
+                let mut locator = locator.clone();
+                if let Some(ident) = locator.as_ident() {
+                    if ident.as_str() == "type" {
+                        if invoke.args.len() != 1 {
+                            self.emit_error("type expects exactly one argument");
+                            return Value::undefined();
+                        }
+                        let value = self.eval_expr(&mut invoke.args[0]);
+                        return match value {
+                            Value::Type(ty) => Value::Type(self.materialize_type(ty)),
+                            other => Value::Type(self.type_from_value(&other)),
+                        };
+                    }
+                }
+                if invoke.args.is_empty() {
+                    if let Some(value) = self.try_eval_method_chain(&locator) {
+                        return value;
+                    }
+                }
+
+                if let Some(value) =
+                    self.try_handle_const_collection_invoke(&locator, &mut invoke.args)
+                {
+                    return value;
+                }
+
+                if let Some(function) =
+                    self.resolve_function_call(&mut locator, invoke, ResolutionMode::Default)
+                {
+                    invoke.target = ExprInvokeTarget::Function(locator.clone());
+                    let evaluated =
+                        match self.evaluate_invoke_args(invoke, Some(&function.sig.params)) {
+                            Ok(values) => values,
+                            Err(_) => return Value::undefined(),
+                        };
+                    if let Some(lang_name) = super::function_lang_item(&function) {
+                        if let Some(handler) = super::resolve_lang_item_handler(&lang_name) {
+                            let _command_mock_state = super::ScopedCommandMockState::enter(
+                                self.command_mock_state.clone(),
+                            );
+                            return match handler(&evaluated) {
+                                Ok(value) => value,
+                                Err(err) => {
+                                    self.emit_error(format!(
+                                        "lang item '{}' call failed: {}",
+                                        lang_name, err
+                                    ));
+                                    Value::undefined()
+                                }
+                            };
+                        }
+                    }
+                    if let Some(stack) = Self::module_stack_from_locator(&locator) {
+                        let saved = std::mem::take(&mut self.module_stack);
+                        self.module_stack = stack;
+                        let value = self.call_function(function, evaluated);
+                        self.module_stack = saved;
+                        return value;
+                    }
+                    return self.call_function(function, evaluated);
+                }
+
+                if let Some(Value::Function(function)) = self.lookup_callable_value(&locator) {
+                    let evaluated =
+                        match self.evaluate_invoke_args(invoke, Some(&function.sig.params)) {
+                            Ok(values) => values,
+                            Err(_) => return Value::undefined(),
+                        };
+                    return self.call_value_function(&function, evaluated);
+                }
+
+                self.emit_error(format!("cannot resolve function '{}'", locator));
+                Value::undefined()
+            }
+            ExprInvokeTarget::Expr(expr) => {
+                let target = self.eval_expr(expr.as_mut());
+                match target {
+                    Value::Function(function) => {
+                        let evaluated =
+                            match self.evaluate_invoke_args(invoke, Some(&function.sig.params)) {
+                                Ok(values) => values,
+                                Err(_) => return Value::undefined(),
+                            };
+                        self.call_value_function(&function, evaluated)
+                    }
+                    _ => {
+                        self.emit_error(
+                            "attempted to call a non-function value in const evaluation",
+                        );
+                        Value::undefined()
+                    }
+                }
+            }
+            ExprInvokeTarget::Closure(func) => {
+                let func = func.clone();
+                let params = func.sig.params.clone();
+                let ret_ty = Self::value_function_ret_ty(&func);
+                let args = match self.evaluate_invoke_args(invoke, Some(&params)) {
+                    Ok(values) => values,
+                    Err(_) => return Value::undefined(),
+                };
+                self.set_pending_expr_ty(ret_ty);
+                self.call_value_function(&func, args)
+            }
+            ExprInvokeTarget::Type(_) | ExprInvokeTarget::BinOp(_) => {
+                let evaluated = match self.evaluate_invoke_args(invoke, None) {
+                    Ok(values) => values,
+                    Err(_) => return Value::undefined(),
+                };
+                Value::Tuple(ValueTuple::new(evaluated))
+            }
+            ExprInvokeTarget::Method(_) => unreachable!(),
+        }
+    }
+
+    fn module_stack_from_locator(locator: &Name) -> Option<Vec<String>> {
+        let path = match locator {
+            Name::Path(path) => path,
+            Name::ParameterPath(param_path) => {
+                if param_path.segments.len() <= 1 {
+                    return None;
+                }
+                return Some(
+                    param_path
+                        .segments
+                        .iter()
+                        .take(param_path.segments.len().saturating_sub(1))
+                        .map(|seg| seg.ident.as_str().to_string())
+                        .collect(),
+                );
+            }
+            _ => return None,
+        };
+        if path.segments.len() <= 1 {
+            return None;
+        }
+        Some(
+            path.segments
+                .iter()
+                .take(path.segments.len().saturating_sub(1))
+                .map(|seg| seg.name.clone())
+                .collect(),
+        )
+    }
+
+    fn try_eval_method_chain(&mut self, locator: &Name) -> Option<Value> {
+        let text = locator.to_string();
+        if !text.contains('.') {
+            return None;
+        }
+
+        let mut segments = text.split('.');
+        let base = segments.next()?;
+        let mut value = self.lookup_value(base)?;
+
+        for method in segments {
+            match method {
+                "iter" => match value {
+                    Value::List(list) => value = Value::List(list),
+                    other => {
+                        self.emit_error(format!(
+                            "'iter' is only supported on compile-time arrays and lists, found {:?}",
+                            other
+                        ));
+                        return Some(Value::undefined());
+                    }
+                },
+                "enumerate" => match value {
+                    Value::List(list) => {
+                        let values = list
+                            .values
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, value)| {
+                                Value::Tuple(ValueTuple::new(vec![Value::int(idx as i64), value]))
+                            })
+                            .collect();
+                        value = Value::List(ValueList::new(values));
+                    }
+                    other => {
+                        self.emit_error(format!(
+                            "'enumerate' is only supported on compile-time arrays and lists, found {:?}",
+                            other
+                        ));
+                        return Some(Value::undefined());
+                    }
+                },
+                _ => return None,
+            }
+        }
+
+        Some(value)
+    }
+
+    pub(super) fn eval_invoke_runtime(&mut self, invoke: &mut ExprInvoke) -> Value {
+        let flow = self.eval_invoke_runtime_flow(invoke);
+        self.finish_runtime_flow(flow)
+    }
+
+    pub(super) fn eval_invoke_runtime_flow(&mut self, invoke: &mut ExprInvoke) -> RuntimeFlow {
+        if let ExprInvokeTarget::Function(locator) = &invoke.target {
+            if let Some(ident) = locator.as_ident() {
+                if ident.as_str() == "panic" {
+                    let mut call = ExprIntrinsicCall::new(
+                        IntrinsicCallKind::Panic,
+                        std::mem::take(&mut invoke.args),
+                        std::mem::take(&mut invoke.kwargs),
+                    );
+                    return self.eval_intrinsic_runtime(&mut call);
+                }
+            }
+        }
+        if let Some(mut call) = intrinsic_call_from_invoke(invoke) {
+            return self.eval_intrinsic_runtime(&mut call);
+        }
+        if !invoke.kwargs.is_empty() {
+            match invoke.target {
+                ExprInvokeTarget::Function(_) => {}
+                _ => {
+                    self.emit_error("keyword arguments are only supported on function calls");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+            }
+        }
+        match &mut invoke.target {
+            ExprInvokeTarget::Method(select) => {
+                return self.eval_method_call_runtime(select, &mut invoke.args);
+            }
+            ExprInvokeTarget::Function(locator) => {
+                let mut locator = locator.clone();
+                if let Some(ident) = locator.as_ident() {
+                    if ident.as_str() == "type" {
+                        if invoke.args.len() != 1 {
+                            self.emit_error("type expects exactly one argument");
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                        let flow = self.eval_expr_runtime(&mut invoke.args[0]);
+                        let value = self.finish_runtime_flow(flow);
+                        let output = match value {
+                            Value::Type(ty) => Value::Type(self.materialize_type(ty)),
+                            other => Value::Type(self.type_from_value(&other)),
+                        };
+                        return RuntimeFlow::Value(output);
+                    }
+                    if ident.as_str() == "import" {
+                        if !invoke.kwargs.is_empty() {
+                            self.emit_error("import does not accept keyword arguments");
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                        if invoke.args.len() != 1 {
+                            self.emit_error("import expects exactly one argument");
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                        let value = match self.eval_expr_runtime(&mut invoke.args[0]) {
+                            RuntimeFlow::Value(value) => value,
+                            other => return other,
+                        };
+                        let Value::String(spec) = value else {
+                            self.emit_error("import expects a string argument");
+                            return RuntimeFlow::Value(Value::undefined());
+                        };
+                        let context = match self.module_resolution.as_ref() {
+                            Some(context) => context,
+                            None => {
+                                self.emit_error("import requires a workspace graph");
+                                return RuntimeFlow::Value(Value::undefined());
+                            }
+                        };
+                        let current_module = context
+                            .current_module
+                            .as_ref()
+                            .and_then(|module_id| context.graph.module(module_id));
+                        let language = current_module
+                            .map(|module| module.language.clone())
+                            .unwrap_or(ModuleLanguage::Ferro);
+                        let resolver = match context.resolvers.resolver_for(&language) {
+                            Some(resolver) => resolver,
+                            None => {
+                                self.emit_error(format!(
+                                    "no resolver registered for module language {:?}",
+                                    language
+                                ));
+                                return RuntimeFlow::Value(Value::undefined());
+                            }
+                        };
+                        let module_import = ModuleImport::new(spec.value.clone());
+                        let module_id = match resolver.resolve_module(
+                            &module_import,
+                            current_module,
+                            &context.graph,
+                        ) {
+                            Ok(module_id) => module_id,
+                            Err(err) => {
+                                self.emit_error(format!("import resolution failed: {}", err));
+                                return RuntimeFlow::Value(Value::undefined());
+                            }
+                        };
+                        return RuntimeFlow::Value(Value::Any(AnyBox::new(ImportedModule {
+                            module: module_id,
+                        })));
+                    }
+                }
+                if let Some(info) = self.lookup_enum_variant(&locator) {
+                    if let EnumVariantPayload::Tuple(arity) = info.payload {
+                        let args = match self.evaluate_args_runtime(&mut invoke.args) {
+                            Ok(values) => values,
+                            Err(flow) => return flow,
+                        };
+                        if args.len() != arity {
+                            self.emit_error(format!(
+                                "enum variant {} expects {} argument(s), got {}",
+                                info.variant_name,
+                                arity,
+                                args.len()
+                            ));
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                        let payload = if args.len() == 1 {
+                            args.into_iter().next()
+                        } else {
+                            Some(Value::Tuple(ValueTuple::new(args)))
+                        };
+                        return RuntimeFlow::Value(self.build_enum_value(&info, payload));
+                    }
+                }
+
+                if self.is_printf_symbol(&locator.to_string()) {
+                    let evaluated = match self.evaluate_args_runtime(&mut invoke.args) {
+                        Ok(values) => values,
+                        Err(flow) => return flow,
+                    };
+                    if let Some(Value::String(format_str)) = evaluated.first() {
+                        match format_runtime_string(&format_str.value, &evaluated[1..]) {
+                            Ok(output) => {
+                                if !output.is_empty() {
+                                    self.emit_stdout_fragment(output);
+                                }
+                            }
+                            Err(err) => self.emit_error(err.to_string()),
+                        }
+                    } else {
+                        self.emit_error(
+                            "printf expects a string literal as the first argument at runtime",
+                        );
+                    }
+                    return RuntimeFlow::Value(Value::unit());
+                }
+
+                if let Some(flow) =
+                    self.try_eval_runtime_receiver_function_call(&locator, &mut invoke.args)
+                {
+                    return flow;
+                }
+
+                if let Some(flow) =
+                    self.try_eval_std_net_function_runtime(&locator, &mut invoke.args)
+                {
+                    return flow;
+                }
+
+                if let Some(function) =
+                    self.resolve_function_call(&mut locator, invoke, ResolutionMode::Default)
+                {
+                    invoke.target = ExprInvokeTarget::Function(locator.clone());
+                    let args = match self.evaluate_invoke_args(invoke, Some(&function.sig.params)) {
+                        Ok(values) => values,
+                        Err(flow) => return flow,
+                    };
+                    if !Self::invoke_has_splat(invoke) {
+                        for (expr, value) in invoke.args.iter_mut().zip(args.iter()) {
+                            if expr.ty().is_none() {
+                                if let Some(ty) = self.infer_value_ty(value) {
+                                    expr.set_ty(ty);
+                                }
+                            }
+                        }
+                    }
+                    if let Some(lang_name) = super::function_lang_item(&function) {
+                        if let Some(handler) = super::resolve_lang_item_handler(&lang_name) {
+                            let _command_mock_state = super::ScopedCommandMockState::enter(
+                                self.command_mock_state.clone(),
+                            );
+                            return match handler(&args) {
+                                Ok(value) => RuntimeFlow::Value(value),
+                                Err(err) => {
+                                    self.emit_error(format!(
+                                        "lang item '{}' call failed: {}",
+                                        lang_name, err
+                                    ));
+                                    RuntimeFlow::Value(Value::undefined())
+                                }
+                            };
+                        }
+                    }
+                    let mut impl_context = None;
+                    let segments = Self::locator_segments(&locator);
+                    if segments.len() >= 2 {
+                        let self_ty = segments[segments.len() - 2].clone();
+                        let method_name = segments[segments.len() - 1].as_str();
+                        if let Some(methods) = self.impl_methods.get(&self_ty) {
+                            if methods.contains_key(method_name) {
+                                impl_context = Some(ImplContext {
+                                    self_ty: Some(self_ty),
+                                    trait_ty: None,
+                                });
+                            }
+                        }
+                    }
+
+                    if let Some(context) = impl_context {
+                        self.impl_stack.push(context);
+                        let flow = if let Some(stack) = Self::module_stack_from_locator(&locator) {
+                            let saved = std::mem::take(&mut self.module_stack);
+                            self.module_stack = stack;
+                            let flow = self.call_function_runtime(function, args);
+                            self.module_stack = saved;
+                            flow
+                        } else {
+                            self.call_function_runtime(function, args)
+                        };
+                        self.impl_stack.pop();
+                        return flow;
+                    }
+                    if let Some(stack) = Self::module_stack_from_locator(&locator) {
+                        let saved = std::mem::take(&mut self.module_stack);
+                        self.module_stack = stack;
+                        let flow = self.call_function_runtime(function, args);
+                        self.module_stack = saved;
+                        return flow;
+                    }
+                    return self.call_function_runtime(function, args);
+                }
+
+                if let Some(value) =
+                    self.try_handle_const_collection_invoke(&locator, &mut invoke.args)
+                {
+                    return RuntimeFlow::Value(value);
+                }
+
+                let mut candidate_names = vec![locator.to_string()];
+                if let Some(ident) = locator.as_ident() {
+                    candidate_names.push(ident.as_str().to_string());
+                }
+                for name in candidate_names {
+                    if let Some(template) = self.generic_functions.get(&name) {
+                        let function = template.function.clone();
+                        let params = function.sig.params.clone();
+                        let args = match self.evaluate_invoke_args(invoke, Some(&params)) {
+                            Ok(values) => values,
+                            Err(flow) => return flow,
+                        };
+                        if let Some(stack) = Self::module_stack_from_locator(&locator) {
+                            let saved = std::mem::take(&mut self.module_stack);
+                            self.module_stack = stack;
+                            let flow = self.call_function_runtime(function.clone(), args);
+                            self.module_stack = saved;
+                            return flow;
+                        }
+                        return self.call_function_runtime(function, args);
+                    }
+                }
+
+                let mut extern_candidate_names = vec![locator.to_string()];
+                if let Some(ident) = locator.as_ident() {
+                    extern_candidate_names.push(ident.as_str().to_string());
+                }
+                for name in extern_candidate_names {
+                    if let Some(binding) = self.extern_functions.get(&name).cloned() {
+                        let args = match self.evaluate_invoke_args(invoke, None) {
+                            Ok(values) => values,
+                            Err(flow) => return flow,
+                        };
+                        return self.call_extern_function_runtime(&name, &binding, &args);
+                    }
+                }
+
+                if let Some(value) = self.lookup_callable_value(&locator) {
+                    match value {
+                        Value::Function(function) => {
+                            let args = match self
+                                .evaluate_invoke_args(invoke, Some(&function.sig.params))
+                            {
+                                Ok(values) => values,
+                                Err(flow) => return flow,
+                            };
+                            return self.call_value_function_runtime(&function, args);
+                        }
+                        Value::Any(any) => {
+                            if let Some(closure) = any.downcast_ref::<ConstClosure>() {
+                                let args = match self.evaluate_invoke_args(invoke, None) {
+                                    Ok(values) => values,
+                                    Err(flow) => return flow,
+                                };
+                                return self.call_const_closure_runtime(closure, args);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                self.emit_error(format!("cannot resolve function '{}'", locator));
+                RuntimeFlow::Value(Value::undefined())
+            }
+            ExprInvokeTarget::Expr(expr) => {
+                let target = match self.eval_expr_runtime(expr.as_mut()) {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                match target {
+                    Value::Function(function) => {
+                        let args =
+                            match self.evaluate_invoke_args(invoke, Some(&function.sig.params)) {
+                                Ok(values) => values,
+                                Err(flow) => return flow,
+                            };
+                        self.call_value_function_runtime(&function, args)
+                    }
+                    Value::Any(any) => {
+                        if let Some(symbol) = any.downcast_ref::<ImportedSymbol>() {
+                            let Some(module_path) = self.module_id_path(&symbol.module) else {
+                                self.emit_error(
+                                    "unable to resolve module path for imported symbol",
+                                );
+                                return RuntimeFlow::Value(Value::undefined());
+                            };
+                            let mut segments = module_path
+                                .split("::")
+                                .filter(|segment| !segment.is_empty())
+                                .map(|segment| Ident::new(segment.to_string()))
+                                .collect::<Vec<_>>();
+                            segments.push(Ident::new(symbol.symbol.name.clone()));
+                            let mut locator = Name::path(Path::new(PathPrefix::Plain, segments));
+                            if let Some(function) = self.resolve_function_call(
+                                &mut locator,
+                                invoke,
+                                ResolutionMode::Default,
+                            ) {
+                                invoke.target = ExprInvokeTarget::Function(locator.clone());
+                                let args = match self
+                                    .evaluate_invoke_args(invoke, Some(&function.sig.params))
+                                {
+                                    Ok(values) => values,
+                                    Err(flow) => return flow,
+                                };
+                                if let Some(stack) = Self::module_stack_from_locator(&locator) {
+                                    let saved = std::mem::take(&mut self.module_stack);
+                                    self.module_stack = stack;
+                                    let flow = self.call_function_runtime(function, args);
+                                    self.module_stack = saved;
+                                    return flow;
+                                }
+                                return self.call_function_runtime(function, args);
+                            }
+                            self.emit_error("unable to resolve imported function");
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                        if let Some(closure) = any.downcast_ref::<ConstClosure>() {
+                            let args = match self.evaluate_invoke_args(invoke, None) {
+                                Ok(values) => values,
+                                Err(flow) => return flow,
+                            };
+                            return self.call_const_closure_runtime(closure, args);
+                        }
+                        self.emit_error("attempted to call a non-function value at runtime");
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                    _ => {
+                        self.emit_error("attempted to call a non-function value at runtime");
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                }
+            }
+            ExprInvokeTarget::Closure(func) => {
+                let func = func.clone();
+                let params = func.sig.params.clone();
+                let args = match self.evaluate_invoke_args(invoke, Some(&params)) {
+                    Ok(values) => values,
+                    Err(flow) => return flow,
+                };
+                let ret_ty = Self::value_function_ret_ty(&func);
+                self.set_pending_expr_ty(ret_ty);
+                self.call_value_function_runtime(&func, args)
+            }
+            ExprInvokeTarget::Type(_) | ExprInvokeTarget::BinOp(_) => {
+                let args = match self.evaluate_invoke_args(invoke, None) {
+                    Ok(values) => values,
+                    Err(flow) => return flow,
+                };
+                RuntimeFlow::Value(Value::Tuple(ValueTuple::new(args)))
+            }
+        }
+    }
+
+    pub(super) fn evaluate_args_runtime(
+        &mut self,
+        args: &mut Vec<Expr>,
+    ) -> std::result::Result<Vec<Value>, RuntimeFlow> {
+        let mut values = Vec::with_capacity(args.len());
+        for arg in args.iter_mut() {
+            match arg.kind_mut() {
+                ExprKind::Splat(splat) => match self.eval_expr_runtime(splat.iter.as_mut()) {
+                    RuntimeFlow::Value(Value::List(list)) => values.extend(list.values),
+                    RuntimeFlow::Value(Value::Tuple(tuple)) => values.extend(tuple.values),
+                    RuntimeFlow::Value(_) => {
+                        self.emit_error("splat expects a list or tuple value");
+                        return Err(RuntimeFlow::Value(Value::undefined()));
+                    }
+                    other => return Err(other),
+                },
+                ExprKind::SplatDict(_) => {
+                    self.emit_error("splat dict is not supported in positional arguments");
+                    return Err(RuntimeFlow::Value(Value::undefined()));
+                }
+                _ => match self.eval_expr_runtime(arg) {
+                    RuntimeFlow::Value(value) => values.push(value),
+                    other => return Err(other),
+                },
+            }
+        }
+        Ok(values)
+    }
+
+    fn eval_method_call_runtime(
+        &mut self,
+        select: &mut fp_core::ast::ExprSelect,
+        args: &mut Vec<Expr>,
+    ) -> RuntimeFlow {
+        if let Some(flow) = self.try_eval_std_net_associated_method_runtime(select, args) {
+            return flow;
+        }
+
+        let receiver = self.resolve_receiver_binding(select.obj.as_mut());
+        let method_name = select.field.name.as_str().to_string();
+        if let Some(flow) = self.try_eval_option_method(&receiver.value, &method_name, args) {
+            return flow;
+        }
+        if let Some(flow) = self.try_eval_json_value_method(&receiver.value, &method_name, args) {
+            return flow;
+        }
+        if let Some(flow) = self.try_eval_json_number_method(&receiver.value, &method_name, args) {
+            return flow;
+        }
+        if let Some(flow) =
+            self.try_eval_std_net_method_runtime(&receiver.value, &method_name, args)
+        {
+            return flow;
+        }
+
+        if matches!(
+            method_name.as_str(),
+            "has_field"
+                | "has_method"
+                | "fields"
+                | "method_count"
+                | "field_name_at"
+                | "field_type"
+                | "type_name"
+                | "struct_size"
+        ) {
+            let arg_values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return flow,
+            };
+            if let Some(value) =
+                self.eval_type_method_call(receiver.value.clone(), method_name.as_str(), arg_values)
+            {
+                return RuntimeFlow::Value(value);
+            }
+        }
+        if let Some(function) = self.resolve_method_function(&receiver, &method_name, args) {
+            let arg_values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return flow,
+            };
+            return self.call_method_runtime(function, receiver, arg_values);
+        }
+
+        if matches!(
+            method_name.as_str(),
+            "starts_with" | "ends_with" | "contains"
+        ) && args.len() == 1
+        {
+            if let Value::String(receiver_text) = &receiver.value {
+                let needle = match self.evaluate_args_runtime(args) {
+                    Ok(mut values) => values.pop().unwrap_or_else(Value::undefined),
+                    Err(flow) => return flow,
+                };
+                let needle = match needle {
+                    Value::String(text) => text.value,
+                    Value::Char(ch) => ch.value.to_string(),
+                    other => {
+                        self.emit_error(format!(
+                            "string method '{}' expects a string argument, found {:?}",
+                            method_name, other
+                        ));
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                };
+                let result = match method_name.as_str() {
+                    "starts_with" => receiver_text.value.starts_with(&needle),
+                    "ends_with" => receiver_text.value.ends_with(&needle),
+                    "contains" => receiver_text.value.contains(&needle),
+                    _ => false,
+                };
+                return RuntimeFlow::Value(Value::bool(result));
+            }
+        }
+
+        if method_name.as_str() == "contains" && args.len() == 1 {
+            let Value::List(list) = &receiver.value else {
+                self.emit_error("contains expects a list receiver");
+                return RuntimeFlow::Value(Value::undefined());
+            };
+            let needle = match self.evaluate_args_runtime(args) {
+                Ok(values) => values.into_iter().next().unwrap_or_else(Value::undefined),
+                Err(flow) => return flow,
+            };
+            let found = list.values.iter().any(|value| match value {
+                Value::Structural(structural) => {
+                    if let Some(field) = structural.get_field(&Ident::new("name".to_string())) {
+                        field.value == needle
+                    } else {
+                        *value == needle
+                    }
+                }
+                _ => *value == needle,
+            });
+            return RuntimeFlow::Value(Value::bool(found));
+        }
+
+        if method_name == "join" && args.len() == 1 {
+            let separator = match self.evaluate_args_runtime(args) {
+                Ok(mut values) => values.pop().unwrap_or_else(Value::undefined),
+                Err(flow) => return flow,
+            };
+            let separator = match separator {
+                Value::String(text) => text.value,
+                other => {
+                    self.emit_error(format!(
+                        "join expects a string separator, found {:?}",
+                        other
+                    ));
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+            };
+            let Value::List(list) = &receiver.value else {
+                self.emit_error("join expects a list receiver");
+                return RuntimeFlow::Value(Value::undefined());
+            };
+            let mut parts = Vec::with_capacity(list.values.len());
+            for value in &list.values {
+                match value {
+                    Value::String(text) => parts.push(text.value.clone()),
+                    Value::Char(ch) => parts.push(ch.value.to_string()),
+                    other => {
+                        self.emit_error(format!(
+                            "join expects string list items, found {:?}",
+                            other
+                        ));
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                }
+            }
+            return RuntimeFlow::Value(Value::string(parts.join(&separator)));
+        }
+
+        if args.is_empty() {
+            match method_name.as_str() {
+                "len" => match receiver.value {
+                    Value::List(list) => {
+                        return RuntimeFlow::Value(Value::int(list.values.len() as i64));
+                    }
+                    Value::Tuple(tuple) => {
+                        return RuntimeFlow::Value(Value::int(tuple.values.len() as i64));
+                    }
+                    Value::String(string) => {
+                        return RuntimeFlow::Value(Value::int(string.value.chars().count() as i64));
+                    }
+                    Value::Map(map) => {
+                        return RuntimeFlow::Value(Value::int(map.entries.len() as i64));
+                    }
+                    Value::QuoteToken(ref token) => match &token.value {
+                        QuoteTokenValue::Items(items) => {
+                            return RuntimeFlow::Value(Value::int(items.len() as i64));
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                },
+                "iter" => match receiver.value {
+                    Value::List(list) => return RuntimeFlow::Value(Value::List(list)),
+                    Value::String(string) => {
+                        let chars = string
+                            .value
+                            .chars()
+                            .map(|ch| Value::Char(fp_core::ast::ValueChar::new(ch)))
+                            .collect();
+                        return RuntimeFlow::Value(Value::List(ValueList::new(chars)));
+                    }
+                    _ => {}
+                },
+                "enumerate" => match receiver.value {
+                    Value::List(list) => {
+                        let items = list
+                            .values
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, value)| {
+                                Value::Tuple(ValueTuple::new(vec![Value::int(idx as i64), value]))
+                            })
+                            .collect();
+                        return RuntimeFlow::Value(Value::List(ValueList::new(items)));
+                    }
+                    Value::String(string) => {
+                        let items = string
+                            .value
+                            .chars()
+                            .enumerate()
+                            .map(|(idx, ch)| {
+                                Value::Tuple(ValueTuple::new(vec![
+                                    Value::int(idx as i64),
+                                    Value::Char(fp_core::ast::ValueChar::new(ch)),
+                                ]))
+                            })
+                            .collect();
+                        return RuntimeFlow::Value(Value::List(ValueList::new(items)));
+                    }
+                    _ => {}
+                },
+                "to_string" => {
+                    let value = match receiver.value {
+                        Value::String(value) => Value::String(value),
+                        Value::Int(value) => Value::string(value.value.to_string()),
+                        Value::Decimal(value) => Value::string(value.value.to_string()),
+                        Value::BigInt(value) => Value::string(value.value.to_string()),
+                        Value::BigDecimal(value) => Value::string(value.value.to_string()),
+                        Value::Bool(value) => Value::string(value.value.to_string()),
+                        Value::Char(value) => Value::string(value.value.to_string()),
+                        other => {
+                            self.emit_error(format!(
+                                "'to_string' is only supported on primitive runtime values, found {:?}",
+                                other
+                            ));
+                            Value::undefined()
+                        }
+                    };
+                    return RuntimeFlow::Value(value);
+                }
+                _ => {}
+            }
+        }
+
+        if method_name == "push" && args.len() == 1 {
+            let value = match self.evaluate_args_runtime(args) {
+                Ok(mut values) => values.pop().unwrap_or_else(Value::undefined),
+                Err(flow) => return flow,
+            };
+            let Some(shared) = receiver.shared else {
+                self.emit_error("push requires a mutable receiver");
+                return RuntimeFlow::Value(Value::undefined());
+            };
+            let mut guard = match shared.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+            match &mut *guard {
+                Value::List(list) => {
+                    list.values.push(value);
+                    return RuntimeFlow::Value(Value::unit());
+                }
+                other => {
+                    self.emit_error(format!(
+                        "'push' is only supported on Vec values, found {:?}",
+                        other
+                    ));
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+            }
+        }
+
+        if method_name == "contains_key" && args.len() == 1 {
+            let key = match self.evaluate_args_runtime(args) {
+                Ok(mut values) => values.pop().unwrap_or_else(Value::undefined),
+                Err(flow) => return flow,
+            };
+            if let Value::Map(map) = &receiver.value {
+                return RuntimeFlow::Value(Value::bool(
+                    map.entries.iter().any(|entry| entry.key == key),
+                ));
+            }
+        }
+
+        if method_name == "get_unchecked" && args.len() == 1 {
+            let key = match self.evaluate_args_runtime(args) {
+                Ok(mut values) => values.pop().unwrap_or_else(Value::undefined),
+                Err(flow) => return flow,
+            };
+            if let Value::Map(map) = &receiver.value {
+                if let Some(value) = map.get(&key) {
+                    return RuntimeFlow::Value(value.clone());
+                }
+                self.emit_error("HashMap::get_unchecked key not found");
+                return RuntimeFlow::Value(Value::undefined());
+            }
+        }
+
+        if method_name == "insert" && args.len() == 2 {
+            let arg_values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return flow,
+            };
+            let key = arg_values.first().cloned().unwrap_or_else(Value::undefined);
+            let value = arg_values.get(1).cloned().unwrap_or_else(Value::undefined);
+
+            let Some(shared) = receiver.shared.as_ref() else {
+                self.emit_error("insert requires a mutable receiver");
+                return RuntimeFlow::Value(Value::undefined());
+            };
+
+            let mut guard = match shared.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+
+            match &mut *guard {
+                Value::Map(map) => {
+                    map.insert(key, value);
+                    return RuntimeFlow::Value(Value::unit());
+                }
+                _ => {}
+            }
+        }
+
+        if method_name == "clear" && args.is_empty() {
+            let Some(shared) = receiver.shared.as_ref() else {
+                self.emit_error("clear requires a mutable receiver");
+                return RuntimeFlow::Value(Value::undefined());
+            };
+
+            let mut guard = match shared.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+
+            match &mut *guard {
+                Value::Map(map) => {
+                    map.entries.clear();
+                    return RuntimeFlow::Value(Value::unit());
+                }
+                _ => {}
+            }
+        }
+
+        if method_name == "is_empty" && args.is_empty() {
+            if let Value::Map(map) = &receiver.value {
+                return RuntimeFlow::Value(Value::bool(map.entries.is_empty()));
+            }
+        }
+
+        if method_name == "replace" && args.len() == 2 {
+            let arg_values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return flow,
+            };
+            let from = arg_values.first().cloned().unwrap_or_else(Value::undefined);
+            let to = arg_values.get(1).cloned().unwrap_or_else(Value::undefined);
+            let Value::String(receiver_text) = receiver.value else {
+                self.emit_error("string method 'replace' expects a string receiver");
+                return RuntimeFlow::Value(Value::undefined());
+            };
+            let from = match from {
+                Value::String(text) => text.value,
+                Value::Char(ch) => ch.value.to_string(),
+                other => {
+                    self.emit_error(format!(
+                        "string method 'replace' expects a string needle, found {:?}",
+                        other
+                    ));
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+            };
+            let to = match to {
+                Value::String(text) => text.value,
+                Value::Char(ch) => ch.value.to_string(),
+                other => {
+                    self.emit_error(format!(
+                        "string method 'replace' expects a string replacement, found {:?}",
+                        other
+                    ));
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+            };
+            return RuntimeFlow::Value(Value::string(receiver_text.value.replace(&from, &to)));
+        }
+
+        self.emit_error(format!("cannot resolve method '{}'", method_name));
+        return RuntimeFlow::Value(Value::undefined());
+    }
+
+    fn try_eval_json_value_method(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        let Value::Any(any) = receiver else {
+            return None;
+        };
+        let enum_value = any.downcast_ref::<RuntimeEnum>()?;
+        if enum_value.enum_name != "Value" {
+            return None;
+        }
+
+        let make_option_some = |value: Value| {
+            Value::Any(AnyBox::new(RuntimeEnum {
+                enum_name: "Option".to_string(),
+                variant_name: "Some".to_string(),
+                payload: Some(value),
+                discriminant: None,
+            }))
+        };
+        let make_option_none = || {
+            Value::Any(AnyBox::new(RuntimeEnum {
+                enum_name: "Option".to_string(),
+                variant_name: "None".to_string(),
+                payload: None,
+                discriminant: None,
+            }))
+        };
+
+        match method_name {
+            "is_null" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "Null",
+                )));
+            }
+            "is_bool" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "Bool",
+                )));
+            }
+            "is_number" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "Number",
+                )));
+            }
+            "is_string" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "String",
+                )));
+            }
+            "is_array" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "Array",
+                )));
+            }
+            "is_object" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "Object",
+                )));
+            }
+            "as_bool" => {
+                let value = match enum_value.variant_name.as_str() {
+                    "Bool" => enum_value
+                        .payload
+                        .as_ref()
+                        .cloned()
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none),
+                    _ => make_option_none(),
+                };
+                return Some(RuntimeFlow::Value(value));
+            }
+            "as_str" => {
+                let value = match enum_value.variant_name.as_str() {
+                    "String" => enum_value
+                        .payload
+                        .as_ref()
+                        .cloned()
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none),
+                    _ => make_option_none(),
+                };
+                return Some(RuntimeFlow::Value(value));
+            }
+            "as_number" => {
+                let value = match enum_value.variant_name.as_str() {
+                    "Number" => enum_value
+                        .payload
+                        .as_ref()
+                        .cloned()
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none),
+                    _ => make_option_none(),
+                };
+                return Some(RuntimeFlow::Value(value));
+            }
+            "as_array" => {
+                let value = match enum_value.variant_name.as_str() {
+                    "Array" => enum_value
+                        .payload
+                        .as_ref()
+                        .cloned()
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none),
+                    _ => make_option_none(),
+                };
+                return Some(RuntimeFlow::Value(value));
+            }
+            "as_object" => {
+                let value = match enum_value.variant_name.as_str() {
+                    "Object" => enum_value
+                        .payload
+                        .as_ref()
+                        .cloned()
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none),
+                    _ => make_option_none(),
+                };
+                return Some(RuntimeFlow::Value(value));
+            }
+            "get" => {
+                if args.len() != 1 {
+                    return Some(RuntimeFlow::Value(make_option_none()));
+                }
+                let mut values = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let needle = values.pop().unwrap_or_else(Value::undefined);
+                let needle = match needle {
+                    Value::String(text) => text.value,
+                    other => {
+                        self.emit_error(format!(
+                            "Value::get expects a string key, found {:?}",
+                            other
+                        ));
+                        return Some(RuntimeFlow::Value(make_option_none()));
+                    }
+                };
+                if enum_value.variant_name != "Object" {
+                    return Some(RuntimeFlow::Value(make_option_none()));
+                }
+                let Some(Value::List(list)) = enum_value.payload.as_ref() else {
+                    return Some(RuntimeFlow::Value(make_option_none()));
+                };
+                for field in &list.values {
+                    let structural = match field {
+                        Value::Struct(value_struct) => &value_struct.structural,
+                        Value::Structural(structural) => structural,
+                        _ => continue,
+                    };
+                    let key = structural.get_field(&Ident::new("key".to_string()));
+                    let value = structural.get_field(&Ident::new("value".to_string()));
+                    let Some(key) = key else {
+                        continue;
+                    };
+                    let Some(value) = value else {
+                        continue;
+                    };
+                    if let Value::String(text) = &key.value {
+                        if text.value == needle {
+                            return Some(RuntimeFlow::Value(make_option_some(value.value.clone())));
+                        }
+                    }
+                }
+                return Some(RuntimeFlow::Value(make_option_none()));
+            }
+            "get_index" => {
+                if args.len() != 1 {
+                    return Some(RuntimeFlow::Value(make_option_none()));
+                }
+                let mut values = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let index_value = values.pop().unwrap_or_else(Value::undefined);
+                let idx = match self.numeric_to_non_negative_usize(&index_value, "index") {
+                    Some(value) => value,
+                    None => return Some(RuntimeFlow::Value(make_option_none())),
+                };
+                if enum_value.variant_name != "Array" {
+                    return Some(RuntimeFlow::Value(make_option_none()));
+                }
+                let Some(Value::List(list)) = enum_value.payload.as_ref() else {
+                    return Some(RuntimeFlow::Value(make_option_none()));
+                };
+                if let Some(value) = list.values.get(idx) {
+                    return Some(RuntimeFlow::Value(make_option_some(value.clone())));
+                }
+                return Some(RuntimeFlow::Value(make_option_none()));
+            }
+            _ => {}
+        }
+
+        None
+    }
+
+    fn try_eval_option_method(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        let Value::Any(any) = receiver else {
+            return None;
+        };
+        let enum_value = any.downcast_ref::<RuntimeEnum>()?;
+        if enum_value.enum_name != "Option" {
+            return None;
+        }
+
+        match method_name {
+            "is_some" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name == "Some",
+                )));
+            }
+            "is_none" => {
+                return Some(RuntimeFlow::Value(Value::bool(
+                    enum_value.variant_name != "Some",
+                )));
+            }
+            "unwrap" => {
+                if !args.is_empty() {
+                    self.emit_error("Option::unwrap expects no arguments");
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                }
+                return match enum_value.variant_name.as_str() {
+                    "Some" => Some(RuntimeFlow::Value(
+                        enum_value.payload.clone().unwrap_or_else(Value::unit),
+                    )),
+                    "None" => Some(RuntimeFlow::Panic(Value::string(
+                        "called Option::unwrap() on a None value".to_string(),
+                    ))),
+                    _ => Some(RuntimeFlow::Value(Value::undefined())),
+                };
+            }
+            "expect" => {
+                if args.len() != 1 {
+                    self.emit_error("Option::expect expects one message argument");
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                }
+                let mut values = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let message = match values.pop().unwrap_or_else(Value::undefined) {
+                    Value::String(text) => text.value,
+                    other => {
+                        self.emit_error(format!(
+                            "Option::expect expects a string message, found {:?}",
+                            other
+                        ));
+                        return Some(RuntimeFlow::Value(Value::undefined()));
+                    }
+                };
+                return match enum_value.variant_name.as_str() {
+                    "Some" => Some(RuntimeFlow::Value(
+                        enum_value.payload.clone().unwrap_or_else(Value::unit),
+                    )),
+                    "None" => Some(RuntimeFlow::Panic(Value::string(message))),
+                    _ => Some(RuntimeFlow::Value(Value::undefined())),
+                };
+            }
+            "unwrap_or" => {
+                if args.len() != 1 {
+                    self.emit_error("Option::unwrap_or expects one argument");
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                }
+                let mut values = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let default = values.pop().unwrap_or_else(Value::undefined);
+                return match enum_value.variant_name.as_str() {
+                    "Some" => Some(RuntimeFlow::Value(
+                        enum_value.payload.clone().unwrap_or_else(Value::unit),
+                    )),
+                    "None" => Some(RuntimeFlow::Value(default)),
+                    _ => Some(RuntimeFlow::Value(Value::undefined())),
+                };
+            }
+            _ => {}
+        }
+
+        None
+    }
+
+    fn try_eval_json_number_method(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        let Value::Struct(value_struct) = receiver else {
+            return None;
+        };
+        if value_struct.ty.name.as_str() != "Number" {
+            return None;
+        }
+        if !args.is_empty() {
+            return None;
+        }
+
+        let make_option_some = |value: Value| {
+            Value::Any(AnyBox::new(RuntimeEnum {
+                enum_name: "Option".to_string(),
+                variant_name: "Some".to_string(),
+                payload: Some(value),
+                discriminant: None,
+            }))
+        };
+        let make_option_none = || {
+            Value::Any(AnyBox::new(RuntimeEnum {
+                enum_name: "Option".to_string(),
+                variant_name: "None".to_string(),
+                payload: None,
+                discriminant: None,
+            }))
+        };
+
+        let structural = &value_struct.structural;
+        let field = |name: &str| {
+            structural
+                .get_field(&Ident::new(name.to_string()))
+                .map(|field| field.value.clone())
+        };
+
+        match method_name {
+            "as_i64" => {
+                let has = matches!(field("has_int"), Some(Value::Bool(flag)) if flag.value);
+                let value = if has {
+                    field("int")
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none)
+                } else {
+                    make_option_none()
+                };
+                Some(RuntimeFlow::Value(value))
+            }
+            "as_u64" => {
+                let has = matches!(field("has_uint"), Some(Value::Bool(flag)) if flag.value);
+                let value = if has {
+                    field("uint")
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none)
+                } else {
+                    make_option_none()
+                };
+                Some(RuntimeFlow::Value(value))
+            }
+            "as_f64" => {
+                let has = matches!(field("has_float"), Some(Value::Bool(flag)) if flag.value);
+                let value = if has {
+                    field("float")
+                        .map(make_option_some)
+                        .unwrap_or_else(make_option_none)
+                } else {
+                    make_option_none()
+                };
+                Some(RuntimeFlow::Value(value))
+            }
+            "is_i64" => {
+                let has = matches!(field("has_int"), Some(Value::Bool(flag)) if flag.value);
+                Some(RuntimeFlow::Value(Value::bool(has)))
+            }
+            "is_u64" => {
+                let has = matches!(field("has_uint"), Some(Value::Bool(flag)) if flag.value);
+                Some(RuntimeFlow::Value(Value::bool(has)))
+            }
+            "is_f64" => {
+                let has = matches!(field("has_float"), Some(Value::Bool(flag)) if flag.value);
+                Some(RuntimeFlow::Value(Value::bool(has)))
+            }
+            "to_string" => match field("raw") {
+                Some(Value::String(text)) => Some(RuntimeFlow::Value(Value::string(text.value))),
+                Some(value) => {
+                    self.emit_error(format!(
+                        "Number::to_string expected string field, got {:?}",
+                        value
+                    ));
+                    Some(RuntimeFlow::Value(Value::undefined()))
+                }
+                None => Some(RuntimeFlow::Value(Value::undefined())),
+            },
+            _ => None,
+        }
+    }
+
+    fn try_eval_std_net_associated_method_runtime(
+        &mut self,
+        select: &fp_core::ast::ExprSelect,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        let ExprKind::Name(type_name) = select.obj.kind() else {
+            return None;
+        };
+        let method_name = select.field.name.as_str();
+
+        if Self::locator_suffix_matches(type_name, &["SocketAddr"]) {
+            if method_name == "new" {
+                let values = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                if values.len() != 2 {
+                    self.emit_error("SocketAddr::new expects (host, port)");
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                }
+                let Some(host) = self.runtime_string_arg(&values[0], "SocketAddr::new host") else {
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                };
+                let Some(port) = self.runtime_port_arg(&values[1], "SocketAddr::new port") else {
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                };
+                return Some(RuntimeFlow::Value(Value::Any(AnyBox::new(
+                    RuntimeSocketAddr { host, port },
+                ))));
+            }
+            if method_name == "parse" {
+                let values = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                if values.len() != 1 {
+                    self.emit_error("SocketAddr::parse expects one address string");
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                }
+                let Some(addr) = self.runtime_string_arg(&values[0], "SocketAddr::parse addr")
+                else {
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                };
+                match std::net::SocketAddr::from_str(addr.as_str()) {
+                    Ok(socket_addr) => {
+                        return Some(RuntimeFlow::Value(Value::Any(AnyBox::new(
+                            RuntimeSocketAddr {
+                                host: socket_addr.ip().to_string(),
+                                port: socket_addr.port(),
+                            },
+                        ))));
+                    }
+                    Err(err) => {
+                        self.emit_error(format!("SocketAddr::parse failed: {}", err));
+                        return Some(RuntimeFlow::Value(Value::undefined()));
+                    }
+                }
+            }
+            return None;
+        }
+
+        if Self::locator_suffix_matches(type_name, &["TcpListener"]) && method_name == "bind" {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("TcpListener::bind expects one address argument");
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
+            }
+            let Some(addr) = self.runtime_socket_addr_arg(&values[0], "TcpListener::bind addr")
+            else {
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
+            };
+            match std::net::TcpListener::bind(addr) {
+                Ok(listener) => {
+                    let runtime_listener = RuntimeTcpListener {
+                        listener: Arc::new(listener),
+                    };
+                    let value = Value::Any(AnyBox::new(runtime_listener));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(value),
+                    ));
+                }
+                Err(err) => {
+                    self.emit_error(format!("TcpListener::bind failed: {}", err));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::undefined()),
+                    ));
+                }
+            }
+        }
+
+        if Self::locator_suffix_matches(type_name, &["TcpStream"]) && method_name == "connect" {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("TcpStream::connect expects one address argument");
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
+            }
+            let Some(addr) = self.runtime_socket_addr_arg(&values[0], "TcpStream::connect addr")
+            else {
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
+            };
+            match std::net::TcpStream::connect(addr) {
+                Ok(stream) => {
+                    let runtime_stream = RuntimeTcpStream {
+                        stream: Arc::new(Mutex::new(stream)),
+                        last_read: Arc::new(Mutex::new(Vec::new())),
+                    };
+                    let value = Value::Any(AnyBox::new(runtime_stream));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(value),
+                    ));
+                }
+                Err(err) => {
+                    self.emit_error(format!("TcpStream::connect failed: {}", err));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::undefined()),
+                    ));
+                }
+            }
+        }
+
+        if Self::locator_suffix_matches(type_name, &["UdpSocket"]) && method_name == "bind" {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("UdpSocket::bind expects one address argument");
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
+            }
+            let Some(addr) = self.runtime_socket_addr_arg(&values[0], "UdpSocket::bind addr")
+            else {
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
+            };
+            match std::net::UdpSocket::bind(addr) {
+                Ok(socket) => {
+                    let runtime_socket = RuntimeUdpSocket {
+                        socket: Arc::new(socket),
+                        last_recv: Arc::new(Mutex::new(Vec::new())),
+                    };
+                    let value = Value::Any(AnyBox::new(runtime_socket));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(value),
+                    ));
+                }
+                Err(err) => {
+                    self.emit_error(format!("UdpSocket::bind failed: {}", err));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::undefined()),
+                    ));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn try_eval_std_net_function_runtime(
+        &mut self,
+        locator: &Name,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        if Self::locator_suffix_matches(locator, &["SocketAddr", "new"]) {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 2 {
+                self.emit_error("SocketAddr::new expects (host, port)");
+                return Some(RuntimeFlow::Value(Value::undefined()));
+            }
+            let Some(host) = self.runtime_string_arg(&values[0], "SocketAddr::new host") else {
+                return Some(RuntimeFlow::Value(Value::undefined()));
+            };
+            let Some(port) = self.runtime_port_arg(&values[1], "SocketAddr::new port") else {
+                return Some(RuntimeFlow::Value(Value::undefined()));
+            };
+            return Some(RuntimeFlow::Value(Value::Any(AnyBox::new(
+                RuntimeSocketAddr { host, port },
+            ))));
+        }
+
+        if Self::locator_suffix_matches(locator, &["SocketAddr", "parse"]) {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("SocketAddr::parse expects one address string");
+                return Some(RuntimeFlow::Value(Value::undefined()));
+            }
+            let Some(addr) = self.runtime_string_arg(&values[0], "SocketAddr::parse addr") else {
+                return Some(RuntimeFlow::Value(Value::undefined()));
+            };
+            match std::net::SocketAddr::from_str(addr.as_str()) {
+                Ok(socket_addr) => {
+                    return Some(RuntimeFlow::Value(Value::Any(AnyBox::new(
+                        RuntimeSocketAddr {
+                            host: socket_addr.ip().to_string(),
+                            port: socket_addr.port(),
+                        },
+                    ))));
+                }
+                Err(err) => {
+                    self.emit_error(format!("SocketAddr::parse failed: {}", err));
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                }
+            }
+        }
+
+        if Self::locator_suffix_matches(locator, &["TcpListener", "bind"]) {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("TcpListener::bind expects one address argument");
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
+            }
+            let Some(addr) = self.runtime_socket_addr_arg(&values[0], "TcpListener::bind addr")
+            else {
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
+            };
+            match std::net::TcpListener::bind(addr) {
+                Ok(listener) => {
+                    let runtime_listener = RuntimeTcpListener {
+                        listener: Arc::new(listener),
+                    };
+                    let value = Value::Any(AnyBox::new(runtime_listener));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(value),
+                    ));
+                }
+                Err(err) => {
+                    self.emit_error(format!("TcpListener::bind failed: {}", err));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::undefined()),
+                    ));
+                }
+            }
+        }
+
+        if Self::locator_suffix_matches(locator, &["TcpStream", "connect"]) {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("TcpStream::connect expects one address argument");
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
+            }
+            let Some(addr) = self.runtime_socket_addr_arg(&values[0], "TcpStream::connect addr")
+            else {
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
+            };
+            match std::net::TcpStream::connect(addr) {
+                Ok(stream) => {
+                    let runtime_stream = RuntimeTcpStream {
+                        stream: Arc::new(Mutex::new(stream)),
+                        last_read: Arc::new(Mutex::new(Vec::new())),
+                    };
+                    let value = Value::Any(AnyBox::new(runtime_stream));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(value),
+                    ));
+                }
+                Err(err) => {
+                    self.emit_error(format!("TcpStream::connect failed: {}", err));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::undefined()),
+                    ));
+                }
+            }
+        }
+
+        if Self::locator_suffix_matches(locator, &["UdpSocket", "bind"]) {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("UdpSocket::bind expects one address argument");
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
+            }
+            let Some(addr) = self.runtime_socket_addr_arg(&values[0], "UdpSocket::bind addr")
+            else {
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::undefined()),
+                ));
+            };
+            match std::net::UdpSocket::bind(addr) {
+                Ok(socket) => {
+                    let runtime_socket = RuntimeUdpSocket {
+                        socket: Arc::new(socket),
+                        last_recv: Arc::new(Mutex::new(Vec::new())),
+                    };
+                    let value = Value::Any(AnyBox::new(runtime_socket));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(value),
+                    ));
+                }
+                Err(err) => {
+                    self.emit_error(format!("UdpSocket::bind failed: {}", err));
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::undefined()),
+                    ));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn try_eval_std_net_method_runtime(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        if let Some(addr) = self.runtime_socket_addr_from_receiver(receiver) {
+            if method_name == "to_string" && args.is_empty() {
+                return Some(RuntimeFlow::Value(Value::string(format!(
+                    "{}:{}",
+                    addr.host, addr.port
+                ))));
+            }
+            return None;
+        }
+
+        let Value::Any(any) = receiver else {
+            return None;
+        };
+
+        if let Some(listener) = any.downcast_ref::<RuntimeTcpListener>() {
+            if method_name == "accept" && args.is_empty() {
+                for _ in 0..64 {
+                    if self.ready_tasks.is_empty() {
+                        break;
+                    }
+                    if !self.tick_scheduler() {
+                        break;
+                    }
+                }
+                match listener.listener.accept() {
+                    Ok((stream, _peer)) => {
+                        let runtime_stream = RuntimeTcpStream {
+                            stream: Arc::new(Mutex::new(stream)),
+                            last_read: Arc::new(Mutex::new(Vec::new())),
+                        };
+                        let value = Value::Any(AnyBox::new(runtime_stream));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(value),
+                        ));
+                    }
+                    Err(err) => {
+                        self.emit_error(format!("TcpListener::accept failed: {}", err));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::undefined()),
+                        ));
+                    }
+                }
+            }
+            return None;
+        }
+
+        if let Some(stream) = any.downcast_ref::<RuntimeTcpStream>() {
+            if method_name == "read" && args.len() == 1 {
+                let evaluated = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let mut storage = vec![0u8; self.runtime_buffer_capacity_hint(&evaluated[0])];
+                let read_result = {
+                    let mut guard = match stream.stream.lock() {
+                        Ok(guard) => guard,
+                        Err(err) => err.into_inner(),
+                    };
+                    guard.read(&mut storage)
+                };
+                match read_result {
+                    Ok(size) => {
+                        let bytes = storage[..size].to_vec();
+                        {
+                            let mut last_read = match stream.last_read.lock() {
+                                Ok(guard) => guard,
+                                Err(err) => err.into_inner(),
+                            };
+                            *last_read = bytes.clone();
+                        }
+                        self.write_bytes_to_runtime_buffer(&evaluated[0], &bytes);
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::int(size as i64)),
+                        ));
+                    }
+                    Err(err) => {
+                        self.emit_error(format!("TcpStream::read failed: {}", err));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::int(-1)),
+                        ));
+                    }
+                }
+            }
+
+            if method_name == "write" && args.len() == 1 {
+                let evaluated = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let mut bytes = self
+                    .runtime_value_to_bytes(&evaluated[0])
+                    .unwrap_or_default();
+                if bytes.is_empty() {
+                    let last_read = match stream.last_read.lock() {
+                        Ok(guard) => guard.clone(),
+                        Err(err) => err.into_inner().clone(),
+                    };
+                    bytes = last_read;
+                }
+                let write_result = {
+                    let mut guard = match stream.stream.lock() {
+                        Ok(guard) => guard,
+                        Err(err) => err.into_inner(),
+                    };
+                    guard.write(&bytes)
+                };
+                match write_result {
+                    Ok(size) => {
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::int(size as i64)),
+                        ));
+                    }
+                    Err(err) => {
+                        self.emit_error(format!("TcpStream::write failed: {}", err));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::int(-1)),
+                        ));
+                    }
+                }
+            }
+
+            if method_name == "shutdown" && args.is_empty() {
+                let shutdown_result = {
+                    let guard = match stream.stream.lock() {
+                        Ok(guard) => guard,
+                        Err(err) => err.into_inner(),
+                    };
+                    guard.shutdown(std::net::Shutdown::Both)
+                };
+                if let Err(err) = shutdown_result {
+                    self.emit_error(format!("TcpStream::shutdown failed: {}", err));
+                }
+                return Some(RuntimeFlow::Value(
+                    self.make_ready_future_runtime_value(Value::unit()),
+                ));
+            }
+
+            return None;
+        }
+
+        if let Some(socket) = any.downcast_ref::<RuntimeUdpSocket>() {
+            if method_name == "recv_from" && args.len() == 1 {
+                let evaluated = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let mut storage = vec![0u8; self.runtime_buffer_capacity_hint(&evaluated[0])];
+                match socket.socket.recv_from(&mut storage) {
+                    Ok((size, peer)) => {
+                        let bytes = storage[..size].to_vec();
+                        {
+                            let mut last_recv = match socket.last_recv.lock() {
+                                Ok(guard) => guard,
+                                Err(err) => err.into_inner(),
+                            };
+                            *last_recv = bytes.clone();
+                        }
+                        self.write_bytes_to_runtime_buffer(&evaluated[0], &bytes);
+                        let peer_value = Value::Any(AnyBox::new(RuntimeSocketAddr {
+                            host: peer.ip().to_string(),
+                            port: peer.port(),
+                        }));
+                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                            Value::Tuple(ValueTuple::new(vec![
+                                Value::int(size as i64),
+                                peer_value,
+                            ])),
+                        )));
+                    }
+                    Err(err) => {
+                        self.emit_error(format!("UdpSocket::recv_from failed: {}", err));
+                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                            Value::Tuple(ValueTuple::new(vec![
+                                Value::int(-1),
+                                Value::Any(AnyBox::new(RuntimeSocketAddr {
+                                    host: "0.0.0.0".to_string(),
+                                    port: 0,
+                                })),
+                            ])),
+                        )));
+                    }
+                }
+            }
+
+            if method_name == "send_to" && args.len() == 2 {
+                let evaluated = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let mut bytes = self
+                    .runtime_value_to_bytes(&evaluated[0])
+                    .unwrap_or_default();
+                if bytes.is_empty() {
+                    let last_recv = match socket.last_recv.lock() {
+                        Ok(guard) => guard.clone(),
+                        Err(err) => err.into_inner().clone(),
+                    };
+                    bytes = last_recv;
+                }
+                let Some(addr) =
+                    self.runtime_socket_addr_arg(&evaluated[1], "UdpSocket::send_to addr")
+                else {
+                    return Some(RuntimeFlow::Value(
+                        self.make_ready_future_runtime_value(Value::int(-1)),
+                    ));
+                };
+                match socket.socket.send_to(&bytes, addr) {
+                    Ok(size) => {
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::int(size as i64)),
+                        ));
+                    }
+                    Err(err) => {
+                        self.emit_error(format!("UdpSocket::send_to failed: {}", err));
+                        return Some(RuntimeFlow::Value(
+                            self.make_ready_future_runtime_value(Value::int(-1)),
+                        ));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn try_eval_runtime_receiver_function_call(
+        &mut self,
+        locator: &Name,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        let (receiver_name, method_name) = match locator {
+            Name::Path(path) if path.prefix == PathPrefix::Plain && path.segments.len() == 2 => {
+                (path.segments[0].as_str(), path.segments[1].as_str())
+            }
+            Name::ParameterPath(path)
+                if path.prefix == PathPrefix::Plain && path.segments.len() == 2 =>
+            {
+                (
+                    path.segments[0].ident.as_str(),
+                    path.segments[1].ident.as_str(),
+                )
+            }
+            _ => return None,
+        };
+
+        let receiver_value = self
+            .lookup_stored_value(receiver_name)
+            .map(|value| value.value())?;
+        self.try_eval_std_net_method_runtime(&receiver_value, method_name, args)
+    }
+
+    fn make_ready_future_runtime_value(&self, value: Value) -> Value {
+        let expr = Expr::from_parts(
+            fp_core::ast::fresh_expr_id(),
+            None,
+            None,
+            ExprKind::Value(Box::new(value)),
+        );
+        let future = self.capture_runtime_future(&expr);
+        self.make_future_runtime_value(future)
+    }
+
+    fn locator_suffix_matches(locator: &Name, suffix: &[&str]) -> bool {
+        if suffix.is_empty() {
+            return false;
+        }
+        match locator {
+            Name::Ident(ident) => suffix.len() == 1 && ident.as_str() == suffix[0],
+            Name::Path(path) => {
+                if path.segments.len() < suffix.len() {
+                    return false;
+                }
+                path.segments[path.segments.len() - suffix.len()..]
+                    .iter()
+                    .zip(suffix.iter())
+                    .all(|(segment, expected)| segment.as_str() == *expected)
+            }
+            Name::ParameterPath(path) => {
+                if path.segments.len() < suffix.len() {
+                    return false;
+                }
+                path.segments[path.segments.len() - suffix.len()..]
+                    .iter()
+                    .zip(suffix.iter())
+                    .all(|(segment, expected)| segment.ident.as_str() == *expected)
+            }
+        }
+    }
+
+    fn runtime_string_arg(&mut self, value: &Value, context: &str) -> Option<String> {
+        match value {
+            Value::String(string) => Some(string.value.clone()),
+            other => {
+                self.emit_error(format!("{} must be a string, found {}", context, other));
+                None
+            }
+        }
+    }
+
+    fn runtime_port_arg(&mut self, value: &Value, context: &str) -> Option<u16> {
+        let port = self.numeric_to_i64(value, context)?;
+        if !(0..=u16::MAX as i64).contains(&port) {
+            self.emit_error(format!("{} must be in 0..=65535", context));
+            return None;
+        }
+        Some(port as u16)
+    }
+
+    fn runtime_socket_addr_arg(
+        &mut self,
+        value: &Value,
+        context: &str,
+    ) -> Option<std::net::SocketAddr> {
+        match value {
+            Value::Any(any) => {
+                if let Some(addr) = any.downcast_ref::<RuntimeSocketAddr>() {
+                    return std::net::SocketAddr::from_str(
+                        format!("{}:{}", addr.host, addr.port).as_str(),
+                    )
+                    .ok();
+                }
+            }
+            Value::String(string) => {
+                return std::net::SocketAddr::from_str(&string.value).ok();
+            }
+            Value::Struct(value_struct) => {
+                return self.runtime_socket_addr_from_structural(&value_struct.structural, context);
+            }
+            Value::Structural(structural) => {
+                return self.runtime_socket_addr_from_structural(structural, context);
+            }
+            _ => {}
+        }
+        self.emit_error(format!("{} must be a SocketAddr-compatible value", context));
+        None
+    }
+
+    fn runtime_socket_addr_from_structural(
+        &mut self,
+        structural: &ValueStructural,
+        context: &str,
+    ) -> Option<std::net::SocketAddr> {
+        let host_field = structural.get_field(&Ident::new("host"));
+        let port_field = structural.get_field(&Ident::new("port"));
+        let Some(host_value) = host_field.map(|field| &field.value) else {
+            self.emit_error(format!("{} is missing host field", context));
+            return None;
+        };
+        let Some(port_value) = port_field.map(|field| &field.value) else {
+            self.emit_error(format!("{} is missing port field", context));
+            return None;
+        };
+        let host = self.runtime_string_arg(host_value, context)?;
+        let port = self.runtime_port_arg(port_value, context)?;
+        std::net::SocketAddr::from_str(format!("{}:{}", host, port).as_str()).ok()
+    }
+
+    fn runtime_socket_addr_from_receiver(&self, receiver: &Value) -> Option<RuntimeSocketAddr> {
+        match receiver {
+            Value::Any(any) => any.downcast_ref::<RuntimeSocketAddr>().cloned(),
+            _ => None,
+        }
+    }
+
+    fn collect_hashmap_kwargs_from_structural(
+        &mut self,
+        structural: &ValueStructural,
+    ) -> std::result::Result<Vec<(String, Value)>, ()> {
+        let keys_field = structural.get_field(&Ident::new("keys"));
+        let values_field = structural.get_field(&Ident::new("values"));
+        let Some(keys_value) = keys_field.map(|field| &field.value) else {
+            self.emit_error("splat dict expects HashMap keys field");
+            return Err(());
+        };
+        let Some(values_value) = values_field.map(|field| &field.value) else {
+            self.emit_error("splat dict expects HashMap values field");
+            return Err(());
+        };
+
+        let keys = match keys_value {
+            Value::List(list) => list.values.clone(),
+            Value::Tuple(tuple) => tuple.values.clone(),
+            other => {
+                self.emit_error(format!(
+                    "splat dict expects HashMap keys list, found {:?}",
+                    other
+                ));
+                return Err(());
+            }
+        };
+        let values = match values_value {
+            Value::List(list) => list.values.clone(),
+            Value::Tuple(tuple) => tuple.values.clone(),
+            other => {
+                self.emit_error(format!(
+                    "splat dict expects HashMap values list, found {:?}",
+                    other
+                ));
+                return Err(());
+            }
+        };
+
+        if keys.len() != values.len() {
+            self.emit_error("splat dict expects HashMap keys/values length match");
+            return Err(());
+        }
+
+        let mut kwargs = Vec::with_capacity(keys.len());
+        for (idx, key) in keys.into_iter().enumerate() {
+            let Value::String(text) = key else {
+                self.emit_error("splat dict expects string keys for keyword arguments");
+                return Err(());
+            };
+            let value = values.get(idx).cloned().unwrap_or_else(Value::undefined);
+            kwargs.push((text.value.clone(), value));
+        }
+        Ok(kwargs)
+    }
+
+    fn try_collect_hashmap_kwargs_from_structural(
+        &mut self,
+        structural: &ValueStructural,
+    ) -> std::result::Result<Option<Vec<(String, Value)>>, ()> {
+        let keys_field = structural.get_field(&Ident::new("keys"));
+        let values_field = structural.get_field(&Ident::new("values"));
+
+        if keys_field.is_none() || values_field.is_none() {
+            return Ok(None);
+        }
+
+        let kwargs = self.collect_hashmap_kwargs_from_structural(structural)?;
+        Ok(Some(kwargs))
+    }
+
+    fn runtime_buffer_capacity_hint(&mut self, value: &Value) -> usize {
+        match value {
+            Value::List(list) => list.values.len().max(1),
+            Value::Bytes(bytes) => bytes.value.len().max(1),
+            Value::Any(any) => {
+                if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                    return match self.runtime_ref_value(runtime_ref) {
+                        Value::List(list) => list.values.len().max(1),
+                        Value::Bytes(bytes) => bytes.value.len().max(1),
+                        _ => 1024,
+                    };
+                }
+                1024
+            }
+            _ => 1024,
+        }
+    }
+
+    fn write_bytes_to_runtime_buffer(&mut self, target: &Value, bytes: &[u8]) {
+        let Value::Any(any) = target else {
+            return;
+        };
+        let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() else {
+            return;
+        };
+        let shared = Arc::clone(runtime_ref.shared());
+        let mut guard = match shared.lock() {
+            Ok(guard) => guard,
+            Err(err) => err.into_inner(),
+        };
+        match &runtime_ref.target {
+            RuntimeRefTarget::Whole(_) => match &mut *guard {
+                Value::List(list) => {
+                    for (index, byte) in bytes.iter().enumerate() {
+                        if index >= list.values.len() {
+                            break;
+                        }
+                        list.values[index] = Value::int(*byte as i64);
+                    }
+                }
+                Value::Bytes(value_bytes) => {
+                    if value_bytes.value.len() < bytes.len() {
+                        value_bytes.value.resize(bytes.len(), 0);
+                    }
+                    value_bytes.value[..bytes.len()].copy_from_slice(bytes);
+                }
+                _ => {}
+            },
+            RuntimeRefTarget::Slice { start, end, .. } => match &mut *guard {
+                Value::List(list) => {
+                    let slice_len = end.saturating_sub(*start);
+                    for (offset, byte) in bytes.iter().take(slice_len).enumerate() {
+                        let index = start + offset;
+                        if index >= list.values.len() {
+                            break;
+                        }
+                        list.values[index] = Value::int(*byte as i64);
+                    }
+                }
+                Value::Bytes(value_bytes) => {
+                    let slice_len = end.saturating_sub(*start);
+                    let write_len = bytes.len().min(slice_len);
+                    if value_bytes.value.len() < *end {
+                        value_bytes.value.resize(*end, 0);
+                    }
+                    value_bytes.value[*start..*start + write_len]
+                        .copy_from_slice(&bytes[..write_len]);
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    fn runtime_value_to_bytes(&mut self, value: &Value) -> Option<Vec<u8>> {
+        match value {
+            Value::String(string) => Some(string.value.as_bytes().to_vec()),
+            Value::Bytes(bytes) => Some(bytes.value.to_vec()),
+            Value::List(list) => {
+                let mut out = Vec::with_capacity(list.values.len());
+                for value in &list.values {
+                    match value {
+                        Value::Int(int) if (0..=255).contains(&int.value) => {
+                            out.push(int.value as u8)
+                        }
+                        Value::Char(ch) => out.push(ch.value as u8),
+                        _ => return None,
+                    }
+                }
+                Some(out)
+            }
+            Value::Tuple(tuple) => {
+                let mut out = Vec::with_capacity(tuple.values.len());
+                for value in &tuple.values {
+                    match value {
+                        Value::Int(int) if (0..=255).contains(&int.value) => {
+                            out.push(int.value as u8)
+                        }
+                        Value::Char(ch) => out.push(ch.value as u8),
+                        _ => return None,
+                    }
+                }
+                Some(out)
+            }
+            Value::Any(any) => {
+                if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                    let value = self.runtime_ref_value(runtime_ref);
+                    return self.runtime_value_to_bytes(&value);
+                }
+                if let Some(slice_ref) = any.downcast_ref::<fp_native::ffi::FfiSliceRef>() {
+                    let mut out = Vec::new();
+                    for value in slice_ref.values.iter().skip(slice_ref.index) {
+                        match value {
+                            Value::Int(int) if (0..=255).contains(&int.value) => {
+                                out.push(int.value as u8)
+                            }
+                            Value::Char(ch) => out.push(ch.value as u8),
+                            _ => break,
+                        }
+                    }
+                    return Some(out);
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn evaluate_args(&mut self, args: &mut Vec<Expr>) -> Vec<Value> {
+        let mut values = Vec::with_capacity(args.len());
+        for arg in args.iter_mut() {
+            match arg.kind_mut() {
+                ExprKind::Splat(splat) => {
+                    let value = self.eval_expr(splat.iter.as_mut());
+                    match value {
+                        Value::List(list) => values.extend(list.values),
+                        Value::Tuple(tuple) => values.extend(tuple.values),
+                        _ => {
+                            self.emit_error("splat expects a list or tuple value");
+                        }
+                    }
+                }
+                ExprKind::SplatDict(_) => {
+                    self.emit_error("splat dict is not supported in positional arguments");
+                }
+                _ => values.push(self.eval_expr(arg)),
+            }
+        }
+        values
+    }
+
+    pub(super) fn evaluate_arg_slice(&mut self, args: &mut [Expr]) -> Vec<Value> {
+        args.iter_mut().map(|arg| self.eval_expr(arg)).collect()
+    }
+
+    // Helpers moved from interpreter.rs to support const-eval invoke resolution.
+    pub(super) fn lookup_callable_value(&mut self, locator: &Name) -> Option<Value> {
+        if let Some(ident) = locator.as_ident() {
+            if let Some(value) = self.lookup_value(ident.as_str()) {
+                return Some(value);
+            }
+            let qualified = self.qualified_name(ident.as_str());
+            if let Some(value) = self.evaluated_constants.get(&qualified) {
+                return Some(value.clone());
+            }
+        }
+        let locator_name = locator.to_string();
+        if let Some(value) = self.evaluated_constants.get(&locator_name) {
+            return Some(value.clone());
+        }
+        if let Some(expanded) = self.expand_imported_locator(locator) {
+            if let Some(value) = self.evaluated_constants.get(&expanded) {
+                return Some(value.clone());
+            }
+        }
+        None
+    }
+
+    pub(super) fn resolve_function_call(
+        &mut self,
+        locator: &mut Name,
+        invoke: &mut ExprInvoke,
+        mode: ResolutionMode,
+    ) -> Option<ItemDefFunction> {
+        self.apply_local_import_alias(locator);
+        if matches!(mode, ResolutionMode::Attribute) && !Self::locator_is_qualified(locator) {
+            return None;
+        }
+
+        let mut candidate_names = vec![locator.to_string()];
+        if matches!(mode, ResolutionMode::Default) {
+            if let Some(ident) = locator.as_ident() {
+                let simple = ident.as_str().to_string();
+                if !candidate_names.contains(&simple) {
+                    candidate_names.push(simple);
+                }
+            }
+            if let Name::Path(path) = locator {
+                if path.segments.len() >= 2 {
+                    let type_name = path.segments[path.segments.len() - 2].as_str();
+                    let func_name = path.segments[path.segments.len() - 1].as_str();
+                    let short = format!("{}::{}", type_name, func_name);
+                    if !candidate_names.contains(&short) {
+                        candidate_names.push(short);
+                    }
+                }
+            }
+            if let Name::ParameterPath(path) = locator {
+                if path.segments.len() >= 2 {
+                    let type_name = path.segments[path.segments.len() - 2].ident.as_str();
+                    let func_name = path.segments[path.segments.len() - 1].ident.as_str();
+                    let short = format!("{}::{}", type_name, func_name);
+                    if !candidate_names.contains(&short) {
+                        candidate_names.push(short);
+                    }
+                }
+            }
+        }
+
+        let has_splat = Self::invoke_has_splat(invoke);
+        for name in &candidate_names {
+            if let Some(function) = self.functions.get(name).cloned() {
+                if !Self::invoke_shape_matches(invoke, &function.sig.params) {
+                    continue;
+                }
+                if !has_splat {
+                    if !self.apply_kwargs_to_invoke(invoke, &function.sig.params) {
+                        return None;
+                    }
+                    // Annotate arguments with expected parameter types
+                    self.annotate_invoke_args_slice(&mut invoke.args, &function.sig.params);
+                }
+                return Some(function);
+            }
+        }
+
+        for name in &candidate_names {
+            if let Some(template) = self.generic_functions.get(name).cloned() {
+                if !Self::invoke_shape_matches(invoke, &template.function.sig.params) {
+                    continue;
+                }
+                if !has_splat {
+                    if !self.apply_kwargs_to_invoke(invoke, &template.function.sig.params) {
+                        return None;
+                    }
+                }
+                if let Some(function) =
+                    self.instantiate_generic_function(name, template, locator, &mut invoke.args)
+                {
+                    if !has_splat {
+                        // Annotate arguments now that we know the specialized function signature
+                        self.annotate_invoke_args_slice(&mut invoke.args, &function.sig.params);
+                    }
+                    return Some(function);
+                }
+            }
+        }
+
+        // Fallback: find by fully qualified name
+        if let Some(function) = self.functions.get(&locator.to_string()).cloned() {
+            if !Self::invoke_shape_matches(invoke, &function.sig.params) {
+                return None;
+            }
+            if !has_splat {
+                if !self.apply_kwargs_to_invoke(invoke, &function.sig.params) {
+                    return None;
+                }
+                self.annotate_invoke_args_slice(&mut invoke.args, &function.sig.params);
+            }
+            Some(function)
+        } else {
+            None
+        }
+    }
+
+    fn apply_kwargs_to_invoke(
+        &mut self,
+        invoke: &mut ExprInvoke,
+        params: &[FunctionParam],
+    ) -> bool {
+        let mut slots: Vec<Option<Expr>> = vec![None; params.len()];
+        for (idx, arg) in invoke.args.drain(..).enumerate() {
+            if idx >= params.len() {
+                self.emit_error(format!(
+                    "function expects {} arguments, found {}",
+                    params.len(),
+                    idx + 1
+                ));
+                return false;
+            }
+            slots[idx] = Some(arg);
+        }
+
+        for kwarg in invoke.kwargs.drain(..) {
+            let pos = params
+                .iter()
+                .position(|param| param.name.as_str() == kwarg.name.as_str());
+            let Some(index) = pos else {
+                self.emit_error(format!("unknown keyword argument '{}'", kwarg.name));
+                return false;
+            };
+            if slots[index].is_some() {
+                self.emit_error(format!("duplicate keyword argument '{}'", kwarg.name));
+                return false;
+            }
+            slots[index] = Some(kwarg.value);
+        }
+
+        for (idx, slot) in slots.iter_mut().enumerate() {
+            if slot.is_some() {
+                continue;
+            }
+            if let Some(context_arg) = self.resolve_context_argument(&params[idx]) {
+                *slot = Some(context_arg);
+                continue;
+            }
+            if let Some(default) = params[idx].default.as_ref() {
+                *slot = Some(Expr::value(default.clone()));
+                continue;
+            }
+            self.emit_error(format!(
+                "missing argument '{}' at position {}",
+                params[idx].name.as_str(),
+                idx
+            ));
+            return false;
+        }
+
+        invoke.args = slots.into_iter().map(|slot| slot.unwrap()).collect();
+        true
+    }
+
+    fn invoke_shape_matches(invoke: &ExprInvoke, params: &[FunctionParam]) -> bool {
+        if Self::invoke_has_splat(invoke) {
+            return true;
+        }
+        if invoke.args.len() > params.len() {
+            return false;
+        }
+
+        for kwarg in &invoke.kwargs {
+            if !params
+                .iter()
+                .any(|param| param.name.as_str() == kwarg.name.as_str())
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn invoke_has_splat(invoke: &ExprInvoke) -> bool {
+        invoke.args.iter().any(|arg| match arg.kind() {
+            ExprKind::Splat(_) | ExprKind::SplatDict(_) => true,
+            _ => false,
+        })
+    }
+
+    fn collect_invoke_values_runtime(
+        &mut self,
+        invoke: &mut ExprInvoke,
+    ) -> std::result::Result<(Vec<Value>, Vec<(String, Value)>), RuntimeFlow> {
+        let mut positional = Vec::new();
+        let mut kwargs = Vec::new();
+        let mut saw_kwarg = false;
+
+        for arg in invoke.args.iter_mut() {
+            match arg.kind_mut() {
+                ExprKind::Splat(splat) => {
+                    if saw_kwarg {
+                        self.emit_error("positional arguments cannot follow keyword arguments");
+                        return Err(RuntimeFlow::Value(Value::undefined()));
+                    }
+                    match self.eval_expr_runtime(splat.iter.as_mut()) {
+                        RuntimeFlow::Value(Value::List(list)) => positional.extend(list.values),
+                        RuntimeFlow::Value(Value::Tuple(tuple)) => positional.extend(tuple.values),
+                        RuntimeFlow::Value(_) => {
+                            self.emit_error("splat expects a list or tuple value");
+                            return Err(RuntimeFlow::Value(Value::undefined()));
+                        }
+                        other => return Err(other),
+                    }
+                }
+                ExprKind::SplatDict(splat) => {
+                    let value = match self.eval_expr_runtime(splat.dict.as_mut()) {
+                        RuntimeFlow::Value(value) => value,
+                        other => return Err(other),
+                    };
+                    saw_kwarg = true;
+                    match value {
+                        Value::Map(map) => {
+                            for (key, value) in map.iter() {
+                                let Value::String(text) = key else {
+                                    self.emit_error(
+                                        "splat dict expects string keys for keyword arguments",
+                                    );
+                                    return Err(RuntimeFlow::Value(Value::undefined()));
+                                };
+                                kwargs.push((text.value.clone(), value.clone()));
+                            }
+                        }
+                        Value::Structural(structural) => {
+                            match self.try_collect_hashmap_kwargs_from_structural(&structural) {
+                                Ok(Some(pairs)) => {
+                                    kwargs.extend(pairs);
+                                }
+                                Ok(None) => {
+                                    for field in structural.fields {
+                                        kwargs.push((field.name.as_str().to_string(), field.value));
+                                    }
+                                }
+                                Err(()) => {
+                                    return Err(RuntimeFlow::Value(Value::undefined()));
+                                }
+                            }
+                        }
+                        Value::Struct(struct_value) => {
+                            let type_name = struct_value.ty.name.as_str();
+                            let base_name = type_name
+                                .rsplit("::")
+                                .next()
+                                .unwrap_or(type_name)
+                                .split('<')
+                                .next()
+                                .unwrap_or(type_name);
+                            let is_hashmap = base_name == "HashMap";
+                            if is_hashmap {
+                                let pairs = match self.collect_hashmap_kwargs_from_structural(
+                                    &struct_value.structural,
+                                ) {
+                                    Ok(pairs) => pairs,
+                                    Err(()) => {
+                                        return Err(RuntimeFlow::Value(Value::undefined()));
+                                    }
+                                };
+                                kwargs.extend(pairs);
+                                continue;
+                            }
+                            for field in struct_value.structural.fields {
+                                kwargs.push((field.name.as_str().to_string(), field.value));
+                            }
+                        }
+                        _ => {
+                            self.emit_error("splat dict expects a map or structural value");
+                            return Err(RuntimeFlow::Value(Value::undefined()));
+                        }
+                    }
+                }
+                _ => {
+                    if saw_kwarg {
+                        self.emit_error("positional arguments cannot follow keyword arguments");
+                        return Err(RuntimeFlow::Value(Value::undefined()));
+                    }
+                    match self.eval_expr_runtime(arg) {
+                        RuntimeFlow::Value(value) => positional.push(value),
+                        other => return Err(other),
+                    }
+                }
+            }
+        }
+
+        for kwarg in invoke.kwargs.iter_mut() {
+            let value = match self.eval_expr_runtime(&mut kwarg.value) {
+                RuntimeFlow::Value(value) => value,
+                other => return Err(other),
+            };
+            kwargs.push((kwarg.name.as_str().to_string(), value));
+        }
+
+        Ok((positional, kwargs))
+    }
+
+    fn collect_invoke_values_const(
+        &mut self,
+        invoke: &mut ExprInvoke,
+    ) -> Option<(Vec<Value>, Vec<(String, Value)>)> {
+        let mut positional = Vec::new();
+        let mut kwargs = Vec::new();
+        let mut saw_kwarg = false;
+
+        for arg in invoke.args.iter_mut() {
+            match arg.kind_mut() {
+                ExprKind::Splat(splat) => {
+                    if saw_kwarg {
+                        self.emit_error("positional arguments cannot follow keyword arguments");
+                        return None;
+                    }
+                    let value = self.eval_expr(splat.iter.as_mut());
+                    match value {
+                        Value::List(list) => positional.extend(list.values),
+                        Value::Tuple(tuple) => positional.extend(tuple.values),
+                        _ => {
+                            self.emit_error("splat expects a list or tuple value");
+                            return None;
+                        }
+                    }
+                }
+                ExprKind::SplatDict(splat) => {
+                    let value = self.eval_expr(splat.dict.as_mut());
+                    saw_kwarg = true;
+                    match value {
+                        Value::Map(map) => {
+                            for (key, value) in map.iter() {
+                                let Value::String(text) = key else {
+                                    self.emit_error(
+                                        "splat dict expects string keys for keyword arguments",
+                                    );
+                                    return None;
+                                };
+                                kwargs.push((text.value.clone(), value.clone()));
+                            }
+                        }
+                        Value::Structural(structural) => {
+                            match self.try_collect_hashmap_kwargs_from_structural(&structural) {
+                                Ok(Some(pairs)) => {
+                                    kwargs.extend(pairs);
+                                }
+                                Ok(None) => {
+                                    for field in structural.fields {
+                                        kwargs.push((field.name.as_str().to_string(), field.value));
+                                    }
+                                }
+                                Err(()) => {
+                                    return None;
+                                }
+                            }
+                        }
+                        Value::Struct(struct_value) => {
+                            let type_name = struct_value.ty.name.as_str();
+                            let base_name = type_name
+                                .rsplit("::")
+                                .next()
+                                .unwrap_or(type_name)
+                                .split('<')
+                                .next()
+                                .unwrap_or(type_name);
+                            let is_hashmap = base_name == "HashMap";
+                            if is_hashmap {
+                                let pairs = match self.collect_hashmap_kwargs_from_structural(
+                                    &struct_value.structural,
+                                ) {
+                                    Ok(pairs) => pairs,
+                                    Err(()) => return None,
+                                };
+                                kwargs.extend(pairs);
+                                continue;
+                            }
+                            for field in struct_value.structural.fields {
+                                kwargs.push((field.name.as_str().to_string(), field.value));
+                            }
+                        }
+                        _ => {
+                            self.emit_error("splat dict expects a map or structural value");
+                            return None;
+                        }
+                    }
+                }
+                _ => {
+                    if saw_kwarg {
+                        self.emit_error("positional arguments cannot follow keyword arguments");
+                        return None;
+                    }
+                    positional.push(self.eval_expr(arg));
+                }
+            }
+        }
+
+        for kwarg in invoke.kwargs.iter_mut() {
+            let value = self.eval_expr(&mut kwarg.value);
+            kwargs.push((kwarg.name.as_str().to_string(), value));
+        }
+
+        Some((positional, kwargs))
+    }
+
+    fn apply_invoke_values_to_params_runtime(
+        &mut self,
+        params: &[FunctionParam],
+        positional: Vec<Value>,
+        kwargs: Vec<(String, Value)>,
+    ) -> std::result::Result<Vec<Value>, RuntimeFlow> {
+        if positional.len() > params.len() {
+            self.emit_error(format!(
+                "function expects {} arguments, found {}",
+                params.len(),
+                positional.len()
+            ));
+            return Err(RuntimeFlow::Value(Value::undefined()));
+        }
+
+        let mut slots: Vec<Option<Value>> = vec![None; params.len()];
+        for (idx, value) in positional.into_iter().enumerate() {
+            slots[idx] = Some(value);
+        }
+        for (name, value) in kwargs.into_iter() {
+            let pos = params
+                .iter()
+                .position(|param| param.name.as_str() == name.as_str());
+            let Some(index) = pos else {
+                self.emit_error(format!("unknown keyword argument '{}'", name));
+                return Err(RuntimeFlow::Value(Value::undefined()));
+            };
+            if slots[index].is_some() {
+                self.emit_error(format!("duplicate keyword argument '{}'", name));
+                return Err(RuntimeFlow::Value(Value::undefined()));
+            }
+            slots[index] = Some(value);
+        }
+
+        for (idx, slot) in slots.iter_mut().enumerate() {
+            if slot.is_some() {
+                continue;
+            }
+            if let Some(context_arg) = self.resolve_context_argument(&params[idx]) {
+                let mut context_arg = context_arg;
+                let value = match self.eval_expr_runtime(&mut context_arg) {
+                    RuntimeFlow::Value(value) => value,
+                    other => return Err(other),
+                };
+                *slot = Some(value);
+                continue;
+            }
+            if let Some(default) = params[idx].default.as_ref() {
+                *slot = Some(default.clone());
+                continue;
+            }
+            self.emit_error(format!(
+                "missing argument '{}' at position {}",
+                params[idx].name.as_str(),
+                idx
+            ));
+            return Err(RuntimeFlow::Value(Value::undefined()));
+        }
+
+        Ok(slots.into_iter().map(|slot| slot.unwrap()).collect())
+    }
+
+    fn apply_invoke_values_to_params_const(
+        &mut self,
+        params: &[FunctionParam],
+        positional: Vec<Value>,
+        kwargs: Vec<(String, Value)>,
+    ) -> Option<Vec<Value>> {
+        if positional.len() > params.len() {
+            self.emit_error(format!(
+                "function expects {} arguments, found {}",
+                params.len(),
+                positional.len()
+            ));
+            return None;
+        }
+
+        let mut slots: Vec<Option<Value>> = vec![None; params.len()];
+        for (idx, value) in positional.into_iter().enumerate() {
+            slots[idx] = Some(value);
+        }
+        for (name, value) in kwargs.into_iter() {
+            let pos = params
+                .iter()
+                .position(|param| param.name.as_str() == name.as_str());
+            let Some(index) = pos else {
+                self.emit_error(format!("unknown keyword argument '{}'", name));
+                return None;
+            };
+            if slots[index].is_some() {
+                self.emit_error(format!("duplicate keyword argument '{}'", name));
+                return None;
+            }
+            slots[index] = Some(value);
+        }
+
+        for (idx, slot) in slots.iter_mut().enumerate() {
+            if slot.is_some() {
+                continue;
+            }
+            if let Some(context_arg) = self.resolve_context_argument(&params[idx]) {
+                let mut context_arg = context_arg;
+                let value = self.eval_expr(&mut context_arg);
+                *slot = Some(value);
+                continue;
+            }
+            if let Some(default) = params[idx].default.as_ref() {
+                *slot = Some(default.clone());
+                continue;
+            }
+            self.emit_error(format!(
+                "missing argument '{}' at position {}",
+                params[idx].name.as_str(),
+                idx
+            ));
+            return None;
+        }
+
+        Some(slots.into_iter().map(|slot| slot.unwrap()).collect())
+    }
+
+    fn evaluate_invoke_args(
+        &mut self,
+        invoke: &mut ExprInvoke,
+        params: Option<&[FunctionParam]>,
+    ) -> std::result::Result<Vec<Value>, RuntimeFlow> {
+        // Const vs runtime is determined by interpreter mode and const region.
+        // Capability gating (IO/exec/etc.) is orthogonal and handled elsewhere.
+        let (positional, kwargs) =
+            if self.in_const_region() || matches!(self.mode, InterpreterMode::Comptime) {
+                match self.collect_invoke_values_const(invoke) {
+                    Some(values) => values,
+                    None => return Err(RuntimeFlow::Value(Value::undefined())),
+                }
+            } else {
+                self.collect_invoke_values_runtime(invoke)?
+            };
+        match params {
+            Some(params) => {
+                if self.in_const_region() || matches!(self.mode, InterpreterMode::Comptime) {
+                    self.apply_invoke_values_to_params_const(params, positional, kwargs)
+                        .ok_or_else(|| RuntimeFlow::Value(Value::undefined()))
+                } else {
+                    self.apply_invoke_values_to_params_runtime(params, positional, kwargs)
+                }
+            }
+            None => {
+                if !kwargs.is_empty() {
+                    self.emit_error("keyword arguments are only supported on function calls");
+                    return Err(RuntimeFlow::Value(Value::undefined()));
+                }
+                Ok(positional)
+            }
+        }
+    }
+
+    fn resolve_context_argument(&self, param: &FunctionParam) -> Option<Expr> {
+        if !param.is_context {
+            return None;
+        }
+
+        self.context_env
+            .iter()
+            .rev()
+            .flat_map(|scope| scope.iter().rev())
+            .find(|binding| binding.ty == param.ty)
+            .map(|binding| {
+                let mut expr = Expr::value(binding.value.clone());
+                expr.set_ty(binding.ty.clone());
+                expr
+            })
+    }
+
+    fn locator_is_qualified(locator: &Name) -> bool {
+        match locator {
+            Name::Ident(_) => false,
+            Name::Path(path) => path.segments.len() > 1,
+            Name::ParameterPath(path) => path.segments.len() > 1,
+        }
+    }
+
+    fn apply_local_import_alias(&mut self, locator: &mut Name) -> bool {
+        match locator {
+            Name::Ident(ident) => {
+                let Some(target) = self.import_alias_target(ident.as_str()) else {
+                    return false;
+                };
+                let Some(new_locator) = Self::locator_from_import_target(&target) else {
+                    return false;
+                };
+                *locator = new_locator;
+                true
+            }
+            Name::Path(path) => {
+                if path.prefix != PathPrefix::Plain {
+                    return false;
+                }
+                let Some(first) = path.segments.first() else {
+                    return false;
+                };
+                let Some(target) = self.import_alias_target(first.as_str()) else {
+                    return false;
+                };
+                let Some(mut target_path) = Self::import_target_path(&target) else {
+                    return false;
+                };
+                target_path
+                    .segments
+                    .extend(path.segments.iter().skip(1).cloned());
+                *locator = Name::path(target_path);
+                true
+            }
+            Name::ParameterPath(param_path) => {
+                if param_path.prefix != PathPrefix::Plain {
+                    return false;
+                }
+                let Some(first) = param_path.segments.first() else {
+                    return false;
+                };
+                let Some(target) = self.import_alias_target(first.ident.as_str()) else {
+                    return false;
+                };
+                let Some(mut target_path) = Self::import_target_path(&target) else {
+                    return false;
+                };
+                for segment in param_path.segments.iter().skip(1) {
+                    target_path.segments.push(segment.ident.clone());
+                }
+                *locator = Name::path(target_path);
+                true
+            }
+        }
+    }
+
+    fn locator_from_import_target(target: &str) -> Option<Name> {
+        let path = Self::import_target_path(target)?;
+        Some(Name::path(path))
+    }
+
+    fn import_target_path(target: &str) -> Option<Path> {
+        let parsed = parse_path(target).ok()?;
+        Some(Path::new(
+            parsed.prefix,
+            parsed.segments.into_iter().map(Ident::new).collect(),
+        ))
+    }
+
+    pub(super) fn try_handle_const_collection_invoke(
+        &mut self,
+        locator: &Name,
+        args: &mut [Expr],
+    ) -> Option<Value> {
+        let segments = Self::locator_segments(locator);
+
+        let ends_with = |suffix: &[&str]| -> bool {
+            if segments.len() < suffix.len() {
+                return false;
+            }
+            segments
+                .iter()
+                .rev()
+                .zip(suffix.iter().rev())
+                .all(|(segment, expected)| segment == expected)
+        };
+
+        if ends_with(&["Vec", "new"]) {
+            if !args.is_empty() {
+                let _ = self.evaluate_arg_slice(args);
+                self.emit_error("Vec::new does not take arguments in const evaluation");
+                return Some(Value::undefined());
+            }
+            self.set_pending_expr_ty(Some(Ty::Vec(TypeVec {
+                ty: Box::new(Ty::Any(TypeAny)),
+            })));
+            return Some(Value::List(ValueList::new(Vec::new())));
+        }
+
+        if ends_with(&["Vec", "with_capacity"]) {
+            let _ = self.evaluate_arg_slice(args);
+            self.set_pending_expr_ty(Some(Ty::Vec(TypeVec {
+                ty: Box::new(Ty::Any(TypeAny)),
+            })));
+            return Some(Value::List(ValueList::new(Vec::new())));
+        }
+
+        if ends_with(&["Vec", "from"]) {
+            let evaluated = self.evaluate_arg_slice(args);
+            if evaluated.len() != 1 {
+                self.emit_error("Vec::from expects a single iterable argument in const evaluation");
+                return Some(Value::undefined());
+            }
+
+            match evaluated.into_iter().next() {
+                None => {
+                    self.emit_error("Vec::from expects one argument during const evaluation");
+                    return Some(Value::undefined());
+                }
+                Some(val) => match val {
+                    Value::List(list) => {
+                        self.set_pending_expr_ty(Some(Ty::Vec(TypeVec {
+                            ty: Box::new(Ty::Any(TypeAny)),
+                        })));
+                        return Some(Value::List(ValueList::new(list.values)));
+                    }
+                    other => {
+                        self.emit_error(format!(
+                            "Vec::from expects a list literal during const evaluation, got {:?}",
+                            other
+                        ));
+                        return Some(Value::undefined());
+                    }
+                },
+            }
+        }
+
+        if ends_with(&["HashMap", "new"]) {
+            if !args.is_empty() {
+                let _ = self.evaluate_arg_slice(args);
+                self.emit_error("HashMap::new does not take arguments in const evaluation");
+                return Some(Value::undefined());
+            }
+            return Some(Value::map(Vec::new()));
+        }
+
+        if ends_with(&["HashMap", "with_capacity"]) {
+            let _ = self.evaluate_arg_slice(args);
+            return Some(Value::map(Vec::new()));
+        }
+
+        if ends_with(&["HashMap", "from"]) {
+            let evaluated = self.evaluate_arg_slice(args);
+            if evaluated.len() != 1 {
+                self.emit_error(
+                    "HashMap::from expects a single iterable argument in const evaluation",
+                );
+                return Some(Value::undefined());
+            }
+
+            match evaluated.into_iter().next() {
+                None => {
+                    self.emit_error(
+                        "HashMap::from expects one iterable argument during const evaluation",
+                    );
+                    return Some(Value::undefined());
+                }
+                Some(val) => match val {
+                    Value::List(list) => {
+                        let mut pairs = Vec::with_capacity(list.values.len());
+                        for entry in list.values {
+                            match entry {
+                                Value::Tuple(tuple) if tuple.values.len() == 2 => {
+                                    let mut iter = tuple.values.into_iter();
+                                    if let (Some(key), Some(value)) = (iter.next(), iter.next()) {
+                                        pairs.push((key, value));
+                                    } else {
+                                        self.emit_error(
+                                            "HashMap::from tuple entry did not contain two elements",
+                                        );
+                                        return Some(Value::undefined());
+                                    }
+                                }
+                                Value::List(inner) if inner.values.len() == 2 => {
+                                    let mut iter = inner.values.into_iter();
+                                    if let (Some(key), Some(value)) = (iter.next(), iter.next()) {
+                                        pairs.push((key, value));
+                                    } else {
+                                        self.emit_error(
+                                            "HashMap::from list entry did not contain two elements",
+                                        );
+                                        return Some(Value::undefined());
+                                    }
+                                }
+                                Value::Struct(struct_value) => {
+                                    let type_name = struct_value.ty.name.as_str();
+                                    let base_name = type_name
+                                        .rsplit("::")
+                                        .next()
+                                        .unwrap_or(type_name)
+                                        .split('<')
+                                        .next()
+                                        .unwrap_or(type_name);
+                                    if base_name != "HashMapEntry" {
+                                        self.emit_error(format!(
+                                            "HashMap::from expects entries to be HashMapEntry, tuples, or 2-element lists, found {:?}",
+                                            Value::Struct(struct_value)
+                                        ));
+                                        return Some(Value::undefined());
+                                    }
+                                    let key = struct_value
+                                        .structural
+                                        .get_field(&Ident::new("key".to_string()))
+                                        .map(|field| field.value.clone());
+                                    let value = struct_value
+                                        .structural
+                                        .get_field(&Ident::new("value".to_string()))
+                                        .map(|field| field.value.clone());
+                                    if let (Some(key), Some(value)) = (key, value) {
+                                        pairs.push((key, value));
+                                    } else {
+                                        self.emit_error(
+                                            "HashMap::from HashMapEntry is missing key/value fields",
+                                        );
+                                        return Some(Value::undefined());
+                                    }
+                                }
+                                Value::Structural(structural) => {
+                                    let key = structural
+                                        .get_field(&Ident::new("key".to_string()))
+                                        .map(|field| field.value.clone());
+                                    let value = structural
+                                        .get_field(&Ident::new("value".to_string()))
+                                        .map(|field| field.value.clone());
+                                    if let (Some(key), Some(value)) = (key, value) {
+                                        pairs.push((key, value));
+                                    } else {
+                                        self.emit_error(
+                                            "HashMap::from structural entry is missing key/value fields",
+                                        );
+                                        return Some(Value::undefined());
+                                    }
+                                }
+                                other => {
+                                    self.emit_error(format!(
+                                        "HashMap::from expects entries to be HashMapEntry, tuples, or 2-element lists, found {:?}",
+                                        other
+                                    ));
+                                    return Some(Value::undefined());
+                                }
+                            }
+                        }
+                        return Some(Value::map(pairs));
+                    }
+                    other => {
+                        self.emit_error(format!(
+                            "HashMap::from expects a list of key/value pairs during const evaluation, got {:?}",
+                            other
+                        ));
+                        return Some(Value::undefined());
+                    }
+                },
+            }
+        }
+
+        None
+    }
+}

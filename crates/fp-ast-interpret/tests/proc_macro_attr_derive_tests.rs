@@ -4,7 +4,7 @@ use fp_core::ast::{ItemKind, Node, NodeKind};
 use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::Result;
-use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use fp_ast_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
 use fp_lang::FerroFrontend;
 
 fn interpret_source(source: &str) -> Result<Node> {

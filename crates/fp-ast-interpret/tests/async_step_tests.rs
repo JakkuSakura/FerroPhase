@@ -1,7 +1,7 @@
 use fp_core::ast::{Expr, ExprBinOp, ExprKind, ExprRange, ExprRangeLimit, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::ops::BinOpKind;
-use fp_interpret::engine::{
+use fp_ast_interpret::engine::{
     AstInterpreter, EvalStepOutcome, InterpreterMode, InterpreterOptions, RuntimeStepOutcome,
 };
 
@@ -77,7 +77,7 @@ fn runtime_step_eval_yields_then_completes() {
 
     let final_flow = final_flow.expect("runtime eval completion");
     match final_flow {
-        fp_interpret::engine::RuntimeFlow::Value(value) => {
+        fp_ast_interpret::engine::RuntimeFlow::Value(value) => {
             assert_eq!(value, Value::int(20));
         }
         other => panic!("unexpected runtime flow: {other:?}"),

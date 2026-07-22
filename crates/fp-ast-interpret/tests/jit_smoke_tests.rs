@@ -5,8 +5,8 @@ use fp_core::ast::{ItemKind, NodeKind, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::Result;
-use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
-use fp_jit::{JitConfig, JitKey, JitSession};
+use fp_ast_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use fp_jit::{JitKey, JitOptions, JitSession};
 use fp_lang::FerroFrontend;
 
 fn find_function_sig(ast: &fp_core::ast::Node, name: &str) -> fp_core::ast::FunctionSignature {
@@ -43,10 +43,11 @@ fn main() {
     let hot_sig = find_function_sig(&ast, "hot_add");
 
     let ctx = SharedScopedContext::new();
-    let jit = Arc::new(JitSession::new(JitConfig {
+    let jit = Arc::new(JitSession::new(JitOptions {
+        enabled: true,
         hot_threshold: 1,
-        ..JitConfig::default()
-    })?);
+        ..JitOptions::default()
+    }));
     let options = InterpreterOptions {
         mode: InterpreterMode::Runtime,
         macro_parser: result.macro_parser,
@@ -68,10 +69,11 @@ fn main() {
     );
     assert_eq!(value, Value::int(3));
 
-    let jit_key = JitKey::for_function("hot_add".to_string(), &hot_sig);
+    let jit_key = JitKey::from_signature("hot_add".to_string(), &hot_sig);
+    let pending = jit.take_pending();
     assert!(
-        jit.registry().contains(&jit_key),
-        "expected jit registry to contain compiled hot_add"
+        pending.iter().any(|key| key == &jit_key),
+        "expected jit session to enqueue hot_add for compilation"
     );
 
     Ok(())
