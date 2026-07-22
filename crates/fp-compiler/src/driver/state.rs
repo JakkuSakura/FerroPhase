@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use fp_core::{ast::Node, ast::Value, hir, lir, mir};
 use fp_typing::TypingDiagnostic;
@@ -16,8 +16,10 @@ pub struct CompilerState {
     const_values: BTreeMap<ConstValueId, Value>,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
     typing_diagnostics: Vec<TypingDiagnostic>,
-    /// AST IDs whose comptime needs have been resolved.
-    pub(crate) comptime_resolved: HashSet<AstId>,
+    /// Per-AST count of unresolved comptime needs. Decremented on each resolve.
+    pub(crate) comptime_pending: HashMap<AstId, usize>,
+    /// ASTs whose initial comptime needs have been counted (to avoid double-counting on retype).
+    pub(crate) comptime_seeded: HashSet<AstId>,
     /// Maps HirId to the TypedAstId that was lowered to produce it.
     pub(crate) hir_to_typed_ast: BTreeMap<HirId, TypedAstId>,
     /// Maps MirId to the TypedAstId that was lowered to produce it.

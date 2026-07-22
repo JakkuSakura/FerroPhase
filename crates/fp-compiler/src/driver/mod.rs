@@ -83,14 +83,32 @@ impl CompilerDriver {
             .map(|request| self.typing_request_from_outcome(request, path))
             .collect();
 
-        let requests: Vec<TypingRequest> = if self.state.comptime_resolved.contains(ast_id) {
-            all_requests
-                .into_iter()
-                .filter(|r| !matches!(r, TypingRequest::Comptime(_)))
-                .collect()
-        } else {
-            all_requests
-        };
+        if !self.state.comptime_seeded.contains(ast_id) {
+            let comptime_count = all_requests
+                .iter()
+                .filter(|r| matches!(r, TypingRequest::Comptime(_)))
+                .count();
+            if comptime_count > 0 {
+                self.state
+                    .comptime_pending
+                    .insert(ast_id.clone(), comptime_count);
+            }
+            self.state.comptime_seeded.insert(ast_id.clone());
+        }
+
+        let requests: Vec<TypingRequest> = all_requests
+            .into_iter()
+            .filter(|r| {
+                !matches!(r, TypingRequest::Comptime(_))
+                    || self
+                        .state
+                        .comptime_pending
+                        .get(ast_id)
+                        .copied()
+                        .unwrap_or(0)
+                        > 0
+            })
+            .collect();
 
         self.state.extend_typing_diagnostics(outcome.diagnostics);
         let typed_ast = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
@@ -212,7 +230,9 @@ impl CompilerDriver {
                 });
 
         if let Some(ast_id) = ast_id {
-            self.state.comptime_resolved.insert(ast_id);
+            if let Some(count) = self.state.comptime_pending.get_mut(&ast_id) {
+                *count = count.saturating_sub(1);
+            }
         }
     }
 
