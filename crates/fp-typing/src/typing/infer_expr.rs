@@ -314,6 +314,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     } else {
                         None
                     };
+                    let expect_slice = matches!(
+                        existing_ty.as_ref(),
+                        Some(Ty::Slice(s)) if matches!(s.elem.as_ref(), Ty::Quote(_))
+                    );
                     let ty = if matches!(kind, QuoteFragmentKind::Item) {
                         let mut item_like = 0usize;
                         let mut items = Vec::new();
@@ -333,10 +337,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             }
                         }
                         let has_non_items = item_like != quote.block.stmts.len();
-                        if items.len() == 1 && quote.block.stmts.len() == 1 {
+                        if items.len() == 1 && quote.block.stmts.len() == 1 && !expect_slice {
                             quote_item_type_from_item(items[0])
                                 .unwrap_or_else(|| quote_ty_from_fragment(kind, inner.clone()))
-                        } else if quote.block.stmts.len() > 1 {
+                        } else if quote.block.stmts.len() > 1 || expect_slice {
                             if has_non_items {
                                 self.emit_error("quote<item> expects only item statements");
                             }
