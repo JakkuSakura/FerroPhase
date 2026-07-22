@@ -1178,7 +1178,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 .iter()
                                 .find(|f| f.name.as_str() == rhs_field.name.as_str())
                             {
-                                if existing.value != rhs_field.value {
+                                let existing_var = self.type_from_ast_ty(&existing.value)?;
+                                let rhs_var = self.type_from_ast_ty(&rhs_field.value)?;
+                                if self.unify(existing_var, rhs_var).is_err() {
                                     return Err(Error::from(format!(
                                         "cannot merge struct fields: field '{}' has incompatible types",
                                         rhs_field.name
@@ -1219,7 +1221,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 .iter()
                                 .find(|f| f.name.as_str() == lhs_field.name.as_str())
                             {
-                                if lhs_field.value != rhs_field.value {
+                                let lhs_var = self.type_from_ast_ty(&lhs_field.value)?;
+                                let rhs_var = self.type_from_ast_ty(&rhs_field.value)?;
+                                if self.unify(lhs_var, rhs_var).is_err() {
                                     return Err(Error::from(format!(
                                         "cannot intersect struct fields: field '{}' has incompatible types",
                                         lhs_field.name
