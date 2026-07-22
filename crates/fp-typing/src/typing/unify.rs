@@ -66,6 +66,7 @@ pub(crate) enum TypeTerm {
     Tuple(Vec<TypeVarId>),
     Function(FunctionTerm),
     Concrete(Ty),
+    Error,
     // Compile-time union of two types from `A | B`.
     Union(TypeVarId, TypeVarId),
     Slice(TypeVarId),
@@ -103,6 +104,10 @@ impl TypeTerm {
 
     pub(crate) fn is_any(&self) -> bool {
         matches!(self, Self::Concrete(Ty::Any(_)))
+    }
+
+    pub(crate) fn is_error(&self) -> bool {
+        matches!(self, Self::Error)
     }
 
     pub(crate) fn primitive_ty(&self) -> Option<TypePrimitive> {
@@ -344,6 +349,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     ) -> Result<Ty> {
         Ok(match term {
             TypeTerm::Concrete(ty) => ty,
+            TypeTerm::Error => {
+                return Err(self.error_with_current_span("error type variable during generalization"));
+            }
             TypeTerm::Union(lhs, rhs) => {
                 let lhs = self.build_generalized_ty(lhs, mapping, next)?;
                 let rhs = self.build_generalized_ty(rhs, mapping, next)?;
@@ -739,6 +747,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         match (a, b) {
             (left, right) if left.is_unit() && right.is_unit() => Ok(()),
             (left, right) if left.is_any() && right.is_any() => Ok(()),
+            (TypeTerm::Error, _) | (_, TypeTerm::Error) => Ok(()),
             (left, _) if left.is_nothing() => Ok(()),
             (_, right) if right.is_nothing() => Ok(()),
             (TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)), TypeTerm::Reference(inner))
@@ -1070,6 +1079,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn term_to_ty(&mut self, term: TypeTerm) -> Result<Ty> {
         Ok(match term {
             TypeTerm::Concrete(ty) => ty,
+            TypeTerm::Error => {
+                return Err(self.error_with_current_span("error type variable"));
+            }
             TypeTerm::Union(lhs, rhs) => {
                 let lhs_ty = self.resolve_to_ty(lhs)?;
                 let rhs_ty = self.resolve_to_ty(rhs)?;
@@ -1291,7 +1303,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             Ty::AnyBox(_) => {
                 // Treat AnyBox payloads as fully dynamic until a specific handler exists.
-                self.bind(var, TypeTerm::Any);
+                self.bind(var, TypeTerm::Error);
             }
             Ty::TokenStream(_) => {
                 self.bind(var, TypeTerm::Concrete(ty.clone()));
@@ -1319,7 +1331,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             Ty::TypeBounds(_) => {
                 // Higher-ranked or bounded types are treated as opaque for now.
-                self.bind(var, TypeTerm::Any);
+                self.bind(var, TypeTerm::Error);
             }
             // No Ty::Custom in current AST types; treat all remaining cases via fallback below
             Ty::Unknown(_) => self.bind(var, TypeTerm::Concrete(Ty::Unknown(TypeUnknown))),
@@ -1646,8 +1658,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                     }
                 }
-                // Fallback: treat as any to allow later constraints to refine.
-                self.bind(var, TypeTerm::Any);
+                // Fallback unresolved named types stay symbolic until later constraints refine them.
+                return Ok(var);
             }
             Ty::Function(f) => {
                 let params = f
@@ -1669,7 +1681,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 if !bounds.is_empty() {
                     self.generic_trait_bounds.insert(var, bounds);
                 }
-                self.bind(var, TypeTerm::Any);
+                self.bind(var, TypeTerm::Error);
             }
         }
         Ok(var)

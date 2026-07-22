@@ -398,11 +398,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 var
                             } else {
                                 self.emit_warning(
-                                    "splice expr token lacks inner type; defaulting to any",
+                                    "splice expr token lacks inner type; leaving result unresolved",
                                 );
-                                let any_var = self.fresh_type_var();
-                                self.bind(any_var, TypeTerm::Any);
-                                any_var
+                                self.fresh_type_var()
                             }
                         }
                         Ty::Quote(quote) => {
@@ -687,9 +685,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     any_var
                 }
                 ExprKind::Item(_) | ExprKind::Closured(_) | ExprKind::Structural(_) => {
-                    let any_var = self.fresh_type_var();
-                    self.bind(any_var, TypeTerm::Any);
-                    any_var
+                    self.error_type_var()
                 }
                 ExprKind::Id(_) => {
                     self.emit_error("detached expression identifiers are not supported");
@@ -848,17 +844,13 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         );
         if matches!(self.resolve_to_ty(object_var), Ok(Ty::Struct(struct_ty)) if struct_ty.name.as_str() == "HashMap")
         {
-            let any_var = self.fresh_type_var();
-            self.bind(any_var, TypeTerm::Any);
-            return Ok(any_var);
+            return Ok(self.fresh_type_var());
         }
         if idx_non_integer || idx_is_string_literal {
             let map_var = self.fresh_type_var();
             let map_ty = self.make_hashmap_struct();
             self.bind(map_var, TypeTerm::Concrete(Ty::Struct(map_ty)));            if self.unify(object_var, map_var).is_ok() {
-                let any_var = self.fresh_type_var();
-                self.bind(any_var, TypeTerm::Any);
-                return Ok(any_var);
+                return Ok(self.fresh_type_var());
             }
 
             let map_var = self.fresh_type_var();
@@ -866,9 +858,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             self.bind(map_var, TypeTerm::Concrete(Ty::Struct(map_ty)));            let ref_var = self.fresh_type_var();
             self.bind(ref_var, TypeTerm::Reference(map_var));
             if self.unify(object_var, ref_var).is_ok() {
-                let any_var = self.fresh_type_var();
-                self.bind(any_var, TypeTerm::Any);
-                return Ok(any_var);
+                return Ok(self.fresh_type_var());
             }
 
             self.emit_error("indexing with a non-integer key requires a HashMap");
@@ -902,9 +892,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     }
                 }
                 Ty::Struct(struct_ty) if struct_ty.name.as_str() == "HashMap" => {
-                    let any_var = self.fresh_type_var();
-                    self.bind(any_var, TypeTerm::Any);
-                    return Ok(any_var);
+                    return Ok(self.fresh_type_var());
                 }
                 _ => {}
             }
@@ -1125,7 +1113,6 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             }
             IntrinsicCallKind::Slice => {
                 let elem_var = self.fresh_type_var();
-                self.bind(elem_var, TypeTerm::Any);
                 self.bind(result_var, TypeTerm::Slice(elem_var));
             }
             IntrinsicCallKind::Len
@@ -1318,7 +1305,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 self.bind(result_var, TypeTerm::Unit);
             }
             _ => {
-                self.bind(result_var, TypeTerm::Any);
+                self.bind(result_var, TypeTerm::Error);
             }
         }
 
@@ -2581,9 +2568,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 let elem_var = if let Some(first) = list.values.first() {
                     self.infer_value(first)?
                 } else {
-                    let fresh = self.fresh_type_var();
-                    self.bind(fresh, TypeTerm::Any);
-                    fresh
+                    self.fresh_type_var()
                 };
                 for value in list.values.iter().skip(1) {
                     let next_var = self.infer_value(value)?;
@@ -3096,9 +3081,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                         return Ok(var);
                     }
                     if self.lossy_mode {
-                        let var = self.fresh_type_var();
-                        self.bind(var, TypeTerm::Any);
-                        return Ok(var);
+                        return Ok(self.fresh_type_var());
                     }
                 }
                 self.emit_error(format!(
@@ -3215,14 +3198,10 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                                 ret?
                             }
                         } else {
-                            let fallback = self.fresh_type_var();
-                            self.bind(fallback, TypeTerm::Any);
-                            fallback
+                            self.fresh_type_var()
                         }
                     } else {
-                        let fallback = self.fresh_type_var();
-                        self.bind(fallback, TypeTerm::Any);
-                        fallback
+                        self.fresh_type_var()
                     };
                     let fn_var = self.fresh_type_var();
                     self.bind(
@@ -3542,9 +3521,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 let obj_ty = match self.resolve_to_ty(obj_var) {
                     Ok(ty) => Self::peel_reference(ty),
                     Err(_) => {
-                        let result_var = self.fresh_type_var();
-                        self.bind(result_var, TypeTerm::Any);
-                        return Ok(Some(result_var));
+                        return Ok(Some(self.fresh_type_var()));
                     }
                 };
 
@@ -3558,9 +3535,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 let elem_ty = match elem_ty {
                     Some(ty) => ty,
                     None => {
-                        let result_var = self.fresh_type_var();
-                        self.bind(result_var, TypeTerm::Any);
-                        return Ok(Some(result_var));
+                        return Ok(Some(self.fresh_type_var()));
                     }
                 };
 
@@ -3678,9 +3653,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             }
             other => {
                 if self.lossy_mode && matches!(other, Ty::Any(_) | Ty::Unknown(_)) {
-                    let var = self.fresh_type_var();
-                    self.bind(var, TypeTerm::Any);
-                    Ok(var)
+                    Ok(self.fresh_type_var())
                 } else {
                     self.emit_error(format!(
                         "cannot access field {} on value of type {}",

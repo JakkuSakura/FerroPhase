@@ -2059,7 +2059,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             if self.lossy_mode {
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Any);
+                self.bind(var, TypeTerm::Error);
                 self.insert_env(key.clone(), EnvEntry::Mono(var));
                 self.insert_symbol_alias(&alias, qualified);
                 self.emit_warning(format!("unresolved import: {}", alias));
@@ -3564,7 +3564,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn error_type_var(&mut self) -> TypeVarId {
         let var = self.fresh_type_var();
-        self.bind(var, TypeTerm::Any);
+        self.bind(var, TypeTerm::Error);
         var
     }
 
