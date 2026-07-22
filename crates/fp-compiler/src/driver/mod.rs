@@ -84,18 +84,6 @@ impl CompilerDriver {
             .collect();
 
         if !self.state.comptime_seeded.contains(ast_id) {
-            let comptime_count = all_requests.iter().filter(|r| matches!(r, TypingRequest::Comptime(_))).count();
-            if comptime_count > 0 {
-                self.state.comptime_pending.insert(ast_id.clone(), comptime_count);
-            }
-            self.state.comptime_seeded.insert(ast_id.clone());
-        } else if self.state.comptime_pending.get(ast_id).copied().unwrap_or(0) == 0
-            && all_requests.iter().any(|r| matches!(r, TypingRequest::Comptime(_)))
-        {
-            return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
-        }
-
-        if !self.state.comptime_seeded.contains(ast_id) {
             let comptime_count = all_requests
                 .iter()
                 .filter(|r| matches!(r, TypingRequest::Comptime(_)))
@@ -106,6 +94,18 @@ impl CompilerDriver {
                     .insert(ast_id.clone(), comptime_count);
             }
             self.state.comptime_seeded.insert(ast_id.clone());
+        } else if self
+            .state
+            .comptime_pending
+            .get(ast_id)
+            .copied()
+            .unwrap_or(0)
+            == 0
+            && all_requests
+                .iter()
+                .any(|r| matches!(r, TypingRequest::Comptime(_)))
+        {
+            return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
         }
 
         let requests: Vec<TypingRequest> = all_requests
@@ -211,7 +211,7 @@ impl CompilerDriver {
                 self.state.insert_const_value(value_id.clone(), value);
 
                 if let Some(blocked) = answer_to {
-                    self.resolve_comptime_for_blocked(blocked);
+                    self.resolve_comptime_for_blocked(blocked)?;
                 }
 
                 Ok(CompilerAnswer::CompileTimeValue { value: value_id })
@@ -232,20 +232,35 @@ impl CompilerDriver {
         self.interpreter.run_main(lir)
     }
 
-    fn resolve_comptime_for_blocked(&mut self, blocked: RequestId) {
-        let ast_id =
-            self.scheduler
-                .answered(blocked)
-                .and_then(|completed| match &completed.request.work {
-                    CompilerWork::TypeAst { ast, .. } => Some(ast.clone()),
-                    _ => None,
-                });
+    fn resolve_comptime_for_blocked(
+        &mut self,
+        blocked: RequestId,
+    ) -> Result<(), CompilerDriverError> {
+        let ast_id = self
+            .scheduler
+            .answered(blocked)
+            .and_then(|completed| match &completed.request.work {
+                CompilerWork::TypeAst { ast, .. } => Some(ast.clone()),
+                _ => None,
+            });
 
-        if let Some(ast_id) = ast_id {
-            if let Some(count) = self.state.comptime_pending.get_mut(&ast_id) {
-                *count = count.saturating_sub(1);
-            }
+        let Some(ast_id) = ast_id else {
+            return Ok(());
+        };
+
+        let count = self
+            .state
+            .comptime_pending
+            .get(&ast_id)
+            .copied()
+            .unwrap_or(0);
+        if count == 0 {
+            return Err(CompilerDriverError::UnresolvableComptime(ast_id));
         }
+        self.state
+            .comptime_pending
+            .insert(ast_id, count.saturating_sub(1));
+        Ok(())
     }
 
     fn typing_request_from_outcome(
