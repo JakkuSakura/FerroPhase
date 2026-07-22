@@ -1573,7 +1573,6 @@ dependencies = [
  "fp-jit",
  "fp-lang",
  "fp-native",
- "fp-pipeline",
  "fp-typing",
  "futures-util",
  "glob",
@@ -1668,13 +1667,6 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tracing",
-]
-
-[[package]]
-name = "fp-pipeline"
-version = "0.1.0"
-dependencies = [
- "fp-core",
 ]
 
 [[package]]
