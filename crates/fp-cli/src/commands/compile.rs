@@ -1,7 +1,10 @@
 //! Compilation command implementation
 
 use crate::commands::{setup_progress_bar, validate_paths_exist};
-use crate::compiler::{self, BytecodeCompileOptions, NativeCompileOptions, NativeEmitterKind};
+use crate::compiler::{
+    self, BytecodeCompileOptions, EbpfCompileOptions, JvmCompileOptions, NativeCompileOptions,
+    NativeEmitterKind, WasmCompileOptions,
+};
 use crate::pipeline::{
     AstPreparationOptions, BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
 };
@@ -661,6 +664,51 @@ fn try_compile_with_compiler(
                     save_intermediates: args.save_intermediates,
                 },
             )?;
+            Ok(Some(artifact))
+        }
+        BackendKind::JvmBytecode => {
+            let class_name_hint = input
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(|stem| stem.to_string());
+            let artifact = compiler::compile_jvm_file(
+                input,
+                &JvmCompileOptions {
+                    output: output.to_path_buf(),
+                    save_intermediates: args.save_intermediates,
+                    class_name_hint,
+                },
+            )?;
+            Ok(Some(artifact))
+        }
+        BackendKind::Wasm => {
+            let artifact = compiler::compile_wasm_file(
+                input,
+                &WasmCompileOptions {
+                    output: output.to_path_buf(),
+                },
+            )?;
+            Ok(Some(artifact))
+        }
+        BackendKind::Ebpf => {
+            let artifact = compiler::compile_ebpf_file(
+                input,
+                &EbpfCompileOptions {
+                    output: output.to_path_buf(),
+                },
+            )?;
+            Ok(Some(artifact))
+        }
+        BackendKind::Cil => {
+            let code = compiler::compile_cil_file(input)?;
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+            }
+            std::fs::write(output, code).map_err(CliError::Io)?;
+            Ok(Some(output.to_path_buf()))
+        }
+        BackendKind::Dotnet => {
+            let artifact = compiler::compile_dotnet_file(input, output, args.save_intermediates)?;
             Ok(Some(artifact))
         }
         _ => Ok(None),
