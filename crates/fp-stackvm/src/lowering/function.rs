@@ -1,0 +1,367 @@
+//! Per-function lowering state.
+//!
+//! [`FunctionLowering`] maintains the simulated operand stack, assigns
+//! virtual registers, and dispatches each bytecode instruction to the
+//! appropriate sub-lowering in [`ops`][super::ops].
+
+use fp_bytecode::{
+    BytecodeCallee, BytecodeInstr, BytecodeTerminator,
+};
+use fp_core::lir::{
+    BasicBlockId, CallingConvention, LirBasicBlock, LirFunction,
+    LirInstruction, LirInstructionKind, LirTerminator, LirValue, RegisterId,
+};
+use std::collections::HashMap;
+
+use super::LowerError;
+use super::LowerResult;
+
+/// State kept during the lowering of a single bytecode function.
+pub(crate) struct FunctionLowering<'a> {
+    /// Reference to the full bytecode program (for const pool lookups).
+    pub bytecode: &'a fp_bytecode::BytecodeProgram,
+    /// The LIR function being built.
+    pub func: &'a mut LirFunction,
+    /// Monotonic counter for allocating fresh [`RegisterId`]s.
+    pub next_reg: RegisterId,
+    /// Simulated operand stack.  Each entry is the register holding the
+    /// value at that stack position.
+    pub stack: Vec<RegisterId>,
+    /// Bytecode local index → LIR register that holds the `Alloca`'d
+    /// address of that local.
+    pub local_addrs: HashMap<u32, RegisterId>,
+    /// The ID of the function's entry block (first block in the
+    /// bytecode function).
+    pub entry_block_id: BasicBlockId,
+}
+
+impl<'a> FunctionLowering<'a> {
+    pub fn new(
+        bytecode: &'a fp_bytecode::BytecodeProgram,
+        func: &'a mut LirFunction,
+        entry_block_id: BasicBlockId,
+    ) -> Self {
+        Self {
+            bytecode,
+            func,
+            next_reg: 1000,
+            stack: Vec::new(),
+            local_addrs: HashMap::new(),
+            entry_block_id,
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Register management
+    // ---------------------------------------------------------------
+
+    /// Allocate and return the next available virtual register.
+    pub fn alloc_reg(&mut self) -> RegisterId {
+        let reg = self.next_reg;
+        self.next_reg += 1;
+        reg
+    }
+
+    /// Return the most-recently-allocated register (i.e. the result of
+    /// the last emitted instruction).
+    pub fn last_reg(&self) -> RegisterId {
+        self.next_reg - 1
+    }
+
+    /// Push a register onto the simulated operand stack.
+    pub fn push_reg(&mut self, reg: RegisterId) {
+        self.stack.push(reg);
+    }
+
+    /// Pop a register from the simulated operand stack.
+    pub fn pop_reg(&mut self) -> LowerResult<RegisterId> {
+        self.stack
+            .pop()
+            .ok_or_else(|| LowerError::Internal("stack underflow during lowering".into()))
+    }
+
+    /// Convenience: wrap a register in [`LirValue::Register`].
+    pub fn reg_val(reg: RegisterId) -> LirValue {
+        LirValue::Register(reg)
+    }
+
+    // ---------------------------------------------------------------
+    // Local address bookkeeping
+    // ---------------------------------------------------------------
+
+    /// Record the alloca register for the given bytecode local index.
+    pub fn set_local_addr(&mut self, local_idx: u32, addr_reg: RegisterId) {
+        self.local_addrs.insert(local_idx, addr_reg);
+    }
+
+    /// Look up the alloca register for a bytecode local.
+    pub fn get_local_addr(&self, local_idx: u32) -> LowerResult<RegisterId> {
+        self.local_addrs
+            .get(&local_idx)
+            .copied()
+            .ok_or_else(|| LowerError::Internal(format!("no alloca for local {local_idx}")))
+    }
+
+    // ---------------------------------------------------------------
+    // Block management
+    // ---------------------------------------------------------------
+
+    /// Ensure a basic block with the given ID exists, creating it if
+    /// necessary.
+    pub fn ensure_block(&mut self, id: BasicBlockId) {
+        if self.func.get_basic_block(id).is_none() {
+            self.func.add_basic_block(LirBasicBlock::new(id, None));
+        }
+    }
+
+    /// Get mutable access to the given block, creating it on demand.
+    pub fn current_block_mut(&mut self, id: BasicBlockId) -> &mut LirBasicBlock {
+        self.ensure_block(id);
+        self.func.get_basic_block_mut(id).unwrap()
+    }
+
+    // ---------------------------------------------------------------
+    // Instruction emission
+    // ---------------------------------------------------------------
+
+    /// Emit a single instruction into `block_id`, returning the
+    /// register that holds its result.
+    pub fn emit_in_block(
+        &mut self,
+        block_id: BasicBlockId,
+        kind: LirInstructionKind,
+    ) -> LowerResult<RegisterId> {
+        let reg = self.alloc_reg();
+        let instr = LirInstruction::new(reg, kind);
+        let block = self.current_block_mut(block_id);
+        block.add_instruction(instr);
+        Ok(reg)
+    }
+
+    /// Emit an instruction into the entry block.
+    pub fn emit_in_entry_block(&mut self, kind: LirInstructionKind) -> LowerResult<RegisterId> {
+        self.emit_in_block(self.entry_block_id, kind)
+    }
+
+    // ---------------------------------------------------------------
+    // Block lowering (main dispatch)
+    // ---------------------------------------------------------------
+
+    /// Lower a single bytecode basic block into LIR instructions and a
+    /// terminator.
+    ///
+    /// The simulated operand stack is **cleared** at block entry.  This
+    /// is correct for bytecode generated by a φ-aware compiler (where
+    /// blocks are jumped to with a known stack depth), but limits
+    /// support for multi-predecessor blocks.
+    pub fn lower_block(&mut self, block: &fp_bytecode::BytecodeBlock) -> LowerResult<()> {
+        let block_id = block.id;
+        self.stack.clear();
+
+        for instr in &block.code {
+            match instr {
+                BytecodeInstr::LoadConst(id) => {
+                    let bc_const = self.bytecode.const_pool.get(*id as usize).ok_or_else(|| {
+                        LowerError::Internal(format!("missing const {id}"))
+                    })?;
+                    let reg = super::ops::lower_load_const(self, block_id, bc_const)?;
+                    self.push_reg(reg);
+                }
+                BytecodeInstr::LoadLocal(local) => {
+                    let addr_reg = self.get_local_addr(*local)?;
+                    let val_reg = self.emit_in_block(
+                        block_id,
+                        LirInstructionKind::Load {
+                            address: Self::reg_val(addr_reg),
+                            alignment: Some(8),
+                            volatile: false,
+                        },
+                    )?;
+                    self.push_reg(val_reg);
+                }
+                BytecodeInstr::StoreLocal(local) => {
+                    let val_reg = self.pop_reg()?;
+                    let addr_reg = self.get_local_addr(*local)?;
+                    self.emit_in_block(
+                        block_id,
+                        LirInstructionKind::Store {
+                            value: Self::reg_val(val_reg),
+                            address: Self::reg_val(addr_reg),
+                            alignment: Some(8),
+                            volatile: false,
+                        },
+                    )?;
+                }
+                BytecodeInstr::LoadPlace(place) => {
+                    let val_reg = super::ops::lower_load_place(self, block_id, place)?;
+                    self.push_reg(val_reg);
+                }
+                BytecodeInstr::StorePlace(place) => {
+                    let val_reg = self.pop_reg()?;
+                    super::ops::lower_store_place(self, block_id, place, val_reg)?;
+                }
+                BytecodeInstr::BinaryOp(op) => {
+                    let right = self.pop_reg()?;
+                    let left = self.pop_reg()?;
+                    let result_reg = super::ops::lower_binop(self, block_id, op, left, right)?;
+                    self.push_reg(result_reg);
+                }
+                BytecodeInstr::UnaryOp(op) => {
+                    let operand = self.pop_reg()?;
+                    let result_reg = super::ops::lower_unop(self, block_id, op, operand)?;
+                    self.push_reg(result_reg);
+                }
+                BytecodeInstr::IntrinsicCall { kind, arg_count, format } => {
+                    let mut args = Vec::with_capacity(*arg_count as usize);
+                    for _ in 0..*arg_count {
+                        args.push(Self::reg_val(self.pop_reg()?));
+                    }
+                    args.reverse();
+                    let result_reg =
+                        super::ops::lower_intrinsic(self, block_id, *kind, format.as_deref(), args)?;
+                    if let Some(reg) = result_reg {
+                        self.push_reg(reg);
+                    }
+                }
+                BytecodeInstr::MakeTuple(count) => {
+                    let reg = super::ops::lower_make_compound(
+                        self, block_id,
+                        super::constants::INTRINSIC_MAKE_TUPLE,
+                        *count,
+                    )?;
+                    self.push_reg(reg);
+                }
+                BytecodeInstr::MakeArray(count) => {
+                    let reg = super::ops::lower_make_compound(
+                        self, block_id,
+                        super::constants::INTRINSIC_MAKE_ARRAY,
+                        *count,
+                    )?;
+                    self.push_reg(reg);
+                }
+                BytecodeInstr::MakeList(count) => {
+                    let reg = super::ops::lower_make_compound(
+                        self, block_id,
+                        super::constants::INTRINSIC_MAKE_LIST,
+                        *count,
+                    )?;
+                    self.push_reg(reg);
+                }
+                BytecodeInstr::MakeMap(count) => {
+                    let reg = super::ops::lower_make_compound(
+                        self, block_id,
+                        super::constants::INTRINSIC_MAKE_MAP,
+                        *count,
+                    )?;
+                    self.push_reg(reg);
+                }
+                BytecodeInstr::ContainerLen => {
+                    let container = self.pop_reg()?;
+                    let reg = super::ops::lower_call_intrinsic(
+                        self,
+                        block_id,
+                        super::constants::INTRINSIC_CONTAINER_LEN,
+                        &[Self::reg_val(container)],
+                    )?;
+                    self.push_reg(reg);
+                }
+                BytecodeInstr::ContainerGet => {
+                    let key = self.pop_reg()?;
+                    let container = self.pop_reg()?;
+                    let reg = super::ops::lower_container_get(self, block_id, container, key)?;
+                    self.push_reg(reg);
+                }
+                BytecodeInstr::Pop => {
+                    let _ = self.pop_reg()?;
+                }
+            }
+        }
+
+        // -- Terminator lowering --
+        match &block.terminator {
+            BytecodeTerminator::Return => {
+                let ret_val = if self.stack.is_empty() {
+                    None
+                } else {
+                    Some(Self::reg_val(self.pop_reg()?))
+                };
+                let block = self.current_block_mut(block_id);
+                block.set_terminator(LirTerminator::Return(ret_val));
+            }
+            BytecodeTerminator::Jump { target } => {
+                let block = self.current_block_mut(block_id);
+                block.set_terminator(LirTerminator::Br(*target));
+            }
+            BytecodeTerminator::JumpIfTrue { target, otherwise } => {
+                let cond = self.pop_reg()?;
+                let block = self.current_block_mut(block_id);
+                block.set_terminator(LirTerminator::CondBr {
+                    condition: Self::reg_val(cond),
+                    if_true: *target,
+                    if_false: *otherwise,
+                });
+            }
+            BytecodeTerminator::JumpIfFalse { target, otherwise } => {
+                let cond = self.pop_reg()?;
+                let block = self.current_block_mut(block_id);
+                block.set_terminator(LirTerminator::CondBr {
+                    condition: Self::reg_val(cond),
+                    if_true: *otherwise,
+                    if_false: *target,
+                });
+            }
+            BytecodeTerminator::SwitchInt { values, targets, otherwise } => {
+                let discr = self.pop_reg()?;
+                let block = self.current_block_mut(block_id);
+                let cases: Vec<(u64, BasicBlockId)> = values
+                    .iter()
+                    .zip(targets.iter())
+                    .map(|(v, t)| (*v as u64, *t))
+                    .collect();
+                block.set_terminator(LirTerminator::Switch {
+                    value: Self::reg_val(discr),
+                    default: *otherwise,
+                    cases,
+                });
+            }
+            BytecodeTerminator::Call { callee, arg_count, destination, target } => {
+                let mut args = Vec::with_capacity(*arg_count as usize);
+                for _ in 0..*arg_count {
+                    args.push(Self::reg_val(self.pop_reg()?));
+                }
+                args.reverse();
+
+                let callee_val = match callee {
+                    BytecodeCallee::Function(name) => LirValue::Function(name.clone()),
+                    BytecodeCallee::Local(place) => {
+                        let reg = super::ops::lower_load_place(self, block_id, place)?;
+                        Self::reg_val(reg)
+                    }
+                };
+
+                let result_reg = self.emit_in_block(
+                    block_id,
+                    LirInstructionKind::Call {
+                        function: callee_val,
+                        args,
+                        calling_convention: CallingConvention::C,
+                        tail_call: false,
+                    },
+                )?;
+
+                if let Some(place) = destination {
+                    super::ops::lower_store_place(self, block_id, place, result_reg)?;
+                }
+
+                let block = self.current_block_mut(block_id);
+                block.set_terminator(LirTerminator::Br(*target));
+            }
+            BytecodeTerminator::Abort | BytecodeTerminator::Unreachable => {
+                let block = self.current_block_mut(block_id);
+                block.set_terminator(LirTerminator::Unreachable);
+            }
+        }
+
+        Ok(())
+    }
+}
