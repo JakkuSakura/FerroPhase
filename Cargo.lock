@@ -1545,7 +1545,6 @@ dependencies = [
  "fp-bash",
  "fp-cli",
  "fp-core",
- "fp-interpret",
  "fp-lang",
  "fp-powershell",
  "serde",

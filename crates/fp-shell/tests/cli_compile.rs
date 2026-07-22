@@ -94,3 +94,34 @@ const fn inventory() -> Inventory {
     assert!(script.contains("__fp_std_ops_server_shell_ 'uptime' 'web-1'"));
     assert!(script.contains("__fp_std_ops_server_shell_ 'uptime' 'web-2'"));
 }
+
+#[test]
+fn interpret_command_executes_generated_script() {
+    let bin = env!("CARGO_BIN_EXE_fp-shell");
+    let directory = tempfile::tempdir().expect("tempdir should be created");
+    let input = directory.path().join("deploy.fp");
+
+    fs::write(
+        &input,
+        r#"
+const fn main() {
+    std::ops::server::shell("echo integration-test");
+}
+"#,
+    )
+    .expect("input should be written");
+
+    let run = Command::new(bin)
+        .arg("interpret")
+        .arg(&input)
+        .output()
+        .expect("fp-shell should execute");
+
+    assert!(
+        run.status.success(),
+        "stdout:\n{}\n\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(String::from_utf8_lossy(&run.stdout).contains("integration-test"));
+}

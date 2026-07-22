@@ -5,19 +5,13 @@ mod shell_materializer;
 use fp_core::ast::{
     Abi, AstTargetOutput, AttrMeta, AttributesExt, BlockStmt, Expr, ExprInvokeTarget, ExprKind,
     Ident, Item, ItemDeclFunction, ItemKind, Module, Name, Node, NodeKind, Value, Visibility,
-    register_threadlocal_serializer,
 };
-use fp_core::cfg::TargetEnv;
-use fp_core::context::SharedScopedContext;
 use fp_core::frontend::LanguageFrontend;
-use fp_interpret::engine::{
-    AstInterpreter, CommandMockState, InterpreterCapability, InterpreterMode, InterpreterOptions,
-    RuntimeExternHook, StdoutMode,
-};
-use fp_lang::{FerroFrontend, PrettyAstSerializer};
+use fp_lang::FerroFrontend;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub use ScriptTarget as ShellTarget;
 pub use inventory::load_inventory;
@@ -156,139 +150,6 @@ pub fn compile_source_with_options(
     })
 }
 
-#[derive(Default)]
-struct ShellRuntimeState {
-    changed: bool,
-    change_log: Vec<RuntimeChange>,
-}
-
-#[derive(Debug, Clone)]
-struct RuntimeChange {
-    op: String,
-    target: String,
-    summary: String,
-    changed: bool,
-}
-
-impl ShellRuntimeState {
-    fn record_change(&mut self, change: RuntimeChange) {
-        self.change_log.push(change);
-    }
-
-    fn clear_changes(&mut self) {
-        self.change_log.clear();
-    }
-
-    fn change_summary(&self) -> Value {
-        let entries = self
-            .change_log
-            .iter()
-            .map(runtime_change_to_value)
-            .collect::<Vec<_>>();
-        let changed_any = self.change_log.iter().any(|change| change.changed);
-        Value::map([
-            (
-                Value::string("changed_any".to_string()),
-                Value::bool(changed_any),
-            ),
-            (
-                Value::string("entries".to_string()),
-                Value::List(fp_core::ast::ValueList::new(entries)),
-            ),
-        ])
-    }
-}
-
-struct ShellRuntimeHook {
-    state: Arc<Mutex<ShellRuntimeState>>,
-}
-
-impl RuntimeExternHook for ShellRuntimeHook {
-    fn call(
-        &self,
-        name: &str,
-        _sig: &fp_core::ast::FunctionSignature,
-        args: &[Value],
-    ) -> Option<fp_core::error::Result<Value>> {
-        match name {
-            "runtime_temp_path" => Some(Ok(Value::string(
-                std::env::temp_dir().to_string_lossy().into_owned(),
-            ))),
-            "runtime_fail" => Some(string_arg(args, 0).and_then(|message| Err(message.into()))),
-            "runtime_set_changed" => Some(bool_arg(args, 0).map(|changed| {
-                let mut guard = lock_mutex(&self.state);
-                guard.changed = changed;
-                Value::unit()
-            })),
-            "runtime_last_changed" => {
-                let guard = lock_mutex(&self.state);
-                Some(Ok(Value::bool(guard.changed)))
-            }
-            "runtime_record_change" => Some(
-                string_arg(args, 0)
-                    .and_then(|op| {
-                        string_arg(args, 1).and_then(|target| {
-                            string_arg(args, 2).and_then(|summary| {
-                                bool_arg(args, 3).map(|changed| RuntimeChange {
-                                    op,
-                                    target,
-                                    summary,
-                                    changed,
-                                })
-                            })
-                        })
-                    })
-                    .map(|change| {
-                        let mut guard = lock_mutex(&self.state);
-                        guard.record_change(change);
-                        Value::unit()
-                    }),
-            ),
-            "runtime_change_summary" => {
-                let guard = lock_mutex(&self.state);
-                Some(Ok(guard.change_summary()))
-            }
-            "runtime_clear_change_summary" => Some(Ok({
-                let mut guard = lock_mutex(&self.state);
-                guard.clear_changes();
-                Value::unit()
-            })),
-            _ => None,
-        }
-    }
-}
-
-fn lock_mutex<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    match mutex.lock() {
-        Ok(guard) => guard,
-        Err(err) => err.into_inner(),
-    }
-}
-
-fn string_arg(args: &[Value], index: usize) -> fp_core::error::Result<String> {
-    let Some(value) = args.get(index) else {
-        return Err(format!("missing string argument at index {}", index).into());
-    };
-    match value {
-        Value::String(text) => Ok(text.value.clone()),
-        other => Err(format!(
-            "expected string argument at index {}, got {:?}",
-            index, other
-        )
-        .into()),
-    }
-}
-
-fn bool_arg(args: &[Value], index: usize) -> fp_core::error::Result<bool> {
-    let Some(value) = args.get(index) else {
-        return Err(format!("missing bool argument at index {}", index).into());
-    };
-    match value {
-        Value::Bool(flag) => Ok(flag.value),
-        other => Err(format!("expected bool argument at index {}, got {:?}", index, other).into()),
-    }
-}
-
 pub fn interpret_source(source: &str, source_path: &Path) -> Result<Value, ShellError> {
     interpret_source_with_options(source, source_path, &InterpretOptions::default())
 }
@@ -298,75 +159,61 @@ pub fn interpret_source_with_options(
     source_path: &Path,
     options: &InterpretOptions,
 ) -> Result<Value, ShellError> {
-    let command_mock_state = Some(Arc::new(Mutex::new(CommandMockState::default())));
-    interpret_source_with_runtime_state(
+    let generated = compile_source_with_options(
         source,
         source_path,
-        options,
-        Arc::new(Mutex::new(ShellRuntimeState::default())),
-        command_mock_state,
-    )
-}
-
-fn interpret_source_with_runtime_state(
-    source: &str,
-    source_path: &Path,
-    options: &InterpretOptions,
-    runtime_state: Arc<Mutex<ShellRuntimeState>>,
-    command_mock_state: Option<Arc<Mutex<CommandMockState>>>,
-) -> Result<Value, ShellError> {
-    let frontend = FerroFrontend::new();
-    register_threadlocal_serializer(Arc::new(PrettyAstSerializer::new()));
-    let parsed = frontend
-        .parse(source, Some(source_path))
-        .map_err(|err| ShellError::Parse(err.to_string()))?;
-    let mut ast = merge_runtime_helpers(parsed.ast, options.inventory.as_ref())?;
-    let ctx = SharedScopedContext::new();
-    let runtime_hook: Arc<dyn RuntimeExternHook> = Arc::new(ShellRuntimeHook {
-        state: runtime_state,
-    });
-    let mut interpreter = AstInterpreter::new(
-        &ctx,
-        InterpreterOptions {
-            mode: InterpreterMode::Runtime,
-            capability: InterpreterCapability::default(),
-            target_env: shell_target_env(options.target),
-            debug_assertions: true,
-            diagnostics: None,
-            diagnostic_context: "fp-shell-interpret",
-            module_resolution: None,
-            macro_parser: None,
-            intrinsic_normalizer: None,
-            stdout_mode: StdoutMode::Inherit,
-            command_mock_state,
-            runtime_extern_hook: Some(runtime_hook),
-            jit: None,
+        options.target,
+        &CompileOptions {
+            inventory: options.inventory.clone(),
+            dry_run: false,
+            limit: Vec::new(),
         },
-    );
-    interpreter.enable_incremental_typing(&ast);
-    interpreter.interpret(&mut ast);
-    let value = interpreter.execute_main().unwrap_or_else(Value::unit);
-    let outcome = interpreter.take_outcome();
-    if outcome.has_errors {
-        return Err(ShellError::Interpret(
-            outcome
-                .diagnostics
-                .iter()
-                .map(|diagnostic| diagnostic.message.clone())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        ));
-    }
-    Ok(value)
+    )?;
+    execute_generated_script(&generated.code, options.target)
 }
 
-fn shell_target_env(target: ScriptTarget) -> TargetEnv {
-    let mut env = TargetEnv::host();
-    env.lang = Some(match target {
-        ScriptTarget::Bash => "bash".to_string(),
-        ScriptTarget::PowerShell => "pwsh".to_string(),
-    });
-    env
+fn execute_generated_script(script: &str, target: ScriptTarget) -> Result<Value, ShellError> {
+    let temp_name = format!(
+        "fp-shell-{}-{}.{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+        target.extension()
+    );
+    let script_path = std::env::temp_dir().join(temp_name);
+    fs::write(&script_path, script)?;
+
+    let mut command = match target {
+        ScriptTarget::Bash => {
+            let mut command = Command::new("bash");
+            command.arg(&script_path);
+            command
+        }
+        ScriptTarget::PowerShell => {
+            let mut command = Command::new("pwsh");
+            command
+                .arg("-NoProfile")
+                .arg("-NonInteractive")
+                .arg("-File")
+                .arg(&script_path);
+            command
+        }
+    };
+
+    let status = command.status().map_err(|err| {
+        ShellError::Interpret(format!("failed to execute generated shell script: {err}"))
+    })?;
+    let _ = fs::remove_file(&script_path);
+    if !status.success() {
+        return Err(ShellError::Interpret(format!(
+            "shell execution failed with status {}",
+            status
+        )));
+    }
+
+    Ok(Value::unit())
 }
 
 fn merge_runtime_helpers(ast: Node, inventory: Option<&Node>) -> Result<Node, ShellError> {
@@ -1020,27 +867,6 @@ fn is_runtime_primitive(name: &str) -> bool {
         || name.ends_with("runtime_record_change")
         || name.ends_with("runtime_change_summary")
         || name.ends_with("runtime_clear_change_summary")
-}
-
-fn runtime_change_to_value(change: &RuntimeChange) -> Value {
-    Value::map([
-        (
-            Value::string("op".to_string()),
-            Value::string(change.op.clone()),
-        ),
-        (
-            Value::string("target".to_string()),
-            Value::string(change.target.clone()),
-        ),
-        (
-            Value::string("summary".to_string()),
-            Value::string(change.summary.clone()),
-        ),
-        (
-            Value::string("changed".to_string()),
-            Value::bool(change.changed),
-        ),
-    ])
 }
 
 fn extern_command(function: &ItemDeclFunction) -> Option<String> {

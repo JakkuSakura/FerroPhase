@@ -10,7 +10,6 @@ fp-bash = { path = "../fp-bash" }
 fp-backend = { path = "../fp-backend" }
 fp-cli = { path = "../fp-cli" }
 fp-core = { path = "../fp-core" }
-fp-interpret = { path = "../fp-interpret" }
 fp-lang = { path = "../fp-lang" }
 fp-powershell = { path = "../fp-powershell" }
 serde = { version = "1.0", features = ["derive"] }
