@@ -1,12 +1,7 @@
 //! Interpret FerroPhase source or bytecode files.
 
 use crate::commands::compile::build_module_resolution_context;
-use crate::pipeline::{BackendKind, PipelineOptions};
-use crate::{
-    CliError, Result,
-    cli::CliConfig,
-    pipeline::{Pipeline, PipelineInput, PipelineOutput},
-};
+use crate::{CliError, Result, cli::CliConfig, compiler};
 use clap::Args;
 use fp_jit::JitOptions;
 use std::path::{Path, PathBuf};
@@ -47,33 +42,23 @@ pub async fn interpret_command(args: InterpretArgs, _config: &CliConfig) -> Resu
 }
 
 async fn interpret_source(path: &Path, args: &InterpretArgs) -> Result<()> {
-    let mut options = PipelineOptions::default();
-    options.target = BackendKind::Interpret;
-    options.save_intermediates = false;
-    options.optimization_level = 0;
     if let Some(graph) = args.graph.as_ref() {
-        options.module_resolution = Some(build_module_resolution_context(graph, path)?);
+        let _ = build_module_resolution_context(graph, path)?;
+        return Err(CliError::InvalidInput(
+            "--graph is not yet supported on the fp-compiler interpret path".to_string(),
+        ));
     }
+
     if args.jit {
-        let mut jit_options = JitOptions::default();
-        jit_options.enabled = true;
-        if let Some(threshold) = args.jit_hot_threshold {
-            jit_options.hot_threshold = threshold;
-        }
-        options.jit = Some(jit_options);
+        let _ = JitOptions::default();
+        let _ = args.jit_hot_threshold;
+        return Err(CliError::InvalidInput(
+            "--jit is not yet supported on the fp-compiler interpret path".to_string(),
+        ));
     }
 
-    let mut pipeline = Pipeline::new();
-    let output = pipeline
-        .execute_with_options(PipelineInput::File(path.to_path_buf()), options)
-        .await?;
-
-    match output {
-        PipelineOutput::Value(_) | PipelineOutput::RuntimeValue(_) => Ok(()),
-        PipelineOutput::Code(_) | PipelineOutput::Binary(_) => Err(CliError::Compilation(
-            "Expected interpret output from pipeline".to_string(),
-        )),
-    }
+    let _ = compiler::interpret_file(path)?;
+    Ok(())
 }
 
 fn interpret_text_bytecode(path: &Path) -> Result<()> {

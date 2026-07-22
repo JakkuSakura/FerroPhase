@@ -104,6 +104,12 @@ impl CompilerState {
             .ok_or_else(|| CompilerDriverError::MissingConstValue(value_id.clone()))
     }
 
+    pub fn runtime_value(&self, value_id: &RuntimeValueId) -> Result<&Value, CompilerDriverError> {
+        self.runtime_values
+            .get(value_id)
+            .ok_or_else(|| CompilerDriverError::MissingRuntimeValue(value_id.clone()))
+    }
+
     pub fn typing_diagnostics(&self) -> &[TypingDiagnostic] {
         &self.typing_diagnostics
     }

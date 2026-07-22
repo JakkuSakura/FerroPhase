@@ -1,6 +1,8 @@
 use thiserror::Error;
 
-use crate::scheduler::{AstId, ConstValueId, HirId, LirId, MirId, SchedulerError, TypedAstId};
+use crate::scheduler::{
+    AstId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, SchedulerError, TypedAstId,
+};
 
 #[derive(Debug, Error)]
 pub enum CompilerDriverError {
@@ -20,9 +22,10 @@ pub enum CompilerDriverError {
     MissingLir(LirId),
     #[error("missing const value {0}")]
     MissingConstValue(ConstValueId),
+    #[error("missing runtime value {0}")]
+    MissingRuntimeValue(RuntimeValueId),
     #[error("unsupported compiler work: {0}")]
     UnsupportedWork(String),
     #[error("unresolvable comptime cycle for {0}")]
     UnresolvableComptime(AstId),
 }
-// appended

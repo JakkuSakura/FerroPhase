@@ -1,6 +1,6 @@
 //! Code checking and validation command implementation
 
-use crate::{Result, cli::CliConfig};
+use crate::{Result, cli::CliConfig, compiler, utils::FileUtils};
 use clap::Args;
 use console::style;
 use std::path::PathBuf;
@@ -26,12 +26,42 @@ pub struct CheckArgs {
 pub async fn check_command(args: CheckArgs, _config: &CliConfig) -> Result<()> {
     println!("{} Checking FerroPhase code...", style("🔍").cyan());
 
-    // TODO: Implement comprehensive code checking
-    println!(
-        "{} Code checking not yet fully implemented",
-        style("ℹ").blue()
-    );
-    println!("Paths to check: {:?}", args.paths);
+    let files = collect_check_files(&args)?;
+    for file in &files {
+        compiler::check_path(file, args.syntax_only)?;
+    }
 
+    println!("{} Checked {} file(s)", style("✓").green(), files.len());
     Ok(())
+}
+
+fn collect_check_files(args: &CheckArgs) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+
+    for path in &args.paths {
+        if path.is_file() {
+            files.push(path.clone());
+            continue;
+        }
+
+        if path.is_dir() {
+            files.extend(FileUtils::find_files(path, &args.include, &args.exclude)?);
+            continue;
+        }
+
+        return Err(crate::CliError::InvalidInput(format!(
+            "check: path does not exist: {}",
+            path.display()
+        )));
+    }
+
+    if files.is_empty() {
+        return Err(crate::CliError::InvalidInput(
+            "check: no files matched the provided paths".to_string(),
+        ));
+    }
+
+    files.sort();
+    files.dedup();
+    Ok(files)
 }

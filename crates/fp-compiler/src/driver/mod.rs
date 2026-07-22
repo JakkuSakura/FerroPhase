@@ -202,7 +202,7 @@ impl CompilerDriver {
         let lir = self.state.lir(lir_id)?.clone();
         match mode {
             ExecutionMode::Comptime => {
-                let value = self.evaluate_comptime_lir(&lir).unwrap_or_else(|e| {
+                let value = self.evaluate_lir(&lir).unwrap_or_else(|e| {
                     eprintln!("LIR interpreter error: {e}");
                     Value::unit()
                 });
@@ -217,15 +217,18 @@ impl CompilerDriver {
                 Ok(CompilerAnswer::CompileTimeValue { value: value_id })
             }
             ExecutionMode::Runtime => {
+                let value = self.evaluate_lir(&lir).unwrap_or_else(|e| {
+                    eprintln!("LIR interpreter error: {e}");
+                    Value::unit()
+                });
                 let value_id = RuntimeValueId::new(format!("runtime_value:{}", path.to_key()));
-                self.state
-                    .insert_runtime_value(value_id.clone(), Value::unit());
+                self.state.insert_runtime_value(value_id.clone(), value);
                 Ok(CompilerAnswer::RuntimeOutput { value: value_id })
             }
         }
     }
 
-    fn evaluate_comptime_lir(
+    fn evaluate_lir(
         &mut self,
         lir: &fp_core::lir::LirProgram,
     ) -> Result<fp_core::ast::Value, fp_interpret::lir::vm::VmError> {

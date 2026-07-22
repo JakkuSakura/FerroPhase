@@ -1381,6 +1381,7 @@ dependencies = [
  "eyre",
  "fp-backend",
  "fp-bytecode",
+ "fp-compiler",
  "fp-core",
  "fp-cranelift",
  "fp-csharp",

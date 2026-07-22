@@ -2489,6 +2489,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             | Ty::Unit(_)
             | Ty::Unknown(_)
             | Ty::Any(_)
+            | Ty::GenericVar(_)
+            | Ty::ErrorType(_)
+            | Ty::InferVar(_)
             | Ty::TokenStream(_)
             | Ty::ImplTraits(_)
             | Ty::Value(_)
@@ -4779,7 +4782,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             | Ty::Unit(_)
             | Ty::Nothing(_)
             | Ty::Any(_)
-            | Ty::Unknown(_) => ty.clone(),
+            | Ty::Unknown(_)
+            | Ty::GenericVar(_)
+            | Ty::ErrorType(_)
+            | Ty::InferVar(_) => ty.clone(),
             Ty::Struct(strct) => Ty::Struct(self.substitute_struct(strct, subst)),
             Ty::Reference(reference) => Ty::Reference(TypeReference {
                 ty: Box::new(self.substitute_ty(&reference.ty, subst)),

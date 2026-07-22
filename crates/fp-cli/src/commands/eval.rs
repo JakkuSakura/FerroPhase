@@ -1,13 +1,11 @@
 //! Expression evaluation command implementation
 
-use crate::pipeline::{BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig};
 use crate::{
     CliError, Result,
     cli::CliConfig,
-    pipeline::{Pipeline, PipelineInput, PipelineOutput},
+    commands::format_value_brief,
+    compiler,
 };
-// remove unused imports; printing uses fully-qualified console::style and value matching via PipelineOutput
-use crate::commands::{format_value_brief, print_runtime_result};
 use clap::{ArgAction, Args};
 use tracing::info;
 
@@ -42,109 +40,56 @@ pub struct EvalArgs {
 /// Execute the eval command
 pub async fn eval_command(mut args: EvalArgs, _config: &CliConfig) -> Result<()> {
     args.print_result = true;
+    ensure_compiler_eval_supported(&args)?;
+
     if let Some(expr) = &args.expr {
-        let input = PipelineInput::Expression(expr.clone());
         let description = format!("expression: {}", expr);
-        return eval_single(input, &description, &args).await;
+        info!("Evaluating {}", description);
+        let value = compiler::eval_expr(expr)?;
+        return print_eval_value(&value, &args, None);
     }
 
     if !args.file.is_empty() {
         crate::commands::validate_paths_exist(&args.file, true, "eval")?;
-        return eval_files(&args).await;
+        for file in &args.file {
+            let description = format!("file '{}'", file.display());
+            info!("Evaluating {}", description);
+            let value = compiler::eval_file(file)?;
+            let label = if args.file.len() > 1 {
+                Some(file.as_path())
+            } else {
+                None
+            };
+            print_eval_value(&value, &args, label)?;
+        }
+        return Ok(());
     }
 
-    {
+    Err(CliError::InvalidInput(
+        "Either --expr or --file must be provided".to_string(),
+    ))
+}
+
+fn ensure_compiler_eval_supported(args: &EvalArgs) -> Result<()> {
+    if args.print_ast || args.print_passes {
         return Err(CliError::InvalidInput(
-            "Either --expr or --file must be provided".to_string(),
+            "--print-ast and --print-passes are not supported on the fp-compiler eval path"
+                .to_string(),
         ));
     }
-}
 
-// printing is centralized in commands::common::print_runtime_result
-
-async fn eval_single(input: PipelineInput, description: &str, args: &EvalArgs) -> Result<()> {
-    info!("Evaluating {}", description);
-    let mut options = eval_pipeline_options(args);
-    let mut pipeline = Pipeline::new();
-    let output = match input {
-        PipelineInput::Expression(_) => {
-            options.disabled_stages.push("const-eval".to_string());
-            options
-                .disabled_stages
-                .push("intrinsic-normalize".to_string());
-            pipeline.execute_with_options(input, options).await?
-        }
-        _ => pipeline.execute_with_options(input, options).await?,
-    };
-    print_eval_output(&output, args, None)?;
-
-    Ok(())
-}
-
-async fn eval_files(args: &EvalArgs) -> Result<()> {
-    let options = eval_pipeline_options(args);
-
-    for file in &args.file {
-        let description = format!("file '{}'", file.display());
-        info!("Evaluating {}", description);
-        let mut pipeline = Pipeline::new();
-        let output = pipeline
-            .execute_with_options(PipelineInput::File(file.clone()), options.clone())
-            .await?;
-        let label = if args.file.len() > 1 {
-            Some(file.as_path())
-        } else {
-            None
-        };
-        print_eval_output(&output, args, label)?;
+    if args.runtime.as_deref().unwrap_or("literal") != "literal" {
+        return Err(CliError::InvalidInput(
+            "only --runtime literal is currently supported on the fp-compiler eval path"
+                .to_string(),
+        ));
     }
 
     Ok(())
 }
 
-fn eval_pipeline_options(args: &EvalArgs) -> PipelineOptions {
-    PipelineOptions {
-        target: BackendKind::Interpret,
-        backend: None,
-        target_triple: None,
-        target_cpu: None,
-        native_target: None,
-        target_features: None,
-        target_sysroot: None,
-        linker: None,
-        target_linker: None,
-        runtime: RuntimeConfig {
-            runtime_type: args
-                .runtime
-                .clone()
-                .unwrap_or_else(|| "literal".to_string()),
-            options: std::collections::HashMap::new(),
-        },
-        source_language: None,
-        optimization_level: 0,
-        save_intermediates: true,
-        base_path: None,
-        debug: DebugOptions {
-            print_ast: args.print_ast,
-            print_passes: args.print_passes,
-            verbose: false,
-        },
-        lossy: LossyOptions {
-            enabled: true,
-            max_errors: 0,
-            show_all_errors: true,
-            continue_on_error: true,
-        },
-        release: false,
-        execute_main: false,
-        disabled_stages: Vec::new(),
-        module_resolution: None,
-        jit: None,
-    }
-}
-
-fn print_eval_output(
-    output: &PipelineOutput,
+fn print_eval_value(
+    value: &fp_core::ast::Value,
     args: &EvalArgs,
     label: Option<&std::path::Path>,
 ) -> Result<()> {
@@ -153,30 +98,13 @@ fn print_eval_output(
         None => String::new(),
     };
 
-    match output {
-        PipelineOutput::Value(value) => {
-            if args.print_result {
-                println!(
-                    "{}{} {}",
-                    prefix,
-                    console::style("Result:").green().bold(),
-                    format_value_brief(value)
-                );
-            }
-        }
-        PipelineOutput::RuntimeValue(runtime_value) => {
-            if args.print_result {
-                if !prefix.is_empty() {
-                    println!("{}", prefix.trim_end());
-                }
-                print_runtime_result(runtime_value)?;
-            }
-        }
-        _ => {
-            return Err(CliError::Compilation(
-                "Expected evaluation result".to_string(),
-            ));
-        }
+    if args.print_result {
+        println!(
+            "{}{} {}",
+            prefix,
+            console::style("Result:").green().bold(),
+            format_value_brief(value)
+        );
     }
 
     Ok(())
@@ -200,18 +128,13 @@ mod tests {
             runtime: None,
         };
 
-        // This test might fail until the interpreter is fully implemented
-        // but it demonstrates the expected interface
         let _result = eval_command(args, &config).await;
-        // For now, just check that it doesn't crash
-        // assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_eval_from_file() {
         let config = CliConfig::default();
 
-        // Create a temporary file with some FerroPhase code
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "fn main() {{ 1 + 2 }}").unwrap();
 
@@ -224,9 +147,6 @@ mod tests {
             runtime: None,
         };
 
-        // This test might fail until the interpreter is fully implemented
         let _result = eval_command(args, &config).await;
-        // For now, just check that it doesn't crash with file reading
-        // The evaluation itself might fail
     }
 }

@@ -680,7 +680,14 @@ impl InterfaceBuilder {
                 current_package,
                 receiver_ctx,
             ),
-            Ty::Any(_) | Ty::TypeBinaryOp(_) | Ty::AnyBox(_) | Ty::Unknown(_) | Ty::Nothing(_) => {
+            Ty::Any(_)
+            | Ty::GenericVar(_)
+            | Ty::ErrorType(_)
+            | Ty::InferVar(_)
+            | Ty::TypeBinaryOp(_)
+            | Ty::AnyBox(_)
+            | Ty::Unknown(_)
+            | Ty::Nothing(_) => {
                 "json".to_string()
             }
             Ty::Type(_) | Ty::TypeBounds(_) | Ty::ImplTraits(_) => "json".to_string(),
@@ -1489,7 +1496,12 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
         Ty::Struct(s) => normalize_type_name(sanitize_type_identifier(s.name.as_str())),
         Ty::Enum(e) => normalize_type_name(sanitize_type_identifier(e.name.as_str())),
         Ty::Unit(_) => "tuple<>".to_string(),
-        Ty::Any(_) | Ty::TypeBinaryOp(_) | Ty::AnyBox(_) => "json".to_string(),
+        Ty::Any(_)
+        | Ty::GenericVar(_)
+        | Ty::ErrorType(_)
+        | Ty::InferVar(_)
+        | Ty::TypeBinaryOp(_)
+        | Ty::AnyBox(_) => "json".to_string(),
         Ty::Expr(expr) => expr_to_wit_type(expr, self_name).unwrap_or_else(|| "json".to_string()),
         Ty::Value(_) => "json".to_string(),
         Ty::Unknown(_) | Ty::Nothing(_) => "json".to_string(),

@@ -13,6 +13,7 @@ fp-core = { path = "../fp-core" }
 fp-interpret = { path = "../fp-interpret" }
 fp-jit = { path = "../fp-jit" }
 fp-backend = { path = "../fp-backend" }
+fp-compiler = { path = "../fp-compiler" }
 fp-typing = { path = "../fp-typing" }
 fp-typescript = { path = "../fp-typescript", optional = true }
 fp-csharp = { path = "../fp-csharp", optional = true }
