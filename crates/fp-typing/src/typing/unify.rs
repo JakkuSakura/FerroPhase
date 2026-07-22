@@ -67,16 +67,11 @@ pub(crate) enum TypeTerm {
     Function(FunctionTerm),
     Concrete(Ty),
     Error,
-    // Compile-time union of two types from `A | B`.
-    Union(TypeVarId, TypeVarId),
     Slice(TypeVarId),
     Vec(TypeVarId),
     // Array terms keep the element var plus the length expr so array/slice
     // unification does not fall back through opaque concrete types.
     Array(TypeVarId, Option<BExpr>),
-    Reference(TypeVarId),
-    RawPtr(TypeVarId, Option<bool>),
-    Boxed(TypeVarId),
 }
 
 impl TypeTerm {
@@ -119,6 +114,65 @@ impl TypeTerm {
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
+    pub(crate) fn bind_reference_term(&mut self, var: TypeVarId, inner: TypeVarId) {
+        self.bind(
+            var,
+            TypeTerm::Concrete(Ty::Reference(TypeReference {
+                ty: Box::new(Ty::infer_var(inner)),
+                mutability: None,
+                lifetime: None,
+            })),
+        );
+    }
+
+    pub(crate) fn bind_function_term(
+        &mut self,
+        var: TypeVarId,
+        params: Vec<TypeVarId>,
+        ret: TypeVarId,
+    ) {
+        self.bind(
+            var,
+            TypeTerm::Concrete(Ty::Function(TypeFunction {
+                params: params.into_iter().map(Ty::infer_var).collect(),
+                generics_params: Vec::new(),
+                ret_ty: Some(Box::new(Ty::infer_var(ret))),
+            })),
+        );
+    }
+
+    pub(crate) fn reference_inner_from_term(&mut self, term: &TypeTerm) -> Option<TypeVarId> {
+        match term {
+            TypeTerm::Concrete(Ty::Reference(reference)) => match reference.ty.as_ref() {
+                Ty::InferVar(infer) => Some(infer.id),
+                other => self.type_from_ast_ty(other).ok(),
+            },
+            _ => None,
+        }
+    }
+
+    pub(crate) fn function_term_from_term(&mut self, term: &TypeTerm) -> Option<FunctionTerm> {
+        match term {
+            TypeTerm::Function(func) => Some(func.clone()),
+            TypeTerm::Concrete(Ty::Function(func)) => {
+                let mut params = Vec::with_capacity(func.params.len());
+                for param in &func.params {
+                    match param {
+                        Ty::InferVar(infer) => params.push(infer.id),
+                        other => params.push(self.type_from_ast_ty(other).ok()?),
+                    }
+                }
+                let ret = match func.ret_ty.as_deref() {
+                    Some(Ty::InferVar(infer)) => infer.id,
+                    Some(other) => self.type_from_ast_ty(other).ok()?,
+                    None => self.unit_type_var(),
+                };
+                Some(FunctionTerm { params, ret })
+            }
+            _ => None,
+        }
+    }
+
     fn lower_infer_vars_in_ty(
         &mut self,
         ty: Ty,
@@ -492,18 +546,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Error => {
                 return Err(self.error_with_current_span("error type variable during generalization"));
             }
-            TypeTerm::Union(lhs, rhs) => {
-                let lhs = self.build_generalized_ty(lhs, mapping, next)?;
-                let rhs = self.build_generalized_ty(rhs, mapping, next)?;
-                Ty::TypeBinaryOp(
-                    TypeBinaryOp {
-                        kind: TypeBinaryOpKind::Union,
-                        lhs: Box::new(lhs),
-                        rhs: Box::new(rhs),
-                    }
-                    .into(),
-                )
-            }
             TypeTerm::Tuple(elements) => {
                 let mut converted = Vec::new();
                 for elem in elements {
@@ -539,27 +581,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     elem: Box::new(elem),
                     len: len.unwrap_or_else(|| Expr::value(Value::int(0)).into()),
                 })
-            }
-            TypeTerm::Reference(elem) => {
-                let elem = self.build_generalized_ty(elem, mapping, next)?;
-                Ty::Reference(TypeReference {
-                    ty: Box::new(elem),
-                    mutability: None,
-                    lifetime: None,
-                })
-            }
-            TypeTerm::RawPtr(elem, mutability) => {
-                let elem = self.build_generalized_ty(elem, mapping, next)?;
-                Ty::RawPtr(TypeRawPtr {
-                    ty: Box::new(elem),
-                    mutability,
-                })
-            }
-            TypeTerm::Boxed(elem) => {
-                let elem = self.build_generalized_ty(elem, mapping, next)?;
-                let segment = ParameterPathSegment::new(Ident::new("Box"), vec![elem]);
-                let path = ParameterPath::new(PathPrefix::Plain, vec![segment]);
-                Ty::locator(Name::ParameterPath(path))
             }
         })
     }
@@ -850,13 +871,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 func.params.iter().any(|param| self.occurs_in(var, *param))
                     || self.occurs_in(var, func.ret)
             }
-            TypeTerm::Union(lhs, rhs) => self.occurs_in(var, *lhs) || self.occurs_in(var, *rhs),
             TypeTerm::Slice(elem)
             | TypeTerm::Vec(elem)
-            | TypeTerm::Array(elem, _)
-            | TypeTerm::Reference(elem)
-            | TypeTerm::RawPtr(elem, _)
-            | TypeTerm::Boxed(elem) => self.occurs_in(var, *elem),
+            | TypeTerm::Array(elem, _) => self.occurs_in(var, *elem),
             _ => false,
         }
     }
@@ -873,17 +890,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    fn is_cstr_var(&mut self, var: TypeVarId) -> bool {
-        let root = self.find(var);
-        match self.type_vars[root].kind.clone() {
-            TypeVarKind::Bound(TypeTerm::Concrete(Ty::Struct(struct_ty))) => {
-                struct_ty.name.as_str() == "CStr"
-            }
-            TypeVarKind::Link(next) => self.is_cstr_var(next),
-            _ => false,
-        }
-    }
-
     fn unify_terms(&mut self, a: TypeTerm, b: TypeTerm) -> Result<()> {
         match (a, b) {
             (left, right) if left.is_unit() && right.is_unit() => Ok(()),
@@ -891,16 +897,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             (TypeTerm::Error, _) | (_, TypeTerm::Error) => Ok(()),
             (left, _) if left.is_nothing() => Ok(()),
             (_, right) if right.is_nothing() => Ok(()),
-            (TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)), TypeTerm::Reference(inner))
-                if self.is_cstr_var(inner) =>
-            {
-                Ok(())
-            }
-            (TypeTerm::Reference(inner), TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)))
-                if self.is_cstr_var(inner) =>
-            {
-                Ok(())
-            }
             (
                 TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)),
                 TypeTerm::Concrete(Ty::Struct(struct_ty)),
@@ -910,11 +906,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)),
             ) if struct_ty.name.as_str() == "CStr" => Ok(()),
             (TypeTerm::Concrete(a), TypeTerm::Concrete(b)) => self.unify_concrete_tys(a, b),
-            (TypeTerm::Union(a_lhs, a_rhs), TypeTerm::Union(b_lhs, b_rhs)) => {
-                self.unify_union_pair(a_lhs, a_rhs, b_lhs, b_rhs)
-            }
-            (TypeTerm::Union(lhs, rhs), other) => self.unify_union_with(lhs, rhs, other),
-            (other, TypeTerm::Union(lhs, rhs)) => self.unify_union_with(lhs, rhs, other),
             (TypeTerm::Concrete(Ty::Tuple(a_tuple)), TypeTerm::Tuple(b_elems))
             | (TypeTerm::Tuple(b_elems), TypeTerm::Concrete(Ty::Tuple(a_tuple))) => {
                 if a_tuple.types.len() != b_elems.len() {
@@ -995,36 +986,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 self.unify(a_func.ret, b_func.ret)
             }
-            (TypeTerm::RawPtr(_, m1), TypeTerm::RawPtr(_, m2)) if matches!((m1, m2), (Some(a), Some(b)) if a != b) => {
-                Err(self.error_with_current_span("raw pointer mutability mismatch"))
-            }
             (TypeTerm::Slice(a), TypeTerm::Slice(b))
             | (TypeTerm::Vec(a), TypeTerm::Vec(b))
-            | (TypeTerm::Reference(a), TypeTerm::Reference(b))
-            | (TypeTerm::RawPtr(a, _), TypeTerm::RawPtr(b, _))
-            | (TypeTerm::Boxed(a), TypeTerm::Boxed(b)) => self.unify(a, b),
+                => self.unify(a, b),
             (TypeTerm::Slice(a), TypeTerm::Vec(b)) | (TypeTerm::Vec(a), TypeTerm::Slice(b)) => {
                 self.unify(a, b)
-            }
-            (TypeTerm::Reference(inner), TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String))) => {
-                let temp = self.fresh_type_var();
-                self.bind(temp, TypeTerm::Primitive(TypePrimitive::String));
-                self.unify(inner, temp)
-            }
-            (TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)), TypeTerm::Reference(inner)) => {
-                let temp = self.fresh_type_var();
-                self.bind(temp, TypeTerm::Primitive(TypePrimitive::String));
-                self.unify(inner, temp)
-            }
-            (TypeTerm::Reference(inner), other) => {
-                let other_var = self.fresh_type_var();
-                self.bind(other_var, other);
-                self.unify(inner, other_var)
-            }
-            (other, TypeTerm::Reference(inner)) => {
-                let other_var = self.fresh_type_var();
-                self.bind(other_var, other);
-                self.unify(inner, other_var)
             }
             (left, _other) if left.is_any() => Ok(()),
             (_other, right) if right.is_any() => Ok(()),
@@ -1204,23 +1170,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    fn unify_union_with(&mut self, lhs: TypeVarId, rhs: TypeVarId, other: TypeTerm) -> Result<()> {
-        // Union typing: allow either branch to match, without committing if it fails.
-        let snapshot = self.type_vars.clone();
-        let other_var = self.fresh_type_var();
-        self.bind(other_var, other.clone());
-        if self.unify(lhs, other_var).is_ok() {
-            return Ok(());
-        }
-        self.type_vars = snapshot;
-        let other_var = self.fresh_type_var();
-        self.bind(other_var, other);
-        if self.unify(rhs, other_var).is_ok() {
-            return Ok(());
-        }
-        Err(self.error_with_current_span("union type mismatch"))
-    }
-
     fn unify_struct_fields(&mut self, sa: &TypeStruct, sb: &TypeStruct) -> Result<()> {
         if sa.fields.len() != sb.fields.len() {
             return Err(self.error_with_current_span(format!(
@@ -1240,25 +1189,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.unify(a_var, b_var)?;
         }
         Ok(())
-    }
-
-    fn unify_union_pair(
-        &mut self,
-        a_lhs: TypeVarId,
-        a_rhs: TypeVarId,
-        b_lhs: TypeVarId,
-        b_rhs: TypeVarId,
-    ) -> Result<()> {
-        // Accept either ordering: (A|B) == (C|D) if A==C and B==D or A==D and B==C.
-        let snapshot = self.type_vars.clone();
-        if self.unify(a_lhs, b_lhs).is_ok() && self.unify(a_rhs, b_rhs).is_ok() {
-            return Ok(());
-        }
-        self.type_vars = snapshot;
-        if self.unify(a_lhs, b_rhs).is_ok() && self.unify(a_rhs, b_lhs).is_ok() {
-            return Ok(());
-        }
-        Err(self.error_with_current_span("union type mismatch"))
     }
 
     fn unify_enum_variants(&mut self, ae: &TypeEnum, be: &TypeEnum) -> Result<()> {
@@ -1317,18 +1247,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Error => {
                 return Err(self.error_with_current_span("error type variable"));
             }
-            TypeTerm::Union(lhs, rhs) => {
-                let lhs_ty = self.resolve_to_ty(lhs)?;
-                let rhs_ty = self.resolve_to_ty(rhs)?;
-                Ty::TypeBinaryOp(
-                    TypeBinaryOp {
-                        kind: TypeBinaryOpKind::Union,
-                        lhs: Box::new(lhs_ty),
-                        rhs: Box::new(rhs_ty),
-                    }
-                    .into(),
-                )
-            }
             TypeTerm::Tuple(elements) => {
                 let types = elements
                     .into_iter()
@@ -1368,27 +1286,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ty::Vec(TypeVec {
                     ty: Box::new(elem_ty),
                 })
-            }
-            TypeTerm::Reference(elem) => {
-                let elem_ty = self.resolve_to_ty(elem)?;
-                Ty::Reference(TypeReference {
-                    ty: Box::new(elem_ty),
-                    mutability: None,
-                    lifetime: None,
-                })
-            }
-            TypeTerm::RawPtr(elem, mutability) => {
-                let elem_ty = self.resolve_to_ty(elem)?;
-                Ty::RawPtr(TypeRawPtr {
-                    ty: Box::new(elem_ty),
-                    mutability,
-                })
-            }
-            TypeTerm::Boxed(elem) => {
-                let elem_ty = self.resolve_to_ty(elem)?;
-                let segment = ParameterPathSegment::new(Ident::new("Box"), vec![elem_ty]);
-                let path = ParameterPath::new(PathPrefix::Plain, vec![segment]);
-                Ty::expr(Expr::name(Name::parameter_path(path)))
             }
         })
     }

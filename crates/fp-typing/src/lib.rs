@@ -183,7 +183,7 @@ pub trait TypeResolutionHook {
     fn resolve_symbol(&mut self, name: &str) -> bool;
 }
 
-use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVar, TypeVarKind};
+use crate::typing::unify::{TypeTerm, TypeVar, TypeVarKind};
 use fp_core::module::resolution::ModuleResolutionContext;
 
 #[derive(Clone, Debug)]
@@ -548,7 +548,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             match self.type_vars.get(current).map(|var| var.kind.clone()) {
                 Some(TypeVarKind::Link(next)) => current = next,
-                Some(TypeVarKind::Bound(TypeTerm::Reference(inner))) => current = inner,
+                Some(TypeVarKind::Bound(term)) => {
+                    if let Some(inner) = self.reference_inner_from_term(&term) {
+                        current = inner;
+                    } else {
+                        return None;
+                    }
+                }
                 _ => return None,
             }
         }
@@ -1817,13 +1823,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     };
                     if ok {
                         if let Some(ret_var) = ret_var {
-                            self.bind(
-                                fn_var,
-                                TypeTerm::Function(FunctionTerm {
-                                    params: param_vars,
-                                    ret: ret_var,
-                                }),
-                            );
+                            self.bind_function_term(fn_var, param_vars, ret_var);
                         } else {
                             ok = false;
                         }
@@ -2213,8 +2213,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         let root = self.find(fn_var);
         if matches!(
-            self.type_vars[root].kind,
-            TypeVarKind::Bound(TypeTerm::Function(_))
+            self.type_vars[root].kind.clone(),
+            TypeVarKind::Bound(term) if self.function_term_from_term(&term).is_some()
         ) {
             return;
         }
@@ -2251,13 +2251,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             unit
         };
 
-        self.bind(
-            fn_var,
-            TypeTerm::Function(FunctionTerm {
-                params: param_vars,
-                ret: ret_var,
-            }),
-        );
+        self.bind_function_term(fn_var, param_vars, ret_var);
     }
 
     fn prebind_decl_function_signature(&mut self, decl: &ItemDeclFunction, fn_var: TypeVarId) {
@@ -2267,8 +2261,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         let root = self.find(fn_var);
         if matches!(
-            self.type_vars[root].kind,
-            TypeVarKind::Bound(TypeTerm::Function(_))
+            self.type_vars[root].kind.clone(),
+            TypeVarKind::Bound(term) if self.function_term_from_term(&term).is_some()
         ) {
             return;
         }
@@ -2305,13 +2299,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             unit
         };
 
-        self.bind(
-            fn_var,
-            TypeTerm::Function(FunctionTerm {
-                params: param_vars,
-                ret: ret_var,
-            }),
-        );
+        self.bind_function_term(fn_var, param_vars, ret_var);
     }
 
     fn infer_item(&mut self, item: &mut Item) -> Result<()> {
@@ -2417,24 +2405,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         param_vars.push(self.type_from_ast_ty(elem)?);
                                     }
                                     let fn_var = self.fresh_type_var();
-                                    self.bind(
-                                        fn_var,
-                                        TypeTerm::Function(FunctionTerm {
-                                            params: param_vars,
-                                            ret: enum_var,
-                                        }),
-                                    );
+                                    self.bind_function_term(fn_var, param_vars, enum_var);
                                     fn_var
                                 } else {
                                     let payload_var = self.type_from_ast_ty(&variant.value)?;
                                     let fn_var = self.fresh_type_var();
-                                    self.bind(
-                                        fn_var,
-                                        TypeTerm::Function(FunctionTerm {
-                                            params: vec![payload_var],
-                                            ret: enum_var,
-                                        }),
-                                    );
+                                    self.bind_function_term(fn_var, vec![payload_var], enum_var);
                                     fn_var
                                 };
                                 let _ = self.unify(variant_var, variant_type_var);
@@ -2684,9 +2660,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         } else {
             let root = self.find(fn_var);
             match self.type_vars[root].kind.clone() {
-                TypeVarKind::Bound(TypeTerm::Function(func_term)) => {
+                TypeVarKind::Bound(term) => {
+                    if let Some(func_term) = self.function_term_from_term(&term) {
                     if func_term.params.len() == param_count {
                         Some(func_term)
+                    } else {
+                        None
+                    }
                     } else {
                         None
                     }
@@ -2848,13 +2828,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             param_tys.push(self.resolve_to_ty(*var)?);
         }
 
-        self.bind(
-            fn_var,
-            TypeTerm::Function(FunctionTerm {
-                params: param_vars.clone(),
-                ret: ret_var,
-            }),
-        );
+        self.bind_function_term(fn_var, param_vars.clone(), ret_var);
 
         let scheme = self.generalize(fn_var)?;
         let scheme_env = scheme.clone();
@@ -2976,13 +2950,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         self.exit_scope();
 
-        self.bind(
-            fn_var,
-            TypeTerm::Function(FunctionTerm {
-                params: param_vars.clone(),
-                ret: ret_var,
-            }),
-        );
+        self.bind_function_term(fn_var, param_vars.clone(), ret_var);
 
         let scheme = self.generalize(fn_var)?;
         self.replace_env_entry(func.name.as_str(), EnvEntry::Poly(scheme));
@@ -3058,13 +3026,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         } else {
             self.unit_type_var()
         };
-        self.bind(
-            fn_var,
-            TypeTerm::Function(FunctionTerm {
-                params: param_vars,
-                ret: ret_var,
-            }),
-        );
+        self.bind_function_term(fn_var, param_vars, ret_var);
         self.generalize(fn_var)
     }
 
@@ -3584,7 +3546,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ));
                 Ok(inner)
             }
-            TypeVarKind::Bound(TypeTerm::Reference(inner)) => Ok(inner),
             TypeVarKind::Bound(TypeTerm::Concrete(Ty::Reference(reference))) => {
                 match reference.ty.as_ref() {
                     Ty::InferVar(infer) => Ok(infer.id),

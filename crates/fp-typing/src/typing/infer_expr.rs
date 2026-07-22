@@ -1,4 +1,4 @@
-use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVarKind};
+use crate::typing::unify::{TypeTerm, TypeVarKind};
 use crate::{
     std_result_inner_types, AstTypeInferencer, EnvEntry, PatternBinding, PatternInfo, TypeVarId,
 };
@@ -779,7 +779,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
     pub(crate) fn infer_reference(&mut self, reference: &mut ExprReference) -> Result<TypeVarId> {
         let inner_var = self.infer_expr(reference.referee.as_mut())?;
         let reference_var = self.fresh_type_var();
-        self.bind(reference_var, TypeTerm::Reference(inner_var));
+        self.bind_reference_term(reference_var, inner_var);
         Ok(reference_var)
     }
 
@@ -823,13 +823,13 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         let idx_ty = self.resolve_to_ty(idx_var)?;
         let idx_root = self.find(idx_var);
         let idx_bound_reference = match self.type_vars[idx_root].kind.clone() {
-            TypeVarKind::Bound(TypeTerm::Reference(_)) => true,
+            TypeVarKind::Bound(term) => self.reference_inner_from_term(&term).is_some(),
             TypeVarKind::Link(next) => {
                 let root = self.find(next);
-                matches!(
-                    self.type_vars[root].kind,
-                    TypeVarKind::Bound(TypeTerm::Reference(_))
-                )
+                match self.type_vars[root].kind.clone() {
+                    TypeVarKind::Bound(term) => self.reference_inner_from_term(&term).is_some(),
+                    _ => false,
+                }
             }
             _ => false,
         };
@@ -856,7 +856,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             let map_var = self.fresh_type_var();
             let map_ty = self.make_hashmap_struct();
             self.bind(map_var, TypeTerm::Concrete(Ty::Struct(map_ty)));            let ref_var = self.fresh_type_var();
-            self.bind(ref_var, TypeTerm::Reference(map_var));
+            self.bind_reference_term(ref_var, map_var);
             if self.unify(object_var, ref_var).is_ok() {
                 return Ok(self.fresh_type_var());
             }
@@ -956,7 +956,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             return Ok(string_var);
         }
         let ref_string_var = self.fresh_type_var();
-        self.bind(ref_string_var, TypeTerm::Reference(string_var));
+        self.bind_reference_term(ref_string_var, string_var);
         let vec_ref_string_var = self.fresh_type_var();
         self.bind(vec_ref_string_var, TypeTerm::Vec(ref_string_var));
         if self.unify(object_var, vec_ref_string_var).is_ok() {
@@ -978,12 +978,12 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             return Ok(string_var);
         }
         let ref_string_vec = self.fresh_type_var();
-        self.bind(ref_string_vec, TypeTerm::Reference(vec_string_var));
+        self.bind_reference_term(ref_string_vec, vec_string_var);
         if self.unify(object_var, ref_string_vec).is_ok() {
             return Ok(string_var);
         }
         let ref_string_slice = self.fresh_type_var();
-        self.bind(ref_string_slice, TypeTerm::Reference(slice_string_var));
+        self.bind_reference_term(ref_string_slice, slice_string_var);
         if self.unify(object_var, ref_string_slice).is_ok() {
             return Ok(string_var);
         }
@@ -1161,13 +1161,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 if let Some(&arg_var) = arg_vars.first() {
                     let ret_var = self.unit_type_var();
                     let fn_var = self.fresh_type_var();
-                    self.bind(
-                        fn_var,
-                        TypeTerm::Function(FunctionTerm {
-                            params: Vec::new(),
-                            ret: ret_var,
-                        }),
-                    );
+                    self.bind_function_term(fn_var, Vec::new(), ret_var);
                     self.unify(arg_var, fn_var)?;
                 }
                 self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
@@ -1183,13 +1177,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 let value_var = self.fresh_type_var();
                 if let Some(&arg_var) = arg_vars.first() {
                     let fn_var = self.fresh_type_var();
-                    self.bind(
-                        fn_var,
-                        TypeTerm::Function(FunctionTerm {
-                            params: Vec::new(),
-                            ret: value_var,
-                        }),
-                    );
+                    self.bind_function_term(fn_var, Vec::new(), value_var);
                     self.unify(arg_var, fn_var)?;
                 }
                 let ok_var = self.fresh_type_var();
@@ -1342,13 +1330,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         self.exit_scope();
 
         let closure_var = self.fresh_type_var();
-        self.bind(
-            closure_var,
-            TypeTerm::Function(FunctionTerm {
-                params: param_vars,
-                ret: ret_var,
-            }),
-        );
+        self.bind_function_term(closure_var, param_vars, ret_var);
         Ok(closure_var)
     }
 
@@ -2562,7 +2544,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             Value::String(_) => {
                 let inner = self.fresh_type_var();
                 self.bind(inner, TypeTerm::Primitive(TypePrimitive::String));
-                self.bind(var, TypeTerm::Reference(inner));
+                self.bind_reference_term(var, inner);
             }
             Value::List(list) => {
                 let elem_var = if let Some(first) = list.values.first() {
@@ -3158,13 +3140,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     let result_var = self.fresh_type_var();
                     self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
                     let fn_var = self.fresh_type_var();
-                    self.bind(
-                        fn_var,
-                        TypeTerm::Function(FunctionTerm {
-                            params: Vec::new(),
-                            ret: result_var,
-                        }),
-                    );
+                    self.bind_function_term(fn_var, Vec::new(), result_var);
                     return Ok(fn_var);
                 }
                 "unwrap" => {
@@ -3204,13 +3180,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                         self.fresh_type_var()
                     };
                     let fn_var = self.fresh_type_var();
-                    self.bind(
-                        fn_var,
-                        TypeTerm::Function(FunctionTerm {
-                            params: Vec::new(),
-                            ret: ret_var,
-                        }),
-                    );
+                    self.bind_function_term(fn_var, Vec::new(), ret_var);
                     return Ok(fn_var);
                 }
                 _ => {}
@@ -3238,13 +3208,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     let result_var = self.fresh_type_var();
                     self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
                     let fn_var = self.fresh_type_var();
-                    self.bind(
-                        fn_var,
-                        TypeTerm::Function(FunctionTerm {
-                            params: Vec::new(),
-                            ret: result_var,
-                        }),
-                    );
+                    self.bind_function_term(fn_var, Vec::new(), result_var);
                     return Ok(fn_var);
                 }
                 _ => {}
@@ -3256,13 +3220,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     let result_var = self.fresh_type_var();
                     self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
                     let fn_var = self.fresh_type_var();
-                    self.bind(
-                        fn_var,
-                        TypeTerm::Function(FunctionTerm {
-                            params: Vec::new(),
-                            ret: result_var,
-                        }),
-                    );
+                    self.bind_function_term(fn_var, Vec::new(), result_var);
                     return Ok(fn_var);
                 }
                 "status" => {
@@ -3272,41 +3230,23 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                         TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
                     );
                     let fn_var = self.fresh_type_var();
-                    self.bind(
-                        fn_var,
-                        TypeTerm::Function(FunctionTerm {
-                            params: Vec::new(),
-                            ret: result_var,
-                        }),
-                    );
+                    self.bind_function_term(fn_var, Vec::new(), result_var);
                     return Ok(fn_var);
                 }
                 "stdout" | "stderr" => {
                     let string_var = self.fresh_type_var();
                     self.bind(string_var, TypeTerm::Primitive(TypePrimitive::String));
                     let ref_var = self.fresh_type_var();
-                    self.bind(ref_var, TypeTerm::Reference(string_var));
+                    self.bind_reference_term(ref_var, string_var);
                     let fn_var = self.fresh_type_var();
-                    self.bind(
-                        fn_var,
-                        TypeTerm::Function(FunctionTerm {
-                            params: Vec::new(),
-                            ret: ref_var,
-                        }),
-                    );
+                    self.bind_function_term(fn_var, Vec::new(), ref_var);
                     return Ok(fn_var);
                 }
                 "into_stdout" | "into_stderr" => {
                     let result_var = self.fresh_type_var();
                     self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
                     let fn_var = self.fresh_type_var();
-                    self.bind(
-                        fn_var,
-                        TypeTerm::Function(FunctionTerm {
-                            params: Vec::new(),
-                            ret: result_var,
-                        }),
-                    );
+                    self.bind_function_term(fn_var, Vec::new(), result_var);
                     return Ok(fn_var);
                 }
                 _ => {}
@@ -3357,8 +3297,13 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         loop {
             let root = self.find(receiver);
             match self.type_vars[root].kind.clone() {
-                crate::typing::unify::TypeVarKind::Bound(TypeTerm::Reference(inner)) => {
-                    receiver = inner;
+                crate::typing::unify::TypeVarKind::Bound(term) => {
+                    if let Some(inner) = self.reference_inner_from_term(&term) {
+                        receiver = inner;
+                    } else {
+                        receiver = root;
+                        break;
+                    }
                 }
                 crate::typing::unify::TypeVarKind::Link(next) => {
                     receiver = next;
