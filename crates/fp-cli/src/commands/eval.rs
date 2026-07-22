@@ -54,7 +54,7 @@ pub async fn eval_command(mut args: EvalArgs, _config: &CliConfig) -> Result<()>
         for file in &args.file {
             let description = format!("file '{}'", file.display());
             info!("Evaluating {}", description);
-            let value = compiler::eval_file(file)?;
+            let value = compiler::eval_file(file, None)?;
             let label = if args.file.len() > 1 {
                 Some(file.as_path())
             } else {

@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 use fp_compiler::{
-    AstId, CompilerDriver, CompilerWork, ConstValueId, ExecutionMode, FullyQualifiedPath, LirId,
-    LirConsumer, MirId, RuntimeValueId, ScopeId,
+    AstId, CompilerDriver, CompilerModuleResolver, CompilerWork, ConstValueId, ExecutionMode,
+    FullyQualifiedPath, LirConsumer, LirId, MirId, RuntimeValueId, ScopeId,
 };
 use fp_core::{
     ast::{Node, Value},
@@ -41,7 +42,11 @@ use crate::languages::frontend::WitFrontend;
 #[cfg(feature = "lang-typescript")]
 use fp_typescript::frontend::TsParseMode;
 
-pub fn check_path(path: &Path, syntax_only: bool) -> Result<()> {
+pub fn check_path(
+    path: &Path,
+    syntax_only: bool,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
+) -> Result<()> {
     let ast = parse_file(path, None)?;
     if syntax_only {
         return Ok(());
@@ -49,6 +54,13 @@ pub fn check_path(path: &Path, syntax_only: bool) -> Result<()> {
 
     let identity = CompilerIdentity::for_file(path);
     let mut driver = CompilerDriver::new();
+    if let Some(resolver) = resolver {
+        driver.state.set_module_resolver(resolver);
+        driver
+            .state
+            .prepare_module_resolution(identity.ast_id.clone(), path)
+            .map_err(|err| CliError::Compilation(err.to_string()))?;
+    }
     driver.state.insert_ast(identity.ast_id.clone(), ast);
     driver.scheduler.submit(CompilerWork::TypeAst {
         ast: identity.ast_id.clone(),
@@ -61,17 +73,29 @@ pub fn check_path(path: &Path, syntax_only: bool) -> Result<()> {
 
 pub fn eval_expr(source: &str) -> Result<Value> {
     let ast = parse_expr(source)?;
-    execute_ast(ast, CompilerIdentity::for_expr(), ExecutionMode::Comptime)
+    execute_ast(
+        ast,
+        CompilerIdentity::for_expr(),
+        ExecutionMode::Comptime,
+        Path::new("<eval>"),
+        None,
+    )
 }
 
-pub fn eval_file(path: &Path) -> Result<Value> {
+pub fn eval_file(
+    path: &Path,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
+) -> Result<Value> {
     let ast = parse_file(path, None)?;
-    execute_ast(ast, CompilerIdentity::for_file(path), ExecutionMode::Runtime)
+    execute_ast(ast, CompilerIdentity::for_file(path), ExecutionMode::Runtime, path, resolver)
 }
 
-pub fn interpret_file(path: &Path) -> Result<Value> {
+pub fn interpret_file(
+    path: &Path,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
+) -> Result<Value> {
     let ast = parse_file(path, None)?;
-    execute_ast(ast, CompilerIdentity::for_file(path), ExecutionMode::Runtime)
+    execute_ast(ast, CompilerIdentity::for_file(path), ExecutionMode::Runtime, path, resolver)
 }
 
 pub struct NativeCompileOptions {
@@ -144,9 +168,10 @@ pub struct CraneliftCompileOptions {
 pub fn compile_native_file(
     path: &Path,
     source_language: Option<&str>,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
     options: &NativeCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language)?;
+    let lowered = lower_file(path, source_language, resolver)?;
     let lir = lowered.lir()?;
 
     match options.emitter {
@@ -199,9 +224,10 @@ pub fn compile_native_file(
 pub fn compile_bytecode_file(
     path: &Path,
     source_language: Option<&str>,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
     options: &BytecodeCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language)?;
+    let lowered = lower_file(path, source_language, resolver)?;
     let mir = lowered.mir()?;
     let bytecode = fp_bytecode::lower_program(&mir)
         .map_err(|err| CliError::Compilation(format!("MIR→Bytecode lowering failed: {}", err)))?;
@@ -240,9 +266,10 @@ pub fn compile_bytecode_file(
 pub fn compile_jvm_file(
     path: &Path,
     source_language: Option<&str>,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
     options: &JvmCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language)?;
+    let lowered = lower_file(path, source_language, resolver)?;
     let mir = lowered.mir()?;
     let class_stem = options
         .class_name_hint
@@ -299,9 +326,10 @@ pub fn compile_jvm_file(
 pub fn compile_wasm_file(
     path: &Path,
     source_language: Option<&str>,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
     options: &WasmCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language)?;
+    let lowered = lower_file(path, source_language, resolver)?;
     let lir = lowered.lir()?;
     let wasm_bytes = fp_wasm::emit_wasm(&lir)
         .map_err(|err| CliError::Compilation(format!("Failed to emit wasm: {}", err)))?;
@@ -315,9 +343,10 @@ pub fn compile_wasm_file(
 pub fn compile_ebpf_file(
     path: &Path,
     source_language: Option<&str>,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
     options: &EbpfCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language)?;
+    let lowered = lower_file(path, source_language, resolver)?;
     let lir = lowered.lir()?;
     if let Some(parent) = options.output.parent() {
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
@@ -342,6 +371,7 @@ pub fn compile_cil_file(path: &Path) -> Result<String> {
 pub fn compile_dotnet_file(
     path: &Path,
     source_language: Option<&str>,
+    _resolver: Option<Arc<dyn CompilerModuleResolver>>,
     output: &Path,
     save_intermediates: bool,
 ) -> Result<PathBuf> {
@@ -352,11 +382,12 @@ pub fn compile_dotnet_file(
 pub fn compile_llvm_file(
     path: &Path,
     source_language: Option<&str>,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
     options: &LlvmCompileOptions,
 ) -> Result<PathBuf> {
     #[cfg(feature = "llvm")]
     {
-        let lowered = lower_file(path, source_language)?;
+        let lowered = lower_file(path, source_language, resolver)?;
         let lir = lowered.lir()?;
         let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let llvm_output = if options.output.extension().and_then(|ext| ext.to_str()) == Some("ll") {
@@ -429,11 +460,12 @@ pub fn compile_llvm_file(
 pub fn compile_cranelift_file(
     path: &Path,
     source_language: Option<&str>,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
     options: &CraneliftCompileOptions,
 ) -> Result<PathBuf> {
     #[cfg(feature = "cranelift")]
     {
-        let lowered = lower_file(path, source_language)?;
+        let lowered = lower_file(path, source_language, resolver)?;
         let lir = lowered.lir()?;
         let object_path = options.output.with_extension(if is_windows_target(options.target_triple.as_deref()) {
             "obj"
@@ -655,13 +687,19 @@ fn is_apple_target(target_triple: Option<&str>) -> bool {
     triple.contains("apple") || triple.contains("darwin") || triple.contains("macos")
 }
 
-fn execute_ast(ast: Node, identity: CompilerIdentity, mode: ExecutionMode) -> Result<Value> {
+fn execute_ast(
+    ast: Node,
+    identity: CompilerIdentity,
+    mode: ExecutionMode,
+    source_path: &Path,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
+) -> Result<Value> {
     let value_key = identity.path.to_key();
     let consumer = match mode {
         ExecutionMode::Comptime => LirConsumer::ExecuteComptime,
         ExecutionMode::Runtime => LirConsumer::ExecuteRuntime,
     };
-    let mut driver = lower_ast(ast, &identity, vec![consumer])?;
+    let mut driver = lower_ast(ast, &identity, source_path, vec![consumer], resolver)?;
     drain_driver(&mut driver)?;
 
     match mode {
@@ -678,11 +716,15 @@ fn execute_ast(ast: Node, identity: CompilerIdentity, mode: ExecutionMode) -> Re
     }
 }
 
-fn lower_file(path: &Path, source_language: Option<&str>) -> Result<LoweredProgram> {
+fn lower_file(
+    path: &Path,
+    source_language: Option<&str>,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
+) -> Result<LoweredProgram> {
     let ast = parse_file(path, source_language)?;
     let identity = CompilerIdentity::for_file(path);
     let path_key = identity.path.to_key();
-    let mut driver = lower_ast(ast, &identity, Vec::new())?;
+    let mut driver = lower_ast(ast, &identity, path, Vec::new(), resolver)?;
     drain_driver(&mut driver)?;
     Ok(LoweredProgram { driver, path_key })
 }
@@ -690,12 +732,21 @@ fn lower_file(path: &Path, source_language: Option<&str>) -> Result<LoweredProgr
 fn lower_ast(
     ast: Node,
     identity: &CompilerIdentity,
+    source_path: &Path,
     consumers: Vec<LirConsumer>,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
 ) -> Result<CompilerDriver> {
     let ast_id = identity.ast_id.clone();
     let scope_id = identity.scope_id();
     let path = identity.path.clone();
     let mut driver = CompilerDriver::new();
+    if let Some(resolver) = resolver {
+        driver.state.set_module_resolver(resolver);
+        driver
+            .state
+            .prepare_module_resolution(ast_id.clone(), source_path)
+            .map_err(|err| CliError::Compilation(err.to_string()))?;
+    }
     driver.state.insert_ast(ast_id.clone(), ast);
     driver.scheduler.submit(CompilerWork::TypeAst {
         ast: ast_id,

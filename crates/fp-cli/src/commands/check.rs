@@ -28,7 +28,7 @@ pub async fn check_command(args: CheckArgs, _config: &CliConfig) -> Result<()> {
 
     let files = collect_check_files(&args)?;
     for file in &files {
-        compiler::check_path(file, args.syntax_only)?;
+        compiler::check_path(file, args.syntax_only, None)?;
     }
 
     println!("{} Checked {} file(s)", style("✓").green(), files.len());

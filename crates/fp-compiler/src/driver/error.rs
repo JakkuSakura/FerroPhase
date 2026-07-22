@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+use crate::module_resolution::ModuleResolutionError;
 use crate::scheduler::{
     AstId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, SchedulerError, TypedAstId,
 };
@@ -24,6 +25,8 @@ pub enum CompilerDriverError {
     MissingConstValue(ConstValueId),
     #[error("missing runtime value {0}")]
     MissingRuntimeValue(RuntimeValueId),
+    #[error("module resolution failed: {0}")]
+    ModuleResolution(#[from] ModuleResolutionError),
     #[error("unsupported compiler work: {0}")]
     UnsupportedWork(String),
     #[error("unresolvable comptime cycle for {0}")]

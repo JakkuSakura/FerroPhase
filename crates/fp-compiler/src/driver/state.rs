@@ -1,12 +1,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
+use std::sync::Arc;
 
-use fp_core::{ast::Node, ast::Value, hir, lir, mir};
+use fp_core::{ast::Node, ast::Value, hir, lir, mir, module::resolution::ModuleResolutionContext};
 use fp_typing::TypingDiagnostic;
 
 use crate::driver::CompilerDriverError;
+use crate::module_resolution::CompilerModuleResolver;
 use crate::scheduler::{AstId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, TypedAstId};
 
-#[derive(Default)]
 pub struct CompilerState {
     ast: BTreeMap<AstId, Node>,
     typed_ast: BTreeMap<TypedAstId, Node>,
@@ -16,6 +18,8 @@ pub struct CompilerState {
     const_values: BTreeMap<ConstValueId, Value>,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
     typing_diagnostics: Vec<TypingDiagnostic>,
+    module_resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    module_resolutions: BTreeMap<AstId, ModuleResolutionContext>,
     /// Per-AST count of unresolved comptime needs. Decremented on each resolve.
     pub(crate) comptime_pending: HashMap<AstId, usize>,
     /// ASTs whose initial comptime needs have been counted (to avoid double-counting on retype).
@@ -59,6 +63,23 @@ impl CompilerState {
 
     pub fn insert_runtime_value(&mut self, value_id: RuntimeValueId, value: Value) {
         self.runtime_values.insert(value_id, value);
+    }
+
+    pub fn set_module_resolver(&mut self, resolver: Arc<dyn CompilerModuleResolver>) {
+        self.module_resolver = Some(resolver);
+    }
+
+    pub fn prepare_module_resolution(
+        &mut self,
+        ast_id: AstId,
+        input: &Path,
+    ) -> Result<(), CompilerDriverError> {
+        let Some(resolver) = self.module_resolver.as_ref() else {
+            return Ok(());
+        };
+        let context = resolver.resolve_context(input)?;
+        self.module_resolutions.insert(ast_id, context);
+        Ok(())
     }
 
     pub fn extend_typing_diagnostics(
@@ -114,6 +135,10 @@ impl CompilerState {
         &self.typing_diagnostics
     }
 
+    pub fn module_resolution(&self, ast_id: &AstId) -> Option<&ModuleResolutionContext> {
+        self.module_resolutions.get(ast_id)
+    }
+
     pub fn hir_len(&self) -> usize {
         self.hir.len()
     }
@@ -132,5 +157,27 @@ impl CompilerState {
 
     pub fn runtime_value_len(&self) -> usize {
         self.runtime_values.len()
+    }
+}
+
+impl Default for CompilerState {
+    fn default() -> Self {
+        Self {
+            ast: BTreeMap::new(),
+            typed_ast: BTreeMap::new(),
+            hir: BTreeMap::new(),
+            mir: BTreeMap::new(),
+            lir: BTreeMap::new(),
+            const_values: BTreeMap::new(),
+            runtime_values: BTreeMap::new(),
+            typing_diagnostics: Vec::new(),
+            module_resolver: None,
+            module_resolutions: BTreeMap::new(),
+            comptime_pending: HashMap::new(),
+            comptime_seeded: HashSet::new(),
+            hir_to_typed_ast: BTreeMap::new(),
+            mir_to_typed_ast: BTreeMap::new(),
+            lir_to_typed_ast: BTreeMap::new(),
+        }
     }
 }

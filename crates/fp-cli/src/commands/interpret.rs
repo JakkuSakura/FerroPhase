@@ -1,8 +1,11 @@
 //! Interpret FerroPhase source or bytecode files.
 
-use crate::commands::compile::build_module_resolution_context;
+use std::sync::Arc;
+
+use crate::commands::compile::build_module_resolution_state;
 use crate::{CliError, Result, cli::CliConfig, compiler};
 use clap::Args;
+use fp_compiler::CompilerModuleResolver;
 use fp_jit::JitOptions;
 use std::path::{Path, PathBuf};
 
@@ -42,13 +45,6 @@ pub async fn interpret_command(args: InterpretArgs, _config: &CliConfig) -> Resu
 }
 
 async fn interpret_source(path: &Path, args: &InterpretArgs) -> Result<()> {
-    if let Some(graph) = args.graph.as_ref() {
-        let _ = build_module_resolution_context(graph, path)?;
-        return Err(CliError::InvalidInput(
-            "--graph is not yet supported on the fp-compiler interpret path".to_string(),
-        ));
-    }
-
     if args.jit {
         let _ = JitOptions::default();
         let _ = args.jit_hot_threshold;
@@ -57,7 +53,14 @@ async fn interpret_source(path: &Path, args: &InterpretArgs) -> Result<()> {
         ));
     }
 
-    let _ = compiler::interpret_file(path)?;
+    let resolver = match args.graph.as_ref() {
+        Some(graph) => {
+            Some(Arc::new(build_module_resolution_state(graph)?) as Arc<dyn CompilerModuleResolver>)
+        }
+        None => None,
+    };
+
+    let _ = compiler::interpret_file(path, resolver)?;
     Ok(())
 }
 

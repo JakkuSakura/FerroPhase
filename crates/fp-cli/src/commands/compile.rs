@@ -58,6 +58,7 @@ use tokio::{fs as async_fs, process::Command};
 use tracing::{info, warn};
 
 use clap::{ArgAction, Args, ValueEnum};
+use fp_compiler::{CompilerModuleResolver, ModuleResolutionError};
 
 /// Arguments for the compile command (also used by Clap)
 #[derive(Debug, Clone, Args)]
@@ -231,7 +232,7 @@ impl EmitterKind {
 }
 
 #[derive(Clone)]
-struct ModuleResolutionState {
+pub(crate) struct ModuleResolutionState {
     graph: Arc<PackageGraph>,
     resolvers: Arc<ResolverRegistry>,
     module_paths: Vec<(VirtualPath, ModuleId)>,
@@ -255,6 +256,13 @@ impl ModuleResolutionState {
             resolvers: self.resolvers.clone(),
             current_module,
         })
+    }
+}
+
+impl CompilerModuleResolver for ModuleResolutionState {
+    fn resolve_context(&self, input: &Path) -> std::result::Result<ModuleResolutionContext, ModuleResolutionError> {
+        self.context_for_input(input)
+            .map_err(|err| ModuleResolutionError::new(err.to_string()))
     }
 }
 
@@ -298,7 +306,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     let container_registry = crate::container::ContainerRegistry::new();
     let module_resolution_state = match args.graph.as_ref() {
-        Some(graph) => Some(build_module_resolution_state(graph)?),
+        Some(graph) => Some(Arc::new(build_module_resolution_state(graph)?)),
         None => None,
     };
 
@@ -341,18 +349,13 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             args.exec,
         )?;
 
-        let module_resolution = match module_resolution_state.as_ref() {
-            Some(state) => Some(state.context_for_input(input_file)?),
-            None => None,
-        };
-
         // Compile single file
         if let Some(artifact_path) = compile_file(
             input_file,
             &output_file,
             &args,
             target,
-            module_resolution,
+            module_resolution_state.clone(),
             config,
         )
         .await?
@@ -469,7 +472,7 @@ async fn compile_file(
     output: &Path,
     args: &CompileArgs,
     target: CompileTarget,
-    module_resolution: Option<ModuleResolutionContext>,
+    module_resolution: Option<Arc<ModuleResolutionState>>,
     _config: &CliConfig,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
@@ -494,7 +497,8 @@ async fn compile_file(
         CompileTarget::Ast(_) => unreachable!("AST target should return early"),
     };
 
-    if let Some(artifact) = try_compile_with_compiler(input, output, args, backend, &module_resolution)?
+    if let Some(artifact) =
+        try_compile_with_compiler(input, output, args, backend, module_resolution.clone())?
     {
         return Ok(Some(artifact));
     }
@@ -552,7 +556,10 @@ async fn compile_file(
         release: args.release,
         execute_main: execute_const_main,
         disabled_stages,
-        module_resolution,
+        module_resolution: match module_resolution.as_ref() {
+            Some(state) => Some(state.context_for_input(input)?),
+            None => None,
+        },
         jit: None,
     };
 
@@ -619,14 +626,13 @@ fn try_compile_with_compiler(
     output: &Path,
     args: &CompileArgs,
     backend: BackendKind,
-    module_resolution: &Option<ModuleResolutionContext>,
+    module_resolution: Option<Arc<ModuleResolutionState>>,
 ) -> Result<Option<PathBuf>> {
-    if module_resolution.is_some()
-        || args.lossy
-        || !args.disable_stage.is_empty()
-    {
+    if args.lossy || !args.disable_stage.is_empty() {
         return Ok(None);
     }
+
+    let resolver = module_resolution.map(|state| state as Arc<dyn CompilerModuleResolver>);
 
     match backend {
         BackendKind::Binary => {
@@ -638,6 +644,7 @@ fn try_compile_with_compiler(
                     let artifact = compiler::compile_llvm_file(
                         input,
                         args.source_language.as_deref(),
+                        resolver.clone(),
                         &LlvmCompileOptions {
                             output: output.to_path_buf(),
                             target_triple: args.target_triple.clone(),
@@ -662,6 +669,7 @@ fn try_compile_with_compiler(
                     let artifact = compiler::compile_cranelift_file(
                         input,
                         args.source_language.as_deref(),
+                        resolver.clone(),
                         &CraneliftCompileOptions {
                             output: output.to_path_buf(),
                             target_triple: args.target_triple.clone(),
@@ -680,6 +688,7 @@ fn try_compile_with_compiler(
             let artifact = compiler::compile_native_file(
                 input,
                 args.source_language.as_deref(),
+                resolver,
                 &NativeCompileOptions {
                     emitter,
                     output: output.to_path_buf(),
@@ -700,6 +709,7 @@ fn try_compile_with_compiler(
             let artifact = compiler::compile_bytecode_file(
                 input,
                 args.source_language.as_deref(),
+                resolver,
                 &BytecodeCompileOptions {
                     output: output.to_path_buf(),
                     emit_text: matches!(backend, BackendKind::TextBytecode),
@@ -716,6 +726,7 @@ fn try_compile_with_compiler(
             let artifact = compiler::compile_jvm_file(
                 input,
                 args.source_language.as_deref(),
+                resolver,
                 &JvmCompileOptions {
                     output: output.to_path_buf(),
                     save_intermediates: args.save_intermediates,
@@ -728,6 +739,7 @@ fn try_compile_with_compiler(
             let artifact = compiler::compile_wasm_file(
                 input,
                 args.source_language.as_deref(),
+                resolver,
                 &WasmCompileOptions {
                     output: output.to_path_buf(),
                 },
@@ -738,6 +750,7 @@ fn try_compile_with_compiler(
             let artifact = compiler::compile_ebpf_file(
                 input,
                 args.source_language.as_deref(),
+                resolver,
                 &EbpfCompileOptions {
                     output: output.to_path_buf(),
                 },
@@ -756,6 +769,7 @@ fn try_compile_with_compiler(
             let artifact = compiler::compile_dotnet_file(
                 input,
                 args.source_language.as_deref(),
+                resolver,
                 output,
                 args.save_intermediates,
             )?;
@@ -765,6 +779,7 @@ fn try_compile_with_compiler(
             let artifact = compiler::compile_llvm_file(
                 input,
                 args.source_language.as_deref(),
+                resolver,
                 &LlvmCompileOptions {
                     output: output.to_path_buf(),
                     target_triple: args.target_triple.clone(),
@@ -1482,7 +1497,7 @@ fn validate_inputs(args: &CompileArgs) -> Result<()> {
     Ok(())
 }
 
-fn build_module_resolution_state(graph_path: &Path) -> Result<ModuleResolutionState> {
+pub(crate) fn build_module_resolution_state(graph_path: &Path) -> Result<ModuleResolutionState> {
     let workspace = load_workspace_document(graph_path)?;
     let (graph, module_paths, languages) =
         build_package_graph_from_workspace(&workspace, graph_path)?;
@@ -1503,14 +1518,6 @@ fn build_module_resolution_state(graph_path: &Path) -> Result<ModuleResolutionSt
         resolvers: Arc::new(registry),
         module_paths,
     })
-}
-
-pub(crate) fn build_module_resolution_context(
-    graph_path: &Path,
-    input: &Path,
-) -> Result<ModuleResolutionContext> {
-    let state = build_module_resolution_state(graph_path)?;
-    state.context_for_input(input)
 }
 
 fn load_workspace_document(path: &Path) -> Result<WorkspaceDocument> {

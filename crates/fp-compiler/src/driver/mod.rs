@@ -6,7 +6,9 @@ pub use state::CompilerState;
 
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::ast::{NodeKind, Value};
-use fp_typing::{PendingTypingRequest, PendingTypingRequestKind};
+use fp_typing::{
+    annotate, annotate_with_module_resolution, PendingTypingRequest, PendingTypingRequestKind,
+};
 
 use crate::scheduler::{
     AstId, CompileTimeNeed, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
@@ -76,7 +78,10 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let mut ast = self.state.ast(ast_id)?.clone();
-        let outcome = fp_typing::annotate(&mut ast)?;
+        let outcome = match self.state.module_resolution(ast_id) {
+            Some(context) => annotate_with_module_resolution(&mut ast, Some(context))?,
+            None => annotate(&mut ast)?,
+        };
         let all_requests: Vec<TypingRequest> = outcome
             .pending_requests
             .iter()
