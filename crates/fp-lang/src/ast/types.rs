@@ -268,9 +268,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                                 span: Span::null(),
                                 kind: inner_kind,
                                 item: None,
-                                inner: Some(Box::new(Ty::Slice(TypeSlice {
-                                    elem: Box::new(item_quote),
-                                }))),
+                                inner: Some(Box::new(Ty::Slice(TypeSlice { elem: Box::new(item_quote) }))),
                             }));
                         }
                         _ => return Err(ErrMode::Cut(ContextError::new())),
