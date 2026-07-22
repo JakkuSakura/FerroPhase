@@ -3,10 +3,6 @@ use std::fmt;
 
 use fp_core::lir::RegisterId;
 
-// ---------------------------------------------------------------------------
-// Error
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub enum VmError {
     StackOverflow,
@@ -36,29 +32,14 @@ impl fmt::Display for VmError {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Unified virtual memory
-// ---------------------------------------------------------------------------
-
 const PAGE_SIZE: u64 = 4096;
-const STACK_SIZE: u64 = 8 * 1024 * 1024; // 8 MiB
-const HEAP_DEFAULT: u64 = 64 * 1024 * 1024; // 64 MiB
+const STACK_SIZE: u64 = 8 * 1024 * 1024;
+const HEAP_DEFAULT: u64 = 64 * 1024 * 1024;
 
-/// Unified byte-addressable virtual memory.
-///
-/// Layout:
-///   0x0            → program base (code / read-only)
-///   0x1_0000       → heap start (grows up)
-///   heap_end       → free
-///   stack_top - 8M → stack (grows down)
-///   stack_top      → initial sp
 pub struct VirtMem {
     bytes: Vec<u8>,
-    /// Next free byte in the heap region (bump allocator).
     heap_ptr: u64,
-    /// Top of the stack region (sp starts here, grows down).
     stack_top: u64,
-    /// Lowest used stack address (for bounds checking).
     stack_low: u64,
 }
 
@@ -83,9 +64,6 @@ impl VirtMem {
         Ok(())
     }
 
-    // -- allocation --
-
-    /// Bump-allocate `size` bytes with `alignment`. Returns a heap address.
     pub fn heap_alloc(&mut self, size: u64, alignment: u32) -> Result<u64, VmError> {
         let aligned = (self.heap_ptr + alignment as u64 - 1) & !(alignment as u64 - 1);
         let end = aligned + size;
@@ -96,7 +74,6 @@ impl VirtMem {
         Ok(aligned)
     }
 
-    /// Allocate on the stack (grows down). Returns the new sp value.
     pub fn stack_alloc(&mut self, sp: u64, size: u64, alignment: u32) -> Result<u64, VmError> {
         let aligned_size = (size + alignment as u64 - 1) & !(alignment as u64 - 1);
         let new_sp = sp.checked_sub(aligned_size).ok_or(VmError::StackOverflow)?;
@@ -106,8 +83,6 @@ impl VirtMem {
         self.bounds(new_sp, aligned_size)?;
         Ok(new_sp)
     }
-
-    // -- typed load / store --
 
     pub fn store_u64(&mut self, addr: u64, val: u64) -> Result<(), VmError> {
         self.bounds(addr, 8)?;
@@ -197,14 +172,8 @@ impl VirtMem {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Register file
-// ---------------------------------------------------------------------------
-
 const REG_COUNT: usize = 256;
 
-/// 64-bit general-purpose register file.
-/// r0 is hardwired to zero. r1 is the stack pointer.
 #[derive(Clone)]
 pub struct RegFile {
     pub gpr: [u64; REG_COUNT],
@@ -242,17 +211,10 @@ impl RegFile {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Stack frame
-// ---------------------------------------------------------------------------
-
 pub struct StackFrame {
     pub function_name: String,
-    /// sp value to restore on return.
     pub caller_sp: u64,
-    /// Saved register snapshot for caller-saved regs.
     pub saved_regs: HashMap<RegisterId, u64>,
-    /// Local variable → stack offset mapping.
     pub local_offsets: HashMap<u32, u64>,
 }
 
@@ -267,16 +229,10 @@ impl StackFrame {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Thread state
-// ---------------------------------------------------------------------------
-
 pub struct ThreadState {
     pub regs: RegFile,
     pub mem: VirtMem,
     pub call_stack: Vec<StackFrame>,
-    /// Managed heap: objects allocated via intrinsics (malloc, constructors).
-    /// Handles are indices into this vec.
     pub objects: Vec<Value>,
 }
 
@@ -309,13 +265,13 @@ impl ThreadState {
     pub fn current_frame(&self) -> &StackFrame {
         self.call_stack
             .last()
-            .expect("no active frame — missing function prologue")
+            .expect("no active frame - missing function prologue")
     }
 
     pub fn current_frame_mut(&mut self) -> &mut StackFrame {
         self.call_stack
             .last_mut()
-            .expect("no active frame — missing function prologue")
+            .expect("no active frame - missing function prologue")
     }
 
     pub fn local_addr(&self, local_idx: u32) -> u64 {
@@ -332,10 +288,6 @@ impl ThreadState {
             .insert(local_idx, addr);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Type helpers
-// ---------------------------------------------------------------------------
 
 use fp_core::ast::Value;
 
@@ -379,13 +331,12 @@ pub fn lir_type_info(ty: &fp_core::lir::LirType) -> (u32, bool) {
         LirType::I64 => (64, true),
         LirType::F32 => (32, false),
         LirType::F64 => (64, false),
-        LirType::Ptr(_) => (64, false), // pointer — treated as object handle
+        LirType::Ptr(_) => (64, false),
         LirType::Void => (0, false),
-        _ => (64, false), // struct/array — also handles
+        _ => (64, false),
     }
 }
 
-/// Returns true if this type is stored in the managed object heap (not a scalar).
 pub fn is_object_type(ty: &fp_core::lir::LirType) -> bool {
     use fp_core::lir::LirType;
     matches!(

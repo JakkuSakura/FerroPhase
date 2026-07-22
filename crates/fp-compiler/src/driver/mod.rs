@@ -5,8 +5,9 @@ pub use error::CompilerDriverError;
 pub use state::CompilerState;
 
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
-use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::ast::{NodeKind, Value};
+use fp_core::diagnostics::DiagnosticLevel;
+use fp_interpret::{LirInterpreter, VmError};
 use fp_typing::{
     annotate, annotate_with_module_resolution, PendingTypingRequest, PendingTypingRequestKind,
 };
@@ -20,7 +21,7 @@ use crate::scheduler::{
 pub struct CompilerDriver {
     pub scheduler: CompilerScheduler,
     pub state: CompilerState,
-    interpreter: fp_interpret::lir::LirInterpreter,
+    interpreter: LirInterpreter,
 }
 
 impl CompilerDriver {
@@ -28,7 +29,7 @@ impl CompilerDriver {
         Self {
             scheduler: CompilerScheduler::new(),
             state: CompilerState::new(),
-            interpreter: fp_interpret::lir::LirInterpreter::new(),
+            interpreter: LirInterpreter::new(),
         }
     }
 
@@ -36,7 +37,7 @@ impl CompilerDriver {
         Self {
             scheduler: CompilerScheduler::new(),
             state,
-            interpreter: fp_interpret::lir::LirInterpreter::new(),
+            interpreter: LirInterpreter::new(),
         }
     }
 
@@ -253,7 +254,7 @@ impl CompilerDriver {
     fn evaluate_lir(
         &mut self,
         lir: &fp_core::lir::LirProgram,
-    ) -> Result<fp_core::ast::Value, fp_interpret::lir::vm::VmError> {
+    ) -> Result<fp_core::ast::Value, VmError> {
         self.interpreter.run_main(lir)
     }
 
