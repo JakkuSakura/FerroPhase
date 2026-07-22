@@ -229,53 +229,29 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                 },
                 Ty::Slice(slice) => match slice.elem.as_ref() {
                     Ty::Expr(expr) => match expr.kind() {
-                        ExprKind::Name(name) => match name.as_ident().map(Ident::as_str) {
-                            Some("item") => {
-                                let inner = Ty::Quote(TypeQuote {
-                                    span: Span::null(),
-                                    kind: QuoteFragmentKind::Item,
-                                    item: None,
-                                    inner: None,
-                                });
-                                return Ok(Ty::Slice(TypeSlice {
-                                    elem: Box::new(inner),
-                                }));
-                            }
-                            Some("expr") => {
-                                let inner = Ty::Quote(TypeQuote {
-                                    span: Span::null(),
-                                    kind: QuoteFragmentKind::Expr,
-                                    item: None,
-                                    inner: None,
-                                });
-                                return Ok(Ty::Slice(TypeSlice {
-                                    elem: Box::new(inner),
-                                }));
-                            }
-                            Some("stmt") => {
-                                let inner = Ty::Quote(TypeQuote {
-                                    span: Span::null(),
-                                    kind: QuoteFragmentKind::Stmt,
-                                    item: None,
-                                    inner: None,
-                                });
-                                return Ok(Ty::Slice(TypeSlice {
-                                    elem: Box::new(inner),
-                                }));
-                            }
-                            Some("type") => {
-                                let inner = Ty::Quote(TypeQuote {
-                                    span: Span::null(),
-                                    kind: QuoteFragmentKind::Type,
-                                    item: None,
-                                    inner: None,
-                                });
-                                return Ok(Ty::Slice(TypeSlice {
-                                    elem: Box::new(inner),
-                                }));
-                            }
-                            _ => return Err(ErrMode::Cut(ContextError::new())),
-                        },
+                        ExprKind::Name(name) => {
+                            let inner_kind = match name.as_ident().map(Ident::as_str) {
+                                Some("item") => QuoteFragmentKind::Item,
+                                Some("expr") => QuoteFragmentKind::Expr,
+                                Some("stmt") => QuoteFragmentKind::Stmt,
+                                Some("type") => QuoteFragmentKind::Type,
+                                _ => return Err(ErrMode::Cut(ContextError::new())),
+                            };
+                            let item_quote = Ty::Quote(TypeQuote {
+                                span: Span::null(),
+                                kind: inner_kind,
+                                item: None,
+                                inner: None,
+                            });
+                            return Ok(Ty::Quote(TypeQuote {
+                                span: Span::null(),
+                                kind: inner_kind,
+                                item: None,
+                                inner: Some(Box::new(Ty::Slice(TypeSlice {
+                                    elem: Box::new(item_quote),
+                                }))),
+                            }));
+                        }
                         _ => return Err(ErrMode::Cut(ContextError::new())),
                     },
                     _ => return Err(ErrMode::Cut(ContextError::new())),

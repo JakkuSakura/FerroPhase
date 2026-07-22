@@ -316,7 +316,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     };
                     let expect_slice = matches!(
                         existing_ty.as_ref(),
-                        Some(Ty::Slice(s)) if matches!(s.elem.as_ref(), Ty::Quote(_))
+                        Some(Ty::Quote(q)) if q.inner.as_deref().map_or(false, |i| matches!(i, Ty::Slice(_)))
                     );
                     let ty = if matches!(kind, QuoteFragmentKind::Item) {
                         let mut item_like = 0usize;
@@ -364,8 +364,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     })
                                 }
                             });
-                            Ty::Slice(TypeSlice {
-                                elem: Box::new(elem_ty),
+                            Ty::Quote(TypeQuote {
+                                span: Span::null(),
+                                kind,
+                                item: None,
+                                inner: Some(Box::new(Ty::Slice(TypeSlice {
+                                    elem: Box::new(elem_ty),
+                                }))),
                             })
                         } else {
                             if has_non_items {
