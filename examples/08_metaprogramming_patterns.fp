@@ -18,7 +18,7 @@ type LabeledPoint = const {
 
 const SCORE_EXPR: expr = quote<expr> { (2 + 3) * 4 };
 
-const FN_GROUP: [item] = quote<[item]> {
+const FN_GROUP: quote<item> = quote<[item]> {
     fn alpha() {}
     fn beta(x: i64) -> i64 { x + 1 }
 };
