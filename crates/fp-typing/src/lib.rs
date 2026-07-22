@@ -3575,15 +3575,33 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. } => {
                 let inner = self.fresh_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Reference(inner));
+                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Concrete(
+                    Ty::Reference(TypeReference {
+                        ty: Box::new(Ty::infer_var(inner)),
+                        mutability: None,
+                        lifetime: None,
+                    }),
+                ));
                 Ok(inner)
             }
             TypeVarKind::Bound(TypeTerm::Reference(inner)) => Ok(inner),
+            TypeVarKind::Bound(TypeTerm::Concrete(Ty::Reference(reference))) => {
+                match reference.ty.as_ref() {
+                    Ty::InferVar(infer) => Ok(infer.id),
+                    other => self.type_from_ast_ty(other),
+                }
+            }
             TypeVarKind::Link(next) => self.expect_reference(next, context),
             _other => {
                 self.emit_error(format!("expected reference value for {}", context));
                 let placeholder = self.error_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Reference(placeholder));
+                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Concrete(
+                    Ty::Reference(TypeReference {
+                        ty: Box::new(Ty::infer_var(placeholder)),
+                        mutability: None,
+                        lifetime: None,
+                    }),
+                ));
                 Ok(placeholder)
             }
         }

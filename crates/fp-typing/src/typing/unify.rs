@@ -119,6 +119,146 @@ impl TypeTerm {
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
+    fn lower_infer_vars_in_ty(
+        &mut self,
+        ty: Ty,
+        mapping: &mut std::collections::HashMap<TypeVarId, u32>,
+        next: &mut u32,
+    ) -> Result<Ty> {
+        Ok(match ty {
+            Ty::InferVar(infer) => self.build_generalized_ty(infer.id, mapping, next)?,
+            Ty::Tuple(tuple) => Ty::Tuple(TypeTuple {
+                types: tuple
+                    .types
+                    .into_iter()
+                    .map(|elem| self.lower_infer_vars_in_ty(elem, mapping, next))
+                    .collect::<Result<Vec<_>>>()?,
+            }),
+            Ty::Function(function) => Ty::Function(TypeFunction {
+                params: function
+                    .params
+                    .into_iter()
+                    .map(|param| self.lower_infer_vars_in_ty(param, mapping, next))
+                    .collect::<Result<Vec<_>>>()?,
+                generics_params: function.generics_params,
+                ret_ty: function
+                    .ret_ty
+                    .map(|ret| self.lower_infer_vars_in_ty(*ret, mapping, next).map(Box::new))
+                    .transpose()?,
+            }),
+            Ty::TypeBinaryOp(op) => Ty::TypeBinaryOp(Box::new(TypeBinaryOp {
+                kind: op.kind,
+                lhs: Box::new(self.lower_infer_vars_in_ty(*op.lhs, mapping, next)?),
+                rhs: Box::new(self.lower_infer_vars_in_ty(*op.rhs, mapping, next)?),
+            })),
+            Ty::Slice(slice) => Ty::Slice(TypeSlice {
+                elem: Box::new(self.lower_infer_vars_in_ty(*slice.elem, mapping, next)?),
+            }),
+            Ty::Vec(vec) => Ty::Vec(TypeVec {
+                ty: Box::new(self.lower_infer_vars_in_ty(*vec.ty, mapping, next)?),
+            }),
+            Ty::Array(array) => Ty::Array(TypeArray {
+                elem: Box::new(self.lower_infer_vars_in_ty(*array.elem, mapping, next)?),
+                len: array.len,
+            }),
+            Ty::Reference(reference) => Ty::Reference(TypeReference {
+                ty: Box::new(self.lower_infer_vars_in_ty(*reference.ty, mapping, next)?),
+                mutability: reference.mutability,
+                lifetime: reference.lifetime,
+            }),
+            Ty::RawPtr(raw_ptr) => Ty::RawPtr(TypeRawPtr {
+                ty: Box::new(self.lower_infer_vars_in_ty(*raw_ptr.ty, mapping, next)?),
+                mutability: raw_ptr.mutability,
+            }),
+            other => other,
+        })
+    }
+
+    fn resolve_infer_vars_in_ty(&mut self, ty: Ty) -> Result<Ty> {
+        Ok(match ty {
+            Ty::InferVar(infer) => self.resolve_to_ty(infer.id)?,
+            Ty::Tuple(tuple) => Ty::Tuple(TypeTuple {
+                types: tuple
+                    .types
+                    .into_iter()
+                    .map(|elem| self.resolve_infer_vars_in_ty(elem))
+                    .collect::<Result<Vec<_>>>()?,
+            }),
+            Ty::Function(function) => Ty::Function(TypeFunction {
+                params: function
+                    .params
+                    .into_iter()
+                    .map(|param| self.resolve_infer_vars_in_ty(param))
+                    .collect::<Result<Vec<_>>>()?,
+                generics_params: function.generics_params,
+                ret_ty: function
+                    .ret_ty
+                    .map(|ret| self.resolve_infer_vars_in_ty(*ret).map(Box::new))
+                    .transpose()?,
+            }),
+            Ty::TypeBinaryOp(op) => Ty::TypeBinaryOp(Box::new(TypeBinaryOp {
+                kind: op.kind,
+                lhs: Box::new(self.resolve_infer_vars_in_ty(*op.lhs)?),
+                rhs: Box::new(self.resolve_infer_vars_in_ty(*op.rhs)?),
+            })),
+            Ty::Slice(slice) => Ty::Slice(TypeSlice {
+                elem: Box::new(self.resolve_infer_vars_in_ty(*slice.elem)?),
+            }),
+            Ty::Vec(vec) => Ty::Vec(TypeVec {
+                ty: Box::new(self.resolve_infer_vars_in_ty(*vec.ty)?),
+            }),
+            Ty::Array(array) => Ty::Array(TypeArray {
+                elem: Box::new(self.resolve_infer_vars_in_ty(*array.elem)?),
+                len: array.len,
+            }),
+            Ty::Reference(reference) => Ty::Reference(TypeReference {
+                ty: Box::new(self.resolve_infer_vars_in_ty(*reference.ty)?),
+                mutability: reference.mutability,
+                lifetime: reference.lifetime,
+            }),
+            Ty::RawPtr(raw_ptr) => Ty::RawPtr(TypeRawPtr {
+                ty: Box::new(self.resolve_infer_vars_in_ty(*raw_ptr.ty)?),
+                mutability: raw_ptr.mutability,
+            }),
+            other => other,
+        })
+    }
+
+    fn occurs_in_ty(&mut self, needle: TypeVarId, ty: &Ty) -> bool {
+        match ty {
+            Ty::InferVar(infer) => self.occurs_in(needle, infer.id),
+            Ty::Tuple(tuple) => tuple.types.iter().any(|elem| self.occurs_in_ty(needle, elem)),
+            Ty::Function(function) => {
+                function
+                    .params
+                    .iter()
+                    .any(|param| self.occurs_in_ty(needle, param))
+                    || function
+                        .ret_ty
+                        .as_ref()
+                        .is_some_and(|ret| self.occurs_in_ty(needle, ret))
+            }
+            Ty::TypeBinaryOp(op) => {
+                self.occurs_in_ty(needle, &op.lhs) || self.occurs_in_ty(needle, &op.rhs)
+            }
+            Ty::Slice(slice) => self.occurs_in_ty(needle, &slice.elem),
+            Ty::Vec(vec) => self.occurs_in_ty(needle, &vec.ty),
+            Ty::Array(array) => self.occurs_in_ty(needle, &array.elem),
+            Ty::Reference(reference) => self.occurs_in_ty(needle, &reference.ty),
+            Ty::RawPtr(raw_ptr) => self.occurs_in_ty(needle, &raw_ptr.ty),
+            _ => false,
+        }
+    }
+
+    fn bind_concrete_ty(&mut self, ty: Ty) -> TypeVarId {
+        if let Ty::InferVar(infer) = ty {
+            return infer.id;
+        }
+        let var = self.fresh_type_var();
+        self.bind(var, TypeTerm::Concrete(ty));
+        var
+    }
+
     fn build_generic_arg_map(
         &self,
         params: &[GenericParam],
@@ -348,7 +488,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         next: &mut u32,
     ) -> Result<Ty> {
         Ok(match term {
-            TypeTerm::Concrete(ty) => ty,
+            TypeTerm::Concrete(ty) => self.lower_infer_vars_in_ty(ty, mapping, next)?,
             TypeTerm::Error => {
                 return Err(self.error_with_current_span("error type variable during generalization"));
             }
@@ -483,7 +623,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let lhs_var = self.instantiate_poly_ty(&op.lhs, mapping);
                 let rhs_var = self.instantiate_poly_ty(&op.rhs, mapping);
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Union(lhs_var, rhs_var));
+                self.bind(var, TypeTerm::Concrete(Ty::TypeBinaryOp(Box::new(TypeBinaryOp { kind: TypeBinaryOpKind::Union, lhs: Box::new(Ty::infer_var(lhs_var)), rhs: Box::new(Ty::infer_var(rhs_var)) }))));
                 var
             }
             Ty::Unknown(_) => {
@@ -497,7 +637,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     vars.push(self.instantiate_poly_ty(elem, mapping));
                 }
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Tuple(vars));
+                self.bind(var, TypeTerm::Concrete(Ty::Tuple(TypeTuple { types: vars.into_iter().map(Ty::infer_var).collect() })));
                 var
             }
             Ty::Function(function) => {
@@ -524,31 +664,31 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Slice(elem) => {
                 let elem_var = self.instantiate_poly_ty(&elem.elem, mapping);
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Slice(elem_var));
+                self.bind(var, TypeTerm::Concrete(Ty::Slice(TypeSlice { elem: Box::new(Ty::infer_var(elem_var)) })));
                 var
             }
             Ty::Vec(elem) => {
                 let elem_var = self.instantiate_poly_ty(&elem.ty, mapping);
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Vec(elem_var));
+                self.bind(var, TypeTerm::Concrete(Ty::Vec(TypeVec { ty: Box::new(Ty::infer_var(elem_var)) })));
                 var
             }
             Ty::Array(array) => {
                 let elem_var = self.instantiate_poly_ty(&array.elem, mapping);
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Array(elem_var, Some(array.len.clone())));
+                self.bind(var, TypeTerm::Concrete(Ty::Array(TypeArray { elem: Box::new(Ty::infer_var(elem_var)), len: array.len.clone() })));
                 var
             }
             Ty::Reference(elem) => {
                 let elem_var = self.instantiate_poly_ty(&elem.ty, mapping);
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Reference(elem_var));
+                self.bind(var, TypeTerm::Concrete(Ty::Reference(TypeReference { ty: Box::new(Ty::infer_var(elem_var)), mutability: None, lifetime: None })));
                 var
             }
             Ty::RawPtr(elem) => {
                 let elem_var = self.instantiate_poly_ty(&elem.ty, mapping);
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::RawPtr(elem_var, elem.mutability));
+                self.bind(var, TypeTerm::Concrete(Ty::RawPtr(TypeRawPtr { ty: Box::new(Ty::infer_var(elem_var)), mutability: elem.mutability })));
                 var
             }
             _ => self.type_from_ast_ty(scheme).unwrap_or_else(|_| self.error_type_var()),
@@ -704,6 +844,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn occurs_in_term(&mut self, var: TypeVarId, term: &TypeTerm) -> bool {
         match term {
+            TypeTerm::Concrete(ty) => self.occurs_in_ty(var, ty),
             TypeTerm::Tuple(elements) => elements.iter().any(|elem| self.occurs_in(var, *elem)),
             TypeTerm::Function(func) => {
                 func.params.iter().any(|param| self.occurs_in(var, *param))
@@ -774,10 +915,36 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             (TypeTerm::Union(lhs, rhs), other) => self.unify_union_with(lhs, rhs, other),
             (other, TypeTerm::Union(lhs, rhs)) => self.unify_union_with(lhs, rhs, other),
+            (TypeTerm::Concrete(Ty::Tuple(a_tuple)), TypeTerm::Tuple(b_elems))
+            | (TypeTerm::Tuple(b_elems), TypeTerm::Concrete(Ty::Tuple(a_tuple))) => {
+                if a_tuple.types.len() != b_elems.len() {
+                    return Err(self.error_with_current_span("tuple length mismatch"));
+                }
+                for (a_elem, b_elem) in a_tuple.types.into_iter().zip(b_elems.into_iter()) {
+                    let a_var = self.bind_concrete_ty(a_elem);
+                    self.unify(a_var, b_elem)?;
+                }
+                Ok(())
+            }
             (TypeTerm::Array(a_elem, _), TypeTerm::Array(b_elem, _)) => self.unify(a_elem, b_elem),
             (TypeTerm::Array(array_elem, _), TypeTerm::Slice(slice_elem))
             | (TypeTerm::Slice(slice_elem), TypeTerm::Array(array_elem, _)) => {
                 self.unify(array_elem, slice_elem)
+            }
+            (TypeTerm::Concrete(Ty::Array(array_ty)), TypeTerm::Array(array_elem, _))
+            | (TypeTerm::Array(array_elem, _), TypeTerm::Concrete(Ty::Array(array_ty))) => {
+                let elem_var = self.bind_concrete_ty(*array_ty.elem);
+                self.unify(elem_var, array_elem)
+            }
+            (TypeTerm::Concrete(Ty::Slice(slice_ty)), TypeTerm::Slice(slice_elem))
+            | (TypeTerm::Slice(slice_elem), TypeTerm::Concrete(Ty::Slice(slice_ty))) => {
+                let elem_var = self.bind_concrete_ty(*slice_ty.elem);
+                self.unify(elem_var, slice_elem)
+            }
+            (TypeTerm::Concrete(Ty::Vec(vec_ty)), TypeTerm::Vec(vec_elem))
+            | (TypeTerm::Vec(vec_elem), TypeTerm::Concrete(Ty::Vec(vec_ty))) => {
+                let elem_var = self.bind_concrete_ty(*vec_ty.ty);
+                self.unify(elem_var, vec_elem)
             }
             (TypeTerm::Array(array_elem, _), TypeTerm::Concrete(ty))
             | (TypeTerm::Concrete(ty), TypeTerm::Array(array_elem, _))
@@ -870,6 +1037,79 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn unify_concrete_tys(&mut self, a: Ty, b: Ty) -> Result<()> {
         match (a, b) {
+            (Ty::InferVar(a), Ty::InferVar(b)) => self.unify(a.id, b.id),
+            (Ty::InferVar(infer), other) | (other, Ty::InferVar(infer)) => {
+                let other_var = self.bind_concrete_ty(other);
+                self.unify(infer.id, other_var)
+            }
+            (Ty::Tuple(a_tuple), Ty::Tuple(b_tuple)) => {
+                if a_tuple.types.len() != b_tuple.types.len() {
+                    return Err(self.error_with_current_span("tuple length mismatch"));
+                }
+                for (a_elem, b_elem) in a_tuple.types.into_iter().zip(b_tuple.types.into_iter()) {
+                    let a_var = self.bind_concrete_ty(a_elem);
+                    let b_var = self.bind_concrete_ty(b_elem);
+                    self.unify(a_var, b_var)?;
+                }
+                Ok(())
+            }
+            (Ty::Function(a_func), Ty::Function(b_func)) => {
+                if a_func.params.len() != b_func.params.len() {
+                    return Err(self.error_with_current_span("function arity mismatch"));
+                }
+                for (a_param, b_param) in a_func.params.into_iter().zip(b_func.params.into_iter()) {
+                    let a_var = self.bind_concrete_ty(a_param);
+                    let b_var = self.bind_concrete_ty(b_param);
+                    self.unify(a_var, b_var)?;
+                }
+                match (a_func.ret_ty, b_func.ret_ty) {
+                    (Some(a_ret), Some(b_ret)) => {
+                        let a_var = self.bind_concrete_ty(*a_ret);
+                        let b_var = self.bind_concrete_ty(*b_ret);
+                        self.unify(a_var, b_var)
+                    }
+                    (None, None) => Ok(()),
+                    _ => Err(self.error_with_current_span("function return mismatch")),
+                }
+            }
+            (Ty::TypeBinaryOp(a_op), Ty::TypeBinaryOp(b_op))
+                if a_op.kind == TypeBinaryOpKind::Union && b_op.kind == TypeBinaryOpKind::Union =>
+            {
+                let a_lhs = self.bind_concrete_ty(*a_op.lhs);
+                let b_lhs = self.bind_concrete_ty(*b_op.lhs);
+                self.unify(a_lhs, b_lhs)?;
+                let a_rhs = self.bind_concrete_ty(*a_op.rhs);
+                let b_rhs = self.bind_concrete_ty(*b_op.rhs);
+                self.unify(a_rhs, b_rhs)
+            }
+            (Ty::Slice(a_slice), Ty::Slice(b_slice)) => {
+                let a_var = self.bind_concrete_ty(*a_slice.elem);
+                let b_var = self.bind_concrete_ty(*b_slice.elem);
+                self.unify(a_var, b_var)
+            }
+            (Ty::Vec(a_vec), Ty::Vec(b_vec)) => {
+                let a_var = self.bind_concrete_ty(*a_vec.ty);
+                let b_var = self.bind_concrete_ty(*b_vec.ty);
+                self.unify(a_var, b_var)
+            }
+            (Ty::Array(a_arr), Ty::Array(b_arr)) => {
+                let a_var = self.bind_concrete_ty(*a_arr.elem);
+                let b_var = self.bind_concrete_ty(*b_arr.elem);
+                self.unify(a_var, b_var)
+            }
+            (Ty::Reference(a_ref), Ty::Reference(b_ref)) => {
+                let a_var = self.bind_concrete_ty(*a_ref.ty);
+                let b_var = self.bind_concrete_ty(*b_ref.ty);
+                self.unify(a_var, b_var)
+            }
+            (Ty::RawPtr(a_ptr), Ty::RawPtr(b_ptr)) => {
+                if matches!((a_ptr.mutability, b_ptr.mutability), (Some(a), Some(b)) if a != b) {
+                    return Err(self.error_with_current_span("raw pointer mutability mismatch"));
+                }
+                let a_var = self.bind_concrete_ty(*a_ptr.ty);
+                let b_var = self.bind_concrete_ty(*b_ptr.ty);
+                self.unify(a_var, b_var)
+            }
             (Ty::Struct(sa), Ty::Struct(sb)) => {
                 if sa == sb {
                     Ok(())
@@ -958,11 +1198,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(())
             }
             (left, right) if left == right || quote_item_compatible(&left, &right) => Ok(()),
-            (Ty::Array(left_arr), Ty::Array(right_arr)) => {
-                let left_elem = self.type_from_ast_ty(&left_arr.elem)?;
-                let right_elem = self.type_from_ast_ty(&right_arr.elem)?;
-                self.unify(left_elem, right_elem)
-            }
             (left, right) => Err(
                 self.error_with_current_span(format!("concrete type mismatch: {} vs {}", left, right))
             ),
@@ -1078,7 +1313,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn term_to_ty(&mut self, term: TypeTerm) -> Result<Ty> {
         Ok(match term {
-            TypeTerm::Concrete(ty) => ty,
+            TypeTerm::Concrete(ty) => self.resolve_infer_vars_in_ty(ty)?,
             TypeTerm::Error => {
                 return Err(self.error_with_current_span("error type variable"));
             }
@@ -1166,6 +1401,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::GenericVar(_) => return Ok(var),
             Ty::Nothing(_) => self.bind(var, TypeTerm::Nothing),
             Ty::Any(_) => self.bind(var, TypeTerm::Any),
+            Ty::InferVar(infer) => return Ok(infer.id),
             Ty::TypeBinaryOp(op) => {
                 let op = op.as_ref();
                 match op.kind {
@@ -1263,7 +1499,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     TypeBinaryOpKind::Union => {
                         let lhs_var = self.type_from_ast_ty(&op.lhs)?;
                         let rhs_var = self.type_from_ast_ty(&op.rhs)?;
-                        self.bind(var, TypeTerm::Union(lhs_var, rhs_var));
+                        self.bind(var, TypeTerm::Concrete(Ty::TypeBinaryOp(Box::new(TypeBinaryOp { kind: TypeBinaryOpKind::Union, lhs: Box::new(Ty::infer_var(lhs_var)), rhs: Box::new(Ty::infer_var(rhs_var)) }))));
                     }
                     TypeBinaryOpKind::Subtract => {
                         let lhs_var = self.type_from_ast_ty(&op.lhs)?;
@@ -1340,27 +1576,34 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 for elem in &tuple.types {
                     vars.push(self.type_from_ast_ty(elem)?);
                 }
-                self.bind(var, TypeTerm::Tuple(vars));
+                self.bind(var, TypeTerm::Concrete(Ty::Tuple(TypeTuple { types: vars.into_iter().map(Ty::infer_var).collect() })));
             }
             Ty::Reference(r) => {
                 let inner = self.type_from_ast_ty(&r.ty)?;
-                self.bind(var, TypeTerm::Reference(inner));
+                self.bind(var, TypeTerm::Concrete(Ty::Reference(TypeReference {
+                    ty: Box::new(Ty::infer_var(inner)),
+                    mutability: r.mutability,
+                    lifetime: r.lifetime.clone(),
+                })));
             }
             Ty::RawPtr(r) => {
                 let inner = self.type_from_ast_ty(&r.ty)?;
-                self.bind(var, TypeTerm::RawPtr(inner, r.mutability));
+                self.bind(var, TypeTerm::Concrete(Ty::RawPtr(TypeRawPtr {
+                    ty: Box::new(Ty::infer_var(inner)),
+                    mutability: r.mutability,
+                })));
             }
             Ty::Slice(s) => {
                 let inner = self.type_from_ast_ty(&s.elem)?;
-                self.bind(var, TypeTerm::Slice(inner));
+                self.bind(var, TypeTerm::Concrete(Ty::Slice(TypeSlice { elem: Box::new(Ty::infer_var(inner)) })));
             }
             Ty::Vec(v) => {
                 let inner = self.type_from_ast_ty(&v.ty)?;
-                self.bind(var, TypeTerm::Vec(inner));
+                self.bind(var, TypeTerm::Concrete(Ty::Vec(TypeVec { ty: Box::new(Ty::infer_var(inner)) })));
             }
             Ty::Array(array_ty) => {
                 let elem_var = self.type_from_ast_ty(&array_ty.elem)?;
-                self.bind(var, TypeTerm::Array(elem_var, Some(array_ty.len.clone())));
+                self.bind(var, TypeTerm::Concrete(Ty::Array(TypeArray { elem: Box::new(Ty::infer_var(elem_var)), len: array_ty.len.clone() })));
             }
             Ty::Quote(_) => {
                 // Quote tokens are currently opaque to the typer.
@@ -1397,12 +1640,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         if let Some(segment) = path.segments.last() {
                             if segment.ident.as_str() == "Vec" && segment.args.len() == 1 {
                                 let elem_var = self.type_from_ast_ty(&segment.args[0])?;
-                                self.bind(var, TypeTerm::Vec(elem_var));
+                                self.bind(var, TypeTerm::Concrete(Ty::Vec(TypeVec { ty: Box::new(Ty::infer_var(elem_var)) })));
                                 return Ok(var);
                             }
                             if segment.ident.as_str() == "Box" && segment.args.len() == 1 {
                                 let elem_var = self.type_from_ast_ty(&segment.args[0])?;
-                                self.bind(var, TypeTerm::Boxed(elem_var));
+                                let segment = ParameterPathSegment::new(
+                                    Ident::new("Box"),
+                                    vec![Ty::infer_var(elem_var)],
+                                );
+                                let path =
+                                    ParameterPath::new(PathPrefix::Plain, vec![segment]);
+                                self.bind(var, TypeTerm::Concrete(Ty::locator(Name::ParameterPath(path))));
                                 return Ok(var);
                             }
                             if segment.ident.as_str() == "Future"
@@ -1672,7 +1921,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 } else {
                     self.type_from_ast_ty(&Ty::Unit(TypeUnit))
                 }?;
-                self.bind(var, TypeTerm::Function(FunctionTerm { params, ret }));
+                self.bind(
+                    var,
+                    TypeTerm::Concrete(Ty::Function(TypeFunction {
+                        params: params.into_iter().map(Ty::infer_var).collect(),
+                        generics_params: f.generics_params.clone(),
+                        ret_ty: Some(Box::new(Ty::infer_var(ret))),
+                    })),
+                );
             }
             Ty::ImplTraits(traits) => {
                 // `impl Trait` / `dyn Trait` are currently treated as opaque, but we still

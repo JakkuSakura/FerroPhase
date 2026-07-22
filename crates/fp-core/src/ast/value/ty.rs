@@ -7,6 +7,13 @@ use std::hash::Hash;
 
 pub type TypeId = u64;
 pub type BType = Box<Ty>;
+
+common_struct! {
+    pub struct TypeInferVar {
+        pub id: usize,
+    }
+}
+
 /// Comprehensive Quote inner type (ADT replacing flat kind + inner).
 /// For gradual migration: use in new code, convert via constructors.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -127,6 +134,7 @@ common_enum! {
         Quote(TypeQuote),
         TypeBinaryOp(Box<TypeBinaryOp>),
         AnyBox(AnyBox),
+        InferVar(TypeInferVar),
     }
 
 }
@@ -200,6 +208,9 @@ impl Ty {
         Self::ImplTraits(ImplTraits {
             bounds: TypeBounds::new(Expr::ident(name)),
         })
+    }
+    pub fn infer_var(id: usize) -> Self {
+        Ty::InferVar(TypeInferVar { id })
     }
     pub fn locator(locator: Name) -> Self {
         Self::expr(Expr::name(locator))

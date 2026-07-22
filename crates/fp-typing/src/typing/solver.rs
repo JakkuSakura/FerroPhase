@@ -1,6 +1,6 @@
 use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVarKind};
 use crate::{typing_error, AstTypeInferencer, TypeVarId};
-use fp_core::ast::{TypeInt, TypePrimitive};
+use fp_core::ast::{Ty, TypeFunction, TypeInt, TypePrimitive};
 use fp_core::error::Result;
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -90,10 +90,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeVarKind::Bound(term) if term.is_any() || term.is_error() => {
                 let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
                 let ret = self.fresh_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
-                    params: params.clone(),
-                    ret,
-                }));
+                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Concrete(Ty::Function(
+                    TypeFunction {
+                        params: params.iter().copied().map(Ty::infer_var).collect(),
+                        generics_params: Vec::new(),
+                        ret_ty: Some(Box::new(Ty::infer_var(ret))),
+                    },
+                )));
                 Ok(super::super::FunctionTypeInfo { params, ret })
             }
             TypeVarKind::Bound(TypeTerm::Function(func)) => {
@@ -117,15 +120,52 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     ret: func.ret,
                 })
             }
+            TypeVarKind::Bound(TypeTerm::Concrete(Ty::Function(func))) => {
+                if func.params.len() != arity {
+                    self.emit_error(format!(
+                        "function arity mismatch: expected {}, found {}",
+                        arity,
+                        func.params.len()
+                    ));
+                    let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
+                    let ret = self.error_type_var();
+                    self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Concrete(
+                        Ty::Function(TypeFunction {
+                            params: params.iter().copied().map(Ty::infer_var).collect(),
+                            generics_params: Vec::new(),
+                            ret_ty: Some(Box::new(Ty::infer_var(ret))),
+                        }),
+                    ));
+                    return Ok(super::super::FunctionTypeInfo { params, ret });
+                }
+                let mut params = Vec::with_capacity(func.params.len());
+                for param in &func.params {
+                    let Ty::InferVar(infer) = param else {
+                        let inferred = self.type_from_ast_ty(param)?;
+                        params.push(inferred);
+                        continue;
+                    };
+                    params.push(infer.id);
+                }
+                let ret = match func.ret_ty.as_deref() {
+                    Some(Ty::InferVar(infer)) => infer.id,
+                    Some(other) => self.type_from_ast_ty(other)?,
+                    None => self.unit_type_var(),
+                };
+                Ok(super::super::FunctionTypeInfo { params, ret })
+            }
             TypeVarKind::Link(next) => self.ensure_function(next, arity),
             other => {
                 self.emit_error(format!("expected function, found {:?}", other));
                 let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
                 let ret = self.error_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
-                    params: params.clone(),
-                    ret,
-                }));
+                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Concrete(Ty::Function(
+                    TypeFunction {
+                        params: params.iter().copied().map(Ty::infer_var).collect(),
+                        generics_params: Vec::new(),
+                        ret_ty: Some(Box::new(Ty::infer_var(ret))),
+                    },
+                )));
                 Ok(super::super::FunctionTypeInfo { params, ret })
             }
         }
