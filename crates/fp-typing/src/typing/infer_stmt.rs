@@ -1,4 +1,3 @@
-use crate::typing::unify::TypeTerm;
 use crate::{typing_error, AstTypeInferencer, LoopContext, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::Result;
@@ -32,14 +31,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn infer_block(&mut self, block: &mut ExprBlock) -> Result<TypeVarId> {
         self.enter_scope();
         let mut last = self.fresh_type_var();
-        self.bind(last, TypeTerm::Unit);
+        self.bind(last, Ty::Unit(TypeUnit));
         for stmt in &mut block.stmts {
             match stmt {
                 BlockStmt::Item(item) => {
                     self.predeclare_item(item);
                     self.infer_item(item)?;
                     last = self.fresh_type_var();
-                    self.bind(last, TypeTerm::Unit);
+                    self.bind(last, Ty::Unit(TypeUnit));
                 }
                 BlockStmt::Let(stmt_let) => {
                     let init_var = if let Some(init) = stmt_let.init.as_mut() {
@@ -49,19 +48,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.infer_expr(init)?
                     } else {
                         let unit = self.fresh_type_var();
-                        self.bind(unit, TypeTerm::Unit);
+                        self.bind(unit, Ty::Unit(TypeUnit));
                         unit
                     };
                     let pattern_info = self.infer_pattern(&mut stmt_let.pat)?;
                     self.unify(pattern_info.var, init_var)?;
                     self.apply_pattern_generalization(&pattern_info)?;
                     last = self.fresh_type_var();
-                    self.bind(last, TypeTerm::Unit);
+                    self.bind(last, Ty::Unit(TypeUnit));
                 }
                 BlockStmt::Defer(stmt_defer) => {
                     self.infer_expr(stmt_defer.expr.as_mut())?;
                     last = self.fresh_type_var();
-                    self.bind(last, TypeTerm::Unit);
+                    self.bind(last, Ty::Unit(TypeUnit));
                 }
                 BlockStmt::Expr(expr_stmt) => {
                     // If this is a splice in statement position, enforce stmt token
@@ -81,7 +80,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                         // Statements do not contribute a value
                         last = self.fresh_type_var();
-                        self.bind(last, TypeTerm::Unit);
+                        self.bind(last, Ty::Unit(TypeUnit));
                         continue;
                     }
                     let expr_var = self.infer_expr(expr_stmt.expr.as_mut())?;
@@ -89,12 +88,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         last = expr_var;
                     } else {
                         last = self.fresh_type_var();
-                        self.bind(last, TypeTerm::Unit);
+                        self.bind(last, Ty::Unit(TypeUnit));
                     }
                 }
                 BlockStmt::Noop => {
                     last = self.fresh_type_var();
-                    self.bind(last, TypeTerm::Unit);
+                    self.bind(last, Ty::Unit(TypeUnit));
                 }
                 BlockStmt::Any(_) => {
                     let unit = self.unit_type_var();
@@ -142,7 +141,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         };
 
         if !context.saw_break {
-            self.bind(loop_result_var, TypeTerm::Nothing);
+            self.bind(loop_result_var, Ty::Nothing(TypeNothing));
         }
 
         Ok(loop_result_var)
@@ -203,7 +202,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             || !matches!(scrutinee_ty_initial, Some(Ty::Enum(_)))
                         {
                             let enum_var = self.fresh_type_var();
-                            self.bind(enum_var, TypeTerm::Concrete(Ty::Enum(enum_ty.clone())));                            self.unify(enum_var, scrutinee_var)?;
+                            self.bind(enum_var, Ty::Enum(enum_ty.clone()));
+                            self.unify(enum_var, scrutinee_var)?;
                         }
                         qualify_enum_variant_pattern(pat, enum_ty);
                     }

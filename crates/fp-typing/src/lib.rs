@@ -183,7 +183,7 @@ pub trait TypeResolutionHook {
     fn resolve_symbol(&mut self, name: &str) -> bool;
 }
 
-use crate::typing::unify::{TypeTerm, TypeVar, TypeVarKind};
+use crate::typing::unify::{TypeVar, TypeVarKind};
 use fp_core::module::resolution::ModuleResolutionContext;
 
 #[derive(Clone, Debug)]
@@ -548,8 +548,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             match self.type_vars.get(current).map(|var| var.kind.clone()) {
                 Some(TypeVarKind::Link(next)) => current = next,
-                Some(TypeVarKind::Bound(term)) => {
-                    if let Some(inner) = self.reference_inner_from_term(&term) {
+                Some(TypeVarKind::Bound(ty)) => {
+                    if let Some(inner) = self.reference_inner_from_ty(&ty) {
                         current = inner;
                     } else {
                         return None;
@@ -2059,7 +2059,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             if self.lossy_mode {
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Error);
+                self.bind_error(var);
                 self.insert_env(key.clone(), EnvEntry::Mono(var));
                 self.insert_symbol_alias(&alias, qualified);
                 self.emit_warning(format!("unresolved import: {}", alias));
@@ -2214,7 +2214,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let root = self.find(fn_var);
         if matches!(
             self.type_vars[root].kind.clone(),
-            TypeVarKind::Bound(term) if self.function_term_from_term(&term).is_some()
+            TypeVarKind::Bound(ty) if self.function_term_from_ty(&ty).is_some()
         ) {
             return;
         }
@@ -2247,7 +2247,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         } else {
             let unit = self.fresh_type_var();
-            self.bind(unit, TypeTerm::Unit);
+            self.bind(unit, Ty::Unit(TypeUnit));
             unit
         };
 
@@ -2262,7 +2262,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let root = self.find(fn_var);
         if matches!(
             self.type_vars[root].kind.clone(),
-            TypeVarKind::Bound(term) if self.function_term_from_term(&term).is_some()
+            TypeVarKind::Bound(ty) if self.function_term_from_ty(&ty).is_some()
         ) {
             return;
         }
@@ -2295,7 +2295,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         } else {
             let unit = self.fresh_type_var();
-            self.bind(unit, TypeTerm::Unit);
+            self.bind(unit, Ty::Unit(TypeUnit));
             unit
         };
 
@@ -2660,13 +2660,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         } else {
             let root = self.find(fn_var);
             match self.type_vars[root].kind.clone() {
-                TypeVarKind::Bound(term) => {
-                    if let Some(func_term) = self.function_term_from_term(&term) {
-                    if func_term.params.len() == param_count {
-                        Some(func_term)
-                    } else {
-                        None
-                    }
+                TypeVarKind::Bound(ty) => {
+                    if let Some(func_term) = self.function_term_from_ty(&ty) {
+                        if func_term.params.len() == param_count {
+                            Some(func_term)
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
@@ -3277,7 +3277,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .any(|v| v.name.as_str() == variant_name)
                         {
                             let var = self.fresh_type_var();
-                            self.bind(var, TypeTerm::Concrete(Ty::Enum(enum_def)));                            let qualified = enum_key.with_segment(variant_name.to_string());
+                            self.bind(var, Ty::Enum(enum_def));
+                            let qualified = enum_key.with_segment(variant_name.to_string());
                             return Ok((
                                 var,
                                 Some(ResolvedName {
@@ -3317,7 +3318,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         };
         if self.struct_defs.contains_key(&key) || self.enum_defs.contains_key(&key) {
             let var = self.fresh_type_var();
-            self.bind(var, TypeTerm::Concrete(Ty::Type(TypeType::new(Span::null()))));
+            self.bind(var, Ty::Type(TypeType::new(Span::null())));
             return Ok((
                 var,
                 Some(ResolvedName {
@@ -3526,7 +3527,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn error_type_var(&mut self) -> TypeVarId {
         let var = self.fresh_type_var();
-        self.bind(var, TypeTerm::Error);
+        self.bind_error(var);
         var
     }
 
@@ -3537,32 +3538,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. } => {
                 let inner = self.fresh_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Concrete(
-                    Ty::Reference(TypeReference {
-                        ty: Box::new(Ty::infer_var(inner)),
-                        mutability: None,
-                        lifetime: None,
-                    }),
-                ));
+                self.type_vars[root].kind = TypeVarKind::Bound(Ty::Reference(TypeReference {
+                    ty: Box::new(Ty::infer_var(inner)),
+                    mutability: None,
+                    lifetime: None,
+                }));
                 Ok(inner)
             }
-            TypeVarKind::Bound(TypeTerm::Concrete(Ty::Reference(reference))) => {
-                match reference.ty.as_ref() {
-                    Ty::InferVar(infer) => Ok(infer.id),
-                    other => self.type_from_ast_ty(other),
-                }
-            }
+            TypeVarKind::Bound(Ty::Reference(reference)) => match reference.ty.as_ref() {
+                Ty::InferVar(infer) => Ok(infer.id),
+                other => self.type_from_ast_ty(other),
+            },
             TypeVarKind::Link(next) => self.expect_reference(next, context),
             _other => {
                 self.emit_error(format!("expected reference value for {}", context));
                 let placeholder = self.error_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Concrete(
-                    Ty::Reference(TypeReference {
-                        ty: Box::new(Ty::infer_var(placeholder)),
-                        mutability: None,
-                        lifetime: None,
-                    }),
-                ));
+                self.type_vars[root].kind = TypeVarKind::Bound(Ty::Reference(TypeReference {
+                    ty: Box::new(Ty::infer_var(placeholder)),
+                    mutability: None,
+                    lifetime: None,
+                }));
                 Ok(placeholder)
             }
         }

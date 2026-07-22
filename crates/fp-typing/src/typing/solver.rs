@@ -1,28 +1,28 @@
-use crate::typing::unify::{TypeTerm, TypeVarKind};
+use crate::typing::unify::TypeVarKind;
 use crate::{typing_error, AstTypeInferencer, TypeVarId};
 use fp_core::ast::{Ty, TypeFunction, TypeInt, TypePrimitive};
 use fp_core::error::Result;
+
+fn primitive_ty(ty: &Ty) -> Option<TypePrimitive> {
+    match ty {
+        Ty::Primitive(primitive) => Some(*primitive),
+        _ => None,
+    }
+}
+
+fn is_any_ty(ty: &Ty) -> bool {
+    matches!(ty, Ty::Any(_))
+}
 
 impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn ensure_numeric(&mut self, var: TypeVarId, context: &str) -> Result<()> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. } | TypeVarKind::Bound(TypeTerm::Concrete(_)) => Ok(()),
-            TypeVarKind::Bound(term)
-                if matches!(
-                    term.primitive_ty(),
-                    Some(TypePrimitive::Int(_)) | Some(TypePrimitive::Decimal(_))
-                ) =>
-            {
-                Ok(())
-            }
+            TypeVarKind::Unbound { .. } | TypeVarKind::Bound(_) => Ok(()),
             TypeVarKind::Link(next) => self.ensure_numeric(next, context),
-            other => {
+            TypeVarKind::Error => {
                 self.emit_error(format!("expected numeric value for {}", context));
-                Err(typing_error(format!(
-                    "expected numeric type, found {:?}",
-                    other
-                )))
+                Err(typing_error("expected numeric type, found error"))
             }
         }
     }
@@ -34,13 +34,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. } => {
-                self.type_vars[root].kind =
-                    TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Bool));
+                self.type_vars[root].kind = TypeVarKind::Bound(Ty::Primitive(TypePrimitive::Bool));
                 Ok(())
             }
-            TypeVarKind::Bound(term) if term.primitive_ty() == Some(TypePrimitive::Bool) => Ok(()),
-            TypeVarKind::Bound(term) if term.is_any() || term.is_error() => Ok(()),
+            TypeVarKind::Bound(ty) if primitive_ty(&ty) == Some(TypePrimitive::Bool) => Ok(()),
+            TypeVarKind::Bound(ty) if is_any_ty(&ty) => Ok(()),
             TypeVarKind::Link(next) => self.ensure_bool(next, context),
+            TypeVarKind::Error => Ok(()),
             other => {
                 tracing::debug!("ensure_bool failure: context={} type={:?}", context, other);
                 self.emit_error(format!("expected boolean for {}", context));
@@ -54,16 +54,23 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. } => {
                 self.type_vars[root].kind =
-                    TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
+                    TypeVarKind::Bound(Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
                 Ok(())
             }
-            TypeVarKind::Bound(term) if term.is_any() || term.is_error() => {
+            TypeVarKind::Bound(ty) if is_any_ty(&ty) => {
                 self.type_vars[root].kind =
-                    TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
+                    TypeVarKind::Bound(Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
                 Ok(())
             }
-            TypeVarKind::Bound(term) if matches!(term.primitive_ty(), Some(TypePrimitive::Int(_))) => Ok(()),
+            TypeVarKind::Bound(ty) if matches!(primitive_ty(&ty), Some(TypePrimitive::Int(_))) => {
+                Ok(())
+            }
             TypeVarKind::Link(next) => self.ensure_integer(next, context),
+            TypeVarKind::Error => {
+                self.type_vars[root].kind =
+                    TypeVarKind::Bound(Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
+                Ok(())
+            }
             other => {
                 self.emit_error(format!("expected integer value for {}", context));
                 Err(typing_error(format!("expected integer, found {:?}", other)))
@@ -84,19 +91,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind_function_term(root, params.clone(), ret);
                 Ok(super::super::FunctionTypeInfo { params, ret })
             }
-            TypeVarKind::Bound(term) if term.is_any() || term.is_error() => {
+            TypeVarKind::Bound(ty) if is_any_ty(&ty) => {
                 let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
                 let ret = self.fresh_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Concrete(Ty::Function(
-                    TypeFunction {
-                        params: params.iter().copied().map(Ty::infer_var).collect(),
-                        generics_params: Vec::new(),
-                        ret_ty: Some(Box::new(Ty::infer_var(ret))),
-                    },
-                )));
+                self.type_vars[root].kind = TypeVarKind::Bound(Ty::Function(TypeFunction {
+                    params: params.iter().copied().map(Ty::infer_var).collect(),
+                    generics_params: Vec::new(),
+                    ret_ty: Some(Box::new(Ty::infer_var(ret))),
+                }));
                 Ok(super::super::FunctionTypeInfo { params, ret })
             }
-            TypeVarKind::Bound(TypeTerm::Concrete(Ty::Function(func))) => {
+            TypeVarKind::Bound(Ty::Function(func)) => {
                 if func.params.len() != arity {
                     self.emit_error(format!(
                         "function arity mismatch: expected {}, found {}",
@@ -105,13 +110,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     ));
                     let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
                     let ret = self.error_type_var();
-                    self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Concrete(
-                        Ty::Function(TypeFunction {
-                            params: params.iter().copied().map(Ty::infer_var).collect(),
-                            generics_params: Vec::new(),
-                            ret_ty: Some(Box::new(Ty::infer_var(ret))),
-                        }),
-                    ));
+                    self.type_vars[root].kind = TypeVarKind::Bound(Ty::Function(TypeFunction {
+                        params: params.iter().copied().map(Ty::infer_var).collect(),
+                        generics_params: Vec::new(),
+                        ret_ty: Some(Box::new(Ty::infer_var(ret))),
+                    }));
                     return Ok(super::super::FunctionTypeInfo { params, ret });
                 }
                 let mut params = Vec::with_capacity(func.params.len());
@@ -131,17 +134,25 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(super::super::FunctionTypeInfo { params, ret })
             }
             TypeVarKind::Link(next) => self.ensure_function(next, arity),
+            TypeVarKind::Error => {
+                let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
+                let ret = self.error_type_var();
+                self.type_vars[root].kind = TypeVarKind::Bound(Ty::Function(TypeFunction {
+                    params: params.iter().copied().map(Ty::infer_var).collect(),
+                    generics_params: Vec::new(),
+                    ret_ty: Some(Box::new(Ty::infer_var(ret))),
+                }));
+                Ok(super::super::FunctionTypeInfo { params, ret })
+            }
             other => {
                 self.emit_error(format!("expected function, found {:?}", other));
                 let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
                 let ret = self.error_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Concrete(Ty::Function(
-                    TypeFunction {
-                        params: params.iter().copied().map(Ty::infer_var).collect(),
-                        generics_params: Vec::new(),
-                        ret_ty: Some(Box::new(Ty::infer_var(ret))),
-                    },
-                )));
+                self.type_vars[root].kind = TypeVarKind::Bound(Ty::Function(TypeFunction {
+                    params: params.iter().copied().map(Ty::infer_var).collect(),
+                    generics_params: Vec::new(),
+                    ret_ty: Some(Box::new(Ty::infer_var(ret))),
+                }));
                 Ok(super::super::FunctionTypeInfo { params, ret })
             }
         }
