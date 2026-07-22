@@ -7,3 +7,4 @@ pub mod const_eval;
 pub mod engine;
 pub mod error;
 pub mod intrinsics;
+pub mod lir;

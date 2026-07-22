@@ -17,6 +17,7 @@ use crate::scheduler::{
 pub struct CompilerDriver {
     pub scheduler: CompilerScheduler,
     pub state: CompilerState,
+    interpreter: fp_interpret::lir::LirInterpreter,
 }
 
 impl CompilerDriver {
@@ -24,6 +25,7 @@ impl CompilerDriver {
         Self {
             scheduler: CompilerScheduler::new(),
             state: CompilerState::new(),
+            interpreter: fp_interpret::lir::LirInterpreter::new(),
         }
     }
 
@@ -31,6 +33,7 @@ impl CompilerDriver {
         Self {
             scheduler: CompilerScheduler::new(),
             state,
+            interpreter: fp_interpret::lir::LirInterpreter::new(),
         }
     }
 
@@ -116,6 +119,9 @@ impl CompilerDriver {
             }
         };
         let hir = HirId::new(format!("hir:{}", path.to_key()));
+        self.state
+            .hir_to_typed_ast
+            .insert(hir.clone(), typed_ast_id.clone());
         self.state.insert_hir(hir.clone(), hir_program);
         Ok(CompilerAnswer::Hir { hir })
     }
@@ -129,6 +135,11 @@ impl CompilerDriver {
         let mut lowering = MirLowering::new();
         let mir = lowering.transform(hir)?;
         let mir_id = MirId::new(format!("mir:{}", path.to_key()));
+        if let Some(typed_ast) = self.state.hir_to_typed_ast.get(hir_id).cloned() {
+            self.state
+                .mir_to_typed_ast
+                .insert(mir_id.clone(), typed_ast);
+        }
         self.state.insert_mir(mir_id.clone(), mir);
         Ok(CompilerAnswer::Mir { mir: mir_id })
     }
@@ -142,6 +153,11 @@ impl CompilerDriver {
         let mut lowering = LirGenerator::new();
         let lir = lowering.transform(mir)?;
         let lir_id = LirId::new(format!("lir:{}", path.to_key()));
+        if let Some(typed_ast) = self.state.mir_to_typed_ast.get(mir_id).cloned() {
+            self.state
+                .lir_to_typed_ast
+                .insert(lir_id.clone(), typed_ast);
+        }
         self.state.insert_lir(lir_id.clone(), lir);
         Ok(CompilerAnswer::Lir { lir: lir_id })
     }
@@ -153,12 +169,16 @@ impl CompilerDriver {
         mode: ExecutionMode,
         answer_to: Option<RequestId>,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
-        let _ = self.state.lir(lir_id)?;
+        let lir = self.state.lir(lir_id)?.clone();
         match mode {
             ExecutionMode::Comptime => {
+                let value = self.evaluate_comptime_lir(&lir).unwrap_or_else(|e| {
+                    eprintln!("LIR interpreter error: {e}");
+                    Value::unit()
+                });
+
                 let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
-                self.state
-                    .insert_const_value(value_id.clone(), Value::unit());
+                self.state.insert_const_value(value_id.clone(), value);
 
                 if let Some(blocked) = answer_to {
                     self.resolve_comptime_for_blocked(blocked);
@@ -173,6 +193,13 @@ impl CompilerDriver {
                 Ok(CompilerAnswer::RuntimeOutput { value: value_id })
             }
         }
+    }
+
+    fn evaluate_comptime_lir(
+        &mut self,
+        lir: &fp_core::lir::LirProgram,
+    ) -> Result<fp_core::ast::Value, fp_interpret::lir::vm::VmError> {
+        self.interpreter.run_main(lir)
     }
 
     fn resolve_comptime_for_blocked(&mut self, blocked: RequestId) {

@@ -18,6 +18,12 @@ pub struct CompilerState {
     typing_diagnostics: Vec<TypingDiagnostic>,
     /// AST IDs whose comptime needs have been resolved.
     pub(crate) comptime_resolved: HashSet<AstId>,
+    /// Maps HirId to the TypedAstId that was lowered to produce it.
+    pub(crate) hir_to_typed_ast: BTreeMap<HirId, TypedAstId>,
+    /// Maps MirId to the TypedAstId that was lowered to produce it.
+    pub(crate) mir_to_typed_ast: BTreeMap<MirId, TypedAstId>,
+    /// Maps LirId to the TypedAstId that was lowered to produce it.
+    pub(crate) lir_to_typed_ast: BTreeMap<LirId, TypedAstId>,
 }
 
 impl CompilerState {
