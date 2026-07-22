@@ -1,4 +1,4 @@
-use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVarKind};
+use crate::typing::unify::{TypeTerm, TypeVarKind};
 use crate::{typing_error, AstTypeInferencer, TypeVarId};
 use fp_core::ast::{Ty, TypeFunction, TypeInt, TypePrimitive};
 use fp_core::error::Result;
@@ -81,10 +81,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeVarKind::Unbound { .. } => {
                 let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
                 let ret = self.fresh_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
-                    params: params.clone(),
-                    ret,
-                }));
+                self.bind_function_term(root, params.clone(), ret);
                 Ok(super::super::FunctionTypeInfo { params, ret })
             }
             TypeVarKind::Bound(term) if term.is_any() || term.is_error() => {
@@ -98,27 +95,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     },
                 )));
                 Ok(super::super::FunctionTypeInfo { params, ret })
-            }
-            TypeVarKind::Bound(TypeTerm::Function(func)) => {
-                if func.params.len() != arity {
-                    self.emit_error(format!(
-                        "function arity mismatch: expected {}, found {}",
-                        arity,
-                        func.params.len()
-                    ));
-                    let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
-                    let ret = self.error_type_var();
-                    self.type_vars[root].kind =
-                        TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
-                            params: params.clone(),
-                            ret,
-                        }));
-                    return Ok(super::super::FunctionTypeInfo { params, ret });
-                }
-                Ok(super::super::FunctionTypeInfo {
-                    params: func.params,
-                    ret: func.ret,
-                })
             }
             TypeVarKind::Bound(TypeTerm::Concrete(Ty::Function(func))) => {
                 if func.params.len() != arity {

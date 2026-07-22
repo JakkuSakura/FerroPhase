@@ -63,15 +63,8 @@ pub(crate) struct FunctionTerm {
 
 #[derive(Clone, Debug)]
 pub(crate) enum TypeTerm {
-    Tuple(Vec<TypeVarId>),
-    Function(FunctionTerm),
     Concrete(Ty),
     Error,
-    Slice(TypeVarId),
-    Vec(TypeVarId),
-    // Array terms keep the element var plus the length expr so array/slice
-    // unification does not fall back through opaque concrete types.
-    Array(TypeVarId, Option<BExpr>),
 }
 
 impl TypeTerm {
@@ -88,14 +81,6 @@ impl TypeTerm {
 
     #[allow(non_upper_case_globals)]
     pub(crate) const Any: Self = Self::Concrete(Ty::Any(TypeAny));
-
-    pub(crate) fn is_unit(&self) -> bool {
-        matches!(self, Self::Concrete(Ty::Unit(_)))
-    }
-
-    pub(crate) fn is_nothing(&self) -> bool {
-        matches!(self, Self::Concrete(Ty::Nothing(_)))
-    }
 
     pub(crate) fn is_any(&self) -> bool {
         matches!(self, Self::Concrete(Ty::Any(_)))
@@ -141,6 +126,48 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         );
     }
 
+    pub(crate) fn bind_tuple_term(&mut self, var: TypeVarId, elements: Vec<TypeVarId>) {
+        self.bind(
+            var,
+            TypeTerm::Concrete(Ty::Tuple(TypeTuple {
+                types: elements.into_iter().map(Ty::infer_var).collect(),
+            })),
+        );
+    }
+
+    pub(crate) fn bind_slice_term(&mut self, var: TypeVarId, elem: TypeVarId) {
+        self.bind(
+            var,
+            TypeTerm::Concrete(Ty::Slice(TypeSlice {
+                elem: Box::new(Ty::infer_var(elem)),
+            })),
+        );
+    }
+
+    pub(crate) fn bind_vec_term(&mut self, var: TypeVarId, elem: TypeVarId) {
+        self.bind(
+            var,
+            TypeTerm::Concrete(Ty::Vec(TypeVec {
+                ty: Box::new(Ty::infer_var(elem)),
+            })),
+        );
+    }
+
+    pub(crate) fn bind_array_term(
+        &mut self,
+        var: TypeVarId,
+        elem: TypeVarId,
+        len: Option<BExpr>,
+    ) {
+        self.bind(
+            var,
+            TypeTerm::Concrete(Ty::Array(TypeArray {
+                elem: Box::new(Ty::infer_var(elem)),
+                len: len.unwrap_or_else(|| Expr::value(Value::int(0)).into()),
+            })),
+        );
+    }
+
     pub(crate) fn reference_inner_from_term(&mut self, term: &TypeTerm) -> Option<TypeVarId> {
         match term {
             TypeTerm::Concrete(Ty::Reference(reference)) => match reference.ty.as_ref() {
@@ -153,7 +180,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub(crate) fn function_term_from_term(&mut self, term: &TypeTerm) -> Option<FunctionTerm> {
         match term {
-            TypeTerm::Function(func) => Some(func.clone()),
             TypeTerm::Concrete(Ty::Function(func)) => {
                 let mut params = Vec::with_capacity(func.params.len());
                 for param in &func.params {
@@ -546,42 +572,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Error => {
                 return Err(self.error_with_current_span("error type variable during generalization"));
             }
-            TypeTerm::Tuple(elements) => {
-                let mut converted = Vec::new();
-                for elem in elements {
-                    converted.push(self.build_generalized_ty(elem, mapping, next)?);
-                }
-                Ty::Tuple(TypeTuple { types: converted })
-            }
-            TypeTerm::Function(function) => {
-                let mut converted = Vec::new();
-                for param in function.params {
-                    converted.push(self.build_generalized_ty(param, mapping, next)?);
-                }
-                let ret = self.build_generalized_ty(function.ret, mapping, next)?;
-                Ty::Function(TypeFunction {
-                    params: converted,
-                    generics_params: Vec::new(),
-                    ret_ty: Some(Box::new(ret)),
-                })
-            }
-            TypeTerm::Slice(elem) => {
-                let elem = self.build_generalized_ty(elem, mapping, next)?;
-                Ty::Slice(TypeSlice {
-                    elem: Box::new(elem),
-                })
-            }
-            TypeTerm::Vec(elem) => {
-                let elem = self.build_generalized_ty(elem, mapping, next)?;
-                Ty::Vec(TypeVec { ty: Box::new(elem) })
-            }
-            TypeTerm::Array(elem, len) => {
-                let elem = self.build_generalized_ty(elem, mapping, next)?;
-                Ty::Array(TypeArray {
-                    elem: Box::new(elem),
-                    len: len.unwrap_or_else(|| Expr::value(Value::int(0)).into()),
-                })
-            }
         })
     }
 
@@ -673,13 +663,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     .map(|ret| self.instantiate_poly_ty(ret, mapping))
                     .unwrap_or_else(|| self.unit_type_var());
                 let var = self.fresh_type_var();
-                self.bind(
-                    var,
-                    TypeTerm::Function(FunctionTerm {
-                        params: param_vars,
-                        ret: ret_var,
-                    }),
-                );
+                self.bind_function_term(var, param_vars, ret_var);
                 var
             }
             Ty::Slice(elem) => {
@@ -866,15 +850,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn occurs_in_term(&mut self, var: TypeVarId, term: &TypeTerm) -> bool {
         match term {
             TypeTerm::Concrete(ty) => self.occurs_in_ty(var, ty),
-            TypeTerm::Tuple(elements) => elements.iter().any(|elem| self.occurs_in(var, *elem)),
-            TypeTerm::Function(func) => {
-                func.params.iter().any(|param| self.occurs_in(var, *param))
-                    || self.occurs_in(var, func.ret)
-            }
-            TypeTerm::Slice(elem)
-            | TypeTerm::Vec(elem)
-            | TypeTerm::Array(elem, _) => self.occurs_in(var, *elem),
-            _ => false,
+            TypeTerm::Error => false,
         }
     }
 
@@ -892,112 +868,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn unify_terms(&mut self, a: TypeTerm, b: TypeTerm) -> Result<()> {
         match (a, b) {
-            (left, right) if left.is_unit() && right.is_unit() => Ok(()),
-            (left, right) if left.is_any() && right.is_any() => Ok(()),
             (TypeTerm::Error, _) | (_, TypeTerm::Error) => Ok(()),
-            (left, _) if left.is_nothing() => Ok(()),
-            (_, right) if right.is_nothing() => Ok(()),
-            (
-                TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)),
-                TypeTerm::Concrete(Ty::Struct(struct_ty)),
-            ) if struct_ty.name.as_str() == "CStr" => Ok(()),
-            (
-                TypeTerm::Concrete(Ty::Struct(struct_ty)),
-                TypeTerm::Concrete(Ty::Primitive(TypePrimitive::String)),
-            ) if struct_ty.name.as_str() == "CStr" => Ok(()),
             (TypeTerm::Concrete(a), TypeTerm::Concrete(b)) => self.unify_concrete_tys(a, b),
-            (TypeTerm::Concrete(Ty::Tuple(a_tuple)), TypeTerm::Tuple(b_elems))
-            | (TypeTerm::Tuple(b_elems), TypeTerm::Concrete(Ty::Tuple(a_tuple))) => {
-                if a_tuple.types.len() != b_elems.len() {
-                    return Err(self.error_with_current_span("tuple length mismatch"));
-                }
-                for (a_elem, b_elem) in a_tuple.types.into_iter().zip(b_elems.into_iter()) {
-                    let a_var = self.bind_concrete_ty(a_elem);
-                    self.unify(a_var, b_elem)?;
-                }
-                Ok(())
-            }
-            (TypeTerm::Array(a_elem, _), TypeTerm::Array(b_elem, _)) => self.unify(a_elem, b_elem),
-            (TypeTerm::Array(array_elem, _), TypeTerm::Slice(slice_elem))
-            | (TypeTerm::Slice(slice_elem), TypeTerm::Array(array_elem, _)) => {
-                self.unify(array_elem, slice_elem)
-            }
-            (TypeTerm::Concrete(Ty::Array(array_ty)), TypeTerm::Array(array_elem, _))
-            | (TypeTerm::Array(array_elem, _), TypeTerm::Concrete(Ty::Array(array_ty))) => {
-                let elem_var = self.bind_concrete_ty(*array_ty.elem);
-                self.unify(elem_var, array_elem)
-            }
-            (TypeTerm::Concrete(Ty::Slice(slice_ty)), TypeTerm::Slice(slice_elem))
-            | (TypeTerm::Slice(slice_elem), TypeTerm::Concrete(Ty::Slice(slice_ty))) => {
-                let elem_var = self.bind_concrete_ty(*slice_ty.elem);
-                self.unify(elem_var, slice_elem)
-            }
-            (TypeTerm::Concrete(Ty::Vec(vec_ty)), TypeTerm::Vec(vec_elem))
-            | (TypeTerm::Vec(vec_elem), TypeTerm::Concrete(Ty::Vec(vec_ty))) => {
-                let elem_var = self.bind_concrete_ty(*vec_ty.ty);
-                self.unify(elem_var, vec_elem)
-            }
-            (TypeTerm::Array(array_elem, _), TypeTerm::Concrete(ty))
-            | (TypeTerm::Concrete(ty), TypeTerm::Array(array_elem, _))
-                if matches!(ty, Ty::Array(_)) =>
-            {
-                if let Ty::Array(array_ty) = ty {
-                    let elem_var = self.type_from_ast_ty(&array_ty.elem)?;
-                    self.unify(array_elem, elem_var)
-                } else {
-                    Ok(())
-                }
-            }
-            (TypeTerm::Concrete(array_ty), TypeTerm::Slice(slice_elem))
-                if matches!(array_ty, Ty::Array(_)) =>
-            {
-                if let Ty::Array(array_ty) = array_ty {
-                    let array_elem = self.type_from_ast_ty(&array_ty.elem)?;
-                    self.unify(array_elem, slice_elem)
-                } else {
-                    Ok(())
-                }
-            }
-            (TypeTerm::Slice(slice_elem), TypeTerm::Concrete(array_ty))
-                if matches!(array_ty, Ty::Array(_)) =>
-            {
-                if let Ty::Array(array_ty) = array_ty {
-                    let array_elem = self.type_from_ast_ty(&array_ty.elem)?;
-                    self.unify(array_elem, slice_elem)
-                } else {
-                    Ok(())
-                }
-            }
-            (TypeTerm::Tuple(a_elems), TypeTerm::Tuple(b_elems)) => {
-                if a_elems.len() != b_elems.len() {
-                    return Err(self.error_with_current_span("tuple length mismatch"));
-                }
-                for (a_elem, b_elem) in a_elems.into_iter().zip(b_elems.into_iter()) {
-                    self.unify(a_elem, b_elem)?;
-                }
-                Ok(())
-            }
-            (TypeTerm::Function(a_func), TypeTerm::Function(b_func)) => {
-                if a_func.params.len() != b_func.params.len() {
-                    return Err(self.error_with_current_span("function arity mismatch"));
-                }
-                for (a_param, b_param) in a_func.params.into_iter().zip(b_func.params.into_iter()) {
-                    self.unify(a_param, b_param)?;
-                }
-                self.unify(a_func.ret, b_func.ret)
-            }
-            (TypeTerm::Slice(a), TypeTerm::Slice(b))
-            | (TypeTerm::Vec(a), TypeTerm::Vec(b))
-                => self.unify(a, b),
-            (TypeTerm::Slice(a), TypeTerm::Vec(b)) | (TypeTerm::Vec(a), TypeTerm::Slice(b)) => {
-                self.unify(a, b)
-            }
-            (left, _other) if left.is_any() => Ok(()),
-            (_other, right) if right.is_any() => Ok(()),
-            (left, right) => {
-                Err(self
-                    .error_with_current_span(format!("type mismatch: {:?} vs {:?}", left, right)))
-            }
         }
     }
 
@@ -1246,46 +1118,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Concrete(ty) => self.resolve_infer_vars_in_ty(ty)?,
             TypeTerm::Error => {
                 return Err(self.error_with_current_span("error type variable"));
-            }
-            TypeTerm::Tuple(elements) => {
-                let types = elements
-                    .into_iter()
-                    .map(|elem| self.resolve_to_ty(elem))
-                    .collect::<Result<Vec<_>>>()?;
-                Ty::Tuple(TypeTuple { types })
-            }
-            TypeTerm::Function(function) => {
-                let params = function
-                    .params
-                    .into_iter()
-                    .map(|param| self.resolve_to_ty(param))
-                    .collect::<Result<Vec<_>>>()?;
-                let ret = self.resolve_to_ty(function.ret)?;
-                Ty::Function(TypeFunction {
-                    params,
-                    generics_params: Vec::new(),
-                    ret_ty: Some(Box::new(ret)),
-                })
-            }
-            TypeTerm::Slice(elem) => {
-                let elem_ty = self.resolve_to_ty(elem)?;
-                Ty::Slice(TypeSlice {
-                    elem: Box::new(elem_ty),
-                })
-            }
-            TypeTerm::Array(elem, len_expr) => {
-                let elem_ty = self.resolve_to_ty(elem)?;
-                let len = len_expr.unwrap_or_else(|| Expr::value(Value::int(0)).into());
-                Ty::Array(TypeArray {
-                    elem: Box::new(elem_ty),
-                    len,
-                })
-            }
-            TypeTerm::Vec(elem) => {
-                let elem_ty = self.resolve_to_ty(elem)?;
-                Ty::Vec(TypeVec {
-                    ty: Box::new(elem_ty),
-                })
             }
         })
     }
@@ -2099,13 +1931,7 @@ mod tests {
             })),
         );
         let ret_var = typer.unit_type_var();
-        typer.bind(
-            func_var,
-            TypeTerm::Function(FunctionTerm {
-                params: Vec::new(),
-                ret: ret_var,
-            }),
-        );
+        typer.bind_function_term(func_var, Vec::new(), ret_var);
 
         let err = typer
             .unify(struct_var, func_var)

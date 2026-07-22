@@ -437,7 +437,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 self.unify(value_var, elem_var)?;
                             }
                             let vec_var = self.fresh_type_var();
-                            self.bind(vec_var, TypeTerm::Vec(elem_var));
+                            self.bind_vec_term(vec_var, elem_var);
                             vec_var
                         } else if let Some(Ty::Slice(slice_ty)) = hint_ty.as_ref() {
                             let elem_var = self.type_from_ast_ty(&slice_ty.elem)?;
@@ -446,7 +446,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 self.unify(value_var, elem_var)?;
                             }
                             let slice_var = self.fresh_type_var();
-                            self.bind(slice_var, TypeTerm::Slice(elem_var));
+                            self.bind_slice_term(slice_var, elem_var);
                             slice_var
                         } else {
                             self.infer_list_value_as_vec(list)?
@@ -527,7 +527,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         element_vars.push(self.infer_expr(expr)?);
                     }
                     let tuple_var = self.fresh_type_var();
-                    self.bind(tuple_var, TypeTerm::Tuple(element_vars));
+                    self.bind_tuple_term(tuple_var, element_vars);
                     tuple_var
                 }
                 ExprKind::Array(array) => {
@@ -543,7 +543,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.fresh_type_var()
                     };
                     let slice_var = self.fresh_type_var();
-                    self.bind(slice_var, TypeTerm::Slice(elem_var));
+                    self.bind_slice_term(slice_var, elem_var);
                     let slice_ty = self.resolve_to_ty(slice_var)?;
                     expr.set_ty(slice_ty);
                     slice_var
@@ -551,7 +551,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 ExprKind::ArrayRepeat(array_repeat) => {
                     let elem_var = self.infer_expr(array_repeat.elem.as_mut())?;
                     let slice_var = self.fresh_type_var();
-                    self.bind(slice_var, TypeTerm::Slice(elem_var));
+                    self.bind_slice_term(slice_var, elem_var);
                     let slice_ty = self.resolve_to_ty(slice_var)?;
                     expr.set_ty(slice_ty);
                     slice_var
@@ -867,7 +867,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
 
         let elem_vec_var = self.fresh_type_var();
         let vec_var = self.fresh_type_var();
-        self.bind(vec_var, TypeTerm::Vec(elem_vec_var));
+        self.bind_vec_term(vec_var, elem_vec_var);
         if self.unify(object_var, vec_var).is_ok() {
             self.ensure_integer(idx_var, "index expression")?;
             return Ok(elem_vec_var);
@@ -875,7 +875,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
 
         let elem_slice_var = self.fresh_type_var();
         let slice_var = self.fresh_type_var();
-        self.bind(slice_var, TypeTerm::Slice(elem_slice_var));
+        self.bind_slice_term(slice_var, elem_slice_var);
         if self.unify(object_var, slice_var).is_err() {
             let object_ty = self.resolve_to_ty(object_var)?;
             match object_ty {
@@ -923,7 +923,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     }
                     let elem_var = self.type_from_ast_ty(&vec.ty)?;
                     let slice_var = self.fresh_type_var();
-                    self.bind(slice_var, TypeTerm::Slice(elem_var));
+                    self.bind_slice_term(slice_var, elem_var);
                     return Ok(slice_var);
                 }
                 Ty::Slice(slice) => {
@@ -932,7 +932,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     }
                     let elem_var = self.type_from_ast_ty(&slice.elem)?;
                     let slice_var = self.fresh_type_var();
-                    self.bind(slice_var, TypeTerm::Slice(elem_var));
+                    self.bind_slice_term(slice_var, elem_var);
                     return Ok(slice_var);
                 }
                 Ty::Array(array) => {
@@ -941,7 +941,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     }
                     let elem_var = self.type_from_ast_ty(&array.elem)?;
                     let slice_var = self.fresh_type_var();
-                    self.bind(slice_var, TypeTerm::Slice(elem_var));
+                    self.bind_slice_term(slice_var, elem_var);
                     return Ok(slice_var);
                 }
                 _ => {}
@@ -951,29 +951,29 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         let string_var = self.fresh_type_var();
         self.bind(string_var, TypeTerm::Primitive(TypePrimitive::String));
         let vec_string_var = self.fresh_type_var();
-        self.bind(vec_string_var, TypeTerm::Vec(string_var));
+        self.bind_vec_term(vec_string_var, string_var);
         if self.unify(object_var, vec_string_var).is_ok() {
             return Ok(string_var);
         }
         let ref_string_var = self.fresh_type_var();
         self.bind_reference_term(ref_string_var, string_var);
         let vec_ref_string_var = self.fresh_type_var();
-        self.bind(vec_ref_string_var, TypeTerm::Vec(ref_string_var));
+        self.bind_vec_term(vec_ref_string_var, ref_string_var);
         if self.unify(object_var, vec_ref_string_var).is_ok() {
             return Ok(string_var);
         }
         let slice_string_var = self.fresh_type_var();
-        self.bind(slice_string_var, TypeTerm::Slice(string_var));
+        self.bind_slice_term(slice_string_var, string_var);
         if self.unify(object_var, slice_string_var).is_ok() {
             return Ok(string_var);
         }
         let slice_ref_string_var = self.fresh_type_var();
-        self.bind(slice_ref_string_var, TypeTerm::Slice(ref_string_var));
+        self.bind_slice_term(slice_ref_string_var, ref_string_var);
         if self.unify(object_var, slice_ref_string_var).is_ok() {
             return Ok(string_var);
         }
         let array_string_var = self.fresh_type_var();
-        self.bind(array_string_var, TypeTerm::Array(string_var, None));
+        self.bind_array_term(array_string_var, string_var, None);
         if self.unify(object_var, array_string_var).is_ok() {
             return Ok(string_var);
         }
@@ -990,10 +990,10 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
 
         let elem_var = self.fresh_type_var();
         let slice_var = self.fresh_type_var();
-        self.bind(slice_var, TypeTerm::Slice(elem_var));
+        self.bind_slice_term(slice_var, elem_var);
 
         let vec_var = self.fresh_type_var();
-        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        self.bind_vec_term(vec_var, elem_var);
         if self.unify(object_var, vec_var).is_ok() {
             return Ok(slice_var);
         }
@@ -1017,7 +1017,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                         }
                         let elem_var = self.type_from_ast_ty(&vec.ty)?;
                         let slice_var = self.fresh_type_var();
-                        self.bind(slice_var, TypeTerm::Slice(elem_var));
+                        self.bind_slice_term(slice_var, elem_var);
                         return Ok(slice_var);
                     }
                     Ty::Slice(slice) => {
@@ -1026,7 +1026,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                         }
                         let elem_var = self.type_from_ast_ty(&slice.elem)?;
                         let slice_var = self.fresh_type_var();
-                        self.bind(slice_var, TypeTerm::Slice(elem_var));
+                        self.bind_slice_term(slice_var, elem_var);
                         return Ok(slice_var);
                     }
                     Ty::Array(array) => {
@@ -1035,7 +1035,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                         }
                         let elem_var = self.type_from_ast_ty(&array.elem)?;
                         let slice_var = self.fresh_type_var();
-                        self.bind(slice_var, TypeTerm::Slice(elem_var));
+                        self.bind_slice_term(slice_var, elem_var);
                         return Ok(slice_var);
                     }
                     Ty::Primitive(TypePrimitive::String) => {
@@ -1071,7 +1071,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         self.ensure_numeric(element_var, "range bounds")?;
 
         let range_var = self.fresh_type_var();
-        self.bind(range_var, TypeTerm::Vec(element_var));
+        self.bind_vec_term(range_var, element_var);
         Ok(range_var)
     }
 
@@ -1113,7 +1113,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             }
             IntrinsicCallKind::Slice => {
                 let elem_var = self.fresh_type_var();
-                self.bind(result_var, TypeTerm::Slice(elem_var));
+                self.bind_slice_term(result_var, elem_var);
             }
             IntrinsicCallKind::Len
             | IntrinsicCallKind::SizeOf
@@ -1182,7 +1182,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 }
                 let ok_var = self.fresh_type_var();
                 self.bind(ok_var, TypeTerm::Primitive(TypePrimitive::Bool));
-                self.bind(result_var, TypeTerm::Tuple(vec![ok_var, value_var]));
+                self.bind_tuple_term(result_var, vec![ok_var, value_var]);
             }
             IntrinsicCallKind::Input => {
                 if arg_vars.len() > 1 {
@@ -1236,7 +1236,8 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 ];
                 let struct_ty = TypeStructural { fields };
                 let elem_var = self.fresh_type_var();
-                self.bind(elem_var, TypeTerm::Concrete(Ty::Structural(struct_ty)));                self.bind(result_var, TypeTerm::Vec(elem_var));
+                self.bind(elem_var, TypeTerm::Concrete(Ty::Structural(struct_ty)));
+                self.bind_vec_term(result_var, elem_var);
             }
             IntrinsicCallKind::CreateStruct
             | IntrinsicCallKind::CloneStruct
@@ -2222,7 +2223,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         }
         let elem_var = self.fresh_type_var();
         let vec_var = self.fresh_type_var();
-        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        self.bind_vec_term(vec_var, elem_var);
         Ok(vec_var)
     }
 
@@ -2243,7 +2244,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         }
         let elem_var = self.fresh_type_var();
         let vec_var = self.fresh_type_var();
-        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        self.bind_vec_term(vec_var, elem_var);
         Ok(vec_var)
     }
 
@@ -2258,7 +2259,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         }
         let elem_var = self.fresh_type_var();
         let vec_var = self.fresh_type_var();
-        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        self.bind_vec_term(vec_var, elem_var);
         Ok(vec_var)
     }
 
@@ -2476,7 +2477,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             self.fresh_type_var()
         };
         let vec_var = self.fresh_type_var();
-        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        self.bind_vec_term(vec_var, elem_var);
         Ok(vec_var)
     }
 
@@ -2497,7 +2498,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     self.fresh_type_var()
                 };
                 let vec_var = self.fresh_type_var();
-                self.bind(vec_var, TypeTerm::Vec(elem_var));
+                self.bind_vec_term(vec_var, elem_var);
                 Ok(vec_var)
             }
             ExprIntrinsicContainer::VecRepeat { elem, len } => {
@@ -2510,7 +2511,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 );
                 self.unify(len_var, expected)?;
                 let vec_var = self.fresh_type_var();
-                self.bind(vec_var, TypeTerm::Vec(elem_var));
+                self.bind_vec_term(vec_var, elem_var);
                 Ok(vec_var)
             }
             ExprIntrinsicContainer::HashMapEntries { entries } => {
@@ -2558,7 +2559,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 }
                 let len = list.values.len() as i64;
                 let len_expr = Expr::value(Value::int(len)).into();
-                self.bind(var, TypeTerm::Array(elem_var, Some(len_expr)));
+                self.bind_array_term(var, elem_var, Some(len_expr));
             }
             Value::Char(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Char)),
             Value::Unit(_) => self.bind(var, TypeTerm::Unit),
@@ -2578,7 +2579,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 for elem in &tuple.values {
                     vars.push(self.infer_value(elem)?);
                 }
-                self.bind(var, TypeTerm::Tuple(vars));
+                self.bind_tuple_term(var, vars);
             }
             Value::Map(map) => {
                 for entry in &map.entries {
@@ -2688,7 +2689,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 let quote_ty = quote_ty_from_fragment(quote.fragment, None);
                 let elem_var = self.type_from_ast_ty(&quote_ty)?;
                 let list_var = self.fresh_type_var();
-                self.bind(list_var, TypeTerm::Vec(elem_var));
+                self.bind_vec_term(list_var, elem_var);
                 PatternInfo::new(list_var)
             }
             PatternKind::Wildcard(_) => PatternInfo::new(self.fresh_type_var()),
@@ -2701,7 +2702,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     bindings.extend(child.bindings);
                 }
                 let tuple_var = self.fresh_type_var();
-                self.bind(tuple_var, TypeTerm::Tuple(vars));
+                self.bind_tuple_term(tuple_var, vars);
                 PatternInfo {
                     var: tuple_var,
                     bindings,
@@ -2762,7 +2763,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 }
 
                 let tuple_var = self.fresh_type_var();
-                self.bind(tuple_var, TypeTerm::Tuple(element_vars.clone()));
+                self.bind_tuple_term(tuple_var, element_vars.clone());
 
                 // Try to resolve as an enum variant: `Enum::Variant(...)`.
                 let locator = &tuple_struct.name;
@@ -3437,7 +3438,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 let elem_var = self.fresh_type_var();
                 self.bind(elem_var, TypeTerm::Primitive(TypePrimitive::String));
                 let result_var = self.fresh_type_var();
-                self.bind(result_var, TypeTerm::Vec(elem_var));
+                self.bind_vec_term(result_var, elem_var);
                 Ok(Some(result_var))
             }
             "join" => {
@@ -3492,14 +3493,14 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                     );
                     let value_var = self.type_from_ast_ty(&elem_ty)?;
                     let tuple_var = self.fresh_type_var();
-                    self.bind(tuple_var, TypeTerm::Tuple(vec![index_var, value_var]));
+                    self.bind_tuple_term(tuple_var, vec![index_var, value_var]);
                     tuple_var
                 } else {
                     self.type_from_ast_ty(&elem_ty)?
                 };
 
                 let result_var = self.fresh_type_var();
-                self.bind(result_var, TypeTerm::Vec(iter_elem_var));
+                self.bind_vec_term(result_var, iter_elem_var);
                 Ok(Some(result_var))
             }
             _ => Ok(None),
@@ -3564,7 +3565,7 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
                 let result_var = self.fresh_type_var();
                 let elem_var = self.fresh_type_var();
                 self.bind(elem_var, TypeTerm::Primitive(TypePrimitive::String));
-                self.bind(result_var, TypeTerm::Vec(elem_var));
+                self.bind_vec_term(result_var, elem_var);
                 Ok(result_var)
             }
             Ty::Type(_) if field.name.as_str() == "size" => {
@@ -3747,7 +3748,8 @@ ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
         ];
         let struct_ty = TypeStructural { fields };
         let elem_var = self.fresh_type_var();
-        self.bind(elem_var, TypeTerm::Concrete(Ty::Structural(struct_ty)));        self.bind(result_var, TypeTerm::Vec(elem_var));
+        self.bind(elem_var, TypeTerm::Concrete(Ty::Structural(struct_ty)));
+        self.bind_vec_term(result_var, elem_var);
         Ok(result_var)
     }
 
