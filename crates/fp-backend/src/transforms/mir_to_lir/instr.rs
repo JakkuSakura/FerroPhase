@@ -783,6 +783,27 @@ impl LirGenerator {
                     .map(|(bytes, relocations)| (lir::LirConstant::Bytes(bytes), relocations))
                     .unwrap_or((initializer, Vec::new()))
             }
+            lir::LirConstant::GlobalRef(ref name, ref ptr_ty, ref indices) => {
+                let addend = Self::global_ref_addend(ptr_ty, indices).unwrap_or(0);
+                let size = layout::size_of(ptr_ty) as usize;
+                let reloc = lir::LirGlobalRelocation {
+                    offset: 0,
+                    kind: lir::LirRelocationKind::Abs64,
+                    target: lir::LirRelocationTarget::Global(name.clone()),
+                    addend,
+                };
+                (lir::LirConstant::Bytes(vec![0u8; size]), vec![reloc])
+            }
+            lir::LirConstant::FunctionRef(ref name, ref ptr_ty) => {
+                let size = layout::size_of(ptr_ty) as usize;
+                let reloc = lir::LirGlobalRelocation {
+                    offset: 0,
+                    kind: lir::LirRelocationKind::Abs64,
+                    target: lir::LirRelocationTarget::Function(name.clone()),
+                    addend: 0,
+                };
+                (lir::LirConstant::Bytes(vec![0u8; size]), vec![reloc])
+            }
             other => (other, Vec::new()),
         }
     }
