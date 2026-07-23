@@ -467,20 +467,31 @@ impl CompilerDriver {
                 _ => None,
             },
             Value::Struct(value_struct) => {
-                let TyKind::Tuple(fields) = &ty.kind else {
-                    return None;
-                };
-                if value_struct.structural.fields.len() != fields.len() {
-                    return None;
+                match &ty.kind {
+                    TyKind::Tuple(fields) => {
+                        if value_struct.structural.fields.len() != fields.len() {
+                            return None;
+                        }
+                        let values = value_struct
+                            .structural
+                            .fields
+                            .iter()
+                            .zip(fields.iter())
+                            .map(|(field, field_ty)| self.value_to_const_value(&field.value, field_ty))
+                            .collect::<Option<Vec<_>>>()?;
+                        Some(mir::ConstValue::Struct(values))
+                    }
+                    TyKind::Adt(adt_def, _substs) => {
+                        let variant = adt_def.variants.first()?;
+                        if value_struct.structural.fields.len() != variant.fields.len() {
+                            return None;
+                        }
+                        // Field types aren't directly in AdtDef; fall through
+                        // to the ExecutableConst path which can evaluate this.
+                        return None;
+                    }
+                    _ => return None,
                 }
-                let values = value_struct
-                    .structural
-                    .fields
-                    .iter()
-                    .zip(fields.iter())
-                    .map(|(field, field_ty)| self.value_to_const_value(&field.value, field_ty))
-                    .collect::<Option<Vec<_>>>()?;
-                Some(mir::ConstValue::Struct(values))
             }
             Value::Structural(structural) => {
                 let TyKind::Tuple(fields) = &ty.kind else {

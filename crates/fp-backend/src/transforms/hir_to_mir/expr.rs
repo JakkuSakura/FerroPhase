@@ -5700,16 +5700,31 @@ impl MirLowering {
                     return None;
                 };
                 let item = program.def_map.get(def_id)?;
-                let hir::ItemKind::Function(function) = &item.kind else {
-                    return None;
-                };
-                let (TyKind::FnDef(_, _) | TyKind::FnPtr(_)) = expected_ty.map(|ty| &ty.kind)?
-                else {
-                    return None;
-                };
-                Some(mir::ConstValue::Fn(mir::Symbol::new(
-                    function.sig.name.as_str(),
-                )))
+                match &item.kind {
+                    hir::ItemKind::Function(function) => {
+                        let (TyKind::FnDef(_, _) | TyKind::FnPtr(_)) =
+                            expected_ty.map(|ty| &ty.kind)?
+                        else {
+                            return None;
+                        };
+                        Some(mir::ConstValue::Fn(mir::Symbol::new(
+                            function.sig.name.as_str(),
+                        )))
+                    }
+                    hir::ItemKind::Const(_) => {
+                        let const_info = self.const_values.get(&def_id)?;
+                        match &const_info.value.literal {
+                            mir::ConstantKind::Int(v) => Some(mir::ConstValue::Int(*v)),
+                            mir::ConstantKind::UInt(v) => Some(mir::ConstValue::UInt(*v)),
+                            mir::ConstantKind::Bool(v) => Some(mir::ConstValue::Bool(*v)),
+                            mir::ConstantKind::Float(v) => Some(mir::ConstValue::Float(*v)),
+                            mir::ConstantKind::Str(v) => Some(mir::ConstValue::Str(v.clone())),
+                            mir::ConstantKind::Val(v, _) => Some(v.clone()),
+                            _ => None,
+                        }
+                    }
+                    _ => return None,
+                }
             }
             _ => None,
         }
