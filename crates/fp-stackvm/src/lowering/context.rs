@@ -63,18 +63,10 @@ impl<'a> LoweringContext<'a> {
 
         let mut fl = FunctionLowering::new(self.bytecode, &mut lir_func, entry_block_id);
 
-        // Allocate stack slots (Alloca) for every bytecode local so
-        // LoadLocal / StoreLocal have valid addresses to reference.
-        for i in 0..func.locals {
-            let slot_reg = fl.emit_in_block(
-                entry_block_id,
-                fp_core::lir::LirInstructionKind::Alloca {
-                    size: fp_core::lir::LirValue::Constant(fp_core::lir::LirConstant::Int(8, fp_core::lir::LirType::I64)),
-                    alignment: 8,
-                },
-            )?;
-            fl.set_local_addr(i, slot_reg);
-        }
+        // The LirInterpreter pre-allocates stack slots for all locals
+        // declared in func.locals during run_function().  We reference
+        // them by index (LirValue::Local) rather than emitting Alloca
+        // instructions, which would permanently consume stack space.
 
         // Lower each basic block.
         for block in &func.blocks {

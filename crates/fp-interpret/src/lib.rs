@@ -162,12 +162,12 @@ impl LirInterpreter {
             }
             LirInstructionKind::Store { value, address, .. } => {
                 let val = self.resolve_raw(value)?;
-                let addr = self.resolve_raw(address)?;
+                let addr = self.resolve_addr(address)?;
                 let ty = self.infer_type(value);
                 mem_store(&mut self.state.mem, addr, val, &ty)
             }
             LirInstructionKind::Load { address, .. } => {
-                let addr = self.resolve_raw(address)?;
+                let addr = self.resolve_addr(address)?;
                 let ty = instr.type_hint.as_ref().unwrap_or(&LirType::I64);
                 let val = mem_load(&self.state.mem, addr, ty)?;
                 self.wr(dst, val);
@@ -226,6 +226,12 @@ impl LirInterpreter {
     }
 
     fn wr(&mut self, dst: u32, val: u64) {
+        // r1 is the stack pointer — never overwrite it with
+        // instruction results, as some LIR producers may assign
+        // instruction IDs that alias the sp register.
+        if dst == 1 {
+            return;
+        }
         self.state.regs.write(dst, val);
     }
 
@@ -238,6 +244,15 @@ impl LirInterpreter {
             LirValue::Global(..) => Err(VmError::Runtime("global".into())),
             LirValue::Function(_) => Ok(0),
             LirValue::Undef(_) | LirValue::Null(_) => Ok(0),
+        }
+    }
+
+    /// Resolve an address operand — for `LirValue::Local`, returns
+    /// the pre-allocated stack address rather than the value at it.
+    fn resolve_addr(&self, val: &LirValue) -> LirResult<u64> {
+        match val {
+            LirValue::Local(id) => Ok(self.state.local_addr(*id)),
+            other => self.resolve_raw(other),
         }
     }
 
@@ -983,12 +998,12 @@ mod tests {
             basic_blocks: vec![bb(
                 0,
                 vec![
-                    i(0, LirInstructionKind::Mul(int(5), int(4))),
-                    i(1, LirInstructionKind::Mul(reg(0), int(3))),
-                    i(2, LirInstructionKind::Mul(reg(1), int(2))),
-                    i(3, LirInstructionKind::Mul(reg(2), int(1))),
+                    i(10, LirInstructionKind::Mul(int(5), int(4))),
+                    i(11, LirInstructionKind::Mul(reg(10), int(3))),
+                    i(12, LirInstructionKind::Mul(reg(11), int(2))),
+                    i(13, LirInstructionKind::Mul(reg(12), int(1))),
                 ],
-                ret(reg(3)),
+                ret(reg(13)),
             )],
             locals: vec![],
             stack_slots: vec![],
@@ -1063,7 +1078,7 @@ mod tests {
                 0,
                 vec![
                     LirInstruction {
-                        id: 0,
+                        id: 10,
                         kind: LirInstructionKind::InsertValue {
                             aggregate: LirValue::Constant(LirConstant::Undef(slice_ty.clone())),
                             element: LirValue::Constant(LirConstant::UInt(0x1234, LirType::I64)),
@@ -1073,9 +1088,9 @@ mod tests {
                         debug_info: None,
                     },
                     LirInstruction {
-                        id: 1,
+                        id: 11,
                         kind: LirInstructionKind::InsertValue {
-                            aggregate: reg(0),
+                            aggregate: reg(10),
                             element: int(5),
                             indices: vec![1],
                         },
@@ -1083,14 +1098,14 @@ mod tests {
                         debug_info: None,
                     },
                     i(
-                        2,
+                        12,
                         LirInstructionKind::ExtractValue {
-                            aggregate: reg(1),
+                            aggregate: reg(11),
                             indices: vec![1],
                         },
                     ),
                 ],
-                ret(reg(2)),
+                ret(reg(12)),
             )],
             locals: vec![],
             stack_slots: vec![],
@@ -1115,7 +1130,7 @@ mod tests {
                 0,
                 vec![
                     LirInstruction {
-                        id: 0,
+                        id: 10,
                         kind: LirInstructionKind::InsertValue {
                             aggregate: LirValue::Constant(LirConstant::Undef(array_ty.clone())),
                             element: LirValue::Constant(LirConstant::String("abc".into())),
@@ -1125,16 +1140,16 @@ mod tests {
                         debug_info: None,
                     },
                     LirInstruction {
-                        id: 1,
+                        id: 11,
                         kind: LirInstructionKind::ExtractValue {
-                            aggregate: reg(0),
+                            aggregate: reg(10),
                             indices: vec![0],
                         },
                         type_hint: Some(LirType::Ptr(Box::new(LirType::I8))),
                         debug_info: None,
                     },
                 ],
-                ret(reg(1)),
+                ret(reg(11)),
             )],
             locals: vec![],
             stack_slots: vec![],

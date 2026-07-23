@@ -314,11 +314,10 @@ pub(crate) fn lower_load_place(
     block_id: BasicBlockId,
     place: &BytecodePlace,
 ) -> LowerResult<RegisterId> {
-    let addr_reg = fl.get_local_addr(place.local)?;
     let mut current_val = fl.emit_in_block(
         block_id,
         LirInstructionKind::Load {
-            address: FunctionLowering::reg_val(addr_reg),
+            address: LirValue::Local(place.local),
             alignment: Some(8),
             volatile: false,
         },
@@ -351,12 +350,11 @@ pub(crate) fn lower_store_place(
     value_reg: RegisterId,
 ) -> LowerResult<()> {
     if place.projection.is_empty() {
-        let addr_reg = fl.get_local_addr(place.local)?;
         fl.emit_in_block(
             block_id,
             LirInstructionKind::Store {
                 value: FunctionLowering::reg_val(value_reg),
-                address: FunctionLowering::reg_val(addr_reg),
+                address: LirValue::Local(place.local),
                 alignment: Some(8),
                 volatile: false,
             },
@@ -364,11 +362,10 @@ pub(crate) fn lower_store_place(
         return Ok(());
     }
 
-    let addr_reg = fl.get_local_addr(place.local)?;
     let mut base_val_reg = fl.emit_in_block(
         block_id,
         LirInstructionKind::Load {
-            address: FunctionLowering::reg_val(addr_reg),
+            address: LirValue::Local(place.local),
             alignment: Some(8),
             volatile: false,
         },
@@ -397,7 +394,7 @@ pub(crate) fn lower_store_place(
                 block_id,
                 LirInstructionKind::Store {
                     value: FunctionLowering::reg_val(new_handle),
-                    address: FunctionLowering::reg_val(addr_reg),
+                    address: LirValue::Local(place.local),
                     alignment: Some(8),
                     volatile: false,
                 },
@@ -457,11 +454,10 @@ fn lower_projection_index(
             ),
         ),
         BytecodePlaceElem::Index(local_idx) => {
-            let addr_reg = fl.get_local_addr(*local_idx)?;
             fl.emit_in_block(
                 block_id,
                 LirInstructionKind::Load {
-                    address: FunctionLowering::reg_val(addr_reg),
+                    address: LirValue::Local(*local_idx),
                     alignment: Some(8),
                     volatile: false,
                 },

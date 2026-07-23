@@ -286,6 +286,7 @@ impl CompilerDriver {
         &mut self,
         lir: &fp_core::lir::LirProgram,
     ) -> Result<fp_core::ast::Value, VmError> {
+        self.interpreter = LirInterpreter::new();
         self.interpreter.run_main(lir)
     }
 
@@ -294,6 +295,7 @@ impl CompilerDriver {
         lir: &fp_core::lir::LirProgram,
         name: &str,
     ) -> Result<fp_core::ast::Value, VmError> {
+        self.interpreter = LirInterpreter::new();
         self.interpreter.run_function_named(lir, name)
     }
 

@@ -11,7 +11,6 @@ use fp_core::lir::{
     BasicBlockId, CallingConvention, LirBasicBlock, LirFunction,
     LirInstruction, LirInstructionKind, LirTerminator, LirValue, RegisterId,
 };
-use std::collections::HashMap;
 
 use super::LowerError;
 use super::LowerResult;
@@ -27,9 +26,6 @@ pub(crate) struct FunctionLowering<'a> {
     /// Simulated operand stack.  Each entry is the register holding the
     /// value at that stack position.
     pub stack: Vec<RegisterId>,
-    /// Bytecode local index → LIR register that holds the `Alloca`'d
-    /// address of that local.
-    pub local_addrs: HashMap<u32, RegisterId>,
 }
 
 impl<'a> FunctionLowering<'a> {
@@ -43,7 +39,6 @@ impl<'a> FunctionLowering<'a> {
             func,
             next_reg: 10,
             stack: Vec::new(),
-            local_addrs: HashMap::new(),
         }
     }
 
@@ -73,21 +68,6 @@ impl<'a> FunctionLowering<'a> {
     /// Convenience: wrap a register in [`LirValue::Register`].
     pub fn reg_val(reg: RegisterId) -> LirValue {
         LirValue::Register(reg)
-    }
-
-    // ---------------------------------------------------------------
-    // Local address bookkeeping
-    // ---------------------------------------------------------------
-
-    pub fn set_local_addr(&mut self, local_idx: u32, addr_reg: RegisterId) {
-        self.local_addrs.insert(local_idx, addr_reg);
-    }
-
-    pub fn get_local_addr(&self, local_idx: u32) -> LowerResult<RegisterId> {
-        self.local_addrs
-            .get(&local_idx)
-            .copied()
-            .ok_or_else(|| LowerError::Internal(format!("no alloca for local {local_idx}")))
     }
 
     // ---------------------------------------------------------------
@@ -151,11 +131,10 @@ impl<'a> FunctionLowering<'a> {
                     self.push_reg(reg);
                 }
                 BytecodeInstr::LoadLocal(local) => {
-                    let addr_reg = self.get_local_addr(*local)?;
                     let val_reg = self.emit_in_block(
                         block_id,
                         LirInstructionKind::Load {
-                            address: Self::reg_val(addr_reg),
+                            address: LirValue::Local(*local),
                             alignment: Some(8),
                             volatile: false,
                         },
@@ -164,12 +143,11 @@ impl<'a> FunctionLowering<'a> {
                 }
                 BytecodeInstr::StoreLocal(local) => {
                     let val_reg = self.pop_reg()?;
-                    let addr_reg = self.get_local_addr(*local)?;
                     self.emit_in_block(
                         block_id,
                         LirInstructionKind::Store {
                             value: Self::reg_val(val_reg),
-                            address: Self::reg_val(addr_reg),
+                            address: LirValue::Local(*local),
                             alignment: Some(8),
                             volatile: false,
                         },
@@ -264,11 +242,10 @@ impl<'a> FunctionLowering<'a> {
         match &block.terminator {
             BytecodeTerminator::Return => {
                 // Bytecode VM reads locals[0] as the return value.
-                let addr_reg = self.get_local_addr(0)?;
                 let val_reg = self.emit_in_block(
                     block_id,
                     LirInstructionKind::Load {
-                        address: Self::reg_val(addr_reg),
+                        address: LirValue::Local(0),
                         alignment: Some(8),
                         volatile: false,
                     },
