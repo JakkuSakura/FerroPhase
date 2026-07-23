@@ -900,6 +900,7 @@ mod tests {
             globals: vec![],
             type_definitions: vec![],
             queries: vec![],
+            comptime_entries: vec![],
         }
     }
 
