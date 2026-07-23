@@ -176,7 +176,7 @@ fn assert_query_bundle(name: &'static str, expected_language: &'static str) {
                 None,
                 compiler::LossyCompileOptions::default(),
             )
-                .expect("compile example to lir");
+            .expect("compile example to lir");
             assert_eq!(bundle.frontend.source_language, expected_language);
             assert!(
                 !bundle.lir_program.queries.is_empty(),
@@ -199,7 +199,7 @@ fn assert_host_query_bundle(name: &'static str) {
                 None,
                 compiler::LossyCompileOptions::default(),
             )
-                .expect("compile host example to lir");
+            .expect("compile host example to lir");
             assert_eq!(bundle.frontend.source_language, languages::FERROPHASE);
             assert!(
                 bundle

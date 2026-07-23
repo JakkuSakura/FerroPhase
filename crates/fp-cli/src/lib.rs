@@ -5,10 +5,10 @@
 
 pub mod cli;
 pub mod codegen;
-pub mod compile_options;
-pub mod compiler;
 pub mod commands;
 pub mod compilation;
+pub mod compile_options;
+pub mod compiler;
 pub mod container;
 pub mod diagnostics;
 pub mod languages;

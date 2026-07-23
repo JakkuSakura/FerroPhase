@@ -1,11 +1,6 @@
 //! Expression evaluation command implementation
 
-use crate::{
-    CliError, Result,
-    cli::CliConfig,
-    commands::format_value_brief,
-    compiler,
-};
+use crate::{CliError, Result, cli::CliConfig, commands::format_value_brief, compiler};
 use clap::{ArgAction, Args};
 use tracing::info;
 

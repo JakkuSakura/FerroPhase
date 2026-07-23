@@ -12,12 +12,10 @@ use fp_core::{
     diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager},
     frontend::{FrontendParseMode, FrontendResult, FrontendSnapshot, LanguageFrontend},
 };
+use fp_goasm::config::GoAsmTarget;
 use fp_lang::FerroFrontend;
 use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
-use fp_goasm::config::GoAsmTarget;
 
-use crate::{CliError, Result};
-use crate::languages::{self, detect_source_language};
 #[cfg(feature = "lang-flatbuffers")]
 use crate::languages::frontend::FlatbuffersFrontend;
 #[cfg(feature = "lang-golang")]
@@ -40,6 +38,8 @@ use crate::languages::frontend::TomlFrontend;
 use crate::languages::frontend::TypeScriptFrontend;
 #[cfg(feature = "lang-wit")]
 use crate::languages::frontend::WitFrontend;
+use crate::languages::{self, detect_source_language};
+use crate::{CliError, Result};
 #[cfg(feature = "lang-typescript")]
 use fp_typescript::frontend::TsParseMode;
 
@@ -86,10 +86,7 @@ pub fn eval_expr(source: &str) -> Result<Value> {
     )
 }
 
-pub fn eval_file(
-    path: &Path,
-    resolver: Option<Arc<dyn CompilerModuleResolver>>,
-) -> Result<Value> {
+pub fn eval_file(path: &Path, resolver: Option<Arc<dyn CompilerModuleResolver>>) -> Result<Value> {
     let ast = parse_file_with_mode(
         path,
         None,
@@ -232,17 +229,18 @@ pub fn compile_native_file(
 
     match options.emitter {
         NativeEmitterKind::Native => {
-            let native_target =
-                match options.native_target.as_deref() {
-                    Some(value) => Some(fp_native::config::NativeTarget::resolve(
+            let native_target = match options.native_target.as_deref() {
+                Some(value) => Some(
+                    fp_native::config::NativeTarget::resolve(
                         value,
                         options.target_triple.as_deref(),
                     )
                     .ok_or_else(|| {
                         CliError::Compilation(format!("Unsupported fp-native target: {}", value))
-                    })?),
-                    None => None,
-                };
+                    })?,
+                ),
+                None => None,
+            };
 
             let mut cfg = fp_native::config::NativeConfig::executable(&options.output)
                 .with_target_triple(options.target_triple.clone())
@@ -269,11 +267,11 @@ pub fn compile_native_file(
                 .emit(lir, None)
                 .map_err(|err| CliError::Compilation(err.to_string()))
         }
-        NativeEmitterKind::Urcl => fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(
-            &options.output,
-        ))
-        .emit(lir, None)
-        .map_err(|err| CliError::Compilation(err.to_string())),
+        NativeEmitterKind::Urcl => {
+            fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(&options.output))
+                .emit(lir, None)
+                .map_err(|err| CliError::Compilation(err.to_string()))
+        }
     }
 }
 
@@ -293,8 +291,8 @@ pub fn compile_bytecode_file(
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
     }
 
-    let wants_text =
-        options.emit_text || options.output.extension().and_then(|ext| ext.to_str()) == Some("ftbc");
+    let wants_text = options.emit_text
+        || options.output.extension().and_then(|ext| ext.to_str()) == Some("ftbc");
 
     if options.save_intermediates || wants_text {
         let rendered = fp_bytecode::format_program(&bytecode);
@@ -329,10 +327,7 @@ pub fn compile_jvm_file(
 ) -> Result<PathBuf> {
     let lowered = lower_file(path, source_language, resolver, lossy)?;
     let mir = lowered.mir()?;
-    let class_stem = options
-        .class_name_hint
-        .as_deref()
-        .unwrap_or("Main");
+    let class_stem = options.class_name_hint.as_deref().unwrap_or("Main");
     let jvm_options = fp_jvm::JvmBackendOptions {
         class_name: fp_jvm::derive_class_name(class_stem),
         emit_java_entrypoint: true,
@@ -412,12 +407,14 @@ pub fn compile_ebpf_file(
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
     }
     if options.output.extension().and_then(|ext| ext.to_str()) == Some("o") {
-        let object_bytes = fp_ebpf::emit_object(&lir)
-            .map_err(|err| CliError::Compilation(format!("eBPF object emission failed: {}", err)))?;
+        let object_bytes = fp_ebpf::emit_object(&lir).map_err(|err| {
+            CliError::Compilation(format!("eBPF object emission failed: {}", err))
+        })?;
         std::fs::write(&options.output, object_bytes).map_err(CliError::Io)?;
     } else {
-        let text = fp_ebpf::emit_assembly(&lir)
-            .map_err(|err| CliError::Compilation(format!("eBPF assembly emission failed: {}", err)))?;
+        let text = fp_ebpf::emit_assembly(&lir).map_err(|err| {
+            CliError::Compilation(format!("eBPF assembly emission failed: {}", err))
+        })?;
         std::fs::write(&options.output, text).map_err(CliError::Io)?;
     }
     Ok(options.output.clone())
@@ -530,11 +527,14 @@ pub fn compile_cranelift_file(
     {
         let lowered = lower_file(path, source_language, resolver, lossy)?;
         let lir = lowered.lir()?;
-        let object_path = options.output.with_extension(if is_windows_target(options.target_triple.as_deref()) {
-            "obj"
-        } else {
-            "o"
-        });
+        let object_path =
+            options
+                .output
+                .with_extension(if is_windows_target(options.target_triple.as_deref()) {
+                    "obj"
+                } else {
+                    "o"
+                });
         if let Some(parent) = object_path.parent() {
             std::fs::create_dir_all(parent).map_err(CliError::Io)?;
         }
@@ -578,8 +578,7 @@ pub fn compile_cranelift_file(
     {
         let _ = (path, source_language, options);
         Err(CliError::MissingDependency(
-            "Feature 'cranelift' is disabled; enable it to use the Cranelift emitter."
-                .to_string(),
+            "Feature 'cranelift' is disabled; enable it to use the Cranelift emitter.".to_string(),
         ))
     }
 }
@@ -640,8 +639,8 @@ fn link_llvm_ir_with_clang(
     let mut cmd = Command::new(linker);
     cmd.arg(llvm_ir_path);
     if requires_eh {
-        let runtime_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../crates/fp-llvm/runtime/fp_unwind.cc");
+        let runtime_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/fp-llvm/runtime/fp_unwind.cc");
         cmd.arg(runtime_path);
         cmd.arg("-fexceptions");
         if is_apple_target(target_triple) {
@@ -841,11 +840,18 @@ pub fn parse_expr_with_mode(source: &str, parse_mode: FrontendParseMode) -> Resu
     } = frontend
         .parse_expr(source)
         .map_err(|err| CliError::Compilation(err.to_string()))?;
-    emit_frontend_diagnostics(&diagnostics.get_diagnostics(), LossyCompileOptions::default())?;
+    emit_frontend_diagnostics(
+        &diagnostics.get_diagnostics(),
+        LossyCompileOptions::default(),
+    )?;
     Ok(ast)
 }
 
-fn parse_file(path: &Path, source_language: Option<&str>, lossy: LossyCompileOptions) -> Result<Node> {
+fn parse_file(
+    path: &Path,
+    source_language: Option<&str>,
+    lossy: LossyCompileOptions,
+) -> Result<Node> {
     parse_file_with_mode(path, source_language, FrontendParseMode::Strict, lossy)
 }
 
@@ -901,11 +907,13 @@ pub fn prepare_ast_target(
     register_threadlocal_serializer(parsed.serializer.clone());
 
     if let Some(normalizer) = parsed.intrinsic_normalizer.as_ref() {
-        fp_core::intrinsics::normalize_intrinsics_with(ast, normalizer.as_ref())
-            .map_err(|err| CliError::Compilation(format!("Intrinsic normalization failed: {err}")))?;
+        fp_core::intrinsics::normalize_intrinsics_with(ast, normalizer.as_ref()).map_err(
+            |err| CliError::Compilation(format!("Intrinsic normalization failed: {err}")),
+        )?;
     } else {
-        fp_core::intrinsics::normalize_intrinsics(ast)
-            .map_err(|err| CliError::Compilation(format!("Intrinsic normalization failed: {err}")))?;
+        fp_core::intrinsics::normalize_intrinsics(ast).map_err(|err| {
+            CliError::Compilation(format!("Intrinsic normalization failed: {err}"))
+        })?;
     }
     Ok(())
 }
@@ -939,12 +947,13 @@ fn parse_file_with_context(
     })
 }
 
-fn select_frontend(path: &Path, source_language: Option<&str>) -> Result<Box<dyn LanguageFrontend>> {
+fn select_frontend(
+    path: &Path,
+    source_language: Option<&str>,
+) -> Result<Box<dyn LanguageFrontend>> {
     let language = source_language
         .map(|lang| lang.trim().to_ascii_lowercase())
-        .or_else(|| {
-            detect_source_language(path).map(|lang| lang.name.to_ascii_lowercase())
-        })
+        .or_else(|| detect_source_language(path).map(|lang| lang.name.to_ascii_lowercase()))
         .unwrap_or_else(|| languages::FERROPHASE.to_string());
 
     match language.as_str() {
@@ -988,8 +997,8 @@ fn emit_frontend_diagnostics(diagnostics: &[Diagnostic], lossy: LossyCompileOpti
     );
     if !lossy.enabled
         && diagnostics
-        .iter()
-        .any(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
+            .iter()
+            .any(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
     {
         return Err(CliError::Compilation(
             "frontend stage failed; see diagnostics for details".to_string(),
@@ -1010,8 +1019,8 @@ fn emit_typing_diagnostics(
     );
     if !lossy.enabled
         && diagnostics
-        .iter()
-        .any(|diagnostic| matches!(diagnostic.level, TypingDiagnosticLevel::Error))
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.level, TypingDiagnosticLevel::Error))
     {
         return Err(CliError::Compilation(
             "typing stage failed; see diagnostics for details".to_string(),

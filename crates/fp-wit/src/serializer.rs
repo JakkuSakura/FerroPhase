@@ -687,9 +687,7 @@ impl InterfaceBuilder {
             | Ty::TypeBinaryOp(_)
             | Ty::AnyBox(_)
             | Ty::Unknown(_)
-            | Ty::Nothing(_) => {
-                "json".to_string()
-            }
+            | Ty::Nothing(_) => "json".to_string(),
             Ty::Type(_) | Ty::TypeBounds(_) | Ty::ImplTraits(_) => "json".to_string(),
             Ty::Value(_) => "json".to_string(),
             Ty::Function(_) => "func".to_string(),

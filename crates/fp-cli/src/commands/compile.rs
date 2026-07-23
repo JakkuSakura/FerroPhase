@@ -1,16 +1,12 @@
 //! Compilation command implementation
 
 use crate::commands::{setup_progress_bar, validate_paths_exist};
-use crate::compiler::{
-    self, BytecodeCompileOptions, CraneliftCompileOptions, EbpfCompileOptions,
-    JvmCompileOptions, LlvmCompileOptions, NativeCompileOptions, NativeEmitterKind,
-    WasmCompileOptions,
-};
 use crate::compile_options::BackendKind;
-use crate::{
-    CliError, Result,
-    cli::CliConfig,
+use crate::compiler::{
+    self, BytecodeCompileOptions, CraneliftCompileOptions, EbpfCompileOptions, JvmCompileOptions,
+    LlvmCompileOptions, NativeCompileOptions, NativeEmitterKind, WasmCompileOptions,
 };
+use crate::{CliError, Result, cli::CliConfig};
 use console::style;
 use fp_core::ast::{AstTarget, AstTargetOutput, Node};
 use fp_core::config;
@@ -257,7 +253,10 @@ impl ModuleResolutionState {
 }
 
 impl CompilerModuleResolver for ModuleResolutionState {
-    fn resolve_context(&self, input: &Path) -> std::result::Result<ModuleResolutionContext, ModuleResolutionError> {
+    fn resolve_context(
+        &self,
+        input: &Path,
+    ) -> std::result::Result<ModuleResolutionContext, ModuleResolutionError> {
         self.context_for_input(input)
             .map_err(|err| ModuleResolutionError::new(err.to_string()))
     }
@@ -903,12 +902,7 @@ async fn compile_ast_target(
         if args.const_eval {
             warn!("--const-eval is ignored: AST const evaluation has been removed");
         }
-        compiler::prepare_ast_target(
-            &mut ast,
-            input,
-            args.source_language.as_deref(),
-            false,
-        )?;
+        compiler::prepare_ast_target(&mut ast, input, args.source_language.as_deref(), false)?;
     }
 
     let result = emit_ast_target(&ast, target, args.type_defs, input, args.single_world)?;

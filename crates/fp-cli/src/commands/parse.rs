@@ -88,7 +88,12 @@ pub async fn parse_command(mut args: ParseArgs, _config: &CliConfig) -> Result<(
     let mut snapshot = args.snapshot.take();
     for (index, path) in args.files.into_iter().enumerate() {
         let snapshot_for_file = if index == 0 { snapshot.take() } else { None };
-        parse_path(&path, args.parse_mode.into(), args.resolve_imports, snapshot_for_file)?;
+        parse_path(
+            &path,
+            args.parse_mode.into(),
+            args.resolve_imports,
+            snapshot_for_file,
+        )?;
     }
     Ok(())
 }
@@ -100,7 +105,11 @@ pub async fn parse_command(_args: ParseArgs, _config: &CliConfig) -> Result<()> 
     ))
 }
 
-fn parse_expression(expr: String, mode: FrontendParseMode, snapshot: Option<PathBuf>) -> Result<()> {
+fn parse_expression(
+    expr: String,
+    mode: FrontendParseMode,
+    snapshot: Option<PathBuf>,
+) -> Result<()> {
     let ast = compiler::parse_expr_with_mode(&expr, mode)?;
     let print_ast = snapshot.is_none();
     persist_snapshot(&ast, snapshot.as_deref())?;

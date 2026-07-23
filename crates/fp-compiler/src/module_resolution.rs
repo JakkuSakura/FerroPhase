@@ -36,5 +36,8 @@ impl From<&str> for ModuleResolutionError {
 }
 
 pub trait CompilerModuleResolver: Send + Sync {
-    fn resolve_context(&self, input: &Path) -> Result<ModuleResolutionContext, ModuleResolutionError>;
+    fn resolve_context(
+        &self,
+        input: &Path,
+    ) -> Result<ModuleResolutionContext, ModuleResolutionError>;
 }
