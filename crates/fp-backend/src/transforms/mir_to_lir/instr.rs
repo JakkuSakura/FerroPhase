@@ -2208,7 +2208,29 @@ impl LirGenerator {
     ) -> Result<lir::LirTerminator> {
         match &terminator.kind {
             mir::TerminatorKind::Return => {
-                Ok(lir::LirTerminator::Return(self.prepare_return_value(block)))
+                let mut ret_val = self.prepare_return_value(block);
+                // Wrap bare GlobalRef in a struct when the return type
+                // expects a fat pointer (slice/&str).
+                if let Some(lir::LirValue::Constant(lir::LirConstant::GlobalRef(ref name, _, _))) = ret_val {
+                    if let Some(ref ret_ty) = self.current_return_type {
+                        if matches!(ret_ty, lir::LirType::Struct { .. }) {
+                            let slice_ty = ret_ty.clone();
+                            let zero_len = lir::LirConstant::UInt(0, lir::LirType::I64);
+                            ret_val = Some(lir::LirValue::Constant(lir::LirConstant::Struct(
+                                vec![
+                                    lir::LirConstant::GlobalRef(
+                                        name.clone(),
+                                        lir::LirType::Ptr(Box::new(lir::LirType::I8)),
+                                        vec![],
+                                    ),
+                                    zero_len,
+                                ],
+                                slice_ty,
+                            )));
+                        }
+                    }
+                }
+                Ok(lir::LirTerminator::Return(ret_val))
             }
             mir::TerminatorKind::Goto { target } => Ok(lir::LirTerminator::Br(*target)),
             mir::TerminatorKind::Unreachable => Ok(lir::LirTerminator::Unreachable),
