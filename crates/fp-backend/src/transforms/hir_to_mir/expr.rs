@@ -5676,14 +5676,18 @@ impl MirLowering {
                     .and_then(|segment| segment.args.as_ref())
                     .map(|args| self.lower_generic_args(Some(args), expr.span))
                     .unwrap_or_default();
-                let layout = self.struct_layout_for_instance(def_id, &args, expr.span)?;
+                let layout = self.struct_layout_for_instance(def_id, &args, expr.span);
+                let layout = match layout {
+                    Some(l) => l,
+                    None => return None,
+                };
                 let mut field_map: HashMap<String, &hir::Expr> = HashMap::new();
                 for field in fields {
                     field_map.insert(field.name.as_str().to_string(), &field.expr);
                 }
                 let mut lowered = Vec::with_capacity(struct_def.fields.len());
                 for (idx, field_def) in struct_def.fields.iter().enumerate() {
-                    let Some(expr) = field_map.get(&field_def.name) else {
+                    let Some(field_expr) = field_map.get(&field_def.name) else {
                         self.emit_error(
                             expr.span,
                             format!("missing field `{}` in const struct literal", field_def.name),
@@ -5691,7 +5695,7 @@ impl MirLowering {
                         return None;
                     };
                     let field_ty = layout.field_tys.get(idx)?;
-                    lowered.push(self.lower_const_value(program, expr, Some(field_ty))?);
+                    lowered.push(self.lower_const_value(program, field_expr, Some(field_ty))?);
                 }
                 Some(mir::ConstValue::Struct(lowered))
             }
@@ -5699,6 +5703,22 @@ impl MirLowering {
                 let hir::Res::Def(def_id) = path.res.as_ref()? else {
                     return None;
                 };
+
+                // Check const_values first — function-local consts are
+                // registered here by lower_const but may not be in
+                // program.def_map.
+                if let Some(const_info) = self.const_values.get(&def_id) {
+                    return match &const_info.value.literal {
+                        mir::ConstantKind::Int(v) => Some(mir::ConstValue::Int(*v)),
+                        mir::ConstantKind::UInt(v) => Some(mir::ConstValue::UInt(*v)),
+                        mir::ConstantKind::Bool(v) => Some(mir::ConstValue::Bool(*v)),
+                        mir::ConstantKind::Float(v) => Some(mir::ConstValue::Float(*v)),
+                        mir::ConstantKind::Str(v) => Some(mir::ConstValue::Str(v.clone())),
+                        mir::ConstantKind::Val(v, _) => Some(v.clone()),
+                        _ => None,
+                    };
+                }
+
                 let item = program.def_map.get(def_id)?;
                 match &item.kind {
                     hir::ItemKind::Function(function) => {

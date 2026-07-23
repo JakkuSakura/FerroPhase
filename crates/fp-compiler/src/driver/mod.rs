@@ -302,6 +302,8 @@ impl CompilerDriver {
         lir: &fp_core::lir::LirProgram,
     ) -> Result<fp_core::ast::Value, VmError> {
         self.interpreter = LirInterpreter::new();
+        let resolved = self.collect_resolved_const_values();
+        self.interpreter.inject_globals(&resolved);
         self.interpreter.run_main(lir)
     }
 
@@ -311,6 +313,8 @@ impl CompilerDriver {
         name: &str,
     ) -> Result<fp_core::ast::Value, VmError> {
         self.interpreter = LirInterpreter::new();
+        let resolved = self.collect_resolved_const_values();
+        self.interpreter.inject_globals(&resolved);
         self.interpreter.run_function_named(lir, name)
     }
 
@@ -329,7 +333,11 @@ impl CompilerDriver {
         let mut map = HashMap::new();
         for (key, constant) in self.state.resolved_const_values() {
             if let Some(value) = self.mir_constant_to_value(constant) {
-                map.insert(key.to_string(), value);
+                map.insert(key.to_string(), value.clone());
+                // Also index by short name (last segment after last colon)
+                if let Some(short) = key.rsplit(':').next() {
+                    map.insert(short.to_string(), value);
+                }
             }
         }
         map
@@ -389,6 +397,12 @@ impl CompilerDriver {
             Value::UInt(value) => mir::ConstantKind::UInt(value.value),
             Value::Decimal(value) => mir::ConstantKind::Float(value.value),
             Value::String(value) => mir::ConstantKind::Str(value.value.clone()),
+            Value::Bytes(bytes) => {
+                let s = String::from_utf8_lossy(&bytes.value)
+                    .trim_end_matches('\0')
+                    .to_string();
+                mir::ConstantKind::Str(s)
+            }
             Value::Null(_) => mir::ConstantKind::Null,
             _ => mir::ConstantKind::Val(self.value_to_const_value(value, ty)?, ty.clone()),
         };
@@ -428,6 +442,12 @@ impl CompilerDriver {
                 _ => return None,
             }),
             Value::String(value) => Some(mir::ConstValue::Str(value.value.clone())),
+            Value::Bytes(bytes) => {
+                let s = String::from_utf8_lossy(&bytes.value)
+                    .trim_end_matches('\0')
+                    .to_string();
+                Some(mir::ConstValue::Str(s))
+            }
             Value::Null(_) => Some(mir::ConstValue::Null),
             Value::Tuple(tuple) => {
                 let TyKind::Tuple(fields) = &ty.kind else {

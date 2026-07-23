@@ -783,6 +783,16 @@ impl LirGenerator {
                     .map(|(bytes, relocations)| (lir::LirConstant::Bytes(bytes), relocations))
                     .unwrap_or((initializer, Vec::new()))
             }
+            // Encode simple scalar constants as Bytes so native backends
+            // can emit them directly into the data section.
+            lir::LirConstant::Bool(_)
+            | lir::LirConstant::Int(..)
+            | lir::LirConstant::UInt(..)
+            | lir::LirConstant::Float(..) => {
+                Self::try_encode_global_initializer_bytes(&initializer, ty)
+                    .map(|(bytes, relocations)| (lir::LirConstant::Bytes(bytes), relocations))
+                    .unwrap_or((initializer, Vec::new()))
+            }
             lir::LirConstant::GlobalRef(ref name, ref ptr_ty, ref indices) => {
                 let addend = Self::global_ref_addend(ptr_ty, indices).unwrap_or(0);
                 let size = layout::size_of(ptr_ty) as usize;

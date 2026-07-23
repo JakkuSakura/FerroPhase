@@ -257,7 +257,6 @@ impl LirInterpreter {
     }
 
     fn populate_globals(&mut self, program: &LirProgram) {
-        self.global_values.clear();
         for global in &program.globals {
             if let Some(init) = &global.initializer {
                 // Push the value into the object heap and store the handle.
@@ -267,6 +266,16 @@ impl LirInterpreter {
                     self.global_values.insert(global.name.to_string(), handle);
                 }
             }
+        }
+    }
+
+    /// Inject externally-resolved constant values as globals so that
+    /// comptime functions can reference other already-computed consts.
+    pub fn inject_globals(&mut self, values: &HashMap<String, Value>) {
+        for (name, value) in values {
+            let handle = self.state.objects.len() as u64;
+            self.state.objects.push(value.clone());
+            self.global_values.insert(name.clone(), handle);
         }
     }
 
