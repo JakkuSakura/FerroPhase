@@ -197,6 +197,7 @@ pub struct MirLowering {
     enum_variants: HashMap<hir::DefId, EnumVariantInfo>,
     enum_variant_names: HashMap<String, hir::DefId>,
     const_values: HashMap<hir::DefId, ConstInfo>,
+    executable_consts: HashMap<hir::DefId, (mir::Symbol, Ty)>,
     resolved_const_values: HashMap<String, mir::Constant>,
     function_sigs: HashMap<hir::DefId, mir::FunctionSig>,
     generic_function_defs: HashMap<hir::DefId, hir::Function>,
@@ -270,6 +271,7 @@ impl MirLowering {
             enum_variants: HashMap::new(),
             enum_variant_names: HashMap::new(),
             const_values: HashMap::new(),
+            executable_consts: HashMap::new(),
             resolved_const_values: HashMap::new(),
             function_sigs: HashMap::new(),
             generic_function_defs: HashMap::new(),
@@ -3225,7 +3227,7 @@ impl MirLowering {
         match &ty_expr.kind {
             hir::TypeExprKind::Ref(inner) => {
                 if self.is_string_slice_ref(inner) {
-                    return self.raw_string_ptr_ty();
+                    return self.string_slice_ty();
                 }
                 let inner_ty = self.lower_type_expr_with_context(inner, method_context);
                 Ty {
@@ -3326,6 +3328,8 @@ impl MirLowering {
         ty: Ty,
         key: String,
     ) -> Result<mir::Item> {
+        self.executable_consts
+            .insert(def_id, (mir::Symbol::from(&konst.name), ty.clone()));
         let body_id = mir::BodyId::new(self.next_body_id);
         self.next_body_id += 1;
 
@@ -3434,7 +3438,7 @@ impl MirLowering {
             }
             hir::TypeExprKind::Ref(inner) => {
                 if self.is_string_slice_ref(inner) {
-                    return self.raw_string_ptr_ty();
+                    return self.string_slice_ty();
                 }
                 let inner_ty = self.lower_type_expr(inner);
                 Ty {
@@ -4094,14 +4098,7 @@ impl MirLowering {
                     }
                 }
             },
-            TypePrimitive::String => Ty {
-                kind: TyKind::RawPtr(TypeAndMut {
-                    ty: Box::new(Ty {
-                        kind: TyKind::Int(IntTy::I8),
-                    }),
-                    mutbl: Mutability::Not,
-                }),
-            },
+            TypePrimitive::String => self.string_slice_ty(),
             TypePrimitive::List => {
                 self.emit_warning(
                     span,
@@ -4967,7 +4964,7 @@ impl MirLowering {
             }
             hir::TypeExprKind::Ref(inner) => {
                 if self.is_string_slice_ref(inner) {
-                    return self.raw_string_ptr_ty();
+                    return self.string_slice_ty();
                 }
                 let inner_ty = self.lower_type_expr_with_substs(inner, substs);
                 Ty {
@@ -5100,6 +5097,14 @@ impl MirLowering {
                 }),
                 mutbl: Mutability::Not,
             }),
+        }
+    }
+
+    fn string_slice_ty(&self) -> Ty {
+        Ty {
+            kind: TyKind::Slice(Box::new(Ty {
+                kind: TyKind::Int(IntTy::I8),
+            })),
         }
     }
 
@@ -5565,6 +5570,17 @@ impl MirLowering {
                 let hir::Res::Def(def_id) = path.res.as_ref()? else {
                     return None;
                 };
+                if let Some(const_info) = self.const_values.get(def_id) {
+                    return Some(const_info.value.clone());
+                }
+                if let Some(item) = program.def_map.get(def_id) {
+                    if let hir::ItemKind::Const(konst) = &item.kind {
+                        self.register_const_value(program, *def_id, konst);
+                        if let Some(const_info) = self.const_values.get(def_id) {
+                            return Some(const_info.value.clone());
+                        }
+                    }
+                }
                 let item = program.def_map.get(def_id)?;
                 let hir::ItemKind::Function(function) = &item.kind else {
                     return None;
@@ -5583,10 +5599,50 @@ impl MirLowering {
                     ),
                 })
             }
+            hir::ExprKind::Slice(slice) => {
+                let value = self.lower_const_string_slice(program, slice)?;
+                Some(mir::Constant {
+                    span: expr.span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Str(value),
+                })
+            }
+            hir::ExprKind::Index(base, index) => self
+                .lower_const_expr(program, base, None, container_args)
+                .and_then(|constant| self.const_index_value(program, expr.span, &constant, index))
+                .map(|(constant, _)| constant),
+            hir::ExprKind::FieldAccess(base, field) => {
+                self.lower_const_field_access(program, base, field.as_str(), expr.span)
+            }
+            hir::ExprKind::MethodCall(receiver, method_name, args) => {
+                let ty = expected_ty.cloned().unwrap_or_else(Self::unit_ty);
+                let value = self.lower_const_method_value(
+                    program,
+                    receiver,
+                    method_name.as_str(),
+                    args,
+                    expr.span,
+                )?;
+                Some(mir::Constant {
+                    span: expr.span,
+                    user_ty: None,
+                    literal: self
+                        .const_value_to_constant(expr.span, &value, &ty)
+                        .literal,
+                })
+            }
             hir::ExprKind::Binary(op, lhs, rhs) => {
-                let left = self.lower_const_expr(program, lhs, expected_ty, container_args)?;
-                let right = self.lower_const_expr(program, rhs, expected_ty, container_args)?;
-                let kind = Self::lower_binary_op_const(op, &left, &right)?;
+                let kind =
+                    if let (Some(left), Some(right)) = (
+                        self.lower_const_expr(program, lhs, expected_ty, container_args),
+                        self.lower_const_expr(program, rhs, expected_ty, container_args),
+                    ) {
+                        Self::lower_binary_op_const(op, &left, &right)
+                    } else {
+                        let left = self.lower_const_value(program, lhs, expected_ty)?;
+                        let right = self.lower_const_value(program, rhs, expected_ty)?;
+                        Self::lower_binary_op_const_values(op, &left, &right)
+                    }?;
                 Some(mir::Constant {
                     span: expr.span,
                     user_ty: None,
@@ -5623,6 +5679,28 @@ impl MirLowering {
                 hir::BinOp::Div => Some(mir::ConstantKind::UInt(l / r)),
                 hir::BinOp::Gt => Some(mir::ConstantKind::Bool(l > r)),
                 hir::BinOp::Lt => Some(mir::ConstantKind::Bool(l < r)),
+                _ => None,
+            },
+            (mir::ConstantKind::Str(l), mir::ConstantKind::Str(r)) => match op {
+                hir::BinOp::Add => Some(mir::ConstantKind::Str(format!("{l}{r}"))),
+                hir::BinOp::Eq => Some(mir::ConstantKind::Bool(l == r)),
+                hir::BinOp::Ne => Some(mir::ConstantKind::Bool(l != r)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn lower_binary_op_const_values(
+        op: &hir::BinOp,
+        left: &mir::ConstValue,
+        right: &mir::ConstValue,
+    ) -> Option<mir::ConstantKind> {
+        match (left, right) {
+            (mir::ConstValue::Str(l), mir::ConstValue::Str(r)) => match op {
+                hir::BinOp::Add => Some(mir::ConstantKind::Str(format!("{l}{r}"))),
+                hir::BinOp::Eq => Some(mir::ConstantKind::Bool(l == r)),
+                hir::BinOp::Ne => Some(mir::ConstantKind::Bool(l != r)),
                 _ => None,
             },
             _ => None,
@@ -5699,6 +5777,19 @@ impl MirLowering {
                 }
                 Some(mir::ConstValue::Struct(lowered))
             }
+            hir::ExprKind::Slice(slice) => {
+                Some(mir::ConstValue::Str(self.lower_const_string_slice(program, slice)?))
+            }
+            hir::ExprKind::Index(base, index) => self
+                .lower_const_expr(program, base, None, None)
+                .and_then(|constant| self.const_index_value(program, expr.span, &constant, index))
+                .and_then(|(constant, _)| self.const_value_from_constant(&constant)),
+            hir::ExprKind::FieldAccess(base, field) => {
+                self.lower_const_field_access(program, base, field.as_str(), expr.span)
+                    .and_then(|constant| self.const_value_from_constant(&constant))
+            }
+            hir::ExprKind::MethodCall(receiver, method_name, args) => self
+                .lower_const_method_value(program, receiver, method_name.as_str(), args, expr.span),
             hir::ExprKind::Path(path) => {
                 let hir::Res::Def(def_id) = path.res.as_ref()? else {
                     return None;
@@ -5746,6 +5837,196 @@ impl MirLowering {
                     _ => return None,
                 }
             }
+            _ => None,
+        }
+    }
+
+    fn lower_const_string_slice(
+        &mut self,
+        program: &hir::Program,
+        slice: &hir::SliceExpr,
+    ) -> Option<String> {
+        let base = self.const_string_from_expr(program, slice.base.as_ref())?;
+        let start = match slice.start.as_ref() {
+            Some(start) => self.const_index_u64(program, start.as_ref())? as usize,
+            None => 0,
+        };
+        let mut end = match slice.end.as_ref() {
+            Some(end) => self.const_index_u64(program, end.as_ref())? as usize,
+            None => base.len(),
+        };
+        if slice.inclusive {
+            end = end.checked_add(1)?;
+        }
+        if start > end || end > base.len() {
+            return None;
+        }
+        base.get(start..end).map(str::to_string)
+    }
+
+    fn lower_const_method_value(
+        &mut self,
+        program: &hir::Program,
+        receiver: &hir::Expr,
+        method_name: &str,
+        args: &[hir::CallArg],
+        _span: Span,
+    ) -> Option<mir::ConstValue> {
+        let matches_name = |name: &str| method_name == name || method_name.ends_with(&format!("::{name}"));
+        let receiver_value = self.lower_const_value(program, receiver, None)?;
+
+        if matches_name("len") && args.is_empty() {
+            return match &receiver_value {
+                mir::ConstValue::Str(text) => Some(mir::ConstValue::UInt(text.len() as u64)),
+                mir::ConstValue::List { elements, .. } => {
+                    Some(mir::ConstValue::UInt(elements.len() as u64))
+                }
+                mir::ConstValue::Array(elements) => Some(mir::ConstValue::UInt(elements.len() as u64)),
+                mir::ConstValue::Tuple(fields) => Some(mir::ConstValue::UInt(fields.len() as u64)),
+                _ => None,
+            };
+        }
+
+        let receiver_text = match &receiver_value {
+            mir::ConstValue::Str(text) => Some(text.clone()),
+            _ => None,
+        };
+        let needle = match args.first() {
+            Some(arg) => self.const_string_from_expr(program, &arg.value)?,
+            None => return None,
+        };
+        if matches_name("starts_with") && args.len() == 1 {
+            let receiver_text = receiver_text?;
+            return Some(mir::ConstValue::Bool(receiver_text.starts_with(&needle)));
+        }
+        if matches_name("ends_with") && args.len() == 1 {
+            let receiver_text = receiver_text?;
+            return Some(mir::ConstValue::Bool(receiver_text.ends_with(&needle)));
+        }
+        if matches_name("contains") && args.len() == 1 {
+            if let Some(receiver_text) = receiver_text {
+                return Some(mir::ConstValue::Bool(receiver_text.contains(&needle)));
+            }
+            if let Some(items) = Self::const_string_items(&receiver_value) {
+                return Some(mir::ConstValue::Bool(items.iter().any(|item| item == &needle)));
+            }
+        }
+        None
+    }
+
+    fn lower_const_field_access(
+        &mut self,
+        _program: &hir::Program,
+        base: &hir::Expr,
+        field: &str,
+        span: Span,
+    ) -> Option<mir::Constant> {
+        let hir::ExprKind::IntrinsicCall(call) = &base.kind else {
+            return None;
+        };
+        if call.kind != IntrinsicCallKind::TypeOf || call.callargs.len() != 1 {
+            return None;
+        }
+        let type_arg = &call.callargs[0].value;
+
+        let hir::ExprKind::Path(path) = &type_arg.kind else {
+            return None;
+        };
+        let struct_def_id = if let Some(hir::Res::Def(def_id)) = &path.res {
+            *def_id
+        } else {
+            let name = path.segments.last()?.name.as_str();
+            let mut matches = self
+                .struct_defs
+                .iter()
+                .filter_map(|(def_id, info)| (info.name == name).then_some(*def_id))
+                .collect::<Vec<_>>();
+            if matches.len() != 1 {
+                return None;
+            }
+            matches.pop()?
+        };
+        let struct_info = self.struct_defs.get(&struct_def_id)?;
+        match field {
+            "fields" => {
+                let names = struct_info
+                    .fields
+                    .iter()
+                    .map(|field| field.name.clone())
+                    .collect::<Vec<_>>();
+                Some(self.string_list_constant(span, names))
+            }
+            "methods" => {
+                let method_names = self
+                    .struct_methods
+                    .get(&struct_info.name)
+                    .map(|methods| methods.keys().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default();
+                Some(self.string_list_constant(span, method_names))
+            }
+            _ => None,
+        }
+    }
+
+    fn string_list_constant(&self, span: Span, items: Vec<String>) -> mir::Constant {
+        let elem_ty = self.string_slice_ty();
+        let ty = Ty {
+            kind: TyKind::Slice(Box::new(elem_ty.clone())),
+        };
+        let elements = items.into_iter().map(mir::ConstValue::Str).collect();
+        mir::Constant {
+            span,
+            user_ty: None,
+            literal: mir::ConstantKind::Val(
+                mir::ConstValue::List { elements, elem_ty },
+                ty,
+            ),
+        }
+    }
+
+    fn const_value_from_constant(&self, constant: &mir::Constant) -> Option<mir::ConstValue> {
+        match &constant.literal {
+            mir::ConstantKind::Int(v) => Some(mir::ConstValue::Int(*v)),
+            mir::ConstantKind::UInt(v) => Some(mir::ConstValue::UInt(*v)),
+            mir::ConstantKind::Bool(v) => Some(mir::ConstValue::Bool(*v)),
+            mir::ConstantKind::Float(v) => Some(mir::ConstValue::Float(*v)),
+            mir::ConstantKind::Str(v) => Some(mir::ConstValue::Str(v.clone())),
+            mir::ConstantKind::Val(v, _) => Some(v.clone()),
+            _ => None,
+        }
+    }
+
+    fn const_string_items(value: &mir::ConstValue) -> Option<Vec<String>> {
+        let items = match value {
+            mir::ConstValue::List { elements, .. } | mir::ConstValue::Array(elements) => elements,
+            mir::ConstValue::Tuple(fields) => fields,
+            _ => return None,
+        };
+        let mut names = Vec::with_capacity(items.len());
+        for item in items {
+            let mir::ConstValue::Str(name) = item else {
+                return None;
+            };
+            names.push(name.clone());
+        }
+        Some(names)
+    }
+
+    fn const_string_from_expr(
+        &mut self,
+        program: &hir::Program,
+        expr: &hir::Expr,
+    ) -> Option<String> {
+        match self.lower_const_value(program, expr, None)? {
+            mir::ConstValue::Str(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    fn const_index_u64(&mut self, program: &hir::Program, expr: &hir::Expr) -> Option<u64> {
+        match self.lower_const_value(program, expr, None)? {
+            mir::ConstValue::UInt(value) => Some(value),
+            mir::ConstValue::Int(value) if value >= 0 => Some(value as u64),
             _ => None,
         }
     }
@@ -6099,49 +6380,6 @@ impl MirLowering {
             span,
             user_ty: None,
             literal,
-        }
-    }
-
-    fn const_constant_from_expr(
-        &mut self,
-        program: &hir::Program,
-        expr: &hir::Expr,
-    ) -> Option<mir::Constant> {
-        match &expr.kind {
-            hir::ExprKind::Literal(lit) => Some(mir::Constant {
-                span: expr.span,
-                user_ty: None,
-                literal: self.lower_literal(lit),
-            }),
-            hir::ExprKind::Block(block) if block.stmts.is_empty() => {
-                self.const_constant_from_expr(program, block.expr.as_deref()?)
-            }
-            hir::ExprKind::Reference(reference) => {
-                self.const_constant_from_expr(program, &reference.expr)
-            }
-            hir::ExprKind::Unary(hir::UnOp::Deref, inner) => {
-                self.const_constant_from_expr(program, inner)
-            }
-            hir::ExprKind::Path(path) => {
-                let hir::Res::Def(def_id) = path.res.as_ref()? else {
-                    return None;
-                };
-                if let Some(const_info) = self.const_values.get(def_id) {
-                    return Some(const_info.value.clone());
-                }
-                let item = program.def_map.get(def_id)?;
-                let hir::ItemKind::Const(konst) = &item.kind else {
-                    return None;
-                };
-                let ty = self.lower_type_expr(&konst.ty);
-                self.lower_const_expr(program, &konst.body.value, Some(&ty), None)
-            }
-            hir::ExprKind::Index(base, index) => {
-                let constant = self.const_constant_from_expr(program, base)?;
-                self.const_index_value(program, expr.span, &constant, index)
-                    .map(|(constant, _)| constant)
-            }
-            _ => None,
         }
     }
 
@@ -12939,6 +13177,24 @@ impl<'a> BodyBuilder<'a> {
         }
         self.active_exprs.insert(expr.hir_id);
         let _guard = ExprRecursionGuard::new(&mut self.active_exprs, expr.hir_id);
+        if matches!(
+            expr.kind,
+            hir::ExprKind::FieldAccess(_, _) | hir::ExprKind::MethodCall(_, _, _)
+        ) {
+            if let Some(constant) =
+                self.lowering
+                    .lower_const_expr(self.program, expr, expected, None)
+            {
+                let ty = expected
+                    .cloned()
+                    .or_else(|| self.constant_ty_from_constant(&constant))
+                    .unwrap_or_else(|| self.lowering.error_ty());
+                return Ok(OperandInfo {
+                    operand: mir::Operand::Constant(constant),
+                    ty,
+                });
+            }
+        }
         if let Some(place) = self.lower_place(expr)? {
             if let Some(expected_ty) = expected {
                 if let Some((variant, layout)) =
@@ -13163,6 +13419,57 @@ impl<'a> BodyBuilder<'a> {
                             });
                         }
                     }
+                    if let Some(const_info) = self.lowering.const_values.get(def_id).cloned() {
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::Constant(const_info.value),
+                            ty: const_info.ty,
+                        });
+                    }
+                    if let Some((name, ty)) = self.lowering.executable_consts.get(def_id) {
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::Constant(mir::Constant {
+                                span: expr.span,
+                                user_ty: None,
+                                literal: mir::ConstantKind::Global(name.clone(), ty.clone()),
+                            }),
+                            ty: ty.clone(),
+                        });
+                    }
+                    if let Some(const_item) = self.program.def_map.get(def_id) {
+                        if let hir::ItemKind::Const(konst) = &const_item.kind {
+                            self.lowering
+                                .register_const_value(self.program, *def_id, konst);
+                            if let Some(const_info) = self.lowering.const_values.get(def_id) {
+                                return Ok(OperandInfo {
+                                    operand: mir::Operand::Constant(const_info.value.clone()),
+                                    ty: const_info.ty.clone(),
+                                });
+                            }
+                            let ty = self.lower_type_expr(&konst.ty);
+                            let local_id = self.allocate_temp(ty.clone(), expr.span);
+                            let place = mir::Place::from_local(local_id);
+                            self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
+                            if let Some(struct_def) = self.struct_def_from_ty(&ty) {
+                                self.local_structs.insert(local_id, struct_def);
+                            }
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::copy(place),
+                                ty,
+                            });
+                        }
+                    } else if let Some(konst) = self.const_items.get(def_id).cloned() {
+                        let ty = self.lower_type_expr(&konst.ty);
+                        let local_id = self.allocate_temp(ty.clone(), expr.span);
+                        let place = mir::Place::from_local(local_id);
+                        self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
+                        if let Some(struct_def) = self.struct_def_from_ty(&ty) {
+                            self.local_structs.insert(local_id, struct_def);
+                        }
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::copy(place),
+                            ty,
+                        });
+                    }
                     if let Some(variant) = self.lowering.enum_variants.get(def_id).cloned() {
                         let mut layout = expected.and_then(|ty| {
                             self.enum_layout_for_variant(&variant, Some(ty), expr.span)
@@ -13200,46 +13507,8 @@ impl<'a> BodyBuilder<'a> {
                             "unable to resolve enum layout for variant value",
                         );
                     }
-                    if let Some(const_info) = self.lowering.const_values.get(def_id).cloned() {
-                        if resolved_path.segments.last().map(|seg| seg.name.as_str())
-                            == Some("REGISTRY")
-                        {
-                            self.lowering.emit_warning(
-                                expr.span,
-                                format!(
-                                    "lower_operand resolved REGISTRY to const ty {:?}",
-                                    const_info.ty.kind
-                                ),
-                            );
-                        }
-                        return Ok(OperandInfo {
-                            operand: mir::Operand::Constant(const_info.value.clone()),
-                            ty: const_info.ty.clone(),
-                        });
-                    }
-
                     if let Some(const_item) = self.program.def_map.get(def_id) {
-                        if let hir::ItemKind::Const(konst) = &const_item.kind {
-                            self.lowering
-                                .register_const_value(self.program, *def_id, konst);
-                            if let Some(const_info) = self.lowering.const_values.get(def_id) {
-                                return Ok(OperandInfo {
-                                    operand: mir::Operand::Constant(const_info.value.clone()),
-                                    ty: const_info.ty.clone(),
-                                });
-                            }
-                            let ty = self.lower_type_expr(&konst.ty);
-                            let local_id = self.allocate_temp(ty.clone(), expr.span);
-                            let place = mir::Place::from_local(local_id);
-                            self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
-                            if let Some(struct_def) = self.struct_def_from_ty(&ty) {
-                                self.local_structs.insert(local_id, struct_def);
-                            }
-                            return Ok(OperandInfo {
-                                operand: mir::Operand::copy(place),
-                                ty,
-                            });
-                        } else if let hir::ItemKind::Function(func) = &const_item.kind {
+                        if let hir::ItemKind::Function(func) = &const_item.kind {
                             // Function reference - create a function pointer constant
                             let sig = self.lowering.lower_function_sig(&func.sig, None);
                             let fn_ty = self.lowering.function_pointer_ty(&sig);
@@ -13256,18 +13525,6 @@ impl<'a> BodyBuilder<'a> {
                                 ty: fn_ty,
                             });
                         }
-                    } else if let Some(konst) = self.const_items.get(def_id).cloned() {
-                        let ty = self.lower_type_expr(&konst.ty);
-                        let local_id = self.allocate_temp(ty.clone(), expr.span);
-                        let place = mir::Place::from_local(local_id);
-                        self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
-                        if let Some(struct_def) = self.struct_def_from_ty(&ty) {
-                            self.local_structs.insert(local_id, struct_def);
-                        }
-                        return Ok(OperandInfo {
-                            operand: mir::Operand::copy(place),
-                            ty,
-                        });
                     }
                 }
 
@@ -13500,6 +13757,7 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::Slice(slice) => self.lower_slice_operand(slice, expr.span, expected),
             hir::ExprKind::Index(base, index) => {
+                let mut resolved_const_base = None;
                 if let hir::ExprKind::Path(path) = &base.kind {
                     if let Some(hir::Res::Def(def_id)) = &path.res {
                         if let Some(const_info) = self.lowering.const_values.get(def_id).cloned() {
@@ -13514,6 +13772,10 @@ impl<'a> BodyBuilder<'a> {
                                     ty,
                                 });
                             }
+                            resolved_const_base = Some(OperandInfo {
+                                operand: mir::Operand::Constant(const_info.value),
+                                ty: const_info.ty,
+                            });
                         }
                         if let Some(konst) = self.const_items.get(def_id).cloned() {
                             let ty = self.lowering.lower_type_expr(&konst.ty);
@@ -13534,11 +13796,18 @@ impl<'a> BodyBuilder<'a> {
                                         ty,
                                     });
                                 }
+                                resolved_const_base = Some(OperandInfo {
+                                    operand: mir::Operand::Constant(constant),
+                                    ty,
+                                });
                             }
                         }
                     }
                 }
-                let base_info = self.lower_operand(base, None)?;
+                let base_info = match resolved_const_base {
+                    Some(const_info) => const_info,
+                    None => self.lower_operand(base, None)?,
+                };
                 if self.is_list_container(&base_info.ty) {
                     let index_ty = Ty {
                         kind: TyKind::Uint(UintTy::Usize),
@@ -13735,7 +14004,10 @@ impl<'a> BodyBuilder<'a> {
                     _ => {
                         self.lowering.emit_error(
                             expr.span,
-                            "index access requires array, slice, or supported container",
+                            format!(
+                                "index access requires array, slice, or supported container; found {:?}",
+                                base_ty.kind
+                            ),
                         );
                         let ty = expected
                             .cloned()
@@ -14425,6 +14697,34 @@ impl<'a> BodyBuilder<'a> {
             Ty { kind: TyKind::Bool },
             mir::ConstantKind::Bool(value),
         )
+    }
+
+    fn constant_ty_from_constant(&self, constant: &mir::Constant) -> Option<Ty> {
+        match &constant.literal {
+            mir::ConstantKind::Bool(_) => Some(Ty { kind: TyKind::Bool }),
+            mir::ConstantKind::Int(_) => Some(Ty {
+                kind: TyKind::Int(IntTy::I64),
+            }),
+            mir::ConstantKind::UInt(_) => Some(Ty {
+                kind: TyKind::Uint(UintTy::U64),
+            }),
+            mir::ConstantKind::Float(_) => Some(Ty {
+                kind: TyKind::Float(FloatTy::F64),
+            }),
+            mir::ConstantKind::Str(_) => Some(self.lowering.string_slice_ty()),
+            mir::ConstantKind::Val(_, ty)
+            | mir::ConstantKind::Fn(_, ty)
+            | mir::ConstantKind::Global(_, ty) => Some(ty.clone()),
+            mir::ConstantKind::Ty(_) => None,
+            mir::ConstantKind::Null => Some(Ty {
+                kind: TyKind::RawPtr(TypeAndMut {
+                    ty: Box::new(Ty {
+                        kind: TyKind::Int(IntTy::I8),
+                    }),
+                    mutbl: Mutability::Not,
+                }),
+            }),
+        }
     }
 
     fn lower_condition_operand(&mut self, expr: &hir::Expr) -> Result<mir::Operand> {
@@ -15551,7 +15851,38 @@ impl<'a> BodyBuilder<'a> {
             }
             TyKind::Slice(elem) => {
                 if self.is_c_string_ptr(elem.as_ref()) {
-                    Ok((operand, ty.clone(), "%s".to_string()))
+                    let ptr_ty = self.lowering.raw_string_ptr_ty();
+                    let ptr_operand = match operand {
+                        mir::Operand::Constant(constant)
+                            if matches!(constant.literal, mir::ConstantKind::Str(_)) =>
+                        {
+                            mir::Operand::Constant(constant)
+                        }
+                        mir::Operand::Copy(place) | mir::Operand::Move(place) => {
+                            let mut ptr_place = place;
+                            ptr_place
+                                .projection
+                                .push(mir::PlaceElem::Field(0, ptr_ty.clone()));
+                            mir::Operand::Copy(ptr_place)
+                        }
+                        operand => {
+                            let local = self.allocate_temp(ty.clone(), span);
+                            let place = mir::Place::from_local(local);
+                            self.push_statement(mir::Statement {
+                                source_info: span,
+                                kind: mir::StatementKind::Assign(
+                                    place.clone(),
+                                    mir::Rvalue::Use(operand),
+                                ),
+                            });
+                            let mut ptr_place = place;
+                            ptr_place
+                                .projection
+                                .push(mir::PlaceElem::Field(0, ptr_ty.clone()));
+                            mir::Operand::Copy(ptr_place)
+                        }
+                    };
+                    Ok((ptr_operand, ptr_ty, "%s".to_string()))
                 } else {
                     self.lowering
                         .emit_warning(span, "printf using %p for non-string slice argument");
@@ -16017,7 +16348,7 @@ impl<'a> BodyBuilder<'a> {
 
     fn lower_place_path_base(
         &mut self,
-        expr: &hir::Expr,
+        _expr: &hir::Expr,
         path: &hir::Path,
     ) -> Result<Option<PlaceInfo>> {
         let fallback_local = path
@@ -16053,37 +16384,9 @@ impl<'a> BodyBuilder<'a> {
                     }));
                 }
             }
-            Some(hir::Res::Def(def_id)) => {
-                if let Some(const_item) = self.program.def_map.get(def_id) {
-                    if let hir::ItemKind::Const(konst) = &const_item.kind {
-                        let ty = self.lower_type_expr(&konst.ty);
-                        let local_id = self.allocate_temp(ty.clone(), expr.span);
-                        let place_local = mir::Place::from_local(local_id);
-                        self.lower_expr_into_place(&konst.body.value, place_local.clone(), &ty)?;
-                        if let Some(struct_def) = self.struct_def_from_ty(&ty) {
-                            self.local_structs.insert(local_id, struct_def);
-                        }
-                        return Ok(Some(PlaceInfo {
-                            place: place_local,
-                            ty: ty.clone(),
-                            struct_def: self.struct_def_from_ty(&ty),
-                        }));
-                    }
-                } else if let Some(konst) = self.const_items.get(def_id).cloned() {
-                    let ty = self.lower_type_expr(&konst.ty);
-                    let local_id = self.allocate_temp(ty.clone(), expr.span);
-                    let place_local = mir::Place::from_local(local_id);
-                    self.lower_expr_into_place(&konst.body.value, place_local.clone(), &ty)?;
-                    if let Some(struct_def) = self.struct_def_from_ty(&ty) {
-                        self.local_structs.insert(local_id, struct_def);
-                    }
-                    return Ok(Some(PlaceInfo {
-                        place: place_local,
-                        ty: ty.clone(),
-                        struct_def: self.struct_def_from_ty(&ty),
-                    }));
-                }
-            }
+            // Constants are operands, never assignable places. Let
+            // `lower_operand` resolve them to their constant or global form.
+            Some(hir::Res::Def(_)) => {}
             _ => {
                 if let Some(local_id) = fallback_local {
                     let ty = self.locals[local_id as usize].ty.clone();
@@ -16934,6 +17237,19 @@ impl<'a> BodyBuilder<'a> {
                 }
             },
             hir::ExprKind::MethodCall(receiver, method_name, args) => {
+                if let Some(constant) =
+                    self.lowering
+                        .lower_const_expr(self.program, expr, Some(expected_ty), None)
+                {
+                    self.push_statement(mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::Use(mir::Operand::Constant(constant)),
+                        ),
+                    });
+                    return Ok(());
+                }
                 let method_key = method_name.clone();
                 let mut resolved_info: Option<(MethodLoweringInfo, Option<PlaceInfo>)> = None;
                 let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
@@ -17597,7 +17913,8 @@ impl<'a> BodyBuilder<'a> {
 
                 if method_name.as_str() == "len" && args.is_empty() {
                     if let Some(constant) =
-                        self.lowering.const_constant_from_expr(self.program, receiver)
+                        self.lowering
+                            .lower_const_expr(self.program, receiver, None, None)
                     {
                         if let Some(len) = self.lowering.const_len_from_constant(&constant) {
                             let len_ty = Ty {

@@ -1011,6 +1011,16 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
+        IntrinsicCallKind::TypeOf => {
+            if invoke.args.len() != 1 || !invoke.kwargs.is_empty() {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(
+                kind,
+                vec![invoke.args[0].clone()],
+                Vec::new(),
+            ))
+        }
         IntrinsicCallKind::Format => None,
         IntrinsicCallKind::DebugAssertions
         | IntrinsicCallKind::Input
@@ -1021,7 +1031,6 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         | IntrinsicCallKind::ReflectFields
         | IntrinsicCallKind::HasMethod
         | IntrinsicCallKind::TypeName
-        | IntrinsicCallKind::TypeOf
         | IntrinsicCallKind::CloneStruct
         | IntrinsicCallKind::HasField
         | IntrinsicCallKind::FieldCount
@@ -1077,6 +1086,7 @@ fn detect_intrinsic_call(locator: &Name) -> Option<IntrinsicCallKind> {
             "print" => Some(IntrinsicCallKind::Print),
             "println" => Some(IntrinsicCallKind::Println),
             "len" => Some(IntrinsicCallKind::Len),
+            "type" => Some(IntrinsicCallKind::TypeOf),
             "catch_unwind" => Some(IntrinsicCallKind::CatchUnwind),
             "catch_unwind_result" => Some(IntrinsicCallKind::CatchUnwindResult),
             _ => None,
@@ -1088,6 +1098,9 @@ fn detect_intrinsic_call(locator: &Name) -> Option<IntrinsicCallKind> {
                 ["std", "println"] | ["std", "io", "println"] => Some(IntrinsicCallKind::Println),
                 ["std", "len"] | ["std", "builtins", "len"] | ["len"] => {
                     Some(IntrinsicCallKind::Len)
+                }
+                ["type"] | ["std", "type"] | ["std", "builtins", "type"] => {
+                    Some(IntrinsicCallKind::TypeOf)
                 }
                 ["std", "time", "now"] => Some(IntrinsicCallKind::TimeNow),
                 ["std", "time", "sleep"] => Some(IntrinsicCallKind::Sleep),
