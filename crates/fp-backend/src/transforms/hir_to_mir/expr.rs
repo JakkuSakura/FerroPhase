@@ -5583,6 +5583,48 @@ impl MirLowering {
                     ),
                 })
             }
+            hir::ExprKind::Binary(op, lhs, rhs) => {
+                let left = self.lower_const_expr(program, lhs, expected_ty, container_args)?;
+                let right = self.lower_const_expr(program, rhs, expected_ty, container_args)?;
+                let kind = Self::lower_binary_op_const(op, &left, &right)?;
+                Some(mir::Constant {
+                    span: expr.span,
+                    user_ty: None,
+                    literal: kind,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn lower_binary_op_const(
+        op: &hir::BinOp,
+        left: &mir::Constant,
+        right: &mir::Constant,
+    ) -> Option<mir::ConstantKind> {
+        match (&left.literal, &right.literal) {
+            (mir::ConstantKind::Int(l), mir::ConstantKind::Int(r)) => match op {
+                hir::BinOp::Add => Some(mir::ConstantKind::Int(l + r)),
+                hir::BinOp::Sub => Some(mir::ConstantKind::Int(l - r)),
+                hir::BinOp::Mul => Some(mir::ConstantKind::Int(l * r)),
+                hir::BinOp::Div => Some(mir::ConstantKind::Int(l / r)),
+                hir::BinOp::Gt => Some(mir::ConstantKind::Bool(l > r)),
+                hir::BinOp::Lt => Some(mir::ConstantKind::Bool(l < r)),
+                hir::BinOp::Ge => Some(mir::ConstantKind::Bool(l >= r)),
+                hir::BinOp::Le => Some(mir::ConstantKind::Bool(l <= r)),
+                hir::BinOp::Eq => Some(mir::ConstantKind::Bool(l == r)),
+                hir::BinOp::Ne => Some(mir::ConstantKind::Bool(l != r)),
+                _ => None,
+            },
+            (mir::ConstantKind::UInt(l), mir::ConstantKind::UInt(r)) => match op {
+                hir::BinOp::Add => Some(mir::ConstantKind::UInt(l + r)),
+                hir::BinOp::Sub => Some(mir::ConstantKind::UInt(l - r)),
+                hir::BinOp::Mul => Some(mir::ConstantKind::UInt(l * r)),
+                hir::BinOp::Div => Some(mir::ConstantKind::UInt(l / r)),
+                hir::BinOp::Gt => Some(mir::ConstantKind::Bool(l > r)),
+                hir::BinOp::Lt => Some(mir::ConstantKind::Bool(l < r)),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -9332,19 +9374,11 @@ impl<'a> BodyBuilder<'a> {
                 self.lowering
                     .register_const_value(self.program, item.def_id, konst);
                 self.const_items.insert(item.def_id, konst.clone());
-                // For aggregate/reference types (slice, struct, array),
-                // also emit a Static MIR item so the native codegen has a
-                // global to emit with proper data and relocations.
+                // Emit a Static/ExecutableConst MIR item for every
+                // non-unit const so cross-references between consts
+                // work correctly in the interpreter and native codegen.
                 let ty = self.lowering.lower_type_expr(&konst.ty);
-                if !MirLowering::is_unit_ty(&ty)
-                    && (matches!(&ty.kind, TyKind::Ref(..) | TyKind::Slice(..) | TyKind::RawPtr(..))
-                        || matches!(
-                            &ty.kind,
-                            TyKind::Tuple(..)
-                                | TyKind::Array(..)
-                                | TyKind::Adt(..)
-                        ))
-                {
+                if !MirLowering::is_unit_ty(&ty) {
                     let mir_item = self
                         .lowering
                         .lower_const(self.program, item.def_id, konst)?;
