@@ -172,7 +172,7 @@ impl VirtMem {
     }
 }
 
-const REG_COUNT: usize = 256;
+const REG_COUNT: usize = 1024;
 
 #[derive(Clone)]
 pub struct RegFile {

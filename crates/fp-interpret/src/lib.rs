@@ -2,7 +2,7 @@ mod vm;
 
 use std::collections::HashMap;
 
-use fp_core::ast::{Value, ValueList, ValueString, ValueTuple};
+use fp_core::ast::{Value, ValueList, ValueMapEntry, ValueString, ValueTuple};
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirInstruction, LirInstructionKind,
     LirProgram, LirTerminator, LirType, LirValue, RegisterId,
@@ -616,6 +616,9 @@ impl LirInterpreter {
     }
 
     fn call_intrinsic(&mut self, name: &str, args: &[u64]) -> LirResult<u64> {
+        if let Some(rest) = name.strip_prefix("__bc_") {
+            return self.call_bc_intrinsic(rest, args);
+        }
         match name {
             "println" | "print" | "eprintln" | "eprint" | "printf" => Ok(0),
             "sizeof" | "strlen" => Ok(0),
@@ -654,6 +657,193 @@ impl LirInterpreter {
                 Ok(handle)
             }
             _ => Ok(0),
+        }
+    }
+
+    fn call_bc_intrinsic(&mut self, name: &str, args: &[u64]) -> LirResult<u64> {
+        match name {
+            "make_tuple" | "make_array" | "make_list" => {
+                let count = args.first().copied().unwrap_or(0) as usize;
+                let elements: Vec<Value> = args[1..]
+                    .iter()
+                    .take(count)
+                    .map(|&raw| Value::uint(raw))
+                    .collect();
+                let obj = match name {
+                    "make_tuple" => Value::Tuple(ValueTuple::new(elements)),
+                    _ => Value::List(ValueList::new(elements)),
+                };
+                let handle = self.state.objects.len() as u64;
+                self.state.objects.push(obj);
+                Ok(handle)
+            }
+            "make_map" => {
+                let count = args.first().copied().unwrap_or(0) as usize;
+                let mut entries = Vec::with_capacity(count);
+                let mut i = 1;
+                for _ in 0..count {
+                    let key_raw = args.get(i).copied().unwrap_or(0);
+                    let val_raw = args.get(i + 1).copied().unwrap_or(0);
+                    entries.push(ValueMapEntry::new(
+                        Value::uint(key_raw),
+                        Value::uint(val_raw),
+                    ));
+                    i += 2;
+                }
+                let obj = Value::Map(fp_core::ast::ValueMap { entries });
+                let handle = self.state.objects.len() as u64;
+                self.state.objects.push(obj);
+                Ok(handle)
+            }
+            "tuple_get" | "array_get" => {
+                let handle = args.first().copied().unwrap_or(0) as usize;
+                let index = args.get(1).copied().unwrap_or(0) as usize;
+                let obj = self
+                    .state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling handle {handle}")))?;
+                let element = match &obj {
+                    Value::Tuple(t) => t.values.get(index).cloned(),
+                    Value::List(l) => l.values.get(index).cloned(),
+                    _ => return Err(VmError::Runtime("get on non-container".into())),
+                }
+                .ok_or(VmError::Runtime(format!("index {index} out of bounds")))?;
+                Ok(self.value_to_handle_or_raw(&element))
+            }
+            "tuple_set" => {
+                let handle = args.first().copied().unwrap_or(0) as usize;
+                let index = args.get(1).copied().unwrap_or(0) as usize;
+                let raw_value = args.get(2).copied().unwrap_or(0);
+                let obj = self
+                    .state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling handle {handle}")))?;
+                let mut values = match &obj {
+                    Value::Tuple(t) => t.values.clone(),
+                    _ => return Err(VmError::Runtime("set on non-tuple".into())),
+                };
+                if index >= values.len() {
+                    return Err(VmError::Runtime(format!("index {index} out of bounds")));
+                }
+                values[index] = Value::uint(raw_value);
+                let new_handle = self.state.objects.len() as u64;
+                self.state.objects.push(Value::Tuple(ValueTuple::new(values)));
+                Ok(new_handle)
+            }
+            "container_len" => {
+                let handle = args.first().copied().unwrap_or(0) as usize;
+                let obj = self
+                    .state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling handle {handle}")))?;
+                let len = match &obj {
+                    Value::Tuple(t) => t.values.len() as u64,
+                    Value::List(l) => l.values.len() as u64,
+                    Value::Map(m) => m.entries.len() as u64,
+                    Value::String(s) => s.value.len() as u64,
+                    _ => return Err(VmError::Runtime("len on non-container".into())),
+                };
+                Ok(len)
+            }
+            "str_alloc" => {
+                let len = args.first().copied().unwrap_or(0) as usize;
+                let s = " ".repeat(len);
+                let handle = self.state.objects.len() as u64;
+                self.state.objects.push(Value::string(s));
+                Ok(handle)
+            }
+            "println" => {
+                for &raw in args {
+                    let val = self.raw_to_value(raw);
+                    print!("{}", self.render_value(&val));
+                }
+                println!();
+                Ok(0)
+            }
+            "print" => {
+                for &raw in args {
+                    let val = self.raw_to_value(raw);
+                    print!("{}", self.render_value(&val));
+                }
+                Ok(0)
+            }
+            "format" => {
+                let mut result = String::new();
+                for &raw in args {
+                    let val = self.raw_to_value(raw);
+                    result.push_str(&self.render_value(&val));
+                }
+                let handle = self.state.objects.len() as u64;
+                self.state.objects.push(Value::string(result));
+                Ok(handle)
+            }
+            "time_now" => {
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let dur = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default();
+                Ok(dur.as_secs_f64().to_bits())
+            }
+            _ => Err(VmError::Runtime(format!("unknown bc intrinsic: {name}"))),
+        }
+    }
+
+    fn raw_to_value(&self, raw: u64) -> Value {
+        Value::uint(raw)
+    }
+
+    fn value_to_handle_or_raw(&mut self, v: &Value) -> u64 {
+        match v {
+            Value::Int(i) => i.value as u64,
+            Value::UInt(u) => u.value,
+            Value::Bool(b) => {
+                if b.value {
+                    1
+                } else {
+                    0
+                }
+            }
+            Value::Decimal(d) => d.value.to_bits(),
+            _ => {
+                let handle = self.state.objects.len() as u64;
+                self.state.objects.push(v.clone());
+                handle
+            }
+        }
+    }
+
+    fn render_value(&self, v: &Value) -> String {
+        match v {
+            Value::Unit(_) => "()".to_string(),
+            Value::Bool(b) => b.value.to_string(),
+            Value::Int(i) => i.value.to_string(),
+            Value::UInt(u) => u.value.to_string(),
+            Value::Decimal(d) => d.value.to_string(),
+            Value::String(s) => s.value.clone(),
+            Value::Null(_) => "null".to_string(),
+            Value::Tuple(t) => {
+                let items: Vec<String> = t.values.iter().map(|x| self.render_value(x)).collect();
+                format!("({})", items.join(", "))
+            }
+            Value::List(l) => {
+                let items: Vec<String> = l.values.iter().map(|x| self.render_value(x)).collect();
+                format!("[{}]", items.join(", "))
+            }
+            Value::Map(m) => {
+                let items: Vec<String> = m
+                    .entries
+                    .iter()
+                    .map(|e| format!("{}: {}", self.render_value(&e.key), self.render_value(&e.value)))
+                    .collect();
+                format!("{{{}}}", items.join(", "))
+            }
+            _ => format!("{v:?}"),
         }
     }
 }

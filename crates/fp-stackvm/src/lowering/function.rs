@@ -30,24 +30,20 @@ pub(crate) struct FunctionLowering<'a> {
     /// Bytecode local index → LIR register that holds the `Alloca`'d
     /// address of that local.
     pub local_addrs: HashMap<u32, RegisterId>,
-    /// The ID of the function's entry block (first block in the
-    /// bytecode function).
-    pub entry_block_id: BasicBlockId,
 }
 
 impl<'a> FunctionLowering<'a> {
     pub fn new(
         bytecode: &'a fp_bytecode::BytecodeProgram,
         func: &'a mut LirFunction,
-        entry_block_id: BasicBlockId,
+        _entry_block_id: BasicBlockId,
     ) -> Self {
         Self {
             bytecode,
             func,
-            next_reg: 1000,
+            next_reg: 10,
             stack: Vec::new(),
             local_addrs: HashMap::new(),
-            entry_block_id,
         }
     }
 
@@ -60,12 +56,6 @@ impl<'a> FunctionLowering<'a> {
         let reg = self.next_reg;
         self.next_reg += 1;
         reg
-    }
-
-    /// Return the most-recently-allocated register (i.e. the result of
-    /// the last emitted instruction).
-    pub fn last_reg(&self) -> RegisterId {
-        self.next_reg - 1
     }
 
     /// Push a register onto the simulated operand stack.
@@ -89,12 +79,10 @@ impl<'a> FunctionLowering<'a> {
     // Local address bookkeeping
     // ---------------------------------------------------------------
 
-    /// Record the alloca register for the given bytecode local index.
     pub fn set_local_addr(&mut self, local_idx: u32, addr_reg: RegisterId) {
         self.local_addrs.insert(local_idx, addr_reg);
     }
 
-    /// Look up the alloca register for a bytecode local.
     pub fn get_local_addr(&self, local_idx: u32) -> LowerResult<RegisterId> {
         self.local_addrs
             .get(&local_idx)
@@ -136,11 +124,6 @@ impl<'a> FunctionLowering<'a> {
         let block = self.current_block_mut(block_id);
         block.add_instruction(instr);
         Ok(reg)
-    }
-
-    /// Emit an instruction into the entry block.
-    pub fn emit_in_entry_block(&mut self, kind: LirInstructionKind) -> LowerResult<RegisterId> {
-        self.emit_in_block(self.entry_block_id, kind)
     }
 
     // ---------------------------------------------------------------
@@ -280,13 +263,18 @@ impl<'a> FunctionLowering<'a> {
         // -- Terminator lowering --
         match &block.terminator {
             BytecodeTerminator::Return => {
-                let ret_val = if self.stack.is_empty() {
-                    None
-                } else {
-                    Some(Self::reg_val(self.pop_reg()?))
-                };
+                // Bytecode VM reads locals[0] as the return value.
+                let addr_reg = self.get_local_addr(0)?;
+                let val_reg = self.emit_in_block(
+                    block_id,
+                    LirInstructionKind::Load {
+                        address: Self::reg_val(addr_reg),
+                        alignment: Some(8),
+                        volatile: false,
+                    },
+                )?;
                 let block = self.current_block_mut(block_id);
-                block.set_terminator(LirTerminator::Return(ret_val));
+                block.set_terminator(LirTerminator::Return(Some(Self::reg_val(val_reg))));
             }
             BytecodeTerminator::Jump { target } => {
                 let block = self.current_block_mut(block_id);

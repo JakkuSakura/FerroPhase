@@ -4,7 +4,9 @@ mod tests {
         BytecodeBinOp, BytecodeBlock, BytecodeCallee, BytecodeConst, BytecodeFunction,
         BytecodeInstr, BytecodePlace, BytecodeProgram, BytecodeTerminator,
     };
+    use fp_core::ast::Value;
     use fp_core::lir::LirTerminator;
+    use fp_interpret::LirInterpreter;
 
     use crate::lowering::lower_program;
 
@@ -124,5 +126,66 @@ mod tests {
 
         let lir = lower_program(&program).expect("lowering should succeed");
         assert_eq!(lir.functions.len(), 2);
+    }
+
+    #[test]
+    fn end_to_end_arithmetic() {
+        let program = BytecodeProgram {
+            const_pool: vec![BytecodeConst::Int(40), BytecodeConst::Int(2)],
+            functions: vec![BytecodeFunction {
+                name: "main".to_string(),
+                params: 0,
+                locals: 1,
+                blocks: vec![BytecodeBlock {
+                    id: 0,
+                    code: vec![
+                        BytecodeInstr::LoadConst(0),
+                        BytecodeInstr::LoadConst(1),
+                        BytecodeInstr::BinaryOp(BytecodeBinOp::Add),
+                        BytecodeInstr::StoreLocal(0),
+                    ],
+                    terminator: BytecodeTerminator::Return,
+                }],
+            }],
+            entry: Some("main".to_string()),
+        };
+
+        let lir = lower_program(&program).expect("lowering should succeed");
+        let mut interpreter = LirInterpreter::new();
+        let result = interpreter.run_main(&lir).expect("interpretation should succeed");
+        assert_eq!(result, Value::int(42));
+    }
+
+    #[test]
+    fn end_to_end_control_flow() {
+        let program = BytecodeProgram {
+            const_pool: vec![BytecodeConst::Bool(true)],
+            functions: vec![BytecodeFunction {
+                name: "main".to_string(),
+                params: 0,
+                locals: 1,
+                blocks: vec![
+                    BytecodeBlock {
+                        id: 0,
+                        code: vec![BytecodeInstr::LoadConst(0)],
+                        terminator: BytecodeTerminator::JumpIfTrue {
+                            target: 1,
+                            otherwise: 0,
+                        },
+                    },
+                    BytecodeBlock {
+                        id: 1,
+                        code: vec![],
+                        terminator: BytecodeTerminator::Return,
+                    },
+                ],
+            }],
+            entry: Some("main".to_string()),
+        };
+
+        let lir = lower_program(&program).expect("lowering should succeed");
+        let mut interpreter = LirInterpreter::new();
+        let result = interpreter.run_main(&lir).expect("interpretation should succeed");
+        assert_eq!(result, Value::int(0));
     }
 }
