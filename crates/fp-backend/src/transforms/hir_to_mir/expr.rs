@@ -9332,6 +9332,24 @@ impl<'a> BodyBuilder<'a> {
                 self.lowering
                     .register_const_value(self.program, item.def_id, konst);
                 self.const_items.insert(item.def_id, konst.clone());
+                // For aggregate/reference types (slice, struct, array),
+                // also emit a Static MIR item so the native codegen has a
+                // global to emit with proper data and relocations.
+                let ty = self.lowering.lower_type_expr(&konst.ty);
+                if !MirLowering::is_unit_ty(&ty)
+                    && (matches!(&ty.kind, TyKind::Ref(..) | TyKind::Slice(..) | TyKind::RawPtr(..))
+                        || matches!(
+                            &ty.kind,
+                            TyKind::Tuple(..)
+                                | TyKind::Array(..)
+                                | TyKind::Adt(..)
+                        ))
+                {
+                    let mir_item = self
+                        .lowering
+                        .lower_const(self.program, item.def_id, konst)?;
+                    self.lowering.extra_items.push(mir_item);
+                }
             }
             hir::ItemKind::Impl(impl_block) => {
                 self.lowering

@@ -353,10 +353,42 @@ impl CompilerDriver {
             mir::ConstantKind::Float(v) => Value::decimal(*v),
             mir::ConstantKind::Str(v) => Value::string(v.clone()),
             mir::ConstantKind::Null => Value::null(),
+            mir::ConstantKind::Val(mir::ConstValue::Array(elements), _) => {
+                Value::List(fp_core::ast::ValueList::new(
+                    elements.iter().filter_map(|v| self.const_value_to_value(v)).collect(),
+                ))
+            }
+            mir::ConstantKind::Val(mir::ConstValue::Tuple(fields), _) => {
+                Value::Tuple(fp_core::ast::ValueTuple::new(
+                    fields.iter().filter_map(|v| self.const_value_to_value(v)).collect(),
+                ))
+            }
             _ => {
-                eprintln!("mir_constant_to_value: unsupported literal {:?}", constant.literal);
                 return None;
             }
+        })
+    }
+
+    fn const_value_to_value(&self, cv: &mir::ConstValue) -> Option<Value> {
+        Some(match cv {
+            mir::ConstValue::Unit => Value::unit(),
+            mir::ConstValue::Bool(v) => Value::bool(*v),
+            mir::ConstValue::Int(v) => Value::int(*v),
+            mir::ConstValue::UInt(v) => Value::uint(*v),
+            mir::ConstValue::Float(v) => Value::decimal(*v),
+            mir::ConstValue::Str(v) => Value::string(v.clone()),
+            mir::ConstValue::Null => Value::null(),
+            mir::ConstValue::Tuple(fields) => {
+                Value::Tuple(fp_core::ast::ValueTuple::new(
+                    fields.iter().filter_map(|v| self.const_value_to_value(v)).collect(),
+                ))
+            }
+            mir::ConstValue::Array(elements) => {
+                Value::List(fp_core::ast::ValueList::new(
+                    elements.iter().filter_map(|v| self.const_value_to_value(v)).collect(),
+                ))
+            }
+            _ => return None,
         })
     }
 

@@ -1556,8 +1556,10 @@ fn encode_const_bytes(constant: &AsmConstant, ty: &AsmType) -> Result<Vec<u8>> {
             }
             Ok(out)
         }
+        (AsmConstant::GlobalRef(_, ptr_ty, _), _) => Ok(vec![0u8; size_of(ptr_ty) as usize]),
+        (AsmConstant::FunctionRef(_, ptr_ty), _) => Ok(vec![0u8; size_of(ptr_ty) as usize]),
         _ => Err(Error::from(
-            "unsupported global initializer for native rodata",
+            format!("unsupported global initializer for native rodata: {:?}", constant),
         )),
     }
 }
