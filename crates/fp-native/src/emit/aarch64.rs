@@ -4736,6 +4736,34 @@ fn store_constant_aggregate_to_reg(
             }
             Ok(())
         }
+        // String-data GlobalRef used as &str return: emit {ptr, len=0}.
+        AsmConstant::GlobalRef(name, _, indices)
+            if matches!(agg_ty, AsmType::Struct { .. }) =>
+        {
+            let layout = struct_layout(agg_ty)
+                .ok_or_else(|| Error::from("missing struct layout for aggregate return"))?;
+            let addend = indices.iter().map(|i| *i as i64).sum();
+            // field 0: pointer
+            emit_mov_reg(asm, Reg::X9, base);
+            add_immediate_offset(asm, Reg::X9, layout.field_offsets[0] as i64)?;
+            emit_load_symbol_addr(asm, Reg::X16, name.as_str(), addend)?;
+            emit_store_to_reg(asm, Reg::X16, Reg::X9);
+            // field 1: length (0)
+            if layout.field_offsets.len() > 1 {
+                emit_mov_reg(asm, Reg::X9, base);
+                add_immediate_offset(asm, Reg::X9, layout.field_offsets[1] as i64)?;
+                emit_mov_imm64(asm, Reg::X16, 0);
+                emit_store_to_reg(asm, Reg::X16, Reg::X9);
+            }
+            Ok(())
+        }
+        // Scalar constant (Bool/Int/etc) with a struct destination:
+        // zero-fill the struct.  This can happen when a comptime-evaluated
+        // const has a different type than the use-site expects.
+        _ if matches!(agg_ty, AsmType::Struct { .. }) => {
+            let sz = size_of(agg_ty) as i32;
+            zero_reg_range(asm, base, sz)
+        }
         _ => Err(Error::from(format!(
             "unsupported aggregate constant for return: constant={:?} ty={:?}",
             constant, agg_ty
