@@ -266,6 +266,7 @@ mod tests {
             rodata: Vec::new(),
             data: Vec::new(),
             relocs: Vec::new(),
+            section_relocs: Vec::new(),
             symbols,
             rodata_symbols: HashMap::new(),
             data_symbols: HashMap::new(),

@@ -265,7 +265,8 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     let segment_cmd_size = 72u64;
     let section_size = 80u64;
     let text_section_count = 1u64 + if has_stubs { 1 } else { 0 } + if has_rodata { 1 } else { 0 };
-    let data_section_count = if has_stubs { 1u64 } else { 0u64 } + if has_data { 1u64 } else { 0u64 };
+    let data_section_count =
+        if has_stubs { 1u64 } else { 0u64 } + if has_data { 1u64 } else { 0u64 };
 
     let lc_segment_text_size = segment_cmd_size + section_size * text_section_count;
     let lc_segment_data_size = segment_cmd_size + section_size * data_section_count;
@@ -327,7 +328,7 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     let data_seg_index = 2u8;
     let text_seg_index = 1u8;
     let mut rebase_offsets = Vec::new();
-    for reloc in &plan.relocs {
+    for reloc in plan.relocs.iter().chain(&plan.section_relocs) {
         if reloc.kind == RelocKind::Abs64 {
             let (seg_index, file_offset) = match reloc.section {
                 crate::emit::RelocSection::Text => (text_seg_index, text_offset + reloc.offset),
@@ -744,12 +745,19 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                 .wrapping_add(addend as u64))
         } else if let Some(offset) = plan.symbols.get(name) {
             Ok(text_addr.wrapping_add(*offset).wrapping_add(addend as u64))
+        } else if let Some(offset) = plan.data_symbols.get(name) {
+            Ok(vmaddr_data
+                .wrapping_add(*offset)
+                .wrapping_add(addend as u64))
         } else {
             Err(Error::from("unsupported relocation in Mach-O executable"))
         }
     };
 
     for reloc in &plan.relocs {
+        if reloc.section != crate::emit::RelocSection::Text {
+            return Err(Error::from("text relocation has a non-text section"));
+        }
         match reloc.kind {
             RelocKind::Abs64 => {
                 let value = resolve_symbol(&reloc.symbol, reloc.addend)?;
@@ -823,6 +831,25 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                     }
                 }
             }
+        }
+    }
+
+    for reloc in &plan.section_relocs {
+        let offset = match reloc.section {
+            crate::emit::RelocSection::Text => {
+                return Err(Error::from("section relocation targets __text"));
+            }
+            crate::emit::RelocSection::Rdata => rodata_offset as usize + reloc.offset as usize,
+            crate::emit::RelocSection::Data => data_offset as usize + reloc.offset as usize,
+        };
+        match reloc.kind {
+            RelocKind::Abs64 => {
+                let value = resolve_symbol(&reloc.symbol, reloc.addend)?;
+                out.get_mut(offset..offset + 8)
+                    .ok_or_else(|| Error::from("section relocation out of range"))?
+                    .copy_from_slice(&value.to_le_bytes());
+            }
+            _ => return Err(Error::from("unsupported non-text Mach-O relocation")),
         }
     }
 

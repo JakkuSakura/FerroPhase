@@ -534,7 +534,11 @@ fn build_frame_layout(
     let outgoing_size = shadow_space + (extra_stack_args as i32) * 8;
     let base = local_size + outgoing_size;
     let frame_size = if base == 0 {
-        if has_calls { 8 } else { 0 }
+        if has_calls {
+            8
+        } else {
+            0
+        }
     } else {
         align16(base + 8) - 8
     };
@@ -566,7 +570,11 @@ fn call_arg_units(
     local_types: &HashMap<u32, AsmType>,
 ) -> usize {
     let ty = value_type(arg, reg_types, local_types).unwrap_or(AsmType::I64);
-    if matches!(ty, AsmType::I128) { 2 } else { 1 }
+    if matches!(ty, AsmType::I128) {
+        2
+    } else {
+        1
+    }
 }
 
 fn vreg_slot_spec(id: u32, reg_types: &HashMap<u32, AsmType>) -> (i32, i32) {
@@ -728,13 +736,13 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
             symbols.insert("fp_panic".to_string(), *offset);
         }
     }
-    let (text, mut relocs) = asm.finish()?;
-    relocs.extend(global_relocs);
+    let (text, relocs) = asm.finish()?;
     Ok(CodegenOutput {
         text,
         rodata,
         data,
         relocs,
+        section_relocs: global_relocs,
         symbols,
         rodata_symbols,
         data_symbols,

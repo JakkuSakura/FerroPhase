@@ -381,7 +381,7 @@ pub fn emit_object_coff(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Resul
     }
 
     let mut relocs = Vec::new();
-    for reloc in &plan.relocs {
+    for reloc in plan.relocs.iter().chain(&plan.section_relocs) {
         let symbol = if reloc.symbol == ".rodata" && has_rdata {
             ".rodata"
         } else {
@@ -896,7 +896,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
             Err(Error::from("unsupported relocation in PE executable"))
         }
     };
-    for reloc in &plan.relocs {
+    for reloc in plan.relocs.iter().chain(&plan.section_relocs) {
         match reloc.kind {
             crate::emit::RelocKind::Abs64 => {
                 let value = resolve_symbol(&reloc.symbol, reloc.addend)?;

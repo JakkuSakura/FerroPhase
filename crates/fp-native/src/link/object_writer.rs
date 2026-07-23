@@ -328,7 +328,7 @@ fn write_macho_aarch64_object(plan: &EmitPlan) -> Result<Vec<u8>> {
         id
     };
 
-    for reloc in &plan.relocs {
+    for reloc in plan.relocs.iter().chain(&plan.section_relocs) {
         if reloc.symbol.is_empty() {
             return Err(Error::from("relocation refers to empty symbol"));
         }
@@ -589,7 +589,7 @@ pub fn container_from_emit_plan(
         }
     }
 
-    for reloc in &plan.relocs {
+    for reloc in plan.relocs.iter().chain(&plan.section_relocs) {
         if reloc.symbol.is_empty()
             || container
                 .symbols
@@ -610,7 +610,7 @@ pub fn container_from_emit_plan(
         });
     }
 
-    for reloc in &plan.relocs {
+    for reloc in plan.relocs.iter().chain(&plan.section_relocs) {
         if reloc.symbol.is_empty() {
             return Err(Error::from("relocation refers to empty symbol"));
         }
@@ -824,6 +824,7 @@ mod tests {
             rodata: Vec::new(),
             data: Vec::new(),
             relocs: Vec::new(),
+            section_relocs: Vec::new(),
             symbols,
             rodata_symbols: HashMap::new(),
             data_symbols: HashMap::new(),
@@ -890,6 +891,7 @@ mod tests {
                 symbol: "puts".to_string(),
                 addend: 0,
             }],
+            section_relocs: Vec::new(),
             symbols,
             rodata_symbols: HashMap::new(),
             data_symbols: HashMap::new(),

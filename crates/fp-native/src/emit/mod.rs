@@ -117,7 +117,11 @@ pub struct EmitPlan {
     pub text: Vec<u8>,
     pub rodata: Vec<u8>,
     pub data: Vec<u8>,
+    /// Offsets are always relative to `text`.
     pub relocs: Vec<Relocation>,
+    /// Relocations in `.rodata` or `.data`; their offsets are relative to the
+    /// buffer named by `Relocation::section`.
+    pub section_relocs: Vec<Relocation>,
     pub symbols: HashMap<String, u64>,
     pub rodata_symbols: HashMap<String, u64>,
     pub data_symbols: HashMap<String, u64>,
@@ -129,10 +133,44 @@ pub struct CodegenOutput {
     pub rodata: Vec<u8>,
     pub data: Vec<u8>,
     pub relocs: Vec<Relocation>,
+    pub section_relocs: Vec<Relocation>,
     pub symbols: HashMap<String, u64>,
     pub rodata_symbols: HashMap<String, u64>,
     pub data_symbols: HashMap<String, u64>,
     pub entry_offset: u64,
+}
+
+impl CodegenOutput {
+    fn validate_text_layout(&self) -> Result<()> {
+        if self.entry_offset > self.text.len() as u64 {
+            return Err(Error::from("entry offset is outside __text"));
+        }
+        for (name, offset) in &self.symbols {
+            if *offset > self.text.len() as u64 {
+                return Err(Error::from(format!("text symbol {name} is outside __text")));
+            }
+        }
+        for reloc in &self.relocs {
+            if reloc.section != RelocSection::Text {
+                return Err(Error::from(
+                    "non-text relocation placed in text relocations",
+                ));
+            }
+            let width = match reloc.kind {
+                RelocKind::Abs64 => 8,
+                RelocKind::CallRel32 => 4,
+                RelocKind::Aarch64AdrpAdd | RelocKind::Aarch64GotLoad => 8,
+            };
+            if reloc
+                .offset
+                .checked_add(width)
+                .is_none_or(|end| end > self.text.len() as u64)
+            {
+                return Err(Error::from("text relocation is outside __text"));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,6 +210,7 @@ pub fn emit_plan(
     crate::libc::materialize(&mut asmir);
     crate::asmir::normalize_for_target(&mut asmir);
     let output = codegen::emit_text_from_selection(&lowered_lir, &asmir, format, arch)?;
+    output.validate_text_layout()?;
     Ok(EmitPlan {
         format,
         arch,
@@ -180,6 +219,7 @@ pub fn emit_plan(
         rodata: output.rodata,
         data: output.data,
         relocs: output.relocs,
+        section_relocs: output.section_relocs,
         symbols: output.symbols,
         rodata_symbols: output.rodata_symbols,
         data_symbols: output.data_symbols,
@@ -211,6 +251,7 @@ pub fn emit_plan_from_asmir(
         TargetArch::X86_64 => crate::emit::x86_64::emit_text_from_asmir(&asmir, format)?,
         TargetArch::Aarch64 => crate::emit::aarch64::emit_text_from_asmir(&asmir, format)?,
     };
+    output.validate_text_layout()?;
     Ok(EmitPlan {
         format,
         arch,
@@ -219,6 +260,7 @@ pub fn emit_plan_from_asmir(
         rodata: output.rodata,
         data: output.data,
         relocs: output.relocs,
+        section_relocs: output.section_relocs,
         symbols: output.symbols,
         rodata_symbols: output.rodata_symbols,
         data_symbols: output.data_symbols,
@@ -270,12 +312,24 @@ pub fn dump_asm(path: &Path, plan: &EmitPlan) -> Result<()> {
     }
 
     if !plan.relocs.is_empty() {
-        writeln!(&mut out, "\nRelocations:").ok();
+        writeln!(&mut out, "\nText relocations:").ok();
         for reloc in &plan.relocs {
             writeln!(
                 &mut out,
                 "  offset=0x{:08x} kind={:?} symbol={} addend={}",
                 reloc.offset, reloc.kind, reloc.symbol, reloc.addend
+            )
+            .ok();
+        }
+    }
+
+    if !plan.section_relocs.is_empty() {
+        writeln!(&mut out, "\nSection relocations:").ok();
+        for reloc in &plan.section_relocs {
+            writeln!(
+                &mut out,
+                "  section={:?} offset=0x{:08x} kind={:?} symbol={} addend={}",
+                reloc.section, reloc.offset, reloc.kind, reloc.symbol, reloc.addend
             )
             .ok();
         }

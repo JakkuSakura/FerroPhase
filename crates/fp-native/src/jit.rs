@@ -207,7 +207,7 @@ impl JitEngine {
         extra_symbols: &[(&str, *const c_void)],
         external_call_stubs: &HashMap<String, u64>,
     ) -> Result<()> {
-        for reloc in &plan.relocs {
+        for reloc in plan.relocs.iter().chain(&plan.section_relocs) {
             let (section_base, section_mem) = match reloc.section {
                 RelocSection::Text => (text_base, text),
                 RelocSection::Rdata => (rodata_base, rodata),
@@ -634,7 +634,7 @@ fn external_call_stub_size(arch: TargetArch) -> usize {
 
 fn collect_external_call_symbols(plan: &EmitPlan) -> Vec<String> {
     let mut symbols = Vec::new();
-    for reloc in &plan.relocs {
+    for reloc in plan.relocs.iter().chain(&plan.section_relocs) {
         if reloc.kind != RelocKind::CallRel32 {
             continue;
         }
@@ -651,7 +651,7 @@ fn collect_external_call_symbols(plan: &EmitPlan) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HostScalar, JitEngine, validate_native_program};
+    use super::{validate_native_program, HostScalar, JitEngine};
     use fp_core::lir::{
         CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature,
         LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, Name,

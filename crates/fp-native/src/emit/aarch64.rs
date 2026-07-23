@@ -4,8 +4,8 @@ use fp_core::asmir::{
 };
 use fp_core::container::ContainerKind;
 use fp_core::error::{Error, Result};
-use fp_core::lir::CallingConvention;
 use fp_core::lir::layout::{align_of, size_of, struct_layout};
+use fp_core::lir::CallingConvention;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::emit::{CodegenOutput, RelocKind, Relocation, TargetFormat};
@@ -631,7 +631,11 @@ fn call_arg_units(
     local_types: &HashMap<u32, AsmType>,
 ) -> usize {
     let ty = value_type(arg, reg_types, local_types).unwrap_or(AsmType::I64);
-    if matches!(ty, AsmType::I128) { 2 } else { 1 }
+    if matches!(ty, AsmType::I128) {
+        2
+    } else {
+        1
+    }
 }
 
 fn vreg_slot_spec(id: u32, reg_types: &HashMap<u32, AsmType>) -> (i32, i32) {
@@ -1265,13 +1269,13 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
             symbols.insert("fp_panic".to_string(), *offset);
         }
     }
-    let (text, mut relocs) = asm.finish()?;
-    relocs.extend(global_relocs);
+    let (text, relocs) = asm.finish()?;
     Ok(CodegenOutput {
         text,
         rodata,
         data,
         relocs,
+        section_relocs: global_relocs,
         symbols,
         rodata_symbols,
         data_symbols,
@@ -1558,9 +1562,10 @@ fn encode_const_bytes(constant: &AsmConstant, ty: &AsmType) -> Result<Vec<u8>> {
         }
         (AsmConstant::GlobalRef(_, ptr_ty, _), _) => Ok(vec![0u8; size_of(ptr_ty) as usize]),
         (AsmConstant::FunctionRef(_, ptr_ty), _) => Ok(vec![0u8; size_of(ptr_ty) as usize]),
-        _ => Err(Error::from(
-            format!("unsupported global initializer for native rodata: {:?}", constant),
-        )),
+        _ => Err(Error::from(format!(
+            "unsupported global initializer for native rodata: {:?}",
+            constant
+        ))),
     }
 }
 
@@ -2756,6 +2761,19 @@ fn emit_store(
                 }
                 for (idx, elem) in values.iter().enumerate() {
                     let offset = dst_offset + (idx as i32) * elem_size;
+                    if matches!(elem, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
+                        emit_mov_reg(asm, Reg::X9, Reg::X31);
+                        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                        store_constant_aggregate_to_reg(
+                            asm,
+                            Reg::X9,
+                            elem,
+                            elem_ty,
+                            rodata,
+                            rodata_pool,
+                        )?;
+                        continue;
+                    }
                     match elem {
                         AsmConstant::String(text) => {
                             let ro_offset = intern_cstring(rodata, rodata_pool, text);
@@ -2777,6 +2795,19 @@ fn emit_store(
                 emit_load_from_sp(asm, Reg::X17, addr_offset);
                 for (idx, elem) in values.iter().enumerate() {
                     let offset = (idx as i32) * elem_size;
+                    if matches!(elem, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
+                        emit_mov_reg(asm, Reg::X9, Reg::X17);
+                        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                        store_constant_aggregate_to_reg(
+                            asm,
+                            Reg::X9,
+                            elem,
+                            elem_ty,
+                            rodata,
+                            rodata_pool,
+                        )?;
+                        continue;
+                    }
                     match elem {
                         AsmConstant::String(text) => {
                             let ro_offset = intern_cstring(rodata, rodata_pool, text);
@@ -2800,6 +2831,19 @@ fn emit_store(
                 emit_load_from_sp(asm, Reg::X17, addr_offset);
                 for (idx, elem) in values.iter().enumerate() {
                     let offset = (idx as i32) * elem_size;
+                    if matches!(elem, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
+                        emit_mov_reg(asm, Reg::X9, Reg::X17);
+                        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                        store_constant_aggregate_to_reg(
+                            asm,
+                            Reg::X9,
+                            elem,
+                            elem_ty,
+                            rodata,
+                            rodata_pool,
+                        )?;
+                        continue;
+                    }
                     match elem {
                         AsmConstant::String(text) => {
                             let ro_offset = intern_cstring(rodata, rodata_pool, text);
@@ -2822,6 +2866,19 @@ fn emit_store(
                 emit_load_symbol_addr(asm, Reg::X17, name, 0)?;
                 for (idx, elem) in values.iter().enumerate() {
                     let offset = (idx as i32) * elem_size;
+                    if matches!(elem, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
+                        emit_mov_reg(asm, Reg::X9, Reg::X17);
+                        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                        store_constant_aggregate_to_reg(
+                            asm,
+                            Reg::X9,
+                            elem,
+                            elem_ty,
+                            rodata,
+                            rodata_pool,
+                        )?;
+                        continue;
+                    }
                     match elem {
                         AsmConstant::String(text) => {
                             let ro_offset = intern_cstring(rodata, rodata_pool, text);
@@ -2943,6 +3000,20 @@ fn emit_store(
                             .get(idx)
                             .ok_or_else(|| Error::from("aggregate field out of range"))?;
                         let field_size = size_of(field_ty);
+                        if matches!(field, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
+                            let store_offset = dst_offset + field_offset as i32;
+                            emit_mov_reg(asm, Reg::X9, Reg::X31);
+                            add_immediate_offset(asm, Reg::X9, store_offset as i64)?;
+                            store_constant_aggregate_to_reg(
+                                asm,
+                                Reg::X9,
+                                field,
+                                field_ty,
+                                rodata,
+                                rodata_pool,
+                            )?;
+                            continue;
+                        }
                         match field {
                             AsmConstant::String(text) => {
                                 let offset = intern_cstring(rodata, rodata_pool, text);
@@ -2982,6 +3053,19 @@ fn emit_store(
                             .get(idx)
                             .ok_or_else(|| Error::from("aggregate field out of range"))?;
                         let field_size = size_of(field_ty);
+                        if matches!(field, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
+                            emit_mov_reg(asm, Reg::X9, Reg::X17);
+                            add_immediate_offset(asm, Reg::X9, field_offset as i64)?;
+                            store_constant_aggregate_to_reg(
+                                asm,
+                                Reg::X9,
+                                field,
+                                field_ty,
+                                rodata,
+                                rodata_pool,
+                            )?;
+                            continue;
+                        }
                         match field {
                             AsmConstant::String(text) => {
                                 let offset = intern_cstring(rodata, rodata_pool, text);
@@ -3022,6 +3106,19 @@ fn emit_store(
                             .get(idx)
                             .ok_or_else(|| Error::from("aggregate field out of range"))?;
                         let field_size = size_of(field_ty);
+                        if matches!(field, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
+                            emit_mov_reg(asm, Reg::X9, Reg::X17);
+                            add_immediate_offset(asm, Reg::X9, field_offset as i64)?;
+                            store_constant_aggregate_to_reg(
+                                asm,
+                                Reg::X9,
+                                field,
+                                field_ty,
+                                rodata,
+                                rodata_pool,
+                            )?;
+                            continue;
+                        }
                         match field {
                             AsmConstant::String(text) => {
                                 let offset = intern_cstring(rodata, rodata_pool, text);
@@ -4523,7 +4620,27 @@ fn store_constant_aggregate_to_reg(
                     .get(idx)
                     .ok_or_else(|| Error::from("aggregate field out of range"))?;
                 let field_size = size_of(field_ty);
+                if matches!(field, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
+                    emit_mov_reg(asm, Reg::X9, base);
+                    add_immediate_offset(asm, Reg::X9, field_offset as i64)?;
+                    store_constant_aggregate_to_reg(
+                        asm,
+                        Reg::X9,
+                        field,
+                        field_ty,
+                        rodata,
+                        rodata_pool,
+                    )?;
+                    continue;
+                }
                 match field {
+                    AsmConstant::GlobalRef(name, _, indices) => {
+                        let addend = indices.iter().map(|index| *index as i64).sum();
+                        emit_load_symbol_addr(asm, Reg::X16, name.as_str(), addend)?;
+                    }
+                    AsmConstant::FunctionRef(name, _) => {
+                        emit_load_symbol_addr(asm, Reg::X16, name.as_str(), 0)?;
+                    }
                     AsmConstant::String(text) => {
                         let offset = intern_cstring(rodata, rodata_pool, text);
                         emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
@@ -4559,11 +4676,21 @@ fn store_constant_aggregate_to_reg(
             if elem_size == 0 {
                 return Ok(());
             }
-            if elem_size > 8 {
-                return Err(Error::from("unsupported array element size in return"));
-            }
             for (idx, elem) in values.iter().enumerate() {
                 let offset = (idx as i32) * elem_size;
+                if matches!(elem, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
+                    emit_mov_reg(asm, Reg::X9, base);
+                    add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                    store_constant_aggregate_to_reg(
+                        asm,
+                        Reg::X9,
+                        elem,
+                        elem_ty,
+                        rodata,
+                        rodata_pool,
+                    )?;
+                    continue;
+                }
                 match elem {
                     AsmConstant::String(text) => {
                         let ro_offset = intern_cstring(rodata, rodata_pool, text);
@@ -5127,9 +5254,9 @@ fn constant_to_u64_bits(constant: &AsmConstant) -> Result<u64> {
         AsmConstant::Float(value, _) => Ok(value.to_bits()),
         AsmConstant::Null(_) | AsmConstant::Undef(_) => Ok(0),
         AsmConstant::GlobalRef(_, _, _) | AsmConstant::FunctionRef(_, _) => Ok(0),
-        AsmConstant::Array(..) | AsmConstant::Struct(..) => Err(Error::from(
-            "nested aggregate in store — call pack_small_aggregate instead",
-        )),
+        AsmConstant::Array(..) | AsmConstant::Struct(..) => Err(Error::from(format!(
+            "nested aggregate in store: {constant:?}",
+        ))),
         AsmConstant::String(_) | AsmConstant::Bytes(_) => Err(Error::from(
             "string/bytes constant in aggregate store — should have been lowered to pointer+len",
         )),

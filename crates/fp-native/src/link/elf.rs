@@ -214,6 +214,7 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     let relative_relocs_count = plan
         .relocs
         .iter()
+        .chain(&plan.section_relocs)
         .filter(|reloc| reloc.kind == RelocKind::Abs64)
         .count();
 
@@ -241,7 +242,8 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     let rela_size = 24usize * (externs.len() + relative_relocs_count);
     let got_offset = align_up(rela_offset + rela_size, 8);
     let got_size = 8usize * externs.len();
-    let data_end = got_offset + got_size;
+    let static_data_offset = align_up(got_offset + got_size, 8);
+    let data_end = static_data_offset + plan.data.len();
 
     let _file_size = data_end;
 
@@ -347,6 +349,7 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
 
     let text_addr = base_addr + text_offset as u64;
     let rodata_addr = base_addr + rodata_offset as u64;
+    let data_addr = base_addr + static_data_offset as u64;
     let resolve_symbol = |name: &str, addend: i64| -> Result<u64> {
         if name == ".rodata" {
             Ok(rodata_addr.wrapping_add(addend as u64))
@@ -356,16 +359,22 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                 .wrapping_add(addend as u64))
         } else if let Some(offset) = plan.symbols.get(name) {
             Ok(text_addr.wrapping_add(*offset).wrapping_add(addend as u64))
+        } else if let Some(offset) = plan.data_symbols.get(name) {
+            Ok(data_addr.wrapping_add(*offset).wrapping_add(addend as u64))
         } else {
             Err(Error::from("unsupported relocation in ELF executable"))
         }
     };
 
     let mut relative_relocs = Vec::new();
-    for reloc in &plan.relocs {
+    for reloc in plan.relocs.iter().chain(&plan.section_relocs) {
         if reloc.kind == RelocKind::Abs64 {
             let value = resolve_symbol(&reloc.symbol, reloc.addend)?;
-            let r_offset = text_addr + reloc.offset as u64;
+            let r_offset = match reloc.section {
+                crate::emit::RelocSection::Text => text_addr + reloc.offset,
+                crate::emit::RelocSection::Rdata => rodata_addr + reloc.offset,
+                crate::emit::RelocSection::Data => data_addr + reloc.offset,
+            };
             relative_relocs.push((r_offset, value));
         }
     }
@@ -448,9 +457,14 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     // .got
     out.resize(got_offset, 0);
     out.extend_from_slice(&vec![0u8; got_size]);
+    out.resize(static_data_offset, 0);
+    out.extend_from_slice(&plan.data);
 
-    // Patch relocations in text (rodata + calls).
+    // `plan.relocs` are always relative to `plan.text`.
     for reloc in &plan.relocs {
+        if reloc.section != crate::emit::RelocSection::Text {
+            return Err(Error::from("text relocation has a non-text section"));
+        }
         match reloc.kind {
             crate::emit::RelocKind::Abs64 => {
                 let value = resolve_symbol(&reloc.symbol, reloc.addend)?;
@@ -527,6 +541,26 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                     "Aarch64GotLoad relocations are not supported in ELF executables",
                 ));
             }
+        }
+    }
+
+    for reloc in &plan.section_relocs {
+        let offset = match reloc.section {
+            crate::emit::RelocSection::Text => {
+                return Err(Error::from("section relocation targets .text"));
+            }
+            crate::emit::RelocSection::Rdata => rodata_offset + reloc.offset as usize,
+            crate::emit::RelocSection::Data => static_data_offset + reloc.offset as usize,
+        };
+        match reloc.kind {
+            crate::emit::RelocKind::Abs64 => {
+                let value = resolve_symbol(&reloc.symbol, reloc.addend)?;
+                let bytes = out
+                    .get_mut(offset..offset + 8)
+                    .ok_or_else(|| Error::from("section relocation offset out of range"))?;
+                bytes.copy_from_slice(&value.to_le_bytes());
+            }
+            _ => return Err(Error::from("unsupported non-text ELF relocation")),
         }
     }
 
