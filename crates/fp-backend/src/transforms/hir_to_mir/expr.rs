@@ -5925,6 +5925,9 @@ impl MirLowering {
             mir::ConstantKind::Val(mir::ConstValue::Map { entries, .. }, _) => {
                 Some(entries.len() as u64)
             }
+            mir::ConstantKind::Val(mir::ConstValue::Tuple(fields), _) => {
+                Some(fields.len() as u64)
+            }
             _ => None,
         }
     }
