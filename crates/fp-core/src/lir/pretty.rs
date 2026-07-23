@@ -96,6 +96,9 @@ fn write_global(global: &LirGlobal, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'
         line.push_str(" = ");
         line.push_str(&format_constant(initializer));
     }
+    if !global.relocations.is_empty() {
+        line.push_str(&format!(" [relocs: {}]", global.relocations.len()));
+    }
     ctx.writeln(f, line)
 }
 
@@ -723,6 +726,7 @@ fn format_constant(constant: &LirConstant) -> String {
         Float(value, ty) => format!("{} {}", format_type(ty), value),
         Bool(value) => format!("bool {}", value),
         String(s) => format!("c\"{}\"", escape_string(s)),
+        Bytes(bytes) => format!("bytes(len={})", bytes.len()),
         Array(elements, ty) => {
             let elems = elements
                 .iter()

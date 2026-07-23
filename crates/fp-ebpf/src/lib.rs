@@ -1689,6 +1689,7 @@ fn constant_type(constant: &LirConstant) -> LirType {
         | LirConstant::Struct(_, ty)
         | LirConstant::GlobalRef(_, ty, _) => ty.clone(),
         LirConstant::FunctionRef(_, ty) => ty.clone(),
+        LirConstant::Bytes(bytes) => LirType::Array(Box::new(LirType::I8), bytes.len() as u64),
     }
 }
 

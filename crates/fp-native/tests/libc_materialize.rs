@@ -32,7 +32,7 @@ fn materialize_maps_stderr_to_darwin_global() {
     program.globals.push(AsmGlobal {
         name: Name::new("stderr"),
         ty: AsmType::Ptr(Box::new(AsmType::I8)),
-        initializer: Some(AsmConstant::UInt(0, AsmType::I64)),
+        initializer: Some(AsmConstant::Bytes(vec![0; 8])),
         relocations: Vec::new(),
         section: Some(".data".to_string()),
         linkage: Linkage::External,
@@ -126,7 +126,7 @@ fn materialize_removes_elf_copy_reloc_getopt_globals_for_darwin() {
     program.globals.push(AsmGlobal {
         name: Name::new("optind"),
         ty: AsmType::I32,
-        initializer: Some(AsmConstant::Int(1, AsmType::I32)),
+        initializer: Some(AsmConstant::Bytes(1i32.to_le_bytes().to_vec())),
         relocations: Vec::new(),
         section: Some(".bss".to_string()),
         linkage: Linkage::External,

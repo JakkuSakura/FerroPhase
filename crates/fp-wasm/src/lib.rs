@@ -2,8 +2,8 @@ use fp_core::error::{Error, Result};
 use fp_core::lir::layout;
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature, LirGlobal,
-    LirInstruction, LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirType,
-    LirValue, RegisterId,
+    LirInstruction, LirInstructionKind, LirIntrinsicKind, LirProgram, LirRelocationKind,
+    LirRelocationTarget, LirTerminator, LirType, LirValue, RegisterId,
 };
 use std::collections::HashMap;
 use wasm_encoder::{
@@ -237,6 +237,7 @@ impl<'a> WasmEmitter<'a> {
         for global in &self.program.globals {
             self.register_global(global)?;
         }
+        self.patch_global_data()?;
         Ok(())
     }
 
@@ -249,17 +250,44 @@ impl<'a> WasmEmitter<'a> {
             );
         }
 
-        if let Some(init) = global.initializer.clone() {
-            let bytes = self.encode_constant_bytes(&init, &global.ty)?;
-            self.data_bytes.extend(bytes);
-        } else {
-            let size = size_of_type(&global.ty);
-            self.data_bytes
-                .extend(std::iter::repeat(0).take(size as usize));
-        }
+        let size = size_of_type(&global.ty);
+        self.data_bytes
+            .extend(std::iter::repeat(0).take(size as usize));
 
         self.global_addr
             .insert(global.name.as_str().to_string(), offset);
+        Ok(())
+    }
+
+    fn patch_global_data(&mut self) -> Result<()> {
+        for global in &self.program.globals {
+            let Some(base) = self.global_addr.get(global.name.as_str()).copied() else {
+                continue;
+            };
+            let Some(initializer) = global.initializer.as_ref() else {
+                continue;
+            };
+            let start = base as usize;
+            let bytes = self.encode_constant_bytes(initializer, &global.ty)?;
+            let end = start + bytes.len();
+            if end > self.data_bytes.len() {
+                return Err(Error::from("Wasm global data range out of bounds"));
+            }
+            self.data_bytes[start..end].copy_from_slice(&bytes);
+            for reloc in &global.relocations {
+                let reloc_start = start + reloc.offset as usize;
+                match (&reloc.kind, &reloc.target) {
+                    (LirRelocationKind::Abs64, LirRelocationTarget::Global(name)) => {
+                        let target = self.global_addr.get(name.as_str()).copied().unwrap_or(0) as i64
+                            + reloc.addend;
+                        let bytes = (target as u64).to_le_bytes();
+                        self.data_bytes[reloc_start..reloc_start + 8].copy_from_slice(&bytes);
+                    }
+                    (LirRelocationKind::Abs64, LirRelocationTarget::Function(_)) => {}
+                    (LirRelocationKind::PcRel32, _) => {}
+                }
+            }
+        }
         Ok(())
     }
 
@@ -273,6 +301,7 @@ impl<'a> WasmEmitter<'a> {
                 let ptr = self.write_string_data(value);
                 Ok(int_to_bytes(ptr as u128, ty))
             }
+            LirConstant::Bytes(bytes) => Ok(bytes.clone()),
             LirConstant::Array(elements, const_elem_ty) => {
                 // Encode arrays to the *expected* type width so global initializers don't get
                 // truncated (which would shift subsequent globals and corrupt memory).
@@ -1646,7 +1675,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
                 let ptr = self.emitter.write_string_data(value) as i64;
                 func.instruction(&Instruction::I64Const(ptr));
             }
-            LirConstant::Array(_, _) | LirConstant::Struct(_, _) => {
+            LirConstant::Bytes(_) | LirConstant::Array(_, _) | LirConstant::Struct(_, _) => {
                 func.instruction(&Instruction::I64Const(0));
             }
             LirConstant::GlobalRef(name, _, indices) => {
@@ -2067,6 +2096,7 @@ fn constant_type(constant: &LirConstant) -> LirType {
         LirConstant::Float(_, ty) => ty.clone(),
         LirConstant::Bool(_) => LirType::I1,
         LirConstant::String(_) => LirType::Ptr(Box::new(LirType::I8)),
+        LirConstant::Bytes(bytes) => LirType::Array(Box::new(LirType::I8), bytes.len() as u64),
         LirConstant::Array(elements, ty) => {
             LirType::Array(Box::new(ty.clone()), elements.len() as u64)
         }

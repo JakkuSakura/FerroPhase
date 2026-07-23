@@ -10,8 +10,8 @@ use fp_core::error::Result;
 use fp_core::lir::layout::{size_of, struct_layout};
 use fp_core::lir::{
     BasicBlockId, CallingConvention, Linkage as LirLinkage, LirBasicBlock, LirConstant,
-    LirFunction, LirFunctionSignature, LirInstruction, LirInstructionKind, LirIntrinsicKind,
-    LirProgram, LirTerminator, LirType, LirValue,
+    LirFunction, LirFunctionSignature, LirGlobalRelocation, LirInstruction, LirInstructionKind,
+    LirIntrinsicKind, LirProgram, LirRelocationTarget, LirTerminator, LirType, LirValue,
 };
 use std::collections::HashMap;
 use target_lexicon::Triple;
@@ -138,9 +138,28 @@ impl CraneliftBackend {
             };
             let mut data_ctx = DataDescription::new();
             if let Some(initializer) = &global.initializer {
-                let mut bytes = vec![0u8; size_of(&global.ty) as usize];
-                let mut relocations = Vec::new();
-                encode_constant(&mut bytes, &mut relocations, initializer, &global.ty, 0)?;
+                let (bytes, relocations) = if global.relocations.is_empty() {
+                    let mut bytes = vec![0u8; size_of(&global.ty) as usize];
+                    let mut relocations = Vec::new();
+                    encode_constant(&mut bytes, &mut relocations, initializer, &global.ty, 0)?;
+                    (bytes, relocations)
+                } else {
+                    let bytes = match initializer {
+                        LirConstant::Bytes(bytes) => bytes.clone(),
+                        _ => {
+                            return Err(fp_core::error::Error::from(
+                                "LIR global relocations require a byte initializer",
+                            ));
+                        }
+                    };
+                    let relocations = global
+                        .relocations
+                        .iter()
+                        .cloned()
+                        .map(DataReloc::from)
+                        .collect::<Vec<_>>();
+                    (bytes, relocations)
+                };
                 data_ctx.define(bytes.into_boxed_slice());
                 for reloc in relocations {
                     match reloc {
@@ -1185,7 +1204,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
                 Ok(self.builder.ins().func_addr(self.pointer_type, func_ref))
             }
-            LirConstant::Array(_, _) | LirConstant::Struct(_, _) => Err(
+            LirConstant::Bytes(_) | LirConstant::Array(_, _) | LirConstant::Struct(_, _) => Err(
                 fp_core::error::Error::from("aggregate constants must be lowered via globals"),
             ),
         }
@@ -1210,6 +1229,9 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 LirConstant::Float(_, ty) => ty.clone(),
                 LirConstant::Bool(_) => LirType::I1,
                 LirConstant::String(_) => LirType::Ptr(Box::new(LirType::I8)),
+                LirConstant::Bytes(bytes) => {
+                    LirType::Array(Box::new(LirType::I8), bytes.len() as u64)
+                }
                 LirConstant::Array(_, ty) => ty.clone(),
                 LirConstant::Struct(_, ty) => ty.clone(),
                 LirConstant::GlobalRef(_, ty, _) => ty.clone(),
@@ -1523,6 +1545,21 @@ enum DataReloc {
     Func { offset: usize, name: String },
 }
 
+impl From<LirGlobalRelocation> for DataReloc {
+    fn from(value: LirGlobalRelocation) -> Self {
+        match value.target {
+            LirRelocationTarget::Global(name) => DataReloc::Data {
+                offset: value.offset as usize,
+                name: name.to_string(),
+            },
+            LirRelocationTarget::Function(name) => DataReloc::Func {
+                offset: value.offset as usize,
+                name: name.to_string(),
+            },
+        }
+    }
+}
+
 fn encode_constant(
     buf: &mut [u8],
     relocs: &mut Vec<DataReloc>,
@@ -1539,6 +1576,9 @@ fn encode_constant(
         LirConstant::Bool(val) => write_int(buf, base, if *val { 1 } else { 0 }, 1, false),
         LirConstant::String(text) => {
             let bytes = text.as_bytes();
+            buf[base..base + bytes.len()].copy_from_slice(bytes);
+        }
+        LirConstant::Bytes(bytes) => {
             buf[base..base + bytes.len()].copy_from_slice(bytes);
         }
         LirConstant::Array(elements, elem_ty) => {

@@ -239,15 +239,11 @@ fn read_cstring_from_any_global(
         return None;
     }
     let offset = usize::try_from(offset).ok()?;
-    let init = globals
+    let data = globals
         .iter()
         .find(|g| g.name.as_str() == global)?
-        .initializer
-        .as_ref()?;
-    let bytes = match init {
-        AsmConstant::Bytes(bytes) => bytes.as_slice(),
-        _ => return None,
-    };
+        ;
+    let bytes = global_bytes(data)?;
     if offset >= bytes.len() {
         return None;
     }
@@ -348,15 +344,11 @@ fn read_cstring_from_global_bytes(
         return None;
     }
     let offset = usize::try_from(offset).ok()?;
-    let init = globals
+    let data = globals
         .iter()
         .find(|g| g.name.as_str() == global)?
-        .initializer
-        .as_ref()?;
-    let bytes = match init {
-        AsmConstant::Bytes(bytes) => bytes.as_slice(),
-        _ => return None,
-    };
+        ;
+    let bytes = global_bytes(data)?;
     if offset >= bytes.len() {
         return None;
     }
@@ -462,8 +454,7 @@ fn materialize_darwin_getopt_globals(program: &mut AsmProgram) {
                 continue;
             }
             global.ty = ty.clone();
-            global.initializer = None;
-            global.relocations.clear();
+            global.clear_initializer();
             global.section = None;
             global.linkage = Linkage::External;
             global.visibility = Visibility::Default;
@@ -702,38 +693,11 @@ fn materialize_disable_darwin_cxa_atexit(program: &mut AsmProgram) {
 }
 
 fn materialize_darwin_progname(program: &mut AsmProgram) {
-    fn cstring_from_initializer(init: &AsmConstant) -> Option<String> {
-        match init {
-            AsmConstant::Bytes(bytes) => {
-                let nul = bytes.iter().position(|byte| *byte == 0)?;
-                std::str::from_utf8(&bytes[..nul])
-                    .ok()
-                    .map(|s| s.to_string())
-            }
-            AsmConstant::Array(values, _) | AsmConstant::Struct(values, _) => {
-                let mut bytes = Vec::new();
-                for elem in values {
-                    let byte = match elem {
-                        AsmConstant::UInt(v, _) => *v as u8,
-                        AsmConstant::Int(v, _) => *v as u8,
-                        AsmConstant::Bool(v) => {
-                            if *v {
-                                1
-                            } else {
-                                0
-                            }
-                        }
-                        _ => return None,
-                    };
-                    if byte == 0 {
-                        break;
-                    }
-                    bytes.push(byte);
-                }
-                std::str::from_utf8(&bytes).ok().map(|s| s.to_string())
-            }
-            _ => None,
-        }
+    fn cstring_from_bytes(init: &[u8]) -> Option<String> {
+        let nul = init.iter().position(|byte| *byte == 0)?;
+        std::str::from_utf8(&init[..nul])
+            .ok()
+            .map(|s| s.to_string())
     }
 
     let global_cstrings: HashMap<String, String> = program
@@ -744,8 +708,8 @@ fn materialize_darwin_progname(program: &mut AsmProgram) {
             if !name.starts_with("fp_str_") {
                 return None;
             }
-            let init = global.initializer.as_ref()?;
-            let text = cstring_from_initializer(init)?;
+            let init = global_bytes(global)?;
+            let text = cstring_from_bytes(init)?;
             Some((name.to_string(), text))
         })
         .collect();
@@ -1119,9 +1083,6 @@ fn materialize_darwin_stdio(program: &mut AsmProgram) {
     }
 
     for global in &mut program.globals {
-        if let Some(initializer) = global.initializer.as_mut() {
-            rewrite_constant(initializer);
-        }
         for reloc in &mut global.relocations {
             if let Some(mapped) = map_stdio_symbol(reloc.symbol.as_str()) {
                 reloc.symbol = fp_core::lir::Name::new(mapped);
@@ -1141,5 +1102,11 @@ fn materialize_darwin_stdio(program: &mut AsmProgram) {
             }
             rewrite_terminator(&mut block.terminator);
         }
+    }
+}
+fn global_bytes(global: &fp_core::asmir::AsmGlobal) -> Option<&[u8]> {
+    match global.initializer.as_ref()? {
+        AsmConstant::Bytes(bytes) => Some(bytes.as_slice()),
+        _ => None,
     }
 }

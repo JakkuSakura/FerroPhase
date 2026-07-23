@@ -751,7 +751,7 @@ fn emit_const_globals(
     relocs_out: &mut Vec<crate::emit::Relocation>,
 ) -> Result<()> {
     let mut emit_global = |global: &fp_core::asmir::AsmGlobal,
-                           initializer: &AsmConstant,
+                           initializer: Option<&AsmConstant>,
                            bytes_out: &mut Vec<u8>,
                            symbols_out: &mut HashMap<String, u64>,
                            reloc_section: crate::emit::RelocSection|
@@ -764,6 +764,9 @@ fn emit_const_globals(
         if offset > bytes_out.len() {
             bytes_out.resize(offset, 0);
         }
+        let Some(initializer) = initializer else {
+            return Ok(());
+        };
         let bytes = encode_const_bytes(initializer, &global.ty)?;
         bytes_out.extend_from_slice(&bytes);
         symbols_out.insert(global.name.to_string(), offset as u64);
@@ -771,6 +774,7 @@ fn emit_const_globals(
         for reloc in &global.relocations {
             let kind = match reloc.kind {
                 fp_core::asmir::AsmRelocationKind::Abs64 => crate::emit::RelocKind::Abs64,
+                fp_core::asmir::AsmRelocationKind::PcRel32 => crate::emit::RelocKind::CallRel32,
             };
             relocs_out.push(crate::emit::Relocation {
                 offset: offset as u64 + reloc.offset,
@@ -784,9 +788,9 @@ fn emit_const_globals(
     };
 
     for global in &program.globals {
-        let Some(initializer) = &global.initializer else {
+        if global.initializer.is_none() {
             continue;
-        };
+        }
 
         let section_kind = global
             .section
@@ -810,7 +814,7 @@ fn emit_const_globals(
             fp_core::asmir::AsmSectionKind::Data | fp_core::asmir::AsmSectionKind::Bss => {
                 emit_global(
                     global,
-                    initializer,
+                    global.initializer.as_ref(),
                     data,
                     data_symbols,
                     crate::emit::RelocSection::Data,
@@ -819,7 +823,7 @@ fn emit_const_globals(
             _ => {
                 emit_global(
                     global,
-                    initializer,
+                    global.initializer.as_ref(),
                     rodata,
                     rodata_symbols,
                     crate::emit::RelocSection::Rdata,
@@ -2068,7 +2072,13 @@ fn constant_to_u64_bits(constant: &AsmConstant) -> Result<u64> {
         AsmConstant::Bool(value) => Ok(if *value { 1 } else { 0 }),
         AsmConstant::Float(value, _) => Ok(value.to_bits()),
         AsmConstant::Null(_) | AsmConstant::Undef(_) => Ok(0),
-        _ => Err(Error::from("unsupported constant for aggregate store")),
+        AsmConstant::GlobalRef(_, _, _) | AsmConstant::FunctionRef(_, _) => Ok(0),
+        AsmConstant::Array(..) | AsmConstant::Struct(..) => Err(Error::from(
+            "nested aggregate in store — call pack_small_aggregate instead",
+        )),
+        AsmConstant::String(_) | AsmConstant::Bytes(_) => Err(Error::from(
+            "string/bytes constant in aggregate store — should have been lowered to pointer+len",
+        )),
     }
 }
 

@@ -19,8 +19,8 @@ use fp_core::asmir::{
 use fp_core::error::Result;
 use fp_core::lir::layout::size_of;
 use fp_core::lir::{
-    Linkage, LirConstant, LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator,
-    LirValue, Name, Visibility,
+    Linkage, LirConstant,
+    LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirValue, Name, Visibility,
 };
 use std::collections::HashMap;
 
@@ -59,21 +59,7 @@ pub fn select_program(
         })
         .collect();
 
-    program.globals = lir_program
-        .globals
-        .iter()
-        .map(|global| AsmGlobal {
-            name: global.name.clone(),
-            ty: global.ty.clone(),
-            initializer: global.initializer.as_ref().map(map_constant),
-            relocations: Vec::new(),
-            section: global.section.clone(),
-            linkage: global.linkage.clone(),
-            visibility: global.visibility.clone(),
-            alignment: global.alignment,
-            is_constant: global.is_constant,
-        })
-        .collect();
+    program.globals = lir_program.globals.iter().map(map_global).collect();
 
     for function in &lir_program.functions {
         let mut asm_function = AsmFunction {
@@ -861,20 +847,11 @@ fn intern_string_constants(program: &mut AsmProgram) {
             let mut bytes = Vec::with_capacity(text.len() + 1);
             bytes.extend_from_slice(text.as_bytes());
             bytes.push(0);
-
-            let initializer = AsmConstant::Array(
-                bytes
-                    .iter()
-                    .map(|byte| AsmConstant::UInt(*byte as u64, AsmType::I8))
-                    .collect(),
-                AsmType::I8,
-            );
             let ty = AsmType::Array(Box::new(AsmType::I8), bytes.len() as u64);
-
             self.globals.push(AsmGlobal {
                 name: name.clone(),
                 ty,
-                initializer: Some(initializer),
+                initializer: Some(AsmConstant::Bytes(bytes)),
                 relocations: Vec::new(),
                 section: Some(".rodata".to_string()),
                 linkage: Linkage::Private,
@@ -4715,6 +4692,7 @@ fn map_constant(constant: &LirConstant) -> AsmConstant {
         LirConstant::Float(value, ty) => AsmConstant::Float(*value, ty.clone()),
         LirConstant::Bool(value) => AsmConstant::Bool(*value),
         LirConstant::String(value) => AsmConstant::String(value.clone()),
+        LirConstant::Bytes(bytes) => AsmConstant::Bytes(bytes.clone()),
         LirConstant::Array(values, ty) => {
             AsmConstant::Array(values.iter().map(map_constant).collect(), ty.clone())
         }
@@ -4727,6 +4705,42 @@ fn map_constant(constant: &LirConstant) -> AsmConstant {
         LirConstant::FunctionRef(name, ty) => AsmConstant::FunctionRef(name.clone(), ty.clone()),
         LirConstant::Null(ty) => AsmConstant::Null(ty.clone()),
         LirConstant::Undef(ty) => AsmConstant::Undef(ty.clone()),
+    }
+}
+
+fn map_global(global: &fp_core::lir::LirGlobal) -> AsmGlobal {
+    AsmGlobal {
+        name: global.name.clone(),
+        ty: global.ty.clone(),
+        initializer: global.initializer.as_ref().map(map_constant),
+        relocations: global
+            .relocations
+            .iter()
+            .filter_map(|reloc| {
+                let symbol = match &reloc.target {
+                    fp_core::lir::LirRelocationTarget::Global(name)
+                    | fp_core::lir::LirRelocationTarget::Function(name) => name.clone(),
+                };
+                Some(fp_core::asmir::AsmGlobalRelocation {
+                    offset: reloc.offset,
+                    kind: match reloc.kind {
+                        fp_core::lir::LirRelocationKind::Abs64 => {
+                            fp_core::asmir::AsmRelocationKind::Abs64
+                        }
+                        fp_core::lir::LirRelocationKind::PcRel32 => {
+                            fp_core::asmir::AsmRelocationKind::PcRel32
+                        }
+                    },
+                    symbol,
+                    addend: reloc.addend,
+                })
+            })
+            .collect(),
+        section: global.section.clone(),
+        linkage: global.linkage.clone(),
+        visibility: global.visibility.clone(),
+        alignment: global.alignment,
+        is_constant: global.is_constant,
     }
 }
 

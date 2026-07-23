@@ -421,13 +421,16 @@ impl LirGenerator {
     fn transform_static(&mut self, mir_static: mir::Static) -> Result<lir::LirGlobal> {
         let name = lir::Name::new(format!("global_{}", self.next_id()));
         let lir_ty = self.lir_type_from_ty(&mir_static.ty);
-        let initializer = self.convert_static_initializer(&mir_static.init, &mir_static.ty)?;
+        let raw_initializer = self.convert_static_initializer(&mir_static.init, &mir_static.ty)?;
+        let (initializer, relocations) =
+            self.canonicalize_global_initializer(raw_initializer, &lir_ty);
         let alignment = Self::alignment_for_lir_type(&lir_ty).max(1);
 
         Ok(lir::LirGlobal {
             name,
             ty: lir_ty,
             initializer: Some(initializer),
+            relocations,
             linkage: lir::Linkage::Internal,
             visibility: lir::Visibility::Hidden,
             is_constant: matches!(mir_static.mutability, mir::Mutability::Not),
@@ -738,18 +741,22 @@ impl LirGenerator {
         let name = lir::Name::new(format!("__const_data_{}", self.const_global_counter));
         self.const_global_counter += 1;
         let array_ty = lir::LirType::Array(Box::new(elem_ty), elements.len() as u64);
-        let initializer = lir::LirConstant::Array(
-            elements,
-            match &array_ty {
-                lir::LirType::Array(elem, _) => *elem.clone(),
-                _ => lir::LirType::I8,
-            },
+        let (initializer, relocations) = self.canonicalize_global_initializer(
+            lir::LirConstant::Array(
+                elements,
+                match &array_ty {
+                    lir::LirType::Array(elem, _) => *elem.clone(),
+                    _ => lir::LirType::I8,
+                },
+            ),
+            &array_ty,
         );
         let align = Self::alignment_for_lir_type(&array_ty);
         let global = lir::LirGlobal {
             name,
             ty: array_ty,
             initializer: Some(initializer),
+            relocations,
             linkage: lir::Linkage::Internal,
             visibility: lir::Visibility::Hidden,
             is_constant: true,
@@ -758,6 +765,211 @@ impl LirGenerator {
         };
         self.extra_globals.push(global.clone());
         global
+    }
+
+    fn canonicalize_global_initializer(
+        &self,
+        initializer: lir::LirConstant,
+        ty: &lir::LirType,
+    ) -> (lir::LirConstant, Vec<lir::LirGlobalRelocation>) {
+        match initializer {
+            lir::LirConstant::Array(..) | lir::LirConstant::Struct(..) => {
+                Self::try_encode_global_initializer_bytes(&initializer, ty)
+                    .map(|(bytes, relocations)| (lir::LirConstant::Bytes(bytes), relocations))
+                    .unwrap_or((initializer, Vec::new()))
+            }
+            other => (other, Vec::new()),
+        }
+    }
+
+    fn try_encode_global_initializer_bytes(
+        constant: &lir::LirConstant,
+        ty: &lir::LirType,
+    ) -> Option<(Vec<u8>, Vec<lir::LirGlobalRelocation>)> {
+        let mut bytes = vec![0u8; layout::size_of(ty) as usize];
+        let mut relocations = Vec::new();
+        Self::encode_global_initializer_into(&mut bytes, &mut relocations, 0, constant, ty)?;
+        Some((bytes, relocations))
+    }
+
+    fn encode_global_initializer_into(
+        out: &mut [u8],
+        relocations: &mut Vec<lir::LirGlobalRelocation>,
+        base: usize,
+        constant: &lir::LirConstant,
+        ty: &lir::LirType,
+    ) -> Option<()> {
+        match constant {
+            lir::LirConstant::Int(value, int_ty) => {
+                Self::write_initializer_int(
+                    out,
+                    base,
+                    *value as u128,
+                    layout::size_of(int_ty) as usize,
+                    true,
+                )?;
+            }
+            lir::LirConstant::UInt(value, int_ty) => {
+                Self::write_initializer_int(
+                    out,
+                    base,
+                    *value as u128,
+                    layout::size_of(int_ty) as usize,
+                    false,
+                )?;
+            }
+            lir::LirConstant::Float(value, float_ty) => {
+                Self::write_initializer_float(
+                    out,
+                    base,
+                    *value,
+                    layout::size_of(float_ty) as usize,
+                )?;
+            }
+            lir::LirConstant::Bool(value) => {
+                *out.get_mut(base)? = if *value { 1 } else { 0 };
+            }
+            lir::LirConstant::Bytes(bytes) => {
+                let end = base.checked_add(bytes.len())?;
+                out.get_mut(base..end)?.copy_from_slice(bytes);
+            }
+            lir::LirConstant::Array(elements, _) => {
+                let lir::LirType::Array(elem_ty, len) = ty else {
+                    return None;
+                };
+                if elements.len() > *len as usize {
+                    return None;
+                }
+                let elem_size = layout::size_of(elem_ty) as usize;
+                for (idx, element) in elements.iter().enumerate() {
+                    Self::encode_global_initializer_into(
+                        out,
+                        relocations,
+                        base + idx * elem_size,
+                        element,
+                        elem_ty,
+                    )?;
+                }
+            }
+            lir::LirConstant::Struct(fields, _) => {
+                let lir::LirType::Struct {
+                    fields: field_tys, ..
+                } = ty
+                else {
+                    return None;
+                };
+                if fields.len() > field_tys.len() {
+                    return None;
+                }
+                let struct_layout = layout::struct_layout(ty)?;
+                for (idx, field) in fields.iter().enumerate() {
+                    let field_ty = field_tys.get(idx)?;
+                    let field_offset = *struct_layout.field_offsets.get(idx)? as usize;
+                    Self::encode_global_initializer_into(
+                        out,
+                        relocations,
+                        base + field_offset,
+                        field,
+                        field_ty,
+                    )?;
+                }
+            }
+            lir::LirConstant::GlobalRef(name, ptr_ty, indices) => {
+                let offset = Self::global_ref_addend(ptr_ty, indices).ok()?;
+                Self::write_initializer_int(out, base, 0, layout::size_of(ptr_ty) as usize, false)?;
+                relocations.push(lir::LirGlobalRelocation {
+                    offset: base as u64,
+                    kind: lir::LirRelocationKind::Abs64,
+                    target: lir::LirRelocationTarget::Global(name.clone()),
+                    addend: offset,
+                });
+            }
+            lir::LirConstant::FunctionRef(name, ptr_ty) => {
+                Self::write_initializer_int(out, base, 0, layout::size_of(ptr_ty) as usize, false)?;
+                relocations.push(lir::LirGlobalRelocation {
+                    offset: base as u64,
+                    kind: lir::LirRelocationKind::Abs64,
+                    target: lir::LirRelocationTarget::Function(name.clone()),
+                    addend: 0,
+                });
+            }
+            lir::LirConstant::Null(null_ty) | lir::LirConstant::Undef(null_ty) => {
+                let size = layout::size_of(null_ty) as usize;
+                let end = base.checked_add(size)?;
+                let slot = out.get_mut(base..end)?;
+                slot.fill(0);
+            }
+            lir::LirConstant::String(_) => return None,
+        }
+        Some(())
+    }
+
+    fn global_ref_addend(base_ty: &lir::LirType, indices: &[u64]) -> Result<i64> {
+        let lir::LirType::Ptr(inner) = base_ty else {
+            return Err(fp_core::error::Error::from(
+                "global reference relocation expects pointer type",
+            ));
+        };
+        let mut offset = 0i64;
+        let mut current = inner.as_ref().clone();
+        for idx in indices {
+            let idx_val = *idx as i64;
+            match &current {
+                lir::LirType::Array(elem, _) => {
+                    let elem_size = layout::size_of(elem) as i64;
+                    offset += idx_val * elem_size;
+                    current = *elem.clone();
+                }
+                lir::LirType::Struct { fields, .. } => {
+                    let struct_layout = layout::struct_layout(&current).ok_or_else(|| {
+                        fp_core::error::Error::from("missing struct layout for relocation")
+                    })?;
+                    let index = idx_val as usize;
+                    if index < struct_layout.field_offsets.len() {
+                        offset += struct_layout.field_offsets[index] as i64;
+                        current = fields[index].clone();
+                    }
+                }
+                _ => {
+                    let elem_size = layout::size_of(&current) as i64;
+                    offset += idx_val * elem_size;
+                }
+            }
+        }
+        Ok(offset)
+    }
+
+    fn write_initializer_int(
+        out: &mut [u8],
+        offset: usize,
+        value: u128,
+        size: usize,
+        signed: bool,
+    ) -> Option<()> {
+        let end = offset.checked_add(size)?;
+        let slot = out.get_mut(offset..end)?;
+        let mut bits = value;
+        if signed && size < 16 {
+            let mask = (1u128 << (size * 8)) - 1;
+            bits &= mask;
+        }
+        for (idx, byte) in slot.iter_mut().enumerate() {
+            *byte = (bits >> (idx * 8)) as u8;
+        }
+        Some(())
+    }
+
+    fn write_initializer_float(
+        out: &mut [u8],
+        offset: usize,
+        value: f64,
+        size: usize,
+    ) -> Option<()> {
+        match size {
+            4 => Self::write_initializer_int(out, offset, (value as f32).to_bits() as u128, 4, false),
+            8 => Self::write_initializer_int(out, offset, value.to_bits() as u128, 8, false),
+            _ => None,
+        }
     }
 
     fn const_string_ptr(&mut self, value: &str) -> lir::LirConstant {
@@ -3636,6 +3848,10 @@ impl LirGenerator {
                 | lir::LirConstant::FunctionRef(_, ty)
                 | lir::LirConstant::Null(ty)
                 | lir::LirConstant::Undef(ty) => Some(ty.clone()),
+                lir::LirConstant::Bytes(bytes) => Some(lir::LirType::Array(
+                    Box::new(lir::LirType::I8),
+                    bytes.len() as u64,
+                )),
                 lir::LirConstant::Array(elements, elem_ty) => Some(lir::LirType::Array(
                     Box::new(elem_ty.clone()),
                     elements.len() as u64,
@@ -4968,6 +5184,10 @@ impl LirGenerator {
             | lir::LirValue::Constant(lir::LirConstant::FunctionRef(_, ty))
             | lir::LirValue::Constant(lir::LirConstant::Null(ty))
             | lir::LirValue::Constant(lir::LirConstant::Undef(ty)) => Some(ty.clone()),
+            lir::LirValue::Constant(lir::LirConstant::Bytes(bytes)) => Some(lir::LirType::Array(
+                Box::new(lir::LirType::I8),
+                bytes.len() as u64,
+            )),
             lir::LirValue::Constant(lir::LirConstant::Bool(_)) => Some(lir::LirType::I1),
             lir::LirValue::Constant(lir::LirConstant::String(_)) => {
                 Some(lir::LirType::Ptr(Box::new(lir::LirType::I8)))

@@ -1,6 +1,7 @@
 use crate::context::LlvmContext;
 use crate::intrinsics::{CRuntimeIntrinsics, IntrinsicSignature};
 use fp_core::diagnostics::report_error_with_context;
+use fp_core::lir::layout;
 use fp_core::tracing::debug;
 use fp_core::{
     error::{Error, Result},
@@ -254,7 +255,16 @@ impl<'a> LirCodegen<'a> {
         })?;
 
         if let Some(init) = global.initializer {
-            let value = self.convert_lir_constant_to_value(init)?;
+            let value = match init {
+                lir::LirConstant::Bytes(bytes) if !global.relocations.is_empty() => self
+                    .convert_global_bytes_to_typed_value(
+                        &bytes,
+                        &global.relocations,
+                        &global.ty,
+                        0,
+                    )?,
+                other => self.convert_lir_constant_to_value(other)?,
+            };
             gvar.set_initializer(&value);
         }
 
@@ -1736,6 +1746,13 @@ impl<'a> LirCodegen<'a> {
                 Ok(float_ty.const_float(value).into())
             }
             lir::LirConstant::Bool(value) => Ok(self.llvm_ctx.const_bool(value).into()),
+            lir::LirConstant::Bytes(bytes) => {
+                let values = bytes
+                    .into_iter()
+                    .map(|byte| self.llvm_ctx.i8_type().const_int(byte as u64, false))
+                    .collect::<Vec<_>>();
+                Ok(self.llvm_ctx.i8_type().const_array(&values).into())
+            }
             lir::LirConstant::Struct(values, ty) => {
                 let struct_ty = match self.llvm_basic_type(&ty)? {
                     BasicTypeEnum::StructType(strct) => strct,
@@ -1888,6 +1905,193 @@ impl<'a> LirCodegen<'a> {
         Ok(gep)
     }
 
+    fn convert_global_bytes_to_typed_value(
+        &mut self,
+        bytes: &[u8],
+        relocations: &[lir::LirGlobalRelocation],
+        ty: &lir::LirType,
+        base: usize,
+    ) -> Result<BasicValueEnum<'static>> {
+        match ty {
+            lir::LirType::I1 => Ok(self
+                .llvm_ctx
+                .i1_type()
+                .const_int((bytes.get(base).copied().unwrap_or(0) & 1) as u64, false)
+                .into()),
+            lir::LirType::I8 => Ok(self
+                .llvm_ctx
+                .i8_type()
+                .const_int(bytes.get(base).copied().unwrap_or(0) as u64, false)
+                .into()),
+            lir::LirType::I16 => Ok(self
+                .llvm_ctx
+                .i16_type()
+                .const_int(Self::read_le_u128(bytes, base, 2)? as u64, false)
+                .into()),
+            lir::LirType::I32 => Ok(self
+                .llvm_ctx
+                .i32_type()
+                .const_int(Self::read_le_u128(bytes, base, 4)? as u64, false)
+                .into()),
+            lir::LirType::I64 => Ok(self
+                .llvm_ctx
+                .i64_type()
+                .const_int(Self::read_le_u128(bytes, base, 8)? as u64, false)
+                .into()),
+            lir::LirType::I128 => Ok(self
+                .llvm_ctx
+                .i128_type()
+                .const_int_arbitrary_precision(&[
+                    Self::read_le_u128(bytes, base, 8)? as u64,
+                    Self::read_le_u128(bytes, base + 8, 8)? as u64,
+                ])
+                .into()),
+            lir::LirType::F32 => {
+                let bits = Self::read_le_u128(bytes, base, 4)? as u32;
+                Ok(self.llvm_ctx.f32_type().const_float(f32::from_bits(bits) as f64).into())
+            }
+            lir::LirType::F64 => {
+                let bits = Self::read_le_u128(bytes, base, 8)? as u64;
+                Ok(self.llvm_ctx.f64_type().const_float(f64::from_bits(bits)).into())
+            }
+            lir::LirType::Ptr(_) | lir::LirType::Function { .. } => {
+                self.convert_global_pointer_bytes(bytes, relocations, ty, base)
+            }
+            lir::LirType::Array(element_ty, size) => {
+                let llvm_elem_ty = self.llvm_basic_type(element_ty)?;
+                let elem_size = layout::size_of(element_ty) as usize;
+                let mut values = Vec::with_capacity(*size as usize);
+                for index in 0..(*size as usize) {
+                    values.push(self.convert_global_bytes_to_typed_value(
+                        bytes,
+                        relocations,
+                        element_ty,
+                        base + index * elem_size,
+                    )?);
+                }
+                let array_value = unsafe {
+                    let mut raw_values: Vec<_> =
+                        values.iter().map(|value| value.as_value_ref()).collect();
+                    let value_ref = LLVMConstArray2(
+                        llvm_elem_ty.as_type_ref(),
+                        raw_values.as_mut_ptr(),
+                        raw_values.len() as u64,
+                    );
+                    inkwell::values::ArrayValue::new(value_ref)
+                };
+                Ok(array_value.into())
+            }
+            lir::LirType::Struct { fields, packed, .. } => {
+                let struct_ty = self
+                    .llvm_ctx
+                    .context
+                    .struct_type(
+                        &fields
+                            .iter()
+                            .map(|field| self.llvm_basic_type(field))
+                            .collect::<Result<Vec<_>>>()?,
+                        *packed,
+                    );
+                let layout = layout::struct_layout(ty).ok_or_else(|| {
+                    report_error_with_context(LOG_AREA, "missing LIR struct layout")
+                })?;
+                let mut values = Vec::with_capacity(fields.len());
+                for (index, field_ty) in fields.iter().enumerate() {
+                    values.push(self.convert_global_bytes_to_typed_value(
+                        bytes,
+                        relocations,
+                        field_ty,
+                        base + layout.field_offsets[index] as usize,
+                    )?);
+                }
+                Ok(struct_ty.const_named_struct(&values).into())
+            }
+            lir::LirType::Void | lir::LirType::Label | lir::LirType::Token | lir::LirType::Metadata => {
+                let llvm_ty = self.llvm_basic_type(ty)?;
+                Ok(llvm_ty.const_zero())
+            }
+            lir::LirType::Error => Ok(self.llvm_ctx.i64_type().const_zero().into()),
+            lir::LirType::Vector(..) => Err(report_error_with_context(
+                LOG_AREA,
+                "vector-typed global initializers are not yet supported by fp-llvm",
+            )),
+        }
+    }
+
+    fn convert_global_pointer_bytes(
+        &mut self,
+        bytes: &[u8],
+        relocations: &[lir::LirGlobalRelocation],
+        ty: &lir::LirType,
+        base: usize,
+    ) -> Result<BasicValueEnum<'static>> {
+        let target_ptr_ty = match self.llvm_basic_type(ty)? {
+            BasicTypeEnum::PointerType(ptr_ty) => ptr_ty,
+            _ => {
+                return Err(report_error_with_context(
+                    LOG_AREA,
+                    "expected pointer type for global relocation decoding",
+                ))
+            }
+        };
+
+        if let Some(reloc) = relocations.iter().find(|reloc| reloc.offset as usize == base) {
+            if reloc.addend != 0 {
+                return Err(report_error_with_context(
+                    LOG_AREA,
+                    "non-zero global relocation addends are not yet supported by fp-llvm",
+                ));
+            }
+            let ptr = match &reloc.target {
+                lir::LirRelocationTarget::Global(name) => {
+                    let llvm_name = self.llvm_symbol_for(name);
+                    let global = self.llvm_ctx.module.get_global(&llvm_name).ok_or_else(|| {
+                        report_error_with_context(
+                            LOG_AREA,
+                            format!("Unknown global referenced in relocation: {}", name),
+                        )
+                    })?;
+                    global.as_pointer_value()
+                }
+                lir::LirRelocationTarget::Function(name) => {
+                    let llvm_name = self.llvm_symbol_for(name);
+                    let function = self.llvm_ctx.module.get_function(&llvm_name).ok_or_else(|| {
+                        report_error_with_context(
+                            LOG_AREA,
+                            format!("Unknown function referenced in relocation: {}", name),
+                        )
+                    })?;
+                    function.as_global_value().as_pointer_value()
+                }
+            };
+            return Ok(ptr.const_cast(target_ptr_ty).into());
+        }
+
+        let raw = Self::read_le_u128(bytes, base, layout::size_of(ty) as usize)? as u64;
+        if raw == 0 {
+            return Ok(target_ptr_ty.const_null().into());
+        }
+
+        Err(report_error_with_context(
+            LOG_AREA,
+            "non-null raw pointer bytes without relocation are not supported by fp-llvm",
+        ))
+    }
+
+    fn read_le_u128(bytes: &[u8], offset: usize, size: usize) -> Result<u128> {
+        if size > 16 || offset.saturating_add(size) > bytes.len() {
+            return Err(report_error_with_context(
+                LOG_AREA,
+                "global byte initializer read out of bounds",
+            ));
+        }
+        let mut value = 0u128;
+        for (index, byte) in bytes[offset..offset + size].iter().enumerate() {
+            value |= (*byte as u128) << (index * 8);
+        }
+        Ok(value)
+    }
+
     fn infer_binary_result_type(
         &self,
         ty_hint: Option<lir::LirType>,
@@ -1918,6 +2122,9 @@ impl<'a> LirCodegen<'a> {
             lir::LirConstant::Float(_, ty) => ty.clone(),
             lir::LirConstant::Bool(_) => lir::LirType::I1,
             lir::LirConstant::String(_) => lir::LirType::Ptr(Box::new(lir::LirType::I8)),
+            lir::LirConstant::Bytes(bytes) => {
+                lir::LirType::Array(Box::new(lir::LirType::I8), bytes.len() as u64)
+            }
             lir::LirConstant::Array(elements, elem_ty) => {
                 lir::LirType::Array(Box::new(elem_ty.clone()), elements.len() as u64)
             }

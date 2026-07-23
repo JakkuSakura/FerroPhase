@@ -70,7 +70,7 @@ fn ensure_glibc_progname_globals(program: &mut AsmProgram) {
             AsmGlobal {
                 name: Name::new(name),
                 ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                initializer: Some(AsmConstant::UInt(0, AsmType::I64)),
+                initializer: Some(AsmConstant::Bytes(vec![0; 8])),
                 relocations: vec![AsmGlobalRelocation {
                     offset: 0,
                     kind: AsmRelocationKind::Abs64,
@@ -2711,7 +2711,7 @@ fn ensure_ctype_tables(program: &mut AsmProgram) {
         AsmGlobal {
             name: Name::new("fp_linux_ctype_tolower_ptr"),
             ty: AsmType::I64,
-            initializer: Some(AsmConstant::UInt(0, AsmType::I64)),
+            initializer: Some(AsmConstant::Bytes(vec![0; 8])),
             relocations: vec![AsmGlobalRelocation {
                 offset: 0,
                 kind: AsmRelocationKind::Abs64,
@@ -2745,7 +2745,7 @@ fn ensure_ctype_tables(program: &mut AsmProgram) {
         AsmGlobal {
             name: Name::new("fp_linux_ctype_toupper_ptr"),
             ty: AsmType::I64,
-            initializer: Some(AsmConstant::UInt(0, AsmType::I64)),
+            initializer: Some(AsmConstant::Bytes(vec![0; 8])),
             relocations: vec![AsmGlobalRelocation {
                 offset: 0,
                 kind: AsmRelocationKind::Abs64,
@@ -2779,7 +2779,7 @@ fn ensure_ctype_tables(program: &mut AsmProgram) {
         AsmGlobal {
             name: Name::new("fp_linux_ctype_b_ptr"),
             ty: AsmType::I64,
-            initializer: Some(AsmConstant::UInt(0, AsmType::I64)),
+            initializer: Some(AsmConstant::Bytes(vec![0; 8])),
             relocations: vec![AsmGlobalRelocation {
                 offset: 0,
                 kind: AsmRelocationKind::Abs64,

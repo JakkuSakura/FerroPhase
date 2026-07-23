@@ -108,6 +108,7 @@ pub struct AsmGlobal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AsmRelocationKind {
     Abs64,
+    PcRel32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -709,6 +710,13 @@ impl AsmProgram {
             functions: Vec::new(),
             type_definitions: Vec::new(),
         }
+    }
+}
+
+impl AsmGlobal {
+    pub fn clear_initializer(&mut self) {
+        self.relocations.clear();
+        self.initializer = None;
     }
 }
 

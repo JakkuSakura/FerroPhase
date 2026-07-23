@@ -1,6 +1,9 @@
 use fp_backend::transformations::LirGenerator;
-use fp_core::lir::{LirConstant, LirInstructionKind, LirTerminator, LirType, LirValue};
-use fp_core::mir::ty::{IntTy, Ty, TyKind};
+use fp_core::lir::{
+    LirConstant, LirInstructionKind, LirRelocationKind, LirRelocationTarget, LirTerminator,
+    LirType, LirValue,
+};
+use fp_core::mir::ty::{IntTy, Ty, TyKind, UintTy};
 use fp_core::mir::{self, FunctionSig, Item, ItemKind, Mutability, Operand};
 use fp_core::span::Span;
 use std::collections::HashMap;
@@ -112,6 +115,64 @@ fn lowers_static_integer_initializer_into_global_constant() {
         }
         other => panic!("expected integer initializer, got {:?}", other),
     }
+}
+
+#[test]
+fn lowers_slice_static_into_bytes_with_relocation() {
+    let ty = Ty {
+        kind: TyKind::Slice(Box::new(Ty::uint(UintTy::U8))),
+    };
+    let constant = mir::Constant {
+        span: Span::new(0, 0, 0),
+        user_ty: None,
+        literal: mir::ConstantKind::Str("hi".to_string()),
+    };
+
+    let static_item = mir::Static {
+        ty: ty.clone(),
+        init: Operand::Constant(constant),
+        mutability: Mutability::Not,
+    };
+
+    let program = mir::Program {
+        items: vec![Item {
+            mir_id: 0,
+            kind: ItemKind::Static(static_item),
+        }],
+        bodies: HashMap::new(),
+    };
+
+    let mut generator = LirGenerator::new();
+    let lir_program = generator
+        .transform(program)
+        .expect("lowering should succeed");
+
+    assert_eq!(lir_program.globals.len(), 2);
+    let slice_global = &lir_program.globals[0];
+    let data_global = &lir_program.globals[1];
+
+    match &slice_global.initializer {
+        Some(LirConstant::Bytes(bytes)) => {
+            assert_eq!(bytes.len(), 16);
+            assert_eq!(&bytes[8..16], &(2u64).to_le_bytes());
+        }
+        other => panic!("expected byte initializer for slice global, got {:?}", other),
+    }
+    assert_eq!(slice_global.relocations.len(), 1);
+    let reloc = &slice_global.relocations[0];
+    assert_eq!(reloc.offset, 0);
+    assert_eq!(reloc.kind, LirRelocationKind::Abs64);
+    assert_eq!(
+        reloc.target,
+        LirRelocationTarget::Global(data_global.name.clone())
+    );
+    assert_eq!(reloc.addend, 0);
+
+    match &data_global.initializer {
+        Some(LirConstant::Bytes(bytes)) => assert_eq!(bytes, b"hi\0"),
+        other => panic!("expected byte initializer for backing string, got {:?}", other),
+    }
+    assert!(data_global.relocations.is_empty());
 }
 
 #[test]

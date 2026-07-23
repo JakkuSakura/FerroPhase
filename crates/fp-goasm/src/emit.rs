@@ -479,6 +479,7 @@ fn format_constant(constant: &LirConstant) -> String {
         LirConstant::Float(value, _) => format!("${}", value),
         LirConstant::Bool(value) => format!("${}", *value as u8),
         LirConstant::String(value) => format!("$\"{}\"", value.escape_default()),
+        LirConstant::Bytes(bytes) => format!("$bytes(len={})", bytes.len()),
         LirConstant::Array(values, _) => format!(
             "$[{}]",
             values

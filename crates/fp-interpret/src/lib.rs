@@ -412,6 +412,7 @@ impl LirInterpreter {
             LirConstant::Null(_) => Value::null(),
             LirConstant::Undef(ty) => Self::default_value_for_type(ty),
             LirConstant::GlobalRef(_, _, _) | LirConstant::FunctionRef(_, _) => Value::uint(0),
+            LirConstant::Bytes(bytes) => Value::Bytes(fp_core::ast::ValueBytes::from(bytes.as_slice())),
         })
     }
 
@@ -892,6 +893,7 @@ fn const_ty(c: &LirConstant) -> LirType {
         | LirConstant::FunctionRef(_, ty) => ty.clone(),
         LirConstant::Bool(_) => LirType::I1,
         LirConstant::String(_) => LirType::Ptr(Box::new(LirType::I8)),
+        LirConstant::Bytes(bytes) => LirType::Array(Box::new(LirType::I8), bytes.len() as u64),
     }
 }
 

@@ -333,6 +333,7 @@ pub enum LirConstant {
     Float(f64, LirType),
     Bool(bool),
     String(String),
+    Bytes(Vec<u8>),
     Array(Vec<LirConstant>, LirType),
     Struct(Vec<LirConstant>, LirType),
     GlobalRef(Name, LirType, Vec<u64>),
@@ -341,11 +342,32 @@ pub enum LirConstant {
     Undef(LirType),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LirRelocationKind {
+    Abs64,
+    PcRel32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LirRelocationTarget {
+    Global(Name),
+    Function(Name),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LirGlobalRelocation {
+    pub offset: u64,
+    pub kind: LirRelocationKind,
+    pub target: LirRelocationTarget,
+    pub addend: i64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirGlobal {
     pub name: Name,
     pub ty: LirType,
     pub initializer: Option<LirConstant>,
+    pub relocations: Vec<LirGlobalRelocation>,
     pub linkage: Linkage,
     pub visibility: Visibility,
     pub is_constant: bool,
@@ -676,6 +698,9 @@ impl LirQuery {
     pub fn span(&self) -> Span {
         self.span
     }
+}
+
+impl LirConstant {
 }
 
 impl LirTypeDefinition {
