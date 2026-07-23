@@ -429,7 +429,6 @@ impl LirGenerator {
         let raw_initializer = self.convert_static_initializer(&mir_static.init, &mir_static.ty)?;
         let (initializer, relocations) =
             self.canonicalize_global_initializer(raw_initializer, &lir_ty);
-        eprintln!("  global {}: init={:?} relocs={}", name, initializer, relocations.len());
         let alignment = Self::alignment_for_lir_type(&lir_ty).max(1);
 
         Ok(lir::LirGlobal {
