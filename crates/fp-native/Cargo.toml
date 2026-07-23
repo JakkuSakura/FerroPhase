@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 fp-core = { path = "../fp-core" }
+fp-ffi = { path = "../fp-ffi" }
 anyhow = "1.0"
 thiserror = "1.0"
 tracing = "0.1"

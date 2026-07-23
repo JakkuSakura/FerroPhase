@@ -1357,6 +1357,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-ffi"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "fp-flatbuffers"
 version = "0.1.0"
 dependencies = [
@@ -1406,6 +1414,7 @@ name = "fp-interpret"
 version = "0.1.0"
 dependencies = [
  "fp-core",
+ "fp-ffi",
 ]
 
 [[package]]
@@ -1480,6 +1489,7 @@ dependencies = [
  "anyhow",
  "capstone",
  "fp-core",
+ "fp-ffi",
  "goblin",
  "libc",
  "object 0.37.3",

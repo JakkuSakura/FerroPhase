@@ -4,9 +4,10 @@ use std::collections::HashMap;
 
 use fp_core::ast::{Value, ValueList, ValueMapEntry, ValueString, ValueTuple};
 use fp_core::lir::{
-    BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirInstruction, LirInstructionKind,
-    LirProgram, LirTerminator, LirType, LirValue, RegisterId,
+    BasicBlockId, CallingConvention, LirBasicBlock, LirConstant, LirFunction, LirInstruction,
+    LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, RegisterId,
 };
+use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
 use crate::vm::{
     is_object_type, lir_type_info, mem_load, mem_store, raw_to_value, value_to_raw, ThreadState,
@@ -22,6 +23,12 @@ pub struct LirInterpreter {
     /// Global object handles keyed by name, populated from the LIR
     /// program during run_main / run_function_named.
     global_values: HashMap<String, u64>,
+    /// Optional FFI runtime for calling extern C functions.  Set
+    /// before running if the program contains extern declarations.
+    ffi: Option<FfiRuntime>,
+    /// C signatures of extern functions, keyed by function name.
+    /// Populated from LIR functions with `is_declaration = true`.
+    extern_sigs: HashMap<String, FfiSignature>,
 }
 
 impl LirInterpreter {
@@ -30,6 +37,8 @@ impl LirInterpreter {
             state: ThreadState::new(),
             register_types: HashMap::new(),
             global_values: HashMap::new(),
+            ffi: FfiRuntime::new().ok(),
+            extern_sigs: HashMap::new(),
         }
     }
 
@@ -265,6 +274,15 @@ impl LirInterpreter {
                     self.state.objects.push(value);
                     self.global_values.insert(global.name.to_string(), handle);
                 }
+            }
+        }
+        // Collect C signatures from extern function declarations.
+        for func in &program.functions {
+            if func.is_declaration
+                && func.calling_convention == CallingConvention::C
+            {
+                let sig = lir_sig_to_ffi(&func.signature);
+                self.extern_sigs.insert(func.name.to_string(), sig);
             }
         }
     }
@@ -655,6 +673,28 @@ impl LirInterpreter {
                     .iter()
                     .map(|a| self.resolve_raw(a))
                     .collect::<LirResult<Vec<_>>>()?;
+
+                // Try FFI dispatch for extern C functions.
+                if let Some(sig) = self.extern_sigs.get(name.as_str()) {
+                    if let Some(ref mut ffi) = self.ffi {
+                        match ffi.call(name, sig, &raws) {
+                            Ok(Some(ret)) => {
+                                self.wr(dst, ret);
+                                return Ok(());
+                            }
+                            Ok(None) => {
+                                self.wr(dst, 0);
+                                return Ok(());
+                            }
+                            Err(e) => {
+                                // FFI call failed — fall through to intrinsic
+                                // stubs so comptime evaluation keeps working.
+                                eprintln!("ffi call '{name}' failed: {e}");
+                            }
+                        }
+                    }
+                }
+
                 let r = self.call_intrinsic(name, &raws)?;
                 self.wr(dst, r);
                 Ok(())
@@ -932,6 +972,22 @@ fn const_ty(c: &LirConstant) -> LirType {
 impl Default for LirInterpreter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Convert a LIR function signature to an FFI signature.
+fn lir_sig_to_ffi(sig: &fp_core::lir::LirFunctionSignature) -> FfiSignature {
+    let args = sig.params.iter().map(lir_ty_to_ffi).collect();
+    let ret = lir_ty_to_ffi(&sig.return_type);
+    FfiSignature { args, ret }
+}
+
+fn lir_ty_to_ffi(ty: &LirType) -> FfiType {
+    match ty {
+        LirType::Ptr(_) => FfiType::Ptr,
+        LirType::Void => FfiType::Void,
+        // All scalar types pass through 64-bit registers.
+        _ => FfiType::U64,
     }
 }
 

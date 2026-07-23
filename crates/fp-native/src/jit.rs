@@ -1,5 +1,5 @@
 use crate::emit::{EmitPlan, RelocKind, RelocSection, TargetArch, TargetFormat};
-use crate::ffi::DynamicLibrary;
+use fp_ffi::DynamicLibrary;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, LirInstructionKind, LirProgram, LirType};
 #[cfg(unix)]
@@ -34,7 +34,7 @@ pub struct JitModule {
     entry: *const c_void,
     symbols: HashMap<String, *const c_void>,
     signatures: HashMap<String, FunctionMetadata>,
-    _lib: Arc<DynamicLibrary>,
+    _lib: Arc<fp_ffi::DynamicLibrary>,
 }
 
 impl JitModule {
@@ -109,7 +109,7 @@ impl JitModule {
 pub struct JitEngine {
     format: TargetFormat,
     arch: TargetArch,
-    lib: Arc<DynamicLibrary>,
+    lib: Arc<fp_ffi::DynamicLibrary>,
 }
 
 impl JitEngine {
@@ -118,7 +118,8 @@ impl JitEngine {
         Ok(Self {
             format,
             arch,
-            lib: Arc::new(DynamicLibrary::open_default()?),
+            lib: Arc::new(fp_ffi::DynamicLibrary::open_default()
+                .map_err(|e| Error::from(format!("ffi: {e}")))?),
         })
     }
 
@@ -392,7 +393,8 @@ impl JitEngine {
         if let Some((_, ptr)) = extra_symbols.iter().find(|(name, _)| *name == symbol) {
             return Ok(*ptr as u64);
         }
-        let ptr = self.lib.symbol(symbol)? as u64;
+        let ptr = self.lib.symbol(symbol)
+            .map_err(|e| Error::from(format!("ffi: {e}")))? as u64;
         Ok(ptr)
     }
 
