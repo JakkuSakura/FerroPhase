@@ -137,6 +137,30 @@ impl LirGenerator {
                     let lir_static = self.transform_static(mir_static)?;
                     lir_program.globals.push(lir_static);
                 }
+                mir::ItemKind::ExecutableConst(konst) => {
+                    let mir_func = mir::Function {
+                        name: konst.function_name,
+                        path: Vec::new(),
+                        def_id: None,
+                        sig: mir::FunctionSig {
+                            inputs: Vec::new(),
+                            output: konst.ty.clone(),
+                        },
+                        body_id: konst.body_id,
+                        abi: mir::ty::Abi::Rust,
+                        is_extern: false,
+                        attrs: Vec::new(),
+                    };
+                    let lir_func =
+                        self.transform_function_with_bodies(mir_func, &mir_program.bodies)?;
+                    let function_name = lir_func.name.clone();
+                    lir_program.functions.push(lir_func);
+                    lir_program.comptime_entries.push(lir::LirComptimeEntry {
+                        function: function_name,
+                        key: konst.key,
+                        ty: konst.ty,
+                    });
+                }
                 mir::ItemKind::Query(query) => {
                     lir_program.queries.push(lir::LirQuery {
                         query_id: mir_item.mir_id,

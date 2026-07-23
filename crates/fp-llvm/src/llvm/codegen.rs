@@ -123,6 +123,7 @@ impl<'a> LirCodegen<'a> {
             functions,
             globals,
             type_definitions: _type_definitions,
+            comptime_entries: _comptime_entries,
             queries: _queries,
         } = lir_program;
 

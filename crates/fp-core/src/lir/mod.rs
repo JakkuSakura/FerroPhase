@@ -67,7 +67,15 @@ pub struct LirProgram {
     pub functions: Vec<LirFunction>,
     pub globals: Vec<LirGlobal>,
     pub type_definitions: Vec<LirTypeDefinition>,
+    pub comptime_entries: Vec<LirComptimeEntry>,
     pub queries: Vec<LirQuery>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LirComptimeEntry {
+    pub function: Name,
+    pub key: String,
+    pub ty: crate::mir::Ty,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -437,6 +445,7 @@ impl LirProgram {
             functions: Vec::new(),
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            comptime_entries: Vec::new(),
             queries: Vec::new(),
         }
     }
@@ -453,6 +462,7 @@ impl LirProgram {
         self.functions.append(&mut other.functions);
         self.globals.append(&mut other.globals);
         self.type_definitions.append(&mut other.type_definitions);
+        self.comptime_entries.append(&mut other.comptime_entries);
         self.queries.append(&mut other.queries);
     }
 

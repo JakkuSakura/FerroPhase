@@ -197,6 +197,7 @@ pub struct MirLowering {
     enum_variants: HashMap<hir::DefId, EnumVariantInfo>,
     enum_variant_names: HashMap<String, hir::DefId>,
     const_values: HashMap<hir::DefId, ConstInfo>,
+    resolved_const_values: HashMap<String, mir::Constant>,
     function_sigs: HashMap<hir::DefId, mir::FunctionSig>,
     generic_function_defs: HashMap<hir::DefId, hir::Function>,
     runtime_functions: HashMap<String, mir::FunctionSig>,
@@ -269,6 +270,7 @@ impl MirLowering {
             enum_variants: HashMap::new(),
             enum_variant_names: HashMap::new(),
             const_values: HashMap::new(),
+            resolved_const_values: HashMap::new(),
             function_sigs: HashMap::new(),
             generic_function_defs: HashMap::new(),
             runtime_functions: Self::default_runtime_signatures(),
@@ -314,6 +316,29 @@ impl MirLowering {
 
     pub fn set_lossy(&mut self, enabled: bool) {
         self.tolerate_errors = enabled;
+    }
+
+    pub fn seed_resolved_const(&mut self, key: impl Into<String>, value: mir::Constant) {
+        self.resolved_const_values.insert(key.into(), value);
+    }
+
+    fn const_key(&self, name: &str, span: Span) -> String {
+        let file = fp_core::source_map::source_map()
+            .file(span.file)
+            .map(|file| file.path.display().to_string())
+            .unwrap_or_else(|| format!("file#{}", span.file));
+        format!("{file}:{}:{}:{name}", span.lo, span.hi)
+    }
+
+    fn synthetic_const_function_name(&self, name: &hir::Symbol, key: &str) -> String {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        let hash = hasher.finish();
+        format!(
+            "__fp_comptime_const_{}_{}",
+            terminal_segment(name.as_str()),
+            hash
+        )
     }
 
     fn lower_program(&mut self, program: &hir::Program) -> Result<mir::Program> {
@@ -3258,15 +3283,16 @@ impl MirLowering {
         konst: &hir::Const,
     ) -> Result<mir::Item> {
         let ty = self.lower_type_expr(&konst.ty);
+        let key = self.const_key(konst.name.as_str(), konst.body.value.span);
         let container_args = self.container_args_from_type_expr(&konst.ty);
-        let init_constant = self
-            .lower_const_expr(
-                program,
-                &konst.body.value,
-                Some(&ty),
-                container_args.as_ref(),
-            )
-            .unwrap_or_else(|| self.error_constant(konst.body.value.span));
+        let Some(init_constant) = self.lower_const_expr(
+            program,
+            &konst.body.value,
+            Some(&ty),
+            container_args.as_ref(),
+        ) else {
+            return self.lower_executable_const(program, def_id, konst, ty, key);
+        };
         let init = mir::Operand::Constant(init_constant.clone());
 
         self.const_values.insert(
@@ -3289,6 +3315,70 @@ impl MirLowering {
         };
         self.next_mir_id += 1;
 
+        Ok(mir_item)
+    }
+
+    fn lower_executable_const(
+        &mut self,
+        program: &hir::Program,
+        def_id: hir::DefId,
+        konst: &hir::Const,
+        ty: Ty,
+        key: String,
+    ) -> Result<mir::Item> {
+        let body_id = mir::BodyId::new(self.next_body_id);
+        self.next_body_id += 1;
+
+        let fn_name = self.synthetic_const_function_name(&konst.name, &key);
+        let synthetic_item = hir::Item {
+            hir_id: konst.body.hir_id,
+            def_id,
+            visibility: hir::Visibility::Private,
+            kind: hir::ItemKind::Function(hir::Function {
+                sig: hir::FunctionSig {
+                    name: hir::Symbol::new(fn_name.clone()),
+                    inputs: Vec::new(),
+                    output: konst.ty.clone(),
+                    generics: hir::Generics {
+                        params: Vec::new(),
+                        where_clause: None,
+                    },
+                    abi: hir::Abi::Rust,
+                },
+                body: Some(hir::Body {
+                    hir_id: konst.body.hir_id,
+                    params: Vec::new(),
+                    value: konst.body.value.clone(),
+                }),
+                is_const: true,
+                is_extern: false,
+                attrs: Vec::new(),
+            }),
+            span: konst.body.value.span,
+        };
+        let hir::ItemKind::Function(function) = &synthetic_item.kind else {
+            unreachable!();
+        };
+
+        let sig = mir::FunctionSig {
+            inputs: Vec::new(),
+            output: ty.clone(),
+        };
+        let body = self.lower_body(program, &synthetic_item, function, &sig, None)?;
+        self.extra_bodies.push((body_id, body));
+
+        let mir_item = mir::Item {
+            mir_id: self.next_mir_id,
+            kind: mir::ItemKind::ExecutableConst(mir::ExecutableConst {
+                name: mir::Symbol::from(&konst.name),
+                function_name: mir::Symbol::new(fn_name),
+                ty,
+                body_id,
+                key,
+                span: konst.body.value.span,
+            }),
+        };
+        self.next_mir_id += 1;
         Ok(mir_item)
     }
 
@@ -5087,6 +5177,17 @@ impl MirLowering {
         }
 
         let ty = self.lower_type_expr(&konst.ty);
+        let key = self.const_key(konst.name.as_str(), konst.body.value.span);
+        if let Some(constant) = self.resolved_const_values.get(&key).cloned() {
+            self.const_values.insert(
+                def_id,
+                ConstInfo {
+                    ty,
+                    value: constant,
+                },
+            );
+            return;
+        }
         let container_args = self.container_args_from_type_expr(&konst.ty);
         if let Some(constant) = self.lower_const_expr(
             program,

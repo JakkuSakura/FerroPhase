@@ -7,6 +7,9 @@ pub use state::CompilerState;
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::ast::{NodeKind, Value};
 use fp_core::diagnostics::DiagnosticLevel;
+use fp_core::mir;
+use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
+use fp_core::span::Span;
 use fp_interpret::{LirInterpreter, VmError};
 use fp_typing::{
     annotate, annotate_with_module_resolution, PendingTypingRequest, PendingTypingRequestKind,
@@ -111,6 +114,7 @@ impl CompilerDriver {
             && all_requests
                 .iter()
                 .any(|r| matches!(r, TypingRequest::Comptime(_)))
+            && self.state.resolved_const_values().next().is_none()
         {
             return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
         }
@@ -171,6 +175,9 @@ impl CompilerDriver {
         let hir = self.state.hir(hir_id)?.clone();
         let mut lowering = MirLowering::new();
         lowering.set_lossy(self.state.lossy());
+        for (key, value) in self.state.resolved_const_values() {
+            lowering.seed_resolved_const(key.to_string(), value.clone());
+        }
         let mir = lowering.transform(hir);
         let (diagnostics, had_errors) = lowering.take_diagnostics();
         let mir = match (mir, had_errors, self.state.lossy()) {
@@ -225,10 +232,34 @@ impl CompilerDriver {
         let lir = self.state.lir(lir_id)?.clone();
         match mode {
             ExecutionMode::Comptime => {
-                let value = self.evaluate_lir(&lir).unwrap_or_else(|e| {
-                    eprintln!("LIR interpreter error: {e}");
-                    Value::unit()
-                });
+                let value = if lir.comptime_entries.is_empty() {
+                    self.evaluate_lir(&lir).unwrap_or_else(|e| {
+                        eprintln!("LIR interpreter error: {e}");
+                        Value::unit()
+                    })
+                } else {
+                    let mut last = Value::unit();
+                    for entry in &lir.comptime_entries {
+                        let value = self
+                            .evaluate_lir_function(&lir, entry.function.as_str())
+                            .unwrap_or_else(|e| {
+                                eprintln!("LIR interpreter error: {e}");
+                                Value::unit()
+                            });
+                        let constant = self.value_to_mir_constant(&value, &entry.ty).ok_or_else(
+                            || {
+                                CompilerDriverError::UnsupportedWork(format!(
+                                    "unsupported comptime result for {}",
+                                    entry.key
+                                ))
+                            },
+                        )?;
+                        self.state
+                            .insert_resolved_const_value(entry.key.clone(), constant);
+                        last = value;
+                    }
+                    last
+                };
 
                 let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
                 self.state.insert_const_value(value_id.clone(), value);
@@ -256,6 +287,133 @@ impl CompilerDriver {
         lir: &fp_core::lir::LirProgram,
     ) -> Result<fp_core::ast::Value, VmError> {
         self.interpreter.run_main(lir)
+    }
+
+    fn evaluate_lir_function(
+        &mut self,
+        lir: &fp_core::lir::LirProgram,
+        name: &str,
+    ) -> Result<fp_core::ast::Value, VmError> {
+        self.interpreter.run_function_named(lir, name)
+    }
+
+    fn value_to_mir_constant(&self, value: &Value, ty: &mir::Ty) -> Option<mir::Constant> {
+        let literal = match value {
+            Value::Bool(value) => mir::ConstantKind::Bool(value.value),
+            Value::Int(value) => mir::ConstantKind::Int(value.value),
+            Value::UInt(value) => mir::ConstantKind::UInt(value.value),
+            Value::Decimal(value) => mir::ConstantKind::Float(value.value),
+            Value::String(value) => mir::ConstantKind::Str(value.value.clone()),
+            Value::Null(_) => mir::ConstantKind::Null,
+            _ => mir::ConstantKind::Val(self.value_to_const_value(value, ty)?, ty.clone()),
+        };
+        Some(mir::Constant {
+            span: Span::null(),
+            user_ty: None,
+            literal,
+        })
+    }
+
+    fn value_to_const_value(&self, value: &Value, ty: &mir::Ty) -> Option<mir::ConstValue> {
+        match value {
+            Value::Unit(_) => Some(mir::ConstValue::Unit),
+            Value::Bool(value) => Some(mir::ConstValue::Bool(value.value)),
+            Value::Int(value) => Some(match ty.kind {
+                TyKind::Uint(UintTy::Usize)
+                | TyKind::Uint(UintTy::U8)
+                | TyKind::Uint(UintTy::U16)
+                | TyKind::Uint(UintTy::U32)
+                | TyKind::Uint(UintTy::U64)
+                | TyKind::Uint(UintTy::U128) => mir::ConstValue::UInt(value.value as u64),
+                _ => mir::ConstValue::Int(value.value),
+            }),
+            Value::UInt(value) => Some(match ty.kind {
+                TyKind::Int(IntTy::Isize)
+                | TyKind::Int(IntTy::I8)
+                | TyKind::Int(IntTy::I16)
+                | TyKind::Int(IntTy::I32)
+                | TyKind::Int(IntTy::I64)
+                | TyKind::Int(IntTy::I128) => mir::ConstValue::Int(value.value as i64),
+                _ => mir::ConstValue::UInt(value.value),
+            }),
+            Value::Decimal(value) => Some(match ty.kind {
+                TyKind::Float(FloatTy::F32) | TyKind::Float(FloatTy::F64) => {
+                    mir::ConstValue::Float(value.value)
+                }
+                _ => return None,
+            }),
+            Value::String(value) => Some(mir::ConstValue::Str(value.value.clone())),
+            Value::Null(_) => Some(mir::ConstValue::Null),
+            Value::Tuple(tuple) => {
+                let TyKind::Tuple(fields) = &ty.kind else {
+                    return None;
+                };
+                if tuple.values.len() != fields.len() {
+                    return None;
+                }
+                let values = tuple
+                    .values
+                    .iter()
+                    .zip(fields.iter())
+                    .map(|(value, field_ty)| self.value_to_const_value(value, field_ty))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(mir::ConstValue::Tuple(values))
+            }
+            Value::List(list) => match &ty.kind {
+                TyKind::Array(elem_ty, _) => {
+                    let values = list
+                        .values
+                        .iter()
+                        .map(|value| self.value_to_const_value(value, elem_ty))
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(mir::ConstValue::Array(values))
+                }
+                TyKind::Slice(elem_ty) => {
+                    let values = list
+                        .values
+                        .iter()
+                        .map(|value| self.value_to_const_value(value, elem_ty))
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(mir::ConstValue::List {
+                        elements: values,
+                        elem_ty: elem_ty.as_ref().clone(),
+                    })
+                }
+                _ => None,
+            },
+            Value::Struct(value_struct) => {
+                let TyKind::Tuple(fields) = &ty.kind else {
+                    return None;
+                };
+                if value_struct.structural.fields.len() != fields.len() {
+                    return None;
+                }
+                let values = value_struct
+                    .structural
+                    .fields
+                    .iter()
+                    .zip(fields.iter())
+                    .map(|(field, field_ty)| self.value_to_const_value(&field.value, field_ty))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(mir::ConstValue::Struct(values))
+            }
+            Value::Structural(structural) => {
+                let TyKind::Tuple(fields) = &ty.kind else {
+                    return None;
+                };
+                if structural.fields.len() != fields.len() {
+                    return None;
+                }
+                let values = structural
+                    .fields
+                    .iter()
+                    .zip(fields.iter())
+                    .map(|(field, field_ty)| self.value_to_const_value(&field.value, field_ty))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(mir::ConstValue::Struct(values))
+            }
+            _ => None,
+        }
     }
 
     fn resolve_comptime_for_blocked(
@@ -543,6 +701,7 @@ mod tests {
             functions: Vec::new(),
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            comptime_entries: Vec::new(),
             queries: Vec::new(),
         };
         driver.state.insert_lir(lir_id.clone(), empty_lir);

@@ -39,6 +39,15 @@ impl LirInterpreter {
         self.run_function(program, func, &[])
     }
 
+    pub fn run_function_named(&mut self, program: &LirProgram, name: &str) -> LirResult<Value> {
+        let func = program
+            .functions
+            .iter()
+            .find(|func| func.name.as_str() == name)
+            .ok_or_else(|| VmError::Runtime(format!("missing function {name}")))?;
+        self.run_function(program, func, &[])
+    }
+
     pub fn run_function(
         &mut self,
         _program: &LirProgram,

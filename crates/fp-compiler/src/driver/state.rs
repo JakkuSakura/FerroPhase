@@ -16,6 +16,7 @@ pub struct CompilerState {
     mir: BTreeMap<MirId, mir::Program>,
     lir: BTreeMap<LirId, lir::LirProgram>,
     const_values: BTreeMap<ConstValueId, Value>,
+    resolved_const_values: BTreeMap<String, mir::Constant>,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
     typing_diagnostics: Vec<TypingDiagnostic>,
     lossy: bool,
@@ -60,6 +61,14 @@ impl CompilerState {
 
     pub fn insert_const_value(&mut self, value_id: ConstValueId, value: Value) {
         self.const_values.insert(value_id, value);
+    }
+
+    pub fn insert_resolved_const_value(
+        &mut self,
+        key: impl Into<String>,
+        value: mir::Constant,
+    ) {
+        self.resolved_const_values.insert(key.into(), value);
     }
 
     pub fn insert_runtime_value(&mut self, value_id: RuntimeValueId, value: Value) {
@@ -130,6 +139,14 @@ impl CompilerState {
             .ok_or_else(|| CompilerDriverError::MissingConstValue(value_id.clone()))
     }
 
+    pub fn resolved_const_values(
+        &self,
+    ) -> impl Iterator<Item = (&str, &mir::Constant)> {
+        self.resolved_const_values
+            .iter()
+            .map(|(key, value)| (key.as_str(), value))
+    }
+
     pub fn runtime_value(&self, value_id: &RuntimeValueId) -> Result<&Value, CompilerDriverError> {
         self.runtime_values
             .get(value_id)
@@ -178,6 +195,7 @@ impl Default for CompilerState {
             mir: BTreeMap::new(),
             lir: BTreeMap::new(),
             const_values: BTreeMap::new(),
+            resolved_const_values: BTreeMap::new(),
             runtime_values: BTreeMap::new(),
             typing_diagnostics: Vec::new(),
             lossy: false,

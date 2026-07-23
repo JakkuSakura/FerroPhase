@@ -459,6 +459,7 @@ pub fn lower_program(program: &mir::Program) -> Result<BytecodeProgram, Bytecode
         let function = match &item.kind {
             mir::ItemKind::Function(func) => func,
             mir::ItemKind::Static(_) => continue,
+            mir::ItemKind::ExecutableConst(_) => continue,
             mir::ItemKind::Query(_) => continue,
         };
         let body =

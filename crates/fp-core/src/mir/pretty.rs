@@ -3,8 +3,9 @@ use std::fmt::{self, Formatter};
 use crate::pretty::{PrettyCtx, PrettyPrintable};
 
 use super::{
-    AggregateKind, BasicBlockData, Body, BodyId, Constant, Function, Item, ItemKind, Operand,
-    Place, Program, Query, Rvalue, Statement, StatementKind, Static, Terminator, TerminatorKind,
+    AggregateKind, BasicBlockData, Body, BodyId, Constant, ExecutableConst, Function, Item,
+    ItemKind, Operand, Place, Program, Query, Rvalue, Statement, StatementKind, Static,
+    Terminator, TerminatorKind,
 };
 
 fn query_statement_lines(ir: &crate::query::QueryIrDocument) -> Vec<String> {
@@ -58,6 +59,7 @@ fn write_item(item: &Item, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
     match &item.kind {
         ItemKind::Function(func) => write_function(func, f, ctx),
         ItemKind::Static(stat) => write_static(stat, f, ctx),
+        ItemKind::ExecutableConst(konst) => write_executable_const(konst, f, ctx),
         ItemKind::Query(query) => write_query(query, f, ctx),
     }
 }
@@ -139,6 +141,29 @@ fn write_query(query: &Query, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) ->
         }
         Ok(())
     })
+}
+
+fn write_executable_const(
+    konst: &ExecutableConst,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
+    let span_suffix = if ctx.options.show_spans {
+        format!(" // span: {:?}", konst.span)
+    } else {
+        String::new()
+    };
+    ctx.writeln(
+        f,
+        format!(
+            "const {}: {} [body: {}] [key: {}]{}",
+            konst.name,
+            konst.ty,
+            format_body_id(konst.body_id),
+            konst.key,
+            span_suffix
+        ),
+    )
 }
 
 fn write_body(

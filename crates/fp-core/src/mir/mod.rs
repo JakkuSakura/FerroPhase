@@ -30,6 +30,7 @@ pub struct Item {
 pub enum ItemKind {
     Function(Function),
     Static(Static),
+    ExecutableConst(ExecutableConst),
     Query(Query),
 }
 
@@ -56,6 +57,16 @@ pub struct Static {
     pub ty: Ty,
     pub init: Operand,
     pub mutability: Mutability,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExecutableConst {
+    pub name: Symbol,
+    pub function_name: Symbol,
+    pub ty: Ty,
+    pub body_id: BodyId,
+    pub key: String,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -549,6 +560,7 @@ impl ItemKind {
         match self {
             ItemKind::Function(func) => func.span(),
             ItemKind::Static(stat) => stat.span(),
+            ItemKind::ExecutableConst(konst) => konst.span(),
             ItemKind::Query(query) => query.span(),
         }
     }
@@ -569,6 +581,12 @@ impl FunctionSig {
 impl Static {
     pub fn span(&self) -> Span {
         self.init.span()
+    }
+}
+
+impl ExecutableConst {
+    pub fn span(&self) -> Span {
+        self.span
     }
 }
 
