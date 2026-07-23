@@ -26,6 +26,8 @@ pub struct CompilerState {
     pub(crate) comptime_pending: HashMap<AstId, usize>,
     /// ASTs whose initial comptime needs have been counted (to avoid double-counting on retype).
     pub(crate) comptime_seeded: HashSet<AstId>,
+    /// ASTs for which comptime evaluation has completed at least once.
+    pub(crate) comptime_evaluated: HashSet<AstId>,
     /// Maps HirId to the TypedAstId that was lowered to produce it.
     pub(crate) hir_to_typed_ast: BTreeMap<HirId, TypedAstId>,
     /// Maps MirId to the TypedAstId that was lowered to produce it.
@@ -203,6 +205,7 @@ impl Default for CompilerState {
             module_resolutions: BTreeMap::new(),
             comptime_pending: HashMap::new(),
             comptime_seeded: HashSet::new(),
+            comptime_evaluated: HashSet::new(),
             hir_to_typed_ast: BTreeMap::new(),
             mir_to_typed_ast: BTreeMap::new(),
             lir_to_typed_ast: BTreeMap::new(),

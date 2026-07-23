@@ -323,6 +323,9 @@ pub struct AstTypeInferencer<'ctx> {
     resolved_names: ResolvedNameTable,
     generic_type_vars: HashMap<TypeVarId, String>,
     comptime_exprs: Vec<Expr>,
+    /// Const names whose values were already resolved by a prior
+    /// comptime evaluation.  Keyed by the const item's name.
+    resolved_consts: HashMap<String, fp_core::ast::Value>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -451,6 +454,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             resolved_names: HashMap::new(),
             generic_type_vars: HashMap::new(),
             comptime_exprs: Vec::new(),
+            resolved_consts: HashMap::new(),
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -2424,27 +2428,41 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     ty
                 }
                 ItemKind::DefConst(def) => {
-                    self.comptime_exprs.push((*def.value).clone());
-                    let placeholder = self.symbol_var(&def.name);
-                    if let Some(annot) = def.ty.as_ref() {
-                        def.value.set_ty(annot.clone());
-                    }
-                    let expr_var = {
-                        let mut value = def.value.as_mut();
-                        self.infer_expr(&mut value)?
-                    };
+                    let name = def.name.as_str().to_string();
+                    if let Some(resolved) = self.resolved_consts.get(&name).cloned() {
+                        // Already evaluated in a prior pass — bind the
+                        // symbol directly and skip comptime re-request.
+                        let placeholder = self.symbol_var(&def.name);
+                        let ty = crate::runtime_types::type_from_value(&resolved);
+                        let ty_var = self.type_from_ast_ty(&ty)?;
+                        self.unify(placeholder, ty_var)?;
+                        def.ty_annotation = Some(ty.clone());
+                        def.ty.get_or_insert(ty.clone());
+                        self.generalize_symbol(def.name.as_str(), placeholder)?;
+                        ty
+                    } else {
+                        self.comptime_exprs.push((*def.value).clone());
+                        let placeholder = self.symbol_var(&def.name);
+                        if let Some(annot) = def.ty.as_ref() {
+                            def.value.set_ty(annot.clone());
+                        }
+                        let expr_var = {
+                            let mut value = def.value.as_mut();
+                            self.infer_expr(&mut value)?
+                        };
 
-                    if let Some(annot) = &def.ty {
-                        let annot_var = self.type_from_ast_ty(annot)?;
-                        self.unify(expr_var, annot_var)?;
-                    }
+                        if let Some(annot) = &def.ty {
+                            let annot_var = self.type_from_ast_ty(annot)?;
+                            self.unify(expr_var, annot_var)?;
+                        }
 
-                    self.unify(placeholder, expr_var)?;
-                    let ty = self.resolve_to_ty(expr_var)?;
-                    def.ty_annotation = Some(ty.clone());
-                    def.ty.get_or_insert(ty.clone());
-                    self.generalize_symbol(def.name.as_str(), placeholder)?;
-                    ty
+                        self.unify(placeholder, expr_var)?;
+                        let ty = self.resolve_to_ty(expr_var)?;
+                        def.ty_annotation = Some(ty.clone());
+                        def.ty.get_or_insert(ty.clone());
+                        self.generalize_symbol(def.name.as_str(), placeholder)?;
+                        ty
+                    }
                 }
                 ItemKind::DefStatic(def) => {
                     let placeholder = self.symbol_var(&def.name);
@@ -3825,6 +3843,22 @@ where
     if let Some(ctx) = module_resolution {
         inferencer.seed_modules_from_resolution_context(ctx);
     }
+    inferencer.infer(node)
+}
+
+/// Like [`annotate_with_module_resolution`] but seeds previously
+/// resolved const values so the typer does not re-request comptime
+/// evaluation for them.
+pub fn annotate_with_resolved_consts(
+    node: &mut Node,
+    module_resolution: Option<&ModuleResolutionContext>,
+    resolved_consts: HashMap<String, fp_core::ast::Value>,
+) -> Result<TypingOutcome> {
+    let mut inferencer = AstTypeInferencer::new().with_extern_prelude(default_extern_prelude());
+    if let Some(ctx) = module_resolution {
+        inferencer.seed_modules_from_resolution_context(ctx);
+    }
+    inferencer.resolved_consts = resolved_consts;
     inferencer.infer(node)
 }
 

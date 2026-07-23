@@ -12,8 +12,10 @@ use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::span::Span;
 use fp_interpret::{LirInterpreter, VmError};
 use fp_typing::{
-    annotate, annotate_with_module_resolution, PendingTypingRequest, PendingTypingRequestKind,
+    annotate, annotate_with_module_resolution, annotate_with_resolved_consts,
+    PendingTypingRequest, PendingTypingRequestKind,
 };
+use std::collections::HashMap;
 
 use crate::scheduler::{
     AstId, CompileTimeNeed, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
@@ -83,9 +85,19 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let mut ast = self.state.ast(ast_id)?.clone();
-        let outcome = match self.state.module_resolution(ast_id) {
-            Some(context) => annotate_with_module_resolution(&mut ast, Some(context))?,
-            None => annotate(&mut ast)?,
+        let resolved_consts = self.collect_resolved_const_values();
+        let outcome = if resolved_consts.is_empty() {
+            match self.state.module_resolution(ast_id) {
+                Some(context) => annotate_with_module_resolution(&mut ast, Some(context))?,
+                None => annotate(&mut ast)?,
+            }
+        } else {
+            let module_resolution = self.state.module_resolution(ast_id);
+            annotate_with_resolved_consts(
+                &mut ast,
+                module_resolution,
+                resolved_consts,
+            )?
         };
         let all_requests: Vec<TypingRequest> = outcome
             .pending_requests
@@ -115,6 +127,7 @@ impl CompilerDriver {
                 .iter()
                 .any(|r| matches!(r, TypingRequest::Comptime(_)))
             && self.state.resolved_const_values().next().is_none()
+            && !self.state.comptime_evaluated.contains(ast_id)
         {
             return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
         }
@@ -233,10 +246,19 @@ impl CompilerDriver {
         match mode {
             ExecutionMode::Comptime => {
                 let value = if lir.comptime_entries.is_empty() {
-                    self.evaluate_lir(&lir).unwrap_or_else(|e| {
+                    let value = self.evaluate_lir(&lir).unwrap_or_else(|e| {
                         eprintln!("LIR interpreter error: {e}");
                         Value::unit()
-                    })
+                    });
+                    // Mark that comptime work was done even without
+                    // comptime_entries, so the cycle detector knows
+                    // progress was made.
+                    if let Some(ref blocked) = answer_to {
+                        if let Some(ast_id) = self.blocked_ast_id(blocked) {
+                            self.state.comptime_evaluated.insert(ast_id);
+                        }
+                    }
+                    value
                 } else {
                     let mut last = Value::unit();
                     for entry in &lir.comptime_entries {
@@ -266,6 +288,9 @@ impl CompilerDriver {
 
                 if let Some(blocked) = answer_to {
                     self.resolve_comptime_for_blocked(blocked)?;
+                    if let Some(ast_id) = self.blocked_ast_id(&blocked) {
+                        self.state.comptime_evaluated.insert(ast_id);
+                    }
                 }
 
                 Ok(CompilerAnswer::CompileTimeValue { value: value_id })
@@ -297,6 +322,42 @@ impl CompilerDriver {
     ) -> Result<fp_core::ast::Value, VmError> {
         self.interpreter = LirInterpreter::new();
         self.interpreter.run_function_named(lir, name)
+    }
+
+    fn blocked_ast_id(&self, blocked: &RequestId) -> Option<AstId> {
+        self.scheduler
+            .answered(*blocked)
+            .and_then(|completed| match &completed.request.work {
+                CompilerWork::TypeAst { ast, .. } => Some(ast.clone()),
+                _ => None,
+            })
+    }
+
+    /// Collect resolved const values into a map suitable for the
+    /// typing pass.  Converts `mir::Constant` → `Value`.
+    fn collect_resolved_const_values(&self) -> HashMap<String, Value> {
+        let mut map = HashMap::new();
+        for (key, constant) in self.state.resolved_const_values() {
+            if let Some(value) = self.mir_constant_to_value(constant) {
+                map.insert(key.to_string(), value);
+            }
+        }
+        map
+    }
+
+    fn mir_constant_to_value(&self, constant: &mir::Constant) -> Option<Value> {
+        Some(match &constant.literal {
+            mir::ConstantKind::Bool(v) => Value::bool(*v),
+            mir::ConstantKind::Int(v) => Value::int(*v),
+            mir::ConstantKind::UInt(v) => Value::uint(*v),
+            mir::ConstantKind::Float(v) => Value::decimal(*v),
+            mir::ConstantKind::Str(v) => Value::string(v.clone()),
+            mir::ConstantKind::Null => Value::null(),
+            _ => {
+                eprintln!("mir_constant_to_value: unsupported literal {:?}", constant.literal);
+                return None;
+            }
+        })
     }
 
     fn value_to_mir_constant(&self, value: &Value, ty: &mir::Ty) -> Option<mir::Constant> {
@@ -441,7 +502,10 @@ impl CompilerDriver {
             .copied()
             .unwrap_or(0);
         if count == 0 {
-            return Err(CompilerDriverError::UnresolvableComptime(ast_id));
+            // Counter is drained — allow one more round of comptime
+            // work to be staged. The cycle detector in type_ast will
+            // catch actual deadlock.
+            return Ok(());
         }
         self.state
             .comptime_pending
