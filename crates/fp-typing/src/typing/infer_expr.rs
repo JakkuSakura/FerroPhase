@@ -601,7 +601,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
                 ExprKind::ConstBlock(const_block) => {
-                    self.saw_comptime = true;
+                    self.comptime_exprs.push(const_block.expr.as_ref().clone());
                     self.infer_expr(const_block.expr.as_mut())?
                 }
                 ExprKind::For(for_expr) => {

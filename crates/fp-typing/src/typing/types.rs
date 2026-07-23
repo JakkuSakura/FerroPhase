@@ -1,4 +1,5 @@
 use fp_core::module::path::QualifiedPath;
+use fp_core::ast::Expr;
 use fp_core::span::Span;
 use std::collections::HashMap;
 
@@ -56,39 +57,39 @@ pub struct TypingOutcome {
     pub pending_requests: Vec<PendingTypingRequest>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 /// Work discovered by a completed typing pass.
 pub struct PendingTypingRequest {
     pub kind: PendingTypingRequestKind,
-    pub description: String,
+    pub expr: Expr,
 }
 
 impl PendingTypingRequest {
-    pub fn unknown_type(description: impl Into<String>) -> Self {
+    pub fn unknown_type(expr: Expr) -> Self {
         Self {
-            kind: PendingTypingRequestKind::UnknownType,
-            description: description.into(),
+            kind: PendingTypingRequestKind::Unresolved,
+            expr,
         }
     }
 
-    pub fn generic(description: impl Into<String>) -> Self {
+    pub fn generic(expr: Expr) -> Self {
         Self {
             kind: PendingTypingRequestKind::Generic,
-            description: description.into(),
+            expr,
         }
     }
 
-    pub fn comptime(description: impl Into<String>) -> Self {
+    pub fn comptime(expr: Expr) -> Self {
         Self {
             kind: PendingTypingRequestKind::Comptime,
-            description: description.into(),
+            expr,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PendingTypingRequestKind {
-    UnknownType,
+    Unresolved,
     Generic,
     Comptime,
 }

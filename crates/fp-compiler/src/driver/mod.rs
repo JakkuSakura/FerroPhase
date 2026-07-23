@@ -453,15 +453,15 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
     ) -> TypingRequest {
         match request.kind {
-            PendingTypingRequestKind::UnknownType => {
-                TypingRequest::UnknownType(TypeNeed::new(request.description.clone()))
+            PendingTypingRequestKind::Unresolved => {
+                TypingRequest::Unresolved(TypeNeed::new(request.expr.clone()))
             }
             PendingTypingRequestKind::Generic => TypingRequest::Generic(GenericWorkRequest::new(
                 path.clone(),
-                request.description.clone(),
+                request.expr.clone(),
             )),
             PendingTypingRequestKind::Comptime => {
-                TypingRequest::Comptime(CompileTimeNeed::new(request.description.clone()))
+                TypingRequest::Comptime(CompileTimeNeed::new(request.expr.clone()))
             }
         }
     }

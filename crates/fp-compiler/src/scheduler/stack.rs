@@ -269,7 +269,7 @@ impl CompilerScheduler {
         request: &TypingRequest,
     ) -> CompilerWork {
         match request {
-            TypingRequest::UnknownType(_) | TypingRequest::Comptime(_) => {
+            TypingRequest::Unresolved(_) | TypingRequest::Comptime(_) => {
                 CompilerWork::LowerToHir {
                     typed_ast: typed_ast.clone(),
                     scope: scope.clone(),
@@ -353,6 +353,7 @@ impl CompilerScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fp_core::ast::Expr;
     use crate::scheduler::{
         AstId, ExecutionMode, FullyQualifiedPath, HirId, LirConsumer, LirId, MirId, RawAstId,
         SchedulerError, ScopeId, SourceId, TypeNeed, TypedAstId, TypingRequest,
@@ -606,7 +607,7 @@ mod tests {
                 request,
                 CompilerAnswer::TypedAst {
                     typed_ast: TypedAstId::new("typed_ast:crate::main"),
-                    requests: vec![TypingRequest::UnknownType(TypeNeed::new("unknown type T"))],
+                    requests: vec![TypingRequest::Unresolved(TypeNeed::new(Expr::unit()))],
                 },
             )
             .expect("typed AST schedules comptime-backed type need");

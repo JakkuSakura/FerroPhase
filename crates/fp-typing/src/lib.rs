@@ -181,6 +181,7 @@ fn is_future_like_ty(ty: &Ty) -> bool {
 
 pub trait TypeResolutionHook {
     fn resolve_symbol(&mut self, name: &str) -> bool;
+    fn comptime_resolved(&mut self, key: &str) -> bool;
 }
 
 use crate::typing::unify::{TypeVar, TypeVarKind};
@@ -321,7 +322,7 @@ pub struct AstTypeInferencer<'ctx> {
     resolution_hook: Option<Box<dyn TypeResolutionHook + 'ctx>>,
     resolved_names: ResolvedNameTable,
     generic_type_vars: HashMap<TypeVarId, String>,
-    saw_comptime: bool,
+    comptime_exprs: Vec<Expr>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -449,7 +450,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             unimplemented_symbols: HashSet::new(),
             resolved_names: HashMap::new(),
             generic_type_vars: HashMap::new(),
-            saw_comptime: false,
+            comptime_exprs: Vec::new(),
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -689,33 +690,32 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         for diagnostic in &self.diagnostics {
             if Self::diagnostic_is_unknown_type(diagnostic) {
                 requests.push(PendingTypingRequest::unknown_type(
-                    diagnostic.message.clone(),
+                    Expr::unit(),
                 ));
             }
         }
 
-        let generic_vars: Vec<(TypeVarId, String)> = self
+        let generic_vars: Vec<TypeVarId> = self
             .generic_type_vars
-            .iter()
-            .map(|(var, name)| (*var, name.clone()))
+            .keys()
+            .copied()
             .collect();
-        for (var, name) in generic_vars {
+        for var in generic_vars {
             let unresolved = self
                 .resolve_to_ty(var)
                 .map(|ty| matches!(ty, Ty::Unknown(_)))
                 .unwrap_or(true);
             if unresolved {
-                requests.push(PendingTypingRequest::generic(format!(
-                    "generic parameter {} remains unresolved after typing",
-                    name
-                )));
+                requests.push(PendingTypingRequest::generic(
+                    Expr::unit(),
+                ));
             }
         }
 
-        if self.saw_comptime {
-            requests.push(PendingTypingRequest::comptime(
-                "comptime or const work remains after typing",
-            ));
+        if !self.comptime_exprs.is_empty() {
+            for expr in std::mem::take(&mut self.comptime_exprs) {
+                requests.push(PendingTypingRequest::comptime(expr));
+            }
         }
 
         requests
@@ -2424,7 +2424,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     ty
                 }
                 ItemKind::DefConst(def) => {
-                    self.saw_comptime = true;
+                    self.comptime_exprs.push((*def.value).clone());
                     let placeholder = self.symbol_var(&def.name);
                     if let Some(annot) = def.ty.as_ref() {
                         def.value.set_ty(annot.clone());
@@ -2462,7 +2462,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ItemKind::DefFunction(func) => self.infer_function(func)?,
                 ItemKind::DeclConst(decl) => {
-                    self.saw_comptime = true;
+                    self.comptime_exprs.push(Expr::unit());
                     let ty = decl.ty.clone();
                     decl.ty_annotation = Some(ty.clone());
                     ty
@@ -3551,7 +3551,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             },
             TypeVarKind::Link(next) => self.expect_reference(next, context),
             _other => {
-                self.emit_error(format!("expected reference value for {}", context));
+                self.emit_error(format!(
+                    "expected reference value for {} (hint: add `&`/`&mut` or change the annotation to a non-reference type)",
+                    context
+                ));
                 let placeholder = self.error_type_var();
                 self.type_vars[root].kind = TypeVarKind::Bound(Ty::Reference(TypeReference {
                     ty: Box::new(Ty::infer_var(placeholder)),

@@ -1,3 +1,4 @@
+use fp_core::ast::Expr;
 use serde::{Deserialize, Serialize};
 
 use super::identity::{
@@ -6,7 +7,7 @@ use super::identity::{
     TypedAstId,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CompilerWork {
     ParseSource {
         source: SourceId,
@@ -70,50 +71,43 @@ pub enum CompilerWork {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CompileTimeNeed {
-    pub description: String,
+    pub expr: Expr,
 }
 
 impl CompileTimeNeed {
-    pub fn new(description: impl Into<String>) -> Self {
-        Self {
-            description: description.into(),
-        }
+    pub fn new(expr: Expr) -> Self {
+        Self { expr }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TypeNeed {
-    pub description: String,
+    pub expr: Expr,
 }
 
 impl TypeNeed {
-    pub fn new(description: impl Into<String>) -> Self {
-        Self {
-            description: description.into(),
-        }
+    pub fn new(expr: Expr) -> Self {
+        Self { expr }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GenericWorkRequest {
     pub path: FullyQualifiedPath,
-    pub description: String,
+    pub expr: Expr,
 }
 
 impl GenericWorkRequest {
-    pub fn new(path: FullyQualifiedPath, description: impl Into<String>) -> Self {
-        Self {
-            path,
-            description: description.into(),
-        }
+    pub fn new(path: FullyQualifiedPath, expr: Expr) -> Self {
+        Self { path, expr }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum TypingRequest {
-    UnknownType(TypeNeed),
+    Unresolved(TypeNeed),
     Generic(GenericWorkRequest),
     Comptime(CompileTimeNeed),
 }
@@ -167,7 +161,7 @@ pub enum InvalidatedObjectId {
     SavedOutput(SavedOutputId),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CompilerAnswer {
     RawAst {
         raw_ast: RawAstId,
