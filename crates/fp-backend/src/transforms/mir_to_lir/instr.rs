@@ -477,8 +477,10 @@ impl LirGenerator {
             mir::ConstantKind::UInt(value) => lir::LirConstant::UInt(*value, target_ty.clone()),
             mir::ConstantKind::Float(value) => lir::LirConstant::Float(*value, target_ty.clone()),
             mir::ConstantKind::Str(value) => {
-                if let TyKind::Slice(elem_ty) = &ty_hint.kind {
-                    let elem_lir_ty = self.lir_type_from_ty(elem_ty);
+                let needs_fat_ptr = matches!(&ty_hint.kind, TyKind::Slice(_))
+                    || matches!(&ty_hint.kind, TyKind::Ref(_, inner, _) if matches!(&inner.kind, TyKind::Slice(_)));
+                if needs_fat_ptr {
+                    let elem_lir_ty = lir::LirType::I8;
                     let slice_ty = self.slice_lir_type(&elem_lir_ty);
                     let ptr_const = self.const_string_ptr(value);
                     let len_const = lir::LirConstant::UInt(value.len() as u64, lir::LirType::I64);
@@ -530,7 +532,7 @@ impl LirGenerator {
                 Ok(lir::LirConstant::Float(*value, self.lir_type_from_ty(ty)))
             }
             mir::ConstValue::Str(value) => {
-                if let TyKind::Slice(elem_ty) = &ty.kind {
+                if let Some(elem_ty) = Self::slice_ref_element_ty(ty) {
                     let elem_lir_ty = self.lir_type_from_ty(elem_ty);
                     let slice_ty = self.slice_lir_type(&elem_lir_ty);
                     let ptr_const = self.const_string_ptr(value);
@@ -1231,10 +1233,16 @@ impl LirGenerator {
                     };
                     result_value = Some(value);
                 }
-                mir::Operand::Constant(_) => {
-                    let value = self.transform_operand(operand)?;
-                    instructions.extend(self.take_queued_instructions());
-                    result_value = Some(value);
+                mir::Operand::Constant(constant) => {
+                    if let Some(place_ty) = place_ty.as_ref() {
+                        let constant_value =
+                            self.constant_to_lir_constant(constant, place_ty)?;
+                        result_value = Some(lir::LirValue::Constant(constant_value));
+                    } else {
+                        let value = self.transform_operand(operand)?;
+                        instructions.extend(self.take_queued_instructions());
+                        result_value = Some(value);
+                    }
                 }
             },
             mir::Rvalue::Query(query) => {
@@ -2208,29 +2216,7 @@ impl LirGenerator {
     ) -> Result<lir::LirTerminator> {
         match &terminator.kind {
             mir::TerminatorKind::Return => {
-                let mut ret_val = self.prepare_return_value(block);
-                // Wrap bare GlobalRef in a struct when the return type
-                // expects a fat pointer (slice/&str).
-                if let Some(lir::LirValue::Constant(lir::LirConstant::GlobalRef(ref name, _, _))) = ret_val {
-                    if let Some(ref ret_ty) = self.current_return_type {
-                        if matches!(ret_ty, lir::LirType::Struct { .. }) {
-                            let slice_ty = ret_ty.clone();
-                            let zero_len = lir::LirConstant::UInt(0, lir::LirType::I64);
-                            ret_val = Some(lir::LirValue::Constant(lir::LirConstant::Struct(
-                                vec![
-                                    lir::LirConstant::GlobalRef(
-                                        name.clone(),
-                                        lir::LirType::Ptr(Box::new(lir::LirType::I8)),
-                                        vec![],
-                                    ),
-                                    zero_len,
-                                ],
-                                slice_ty,
-                            )));
-                        }
-                    }
-                }
-                Ok(lir::LirTerminator::Return(ret_val))
+                Ok(lir::LirTerminator::Return(self.prepare_return_value(block)))
             }
             mir::TerminatorKind::Goto { target } => Ok(lir::LirTerminator::Br(*target)),
             mir::TerminatorKind::Unreachable => Ok(lir::LirTerminator::Unreachable),
@@ -5060,7 +5046,14 @@ impl LirGenerator {
                 let elem_lir = self.lir_type_from_ty(element_ty);
                 self.slice_lir_type(&elem_lir)
             }
-            TyKind::Ref(_, inner, _) => lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner))),
+            TyKind::Ref(_, inner, _) => {
+                if let Some(elem_ty) = Self::slice_ref_element_ty(inner) {
+                    let elem_lir = self.lir_type_from_ty(elem_ty);
+                    self.slice_lir_type(&elem_lir)
+                } else {
+                    lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
+                }
+            }
             TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
                 lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
             }
@@ -5090,6 +5083,17 @@ impl LirGenerator {
                     is_variadic: fn_sig.c_variadic,
                 }))
             }
+        }
+    }
+
+    fn slice_ref_element_ty(ty: &Ty) -> Option<&Ty> {
+        match &ty.kind {
+            TyKind::Slice(elem_ty) => Some(elem_ty),
+            TyKind::Ref(_, inner, _) => match &inner.kind {
+                TyKind::Slice(elem_ty) => Some(elem_ty),
+                _ => None,
+            },
+            _ => None,
         }
     }
 

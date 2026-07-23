@@ -253,6 +253,11 @@ impl LirInterpreter {
     fn resolve_raw(&self, val: &LirValue) -> LirResult<u64> {
         match val {
             LirValue::Register(id) => Ok(self.state.regs.read(*id)),
+            LirValue::Constant(LirConstant::GlobalRef(name, _, _)) => self
+                .global_values
+                .get(name.as_str())
+                .copied()
+                .ok_or_else(|| VmError::Runtime(format!("missing global {name}"))),
             LirValue::Constant(c) => Ok(const_raw(c)),
             LirValue::Local(id) => self.state.mem.load_u64(self.state.local_addr(*id)),
             LirValue::StackSlot(id) => self.state.mem.load_u64(self.state.local_addr(*id)),
@@ -269,7 +274,7 @@ impl LirInterpreter {
         for global in &program.globals {
             if let Some(init) = &global.initializer {
                 // Push the value into the object heap and store the handle.
-                if let Ok(value) = Self::constant_to_value(init) {
+                if let Ok(value) = self.constant_to_value(init) {
                     let handle = self.state.objects.len() as u64;
                     self.state.objects.push(value);
                     self.global_values.insert(global.name.to_string(), handle);
@@ -307,6 +312,9 @@ impl LirInterpreter {
     }
 
     fn resolve_typed(&self, val: &LirValue, ty: &LirType) -> LirResult<Value> {
+        if let Some(value) = self.try_resolve_i8_slice(val, ty)? {
+            return Ok(value);
+        }
         let raw = self.resolve_raw(val)?;
         if is_object_type(ty) {
             let idx = raw as usize;
@@ -367,35 +375,15 @@ impl LirInterpreter {
     }
 
     fn store_runtime_value(&mut self, dst: u32, ty: &LirType, value: Value) -> LirResult<()> {
-        if Self::is_aggregate_runtime_type(ty) {
-            let handle = self.state.objects.len() as u64;
-            self.state.objects.push(value);
-            self.wr(dst, handle);
-            return Ok(());
-        }
-        if matches!(ty, LirType::Ptr(_)) {
-            match value {
-                Value::String(_)
-                | Value::List(_)
-                | Value::Tuple(_)
-                | Value::Struct(_)
-                | Value::Structural(_)
-                | Value::Bytes(_)
-                | Value::Pointer(_) => {
-                    let handle = self.state.objects.len() as u64;
-                    self.state.objects.push(value);
-                    self.wr(dst, handle);
-                }
-                Value::Null(_) | Value::Undefined(_) => self.wr(dst, 0),
-                other => self.wr(dst, value_to_raw(&other)),
-            }
-            return Ok(());
-        }
-        self.wr(dst, value_to_raw(&value));
+        let raw = self.value_to_slot_raw(value, ty);
+        self.wr(dst, raw);
         Ok(())
     }
 
     fn resolve_runtime_value(&self, val: &LirValue, ty: &LirType) -> LirResult<Value> {
+        if let Some(value) = self.try_resolve_i8_slice(val, ty)? {
+            return Ok(value);
+        }
         if Self::is_aggregate_runtime_type(ty) {
             return self.resolve_aggregate_value(val, ty);
         }
@@ -433,14 +421,14 @@ impl LirInterpreter {
             | LirValue::Constant(LirConstant::Null(_))
             | LirValue::Undef(_)
             | LirValue::Null(_) => Ok(Self::default_value_for_type(ty)),
-            LirValue::Constant(constant) => Self::constant_to_value(constant),
+            LirValue::Constant(constant) => self.constant_to_value(constant),
             _ => Err(VmError::Runtime(format!(
                 "expected aggregate value for {ty:?}, found {val:?}"
             ))),
         }
     }
 
-    fn constant_to_value(constant: &LirConstant) -> LirResult<Value> {
+    fn constant_to_value(&self, constant: &LirConstant) -> LirResult<Value> {
         Ok(match constant {
             LirConstant::Int(v, _) => Value::int(*v),
             LirConstant::UInt(v, _) => Value::uint(*v),
@@ -450,20 +438,109 @@ impl LirInterpreter {
             LirConstant::Array(values, _) => Value::List(ValueList::new(
                 values
                     .iter()
-                    .map(Self::constant_to_value)
+                    .map(|value| self.constant_to_value(value))
                     .collect::<LirResult<Vec<_>>>()?,
             )),
             LirConstant::Struct(values, _) => Value::Tuple(ValueTuple::new(
                 values
                     .iter()
-                    .map(Self::constant_to_value)
+                    .map(|value| self.constant_to_value(value))
                     .collect::<LirResult<Vec<_>>>()?,
             )),
             LirConstant::Null(_) => Value::null(),
             LirConstant::Undef(ty) => Self::default_value_for_type(ty),
-            LirConstant::GlobalRef(_, _, _) | LirConstant::FunctionRef(_, _) => Value::uint(0),
+            LirConstant::GlobalRef(name, _, _) => Value::uint(
+                self.global_values
+                    .get(name.as_str())
+                    .copied()
+                    .ok_or_else(|| VmError::Runtime(format!("missing global {name}")))?,
+            ),
+            LirConstant::FunctionRef(_, _) => Value::uint(0),
             LirConstant::Bytes(bytes) => Value::Bytes(fp_core::ast::ValueBytes::from(bytes.as_slice())),
         })
+    }
+
+    fn try_resolve_i8_slice(&self, val: &LirValue, ty: &LirType) -> LirResult<Option<Value>> {
+        let LirType::Struct { fields, name, .. } = ty else {
+            return Ok(None);
+        };
+        if name.as_deref() != Some("__slice") || fields.len() != 2 {
+            return Ok(None);
+        }
+        let LirType::Ptr(elem) = &fields[0] else {
+            return Ok(None);
+        };
+        if **elem != LirType::I8 || fields[1] != LirType::I64 {
+            return Ok(None);
+        }
+
+        let aggregate = self.resolve_aggregate_value(val, ty)?;
+        let Value::Tuple(tuple) = aggregate else {
+            return Ok(None);
+        };
+        if tuple.values.len() != 2 {
+            return Ok(None);
+        }
+
+        let ptr_handle = match &tuple.values[0] {
+            Value::UInt(value) => value.value as usize,
+            Value::Int(value) if value.value >= 0 => value.value as usize,
+            Value::Null(_) => {
+                return Ok(Some(Value::Bytes(fp_core::ast::ValueBytes::from(
+                    &b"\0"[..],
+                ))))
+            }
+            _ => return Ok(None),
+        };
+        let len = match &tuple.values[1] {
+            Value::UInt(value) => value.value as usize,
+            Value::Int(value) if value.value >= 0 => value.value as usize,
+            _ => return Ok(None),
+        };
+
+        let Some(backing) = self.state.objects.get(ptr_handle) else {
+            return Err(VmError::Runtime(format!("dangling object handle {ptr_handle}")));
+        };
+        let bytes = match backing {
+            Value::Bytes(bytes) => bytes.value.as_ref(),
+            Value::String(text) => text.value.as_bytes(),
+            _ => return Ok(None),
+        };
+        let clipped_len = len.min(bytes.len());
+        let mut out = Vec::with_capacity(clipped_len.saturating_add(1));
+        out.extend_from_slice(&bytes[..clipped_len]);
+        if !out.ends_with(&[0]) {
+            out.push(0);
+        }
+        Ok(Some(Value::Bytes(fp_core::ast::ValueBytes::from(
+            out.as_slice(),
+        ))))
+    }
+
+    fn value_to_slot_raw(&mut self, value: Value, ty: &LirType) -> u64 {
+        if Self::is_aggregate_runtime_type(ty) {
+            let handle = self.state.objects.len() as u64;
+            self.state.objects.push(value);
+            return handle;
+        }
+        if matches!(ty, LirType::Ptr(_)) {
+            return match value {
+                Value::String(_)
+                | Value::List(_)
+                | Value::Tuple(_)
+                | Value::Struct(_)
+                | Value::Structural(_)
+                | Value::Bytes(_)
+                | Value::Pointer(_) => {
+                    let handle = self.state.objects.len() as u64;
+                    self.state.objects.push(value);
+                    handle
+                }
+                Value::Null(_) | Value::Undefined(_) => 0,
+                other => value_to_raw(&other),
+            };
+        }
+        value_to_raw(&value)
     }
 
     fn default_value_for_type(ty: &LirType) -> Value {
