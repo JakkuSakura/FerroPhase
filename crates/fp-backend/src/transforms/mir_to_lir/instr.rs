@@ -173,7 +173,12 @@ impl LirGenerator {
         }
 
         if !self.extra_globals.is_empty() {
-            lir_program.globals.extend(self.extra_globals.drain(..));
+            // Prepend data globals (string data, etc.) before
+            // reference globals so the native emitter can use
+            // direct ADRP+ADD rather than GOT-based loads on MachO.
+            let mut extras: Vec<_> = self.extra_globals.drain(..).collect();
+            extras.append(&mut lir_program.globals);
+            lir_program.globals = extras;
         }
 
         Ok(lir_program)
@@ -424,6 +429,7 @@ impl LirGenerator {
         let raw_initializer = self.convert_static_initializer(&mir_static.init, &mir_static.ty)?;
         let (initializer, relocations) =
             self.canonicalize_global_initializer(raw_initializer, &lir_ty);
+        eprintln!("  global {}: init={:?} relocs={}", name, initializer, relocations.len());
         let alignment = Self::alignment_for_lir_type(&lir_ty).max(1);
 
         Ok(lir::LirGlobal {

@@ -854,6 +854,7 @@ fn encode_const_bytes(constant: &AsmConstant, ty: &AsmType) -> Result<Vec<u8>> {
         (AsmConstant::Bytes(bytes), AsmType::Array(elem, _)) if **elem == AsmType::I8 => {
             Ok(bytes.clone())
         }
+        (AsmConstant::Bytes(bytes), _) => Ok(bytes.clone()),
         (AsmConstant::Array(values, _), AsmType::Array(_, len))
             if values.is_empty() || *len == 0 =>
         {
