@@ -981,6 +981,18 @@ fn calculate() {
 
     #[test]
     fn run_all_example_files() {
+        // Use a larger stack to avoid overflow from deeply nested
+        // expressions in some example files.
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .name("example-runner".into())
+            .spawn(run_all_example_files_impl)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    fn run_all_example_files_impl() {
         let examples_dir =
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples");
         let mut entries: Vec<_> = std::fs::read_dir(&examples_dir)

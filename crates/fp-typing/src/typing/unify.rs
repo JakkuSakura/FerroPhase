@@ -1032,6 +1032,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             {
                 Ok(())
             }
+            (Ty::Nothing(_), _) | (_, Ty::Nothing(_)) => Ok(()),
             (left, right) if left == right || quote_item_compatible(&left, &right) => Ok(()),
             (left, right) => Err(self.error_with_current_span(format!(
                 "concrete type mismatch: {} vs {}{}",
