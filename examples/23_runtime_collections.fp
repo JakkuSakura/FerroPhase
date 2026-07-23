@@ -12,12 +12,12 @@ fn main() {
     println!("");
     println!("=== Runtime Collections ===");
 
-    let numbers: Vec<i64> = [10, 20, 30, 40];
+    let numbers: Vec<i64> = vec![10, 20, 30, 40];
     let idx = 2;
     println!("numbers[{}] = {}", idx, numbers[idx]);
     println!("numbers.len = {}", numbers.len());
 
-    let statuses: HashMap<&'static str, i64> = HashMap::from([
+    let statuses: HashMap<&str, i64> = HashMap::from([
         ("ok", 200),
         ("accepted", 202),
         ("nope", 404),

@@ -12,7 +12,7 @@ const ZERO_BUFFER: Vec<i64> = const {
     vec![0; 16]
 };
 
-const HTTP_STATUSES: HashMap<&'static str, i64> = const {
+const HTTP_STATUSES: HashMap<&str, i64> = const {
     HashMap::from([
         ("ok", 200),
         ("created", 201),

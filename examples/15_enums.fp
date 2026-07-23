@@ -8,8 +8,8 @@ enum Shape {
 }
 
 impl Shape {
-    fn describe(&self) -> &'static str {
-        match self {
+    fn describe(&self) -> &str {
+        match *self {
             Shape::Point => "point",
             Shape::Circle(_) => "circle",
             Shape::Rectangle { .. } => "rectangle",

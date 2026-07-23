@@ -2431,9 +2431,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     let name = def.name.as_str().to_string();
                     if let Some(resolved) = self.resolved_consts.get(&name).cloned() {
                         // Already evaluated in a prior pass — bind the
-                        // symbol directly and skip comptime re-request.
+                        // symbol directly and skip comptime re-request. Keep
+                        // its declared type: `Value::List` cannot retain an
+                        // array's length on its own.
                         let placeholder = self.symbol_var(&def.name);
-                        let ty = crate::runtime_types::type_from_value(&resolved);
+                        let ty = def
+                            .ty
+                            .clone()
+                            .or_else(|| def.ty_annotation.clone())
+                            .unwrap_or_else(|| crate::runtime_types::type_from_value(&resolved));
                         let ty_var = self.type_from_ast_ty(&ty)?;
                         self.unify(placeholder, ty_var)?;
                         def.ty_annotation = Some(ty.clone());

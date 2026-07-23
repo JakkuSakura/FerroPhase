@@ -1441,6 +1441,40 @@ fn emit_const_globals(
     data_symbols: &mut HashMap<String, u64>,
     relocs_out: &mut Vec<crate::emit::Relocation>,
 ) -> Result<()> {
+    fn global_section_kind(
+        program: &AsmProgram,
+        global: &fp_core::asmir::AsmGlobal,
+    ) -> fp_core::asmir::AsmSectionKind {
+        let declared = global
+            .section
+            .as_deref()
+            .and_then(|name| {
+                program
+                    .sections
+                    .iter()
+                    .find(|section| section.name == name)
+                    .map(|section| section.kind.clone())
+            })
+            .unwrap_or_else(|| {
+                if global.is_constant {
+                    fp_core::asmir::AsmSectionKind::ReadOnlyData
+                } else {
+                    fp_core::asmir::AsmSectionKind::Data
+                }
+            });
+
+        if global.relocations.is_empty() {
+            declared
+        } else {
+            match declared {
+                fp_core::asmir::AsmSectionKind::Data | fp_core::asmir::AsmSectionKind::Bss => {
+                    declared
+                }
+                _ => fp_core::asmir::AsmSectionKind::Data,
+            }
+        }
+    }
+
     let mut emit_global = |global: &fp_core::asmir::AsmGlobal,
                            initializer: Option<&AsmConstant>,
                            bytes_out: &mut Vec<u8>,
@@ -1483,23 +1517,7 @@ fn emit_const_globals(
             continue;
         }
 
-        let section_kind = global
-            .section
-            .as_deref()
-            .and_then(|name| {
-                program
-                    .sections
-                    .iter()
-                    .find(|section| section.name == name)
-                    .map(|section| section.kind.clone())
-            })
-            .unwrap_or_else(|| {
-                if global.is_constant {
-                    fp_core::asmir::AsmSectionKind::ReadOnlyData
-                } else {
-                    fp_core::asmir::AsmSectionKind::Data
-                }
-            });
+        let section_kind = global_section_kind(program, global);
 
         match section_kind {
             fp_core::asmir::AsmSectionKind::Data | fp_core::asmir::AsmSectionKind::Bss => {

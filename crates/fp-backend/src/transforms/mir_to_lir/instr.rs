@@ -2339,11 +2339,9 @@ impl LirGenerator {
                 mir::ConstantKind::Null => Ok(lir::LirValue::Null(lir::LirType::Ptr(Box::new(
                     lir::LirType::I8,
                 )))),
-                mir::ConstantKind::Val(_cv, _ty) => {
-                    return Err(crate::error::optimization_error(
-                        "Unsupported complex constant in MIR operand",
-                    ));
-                }
+                mir::ConstantKind::Val(value, ty) => Ok(lir::LirValue::Constant(
+                    self.const_value_to_lir_constant(value, ty)?,
+                )),
                 _ => {
                     return Err(crate::error::optimization_error(
                         "Unsupported constant kind for MIR→LIR",

@@ -12,8 +12,8 @@ enum Option<T> {
     None,
 }
 
-fn describe(color: &Color) -> &'static str {
-    match color {
+fn describe(color: &Color) -> &str {
+    match *color {
         Color::Red => "red",
         Color::Green => "green",
         Color::Rgb(255, 0, 0) => "red rgb",
@@ -21,7 +21,7 @@ fn describe(color: &Color) -> &'static str {
     }
 }
 
-fn classify(n: i64) -> &'static str {
+fn classify(n: i64) -> &str {
     match n {
         0 => "zero",
         n if n < 0 => "negative",

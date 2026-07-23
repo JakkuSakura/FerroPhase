@@ -22,9 +22,7 @@ use helpers::greet as say_hi;
 use helpers::math::add;
 use modules::helpers::greet_from_file as file_greet;
 use modules::helpers::math::add as file_add;
-use std::fmt::Display;
-
-fn echo<T: Display>(value: T) {
+fn echo(value: i64) {
     println!("echo: {}", value);
 }
 
