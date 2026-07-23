@@ -125,7 +125,7 @@ fn build_bind_info(externs: &[ExternSymbol], data_seg_index: u8) -> Vec<u8> {
     out
 }
 
-fn build_rebase_info(offsets: &[u64], text_seg_index: u8) -> Vec<u8> {
+fn build_rebase_info(offsets: &[(u8, u64)]) -> Vec<u8> {
     const REBASE_OPCODE_DONE: u8 = 0x00;
     const REBASE_OPCODE_SET_TYPE_IMM: u8 = 0x10;
     const REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: u8 = 0x20;
@@ -138,8 +138,8 @@ fn build_rebase_info(offsets: &[u64], text_seg_index: u8) -> Vec<u8> {
 
     let mut out = Vec::new();
     out.push(REBASE_OPCODE_SET_TYPE_IMM | REBASE_TYPE_POINTER);
-    for offset in offsets {
-        out.push(REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB | text_seg_index);
+    for (seg_index, offset) in offsets {
+        out.push(REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB | seg_index);
         push_uleb128(&mut out, *offset);
         out.push(REBASE_OPCODE_DO_REBASE_IMM_TIMES | 1);
     }
@@ -259,12 +259,13 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     let externs = collect_external_symbols(plan, stub_size);
     let has_stubs = !externs.is_empty();
     let has_rodata = !plan.rodata.is_empty();
+    let has_data = !plan.data.is_empty();
 
     let header_size = 32u64;
     let segment_cmd_size = 72u64;
     let section_size = 80u64;
     let text_section_count = 1u64 + if has_stubs { 1 } else { 0 } + if has_rodata { 1 } else { 0 };
-    let data_section_count = if has_stubs { 1u64 } else { 0u64 };
+    let data_section_count = if has_stubs { 1u64 } else { 0u64 } + if has_data { 1u64 } else { 0u64 };
 
     let lc_segment_text_size = segment_cmd_size + section_size * text_section_count;
     let lc_segment_data_size = segment_cmd_size + section_size * data_section_count;
@@ -317,7 +318,9 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     } else {
         0
     };
-    let data_filesize = align_up(la_ptr_size, page);
+    let data_offset = align_up(la_ptr_offset + la_ptr_size, 16);
+    let data_size = plan.data.len() as u64;
+    let data_filesize = align_up(data_offset + data_size, page);
     let data_vmsize = data_filesize;
     vmaddr_data = vmaddr_text + (data_fileoff - text_fileoff);
 
@@ -326,14 +329,19 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     let mut rebase_offsets = Vec::new();
     for reloc in &plan.relocs {
         if reloc.kind == RelocKind::Abs64 {
-            rebase_offsets.push(text_offset + reloc.offset);
+            let (seg_index, file_offset) = match reloc.section {
+                crate::emit::RelocSection::Text => (text_seg_index, text_offset + reloc.offset),
+                crate::emit::RelocSection::Data => (data_seg_index, data_offset + reloc.offset),
+                crate::emit::RelocSection::Rdata => (text_seg_index, rodata_offset + reloc.offset),
+            };
+            rebase_offsets.push((seg_index, file_offset));
         }
     }
     if matches!(
         std::env::var("FP_NATIVE_MACHO_RELOC_DEBUG"),
         Ok(value) if value == "1" || value.eq_ignore_ascii_case("true")
     ) {
-        let max_reloc = rebase_offsets.iter().copied().max().unwrap_or(0);
+        let max_reloc = rebase_offsets.iter().map(|(_, o)| *o).max().unwrap_or(0);
         eprintln!(
             "[fp-native][macho] text_size={} max_reloc={} reloc_count={}",
             text_size,
@@ -350,7 +358,7 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
         }
     }
     rebase_offsets.sort_unstable();
-    let rebase_info = build_rebase_info(&rebase_offsets, text_seg_index);
+    let rebase_info = build_rebase_info(&rebase_offsets);
     let bind_info = build_bind_info(&externs, data_seg_index);
     let lazy_bind_info = Vec::new();
     let (strtab, str_offsets) = build_strtab(&externs);
@@ -495,16 +503,31 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
         put_u32(&mut out, 0);
         put_u32(&mut out, 0);
     } else {
-        // LC_SEGMENT_64 (__DATA) empty
+        // LC_SEGMENT_64 (__DATA)
         put_u32(&mut out, LC_SEGMENT_64);
         put_u32(&mut out, lc_segment_data_size as u32);
         put_bytes_fixed::<16>(&mut out, "__DATA");
         put_u64(&mut out, vmaddr_data);
-        put_u64(&mut out, 0);
+        put_u64(&mut out, data_vmsize);
         put_u64(&mut out, data_fileoff);
-        put_u64(&mut out, 0);
+        put_u64(&mut out, data_filesize);
         put_i32(&mut out, VM_PROT_READ | VM_PROT_WRITE);
         put_i32(&mut out, VM_PROT_READ | VM_PROT_WRITE);
+        put_u32(&mut out, data_section_count as u32);
+        put_u32(&mut out, 0);
+    }
+
+    if has_data {
+        put_bytes_fixed::<16>(&mut out, "__const_data");
+        put_bytes_fixed::<16>(&mut out, "__DATA");
+        put_u64(&mut out, vmaddr_data + data_offset - data_fileoff);
+        put_u64(&mut out, data_size);
+        put_u32(&mut out, data_offset as u32);
+        put_u32(&mut out, 3);
+        put_u32(&mut out, 0);
+        put_u32(&mut out, 0);
+        put_u32(&mut out, S_REGULAR);
+        put_u32(&mut out, 0);
         put_u32(&mut out, 0);
         put_u32(&mut out, 0);
     }
@@ -646,6 +669,10 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     if has_stubs {
         out.resize(data_fileoff as usize, 0);
         out.resize((data_fileoff + data_filesize) as usize, 0);
+    }
+    if has_data {
+        out.resize(data_offset as usize, 0);
+        out.extend_from_slice(&plan.data);
     }
 
     out.resize(linkedit_fileoff as usize, 0);
