@@ -19,6 +19,9 @@ type LirResult<T> = Result<T, VmError>;
 pub struct LirInterpreter {
     state: ThreadState,
     register_types: HashMap<RegisterId, LirType>,
+    /// Global object handles keyed by name, populated from the LIR
+    /// program during run_main / run_function_named.
+    global_values: HashMap<String, u64>,
 }
 
 impl LirInterpreter {
@@ -26,10 +29,12 @@ impl LirInterpreter {
         Self {
             state: ThreadState::new(),
             register_types: HashMap::new(),
+            global_values: HashMap::new(),
         }
     }
 
     pub fn run_main(&mut self, program: &LirProgram) -> LirResult<Value> {
+        self.populate_globals(program);
         let entry = program
             .functions
             .iter()
@@ -40,6 +45,7 @@ impl LirInterpreter {
     }
 
     pub fn run_function_named(&mut self, program: &LirProgram, name: &str) -> LirResult<Value> {
+        self.populate_globals(program);
         let func = program
             .functions
             .iter()
@@ -50,7 +56,7 @@ impl LirInterpreter {
 
     pub fn run_function(
         &mut self,
-        _program: &LirProgram,
+        program: &LirProgram,
         func: &LirFunction,
         args: &[Value],
     ) -> LirResult<Value> {
@@ -241,9 +247,26 @@ impl LirInterpreter {
             LirValue::Constant(c) => Ok(const_raw(c)),
             LirValue::Local(id) => self.state.mem.load_u64(self.state.local_addr(*id)),
             LirValue::StackSlot(id) => self.state.mem.load_u64(self.state.local_addr(*id)),
-            LirValue::Global(..) => Err(VmError::Runtime("global".into())),
+            LirValue::Global(name, _) => {
+                self.global_values.get(name.as_str()).copied()
+                    .ok_or_else(|| VmError::Runtime(format!("missing global {name}")))
+            }
             LirValue::Function(_) => Ok(0),
             LirValue::Undef(_) | LirValue::Null(_) => Ok(0),
+        }
+    }
+
+    fn populate_globals(&mut self, program: &LirProgram) {
+        self.global_values.clear();
+        for global in &program.globals {
+            if let Some(init) = &global.initializer {
+                // Push the value into the object heap and store the handle.
+                if let Ok(value) = Self::constant_to_value(init) {
+                    let handle = self.state.objects.len() as u64;
+                    self.state.objects.push(value);
+                    self.global_values.insert(global.name.to_string(), handle);
+                }
+            }
         }
     }
 

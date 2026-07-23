@@ -5,12 +5,20 @@ use crate::scheduler::{
     AstId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, SchedulerError, TypedAstId,
 };
 
+impl From<fp_interpret::VmError> for CompilerDriverError {
+    fn from(e: fp_interpret::VmError) -> Self {
+        CompilerDriverError::Interpreter(e.to_string())
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum CompilerDriverError {
     #[error("{0}")]
     Core(#[from] fp_core::Error),
     #[error("scheduler error: {0}")]
     Scheduler(#[from] SchedulerError),
+    #[error("interpreter error: {0}")]
+    Interpreter(String),
     #[error("missing AST {0}")]
     MissingAst(AstId),
     #[error("missing typed AST {0}")]

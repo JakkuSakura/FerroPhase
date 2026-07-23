@@ -246,10 +246,7 @@ impl CompilerDriver {
         match mode {
             ExecutionMode::Comptime => {
                 let value = if lir.comptime_entries.is_empty() {
-                    let value = self.evaluate_lir(&lir).unwrap_or_else(|e| {
-                        eprintln!("LIR interpreter error: {e}");
-                        Value::unit()
-                    });
+                    let value = self.evaluate_lir(&lir)?;
                     // Mark that comptime work was done even without
                     // comptime_entries, so the cycle detector knows
                     // progress was made.
@@ -263,11 +260,7 @@ impl CompilerDriver {
                     let mut last = Value::unit();
                     for entry in &lir.comptime_entries {
                         let value = self
-                            .evaluate_lir_function(&lir, entry.function.as_str())
-                            .unwrap_or_else(|e| {
-                                eprintln!("LIR interpreter error: {e}");
-                                Value::unit()
-                            });
+                            .evaluate_lir_function(&lir, entry.function.as_str())?;
                         let constant = self.value_to_mir_constant(&value, &entry.ty).ok_or_else(
                             || {
                                 CompilerDriverError::UnsupportedWork(format!(
@@ -296,10 +289,7 @@ impl CompilerDriver {
                 Ok(CompilerAnswer::CompileTimeValue { value: value_id })
             }
             ExecutionMode::Runtime => {
-                let value = self.evaluate_lir(&lir).unwrap_or_else(|e| {
-                    eprintln!("LIR interpreter error: {e}");
-                    Value::unit()
-                });
+                let value = self.evaluate_lir(&lir)?;
                 let value_id = RuntimeValueId::new(format!("runtime_value:{}", path.to_key()));
                 self.state.insert_runtime_value(value_id.clone(), value);
                 Ok(CompilerAnswer::RuntimeOutput { value: value_id })
