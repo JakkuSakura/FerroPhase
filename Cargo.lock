@@ -1549,6 +1549,8 @@ name = "fp-stackvm"
 version = "0.1.0"
 dependencies = [
  "fp-bytecode",
+ "fp-core",
+ "fp-interpret",
  "thiserror 2.0.17",
 ]
 
