@@ -10,7 +10,7 @@ pub use typing::types::{
 };
 
 use fp_core::ast::*;
-use fp_core::ast::{AttributesExt, Ident, Name};
+use fp_core::ast::{AttributesExt, ExprResolution, Ident, Name};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::{Error, Result};
@@ -326,6 +326,7 @@ pub struct AstTypeInferencer<'ctx> {
     /// Const names whose values were already resolved by a prior
     /// comptime evaluation.  Keyed by the const item's name.
     resolved_consts: HashMap<String, fp_core::ast::Value>,
+    expr_resolution: Option<&'ctx dyn ExprResolution>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -455,6 +456,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             generic_type_vars: HashMap::new(),
             comptime_exprs: Vec::new(),
             resolved_consts: HashMap::new(),
+            expr_resolution: None,
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -462,6 +464,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub fn with_context(mut self, ctx: &'ctx SharedScopedContext) -> Self {
         self.ctx = Some(ctx);
+        self
+    }
+
+    pub fn with_expr_resolution(mut self, expr_resolution: &'ctx dyn ExprResolution) -> Self {
+        self.expr_resolution = Some(expr_resolution);
         self
     }
 
@@ -3861,6 +3868,22 @@ pub fn annotate_with_resolved_consts(
     resolved_consts: HashMap<String, fp_core::ast::Value>,
 ) -> Result<TypingOutcome> {
     let mut inferencer = AstTypeInferencer::new().with_extern_prelude(default_extern_prelude());
+    if let Some(ctx) = module_resolution {
+        inferencer.seed_modules_from_resolution_context(ctx);
+    }
+    inferencer.resolved_consts = resolved_consts;
+    inferencer.infer(node)
+}
+
+pub fn annotate_with_resolved_state(
+    node: &mut Node,
+    module_resolution: Option<&ModuleResolutionContext>,
+    resolved_consts: HashMap<String, fp_core::ast::Value>,
+    expr_resolution: &dyn ExprResolution,
+) -> Result<TypingOutcome> {
+    let mut inferencer = AstTypeInferencer::new()
+        .with_extern_prelude(default_extern_prelude())
+        .with_expr_resolution(expr_resolution);
     if let Some(ctx) = module_resolution {
         inferencer.seed_modules_from_resolution_context(ctx);
     }

@@ -1,5 +1,6 @@
 use fp_core::ast::Name;
 use fp_core::ast::Pattern;
+use fp_core::ast::{ExprResolution, ExprResolutionTable};
 use fp_core::error::Result;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::query::{
@@ -58,6 +59,7 @@ pub struct HirGenerator {
     resolving_type_aliases: HashSet<String>,
     module_resolution: Option<fp_core::module::resolution::ModuleResolutionContext>,
     resolved_names: ResolvedNameTable,
+    expr_resolution: ExprResolutionTable,
     target_env: TargetEnv,
     respect_cfg: bool,
 }
@@ -315,6 +317,7 @@ impl HirGenerator {
             resolving_type_aliases: HashSet::new(),
             module_resolution: None,
             resolved_names: ResolvedNameTable::new(),
+            expr_resolution: ExprResolutionTable::default(),
             target_env: TargetEnv::host(),
             respect_cfg: true,
         }
@@ -322,6 +325,11 @@ impl HirGenerator {
 
     pub fn with_resolved_names(mut self, resolved_names: ResolvedNameTable) -> Self {
         self.resolved_names = resolved_names;
+        self
+    }
+
+    pub fn with_expr_resolution(mut self, expr_resolution: ExprResolutionTable) -> Self {
+        self.expr_resolution = expr_resolution;
         self
     }
 
@@ -721,10 +729,14 @@ impl HirGenerator {
     }
 
     fn qualify_name(&self, name: &str) -> String {
+        self.qualify_path(name).to_key()
+    }
+
+    fn qualify_path(&self, name: &str) -> fp_core::module::path::QualifiedPath {
         if self.module_path.is_empty() {
-            name.to_string()
+            fp_core::module::path::QualifiedPath::new(vec![name.to_string()])
         } else {
-            self.module_path.with_segment(name.to_string()).to_key()
+            self.module_path.with_segment(name.to_string())
         }
     }
 
@@ -838,6 +850,15 @@ impl HirGenerator {
 
         hir_program.items.push(main_item);
 
+        if !self.synthetic_items.is_empty() {
+            let mut synthetic = std::mem::take(&mut self.synthetic_items);
+            for item in &synthetic {
+                hir_program.def_map.insert(item.def_id, item.clone());
+                self.program_def_map.insert(item.def_id, item.clone());
+            }
+            hir_program.items.extend(synthetic.drain(..));
+        }
+
         Ok(hir_program)
     }
 
@@ -903,7 +924,7 @@ impl HirGenerator {
                 program.def_map.insert(item.def_id, item.clone());
                 self.program_def_map.insert(item.def_id, item.clone());
             }
-            program.items.splice(0..0, synthetic.drain(..));
+            program.items.extend(synthetic.drain(..));
         }
 
         self.program_def_map.extend(program.def_map.clone());

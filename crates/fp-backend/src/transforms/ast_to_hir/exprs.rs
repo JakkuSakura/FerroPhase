@@ -57,6 +57,15 @@ impl HirGenerator {
 
         let kind = match ast_expr.kind() {
             ExprKind::Value(value) => self.transform_value_to_hir(value)?,
+            ExprKind::Id(expr_id) => {
+                if let Some(value) = self.expr_resolution.resolved_value(*expr_id).cloned() {
+                    self.transform_expr_to_hir(&ast::Expr::value(value))?.kind
+                } else {
+                    return Err(fp_core::error::Error::from(format!(
+                        "unresolved expression id {expr_id} during AST→HIR lowering"
+                    )));
+                }
+            }
             ExprKind::Name(_) => hir::ExprKind::Path(
                 self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value)?,
             ),
@@ -298,21 +307,7 @@ impl HirGenerator {
                 hir::ExprKind::Break(value)
             }
             ExprKind::Continue(_) => hir::ExprKind::Continue,
-            ExprKind::ConstBlock(_const_block) => {
-                self.add_error_or_warning(
-                    Diagnostic::error(
-                        "const block must be evaluated before AST→HIR lowering".to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT)
-                    .with_span(self.normalize_span(expr_span)),
-                );
-                let block = hir::Block {
-                    hir_id: self.next_id(),
-                    stmts: Vec::new(),
-                    expr: None,
-                };
-                hir::ExprKind::Block(block)
-            }
+            ExprKind::ConstBlock(const_block) => self.transform_const_block_to_hir(ast_expr, const_block)?,
             ExprKind::IntrinsicContainer(container) => {
                 self.transform_intrinsic_container_to_hir(container)?
             }
@@ -352,6 +347,65 @@ impl HirGenerator {
         };
 
         Ok(hir::Expr { hir_id, kind, span })
+    }
+
+    fn transform_const_block_to_hir(
+        &mut self,
+        ast_expr: &ast::Expr,
+        const_block: &ast::ExprConstBlock,
+    ) -> Result<hir::ExprKind> {
+        if let Some(value) = self.expr_resolution.resolved_value(ast_expr.id()).cloned() {
+            return self.transform_expr_to_hir(&ast::Expr::value(value)).map(|expr| expr.kind);
+        }
+
+        let body_value = self.transform_expr_to_hir(const_block.expr.as_ref())?;
+        let ty = ast_expr
+            .ty()
+            .map(|ty| self.transform_type_to_hir(ty))
+            .transpose()?
+            .unwrap_or_else(|| self.create_unit_type());
+        let def_id = self.next_def_id();
+        let local_name = format!("__fp_expr_{}", ast_expr.id());
+        let qualified_path = self.qualify_path(&local_name);
+        let qualified_name = qualified_path.to_key();
+        let hir_const = hir::Const {
+            name: hir::Symbol::new(qualified_name.clone()),
+            ty,
+            body: hir::Body {
+                hir_id: self.next_id(),
+                params: Vec::new(),
+                value: body_value,
+            },
+        };
+        let hir_item = hir::Item {
+            hir_id: self.next_id(),
+            def_id,
+            visibility: hir::Visibility::Private,
+            kind: hir::ItemKind::Const(hir_const),
+            span: ast_expr.span(),
+        };
+        let path = hir::Path {
+            segments: qualified_path
+                .segments
+                .iter()
+                .map(|segment| self.make_path_segment(segment, None))
+                .collect(),
+            res: Some(hir::Res::Def(def_id)),
+        };
+        self.program_def_map.insert(def_id, hir_item.clone());
+
+        Ok(hir::ExprKind::Block(hir::Block {
+            hir_id: self.next_id(),
+            stmts: vec![hir::Stmt {
+                hir_id: self.next_id(),
+                kind: hir::StmtKind::Item(hir_item),
+            }],
+            expr: Some(Box::new(hir::Expr {
+                hir_id: self.next_id(),
+                kind: hir::ExprKind::Path(path),
+                span: ast_expr.span(),
+            })),
+        }))
     }
 
     // create_main_function moved to items.rs

@@ -2,7 +2,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
-use fp_core::{ast::Node, ast::Value, hir, lir, mir, module::resolution::ModuleResolutionContext};
+use fp_core::{
+    ast::{Expr, ExprId, ExprResolutionTable, Node, Value},
+    hir, lir, mir,
+    module::resolution::ModuleResolutionContext,
+};
 use fp_typing::TypingDiagnostic;
 
 use crate::driver::CompilerDriverError;
@@ -17,6 +21,7 @@ pub struct CompilerState {
     lir: BTreeMap<LirId, lir::LirProgram>,
     const_values: BTreeMap<ConstValueId, Value>,
     resolved_const_values: BTreeMap<String, mir::Constant>,
+    expr_resolutions: ExprResolutionTable,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
     typing_diagnostics: Vec<TypingDiagnostic>,
     lossy: bool,
@@ -71,6 +76,14 @@ impl CompilerState {
         value: mir::Constant,
     ) {
         self.resolved_const_values.insert(key.into(), value);
+    }
+
+    pub fn insert_expr_resolution_source(&mut self, expr_id: ExprId, expr: Expr) {
+        self.expr_resolutions.insert_source(expr_id, expr);
+    }
+
+    pub fn insert_expr_resolution_value(&mut self, expr_id: ExprId, value: Value) {
+        self.expr_resolutions.insert_value(expr_id, value);
     }
 
     pub fn insert_runtime_value(&mut self, value_id: RuntimeValueId, value: Value) {
@@ -149,6 +162,10 @@ impl CompilerState {
             .map(|(key, value)| (key.as_str(), value))
     }
 
+    pub fn expr_resolutions(&self) -> &ExprResolutionTable {
+        &self.expr_resolutions
+    }
+
     pub fn runtime_value(&self, value_id: &RuntimeValueId) -> Result<&Value, CompilerDriverError> {
         self.runtime_values
             .get(value_id)
@@ -198,6 +215,7 @@ impl Default for CompilerState {
             lir: BTreeMap::new(),
             const_values: BTreeMap::new(),
             resolved_const_values: BTreeMap::new(),
+            expr_resolutions: ExprResolutionTable::default(),
             runtime_values: BTreeMap::new(),
             typing_diagnostics: Vec::new(),
             lossy: false,

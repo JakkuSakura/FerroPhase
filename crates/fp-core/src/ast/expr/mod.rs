@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod closure;
 mod collection;
+pub mod resolution;
 mod stmt;
 mod value;
 

@@ -302,6 +302,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.current_span = active;
         let result = (|| {
             let existing_ty = expr.ty().cloned();
+            let expr_snapshot = expr.clone();
             let var = match expr.kind_mut() {
                 ExprKind::Quote(quote) => {
                     let kind = match quote.kind {
@@ -601,8 +602,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
                 ExprKind::ConstBlock(const_block) => {
-                    self.comptime_exprs.push(const_block.expr.as_ref().clone());
-                    self.infer_expr(const_block.expr.as_mut())?
+                    if let Some(expr_resolution) = self.expr_resolution {
+                        if let Some(value) = expr_resolution.resolved_value(expr_id).cloned() {
+                            self.infer_value(&value)?
+                        } else {
+                            self.comptime_exprs.push(expr_snapshot.clone());
+                            self.infer_expr(const_block.expr.as_mut())?
+                        }
+                    } else {
+                        self.comptime_exprs.push(expr_snapshot.clone());
+                        self.infer_expr(const_block.expr.as_mut())?
+                    }
                 }
                 ExprKind::For(for_expr) => {
                     let pat_info = self.infer_pattern(for_expr.pat.as_mut())?;
@@ -688,9 +698,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ExprKind::Item(_) | ExprKind::Closured(_) | ExprKind::Structural(_) => {
                     self.error_type_var()
                 }
-                ExprKind::Id(_) => {
-                    self.emit_error("detached expression identifiers are not supported");
-                    self.error_type_var()
+                ExprKind::Id(expr_id) => {
+                    if let Some(expr_resolution) = self.expr_resolution {
+                        if let Some(value) = expr_resolution.resolved_value(*expr_id).cloned() {
+                            self.infer_value(&value)?
+                        } else if let Some(mut source_expr) =
+                            expr_resolution.source_expr(*expr_id).cloned()
+                        {
+                            self.infer_expr(&mut source_expr)?
+                        } else {
+                            self.emit_error(format!(
+                                "missing source expression for expression id {expr_id}"
+                            ));
+                            self.error_type_var()
+                        }
+                    } else {
+                        self.emit_error("expression resolution is not configured");
+                        self.error_type_var()
+                    }
                 }
             };
 

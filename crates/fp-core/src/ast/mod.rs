@@ -26,6 +26,7 @@ mod value;
 
 pub use attr::*;
 pub use expr::*;
+pub use expr::resolution::*;
 pub use ident::*;
 pub use item::*;
 pub use json::*;

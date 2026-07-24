@@ -12,7 +12,7 @@ use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::span::Span;
 use fp_interpret::{LirInterpreter, VmError};
 use fp_typing::{
-    annotate, annotate_with_module_resolution, annotate_with_resolved_consts,
+    annotate_with_resolved_state,
     PendingTypingRequest, PendingTypingRequestKind,
 };
 use std::collections::HashMap;
@@ -86,19 +86,13 @@ impl CompilerDriver {
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let mut ast = self.state.ast(ast_id)?.clone();
         let resolved_consts = self.collect_resolved_const_values();
-        let outcome = if resolved_consts.is_empty() {
-            match self.state.module_resolution(ast_id) {
-                Some(context) => annotate_with_module_resolution(&mut ast, Some(context))?,
-                None => annotate(&mut ast)?,
-            }
-        } else {
-            let module_resolution = self.state.module_resolution(ast_id);
-            annotate_with_resolved_consts(
-                &mut ast,
-                module_resolution,
-                resolved_consts,
-            )?
-        };
+        let module_resolution = self.state.module_resolution(ast_id);
+        let outcome = annotate_with_resolved_state(
+            &mut ast,
+            module_resolution,
+            resolved_consts,
+            self.state.expr_resolutions(),
+        )?;
         let all_requests: Vec<TypingRequest> = outcome
             .pending_requests
             .iter()
@@ -162,8 +156,12 @@ impl CompilerDriver {
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let ast = self.state.typed_ast(typed_ast_id)?;
         let hir_program = match ast.kind() {
-            NodeKind::Expr(expr) => HirGenerator::new().transform_expr(expr)?,
-            NodeKind::File(file) => HirGenerator::with_file(&file.path).transform_file(file)?,
+            NodeKind::Expr(expr) => HirGenerator::new()
+                .with_expr_resolution(self.state.expr_resolutions().clone())
+                .transform_expr(expr)?,
+            NodeKind::File(file) => HirGenerator::with_file(&file.path)
+                .with_expr_resolution(self.state.expr_resolutions().clone())
+                .transform_file(file)?,
             NodeKind::Query(query) => HirGenerator::new().transform_query_document(query)?,
             NodeKind::Item(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {
                 return Err(CompilerDriverError::UnsupportedWork(format!(
@@ -271,6 +269,9 @@ impl CompilerDriver {
                         )?;
                         self.state
                             .insert_resolved_const_value(entry.key.clone(), constant);
+                        if let Some(expr_id) = Self::expr_id_from_const_key(&entry.key) {
+                            self.state.insert_expr_resolution_value(expr_id, value.clone());
+                        }
                         last = value;
                     }
                     last
@@ -583,6 +584,12 @@ impl CompilerDriver {
                 TypingRequest::Comptime(CompileTimeNeed::new(request.expr.clone()))
             }
         }
+    }
+
+    fn expr_id_from_const_key(key: &str) -> Option<u64> {
+        let name = key.rsplit(':').next()?;
+        let suffix = name.strip_prefix("__fp_expr_")?;
+        suffix.parse().ok()
     }
 }
 
