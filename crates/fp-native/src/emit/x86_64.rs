@@ -99,11 +99,11 @@ fn encode_x86_addsub_imm(
     let modrm = (0b11 << 6) | ((subopcode & 0b111) << 3) | rm;
     match imm_width_bits {
         8 => {
-            let imm8 = i8::try_from(imm).ok()?;
+            let imm8 = i8::try_from(imm).map_err(|e| { eprintln!("[fp-native] preserved-instruction immediate error: {e}"); e }).ok()?;
             Some(vec![rex, 0x83, modrm, imm8 as u8])
         }
         32 => {
-            let imm32 = i32::try_from(imm).ok()?;
+            let imm32 = i32::try_from(imm).map_err(|e| { eprintln!("[fp-native] preserved-instruction immediate error: {e}"); e }).ok()?;
             let mut out = vec![rex, 0x81, modrm];
             out.extend_from_slice(&imm32.to_le_bytes());
             Some(out)
@@ -223,7 +223,7 @@ fn collect_preserved_single_block_bytes(
         match inst.kind {
             AsmInstructionKind::Nop => {
                 let len = annotation_value(&inst.annotations, "fp.preserve.x86_64.nop_len")
-                    .and_then(|value| value.parse::<usize>().ok())
+                    .and_then(|value| value.parse().map_err(|e| { eprintln!("[fp-native] preserved-instruction parse error: {e}"); e }).ok())
                     .or_else(|| inst.encoding.as_ref().map(|encoding| encoding.len()))
                     .unwrap_or(1);
                 out.extend_from_slice(&encode_x86_nop_sequence(len));
@@ -233,10 +233,10 @@ fn collect_preserved_single_block_bytes(
             }
             AsmInstructionKind::Add(_, _) | AsmInstructionKind::Sub(_, _) => {
                 let dst = annotation_value(&inst.annotations, "fp.preserve.x86_64.dst_gpr")
-                    .and_then(|value| value.parse::<u8>().ok());
+                    .and_then(|value| value.parse().map_err(|e| { eprintln!("[fp-native] preserved-instruction parse error: {e}"); e }).ok());
                 let imm_width_bits =
                     annotation_value(&inst.annotations, "fp.preserve.x86_64.imm_width_bits")
-                        .and_then(|value| value.parse::<u16>().ok());
+                        .and_then(|value| value.parse().map_err(|e| { eprintln!("[fp-native] preserved-instruction parse error: {e}"); e }).ok());
 
                 if let (Some(dst), Some(imm_width_bits)) = (dst, imm_width_bits) {
                     let (subopcode, imm) = match &inst.kind {

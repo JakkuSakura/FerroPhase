@@ -888,9 +888,9 @@ fn layout_watch_offsets() -> Vec<i32> {
         .filter(|item| !item.is_empty())
         .filter_map(|item| {
             if let Some(hex) = item.strip_prefix("0x") {
-                i32::from_str_radix(hex, 16).ok()
+                i32::from_str_radix(hex, 16).map_err(|e| { eprintln!("[fp-native] preserved-instruction parse error: {e}"); e }).ok()
             } else {
-                item.parse::<i32>().ok()
+                item.parse().map_err(|e| { eprintln!("[fp-native] preserved-instruction parse error: {e}"); e }).ok()
             }
         })
         .collect()
@@ -1094,11 +1094,11 @@ fn collect_preserved_single_block_bytes(
             AsmInstructionKind::Add(_, _) | AsmInstructionKind::Sub(_, _)
         ) {
             let dst = annotation_value(&inst.annotations, "fp.preserve.aarch64.dst_gpr")
-                .and_then(|value| value.parse::<u8>().ok());
+                .and_then(|value| value.parse::<u8>().map_err(|e| { eprintln!("[fp-native] preserved-instruction parse error: {e}"); e }).ok());
             let src = annotation_value(&inst.annotations, "fp.preserve.aarch64.src_gpr")
-                .and_then(|value| value.parse::<u8>().ok());
+                .and_then(|value| value.parse::<u8>().map_err(|e| { eprintln!("[fp-native] preserved-instruction parse error: {e}"); e }).ok());
             let imm = annotation_value(&inst.annotations, "fp.preserve.aarch64.imm")
-                .and_then(|value| value.parse::<u16>().ok());
+                .and_then(|value| value.parse::<u16>().map_err(|e| { eprintln!("[fp-native] preserved-instruction parse error: {e}"); e }).ok());
             if let (Some(dst), Some(src), Some(imm)) = (dst, src, imm) {
                 if imm > 4095 {
                     return None;
