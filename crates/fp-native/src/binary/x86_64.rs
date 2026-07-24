@@ -1137,7 +1137,7 @@ fn parse_st_register(token: &str) -> Result<u8> {
         .ok_or_else(|| Error::from(format!("expected st register, got: {token}")))?;
     inner
         .parse::<u8>()
-        .map_err(|_| Error::from(format!("invalid st register: {token}")))
+        .map_err(|e| Error::from(format!("invalid st register: {token}: {e}")))
 }
 
 fn read_u16(bytes: &[u8], index: usize) -> Result<u16> {
@@ -1192,10 +1192,10 @@ fn parse_capstone_memory_operand(op_str: &str) -> Result<X86Memory> {
 
         let value = if let Some(rest) = rest.strip_prefix("0x") {
             i64::from_str_radix(rest, 16)
-                .map_err(|_| Error::from(format!("invalid hex displacement: {token}")))?
+                .map_err(|e| Error::from(format!("invalid hex displacement: {token}: {e}")))?
         } else {
             rest.parse::<i64>()
-                .map_err(|_| Error::from(format!("invalid displacement: {token}")))?
+                .map_err(|e| Error::from(format!("invalid displacement: {token}: {e}")))?
         };
         Ok(sign * value)
     }
@@ -1291,7 +1291,7 @@ fn parse_capstone_memory_operand(op_str: &str) -> Result<X86Memory> {
             index = Some(reg_id);
             scale = scale_text
                 .parse::<u8>()
-                .map_err(|_| Error::from(format!("invalid index scale: {op_str}")))?;
+                .map_err(|e| Error::from(format!("invalid index scale: {op_str}: {e}")))?;
             if !matches!(scale, 1 | 2 | 4 | 8) {
                 return Err(Error::from(format!(
                     "unsupported index scale {scale} in memory operand: {op_str}"
@@ -2210,10 +2210,10 @@ fn parse_capstone_immediate(token: &str) -> Result<i64> {
 
     let value = if let Some(rest) = rest.strip_prefix("0x") {
         i64::from_str_radix(rest, 16)
-            .map_err(|_| Error::from(format!("invalid immediate: {token}")))?
+            .map_err(|e| Error::from(format!("invalid immediate: {token}: {e}")))?
     } else {
         rest.parse::<i64>()
-            .map_err(|_| Error::from(format!("invalid immediate: {token}")))?
+            .map_err(|e| Error::from(format!("invalid immediate: {token}: {e}")))?
     };
     Ok(sign * value)
 }
@@ -2290,7 +2290,7 @@ fn parse_xmm_register(token: &str) -> Result<u8> {
         .strip_prefix("xmm")
         .ok_or_else(|| Error::from(format!("expected xmm register, got: {token}")))?
         .parse::<u8>()
-        .map_err(|_| Error::from(format!("invalid xmm register: {token}")))?;
+        .map_err(|e| Error::from(format!("invalid xmm register: {token}: {e}")))?;
     Ok(id)
 }
 
@@ -2310,7 +2310,7 @@ fn parse_gpr_register(token: &str) -> Result<u8> {
             if let Some(rest) = normalized.strip_prefix('r') {
                 let id = rest
                     .parse::<u8>()
-                    .map_err(|_| Error::from(format!("invalid gpr register: {token}")))?;
+                    .map_err(|e| Error::from(format!("invalid gpr register: {token}: {e}")))?;
                 if id >= 8 {
                     return Ok(id);
                 }
@@ -2344,7 +2344,7 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
         let offset = inst.address();
         let len = inst.bytes().len();
         let offset_usize = usize::try_from(offset)
-            .map_err(|_| Error::from("x86_64 instruction offset overflow"))?;
+            .map_err(|_| Error::from(format!("x86_64 instruction offset overflow: offset={offset}")))?;
         let end = offset_usize
             .checked_add(len)
             .ok_or_else(|| Error::from("x86_64 instruction length overflow"))?;
@@ -2527,7 +2527,7 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
                 };
                 let imm = parts[3]
                     .parse::<u8>()
-                    .map_err(|_| Error::from("invalid vpalignr immediate"))?;
+                    .map_err(|e| Error::from(format!("invalid vpalignr immediate: {e}")))?;
                 (Decoded::Vpalignr { dst, lhs, rhs, imm }, len)
             } else if matches!(mnemonic, "vpmaxsq" | "vpmaxuq") {
                 let parts = parse_capstone_operands(op_str);
@@ -2634,7 +2634,7 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
                 let src = parse_xmm_register(parts[1])?;
                 let imm = parts[2]
                     .parse::<u8>()
-                    .map_err(|_| Error::from("invalid vpsrldq immediate"))?;
+                    .map_err(|e| Error::from(format!("invalid vpsrldq immediate: {e}")))?;
                 (Decoded::Vpsrldq { dst, src, imm }, len)
             } else if matches!(mnemonic, "vpandq" | "vporq") {
                 let parts = parse_capstone_operands(op_str);
@@ -2692,7 +2692,7 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
                 };
                 let lane = parts[3]
                     .parse::<u8>()
-                    .map_err(|_| Error::from("invalid vpinsrd lane immediate"))?;
+                    .map_err(|e| Error::from(format!("invalid vpinsrd lane immediate: {e}")))?;
                 (
                     Decoded::Pinsrd {
                         dst,
@@ -2718,7 +2718,7 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
                 };
                 let lane = parts[3]
                     .parse::<u8>()
-                    .map_err(|_| Error::from("invalid vpinsrb lane immediate"))?;
+                    .map_err(|e| Error::from(format!("invalid vpinsrb lane immediate: {e}")))?;
                 (
                     Decoded::Pinsrb {
                         dst,
@@ -2997,7 +2997,7 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
                 };
                 let lane = parts[3]
                     .parse::<u8>()
-                    .map_err(|_| Error::from("invalid pinsrq lane immediate"))?;
+                    .map_err(|e| Error::from(format!("invalid pinsrq lane immediate: {e}")))?;
                 (
                     Decoded::Pinsrq {
                         dst,
@@ -3139,7 +3139,7 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
                 {
                     let imm = parse_capstone_immediate(rhs)?;
                     let imm =
-                        u8::try_from(imm).map_err(|_| Error::from("unsupported bt immediate"))?;
+                        u8::try_from(imm).map_err(|_| Error::from(format!("unsupported bt immediate: {imm}")))?;
                     (Decoded::BtImm { value, imm }, len)
                 } else {
                     let bit = parse_gpr_register(rhs)?;
@@ -3155,7 +3155,7 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
                 };
                 let imm = parse_capstone_immediate(rhs)?;
                 let imm =
-                    u8::try_from(imm).map_err(|_| Error::from("unsupported btc immediate"))?;
+                    u8::try_from(imm).map_err(|_| Error::from(format!("unsupported btc immediate: {imm}")))?;
                 (
                     Decoded::BtcImm {
                         dst,
@@ -3182,7 +3182,7 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
                 };
                 let imm = parse_capstone_immediate(rhs)?;
                 let imm = u8::try_from(imm)
-                    .map_err(|_| Error::from("unsupported x86_64 shift immediate"))?;
+                    .map_err(|e| Error::from(format!("unsupported x86_64 shift immediate: {e}")))?;
                 if matches!(mnemonic, "shl" | "sal") {
                     (
                         Decoded::ShlImm {
@@ -3294,7 +3294,7 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
                 };
                 let imm = parse_capstone_immediate(parts[2])?;
                 let imm =
-                    u16::try_from(imm).map_err(|_| Error::from("unsupported rorx immediate"))?;
+                    u16::try_from(imm).map_err(|_| Error::from(format!("unsupported rorx immediate: {imm}")))?;
                 (
                     Decoded::Rorx {
                         dst,

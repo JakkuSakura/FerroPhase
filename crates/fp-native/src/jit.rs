@@ -117,8 +117,10 @@ impl JitEngine {
         Ok(Self {
             format,
             arch,
-            lib: Arc::new(fp_ffi::DynamicLibrary::open_default()
-                .map_err(|e| Error::from(format!("ffi: {e}")))?),
+            lib: Arc::new(
+                fp_ffi::DynamicLibrary::open_default()
+                    .map_err(|e| Error::from(format!("ffi: {e}")))?,
+            ),
         })
     }
 
@@ -348,7 +350,7 @@ impl JitEngine {
                     .ok_or_else(|| Error::from("relocation overflow"))?;
                 let disp = target as i64 - next as i64;
                 let disp32 =
-                    i32::try_from(disp).map_err(|_| Error::from("call relocation out of range"))?;
+                    i32::try_from(disp).map_err(|e| Error::from(format!("call relocation out of range: {disp}: {e}")))?;
                 unsafe {
                     section.write_i32(offset, disp32)?;
                 }
@@ -392,7 +394,9 @@ impl JitEngine {
         if let Some((_, ptr)) = extra_symbols.iter().find(|(name, _)| *name == symbol) {
             return Ok(*ptr as u64);
         }
-        let ptr = self.lib.symbol(symbol)
+        let ptr = self
+            .lib
+            .symbol(symbol)
             .map_err(|e| Error::from(format!("ffi: {e}")))? as u64;
         Ok(ptr)
     }
@@ -652,7 +656,7 @@ fn collect_external_call_symbols(plan: &EmitPlan) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_native_program, HostScalar, JitEngine};
+    use super::{HostScalar, JitEngine, validate_native_program};
     use fp_core::lir::{
         CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature,
         LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, Name,

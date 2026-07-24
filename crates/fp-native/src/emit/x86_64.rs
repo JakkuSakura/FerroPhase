@@ -457,7 +457,7 @@ fn build_frame_layout(
                     .checked_mul(count)
                     .ok_or_else(|| Error::from("alloca size overflow"))?;
                 let bytes =
-                    i32::try_from(bytes).map_err(|_| Error::from("alloca size too large"))?;
+                    i32::try_from(bytes).map_err(|_| Error::from(format!("alloca size too large: {bytes}")))?;
                 let align = (*alignment).max(1) as i32;
                 alloca_info.push((inst.id, bytes, align));
             }
@@ -3265,7 +3265,7 @@ fn emit_cmp(
         AsmValue::Constant(constant) => {
             let imm = constant_to_i64(constant)?;
             let imm32 =
-                i32::try_from(imm).map_err(|_| Error::from("cmp immediate out of range"))?;
+                i32::try_from(imm).map_err(|_| Error::from(format!("cmp immediate out of range: {imm}")))?;
             emit_cmp_imm32(asm, Reg::R10, imm32);
         }
         _ => {}
@@ -3576,7 +3576,7 @@ impl Assembler {
                 .ok_or_else(|| Error::from("unknown jump target"))?;
             let origin = fixup.pos;
             let rel = (*target as i64) - (origin as i64 + 4);
-            let rel32 = i32::try_from(rel).map_err(|_| Error::from("jump out of range"))?;
+            let rel32 = i32::try_from(rel).map_err(|_| Error::from(format!("jump out of range: {rel}")))?;
             self.buf[origin..origin + 4].copy_from_slice(&rel32.to_le_bytes());
         }
         Ok((self.buf, self.relocs))
@@ -5304,7 +5304,7 @@ fn add_immediate_offset(asm: &mut Assembler, base: Reg, offset: i64) -> Result<(
     if offset == 0 {
         return Ok(());
     }
-    let imm = i32::try_from(offset).map_err(|_| Error::from("GEP offset too large for x86_64"))?;
+    let imm = i32::try_from(offset).map_err(|_| Error::from(format!("GEP offset too large for x86_64: {offset}")))?;
     emit_add_ri32(asm, base, imm);
     Ok(())
 }

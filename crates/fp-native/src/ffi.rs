@@ -205,7 +205,7 @@ fn push_arg_value(
         match value {
             Value::String(s) => {
                 let cstr = CString::new(s.value.clone())
-                    .map_err(|_| Error::from("string contains interior NUL"))?;
+                    .map_err(|e| Error::from(format!("string contains interior NUL: {e}")))?;
                 let ptr = cstr.as_ptr() as *mut c_void;
                 cstrings.push(cstr);
                 args.push(FfiValue::Ptr(ptr));
@@ -433,7 +433,7 @@ fn c_abi_layout_for_enum(variants: &[EnumTypeVariant], repr: &ReprOptions) -> Re
 
 fn parse_repr_align(value: u64, context: &str) -> Result<usize> {
     let align =
-        usize::try_from(value).map_err(|_| Error::from(format!("{context} is too large")))?;
+        usize::try_from(value).map_err(|e| Error::from(format!("{context} is too large: {e}")))?;
     if align == 0 || !align.is_power_of_two() {
         return Err(Error::from(format!(
             "{context} requires a non-zero power-of-two alignment"
@@ -619,7 +619,7 @@ fn array_len_from_expr(expr: &fp_core::ast::Expr) -> Result<usize> {
         match &**value {
             Value::Int(v) if v.value >= 0 => {
                 return usize::try_from(v.value)
-                    .map_err(|_| Error::from("array length out of range"));
+                    .map_err(|e| Error::from(format!("array length out of range: {e}")));
             }
             _ => {}
         }

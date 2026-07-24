@@ -486,7 +486,7 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                     TargetArch::X86_64 => {
                         let rel = stub_addr - (base_addr as i64 + call_site + 4);
                         let rel32 = i32::try_from(rel)
-                            .map_err(|_| Error::from("call target out of range"))?;
+                            .map_err(|e| Error::from(format!("call target out of range: {e}")))?;
                         out[offset..offset + 4].copy_from_slice(&rel32.to_le_bytes());
                     }
                     TargetArch::Aarch64 => {
@@ -519,7 +519,7 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                 let mut adrp = u32::from_le_bytes(
                     out[adrp_offset..adrp_offset + 4]
                         .try_into()
-                        .map_err(|_| Error::from("adrp relocation out of range"))?,
+                        .map_err(|e| Error::from(format!("adrp relocation out of range: {e}")))?,
                 );
                 adrp &= !((0x3 << 29) | (0x7ffff << 5));
                 adrp |= (immlo << 29) | (immhi << 5);
@@ -530,7 +530,7 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                 let mut add = u32::from_le_bytes(
                     out[add_offset..add_offset + 4]
                         .try_into()
-                        .map_err(|_| Error::from("add relocation out of range"))?,
+                        .map_err(|e| Error::from(format!("add relocation out of range: {e}")))?,
                 );
                 add &= !(0xfff << 10);
                 add |= imm12 << 10;

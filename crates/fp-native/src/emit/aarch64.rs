@@ -449,7 +449,7 @@ fn build_frame_layout(
                     .checked_mul(count)
                     .ok_or_else(|| Error::from("alloca size overflow"))?;
                 let bytes =
-                    i32::try_from(bytes).map_err(|_| Error::from("alloca size too large"))?;
+                    i32::try_from(bytes).map_err(|e| Error::from(format!("alloca size too large: {bytes}: {e}")))?;
                 let align = (*alignment).max(1) as i32;
                 alloca_info.push((inst.id, bytes, align));
             }
@@ -4266,7 +4266,7 @@ fn emit_gep(
                     AsmValue::Constant(constant) => {
                         let raw = constant_to_i64(constant)?;
                         usize::try_from(raw)
-                            .map_err(|_| Error::from("GEP struct index out of range"))?
+                            .map_err(|e| Error::from(format!("GEP struct index out of range: {e}")))?
                     }
                     _ => return Err(Error::from("GEP struct index must be constant")),
                 };
@@ -4350,7 +4350,7 @@ fn emit_scaled_index(
     load_value(asm, layout, index, Reg::X17, reg_types, local_types)?;
     if elem_size != 1 {
         let imm = u16::try_from(elem_size)
-            .map_err(|_| Error::from("GEP element size too large for aarch64"))?;
+            .map_err(|e| Error::from(format!("GEP element size too large for aarch64: {e}")))?;
         emit_mov_imm16(asm, Reg::X9, imm);
         emit_mul_reg(asm, Reg::X17, Reg::X17, Reg::X9);
     }
@@ -7698,7 +7698,7 @@ impl Assembler {
             match fixup.kind {
                 FixupKind::B => {
                     let imm26 =
-                        i32::try_from(imm).map_err(|_| Error::from("branch out of range"))?;
+                        i32::try_from(imm).map_err(|e| Error::from(format!("branch out of range: {imm}: {e}")))?;
                     if imm26 < -(1 << 25) || imm26 > (1 << 25) - 1 {
                         return Err(Error::from("branch out of range"));
                     }
@@ -7707,7 +7707,7 @@ impl Assembler {
                 }
                 FixupKind::BCond(cond) => {
                     let imm19 =
-                        i32::try_from(imm).map_err(|_| Error::from("branch out of range"))?;
+                        i32::try_from(imm).map_err(|e| Error::from(format!("branch out of range: {imm}: {e}")))?;
                     if imm19 < -(1 << 18) || imm19 > (1 << 18) - 1 {
                         return Err(Error::from("conditional branch out of range"));
                     }
@@ -7716,7 +7716,7 @@ impl Assembler {
                 }
                 FixupKind::Bl => {
                     let imm26 =
-                        i32::try_from(imm).map_err(|_| Error::from("branch out of range"))?;
+                        i32::try_from(imm).map_err(|e| Error::from(format!("branch out of range: {imm}: {e}")))?;
                     if imm26 < -(1 << 25) || imm26 > (1 << 25) - 1 {
                         return Err(Error::from("call target out of range"));
                     }

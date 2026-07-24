@@ -656,7 +656,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
         );
     }
     let entry_rva = text_rva
-        + u32::try_from(plan.entry_offset).map_err(|_| Error::from("entry offset out of range"))?;
+        + u32::try_from(plan.entry_offset).map_err(|e| Error::from(format!("entry offset out of range: {e}")))?;
 
     let (import_table_rva, import_table_size, iat_rvas) =
         if let Some(layout) = import_layout.as_mut() {
@@ -686,7 +686,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
                 TargetArch::X86_64 => {
                     let rel = stub_rva as i64 - (call_site as i64 + 4);
                     let rel32 =
-                        i32::try_from(rel).map_err(|_| Error::from("call target out of range"))?;
+                        i32::try_from(rel).map_err(|e| Error::from(format!("call target out of range: {rel}: {e}")))?;
                     text[offset..offset + 4].copy_from_slice(&rel32.to_le_bytes());
                 }
                 TargetArch::Aarch64 => {
@@ -711,7 +711,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
                 TargetArch::X86_64 => {
                     let disp = iat_entry_rva as i64 - (stub_rva as i64 + 6);
                     let disp32 =
-                        i32::try_from(disp).map_err(|_| Error::from("IAT out of range"))?;
+                        i32::try_from(disp).map_err(|e| Error::from(format!("IAT out of range: {disp}: {e}")))?;
                     text[stub_offset..stub_offset + 6].copy_from_slice(&[
                         0xFF,
                         0x25,
@@ -948,7 +948,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
                 let mut adrp = u32::from_le_bytes(
                     out[adrp_offset..adrp_offset + 4]
                         .try_into()
-                        .map_err(|_| Error::from("adrp relocation out of range"))?,
+                        .map_err(|e| Error::from(format!("adrp relocation out of range: {e}")))?,
                 );
                 adrp &= !((0x3 << 29) | (0x7ffff << 5));
                 adrp |= (immlo << 29) | (immhi << 5);
@@ -959,7 +959,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
                 let mut add = u32::from_le_bytes(
                     out[add_offset..add_offset + 4]
                         .try_into()
-                        .map_err(|_| Error::from("add relocation out of range"))?,
+                        .map_err(|e| Error::from(format!("add relocation out of range: {e}")))?,
                 );
                 add &= !(0xfff << 10);
                 add |= imm12 << 10;
