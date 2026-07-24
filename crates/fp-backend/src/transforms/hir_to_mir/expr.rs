@@ -871,41 +871,7 @@ impl MirLowering {
                 continue;
             };
 
-            let mut locals = Vec::new();
-            locals.push(self.make_local_decl(&sig.output, span));
-            for input in &sig.inputs {
-                locals.push(self.make_local_decl(input, span));
-            }
-
-            let mut basic_block = mir::BasicBlockData::new(Some(mir::Terminator {
-                source_info: span,
-                kind: mir::TerminatorKind::Return,
-            }));
-
-            if matches!(
-                sig.output.kind,
-                TyKind::Bool
-                    | TyKind::Int(_)
-                    | TyKind::Uint(_)
-                    | TyKind::Float(_)
-                    | TyKind::Ref(_, _, _)
-                    | TyKind::RawPtr(_)
-            ) {
-                let assign = mir::Statement {
-                    source_info: span,
-                    kind: mir::StatementKind::Assign(
-                        mir::Place::from_local(0),
-                        mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
-                            span,
-                            user_ty: None,
-                            literal: self.default_constant_for_ty(&sig.output),
-                        })),
-                    ),
-                };
-                basic_block.statements.push(assign);
-            }
-
-            let body = mir::Body::new(vec![basic_block], locals, sig.inputs.len(), span);
+            let body = self.stub_body(&sig, span);
             let body_id = mir::BodyId::new(self.next_body_id);
             self.next_body_id += 1;
             program.bodies.insert(body_id, body);
@@ -931,17 +897,6 @@ impl MirLowering {
 
     fn is_extern_runtime_function(&self, name: &str) -> bool {
         matches!(name, "printf" | "fp_panic")
-    }
-
-    fn default_constant_for_ty(&self, ty: &Ty) -> mir::ConstantKind {
-        match &ty.kind {
-            TyKind::Bool => mir::ConstantKind::Bool(false),
-            TyKind::Int(_) => mir::ConstantKind::Int(0),
-            TyKind::Uint(_) => mir::ConstantKind::UInt(0),
-            TyKind::Float(_) => mir::ConstantKind::Float(0.0),
-            TyKind::Ref(_, _, _) | TyKind::RawPtr(_) => mir::ConstantKind::UInt(0),
-            _ => mir::ConstantKind::Int(0),
-        }
     }
 
     fn flush_extra_items(&mut self, program: &mut mir::Program) {
@@ -1016,28 +971,25 @@ impl MirLowering {
             locals.push(self.make_local_decl(input, span));
         }
 
-        let mut block = mir::BasicBlockData::new(Some(mir::Terminator {
+        let block = mir::BasicBlockData::new(Some(mir::Terminator {
             source_info: span,
-            kind: mir::TerminatorKind::Return,
+            kind: mir::TerminatorKind::Unreachable,
         }));
 
-        if !Self::is_unit_ty(&sig.output) {
-            let literal = self.default_constant_for_ty(&sig.output);
-            let constant = mir::Constant {
-                span,
-                user_ty: None,
-                literal,
-            };
-            block.statements.push(mir::Statement {
-                source_info: span,
-                kind: mir::StatementKind::Assign(
-                    mir::Place::from_local(0),
-                    mir::Rvalue::Use(mir::Operand::Constant(constant)),
-                ),
-            });
-        }
-
         mir::Body::new(vec![block], locals, sig.inputs.len(), span)
+    }
+
+    fn catch_unwind_default_constant_for_ty(&self, ty: &Ty) -> Result<mir::ConstantKind> {
+        match &ty.kind {
+            TyKind::Bool => Ok(mir::ConstantKind::Bool(false)),
+            TyKind::Int(_) => Ok(mir::ConstantKind::Int(0)),
+            TyKind::Uint(_) => Ok(mir::ConstantKind::UInt(0)),
+            TyKind::Float(_) => Ok(mir::ConstantKind::Float(0.0)),
+            TyKind::Ref(_, _, _) | TyKind::RawPtr(_) => Ok(mir::ConstantKind::UInt(0)),
+            _ => Err(fp_core::error::Error::from(format!(
+                "catch_unwind_result cannot synthesize unwind value for type `{ty}`"
+            ))),
+        }
     }
 
     fn register_generic_function(&mut self, def_id: hir::DefId, function: &hir::Function) {
@@ -10665,14 +10617,11 @@ impl<'a> BodyBuilder<'a> {
         );
 
         if args.len() != payload_tys.len() {
-            self.lowering.emit_error(
-                span,
-                format!(
-                    "enum variant expected {} payload values, got {}",
-                    payload_tys.len(),
-                    args.len()
-                ),
-            );
+            return Err(fp_core::error::Error::from(format!(
+                "enum variant expected {} payload values, got {}",
+                payload_tys.len(),
+                args.len()
+            )));
         }
 
         let mut operands = Vec::with_capacity(1 + layout.payload_tys.len());
@@ -10688,11 +10637,9 @@ impl<'a> BodyBuilder<'a> {
                 let operand = self.lower_operand(&arg.value, Some(expected_ty))?;
                 operands.push(operand.operand);
             } else {
-                operands.push(mir::Operand::Constant(mir::Constant {
-                    span,
-                    user_ty: None,
-                    literal: self.lowering.default_constant_for_ty(slot_ty),
-                }));
+                return Err(fp_core::error::Error::from(format!(
+                    "enum variant payload slot {idx} is missing during MIR lowering (slot_ty={slot_ty})"
+                )));
             }
         }
 
@@ -10747,11 +10694,9 @@ impl<'a> BodyBuilder<'a> {
                     .push(mir::PlaceElem::Field(idx, payload_ty.clone()));
                 operands.push(mir::Operand::Copy(field_place));
             } else {
-                operands.push(mir::Operand::Constant(mir::Constant {
-                    span,
-                    user_ty: None,
-                    literal: self.lowering.default_constant_for_ty(slot_ty),
-                }));
+                return Err(fp_core::error::Error::from(format!(
+                    "enum variant payload slot {idx} is missing in source place during MIR lowering (slot_ty={slot_ty})"
+                )));
             }
         }
 
@@ -11021,22 +10966,18 @@ impl<'a> BodyBuilder<'a> {
                                 let expr = match field_map.get(&field_info.name) {
                                     Some(field) => &field.expr,
                                     None => {
-                                        operands.push(mir::Operand::Constant(mir::Constant {
-                                            span,
-                                            user_ty: None,
-                                            literal: self.lowering.default_constant_for_ty(slot_ty),
-                                        }));
-                                        continue;
+                                        return Err(fp_core::error::Error::from(format!(
+                                            "missing field `{}` in enum variant struct literal",
+                                            field_info.name
+                                        )));
                                     }
                                 };
                                 let operand = self.lower_operand(expr, Some(slot_ty))?;
                                 operands.push(operand.operand);
                             } else {
-                                operands.push(mir::Operand::Constant(mir::Constant {
-                                    span,
-                                    user_ty: None,
-                                    literal: self.lowering.default_constant_for_ty(slot_ty),
-                                }));
+                                return Err(fp_core::error::Error::from(format!(
+                                    "enum variant payload slot {idx} has no corresponding field in struct literal layout (slot_ty={slot_ty})"
+                                )));
                             }
                         }
 
@@ -15794,6 +15735,9 @@ impl<'a> BodyBuilder<'a> {
         });
 
         self.current_block = unwind_block;
+        let unwind_default = self
+            .lowering
+            .catch_unwind_default_constant_for_ty(&sig.output)?;
         self.push_statement(mir::Statement {
             source_info: expr.span,
             kind: mir::StatementKind::Assign(
@@ -15809,7 +15753,7 @@ impl<'a> BodyBuilder<'a> {
                         mir::Operand::Constant(mir::Constant {
                             span: expr.span,
                             user_ty: None,
-                            literal: self.lowering.default_constant_for_ty(&sig.output),
+                            literal: unwind_default,
                         }),
                     ],
                 ),

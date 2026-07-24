@@ -454,13 +454,10 @@ impl LirGenerator {
     ) -> Result<lir::LirConstant> {
         match init {
             mir::Operand::Constant(constant) => self.constant_to_lir_constant(constant, ty),
-            other => {
-                self.emit_warning(format!(
-                    "unsupported static initializer operand {:?}; lowering to undef",
-                    other
-                ));
-                Ok(lir::LirConstant::Undef(self.lir_type_from_ty(ty)))
-            }
+            other => Err(fp_core::error::Error::from(format!(
+                "unsupported static initializer operand: {:?}",
+                other
+            ))),
         }
     }
 
@@ -506,8 +503,9 @@ impl LirGenerator {
                 Vec::new(),
             ),
             mir::ConstantKind::Ty(_) => {
-                self.emit_warning("type-only constant in static initializer lowered to undef");
-                lir::LirConstant::Undef(target_ty.clone())
+                return Err(fp_core::error::Error::from(
+                    "type-only constant is not a valid static initializer",
+                ))
             }
         };
 
@@ -556,7 +554,9 @@ impl LirGenerator {
                 let element_types = match &ty.kind {
                     TyKind::Tuple(items) => items.clone(),
                     _ => {
-                        return Ok(lir::LirConstant::Undef(self.lir_type_from_ty(ty)));
+                        return Err(fp_core::error::Error::from(format!(
+                            "tuple constant requires tuple type hint, got `{ty}`"
+                        )));
                     }
                 };
                 let mut lowered = Vec::with_capacity(elements.len());
@@ -570,7 +570,9 @@ impl LirGenerator {
                 let elem_ty = match &ty.kind {
                     TyKind::Array(inner, _) => inner.as_ref(),
                     _ => {
-                        return Ok(lir::LirConstant::Undef(self.lir_type_from_ty(ty)));
+                        return Err(fp_core::error::Error::from(format!(
+                            "array constant requires array type hint, got `{ty}`"
+                        )));
                     }
                 };
                 let lir_elem_ty = self.lir_type_from_ty(elem_ty);

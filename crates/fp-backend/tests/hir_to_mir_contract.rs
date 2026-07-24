@@ -366,6 +366,258 @@ fn rejects_binary_operations_with_unit_operands() {
 }
 
 #[test]
+fn rejects_enum_variant_call_with_missing_payload_values() {
+    let enum_def_id = 100;
+    let variant_def_id = 101;
+
+    let enum_item = Item {
+        hir_id: 40,
+        def_id: enum_def_id,
+        visibility: Visibility::Public,
+        kind: ItemKind::Enum(hir::Enum {
+            name: Symbol::new("MaybeInt"),
+            variants: vec![hir::EnumVariant {
+                hir_id: 41,
+                def_id: variant_def_id,
+                name: Symbol::new("Some"),
+                discriminant: None,
+                payload: Some(primitive_type(TypePrimitive::Int(TypeInt::I32))),
+            }],
+            generics: Generics::default(),
+            repr: Default::default(),
+        }),
+        span: span(),
+    };
+
+    let body_expr = Expr::new(
+        42,
+        ExprKind::Call(
+            Box::new(Expr::new(
+                43,
+                ExprKind::Path(Path {
+                    segments: vec![PathSegment {
+                        name: Symbol::new("Some"),
+                        args: None,
+                    }],
+                    res: Some(Res::Def(variant_def_id)),
+                }),
+                span(),
+            )),
+            Vec::new(),
+        ),
+        span(),
+    );
+    let body = hir::Body {
+        hir_id: 44,
+        params: Vec::new(),
+        value: body_expr,
+    };
+
+    let function = Function::new(
+        FunctionSig {
+            name: hir::Symbol::new("main"),
+            inputs: Vec::new(),
+            output: TypeExpr {
+                hir_id: 45,
+                kind: TypeExprKind::Path(Path {
+                    segments: vec![PathSegment {
+                        name: Symbol::new("MaybeInt"),
+                        args: None,
+                    }],
+                    res: Some(Res::Def(enum_def_id)),
+                }),
+                span: span(),
+            },
+            generics: Generics::default(),
+            abi: hir::Abi::Rust,
+        },
+        Some(body),
+        false,
+        false,
+    );
+    let function_item = Item {
+        hir_id: 46,
+        def_id: 102,
+        visibility: Visibility::Public,
+        kind: ItemKind::Function(function),
+        span: span(),
+    };
+
+    let program = program_with_items(vec![enum_item, function_item]);
+
+    let mut lowering = mir_lowering();
+    let err = lowering
+        .transform(program)
+        .expect_err("HIR→MIR lowering should reject missing enum variant payload values");
+    let message = err.to_string();
+    assert!(
+        message.contains("enum variant expected 1 payload values, got 0"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn rejects_struct_like_enum_variant_with_missing_fields() {
+    let payload_struct_def_id = 110;
+    let enum_def_id = 111;
+    let variant_def_id = 112;
+
+    let payload_struct_item = Item {
+        hir_id: 50,
+        def_id: payload_struct_def_id,
+        visibility: Visibility::Public,
+        kind: ItemKind::Struct(hir::Struct {
+            name: Symbol::new("Some"),
+            fields: vec![hir::StructField {
+                hir_id: 51,
+                name: Symbol::new("value"),
+                ty: primitive_type(TypePrimitive::Int(TypeInt::I32)),
+                vis: Visibility::Public,
+            }],
+            generics: Generics::default(),
+            repr: Default::default(),
+        }),
+        span: span(),
+    };
+
+    let enum_item = Item {
+        hir_id: 52,
+        def_id: enum_def_id,
+        visibility: Visibility::Public,
+        kind: ItemKind::Enum(hir::Enum {
+            name: Symbol::new("MaybeInt"),
+            variants: vec![hir::EnumVariant {
+                hir_id: 53,
+                def_id: variant_def_id,
+                name: Symbol::new("Some"),
+                discriminant: None,
+                payload: Some(TypeExpr {
+                    hir_id: 54,
+                    kind: TypeExprKind::Path(Path {
+                        segments: vec![PathSegment {
+                            name: Symbol::new("Some"),
+                            args: None,
+                        }],
+                        res: Some(Res::Def(payload_struct_def_id)),
+                    }),
+                    span: span(),
+                }),
+            }],
+            generics: Generics::default(),
+            repr: Default::default(),
+        }),
+        span: span(),
+    };
+
+    let body_expr = Expr::new(
+        55,
+        ExprKind::Struct(
+            Path {
+                segments: vec![PathSegment {
+                    name: Symbol::new("Some"),
+                    args: None,
+                }],
+                res: Some(Res::Def(variant_def_id)),
+            },
+            Vec::new(),
+        ),
+        span(),
+    );
+    let body = hir::Body {
+        hir_id: 56,
+        params: Vec::new(),
+        value: body_expr,
+    };
+
+    let function = Function::new(
+        FunctionSig {
+            name: hir::Symbol::new("main"),
+            inputs: Vec::new(),
+            output: TypeExpr {
+                hir_id: 57,
+                kind: TypeExprKind::Path(Path {
+                    segments: vec![PathSegment {
+                        name: Symbol::new("MaybeInt"),
+                        args: None,
+                    }],
+                    res: Some(Res::Def(enum_def_id)),
+                }),
+                span: span(),
+            },
+            generics: Generics::default(),
+            abi: hir::Abi::Rust,
+        },
+        Some(body),
+        false,
+        false,
+    );
+    let function_item = Item {
+        hir_id: 58,
+        def_id: 113,
+        visibility: Visibility::Public,
+        kind: ItemKind::Function(function),
+        span: span(),
+    };
+
+    let program = program_with_items(vec![payload_struct_item, enum_item, function_item]);
+
+    let mut lowering = mir_lowering();
+    let err = lowering
+        .transform(program)
+        .expect_err("HIR→MIR lowering should reject missing struct-like enum variant fields");
+    let message = err.to_string();
+    assert!(
+        message.contains("enum variant expected 1 payload values, got 0")
+            || message.contains("missing field `value` in enum variant struct literal"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn stubs_bodyless_functions_as_unreachable() {
+    let sig = FunctionSig {
+        name: hir::Symbol::new("extern_like"),
+        inputs: Vec::new(),
+        output: primitive_type(TypePrimitive::Int(TypeInt::I32)),
+        generics: Generics::default(),
+        abi: hir::Abi::Rust,
+    };
+
+    let function = Function::new(sig, None, false, false);
+    let item = Item {
+        hir_id: 60,
+        def_id: 120,
+        visibility: Visibility::Public,
+        kind: ItemKind::Function(function),
+        span: span(),
+    };
+
+    let program = program_with_items(vec![item]);
+
+    let mut lowering = mir_lowering();
+    let mir_program = lowering
+        .transform(program)
+        .expect("HIR→MIR lowering should succeed for bodyless stubs");
+
+    let mir_item = &mir_program.items[0];
+    let mir_function = match &mir_item.kind {
+        MirItemKind::Function(func) => func,
+        other => panic!("expected MIR function item, found {other:?}"),
+    };
+    let body = mir_program
+        .bodies
+        .get(&mir_function.body_id)
+        .expect("function body present");
+    assert_eq!(body.basic_blocks.len(), 1);
+    let block = &body.basic_blocks[0];
+    assert!(block.statements.is_empty(), "unexpected stub statements: {:?}", block.statements);
+    assert!(matches!(
+        block.terminator.as_ref().expect("terminator").kind,
+        TerminatorKind::Unreachable
+    ));
+}
+
+#[test]
 fn lowers_const_item_to_mir_static_with_integer_initializer() {
     let const_body = hir::Body {
         hir_id: 12,

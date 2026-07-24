@@ -131,6 +131,71 @@ fn lowers_static_integer_initializer_into_global_constant() {
 }
 
 #[test]
+fn rejects_non_constant_static_initializer_operand() {
+    let ty = Ty::int(IntTy::I32);
+    let static_item = mir::Static {
+        ty: ty.clone(),
+        init: Operand::Copy(mir::Place::from_local(0)),
+        mutability: Mutability::Not,
+    };
+
+    let program = mir::Program {
+        items: vec![Item {
+            mir_id: 0,
+            kind: ItemKind::Static(static_item),
+        }],
+        bodies: HashMap::new(),
+    };
+
+    let mut generator = LirGenerator::new();
+    let err = generator
+        .transform(program)
+        .expect_err("lowering should reject non-constant static initializers");
+    let message = err.to_string();
+    assert!(
+        message.contains("unsupported static initializer operand"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn rejects_tuple_constant_with_non_tuple_type_hint() {
+    let ty = Ty::int(IntTy::I32);
+    let constant = mir::Constant {
+        span: Span::new(0, 0, 0),
+        user_ty: None,
+        literal: mir::ConstantKind::Val(
+            mir::ConstValue::Tuple(vec![mir::ConstValue::Int(7)]),
+            ty.clone(),
+        ),
+    };
+
+    let static_item = mir::Static {
+        ty: ty.clone(),
+        init: Operand::Constant(constant),
+        mutability: Mutability::Not,
+    };
+
+    let program = mir::Program {
+        items: vec![Item {
+            mir_id: 0,
+            kind: ItemKind::Static(static_item),
+        }],
+        bodies: HashMap::new(),
+    };
+
+    let mut generator = LirGenerator::new();
+    let err = generator
+        .transform(program)
+        .expect_err("lowering should reject tuple constants with scalar type hints");
+    let message = err.to_string();
+    assert!(
+        message.contains("tuple constant requires tuple type hint"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
 fn lowers_slice_static_into_bytes_with_relocation() {
     let ty = Ty {
         kind: TyKind::Slice(Box::new(Ty::uint(UintTy::U8))),
