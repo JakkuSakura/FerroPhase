@@ -83,6 +83,7 @@ fn parse_file(root: TsNode, source: &str) -> Result<File> {
     Ok(File {
         path: Default::default(),
         attrs: Vec::new(),
+        collected_items: Vec::new(),
         items,
     })
 }
@@ -359,6 +360,7 @@ fn parse_function(node: TsNode, source: &str) -> Result<Item> {
         ty_annotation: None,
         attrs: Vec::new(),
         name: name.clone(),
+        collected_items: Vec::new(),
         ty: None,
         sig,
         body: body.into(),

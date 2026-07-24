@@ -73,6 +73,7 @@ impl LanguageFrontend for PythonFrontend {
         let file = File {
             path: Self::file_path(path),
             attrs: Vec::new(),
+            collected_items: Vec::new(),
             items,
         };
         let node = Node::from(NodeKind::File(file));
@@ -295,6 +296,7 @@ fn lower_function_def(
         ty_annotation: None,
         attrs: Vec::new(),
         name,
+        collected_items: Vec::new(),
         ty: None,
         sig,
         body: Expr::block(body).into(),

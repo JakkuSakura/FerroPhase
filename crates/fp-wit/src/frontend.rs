@@ -75,6 +75,7 @@ fn lower_document(document: &WitDocument, path: &Path) -> File {
     File {
         path: path_to_buf(path),
         attrs: Vec::new(),
+        collected_items: Vec::new(),
         items,
     }
 }
@@ -95,6 +96,7 @@ fn lower_package(package: &WitPackage) -> Option<Module> {
     Some(Module {
         attrs: Vec::new(),
         name,
+        collected_items: Vec::new(),
         items,
         visibility: Visibility::Public,
         is_external: false,
@@ -119,6 +121,7 @@ fn lower_interface(interface: &WitInterface) -> Option<Module> {
     Some(Module {
         attrs: Vec::new(),
         name: interface.name.clone(),
+        collected_items: Vec::new(),
         items,
         visibility: Visibility::Public,
         is_external: false,

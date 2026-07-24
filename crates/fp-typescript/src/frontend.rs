@@ -184,6 +184,7 @@ impl LanguageFrontend for TypeScriptFrontend {
         let file = File {
             path: Self::file_path(path),
             attrs: Vec::new(),
+            collected_items: Vec::new(),
             items,
         };
         let node = Node::from(NodeKind::File(file.clone()));
@@ -926,6 +927,7 @@ fn lower_class_like(
     vec![Item::from(AstModule {
         attrs: Vec::new(),
         name: Ident::new(class_name),
+        collected_items: Vec::new(),
         items,
         visibility,
         is_external: false,
@@ -1140,6 +1142,7 @@ fn build_function_item(
         ty_annotation: None,
         attrs: Vec::new(),
         name: name_ident,
+        collected_items: Vec::new(),
         ty: None,
         sig,
         body: Box::new(body_expr),

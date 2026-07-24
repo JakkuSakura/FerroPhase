@@ -72,6 +72,7 @@ impl GoEmitter {
             NodeKind::Item(item) => self.emit_file(&File {
                 path: Default::default(),
                 attrs: Vec::new(),
+                collected_items: Vec::new(),
                 items: vec![item.clone()],
             }),
             NodeKind::Expr(expr) => {
