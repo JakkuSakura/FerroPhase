@@ -4,10 +4,11 @@
 //! operands and emits the appropriate LIR instruction(s).  These are
 //! called from the main dispatch loop in [`FunctionLowering::lower_block`].
 
-use fp_bytecode::{BytecodeBinOp, BytecodeConst, BytecodePlace, BytecodePlaceElem, BytecodeUnOp, IntrinsicCallKind};
+use fp_bytecode::{
+    BytecodeBinOp, BytecodeConst, BytecodePlace, BytecodePlaceElem, BytecodeUnOp, IntrinsicCallKind,
+};
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, LirConstant, LirInstructionKind, LirType, LirValue,
-    RegisterId,
+    BasicBlockId, CallingConvention, LirConstant, LirInstructionKind, LirType, LirValue, RegisterId,
 };
 
 use super::constants;
@@ -81,7 +82,12 @@ pub(crate) fn lower_load_const(
                     LirValue::Constant(LirConstant::UInt(0, LirType::I64)),
                 ),
             )?;
-            lower_call_intrinsic(fl, block_id, constants::INTRINSIC_STR_ALLOC, &[FunctionLowering::reg_val(len_reg)])
+            lower_call_intrinsic(
+                fl,
+                block_id,
+                constants::INTRINSIC_STR_ALLOC,
+                &[FunctionLowering::reg_val(len_reg)],
+            )
         }
         BytecodeConst::Function(_name) => {
             // Function references are lowered identically to strings.
@@ -92,7 +98,12 @@ pub(crate) fn lower_load_const(
                     LirValue::Constant(LirConstant::UInt(0, LirType::I64)),
                 ),
             )?;
-            lower_call_intrinsic(fl, block_id, constants::INTRINSIC_STR_ALLOC, &[FunctionLowering::reg_val(len_reg)])
+            lower_call_intrinsic(
+                fl,
+                block_id,
+                constants::INTRINSIC_STR_ALLOC,
+                &[FunctionLowering::reg_val(len_reg)],
+            )
         }
         BytecodeConst::Null => fl.emit_in_block(
             block_id,
@@ -107,9 +118,10 @@ pub(crate) fn lower_load_const(
                 let reg = lower_load_const(fl, block_id, item)?;
                 element_regs.push(FunctionLowering::reg_val(reg));
             }
-            let mut args = vec![
-                LirValue::Constant(LirConstant::UInt(element_regs.len() as u64, LirType::I64)),
-            ];
+            let mut args = vec![LirValue::Constant(LirConstant::UInt(
+                element_regs.len() as u64,
+                LirType::I64,
+            ))];
             args.extend(element_regs);
             lower_call_intrinsic(fl, block_id, constants::INTRINSIC_MAKE_TUPLE, &args)
         }
@@ -119,9 +131,10 @@ pub(crate) fn lower_load_const(
                 let reg = lower_load_const(fl, block_id, item)?;
                 element_regs.push(FunctionLowering::reg_val(reg));
             }
-            let mut args = vec![
-                LirValue::Constant(LirConstant::UInt(element_regs.len() as u64, LirType::I64)),
-            ];
+            let mut args = vec![LirValue::Constant(LirConstant::UInt(
+                element_regs.len() as u64,
+                LirType::I64,
+            ))];
             args.extend(element_regs);
             lower_call_intrinsic(fl, block_id, constants::INTRINSIC_MAKE_ARRAY, &args)
         }
@@ -131,9 +144,10 @@ pub(crate) fn lower_load_const(
                 let reg = lower_load_const(fl, block_id, item)?;
                 element_regs.push(FunctionLowering::reg_val(reg));
             }
-            let mut args = vec![
-                LirValue::Constant(LirConstant::UInt(element_regs.len() as u64, LirType::I64)),
-            ];
+            let mut args = vec![LirValue::Constant(LirConstant::UInt(
+                element_regs.len() as u64,
+                LirType::I64,
+            ))];
             args.extend(element_regs);
             lower_call_intrinsic(fl, block_id, constants::INTRINSIC_MAKE_LIST, &args)
         }
@@ -145,9 +159,10 @@ pub(crate) fn lower_load_const(
                 arg_regs.push(FunctionLowering::reg_val(k));
                 arg_regs.push(FunctionLowering::reg_val(v));
             }
-            let mut args = vec![
-                LirValue::Constant(LirConstant::UInt(entries.len() as u64, LirType::I64)),
-            ];
+            let mut args = vec![LirValue::Constant(LirConstant::UInt(
+                entries.len() as u64,
+                LirType::I64,
+            ))];
             args.extend(arg_regs);
             lower_call_intrinsic(fl, block_id, constants::INTRINSIC_MAKE_MAP, &args)
         }
@@ -167,24 +182,78 @@ pub(crate) fn lower_binop(
     right: RegisterId,
 ) -> LowerResult<RegisterId> {
     let kind = match op {
-        BytecodeBinOp::Add => LirInstructionKind::Add(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Sub => LirInstructionKind::Sub(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Mul => LirInstructionKind::Mul(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Div => LirInstructionKind::Div(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Rem => LirInstructionKind::Rem(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::And => LirInstructionKind::And(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Or  => LirInstructionKind::Or(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::BitXor => LirInstructionKind::Xor(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::BitAnd => LirInstructionKind::And(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::BitOr  => LirInstructionKind::Or(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Shl => LirInstructionKind::Shl(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Shr => LirInstructionKind::Shr(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Eq => LirInstructionKind::Eq(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Ne => LirInstructionKind::Ne(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Lt => LirInstructionKind::Lt(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Le => LirInstructionKind::Le(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Ge => LirInstructionKind::Ge(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
-        BytecodeBinOp::Gt => LirInstructionKind::Gt(FunctionLowering::reg_val(left), FunctionLowering::reg_val(right)),
+        BytecodeBinOp::Add => LirInstructionKind::Add(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Sub => LirInstructionKind::Sub(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Mul => LirInstructionKind::Mul(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Div => LirInstructionKind::Div(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Rem => LirInstructionKind::Rem(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::And => LirInstructionKind::And(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Or => LirInstructionKind::Or(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::BitXor => LirInstructionKind::Xor(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::BitAnd => LirInstructionKind::And(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::BitOr => LirInstructionKind::Or(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Shl => LirInstructionKind::Shl(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Shr => LirInstructionKind::Shr(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Eq => LirInstructionKind::Eq(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Ne => LirInstructionKind::Ne(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Lt => LirInstructionKind::Lt(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Le => LirInstructionKind::Le(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Ge => LirInstructionKind::Ge(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
+        BytecodeBinOp::Gt => LirInstructionKind::Gt(
+            FunctionLowering::reg_val(left),
+            FunctionLowering::reg_val(right),
+        ),
     };
     fl.emit_in_block(block_id, kind)
 }
@@ -236,12 +305,8 @@ pub(crate) fn lower_intrinsic(
             Ok(Some(reg))
         }
         IntrinsicCallKind::Len => {
-            let reg = lower_call_intrinsic(
-                fl,
-                block_id,
-                constants::INTRINSIC_CONTAINER_LEN,
-                &args,
-            )?;
+            let reg =
+                lower_call_intrinsic(fl, block_id, constants::INTRINSIC_CONTAINER_LEN, &args)?;
             Ok(Some(reg))
         }
         IntrinsicCallKind::TimeNow => {
@@ -271,9 +336,10 @@ pub(crate) fn lower_make_compound(
         element_regs.push(FunctionLowering::reg_val(fl.pop_reg()?));
     }
     element_regs.reverse();
-    let mut args = vec![
-        LirValue::Constant(LirConstant::UInt(count as u64, LirType::I64)),
-    ];
+    let mut args = vec![LirValue::Constant(LirConstant::UInt(
+        count as u64,
+        LirType::I64,
+    ))];
     args.extend(element_regs);
     lower_call_intrinsic(fl, block_id, intrinsic_name, &args)
 }
@@ -297,7 +363,10 @@ pub(crate) fn lower_container_get(
         fl,
         block_id,
         constants::INTRINSIC_ARRAY_GET,
-        &[FunctionLowering::reg_val(container), FunctionLowering::reg_val(key)],
+        &[
+            FunctionLowering::reg_val(container),
+            FunctionLowering::reg_val(key),
+        ],
     )
 }
 
@@ -330,7 +399,10 @@ pub(crate) fn lower_load_place(
             fl,
             block_id,
             get_intrinsic,
-            &[FunctionLowering::reg_val(current_val), FunctionLowering::reg_val(index_reg)],
+            &[
+                FunctionLowering::reg_val(current_val),
+                FunctionLowering::reg_val(index_reg),
+            ],
         )?;
     }
 
@@ -405,7 +477,10 @@ pub(crate) fn lower_store_place(
                 fl,
                 block_id,
                 get_intrinsic,
-                &[FunctionLowering::reg_val(base_val_reg), FunctionLowering::reg_val(index_reg)],
+                &[
+                    FunctionLowering::reg_val(base_val_reg),
+                    FunctionLowering::reg_val(index_reg),
+                ],
             )?;
         }
     }
@@ -453,16 +528,14 @@ fn lower_projection_index(
                 LirValue::Constant(LirConstant::UInt(0, LirType::I64)),
             ),
         ),
-        BytecodePlaceElem::Index(local_idx) => {
-            fl.emit_in_block(
-                block_id,
-                LirInstructionKind::Load {
-                    address: LirValue::Local(*local_idx),
-                    alignment: Some(8),
-                    volatile: false,
-                },
-            )
-        }
+        BytecodePlaceElem::Index(local_idx) => fl.emit_in_block(
+            block_id,
+            LirInstructionKind::Load {
+                address: LirValue::Local(*local_idx),
+                alignment: Some(8),
+                volatile: false,
+            },
+        ),
     }
 }
 

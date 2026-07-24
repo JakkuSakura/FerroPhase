@@ -700,8 +700,7 @@ impl LirQuery {
     }
 }
 
-impl LirConstant {
-}
+impl LirConstant {}
 
 impl LirTypeDefinition {
     pub fn span(&self) -> Span {

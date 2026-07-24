@@ -152,7 +152,9 @@ mod tests {
 
         let lir = lower_program(&program).expect("lowering should succeed");
         let mut interpreter = LirInterpreter::new();
-        let result = interpreter.run_main(&lir).expect("interpretation should succeed");
+        let result = interpreter
+            .run_main(&lir)
+            .expect("interpretation should succeed");
         assert_eq!(result, Value::int(42));
     }
 
@@ -185,7 +187,9 @@ mod tests {
 
         let lir = lower_program(&program).expect("lowering should succeed");
         let mut interpreter = LirInterpreter::new();
-        let result = interpreter.run_main(&lir).expect("interpretation should succeed");
+        let result = interpreter
+            .run_main(&lir)
+            .expect("interpretation should succeed");
         assert_eq!(result, Value::int(0));
     }
 }

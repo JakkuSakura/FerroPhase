@@ -7,8 +7,8 @@
 use fp_bytecode::{BytecodeFunction, BytecodeProgram};
 use fp_core::lir::LirProgram;
 
-use super::function::FunctionLowering;
 use super::LowerResult;
+use super::function::FunctionLowering;
 
 /// Top-level entry point: convert a complete bytecode program into LIR.
 pub fn lower_program(program: &BytecodeProgram) -> LowerResult<LirProgram> {
@@ -36,7 +36,10 @@ impl<'a> LoweringContext<'a> {
     }
 
     /// Lower a single bytecode function into an [`LirFunction`].
-    pub fn lower_function(&mut self, func: &BytecodeFunction) -> LowerResult<fp_core::lir::LirFunction> {
+    pub fn lower_function(
+        &mut self,
+        func: &BytecodeFunction,
+    ) -> LowerResult<fp_core::lir::LirFunction> {
         let entry_block_id = func.blocks.first().map(|b| b.id).unwrap_or(0);
         let sig = fp_core::lir::LirFunctionSignature {
             params: vec![fp_core::lir::LirType::I64; func.params as usize],

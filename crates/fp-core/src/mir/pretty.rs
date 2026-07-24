@@ -4,8 +4,8 @@ use crate::pretty::{PrettyCtx, PrettyPrintable};
 
 use super::{
     AggregateKind, BasicBlockData, Body, BodyId, Constant, ExecutableConst, Function, Item,
-    ItemKind, Operand, Place, Program, Query, Rvalue, Statement, StatementKind, Static,
-    Terminator, TerminatorKind,
+    ItemKind, Operand, Place, Program, Query, Rvalue, Statement, StatementKind, Static, Terminator,
+    TerminatorKind,
 };
 
 fn query_statement_lines(ir: &crate::query::QueryIrDocument) -> Vec<String> {

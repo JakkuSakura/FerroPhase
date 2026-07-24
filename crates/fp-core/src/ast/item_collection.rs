@@ -1,7 +1,7 @@
 use crate::ast::{
     BlockStmt, Expr, ExprBlock, ExprConstBlock, ExprFor, ExprIf, ExprIntrinsicContainer,
-    ExprInvokeTarget, ExprKind, ExprMatch, ExprTry, ExprWhile, File, Item, ItemDefFunction,
-    ItemChunk, ItemDefTrait, ItemImpl, ItemKind, Module, Node, NodeKind, Value,
+    ExprInvokeTarget, ExprKind, ExprMatch, ExprTry, ExprWhile, File, Item, ItemChunk,
+    ItemDefFunction, ItemDefTrait, ItemImpl, ItemKind, Module, Node, NodeKind, Value,
 };
 use crate::module::path::QualifiedPath;
 
@@ -130,7 +130,9 @@ fn annotate_expr(expr: &mut Expr, module_path: &QualifiedPath) {
             match &mut invoke.target {
                 ExprInvokeTarget::Expr(inner) => annotate_expr(inner.as_mut(), module_path),
                 ExprInvokeTarget::Method(select) => annotate_expr(select.obj.as_mut(), module_path),
-                ExprInvokeTarget::Closure(closure) => annotate_expr(closure.body.as_mut(), module_path),
+                ExprInvokeTarget::Closure(closure) => {
+                    annotate_expr(closure.body.as_mut(), module_path)
+                }
                 ExprInvokeTarget::Function(_)
                 | ExprInvokeTarget::Type(_)
                 | ExprInvokeTarget::BinOp(_) => {}

@@ -2,7 +2,7 @@ use fp_core::asmir::AsmProgram;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirValue};
 
-use crate::emit::{aarch64, x86_64, CodegenOutput, TargetArch, TargetFormat};
+use crate::emit::{CodegenOutput, TargetArch, TargetFormat, aarch64, x86_64};
 
 pub fn emit_text_from_selection(
     lir_program: &LirProgram,

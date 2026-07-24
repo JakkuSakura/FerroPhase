@@ -278,7 +278,8 @@ impl<'a> WasmEmitter<'a> {
                 let reloc_start = start + reloc.offset as usize;
                 match (&reloc.kind, &reloc.target) {
                     (LirRelocationKind::Abs64, LirRelocationTarget::Global(name)) => {
-                        let target = self.global_addr.get(name.as_str()).copied().unwrap_or(0) as i64
+                        let target = self.global_addr.get(name.as_str()).copied().unwrap_or(0)
+                            as i64
                             + reloc.addend;
                         let bytes = (target as u64).to_le_bytes();
                         self.data_bytes[reloc_start..reloc_start + 8].copy_from_slice(&bytes);

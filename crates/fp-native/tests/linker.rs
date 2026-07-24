@@ -21,9 +21,11 @@ fn emit_plan_carries_selected_asmir() {
     assert_eq!(plan.asmir.functions.len(), 1);
     assert_eq!(plan.asmir.functions[0].name.as_str(), "main");
     assert_eq!(plan.asmir.functions[0].basic_blocks.len(), 1);
-    assert!(plan.asmir.functions[0].basic_blocks[0]
-        .instructions
-        .is_empty());
+    assert!(
+        plan.asmir.functions[0].basic_blocks[0]
+            .instructions
+            .is_empty()
+    );
 }
 
 #[test]
@@ -588,14 +590,16 @@ fn pe_executable_has_magic() {
 fn elf_executable_supports_printf() {
     let arch = host_arch();
     let plan = emit::emit_plan(&program_with_print(), TargetFormat::Elf, arch).unwrap();
-    assert!(plan
-        .relocs
-        .iter()
-        .any(|reloc| reloc.kind == RelocKind::CallRel32 && reloc.symbol == "printf"));
-    assert!(plan
-        .relocs
-        .iter()
-        .any(|reloc| reloc.kind == RelocKind::Abs64 && reloc.symbol == ".rodata"));
+    assert!(
+        plan.relocs
+            .iter()
+            .any(|reloc| reloc.kind == RelocKind::CallRel32 && reloc.symbol == "printf")
+    );
+    assert!(
+        plan.relocs
+            .iter()
+            .any(|reloc| reloc.kind == RelocKind::Abs64 && reloc.symbol == ".rodata")
+    );
 
     let out_dir = tempfile::tempdir().unwrap();
     let exe = out_dir.path().join("printf.elf");

@@ -713,26 +713,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         for diagnostic in &self.diagnostics {
             if Self::diagnostic_is_unknown_type(diagnostic) {
-                requests.push(PendingTypingRequest::unknown_type(
-                    Expr::unit(),
-                ));
+                requests.push(PendingTypingRequest::unknown_type(Expr::unit()));
             }
         }
 
-        let generic_vars: Vec<TypeVarId> = self
-            .generic_type_vars
-            .keys()
-            .copied()
-            .collect();
+        let generic_vars: Vec<TypeVarId> = self.generic_type_vars.keys().copied().collect();
         for var in generic_vars {
             let unresolved = self
                 .resolve_to_ty(var)
                 .map(|ty| matches!(ty, Ty::Unknown(_)))
                 .unwrap_or(true);
             if unresolved {
-                requests.push(PendingTypingRequest::generic(
-                    Expr::unit(),
-                ));
+                requests.push(PendingTypingRequest::generic(Expr::unit()));
             }
         }
 

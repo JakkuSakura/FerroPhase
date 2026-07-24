@@ -239,10 +239,7 @@ fn read_cstring_from_any_global(
         return None;
     }
     let offset = usize::try_from(offset).ok()?;
-    let data = globals
-        .iter()
-        .find(|g| g.name.as_str() == global)?
-        ;
+    let data = globals.iter().find(|g| g.name.as_str() == global)?;
     let bytes = global_bytes(data)?;
     if offset >= bytes.len() {
         return None;
@@ -344,10 +341,7 @@ fn read_cstring_from_global_bytes(
         return None;
     }
     let offset = usize::try_from(offset).ok()?;
-    let data = globals
-        .iter()
-        .find(|g| g.name.as_str() == global)?
-        ;
+    let data = globals.iter().find(|g| g.name.as_str() == global)?;
     let bytes = global_bytes(data)?;
     if offset >= bytes.len() {
         return None;

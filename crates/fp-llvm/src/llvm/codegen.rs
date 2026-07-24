@@ -1948,11 +1948,19 @@ impl<'a> LirCodegen<'a> {
                 .into()),
             lir::LirType::F32 => {
                 let bits = Self::read_le_u128(bytes, base, 4)? as u32;
-                Ok(self.llvm_ctx.f32_type().const_float(f32::from_bits(bits) as f64).into())
+                Ok(self
+                    .llvm_ctx
+                    .f32_type()
+                    .const_float(f32::from_bits(bits) as f64)
+                    .into())
             }
             lir::LirType::F64 => {
                 let bits = Self::read_le_u128(bytes, base, 8)? as u64;
-                Ok(self.llvm_ctx.f64_type().const_float(f64::from_bits(bits)).into())
+                Ok(self
+                    .llvm_ctx
+                    .f64_type()
+                    .const_float(f64::from_bits(bits))
+                    .into())
             }
             lir::LirType::Ptr(_) | lir::LirType::Function { .. } => {
                 self.convert_global_pointer_bytes(bytes, relocations, ty, base)
@@ -1982,16 +1990,13 @@ impl<'a> LirCodegen<'a> {
                 Ok(array_value.into())
             }
             lir::LirType::Struct { fields, packed, .. } => {
-                let struct_ty = self
-                    .llvm_ctx
-                    .context
-                    .struct_type(
-                        &fields
-                            .iter()
-                            .map(|field| self.llvm_basic_type(field))
-                            .collect::<Result<Vec<_>>>()?,
-                        *packed,
-                    );
+                let struct_ty = self.llvm_ctx.context.struct_type(
+                    &fields
+                        .iter()
+                        .map(|field| self.llvm_basic_type(field))
+                        .collect::<Result<Vec<_>>>()?,
+                    *packed,
+                );
                 let layout = layout::struct_layout(ty).ok_or_else(|| {
                     report_error_with_context(LOG_AREA, "missing LIR struct layout")
                 })?;
@@ -2006,7 +2011,10 @@ impl<'a> LirCodegen<'a> {
                 }
                 Ok(struct_ty.const_named_struct(&values).into())
             }
-            lir::LirType::Void | lir::LirType::Label | lir::LirType::Token | lir::LirType::Metadata => {
+            lir::LirType::Void
+            | lir::LirType::Label
+            | lir::LirType::Token
+            | lir::LirType::Metadata => {
                 let llvm_ty = self.llvm_basic_type(ty)?;
                 Ok(llvm_ty.const_zero())
             }
@@ -2035,7 +2043,10 @@ impl<'a> LirCodegen<'a> {
             }
         };
 
-        if let Some(reloc) = relocations.iter().find(|reloc| reloc.offset as usize == base) {
+        if let Some(reloc) = relocations
+            .iter()
+            .find(|reloc| reloc.offset as usize == base)
+        {
             if reloc.addend != 0 {
                 return Err(report_error_with_context(
                     LOG_AREA,
@@ -2055,12 +2066,16 @@ impl<'a> LirCodegen<'a> {
                 }
                 lir::LirRelocationTarget::Function(name) => {
                     let llvm_name = self.llvm_symbol_for(name);
-                    let function = self.llvm_ctx.module.get_function(&llvm_name).ok_or_else(|| {
-                        report_error_with_context(
-                            LOG_AREA,
-                            format!("Unknown function referenced in relocation: {}", name),
-                        )
-                    })?;
+                    let function =
+                        self.llvm_ctx
+                            .module
+                            .get_function(&llvm_name)
+                            .ok_or_else(|| {
+                                report_error_with_context(
+                                    LOG_AREA,
+                                    format!("Unknown function referenced in relocation: {}", name),
+                                )
+                            })?;
                     function.as_global_value().as_pointer_value()
                 }
             };

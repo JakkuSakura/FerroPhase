@@ -33,9 +33,7 @@ fn terminator_targets(term: &LirTerminator) -> Vec<BasicBlockId> {
         LirTerminator::CondBr {
             if_true, if_false, ..
         } => vec![*if_true, *if_false],
-        LirTerminator::Switch {
-            default, cases, ..
-        } => {
+        LirTerminator::Switch { default, cases, .. } => {
             let mut v: Vec<BasicBlockId> = cases.iter().map(|(_, t)| *t).collect();
             v.push(*default);
             v

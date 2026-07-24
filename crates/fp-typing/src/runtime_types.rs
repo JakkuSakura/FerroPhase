@@ -200,7 +200,8 @@ pub fn builtin_type_bindings() -> HashMap<String, Ty> {
 }
 
 pub fn bytes_value_is_borrowed_string(bytes: &ValueBytes) -> bool {
-    bytes.value.last() == Some(&0) && std::str::from_utf8(&bytes.value[..bytes.value.len() - 1]).is_ok()
+    bytes.value.last() == Some(&0)
+        && std::str::from_utf8(&bytes.value[..bytes.value.len() - 1]).is_ok()
 }
 
 pub fn infer_value_ty(value: &Value) -> Option<Ty> {

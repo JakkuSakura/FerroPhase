@@ -1,5 +1,5 @@
-use fp_core::module::path::QualifiedPath;
 use fp_core::ast::Expr;
+use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use std::collections::HashMap;
 

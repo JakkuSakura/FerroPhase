@@ -4,12 +4,10 @@
 //! virtual registers, and dispatches each bytecode instruction to the
 //! appropriate sub-lowering in [`ops`][super::ops].
 
-use fp_bytecode::{
-    BytecodeCallee, BytecodeInstr, BytecodeTerminator,
-};
+use fp_bytecode::{BytecodeCallee, BytecodeInstr, BytecodeTerminator};
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, LirBasicBlock, LirFunction,
-    LirInstruction, LirInstructionKind, LirTerminator, LirValue, RegisterId,
+    BasicBlockId, CallingConvention, LirBasicBlock, LirFunction, LirInstruction,
+    LirInstructionKind, LirTerminator, LirValue, RegisterId,
 };
 
 use super::LowerError;
@@ -124,9 +122,11 @@ impl<'a> FunctionLowering<'a> {
         for instr in &block.code {
             match instr {
                 BytecodeInstr::LoadConst(id) => {
-                    let bc_const = self.bytecode.const_pool.get(*id as usize).ok_or_else(|| {
-                        LowerError::Internal(format!("missing const {id}"))
-                    })?;
+                    let bc_const = self
+                        .bytecode
+                        .const_pool
+                        .get(*id as usize)
+                        .ok_or_else(|| LowerError::Internal(format!("missing const {id}")))?;
                     let reg = super::ops::lower_load_const(self, block_id, bc_const)?;
                     self.push_reg(reg);
                 }
@@ -172,21 +172,31 @@ impl<'a> FunctionLowering<'a> {
                     let result_reg = super::ops::lower_unop(self, block_id, op, operand)?;
                     self.push_reg(result_reg);
                 }
-                BytecodeInstr::IntrinsicCall { kind, arg_count, format } => {
+                BytecodeInstr::IntrinsicCall {
+                    kind,
+                    arg_count,
+                    format,
+                } => {
                     let mut args = Vec::with_capacity(*arg_count as usize);
                     for _ in 0..*arg_count {
                         args.push(Self::reg_val(self.pop_reg()?));
                     }
                     args.reverse();
-                    let result_reg =
-                        super::ops::lower_intrinsic(self, block_id, *kind, format.as_deref(), args)?;
+                    let result_reg = super::ops::lower_intrinsic(
+                        self,
+                        block_id,
+                        *kind,
+                        format.as_deref(),
+                        args,
+                    )?;
                     if let Some(reg) = result_reg {
                         self.push_reg(reg);
                     }
                 }
                 BytecodeInstr::MakeTuple(count) => {
                     let reg = super::ops::lower_make_compound(
-                        self, block_id,
+                        self,
+                        block_id,
                         super::constants::INTRINSIC_MAKE_TUPLE,
                         *count,
                     )?;
@@ -194,7 +204,8 @@ impl<'a> FunctionLowering<'a> {
                 }
                 BytecodeInstr::MakeArray(count) => {
                     let reg = super::ops::lower_make_compound(
-                        self, block_id,
+                        self,
+                        block_id,
                         super::constants::INTRINSIC_MAKE_ARRAY,
                         *count,
                     )?;
@@ -202,7 +213,8 @@ impl<'a> FunctionLowering<'a> {
                 }
                 BytecodeInstr::MakeList(count) => {
                     let reg = super::ops::lower_make_compound(
-                        self, block_id,
+                        self,
+                        block_id,
                         super::constants::INTRINSIC_MAKE_LIST,
                         *count,
                     )?;
@@ -210,7 +222,8 @@ impl<'a> FunctionLowering<'a> {
                 }
                 BytecodeInstr::MakeMap(count) => {
                     let reg = super::ops::lower_make_compound(
-                        self, block_id,
+                        self,
+                        block_id,
                         super::constants::INTRINSIC_MAKE_MAP,
                         *count,
                     )?;
@@ -275,7 +288,11 @@ impl<'a> FunctionLowering<'a> {
                     if_false: *target,
                 });
             }
-            BytecodeTerminator::SwitchInt { values, targets, otherwise } => {
+            BytecodeTerminator::SwitchInt {
+                values,
+                targets,
+                otherwise,
+            } => {
                 let discr = self.pop_reg()?;
                 let block = self.current_block_mut(block_id);
                 let cases: Vec<(u64, BasicBlockId)> = values
@@ -289,7 +306,12 @@ impl<'a> FunctionLowering<'a> {
                     cases,
                 });
             }
-            BytecodeTerminator::Call { callee, arg_count, destination, target } => {
+            BytecodeTerminator::Call {
+                callee,
+                arg_count,
+                destination,
+                target,
+            } => {
                 let mut args = Vec::with_capacity(*arg_count as usize);
                 for _ in 0..*arg_count {
                     args.push(Self::reg_val(self.pop_reg()?));

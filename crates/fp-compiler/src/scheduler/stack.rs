@@ -269,14 +269,12 @@ impl CompilerScheduler {
         request: &TypingRequest,
     ) -> CompilerWork {
         match request {
-            TypingRequest::Unresolved(_) | TypingRequest::Comptime(_) => {
-                CompilerWork::LowerToHir {
-                    typed_ast: typed_ast.clone(),
-                    scope: scope.clone(),
-                    path: path.clone(),
-                    consumers: vec![LirConsumer::AnswerComptime(blocked)],
-                }
-            }
+            TypingRequest::Unresolved(_) | TypingRequest::Comptime(_) => CompilerWork::LowerToHir {
+                typed_ast: typed_ast.clone(),
+                scope: scope.clone(),
+                path: path.clone(),
+                consumers: vec![LirConsumer::AnswerComptime(blocked)],
+            },
             TypingRequest::Generic(generic) => CompilerWork::EnqueueGeneric {
                 typed_ast: typed_ast.clone(),
                 path: path.clone(),
@@ -353,11 +351,11 @@ impl CompilerScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fp_core::ast::Expr;
     use crate::scheduler::{
         AstId, ExecutionMode, FullyQualifiedPath, HirId, LirConsumer, LirId, MirId, RawAstId,
         SchedulerError, ScopeId, SourceId, TypeNeed, TypedAstId, TypingRequest,
     };
+    use fp_core::ast::Expr;
 
     fn path(segments: &[&str]) -> FullyQualifiedPath {
         FullyQualifiedPath::from_segments(segments.iter().map(|seg| (*seg).to_string()).collect())

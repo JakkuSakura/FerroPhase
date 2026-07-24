@@ -70,11 +70,7 @@ impl CompilerState {
         self.const_values.insert(value_id, value);
     }
 
-    pub fn insert_resolved_const_value(
-        &mut self,
-        key: impl Into<String>,
-        value: mir::Constant,
-    ) {
+    pub fn insert_resolved_const_value(&mut self, key: impl Into<String>, value: mir::Constant) {
         self.resolved_const_values.insert(key.into(), value);
     }
 
@@ -154,9 +150,7 @@ impl CompilerState {
             .ok_or_else(|| CompilerDriverError::MissingConstValue(value_id.clone()))
     }
 
-    pub fn resolved_const_values(
-        &self,
-    ) -> impl Iterator<Item = (&str, &mir::Constant)> {
+    pub fn resolved_const_values(&self) -> impl Iterator<Item = (&str, &mir::Constant)> {
         self.resolved_const_values
             .iter()
             .map(|(key, value)| (key.as_str(), value))
