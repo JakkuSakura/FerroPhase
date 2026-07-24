@@ -5637,6 +5637,33 @@ impl MirLowering {
             hir::ExprKind::FieldAccess(base, field) => {
                 self.lower_const_field_access(program, base, field.as_str(), expr.span)
             }
+            hir::ExprKind::If(cond, then_expr, else_expr) => {
+                let branch = match self.lower_const_value(program, cond, None)? {
+                    mir::ConstValue::Bool(value) => {
+                        if value {
+                            then_expr.as_ref()
+                        } else {
+                            else_expr.as_deref()?
+                        }
+                    }
+                    mir::ConstValue::Int(value) => {
+                        if value != 0 {
+                            then_expr.as_ref()
+                        } else {
+                            else_expr.as_deref()?
+                        }
+                    }
+                    mir::ConstValue::UInt(value) => {
+                        if value != 0 {
+                            then_expr.as_ref()
+                        } else {
+                            else_expr.as_deref()?
+                        }
+                    }
+                    _ => return None,
+                };
+                self.lower_const_expr(program, branch, expected_ty, container_args)
+            }
             hir::ExprKind::MethodCall(receiver, method_name, args) => {
                 let ty = expected_ty.cloned().unwrap_or_else(Self::unit_ty);
                 let value = self.lower_const_method_value(
@@ -5810,6 +5837,33 @@ impl MirLowering {
             hir::ExprKind::FieldAccess(base, field) => {
                 self.lower_const_field_access(program, base, field.as_str(), expr.span)
                     .and_then(|constant| self.const_value_from_constant(&constant))
+            }
+            hir::ExprKind::If(cond, then_expr, else_expr) => {
+                let branch = match self.lower_const_value(program, cond, None)? {
+                    mir::ConstValue::Bool(value) => {
+                        if value {
+                            then_expr.as_ref()
+                        } else {
+                            else_expr.as_deref()?
+                        }
+                    }
+                    mir::ConstValue::Int(value) => {
+                        if value != 0 {
+                            then_expr.as_ref()
+                        } else {
+                            else_expr.as_deref()?
+                        }
+                    }
+                    mir::ConstValue::UInt(value) => {
+                        if value != 0 {
+                            then_expr.as_ref()
+                        } else {
+                            else_expr.as_deref()?
+                        }
+                    }
+                    _ => return None,
+                };
+                self.lower_const_value(program, branch, expected_ty)
             }
             hir::ExprKind::MethodCall(receiver, method_name, args) => self
                 .lower_const_method_value(program, receiver, method_name.as_str(), args, expr.span),

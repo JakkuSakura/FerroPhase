@@ -1,3 +1,4 @@
+use crate::runtime_types::bytes_value_is_borrowed_string;
 use crate::typing::unify::TypeVarKind;
 use crate::{
     std_result_inner_types, AstTypeInferencer, EnvEntry, PatternBinding, PatternInfo, TypeVarId,
@@ -720,7 +721,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             };
 
             if let Some(existing_ty) = existing_ty {
-                if !matches!(existing_ty, Ty::Unknown(_)) {
+                if !matches!(existing_ty, Ty::Unknown(_) | Ty::ErrorType(_)) {
                     let existing_var = self.type_from_ast_ty(&existing_ty)?;
                     self.unify(var, existing_var)?;
                 }
@@ -2546,6 +2547,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(inner, Ty::Primitive(TypePrimitive::String));
                 self.bind_reference_term(var, inner);
             }
+            Value::Bytes(bytes) if bytes_value_is_borrowed_string(bytes) => {
+                let string_var = self.borrowed_string_var();
+                self.unify(var, string_var)?;
+            }
             Value::List(list) => {
                 let elem_var = if let Some(first) = list.values.first() {
                     self.infer_value(first)?
@@ -3743,7 +3748,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         })
     }
 
-    fn borrowed_string_var(&mut self) -> TypeVarId {
+    pub(crate) fn borrowed_string_var(&mut self) -> TypeVarId {
         let string_var = self.fresh_type_var();
         self.bind(string_var, Ty::Primitive(TypePrimitive::String));
         let ref_var = self.fresh_type_var();

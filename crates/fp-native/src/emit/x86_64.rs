@@ -1603,12 +1603,8 @@ fn load_value(
                 return Err(Error::from("use i128 helper to load 128-bit values"));
             }
             if let AsmConstant::GlobalRef(name, _, indices) = constant {
-                if indices.iter().any(|idx| *idx != 0) {
-                    return Err(Error::from(
-                        "unsupported non-zero GlobalRef indices for x86_64",
-                    ));
-                }
-                emit_mov_symbol_addr(asm, dst, name.as_str(), 0)?;
+                let addend = indices.iter().map(|idx| *idx as i64).sum();
+                emit_mov_symbol_addr(asm, dst, name.as_str(), addend)?;
                 return Ok(());
             }
             let imm = constant_to_i64(constant)?;

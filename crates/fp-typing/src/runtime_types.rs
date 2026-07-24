@@ -199,6 +199,10 @@ pub fn builtin_type_bindings() -> HashMap<String, Ty> {
     bindings
 }
 
+pub fn bytes_value_is_borrowed_string(bytes: &ValueBytes) -> bool {
+    bytes.value.last() == Some(&0) && std::str::from_utf8(&bytes.value[..bytes.value.len() - 1]).is_ok()
+}
+
 pub fn infer_value_ty(value: &Value) -> Option<Ty> {
     match value {
         Value::Int(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
@@ -215,6 +219,13 @@ pub fn infer_value_ty(value: &Value) -> Option<Ty> {
             mutability: None,
             lifetime: None,
         })),
+        Value::Bytes(bytes) if bytes_value_is_borrowed_string(bytes) => {
+            Some(Ty::Reference(TypeReference {
+                ty: Box::new(Ty::Primitive(TypePrimitive::String)),
+                mutability: None,
+                lifetime: None,
+            }))
+        }
         Value::List(_) => Some(Ty::Primitive(TypePrimitive::List)),
         Value::Struct(struct_value) => Some(Ty::Struct(struct_value.ty.clone())),
         Value::TokenStream(_) => Some(Ty::TokenStream(TypeTokenStream)),

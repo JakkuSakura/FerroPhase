@@ -2169,12 +2169,8 @@ fn load_value(
                 return Err(Error::from("use i128 helper to load 128-bit values"));
             }
             if let AsmConstant::GlobalRef(name, _, indices) = constant {
-                if indices.iter().any(|idx| *idx != 0) {
-                    return Err(Error::from(
-                        "unsupported non-zero GlobalRef indices for aarch64",
-                    ));
-                }
-                emit_load_symbol_addr(asm, dst, name.as_str(), 0)?;
+                let addend = indices.iter().map(|idx| *idx as i64).sum();
+                emit_load_symbol_addr(asm, dst, name.as_str(), addend)?;
                 return Ok(());
             }
             let imm = constant_to_i64(constant)?;
@@ -5221,11 +5217,6 @@ fn emit_load_rodata_addr(asm: &mut Assembler, dst: Reg, addend: i64) -> Result<(
 
 fn emit_load_symbol_addr(asm: &mut Assembler, dst: Reg, symbol: &str, addend: i64) -> Result<()> {
     if asm.target_format == TargetFormat::MachO {
-        if addend != 0 {
-            return Err(Error::from(
-                "Mach-O symbol address relocations do not support addends",
-            ));
-        }
         let offset = asm.buf.len();
         // When taking the address of an undefined symbol on Mach-O/AArch64,
         // use a GOT load so the linker can keep it unresolved under
@@ -5255,6 +5246,7 @@ fn emit_load_symbol_addr(asm: &mut Assembler, dst: Reg, symbol: &str, addend: i6
             symbol: symbol.to_string(),
             addend: 0,
         });
+        add_immediate_offset(asm, dst, addend);
         return Ok(());
     }
 

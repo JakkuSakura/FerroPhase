@@ -112,6 +112,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if let Some(elze) = if_expr.elze.as_mut() {
             let else_ty = self.infer_expr(elze)?;
             self.unify(then_ty, else_ty)?;
+            if let (Ok(then_resolved), Ok(else_resolved)) =
+                (self.resolve_to_ty(then_ty), self.resolve_to_ty(else_ty))
+            {
+                let then_is_string = self.is_string_like_type(&then_resolved)
+                    || matches!(
+                        &then_resolved,
+                        Ty::Reference(reference) if self.is_string_like_type(reference.ty.as_ref())
+                    );
+                let else_is_string = self.is_string_like_type(&else_resolved)
+                    || matches!(
+                        &else_resolved,
+                        Ty::Reference(reference) if self.is_string_like_type(reference.ty.as_ref())
+                    );
+                if then_is_string && else_is_string {
+                    let result_var = self.borrowed_string_var();
+                    self.unify(result_var, then_ty)?;
+                    self.unify(result_var, else_ty)?;
+                    return Ok(result_var);
+                }
+            }
         }
         Ok(then_ty)
     }
