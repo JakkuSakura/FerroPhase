@@ -1833,6 +1833,11 @@ impl LirGenerator {
 
                         let mut current =
                             lir::LirValue::Constant(lir::LirConstant::Undef(value_lir_ty.clone()));
+                        let found_zero = lir::LirValue::Constant(lir::LirConstant::Int(
+                            0,
+                            lir::LirType::I64,
+                        ));
+                        let mut found = found_zero.clone();
 
                         for idx in 0..*len {
                             let index_value = lir::LirValue::Constant(lir::LirConstant::UInt(
@@ -1895,7 +1900,7 @@ impl LirGenerator {
                             instructions.push(lir::LirInstruction {
                                 id: select_id,
                                 kind: lir::LirInstructionKind::Select {
-                                    condition: cmp_val,
+                                    condition: cmp_val.clone(),
                                     if_true: entry_value,
                                     if_false: current,
                                 },
@@ -1903,9 +1908,66 @@ impl LirGenerator {
                                 debug_info: None,
                             });
                             current = lir::LirValue::Register(select_id);
+
+                            let found_id = self.next_id();
+                            instructions.push(lir::LirInstruction {
+                                id: found_id,
+                                kind: lir::LirInstructionKind::Or(cmp_val, found),
+                                type_hint: Some(lir::LirType::I64),
+                                debug_info: None,
+                            });
+                            found = lir::LirValue::Register(found_id);
                         }
 
-                        result_value = Some(current);
+                        let value_slot = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: value_slot,
+                            kind: lir::LirInstructionKind::Alloca {
+                                size: lir::LirValue::Constant(lir::LirConstant::UInt(
+                                    8,
+                                    lir::LirType::I64,
+                                )),
+                                alignment: 8,
+                            },
+                            type_hint: Some(lir::LirType::Ptr(Box::new(value_lir_ty.clone()))),
+                            debug_info: None,
+                        });
+                        let slot_ptr = lir::LirValue::Register(value_slot);
+                        instructions.push(lir::LirInstruction {
+                            id: self.next_id(),
+                            kind: lir::LirInstructionKind::Store {
+                                value: current,
+                                address: slot_ptr.clone(),
+                                alignment: Some(8),
+                                volatile: false,
+                            },
+                            type_hint: Some(value_lir_ty.clone()),
+                            debug_info: None,
+                        });
+
+                        let load_addr_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: load_addr_id,
+                            kind: lir::LirInstructionKind::Select {
+                                condition: found,
+                                if_true: slot_ptr,
+                                if_false: found_zero,
+                            },
+                            type_hint: Some(lir::LirType::Ptr(Box::new(value_lir_ty.clone()))),
+                            debug_info: None,
+                        });
+                        let recheck_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: recheck_id,
+                            kind: lir::LirInstructionKind::Load {
+                                address: lir::LirValue::Register(load_addr_id),
+                                alignment: Some(Self::alignment_for_lir_type(&value_lir_ty)),
+                                volatile: false,
+                            },
+                            type_hint: Some(value_lir_ty.clone()),
+                            debug_info: None,
+                        });
+                        result_value = Some(lir::LirValue::Register(recheck_id));
                     }
                 }
             }
