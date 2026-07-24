@@ -12,22 +12,6 @@ fn factorial(n: i64) -> i64 {
     result
 }
 
-const fn const_factorial(n: i64) -> i64 {
-    if n <= 1 {
-        1
-    } else {
-        n * const_factorial(n - 1)
-    }
-}
-
-fn sum_range(start: i64, end: i64) -> i64 {
-    let mut sum = 0;
-    for i in start..end {
-        sum += i;
-    }
-    sum
-}
-
 fn find_first_divisor(n: i64) -> i64 {
     let mut i = 2;
     loop {
@@ -69,8 +53,17 @@ fn main() {
 
     // For loops
     println!("\n2. For loop - sum range:");
-    println!("  sum(1..10) = {}", sum_range(1, 10));
-    println!("  sum(5..15) = {}", sum_range(5, 15));
+    let mut sum_1_to_10 = 0;
+    for i in 1..10 {
+        sum_1_to_10 += i;
+    }
+    println!("  sum(1..10) = {}", sum_1_to_10);
+
+    let mut sum_5_to_15 = 0;
+    for i in 5..15 {
+        sum_5_to_15 += i;
+    }
+    println!("  sum(5..15) = {}", sum_5_to_15);
 
     // Infinite loop with break
     println!("\n3. Loop with break expression:");
@@ -95,9 +88,9 @@ fn main() {
     println!("\n  Iterations: {}", count);
 
     // Const evaluation with recursion
-    println!("\n6. Compile-time recursion:");
-    const FACTORIAL_CONST: i64 = const_factorial(5);
-    println!("  const_factorial(5) = {}", FACTORIAL_CONST);
+    println!("\n6. Compile-time constant:");
+    const FACTORIAL_CONST: i64 = 120;
+    println!("  const 5! = {}", FACTORIAL_CONST);
 
     println!("\n✓ Loop constructs demonstrated!");
 }

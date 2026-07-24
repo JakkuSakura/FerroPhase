@@ -9851,8 +9851,10 @@ impl<'a> BodyBuilder<'a> {
         self.set_current_terminator(switch);
 
         self.current_block = then_block;
+        self.control_flow_emitted = false;
         self.lower_expr_as_statement(then_expr)?;
-        if self.blocks[self.current_block as usize]
+        if !self.control_flow_emitted
+            && self.blocks[self.current_block as usize]
             .terminator
             .is_none()
         {
@@ -9866,8 +9868,10 @@ impl<'a> BodyBuilder<'a> {
 
         self.current_block = else_block;
         if let Some(else_expr) = else_expr {
+            self.control_flow_emitted = false;
             self.lower_expr_as_statement(else_expr)?;
-            if self.blocks[self.current_block as usize]
+            if !self.control_flow_emitted
+                && self.blocks[self.current_block as usize]
                 .terminator
                 .is_none()
             {
@@ -9879,6 +9883,7 @@ impl<'a> BodyBuilder<'a> {
                 });
             }
         } else {
+            self.control_flow_emitted = false;
             self.set_current_terminator(mir::Terminator {
                 source_info: span,
                 kind: mir::TerminatorKind::Goto {
@@ -9888,6 +9893,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         self.current_block = continue_block;
+        self.control_flow_emitted = false;
         Ok(())
     }
 
@@ -17042,27 +17048,42 @@ impl<'a> BodyBuilder<'a> {
 
                 // Then branch
                 self.current_block = then_block;
+                self.control_flow_emitted = false;
                 self.lower_expr_into_place(then_expr, place.clone(), expected_ty)?;
-                let then_goto = mir::Terminator {
-                    source_info: then_expr.span,
-                    kind: mir::TerminatorKind::Goto {
-                        target: continue_block,
-                    },
-                };
-                self.set_current_terminator(then_goto);
-
-                // Else branch (if present)
-                self.current_block = else_block;
-                if let Some(else_expr) = else_expr {
-                    self.lower_expr_into_place(else_expr, place, expected_ty)?;
-                    let else_goto = mir::Terminator {
-                        source_info: else_expr.span,
+                if !self.control_flow_emitted
+                    && self.blocks[self.current_block as usize]
+                        .terminator
+                        .is_none()
+                {
+                    let then_goto = mir::Terminator {
+                        source_info: then_expr.span,
                         kind: mir::TerminatorKind::Goto {
                             target: continue_block,
                         },
                     };
-                    self.set_current_terminator(else_goto);
+                    self.set_current_terminator(then_goto);
+                }
+
+                // Else branch (if present)
+                self.current_block = else_block;
+                if let Some(else_expr) = else_expr {
+                    self.control_flow_emitted = false;
+                    self.lower_expr_into_place(else_expr, place, expected_ty)?;
+                    if !self.control_flow_emitted
+                        && self.blocks[self.current_block as usize]
+                            .terminator
+                            .is_none()
+                    {
+                        let else_goto = mir::Terminator {
+                            source_info: else_expr.span,
+                            kind: mir::TerminatorKind::Goto {
+                                target: continue_block,
+                            },
+                        };
+                        self.set_current_terminator(else_goto);
+                    }
                 } else {
+                    self.control_flow_emitted = false;
                     let unit_assign = mir::Statement {
                         source_info: expr.span,
                         kind: mir::StatementKind::Assign(
@@ -17071,16 +17092,22 @@ impl<'a> BodyBuilder<'a> {
                         ),
                     };
                     self.push_statement(unit_assign);
-                    let else_goto = mir::Terminator {
-                        source_info: expr.span,
-                        kind: mir::TerminatorKind::Goto {
-                            target: continue_block,
-                        },
-                    };
-                    self.set_current_terminator(else_goto);
+                    if self.blocks[self.current_block as usize]
+                        .terminator
+                        .is_none()
+                    {
+                        let else_goto = mir::Terminator {
+                            source_info: expr.span,
+                            kind: mir::TerminatorKind::Goto {
+                                target: continue_block,
+                            },
+                        };
+                        self.set_current_terminator(else_goto);
+                    }
                 }
 
                 self.current_block = continue_block;
+                self.control_flow_emitted = false;
             }
             hir::ExprKind::Match(scrutinee, arms) => {
                 self.lower_match_expr(expr.span, scrutinee, arms, place, expected_ty)?;
