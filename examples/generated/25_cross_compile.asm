@@ -16,7 +16,7 @@ fn main
 Symbols:
   main                             0x00000000
 
-Relocations:
+Text relocations:
   offset=0x0000000c kind=Aarch64AdrpAdd symbol=fp_rodata_base addend=0
   offset=0x00000014 kind=CallRel32 symbol=printf addend=0
   offset=0x00000018 kind=Aarch64AdrpAdd symbol=fp_rodata_base addend=0
