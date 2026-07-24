@@ -1261,7 +1261,12 @@ impl LirGenerator {
                         ir: query.ir.clone(),
                         span: query.span,
                     }),
-                    type_hint: destination_lir_ty.clone().or(Some(lir::LirType::I64)),
+                    type_hint: destination_lir_ty.clone().or_else(|| {
+                        // JUSTIFY: SQL query lowering occasionally lacks a
+                        // destination type from MIR; I64 is the safest default.
+                        eprintln!("[fp-backend] MIR→LIR: destination type missing for query, defaulting to I64");
+                        Some(lir::LirType::I64)
+                    }),
                     debug_info: None,
                 });
                 result_value = Some(lir::LirValue::Register(query_id));
@@ -1305,7 +1310,10 @@ impl LirGenerator {
                                 Some(lir::LirType::Ptr(elem)) => Some((**elem).clone()),
                                 _ => None,
                             })
-                            .unwrap_or(lir::LirType::I8);
+                            .unwrap_or_else(|| {
+                                eprintln!("[fp-backend] MIR→LIR: slice element type unknown, defaulting to I8");
+                                lir::LirType::I8
+                            });
 
                         let ptr_ty = lir::LirType::Ptr(Box::new(elem_lir_ty.clone()));
                         let base_ptr = match base_lir_ty.as_ref() {
@@ -1406,7 +1414,10 @@ impl LirGenerator {
                     self.lower_binary_op(bin_op.clone(), lhs_value.clone(), rhs_value.clone());
                 let type_hint = destination_lir_ty
                     .clone()
-                    .or_else(|| Some(lir::LirType::I32));
+                    .or_else(|| {
+                        eprintln!("[fp-backend] MIR→LIR: binary op type unknown, defaulting to I32");
+                        Some(lir::LirType::I32)
+                    });
 
                 instructions.push(lir::LirInstruction {
                     id: instr_id,
@@ -1682,8 +1693,14 @@ impl LirGenerator {
                     lir::LirType::Struct { fields, .. } => fields.clone(),
                     _ => vec![lir::LirType::I64, lir::LirType::I64],
                 };
-                let key_ty = entry_fields.get(0).cloned().unwrap_or(lir::LirType::I64);
-                let value_ty = entry_fields.get(1).cloned().unwrap_or(lir::LirType::I64);
+                let key_ty = entry_fields.get(0).cloned().unwrap_or_else(|| {
+                    eprintln!("[fp-backend] MIR→LIR: map key type unknown, defaulting to I64");
+                    lir::LirType::I64
+                });
+                let value_ty = entry_fields.get(1).cloned().unwrap_or_else(|| {
+                    eprintln!("[fp-backend] MIR→LIR: map value type unknown, defaulting to I64");
+                    lir::LirType::I64
+                });
 
                 for (idx, (key_op, value_op)) in entries.iter().enumerate() {
                     let key_val = self.transform_operand(key_op)?;
@@ -3016,7 +3033,10 @@ impl LirGenerator {
         let mut index_value = self.transform_operand(&index_operand)?;
         let index_lir_ty = self
             .type_of_operand(&index_operand)
-            .unwrap_or(lir::LirType::I64);
+            .unwrap_or_else(|| {
+                eprintln!("[fp-backend] MIR→LIR: index operand type unknown, defaulting to I64");
+                lir::LirType::I64
+            });
         if index_lir_ty != lir::LirType::I64 {
             let cast_id = self.next_id();
             self.queued_instructions.push(lir::LirInstruction {
@@ -3234,7 +3254,10 @@ impl LirGenerator {
     ) -> lir::LirValue {
         let current_ty = self
             .infer_lir_value_type(&value)
-            .unwrap_or(lir::LirType::I64);
+            .unwrap_or_else(|| {
+                eprintln!("[fp-backend] MIR→LIR: value type unknown, defaulting to I64");
+                lir::LirType::I64
+            });
         if current_ty == lir::LirType::I64 {
             return value;
         }
@@ -4002,7 +4025,10 @@ impl LirGenerator {
                     operand_ty
                         .clone()
                         .or_else(|| self.infer_lir_value_type(value))
-                        .unwrap_or(lir::LirType::Ptr(Box::new(lir::LirType::I8)))
+                        .unwrap_or_else(|| {
+                            eprintln!("[fp-backend] MIR→LIR: field type unknown, defaulting to Ptr(I8)");
+                            lir::LirType::Ptr(Box::new(lir::LirType::I8))
+                        })
                 })
                 .collect();
         }
@@ -4060,7 +4086,10 @@ impl LirGenerator {
                         let elem_ty = expected_field_tys
                             .get(0)
                             .cloned()
-                            .unwrap_or(lir::LirType::I64);
+                            .unwrap_or_else(|| {
+                                eprintln!("[fp-backend] MIR→LIR: GEP result type unknown, defaulting to I64");
+                                lir::LirType::I64
+                            });
                         Some(lir::LirType::Array(
                             Box::new(elem_ty),
                             raw_values.len() as u64,
@@ -4391,7 +4420,10 @@ impl LirGenerator {
                         .enumerate()
                         .map(|(idx, field_const)| {
                             let field_ty =
-                                target_fields.get(idx).cloned().unwrap_or(lir::LirType::I64);
+                                target_fields.get(idx).cloned().unwrap_or_else(|| {
+                                    eprintln!("[fp-backend] MIR→LIR: tuple field type unknown, defaulting to I64");
+                                    lir::LirType::I64
+                                });
                             self.cast_constant_to_lir_type(field_const, &field_ty)
                         })
                         .collect();
