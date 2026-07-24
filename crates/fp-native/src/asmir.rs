@@ -3162,7 +3162,10 @@ fn lift_x86_instruction(instruction: &X86InstructionDetail, id: u32) -> AsmInstr
         .map(x86_operand_to_asm)
         .collect::<Vec<_>>();
     let type_hint = output_type_from_asm_operands(&operands);
-    let kind = semanticize_x86_detail(instruction, &operands).unwrap_or_else(|_| {
+    let kind = semanticize_x86_detail(instruction, &operands).unwrap_or_else(|e| {
+        eprintln!("[fp-native] x86 semanticize failed for {:?}: {e}", instruction.opcode);
+        // JUSTIFY: lifter must produce an instruction for every input;
+        // InlineAsm preserves the original opcode/operands opaque to downstream.
         AsmInstructionKind::InlineAsm {
             asm_string: x86_custom_opcode_name(instruction),
             constraints: String::new(),
@@ -3193,7 +3196,10 @@ fn lift_aarch64_instruction(instruction: &Aarch64InstructionDetail, id: u32) -> 
         .map(aarch64_operand_to_asm)
         .collect::<Vec<_>>();
     let type_hint = output_type_from_asm_operands(&operands);
-    let kind = semanticize_aarch64_detail(instruction, &operands).unwrap_or_else(|_| {
+    let kind = semanticize_aarch64_detail(instruction, &operands).unwrap_or_else(|e| {
+        eprintln!("[fp-native] aarch64 semanticize failed for {}: {e}", instruction.opcode);
+        // JUSTIFY: lifter must produce an instruction for every input;
+        // InlineAsm preserves the original opcode/operands opaque to downstream.
         AsmInstructionKind::InlineAsm {
             asm_string: aarch64_custom_opcode_name(instruction),
             constraints: String::new(),

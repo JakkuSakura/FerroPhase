@@ -2276,6 +2276,9 @@ fn capstone_operand_width_bits(token: &str) -> Option<u16> {
             return Some(64);
         }
     }
+    // JUSTIFY: x86 operand strings from capstone do not always encode an
+    // explicit width; callers apply context-appropriate defaults.
+    eprintln!("[fp-native] capstone_operand_width_bits: unable to determine width from token: {token:?}");
     None
 }
 
@@ -4150,7 +4153,16 @@ fn lift_terminator(
                 let value = ctx
                     .pending_jump_table_index
                     .remove(&inst.offset)
-                    .or_else(|| ctx.read_gpr(table.index_reg).ok())
+                    .or_else(|| {
+                        // JUSTIFY: if the index register can't be read, fall
+                        // back to case 0; the log makes the failure visible.
+                        ctx.read_gpr(table.index_reg)
+                            .map_err(|e| {
+                                eprintln!("[fp-native] jump-table index register read error: {e}");
+                                e
+                            })
+                            .ok()
+                    })
                     .unwrap_or_else(|| AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)));
 
                 let mut cases = Vec::with_capacity(table.target_offsets.len());

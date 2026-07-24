@@ -29,6 +29,8 @@ pub struct LirInterpreter {
     /// C signatures of extern functions, keyed by function name.
     /// Populated from LIR functions with `is_declaration = true`.
     extern_sigs: HashMap<String, FfiSignature>,
+    /// Tracks the predecessor block ID for correct Phi resolution.
+    last_predecessor: Option<BasicBlockId>,
 }
 
 impl LirInterpreter {
@@ -39,6 +41,7 @@ impl LirInterpreter {
             global_values: HashMap::new(),
             ffi: FfiRuntime::new().ok(),
             extern_sigs: HashMap::new(),
+            last_predecessor: None,
         }
     }
 
@@ -110,12 +113,16 @@ impl LirInterpreter {
                     };
                     break Ok(v);
                 }
-                LirTerminator::Br(dest) => current = *dest,
+                LirTerminator::Br(dest) => {
+                    self.last_predecessor = Some(current);
+                    current = *dest;
+                }
                 LirTerminator::CondBr {
                     condition,
                     if_true,
                     if_false,
                 } => {
+                    self.last_predecessor = Some(current);
                     current = if self.resolve_raw(condition)? != 0 {
                         *if_true
                     } else {
@@ -160,12 +167,20 @@ impl LirInterpreter {
                 self.unary(dst, chosen, |x| x)
             }
             LirInstructionKind::Phi { incoming } => {
+                let predecessor = self.last_predecessor;
                 let raw = incoming
-                    .first()
-                    .map(|(v, _)| self.resolve_raw(v))
-                    .unwrap_or(Ok(0))?;
-                self.wr(dst, raw);
-                Ok(())
+                    .iter()
+                    .find(|(_, bb)| predecessor.map_or(true, |p| p == *bb))
+                    .map(|(v, _)| v)
+                    .or_else(|| incoming.first().map(|(v, _)| v));
+                match raw {
+                    Some(val) => {
+                        let raw = self.resolve_raw(val)?;
+                        self.wr(dst, raw);
+                        Ok(())
+                    }
+                    None => Ok(()),
+                }
             }
             LirInstructionKind::Alloca { size, alignment } => {
                 let raw_size = self.resolve_raw(size)?;
@@ -198,9 +213,18 @@ impl LirInterpreter {
             }
             LirInstructionKind::GetElementPtr { ptr, indices, .. } => {
                 let base = self.resolve_raw(ptr)?;
+                let ptr_ty = self.infer_type(ptr);
+                let elem_size = match &ptr_ty {
+                    LirType::Ptr(pointee) => {
+                        let (bits, _) = lir_type_info(pointee);
+                        ((bits + 7) / 8) as u64
+                    }
+                    _ => 1u64,
+                };
                 let mut off: u64 = 0;
-                for idx in indices {
-                    off = off.wrapping_add(self.resolve_raw(idx)?);
+                for (i, idx) in indices.iter().enumerate() {
+                    let scale = if i == 0 { elem_size.max(1) } else { 1 };
+                    off = off.wrapping_add(self.resolve_raw(idx)?.wrapping_mul(scale));
                 }
                 self.wr(dst, base.wrapping_add(off));
                 Ok(())
@@ -208,12 +232,37 @@ impl LirInterpreter {
             LirInstructionKind::PtrToInt(v) | LirInstructionKind::IntToPtr(v) => {
                 self.unary(dst, v, |x| x)
             }
-            LirInstructionKind::Bitcast(v, _)
-            | LirInstructionKind::ZExt(v, _)
-            | LirInstructionKind::SExt(v, _)
-            | LirInstructionKind::SextOrTrunc(v, _)
-            | LirInstructionKind::Trunc(v, _)
-            | LirInstructionKind::FPTrunc(v, _)
+            LirInstructionKind::Bitcast(v, _) => self.unary(dst, v, |x| x),
+            LirInstructionKind::ZExt(v, dst_ty)
+            | LirInstructionKind::Trunc(v, dst_ty)
+            | LirInstructionKind::SExt(v, dst_ty)
+            | LirInstructionKind::SextOrTrunc(v, dst_ty) => {
+                let src_val = self.resolve_raw(v)?;
+                let src_ty = self.infer_type(v);
+                let (src_bits, _) = lir_type_info(&src_ty);
+                let (dst_bits, _dst_signed) = lir_type_info(dst_ty);
+                let result = match &instr.kind {
+                    LirInstructionKind::ZExt(..) | LirInstructionKind::Trunc(..) => {
+                        if dst_bits < 64 {
+                            src_val & ((1u64 << dst_bits) - 1)
+                        } else {
+                            src_val
+                        }
+                    }
+                    LirInstructionKind::SExt(..) | LirInstructionKind::SextOrTrunc(..) => {
+                        if src_bits == 0 || src_bits >= 64 {
+                            src_val
+                        } else {
+                            let shift = 64 - src_bits;
+                            ((src_val << shift) as i64 >> shift) as u64
+                        }
+                    }
+                    _ => src_val,
+                };
+                self.wr(dst, result);
+                Ok(())
+            }
+            LirInstructionKind::FPTrunc(v, _)
             | LirInstructionKind::FPExt(v, _)
             | LirInstructionKind::FPToUI(v, _)
             | LirInstructionKind::FPToSI(v, _)
@@ -266,7 +315,19 @@ impl LirInterpreter {
                 .get(name.as_str())
                 .copied()
                 .ok_or_else(|| VmError::Runtime(format!("missing global {name}"))),
-            LirValue::Constant(c) => Ok(const_raw(c)),
+            LirValue::Constant(c) => {
+                match c {
+                    LirConstant::String(_)
+                    | LirConstant::Array(..)
+                    | LirConstant::Struct(..)
+                    | LirConstant::Bytes(_) => {
+                        Err(VmError::Runtime(format!(
+                            "resolve_raw called on non-scalar constant: {c:?}"
+                        )))
+                    }
+                    _ => Ok(const_raw(c)),
+                }
+            }
             LirValue::Local(id) => self.state.mem.load_u64(self.state.local_addr(*id)),
             LirValue::StackSlot(id) => self.state.mem.load_u64(self.state.local_addr(*id)),
             LirValue::Global(name, _) => {

@@ -121,7 +121,7 @@ fn initialize_lifted_x86_regfile(
         emit_mov_imm16(asm, Reg::X16, 0);
         for idx in 0..16i64 {
             emit_mov_reg(asm, Reg::X17, Reg::X19);
-            add_immediate_offset(asm, Reg::X17, idx * 8)?;
+            add_immediate_offset(asm, Reg::X17, idx * 8);
             emit_store_to_reg(asm, Reg::X16, Reg::X17);
         }
         return Ok(());
@@ -714,12 +714,18 @@ fn build_reg_types(func: &AsmFunction) -> HashMap<u32, AsmType> {
                     | AsmInstructionKind::Xor(lhs, _)
                     | AsmInstructionKind::Shl(lhs, _)
                     | AsmInstructionKind::Shr(lhs, _) => value_type(lhs, &map, &local_types)
-                        .ok()
-                        .or(Some(AsmType::I64)),
+                        .map_err(|e| {
+                            eprintln!("[fp-native] aarch64 type inference error: {e}");
+                            e
+                        })
+                        .ok(),
                     AsmInstructionKind::Not(value) | AsmInstructionKind::Freeze(value) => {
                         value_type(value, &map, &local_types)
+                            .map_err(|e| {
+                                eprintln!("[fp-native] aarch64 type inference error: {e}");
+                                e
+                            })
                             .ok()
-                            .or(Some(AsmType::I64))
                     }
                     AsmInstructionKind::Eq(..)
                     | AsmInstructionKind::Ne(..)
@@ -758,21 +764,46 @@ fn build_reg_types(func: &AsmFunction) -> HashMap<u32, AsmType> {
                     AsmInstructionKind::InlineAsm { output_type, .. } => Some(output_type.clone()),
                     AsmInstructionKind::LandingPad { result_type, .. } => Some(result_type.clone()),
                     AsmInstructionKind::InsertValue { aggregate, .. } => {
-                        value_type(aggregate, &map, &local_types).ok()
+                        value_type(aggregate, &map, &local_types)
+                            .map_err(|e| {
+                                eprintln!("[fp-native] aarch64 type inference error: {e}");
+                                e
+                            })
+                            .ok()
                     }
                     AsmInstructionKind::ExtractValue { aggregate, indices } => {
                         value_type(aggregate, &map, &local_types)
+                            .map_err(|e| {
+                                eprintln!("[fp-native] aarch64 type inference error: {e}");
+                                e
+                            })
                             .ok()
-                            .and_then(|agg_ty| extract_value_type(&agg_ty, indices).ok())
+                            .and_then(|agg_ty| {
+                                extract_value_type(&agg_ty, indices)
+                                    .map_err(|e| {
+                                        eprintln!("[fp-native] aarch64 extract_value_type error: {e}");
+                                        e
+                                    })
+                                    .ok()
+                            })
                     }
                     AsmInstructionKind::Phi { incoming } => incoming
                         .first()
-                        .and_then(|(value, _)| value_type(value, &map, &local_types).ok())
-                        .or(Some(AsmType::I64)),
+                        .and_then(|(value, _)| {
+                            value_type(value, &map, &local_types)
+                                .map_err(|e| {
+                                    eprintln!("[fp-native] aarch64 type inference error: {e}");
+                                    e
+                                })
+                                .ok()
+                        }),
                     AsmInstructionKind::Select { if_true, .. } => {
                         value_type(if_true, &map, &local_types)
+                            .map_err(|e| {
+                                eprintln!("[fp-native] aarch64 type inference error: {e}");
+                                e
+                            })
                             .ok()
-                            .or(Some(AsmType::I64))
                     }
                     AsmInstructionKind::Call { .. }
                     | AsmInstructionKind::IntrinsicCall { .. }
@@ -1085,9 +1116,11 @@ fn collect_preserved_single_block_bytes(
             }
 
             // Backward compatible fallback for older lifters.
-            if inst.encoding.is_some() && instruction_encoding_matches_kind(inst) {
-                out.extend_from_slice(inst.encoding.as_deref().unwrap());
-                continue;
+            if let Some(encoding) = inst.encoding.as_deref() {
+                if instruction_encoding_matches_kind(inst) {
+                    out.extend_from_slice(encoding);
+                    continue;
+                }
             }
         }
 
@@ -1362,7 +1395,7 @@ fn initialize_lifted_stack_pointer(
             emit_store_to_sp(asm, Reg::X16, offset);
         } else {
             emit_mov_reg(asm, Reg::X17, base);
-            add_immediate_offset(asm, Reg::X17, offset as i64)?;
+            add_immediate_offset(asm, Reg::X17, offset as i64);
             emit_store_to_reg(asm, Reg::X16, Reg::X17);
         }
     }
@@ -2101,7 +2134,7 @@ fn load_value(
             let offset = local_offset(layout, *id)?;
             if is_aggregate_type(&ty) && size_of(&ty) > 8 {
                 emit_mov_reg(asm, dst, Reg::X31);
-                add_immediate_offset(asm, dst, offset as i64)?;
+                add_immediate_offset(asm, dst, offset as i64);
                 return Ok(());
             }
             if matches!(ty, AsmType::I128) {
@@ -2545,14 +2578,14 @@ fn emit_load(
                 let offset = vreg_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X9, offset);
                 emit_load_from_reg(asm, Reg::X16, Reg::X9);
-                add_immediate_offset(asm, Reg::X9, 8)?;
+                add_immediate_offset(asm, Reg::X9, 8);
                 emit_load_from_reg(asm, Reg::X17, Reg::X9);
             }
             AsmValue::Local(id) => {
                 let offset = local_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X9, offset);
                 emit_load_from_reg(asm, Reg::X16, Reg::X9);
-                add_immediate_offset(asm, Reg::X9, 8)?;
+                add_immediate_offset(asm, Reg::X9, 8);
                 emit_load_from_reg(asm, Reg::X17, Reg::X9);
             }
             _ => return Err(Error::from("unsupported load address for i128 on aarch64")),
@@ -2587,7 +2620,7 @@ fn emit_load(
             _ => return Err(Error::from("unsupported load address for aarch64")),
         }
         emit_mov_reg(asm, Reg::X16, Reg::X31);
-        add_immediate_offset(asm, Reg::X16, dst_offset as i64)?;
+        add_immediate_offset(asm, Reg::X16, dst_offset as i64);
         store_vreg(asm, layout, dst_id, Reg::X16)?;
         asm.record_vreg_sp_offset(dst_id, dst_offset);
         return Ok(());
@@ -2781,7 +2814,7 @@ fn emit_store(
                     let offset = dst_offset + (idx as i32) * elem_size;
                     if matches!(elem, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
                         emit_mov_reg(asm, Reg::X9, Reg::X31);
-                        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                        add_immediate_offset(asm, Reg::X9, offset as i64);
                         store_constant_aggregate_to_reg(
                             asm,
                             Reg::X9,
@@ -2815,7 +2848,7 @@ fn emit_store(
                     let offset = (idx as i32) * elem_size;
                     if matches!(elem, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
                         emit_mov_reg(asm, Reg::X9, Reg::X17);
-                        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                        add_immediate_offset(asm, Reg::X9, offset as i64);
                         store_constant_aggregate_to_reg(
                             asm,
                             Reg::X9,
@@ -2840,7 +2873,7 @@ fn emit_store(
                         }
                     }
                     emit_mov_reg(asm, Reg::X9, Reg::X17);
-                    add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                    add_immediate_offset(asm, Reg::X9, offset as i64);
                     store_elem_reg(asm)?;
                 }
             }
@@ -2851,7 +2884,7 @@ fn emit_store(
                     let offset = (idx as i32) * elem_size;
                     if matches!(elem, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
                         emit_mov_reg(asm, Reg::X9, Reg::X17);
-                        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                        add_immediate_offset(asm, Reg::X9, offset as i64);
                         store_constant_aggregate_to_reg(
                             asm,
                             Reg::X9,
@@ -2876,7 +2909,7 @@ fn emit_store(
                         }
                     }
                     emit_mov_reg(asm, Reg::X9, Reg::X17);
-                    add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                    add_immediate_offset(asm, Reg::X9, offset as i64);
                     store_elem_reg(asm)?;
                 }
             }
@@ -2886,7 +2919,7 @@ fn emit_store(
                     let offset = (idx as i32) * elem_size;
                     if matches!(elem, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
                         emit_mov_reg(asm, Reg::X9, Reg::X17);
-                        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                        add_immediate_offset(asm, Reg::X9, offset as i64);
                         store_constant_aggregate_to_reg(
                             asm,
                             Reg::X9,
@@ -2911,7 +2944,7 @@ fn emit_store(
                         }
                     }
                     emit_mov_reg(asm, Reg::X9, Reg::X17);
-                    add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                    add_immediate_offset(asm, Reg::X9, offset as i64);
                     store_elem_reg(asm)?;
                 }
             }
@@ -2940,20 +2973,20 @@ fn emit_store(
                 let addr_offset = vreg_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X9, addr_offset);
                 emit_store_to_reg(asm, Reg::X16, Reg::X9);
-                add_immediate_offset(asm, Reg::X9, 8)?;
+                add_immediate_offset(asm, Reg::X9, 8);
                 emit_store_to_reg(asm, Reg::X17, Reg::X9);
             }
             AsmValue::Local(id) => {
                 let addr_offset = local_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X9, addr_offset);
                 emit_store_to_reg(asm, Reg::X16, Reg::X9);
-                add_immediate_offset(asm, Reg::X9, 8)?;
+                add_immediate_offset(asm, Reg::X9, 8);
                 emit_store_to_reg(asm, Reg::X17, Reg::X9);
             }
             AsmValue::Global(name, _) => {
                 emit_load_symbol_addr(asm, Reg::X9, name, 0)?;
                 emit_store_to_reg(asm, Reg::X16, Reg::X9);
-                add_immediate_offset(asm, Reg::X9, 8)?;
+                add_immediate_offset(asm, Reg::X9, 8);
                 emit_store_to_reg(asm, Reg::X17, Reg::X9);
             }
             _ => return Err(Error::from("unsupported store address for i128 on aarch64")),
@@ -3021,7 +3054,7 @@ fn emit_store(
                         if matches!(field, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
                             let store_offset = dst_offset + field_offset as i32;
                             emit_mov_reg(asm, Reg::X9, Reg::X31);
-                            add_immediate_offset(asm, Reg::X9, store_offset as i64)?;
+                            add_immediate_offset(asm, Reg::X9, store_offset as i64);
                             store_constant_aggregate_to_reg(
                                 asm,
                                 Reg::X9,
@@ -3080,7 +3113,7 @@ fn emit_store(
                         let field_size = size_of(field_ty);
                         if matches!(field, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
                             emit_mov_reg(asm, Reg::X9, Reg::X17);
-                            add_immediate_offset(asm, Reg::X9, field_offset as i64)?;
+                            add_immediate_offset(asm, Reg::X9, field_offset as i64);
                             store_constant_aggregate_to_reg(
                                 asm,
                                 Reg::X9,
@@ -3112,7 +3145,7 @@ fn emit_store(
                             }
                         }
                         emit_mov_reg(asm, Reg::X9, Reg::X17);
-                        add_immediate_offset(asm, Reg::X9, field_offset as i64)?;
+                        add_immediate_offset(asm, Reg::X9, field_offset as i64);
                         match field_size {
                             1 => emit_store8_to_reg(asm, Reg::X16, Reg::X9),
                             2 => emit_store16_to_reg(asm, Reg::X16, Reg::X9),
@@ -3140,7 +3173,7 @@ fn emit_store(
                         let field_size = size_of(field_ty);
                         if matches!(field, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
                             emit_mov_reg(asm, Reg::X9, Reg::X17);
-                            add_immediate_offset(asm, Reg::X9, field_offset as i64)?;
+                            add_immediate_offset(asm, Reg::X9, field_offset as i64);
                             store_constant_aggregate_to_reg(
                                 asm,
                                 Reg::X9,
@@ -3172,7 +3205,7 @@ fn emit_store(
                             }
                         }
                         emit_mov_reg(asm, Reg::X9, Reg::X17);
-                        add_immediate_offset(asm, Reg::X9, field_offset as i64)?;
+                        add_immediate_offset(asm, Reg::X9, field_offset as i64);
                         match field_size {
                             1 => emit_store8_to_reg(asm, Reg::X16, Reg::X9),
                             2 => emit_store16_to_reg(asm, Reg::X16, Reg::X9),
@@ -3535,7 +3568,7 @@ fn emit_call(
         // address on `ret`, so we restore `rsp` after returning.
         if let Some(rsp_offset) = layout.x86_regfile_offsets.get(&4).copied() {
             emit_load_from_base(asm, Reg::X16, Reg::X19, rsp_offset);
-            add_immediate_offset(asm, Reg::X16, -8)?;
+            add_immediate_offset(asm, Reg::X16, -8);
             emit_store_to_base(asm, Reg::X16, Reg::X19, rsp_offset);
             // Store the AArch64 return address as a best-effort stand-in.
             emit_store_to_base(asm, Reg::X30, Reg::X16, 0);
@@ -3555,7 +3588,7 @@ fn emit_call(
 
         if let Some(rsp_offset) = layout.x86_regfile_offsets.get(&4).copied() {
             emit_load_from_base(asm, Reg::X16, Reg::X19, rsp_offset);
-            add_immediate_offset(asm, Reg::X16, 8)?;
+            add_immediate_offset(asm, Reg::X16, 8);
             emit_store_to_base(asm, Reg::X16, Reg::X19, rsp_offset);
         }
 
@@ -3608,7 +3641,7 @@ fn emit_call(
     if needs_sret {
         let agg_off = agg_offset(layout, dst_id)?;
         emit_mov_reg(asm, arg_regs[0], Reg::X31);
-        add_immediate_offset(asm, arg_regs[0], agg_off as i64)?;
+        add_immediate_offset(asm, arg_regs[0], agg_off as i64);
         int_idx = 1;
         sret_offset = Some(agg_off);
     }
@@ -3773,7 +3806,7 @@ fn emit_call(
     if needs_sret {
         if let Some(agg_off) = sret_offset {
             emit_mov_reg(asm, Reg::X16, Reg::X31);
-            add_immediate_offset(asm, Reg::X16, agg_off as i64)?;
+            add_immediate_offset(asm, Reg::X16, agg_off as i64);
             store_vreg(asm, layout, dst_id, Reg::X16)?;
         }
     } else if matches!(ret_ty, AsmType::I128) {
@@ -4249,7 +4282,7 @@ fn emit_gep(
                     .field_offsets
                     .get(idx)
                     .ok_or_else(|| Error::from("GEP struct field out of range"))?;
-                add_immediate_offset(asm, Reg::X16, field_offset as i64)?;
+                add_immediate_offset(asm, Reg::X16, field_offset as i64);
                 if let Some(base) = const_offset.as_mut() {
                     *base += field_offset as i64;
                 }
@@ -4331,16 +4364,16 @@ fn emit_scaled_index(
     Ok(())
 }
 
-fn add_immediate_offset(asm: &mut Assembler, base: Reg, offset: i64) -> Result<()> {
+fn add_immediate_offset(asm: &mut Assembler, base: Reg, offset: i64) {
     if offset == 0 {
-        return Ok(());
+        return;
     }
     let scratch = if base == Reg::X17 { Reg::X9 } else { Reg::X17 };
     if offset < 0 {
         let abs = (-offset) as u64;
         if abs <= 4095 {
             emit_sub_imm12(asm, base, base, abs as u32);
-            return Ok(());
+            return;
         }
         if let Ok(imm) = u16::try_from(abs) {
             emit_mov_imm16(asm, scratch, imm);
@@ -4349,11 +4382,11 @@ fn add_immediate_offset(asm: &mut Assembler, base: Reg, offset: i64) -> Result<(
             emit_mov_imm64(asm, scratch, abs as u64);
             emit_sub_reg(asm, base, base, scratch);
         }
-        return Ok(());
+        return;
     }
     if offset <= 4095 {
         emit_add_imm12(asm, base, base, offset as u32);
-        return Ok(());
+        return;
     }
     if let Ok(imm) = u16::try_from(offset) {
         emit_mov_imm16(asm, scratch, imm);
@@ -4362,7 +4395,6 @@ fn add_immediate_offset(asm: &mut Assembler, base: Reg, offset: i64) -> Result<(
         emit_mov_imm64(asm, scratch, offset as u64);
         emit_add_reg(asm, base, base, scratch);
     }
-    Ok(())
 }
 
 fn extract_value_type(ty: &AsmType, indices: &[u32]) -> Result<AsmType> {
@@ -4451,7 +4483,7 @@ fn copy_sp_to_reg(asm: &mut Assembler, src: i32, dst: Reg, size: i32) -> Result<
     while offset + 8 <= size {
         emit_load_from_sp(asm, Reg::X16, src + offset);
         emit_mov_reg(asm, Reg::X9, dst);
-        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        add_immediate_offset(asm, Reg::X9, offset as i64);
         emit_store_to_reg(asm, Reg::X16, Reg::X9);
         offset += 8;
     }
@@ -4459,7 +4491,7 @@ fn copy_sp_to_reg(asm: &mut Assembler, src: i32, dst: Reg, size: i32) -> Result<
     if remaining >= 4 {
         emit_load32u_from_sp(asm, Reg::X16, src + offset)?;
         emit_mov_reg(asm, Reg::X9, dst);
-        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        add_immediate_offset(asm, Reg::X9, offset as i64);
         emit_store32_to_reg(asm, Reg::X16, Reg::X9);
         offset += 4;
         remaining -= 4;
@@ -4467,7 +4499,7 @@ fn copy_sp_to_reg(asm: &mut Assembler, src: i32, dst: Reg, size: i32) -> Result<
     if remaining >= 2 {
         emit_load16u_from_sp(asm, Reg::X16, src + offset)?;
         emit_mov_reg(asm, Reg::X9, dst);
-        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        add_immediate_offset(asm, Reg::X9, offset as i64);
         emit_store16_to_reg(asm, Reg::X16, Reg::X9);
         offset += 2;
         remaining -= 2;
@@ -4475,7 +4507,7 @@ fn copy_sp_to_reg(asm: &mut Assembler, src: i32, dst: Reg, size: i32) -> Result<
     if remaining >= 1 {
         emit_load8u_from_sp(asm, Reg::X16, src + offset)?;
         emit_mov_reg(asm, Reg::X9, dst);
-        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        add_immediate_offset(asm, Reg::X9, offset as i64);
         emit_store8_to_reg(asm, Reg::X16, Reg::X9);
     }
     Ok(())
@@ -4488,7 +4520,7 @@ fn copy_reg_to_sp(asm: &mut Assembler, src: Reg, dst: i32, size: i32) -> Result<
     let mut offset = 0;
     while offset + 8 <= size {
         emit_mov_reg(asm, Reg::X9, src);
-        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        add_immediate_offset(asm, Reg::X9, offset as i64);
         emit_load_from_reg(asm, Reg::X16, Reg::X9);
         emit_store_to_sp(asm, Reg::X16, dst + offset);
         offset += 8;
@@ -4496,7 +4528,7 @@ fn copy_reg_to_sp(asm: &mut Assembler, src: Reg, dst: i32, size: i32) -> Result<
     let mut remaining = size - offset;
     if remaining >= 4 {
         emit_mov_reg(asm, Reg::X9, src);
-        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        add_immediate_offset(asm, Reg::X9, offset as i64);
         emit_load32u_from_reg(asm, Reg::X16, Reg::X9);
         emit_store32_to_sp(asm, Reg::X16, dst + offset)?;
         offset += 4;
@@ -4504,7 +4536,7 @@ fn copy_reg_to_sp(asm: &mut Assembler, src: Reg, dst: i32, size: i32) -> Result<
     }
     if remaining >= 2 {
         emit_mov_reg(asm, Reg::X9, src);
-        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        add_immediate_offset(asm, Reg::X9, offset as i64);
         emit_load16u_from_reg(asm, Reg::X16, Reg::X9);
         emit_store16_to_sp(asm, Reg::X16, dst + offset)?;
         offset += 2;
@@ -4512,7 +4544,7 @@ fn copy_reg_to_sp(asm: &mut Assembler, src: Reg, dst: i32, size: i32) -> Result<
     }
     if remaining >= 1 {
         emit_mov_reg(asm, Reg::X9, src);
-        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        add_immediate_offset(asm, Reg::X9, offset as i64);
         emit_load8u_from_reg(asm, Reg::X16, Reg::X9);
         emit_store8_to_sp(asm, Reg::X16, dst + offset)?;
     }
@@ -4527,40 +4559,40 @@ fn copy_reg_to_reg(asm: &mut Assembler, src: Reg, dst: Reg, size: i32) -> Result
     let mut offset = 0;
     while offset + 8 <= size {
         emit_mov_reg(asm, Reg::X9, src);
-        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        add_immediate_offset(asm, Reg::X9, offset as i64);
         emit_load_from_reg(asm, Reg::X16, Reg::X9);
         emit_mov_reg(asm, Reg::X17, dst);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        add_immediate_offset(asm, Reg::X17, offset as i64);
         emit_store_to_reg(asm, Reg::X16, Reg::X17);
         offset += 8;
     }
     let mut remaining = size - offset;
     if remaining >= 4 {
         emit_mov_reg(asm, Reg::X9, src);
-        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        add_immediate_offset(asm, Reg::X9, offset as i64);
         emit_load32u_from_reg(asm, Reg::X16, Reg::X9);
         emit_mov_reg(asm, Reg::X17, dst);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        add_immediate_offset(asm, Reg::X17, offset as i64);
         emit_store32_to_reg(asm, Reg::X16, Reg::X17);
         offset += 4;
         remaining -= 4;
     }
     if remaining >= 2 {
         emit_mov_reg(asm, Reg::X9, src);
-        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        add_immediate_offset(asm, Reg::X9, offset as i64);
         emit_load16u_from_reg(asm, Reg::X16, Reg::X9);
         emit_mov_reg(asm, Reg::X17, dst);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        add_immediate_offset(asm, Reg::X17, offset as i64);
         emit_store16_to_reg(asm, Reg::X16, Reg::X17);
         offset += 2;
         remaining -= 2;
     }
     if remaining >= 1 {
         emit_mov_reg(asm, Reg::X9, src);
-        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        add_immediate_offset(asm, Reg::X9, offset as i64);
         emit_load8u_from_reg(asm, Reg::X16, Reg::X9);
         emit_mov_reg(asm, Reg::X17, dst);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        add_immediate_offset(asm, Reg::X17, offset as i64);
         emit_store8_to_reg(asm, Reg::X16, Reg::X17);
     }
     Ok(())
@@ -4601,28 +4633,28 @@ fn zero_reg_range(asm: &mut Assembler, dst: Reg, size: i32) -> Result<()> {
     emit_mov_imm16(asm, Reg::X16, 0);
     while offset + 8 <= size {
         emit_mov_reg(asm, Reg::X17, dst);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        add_immediate_offset(asm, Reg::X17, offset as i64);
         emit_store_to_reg(asm, Reg::X16, Reg::X17);
         offset += 8;
     }
     let mut remaining = size - offset;
     if remaining >= 4 {
         emit_mov_reg(asm, Reg::X17, dst);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        add_immediate_offset(asm, Reg::X17, offset as i64);
         emit_store32_to_reg(asm, Reg::X16, Reg::X17);
         offset += 4;
         remaining -= 4;
     }
     if remaining >= 2 {
         emit_mov_reg(asm, Reg::X17, dst);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        add_immediate_offset(asm, Reg::X17, offset as i64);
         emit_store16_to_reg(asm, Reg::X16, Reg::X17);
         offset += 2;
         remaining -= 2;
     }
     if remaining >= 1 {
         emit_mov_reg(asm, Reg::X17, dst);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        add_immediate_offset(asm, Reg::X17, offset as i64);
         emit_store8_to_reg(asm, Reg::X16, Reg::X17);
     }
     Ok(())
@@ -4661,7 +4693,7 @@ fn store_constant_aggregate_to_reg(
                 let field_size = size_of(field_ty);
                 if matches!(field, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
                     emit_mov_reg(asm, Reg::X9, base);
-                    add_immediate_offset(asm, Reg::X9, field_offset as i64)?;
+                    add_immediate_offset(asm, Reg::X9, field_offset as i64);
                     store_constant_aggregate_to_reg(
                         asm,
                         Reg::X9,
@@ -4693,7 +4725,7 @@ fn store_constant_aggregate_to_reg(
                     }
                 }
                 emit_mov_reg(asm, Reg::X9, base);
-                add_immediate_offset(asm, Reg::X9, field_offset as i64)?;
+                add_immediate_offset(asm, Reg::X9, field_offset as i64);
                 match field_size {
                     1 => emit_store8_to_reg(asm, Reg::X16, Reg::X9),
                     2 => emit_store16_to_reg(asm, Reg::X16, Reg::X9),
@@ -4719,7 +4751,7 @@ fn store_constant_aggregate_to_reg(
                 let offset = (idx as i32) * elem_size;
                 if matches!(elem, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
                     emit_mov_reg(asm, Reg::X9, base);
-                    add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                    add_immediate_offset(asm, Reg::X9, offset as i64);
                     store_constant_aggregate_to_reg(
                         asm,
                         Reg::X9,
@@ -4744,7 +4776,7 @@ fn store_constant_aggregate_to_reg(
                     }
                 }
                 emit_mov_reg(asm, Reg::X9, base);
-                add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                add_immediate_offset(asm, Reg::X9, offset as i64);
                 match elem_size {
                     1 => emit_store8_to_reg(asm, Reg::X16, Reg::X9),
                     2 => emit_store16_to_reg(asm, Reg::X16, Reg::X9),
@@ -4766,13 +4798,13 @@ fn store_constant_aggregate_to_reg(
             let addend = indices.iter().map(|i| *i as i64).sum();
             // field 0: pointer
             emit_mov_reg(asm, Reg::X9, base);
-            add_immediate_offset(asm, Reg::X9, layout.field_offsets[0] as i64)?;
+            add_immediate_offset(asm, Reg::X9, layout.field_offsets[0] as i64);
             emit_load_symbol_addr(asm, Reg::X16, name.as_str(), addend)?;
             emit_store_to_reg(asm, Reg::X16, Reg::X9);
             // field 1: length (0)
             if layout.field_offsets.len() > 1 {
                 emit_mov_reg(asm, Reg::X9, base);
-                add_immediate_offset(asm, Reg::X9, layout.field_offsets[1] as i64)?;
+                add_immediate_offset(asm, Reg::X9, layout.field_offsets[1] as i64);
                 emit_mov_imm64(asm, Reg::X16, 0);
                 emit_store_to_reg(asm, Reg::X16, Reg::X9);
             }
@@ -4969,7 +5001,7 @@ fn emit_insert_value(
             _ => return Err(Error::from("unsupported InsertValue aggregate element")),
         }
         emit_mov_reg(asm, Reg::X16, Reg::X31);
-        add_immediate_offset(asm, Reg::X16, dst_offset as i64)?;
+        add_immediate_offset(asm, Reg::X16, dst_offset as i64);
         store_vreg(asm, layout, dst_id, Reg::X16)?;
         return Ok(());
     }
@@ -5028,7 +5060,7 @@ fn emit_insert_value(
     }
 
     emit_mov_reg(asm, Reg::X16, Reg::X31);
-    add_immediate_offset(asm, Reg::X16, dst_offset as i64)?;
+    add_immediate_offset(asm, Reg::X16, dst_offset as i64);
     store_vreg(asm, layout, dst_id, Reg::X16)?;
     asm.record_vreg_sp_offset(dst_id, dst_offset);
     Ok(())
@@ -5066,12 +5098,12 @@ fn emit_extract_value(
         if let Ok(dst_offset) = agg_offset(layout, dst_id) {
             copy_sp_to_sp(asm, load_offset, dst_offset, field_size)?;
             emit_mov_reg(asm, Reg::X16, Reg::X31);
-            add_immediate_offset(asm, Reg::X16, dst_offset as i64)?;
+            add_immediate_offset(asm, Reg::X16, dst_offset as i64);
             store_vreg(asm, layout, dst_id, Reg::X16)?;
             asm.record_vreg_sp_offset(dst_id, dst_offset);
         } else {
             emit_mov_reg(asm, Reg::X16, Reg::X31);
-            add_immediate_offset(asm, Reg::X16, load_offset as i64)?;
+            add_immediate_offset(asm, Reg::X16, load_offset as i64);
             store_vreg(asm, layout, dst_id, Reg::X16)?;
             asm.record_vreg_sp_offset(dst_id, load_offset);
         }
@@ -5118,7 +5150,7 @@ fn emit_landingpad(
         let dst_offset = agg_offset(layout, dst_id)?;
         zero_sp_range(asm, dst_offset, size)?;
         emit_mov_reg(asm, Reg::X16, Reg::X31);
-        add_immediate_offset(asm, Reg::X16, dst_offset as i64)?;
+        add_immediate_offset(asm, Reg::X16, dst_offset as i64);
         store_vreg(asm, layout, dst_id, Reg::X16)?;
         return Ok(());
     }
@@ -5164,7 +5196,7 @@ fn emit_load_rodata_addr(asm: &mut Assembler, dst: Reg, addend: i64) -> Result<(
             symbol: "fp_rodata_base".to_string(),
             addend: 0,
         });
-        add_immediate_offset(asm, dst, addend)?;
+        add_immediate_offset(asm, dst, addend);
         return Ok(());
     }
 
@@ -5529,7 +5561,7 @@ fn emit_load_from_base(asm: &mut Assembler, dst: Reg, base: Reg, offset: i32) {
         }
     }
     emit_mov_reg(asm, Reg::X17, base);
-    let _ = add_immediate_offset(asm, Reg::X17, offset as i64);
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_load_from_reg(asm, dst, Reg::X17);
 }
 
@@ -5543,7 +5575,7 @@ fn emit_load8u_from_base(asm: &mut Assembler, dst: Reg, base: Reg, offset: i32) 
         }
     }
     emit_mov_reg(asm, Reg::X17, base);
-    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_load8u_from_reg(asm, dst, Reg::X17);
     Ok(())
 }
@@ -5558,7 +5590,7 @@ fn emit_load8s_from_base(asm: &mut Assembler, dst: Reg, base: Reg, offset: i32) 
         }
     }
     emit_mov_reg(asm, Reg::X17, base);
-    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_load8s_from_reg(asm, dst, Reg::X17);
     Ok(())
 }
@@ -5576,7 +5608,7 @@ fn emit_load16u_from_base(asm: &mut Assembler, dst: Reg, base: Reg, offset: i32)
         }
     }
     emit_mov_reg(asm, Reg::X17, base);
-    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_load16u_from_reg(asm, dst, Reg::X17);
     Ok(())
 }
@@ -5594,7 +5626,7 @@ fn emit_load16s_from_base(asm: &mut Assembler, dst: Reg, base: Reg, offset: i32)
         }
     }
     emit_mov_reg(asm, Reg::X17, base);
-    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_load16s_from_reg(asm, dst, Reg::X17);
     Ok(())
 }
@@ -5612,7 +5644,7 @@ fn emit_load32u_from_base(asm: &mut Assembler, dst: Reg, base: Reg, offset: i32)
         }
     }
     emit_mov_reg(asm, Reg::X17, base);
-    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_load32u_from_reg(asm, dst, Reg::X17);
     Ok(())
 }
@@ -5630,7 +5662,7 @@ fn emit_load32s_from_base(asm: &mut Assembler, dst: Reg, base: Reg, offset: i32)
         }
     }
     emit_mov_reg(asm, Reg::X17, base);
-    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_load32s_from_reg(asm, dst, Reg::X17);
     Ok(())
 }
@@ -5659,7 +5691,7 @@ fn emit_store_to_base(asm: &mut Assembler, src: Reg, base: Reg, offset: i32) {
         other => other,
     };
     emit_mov_reg(asm, Reg::X17, base);
-    let _ = add_immediate_offset(asm, Reg::X17, offset as i64);
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_store_to_reg(asm, src, Reg::X17);
 }
 
@@ -5687,7 +5719,7 @@ fn emit_store8_to_base(asm: &mut Assembler, src: Reg, base: Reg, offset: i32) ->
         other => other,
     };
     emit_mov_reg(asm, Reg::X17, base);
-    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_store8_to_reg(asm, src, Reg::X17);
     Ok(())
 }
@@ -5967,9 +5999,9 @@ fn emit_add_sp(asm: &mut Assembler, imm: u32) {
     asm.extend(&instr.to_le_bytes());
 }
 
-fn emit_adjust_sp(asm: &mut Assembler, imm: i32, add: bool) -> Result<()> {
+fn emit_adjust_sp(asm: &mut Assembler, imm: i32, add: bool) {
     if imm <= 0 {
-        return Ok(());
+        return;
     }
     let imm = imm as u32;
     if imm <= 0xfff {
@@ -5978,7 +6010,7 @@ fn emit_adjust_sp(asm: &mut Assembler, imm: i32, add: bool) -> Result<()> {
         } else {
             emit_sub_sp(asm, imm);
         }
-        return Ok(());
+        return;
     }
     emit_mov_reg(asm, Reg::X16, Reg::X31);
     emit_mov_imm64(asm, Reg::X17, imm as u64);
@@ -5988,7 +6020,6 @@ fn emit_adjust_sp(asm: &mut Assembler, imm: i32, add: bool) -> Result<()> {
         emit_sub_reg(asm, Reg::X16, Reg::X16, Reg::X17);
     }
     emit_mov_reg(asm, Reg::X31, Reg::X16);
-    Ok(())
 }
 
 fn emit_sdiv(asm: &mut Assembler, dst: Reg, lhs: Reg, rhs: Reg) {
@@ -6062,7 +6093,7 @@ fn emit_store16_to_sp(asm: &mut Assembler, src: Reg, offset: i32) -> Result<()> 
         other => other,
     };
     emit_mov_reg(asm, Reg::X17, Reg::X31);
-    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_store16_to_reg(asm, src, Reg::X17);
     Ok(())
 }
@@ -6092,7 +6123,7 @@ fn emit_store32_to_sp(asm: &mut Assembler, src: Reg, offset: i32) -> Result<()> 
         other => other,
     };
     emit_mov_reg(asm, Reg::X17, Reg::X31);
-    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_store32_to_reg(asm, src, Reg::X17);
     Ok(())
 }
@@ -6168,7 +6199,7 @@ fn emit_load_float_from_sp(asm: &mut Assembler, dst: FReg, offset: i32, ty: &Asm
     }
 
     emit_mov_reg(asm, Reg::X17, Reg::X31);
-    let _ = add_immediate_offset(asm, Reg::X17, offset as i64);
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_load_float_from_reg(asm, dst, Reg::X17, ty);
 }
 
@@ -6189,7 +6220,7 @@ fn emit_store_float_to_sp(asm: &mut Assembler, src: FReg, offset: i32, ty: &AsmT
     }
 
     emit_mov_reg(asm, Reg::X17, Reg::X31);
-    let _ = add_immediate_offset(asm, Reg::X17, offset as i64);
+    add_immediate_offset(asm, Reg::X17, offset as i64);
     emit_store_float_to_reg(asm, src, Reg::X17, ty);
 }
 
@@ -6777,7 +6808,7 @@ fn emit_block(
             AsmInstructionKind::Alloca { .. } => {
                 let offset = alloca_offset(layout, inst.id)?;
                 emit_mov_reg(asm, Reg::X16, Reg::X31);
-                add_immediate_offset(asm, Reg::X16, offset as i64)?;
+                add_immediate_offset(asm, Reg::X16, offset as i64);
                 store_vreg(asm, layout, inst.id, Reg::X16)?;
                 asm.record_vreg_sp_offset(inst.id, offset);
             }
@@ -7497,12 +7528,12 @@ struct LayoutContext {
 fn emit_prologue(asm: &mut Assembler, layout: &FrameLayout) -> Result<()> {
     let frame = layout.frame_size;
     if frame > 0 {
-        emit_adjust_sp(asm, frame, false)?;
+        emit_adjust_sp(asm, frame, false);
     }
     let save_offset = layout.frame_size - 16;
     if save_offset > 504 {
         emit_mov_reg(asm, Reg::X16, Reg::X31);
-        add_immediate_offset(asm, Reg::X16, save_offset as i64)?;
+        add_immediate_offset(asm, Reg::X16, save_offset as i64);
         emit_store_pair_base(asm, Reg::X16, Reg::X29, Reg::X30, 0);
     } else {
         emit_store_pair(asm, Reg::X29, Reg::X30, save_offset);
@@ -7516,13 +7547,13 @@ fn emit_epilogue(asm: &mut Assembler, layout: &FrameLayout) {
     let save_offset = layout.frame_size - 16;
     if save_offset > 504 {
         emit_mov_reg(asm, Reg::X16, Reg::X31);
-        let _ = add_immediate_offset(asm, Reg::X16, save_offset as i64);
+        add_immediate_offset(asm, Reg::X16, save_offset as i64);
         emit_load_pair_base(asm, Reg::X16, Reg::X29, Reg::X30, 0);
     } else {
         emit_load_pair(asm, Reg::X29, Reg::X30, save_offset);
     }
     if layout.frame_size > 0 {
-        let _ = emit_adjust_sp(asm, layout.frame_size, true);
+        emit_adjust_sp(asm, layout.frame_size, true);
     }
 }
 

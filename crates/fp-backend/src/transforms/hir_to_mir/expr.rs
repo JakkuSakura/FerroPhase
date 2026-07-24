@@ -2015,13 +2015,20 @@ impl MirLowering {
                 if let hir::TypeExprKind::Path(path) = &return_ty.kind {
                     if self.is_result_path(path) {
                         let fallback = self.lower_type_expr(return_ty);
-                        let _ = self.infer_generic_from_type_expr(
+                        // JUSTIFY: best-effort inference from Result path;
+                        // a separate fallback below uses explicit_args_from_expected_result_ty.
+                        if let Err(e) = self.infer_generic_from_type_expr(
                             return_ty,
                             &fallback,
                             generics,
                             &mut substs,
                             span,
-                        );
+                        ) {
+                            self.emit_warning(
+                                span,
+                                format!("generic type inference error: {e}"),
+                            );
+                        }
                         let fallback = self.lower_type_expr(return_ty);
                         if let Some(fallback_args) =
                             self.explicit_args_from_expected_result_ty(&fallback)
@@ -4041,7 +4048,11 @@ impl MirLowering {
             },
         );
 
-        let _ = self.enum_layout_for_instance(def_id, &[], span);
+        // JUSTIFY: layout may be uncomputable for forward-referenced types
+        // during registration; computed lazily when needed later.
+        if self.enum_layout_for_instance(def_id, &[], span).is_none() {
+            self.emit_warning(span, "enum layout computation returned None during registration");
+        }
     }
 
     fn lower_primitive_type(&mut self, primitive: &TypePrimitive, span: Span) -> Ty {
@@ -4526,7 +4537,11 @@ impl MirLowering {
             .insert(String::from(strukt.name.clone()), def_id);
 
         if strukt.generics.params.is_empty() {
-            let _ = self.struct_layout_for_instance(def_id, &[], span);
+            // JUSTIFY: layout may be uncomputable for forward-referenced types
+            // during registration; computed lazily when needed later.
+            if self.struct_layout_for_instance(def_id, &[], span).is_none() {
+                self.emit_warning(span, "struct layout computation returned None during registration");
+            }
         }
     }
 
@@ -4621,7 +4636,11 @@ impl MirLowering {
         );
 
         if enm.generics.params.is_empty() {
-            let _ = self.enum_layout_for_instance(def_id, &[], span);
+            // JUSTIFY: layout may be uncomputable for forward-referenced types
+            // during registration; computed lazily when needed later.
+            if self.enum_layout_for_instance(def_id, &[], span).is_none() {
+                self.emit_warning(span, "enum layout computation returned None during registration");
+            }
         }
     }
 
@@ -4816,7 +4835,11 @@ impl MirLowering {
                 if let Some(payload) = variant.payload.as_ref() {
                     let payload_ty = self.lower_type_expr_with_substs(payload, &substs);
                     if let TyKind::Adt(adt, _) = &payload_ty.kind {
-                        let _ = self.struct_layout_for_instance(adt.did, &[], span);
+                        // JUSTIFY: layout may be uncomputable for forward-referenced
+                        // types; computed lazily when needed later.
+                        if self.struct_layout_for_instance(adt.did, &[], span).is_none() {
+                            self.emit_warning(span, "struct layout computation returned None for variant payload");
+                        }
                     }
                     if let Some(layout) = self.struct_layout_for_ty(&payload_ty) {
                         layout.field_tys.clone()

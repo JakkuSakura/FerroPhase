@@ -612,9 +612,17 @@ fn build_reg_types(func: &AsmFunction) -> HashMap<u32, AsmType> {
                 continue;
             }
             if let AsmInstructionKind::ExtractValue { aggregate, indices } = &inst.kind {
-                if let Ok(agg_ty) = value_type(aggregate, &map, &local_types) {
-                    if let Ok(field_ty) = extract_value_type(&agg_ty, indices) {
-                        map.insert(inst.id, field_ty);
+                match value_type(aggregate, &map, &local_types) {
+                    Ok(agg_ty) => match extract_value_type(&agg_ty, indices) {
+                        Ok(field_ty) => {
+                            map.insert(inst.id, field_ty);
+                        }
+                        Err(e) => {
+                            eprintln!("[fp-native] x86_64 extract_value_type error: {e}");
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("[fp-native] x86_64 type inference error: {e}");
                     }
                 }
             }
