@@ -17,6 +17,12 @@ struct IterLoopSpec {
 }
 
 impl HirGenerator {
+    fn borrowed_string_from_bytes(bytes: &ast::ValueBytes) -> Option<String> {
+        let raw = bytes.value.as_ref();
+        let trimmed = raw.strip_suffix(&[0])?;
+        std::str::from_utf8(trimmed).ok().map(str::to_string)
+    }
+
     fn empty_block_expr_kind(&mut self) -> hir::ExprKind {
         hir::ExprKind::Block(hir::Block {
             hir_id: self.next_id(),
@@ -307,7 +313,9 @@ impl HirGenerator {
                 hir::ExprKind::Break(value)
             }
             ExprKind::Continue(_) => hir::ExprKind::Continue,
-            ExprKind::ConstBlock(const_block) => self.transform_const_block_to_hir(ast_expr, const_block)?,
+            ExprKind::ConstBlock(const_block) => {
+                self.transform_const_block_to_hir(ast_expr, const_block)?
+            }
             ExprKind::IntrinsicContainer(container) => {
                 self.transform_intrinsic_container_to_hir(container)?
             }
@@ -355,7 +363,9 @@ impl HirGenerator {
         const_block: &ast::ExprConstBlock,
     ) -> Result<hir::ExprKind> {
         if let Some(value) = self.expr_resolution.resolved_value(ast_expr.id()).cloned() {
-            return self.transform_expr_to_hir(&ast::Expr::value(value)).map(|expr| expr.kind);
+            return self
+                .transform_expr_to_hir(&ast::Expr::value(value))
+                .map(|expr| expr.kind);
         }
 
         let body_value = self.transform_expr_to_hir(const_block.expr.as_ref())?;
@@ -444,6 +454,15 @@ impl HirGenerator {
             Value::Int(i) => Ok(hir::ExprKind::Literal(hir::Lit::Integer(i.value))),
             Value::Bool(b) => Ok(hir::ExprKind::Literal(hir::Lit::Bool(b.value))),
             Value::String(s) => Ok(hir::ExprKind::Literal(hir::Lit::Str(s.value.clone()))),
+            Value::Bytes(bytes) => {
+                if let Some(text) = Self::borrowed_string_from_bytes(bytes) {
+                    Ok(hir::ExprKind::Literal(hir::Lit::Str(text)))
+                } else {
+                    Err(fp_core::error::Error::from(
+                        "byte values are not supported in AST→HIR expression lowering",
+                    ))
+                }
+            }
             Value::Decimal(d) => Ok(hir::ExprKind::Literal(hir::Lit::Float(d.value))),
             Value::Char(ch) => Ok(hir::ExprKind::Literal(hir::Lit::Char(ch.value))),
             Value::Unit(_) => {

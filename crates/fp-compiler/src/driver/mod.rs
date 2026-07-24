@@ -11,10 +11,7 @@ use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::span::Span;
 use fp_interpret::{LirInterpreter, VmError};
-use fp_typing::{
-    annotate_with_resolved_state,
-    PendingTypingRequest, PendingTypingRequestKind,
-};
+use fp_typing::{annotate_with_resolved_state, PendingTypingRequest, PendingTypingRequestKind};
 use std::collections::HashMap;
 
 use crate::scheduler::{
@@ -258,20 +255,20 @@ impl CompilerDriver {
                 } else {
                     let mut last = Value::unit();
                     for entry in &lir.comptime_entries {
-                        let value = self
-                            .evaluate_lir_function(&lir, entry.function.as_str())?;
-                        let constant = self.value_to_mir_constant(&value, &entry.ty).ok_or_else(
-                            || {
-                                CompilerDriverError::UnsupportedWork(format!(
-                                    "unsupported comptime result for {}",
-                                    entry.key
-                                ))
-                            },
-                        )?;
+                        let value = self.evaluate_lir_function(&lir, entry.function.as_str())?;
+                        let constant =
+                            self.value_to_mir_constant(&value, &entry.ty)
+                                .ok_or_else(|| {
+                                    CompilerDriverError::UnsupportedWork(format!(
+                                        "unsupported comptime result for {}",
+                                        entry.key
+                                    ))
+                                })?;
                         self.state
                             .insert_resolved_const_value(entry.key.clone(), constant);
                         if let Some(expr_id) = Self::expr_id_from_const_key(&entry.key) {
-                            self.state.insert_expr_resolution_value(expr_id, value.clone());
+                            self.state
+                                .insert_expr_resolution_value(expr_id, value.clone());
                         }
                         last = value;
                     }
@@ -353,23 +350,14 @@ impl CompilerDriver {
             mir::ConstantKind::Float(v) => Value::decimal(*v),
             mir::ConstantKind::Str(v) => Value::string(v.clone()),
             mir::ConstantKind::Null => Value::null(),
-            mir::ConstantKind::Val(mir::ConstValue::Array(elements), _) => {
-                Value::List(fp_core::ast::ValueList::new(
-                    elements.iter().filter_map(|v| self.const_value_to_value(v)).collect(),
-                ))
-            }
-            mir::ConstantKind::Val(mir::ConstValue::Tuple(fields), _) => {
-                Value::Tuple(fp_core::ast::ValueTuple::new(
-                    fields.iter().filter_map(|v| self.const_value_to_value(v)).collect(),
-                ))
-            }
+            mir::ConstantKind::Val(value, ty) => self.const_value_to_value(value, Some(ty))?,
             _ => {
                 return None;
             }
         })
     }
 
-    fn const_value_to_value(&self, cv: &mir::ConstValue) -> Option<Value> {
+    fn const_value_to_value(&self, cv: &mir::ConstValue, ty: Option<&mir::Ty>) -> Option<Value> {
         Some(match cv {
             mir::ConstValue::Unit => Value::unit(),
             mir::ConstValue::Bool(v) => Value::bool(*v),
@@ -379,15 +367,97 @@ impl CompilerDriver {
             mir::ConstValue::Str(v) => Value::string(v.clone()),
             mir::ConstValue::Null => Value::null(),
             mir::ConstValue::Tuple(fields) => {
+                let field_tys = match ty.map(|ty| &ty.kind) {
+                    Some(TyKind::Tuple(field_tys)) => Some(field_tys.as_slice()),
+                    _ => None,
+                };
                 Value::Tuple(fp_core::ast::ValueTuple::new(
-                    fields.iter().filter_map(|v| self.const_value_to_value(v)).collect(),
+                    fields
+                        .iter()
+                        .enumerate()
+                        .map(|(index, value)| {
+                            self.const_value_to_value(
+                                value,
+                                field_tys.and_then(|tys| tys.get(index).map(|ty| ty.as_ref())),
+                            )
+                        })
+                        .collect::<Option<Vec<_>>>()?,
                 ))
             }
             mir::ConstValue::Array(elements) => {
+                let elem_ty = match ty.map(|ty| &ty.kind) {
+                    Some(TyKind::Array(elem_ty, _)) => Some(elem_ty.as_ref()),
+                    _ => None,
+                };
                 Value::List(fp_core::ast::ValueList::new(
-                    elements.iter().filter_map(|v| self.const_value_to_value(v)).collect(),
+                    elements
+                        .iter()
+                        .map(|value| self.const_value_to_value(value, elem_ty))
+                        .collect::<Option<Vec<_>>>()?,
                 ))
             }
+            mir::ConstValue::List { elements, elem_ty } => {
+                Value::List(fp_core::ast::ValueList::new(
+                    elements
+                        .iter()
+                        .map(|value| self.const_value_to_value(value, Some(elem_ty)))
+                        .collect::<Option<Vec<_>>>()?,
+                ))
+            }
+            mir::ConstValue::Map {
+                entries,
+                key_ty,
+                value_ty,
+            } => Value::Map(fp_core::ast::ValueMap::from_pairs(
+                entries
+                    .iter()
+                    .map(|(key, value)| {
+                        Some((
+                            self.const_value_to_value(key, Some(key_ty))?,
+                            self.const_value_to_value(value, Some(value_ty))?,
+                        ))
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            )),
+            mir::ConstValue::Struct(fields) => match ty.map(|ty| &ty.kind) {
+                Some(TyKind::Adt(adt_def, _)) => {
+                    let variant = adt_def.variants.first()?;
+                    if variant.fields.len() != fields.len() {
+                        return None;
+                    }
+                    Value::Structural(fp_core::ast::ValueStructural::new(
+                        variant
+                            .fields
+                            .iter()
+                            .zip(fields.iter())
+                            .map(|(field_def, field_value)| {
+                                Some(fp_core::ast::ValueField::new(
+                                    field_def.ident.as_str().into(),
+                                    self.const_value_to_value(field_value, None)?,
+                                ))
+                            })
+                            .collect::<Option<Vec<_>>>()?,
+                    ))
+                }
+                Some(TyKind::Tuple(field_tys)) => Value::Tuple(fp_core::ast::ValueTuple::new(
+                    fields
+                        .iter()
+                        .enumerate()
+                        .map(|(index, value)| {
+                            self.const_value_to_value(
+                                value,
+                                field_tys.get(index).map(|ty| ty.as_ref()),
+                            )
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                )),
+                _ => Value::Tuple(fp_core::ast::ValueTuple::new(
+                    fields
+                        .iter()
+                        .map(|value| self.const_value_to_value(value, None))
+                        .collect::<Option<Vec<_>>>()?,
+                )),
+            },
             _ => return None,
         })
     }
@@ -488,48 +558,109 @@ impl CompilerDriver {
                 }
                 _ => None,
             },
-            Value::Struct(value_struct) => {
-                match &ty.kind {
-                    TyKind::Tuple(fields) => {
-                        if value_struct.structural.fields.len() != fields.len() {
-                            return None;
-                        }
-                        let values = value_struct
-                            .structural
-                            .fields
-                            .iter()
-                            .zip(fields.iter())
-                            .map(|(field, field_ty)| self.value_to_const_value(&field.value, field_ty))
-                            .collect::<Option<Vec<_>>>()?;
-                        Some(mir::ConstValue::Struct(values))
-                    }
-                    TyKind::Adt(adt_def, _substs) => {
-                        let variant = adt_def.variants.first()?;
-                        if value_struct.structural.fields.len() != variant.fields.len() {
-                            return None;
-                        }
-                        // Field types aren't directly in AdtDef; fall through
-                        // to the ExecutableConst path which can evaluate this.
+            Value::Struct(value_struct) => match &ty.kind {
+                TyKind::Tuple(fields) => {
+                    if value_struct.structural.fields.len() != fields.len() {
                         return None;
                     }
-                    _ => return None,
+                    let values = value_struct
+                        .structural
+                        .fields
+                        .iter()
+                        .zip(fields.iter())
+                        .map(|(field, field_ty)| self.value_to_const_value(&field.value, field_ty))
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(mir::ConstValue::Struct(values))
                 }
+                TyKind::Adt(adt_def, _substs) => {
+                    let variant = adt_def.variants.first()?;
+                    if value_struct.structural.fields.len() != variant.fields.len() {
+                        return None;
+                    }
+                    let values = value_struct
+                        .structural
+                        .fields
+                        .iter()
+                        .map(|field| self.value_to_untyped_const_value(&field.value))
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(mir::ConstValue::Struct(values))
+                }
+                _ => return None,
+            },
+            Value::Structural(structural) => match &ty.kind {
+                TyKind::Tuple(fields) => {
+                    if structural.fields.len() != fields.len() {
+                        return None;
+                    }
+                    let values = structural
+                        .fields
+                        .iter()
+                        .zip(fields.iter())
+                        .map(|(field, field_ty)| self.value_to_const_value(&field.value, field_ty))
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(mir::ConstValue::Struct(values))
+                }
+                TyKind::Adt(adt_def, _substs) => {
+                    let variant = adt_def.variants.first()?;
+                    if structural.fields.len() != variant.fields.len() {
+                        return None;
+                    }
+                    let values = structural
+                        .fields
+                        .iter()
+                        .map(|field| self.value_to_untyped_const_value(&field.value))
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(mir::ConstValue::Struct(values))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn value_to_untyped_const_value(&self, value: &Value) -> Option<mir::ConstValue> {
+        match value {
+            Value::Unit(_) => Some(mir::ConstValue::Unit),
+            Value::Bool(value) => Some(mir::ConstValue::Bool(value.value)),
+            Value::Int(value) => Some(mir::ConstValue::Int(value.value)),
+            Value::UInt(value) => Some(mir::ConstValue::UInt(value.value)),
+            Value::Decimal(value) => Some(mir::ConstValue::Float(value.value)),
+            Value::String(value) => Some(mir::ConstValue::Str(value.value.clone())),
+            Value::Bytes(bytes) => {
+                let s = String::from_utf8_lossy(&bytes.value)
+                    .trim_end_matches('\0')
+                    .to_string();
+                Some(mir::ConstValue::Str(s))
             }
-            Value::Structural(structural) => {
-                let TyKind::Tuple(fields) = &ty.kind else {
-                    return None;
-                };
-                if structural.fields.len() != fields.len() {
-                    return None;
-                }
-                let values = structural
+            Value::Null(_) => Some(mir::ConstValue::Null),
+            Value::Tuple(tuple) => Some(mir::ConstValue::Tuple(
+                tuple
+                    .values
+                    .iter()
+                    .map(|value| self.value_to_untyped_const_value(value))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
+            Value::List(list) => Some(mir::ConstValue::Array(
+                list.values
+                    .iter()
+                    .map(|value| self.value_to_untyped_const_value(value))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
+            Value::Struct(value_struct) => Some(mir::ConstValue::Struct(
+                value_struct
+                    .structural
                     .fields
                     .iter()
-                    .zip(fields.iter())
-                    .map(|(field, field_ty)| self.value_to_const_value(&field.value, field_ty))
-                    .collect::<Option<Vec<_>>>()?;
-                Some(mir::ConstValue::Struct(values))
-            }
+                    .map(|field| self.value_to_untyped_const_value(&field.value))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
+            Value::Structural(structural) => Some(mir::ConstValue::Struct(
+                structural
+                    .fields
+                    .iter()
+                    .map(|field| self.value_to_untyped_const_value(&field.value))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
             _ => None,
         }
     }
@@ -577,10 +708,9 @@ impl CompilerDriver {
             PendingTypingRequestKind::Unresolved => {
                 TypingRequest::Unresolved(TypeNeed::new(request.expr.clone()))
             }
-            PendingTypingRequestKind::Generic => TypingRequest::Generic(GenericWorkRequest::new(
-                path.clone(),
-                request.expr.clone(),
-            )),
+            PendingTypingRequestKind::Generic => {
+                TypingRequest::Generic(GenericWorkRequest::new(path.clone(), request.expr.clone()))
+            }
             PendingTypingRequestKind::Comptime => {
                 TypingRequest::Comptime(CompileTimeNeed::new(request.expr.clone()))
             }

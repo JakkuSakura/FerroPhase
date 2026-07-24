@@ -2024,10 +2024,7 @@ impl MirLowering {
                             &mut substs,
                             span,
                         ) {
-                            self.emit_warning(
-                                span,
-                                format!("generic type inference error: {e}"),
-                            );
+                            self.emit_warning(span, format!("generic type inference error: {e}"));
                         }
                         let fallback = self.lower_type_expr(return_ty);
                         if let Some(fallback_args) =
@@ -4051,7 +4048,10 @@ impl MirLowering {
         // JUSTIFY: layout may be uncomputable for forward-referenced types
         // during registration; computed lazily when needed later.
         if self.enum_layout_for_instance(def_id, &[], span).is_none() {
-            self.emit_warning(span, "enum layout computation returned None during registration");
+            self.emit_warning(
+                span,
+                "enum layout computation returned None during registration",
+            );
         }
     }
 
@@ -4540,7 +4540,10 @@ impl MirLowering {
             // JUSTIFY: layout may be uncomputable for forward-referenced types
             // during registration; computed lazily when needed later.
             if self.struct_layout_for_instance(def_id, &[], span).is_none() {
-                self.emit_warning(span, "struct layout computation returned None during registration");
+                self.emit_warning(
+                    span,
+                    "struct layout computation returned None during registration",
+                );
             }
         }
     }
@@ -4639,7 +4642,10 @@ impl MirLowering {
             // JUSTIFY: layout may be uncomputable for forward-referenced types
             // during registration; computed lazily when needed later.
             if self.enum_layout_for_instance(def_id, &[], span).is_none() {
-                self.emit_warning(span, "enum layout computation returned None during registration");
+                self.emit_warning(
+                    span,
+                    "enum layout computation returned None during registration",
+                );
             }
         }
     }
@@ -4837,8 +4843,14 @@ impl MirLowering {
                     if let TyKind::Adt(adt, _) = &payload_ty.kind {
                         // JUSTIFY: layout may be uncomputable for forward-referenced
                         // types; computed lazily when needed later.
-                        if self.struct_layout_for_instance(adt.did, &[], span).is_none() {
-                            self.emit_warning(span, "struct layout computation returned None for variant payload");
+                        if self
+                            .struct_layout_for_instance(adt.did, &[], span)
+                            .is_none()
+                        {
+                            self.emit_warning(
+                                span,
+                                "struct layout computation returned None for variant payload",
+                            );
                         }
                     }
                     if let Some(layout) = self.struct_layout_for_ty(&payload_ty) {
@@ -5676,23 +5688,20 @@ impl MirLowering {
                 Some(mir::Constant {
                     span: expr.span,
                     user_ty: None,
-                    literal: self
-                        .const_value_to_constant(expr.span, &value, &ty)
-                        .literal,
+                    literal: self.const_value_to_constant(expr.span, &value, &ty).literal,
                 })
             }
             hir::ExprKind::Binary(op, lhs, rhs) => {
-                let kind =
-                    if let (Some(left), Some(right)) = (
-                        self.lower_const_expr(program, lhs, expected_ty, container_args),
-                        self.lower_const_expr(program, rhs, expected_ty, container_args),
-                    ) {
-                        Self::lower_binary_op_const(op, &left, &right)
-                    } else {
-                        let left = self.lower_const_value(program, lhs, expected_ty)?;
-                        let right = self.lower_const_value(program, rhs, expected_ty)?;
-                        Self::lower_binary_op_const_values(op, &left, &right)
-                    }?;
+                let kind = if let (Some(left), Some(right)) = (
+                    self.lower_const_expr(program, lhs, expected_ty, container_args),
+                    self.lower_const_expr(program, rhs, expected_ty, container_args),
+                ) {
+                    Self::lower_binary_op_const(op, &left, &right)
+                } else {
+                    let left = self.lower_const_value(program, lhs, expected_ty)?;
+                    let right = self.lower_const_value(program, rhs, expected_ty)?;
+                    Self::lower_binary_op_const_values(op, &left, &right)
+                }?;
                 Some(mir::Constant {
                     span: expr.span,
                     user_ty: None,
@@ -5827,17 +5836,16 @@ impl MirLowering {
                 }
                 Some(mir::ConstValue::Struct(lowered))
             }
-            hir::ExprKind::Slice(slice) => {
-                Some(mir::ConstValue::Str(self.lower_const_string_slice(program, slice)?))
-            }
+            hir::ExprKind::Slice(slice) => Some(mir::ConstValue::Str(
+                self.lower_const_string_slice(program, slice)?,
+            )),
             hir::ExprKind::Index(base, index) => self
                 .lower_const_expr(program, base, None, None)
                 .and_then(|constant| self.const_index_value(program, expr.span, &constant, index))
                 .and_then(|(constant, _)| self.const_value_from_constant(&constant)),
-            hir::ExprKind::FieldAccess(base, field) => {
-                self.lower_const_field_access(program, base, field.as_str(), expr.span)
-                    .and_then(|constant| self.const_value_from_constant(&constant))
-            }
+            hir::ExprKind::FieldAccess(base, field) => self
+                .lower_const_field_access(program, base, field.as_str(), expr.span)
+                .and_then(|constant| self.const_value_from_constant(&constant)),
             hir::ExprKind::If(cond, then_expr, else_expr) => {
                 let branch = match self.lower_const_value(program, cond, None)? {
                     mir::ConstValue::Bool(value) => {
@@ -5949,7 +5957,8 @@ impl MirLowering {
         args: &[hir::CallArg],
         _span: Span,
     ) -> Option<mir::ConstValue> {
-        let matches_name = |name: &str| method_name == name || method_name.ends_with(&format!("::{name}"));
+        let matches_name =
+            |name: &str| method_name == name || method_name.ends_with(&format!("::{name}"));
         let receiver_value = self.lower_const_value(program, receiver, None)?;
 
         if matches_name("len") && args.is_empty() {
@@ -5958,7 +5967,9 @@ impl MirLowering {
                 mir::ConstValue::List { elements, .. } => {
                     Some(mir::ConstValue::UInt(elements.len() as u64))
                 }
-                mir::ConstValue::Array(elements) => Some(mir::ConstValue::UInt(elements.len() as u64)),
+                mir::ConstValue::Array(elements) => {
+                    Some(mir::ConstValue::UInt(elements.len() as u64))
+                }
                 mir::ConstValue::Tuple(fields) => Some(mir::ConstValue::UInt(fields.len() as u64)),
                 _ => None,
             };
@@ -5985,7 +5996,9 @@ impl MirLowering {
                 return Some(mir::ConstValue::Bool(receiver_text.contains(&needle)));
             }
             if let Some(items) = Self::const_string_items(&receiver_value) {
-                return Some(mir::ConstValue::Bool(items.iter().any(|item| item == &needle)));
+                return Some(mir::ConstValue::Bool(
+                    items.iter().any(|item| item == &needle),
+                ));
             }
         }
         None
@@ -5993,11 +6006,24 @@ impl MirLowering {
 
     fn lower_const_field_access(
         &mut self,
-        _program: &hir::Program,
+        program: &hir::Program,
         base: &hir::Expr,
         field: &str,
         span: Span,
     ) -> Option<mir::Constant> {
+        if let Some(constant) = self.lower_const_expr(program, base, None, None) {
+            return Some(
+                self.lower_const_struct_field_from_constant(&constant, field, span)
+                    .unwrap_or_else(|| {
+                        self.emit_error(
+                            span,
+                            format!("unsupported const field access `{field}`"),
+                        );
+                        self.error_constant(span)
+                    }),
+            );
+        }
+
         let hir::ExprKind::IntrinsicCall(call) = &base.kind else {
             return None;
         };
@@ -6045,6 +6071,51 @@ impl MirLowering {
         }
     }
 
+    fn lower_const_struct_field_from_constant(
+        &mut self,
+        constant: &mir::Constant,
+        field: &str,
+        span: Span,
+    ) -> Option<mir::Constant> {
+        let (values, ty) = match &constant.literal {
+            mir::ConstantKind::Val(mir::ConstValue::Struct(values), ty) => (values, ty),
+            _ => return None,
+        };
+
+        match &ty.kind {
+            TyKind::Adt(adt_def, _) => {
+                let variant = adt_def.variants.first()?;
+                let field_index = variant
+                    .fields
+                    .iter()
+                    .position(|field_def| field_def.ident.as_str() == field)?;
+                let layout = self.struct_layout_for_ty(ty)?;
+                let field_ty = layout.field_tys.get(field_index)?;
+                let field_value = values.get(field_index)?;
+                Some(self.const_value_to_constant(span, field_value, field_ty))
+            }
+            TyKind::Tuple(field_tys) => {
+                if let Some(key) = self.struct_layouts_by_ty.get(ty) {
+                    let field_index = self
+                        .struct_defs
+                        .get(&key.def_id)?
+                        .field_index
+                        .get(field)
+                        .copied()?;
+                    let layout = self.struct_layouts.get(key)?;
+                    let field_ty = layout.field_tys.get(field_index)?;
+                    let field_value = values.get(field_index)?;
+                    return Some(self.const_value_to_constant(span, field_value, field_ty));
+                }
+                let field_index = field.parse::<usize>().ok()?;
+                let field_ty = field_tys.get(field_index)?.as_ref();
+                let field_value = values.get(field_index)?;
+                Some(self.const_value_to_constant(span, field_value, field_ty))
+            }
+            _ => None,
+        }
+    }
+
     fn string_list_constant(&self, span: Span, items: Vec<String>) -> mir::Constant {
         let elem_ty = self.string_slice_ty();
         let ty = Ty {
@@ -6054,10 +6125,7 @@ impl MirLowering {
         mir::Constant {
             span,
             user_ty: None,
-            literal: mir::ConstantKind::Val(
-                mir::ConstValue::List { elements, elem_ty },
-                ty,
-            ),
+            literal: mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }, ty),
         }
     }
 
@@ -6360,9 +6428,7 @@ impl MirLowering {
             mir::ConstantKind::Val(mir::ConstValue::Map { entries, .. }, _) => {
                 Some(entries.len() as u64)
             }
-            mir::ConstantKind::Val(mir::ConstValue::Tuple(fields), _) => {
-                Some(fields.len() as u64)
-            }
+            mir::ConstantKind::Val(mir::ConstValue::Tuple(fields), _) => Some(fields.len() as u64),
             _ => None,
         }
     }
@@ -9909,8 +9975,8 @@ impl<'a> BodyBuilder<'a> {
         self.lower_expr_as_statement(then_expr)?;
         if !self.control_flow_emitted
             && self.blocks[self.current_block as usize]
-            .terminator
-            .is_none()
+                .terminator
+                .is_none()
         {
             self.set_current_terminator(mir::Terminator {
                 source_info: then_expr.span,
@@ -9926,8 +9992,8 @@ impl<'a> BodyBuilder<'a> {
             self.lower_expr_as_statement(else_expr)?;
             if !self.control_flow_emitted
                 && self.blocks[self.current_block as usize]
-                .terminator
-                .is_none()
+                    .terminator
+                    .is_none()
             {
                 self.set_current_terminator(mir::Terminator {
                     source_info: else_expr.span,

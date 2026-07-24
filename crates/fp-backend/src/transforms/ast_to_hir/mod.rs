@@ -1843,6 +1843,15 @@ impl HirGenerator {
                 ast::Value::String(_) => {
                     Some(LiteralTypeKind::Primitive(ast::TypePrimitive::String))
                 }
+                ast::Value::Bytes(bytes)
+                    if bytes.value.as_ref().strip_suffix(&[0]).is_some()
+                        && std::str::from_utf8(
+                            bytes.value.as_ref().strip_suffix(&[0]).unwrap_or_default(),
+                        )
+                        .is_ok() =>
+                {
+                    Some(LiteralTypeKind::Primitive(ast::TypePrimitive::String))
+                }
                 ast::Value::Char(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Char)),
                 ast::Value::Unit(_) => Some(LiteralTypeKind::Unit),
                 ast::Value::Null(_) | ast::Value::None(_) => Some(LiteralTypeKind::Null),
@@ -1871,6 +1880,15 @@ impl HirGenerator {
                 ast::TypePrimitive::Decimal(ast::DecimalType::F64),
             )),
             ast::Value::String(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::String)),
+            ast::Value::Bytes(bytes)
+                if bytes.value.as_ref().strip_suffix(&[0]).is_some()
+                    && std::str::from_utf8(
+                        bytes.value.as_ref().strip_suffix(&[0]).unwrap_or_default(),
+                    )
+                    .is_ok() =>
+            {
+                Some(LiteralTypeKind::Primitive(ast::TypePrimitive::String))
+            }
             ast::Value::Char(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Char)),
             ast::Value::Unit(_) => Some(LiteralTypeKind::Unit),
             ast::Value::Null(_) | ast::Value::None(_) => Some(LiteralTypeKind::Null),
@@ -2065,6 +2083,15 @@ impl HirGenerator {
                 self.primitive_type_to_hir(ast::TypePrimitive::Decimal(ast::DecimalType::F64))
             }
             ast::Value::String(_) => self.primitive_type_to_hir(ast::TypePrimitive::String),
+            ast::Value::Bytes(bytes)
+                if bytes.value.as_ref().strip_suffix(&[0]).is_some()
+                    && std::str::from_utf8(
+                        bytes.value.as_ref().strip_suffix(&[0]).unwrap_or_default(),
+                    )
+                    .is_ok() =>
+            {
+                self.primitive_type_to_hir(ast::TypePrimitive::String)
+            }
             ast::Value::Char(_) => self.primitive_type_to_hir(ast::TypePrimitive::Char),
             ast::Value::Unit(_) => self.create_unit_type(),
             ast::Value::Null(_) | ast::Value::None(_) => {
