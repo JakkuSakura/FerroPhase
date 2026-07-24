@@ -22,7 +22,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.emit_error(format!("expected numeric value for {}", context));
                 Err(typing_error("expected numeric type, found error"))
             }
-            TypeVarKind::Unbound { .. } | TypeVarKind::Bound(_) => Ok(()),
+            TypeVarKind::Unbound { .. } => Ok(()),
+            TypeVarKind::Bound(ref ty) => match primitive_ty(ty) {
+                Some(TypePrimitive::Int(_)) | Some(TypePrimitive::Decimal(_)) => Ok(()),
+                _ => {
+                    self.emit_error(format!(
+                        "expected numeric value for {context}, found {ty}"
+                    ));
+                    Err(typing_error(format!(
+                        "expected numeric type, found {ty}"
+                    )))
+                }
+            },
             TypeVarKind::Link(next) => self.ensure_numeric(next, context),
         }
     }

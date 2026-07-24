@@ -143,6 +143,7 @@ impl RegFile {
     pub fn read(&self, reg: RegisterId) -> u64 {
         let idx = reg as usize;
         if idx >= REG_COUNT {
+            eprintln!("[fp-interpret] RegFile::read out of range: reg={reg}");
             0
         } else {
             self.gpr[idx]
@@ -153,6 +154,8 @@ impl RegFile {
         let idx = reg as usize;
         if idx < REG_COUNT {
             self.gpr[idx] = value;
+        } else {
+            eprintln!("[fp-interpret] RegFile::write out of range: reg={reg}");
         }
     }
 
@@ -200,8 +203,7 @@ impl ThreadState {
         }
     }
 
-    pub fn push_frame(&mut self, func_name: String) {
-        let _ = func_name;
+    pub fn push_frame(&mut self, _func_name: String) {
         let sp = self.regs.sp();
         self.call_stack.push(StackFrame::new(sp));
     }
@@ -270,6 +272,9 @@ pub fn value_to_raw(v: &Value) -> u64 {
             }
         }
         Value::Decimal(f) => f.value.to_bits(),
+        // JUSTIFY: all other Value variants (String, Map, List, Struct,
+        // etc.) have no meaningful raw u64 representation; returning 0
+        // is the only sensible fallback for a raw-value conversion.
         _ => 0,
     }
 }

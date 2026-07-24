@@ -143,8 +143,8 @@ impl LirInterpreter {
             LirInstructionKind::Add(a, b) => self.binop(dst, a, b, |x, y| x.wrapping_add(y)),
             LirInstructionKind::Sub(a, b) => self.binop(dst, a, b, |x, y| x.wrapping_sub(y)),
             LirInstructionKind::Mul(a, b) => self.binop(dst, a, b, |x, y| x.wrapping_mul(y)),
-            LirInstructionKind::Div(a, b) => self.binop_div(dst, a, b),
-            LirInstructionKind::Rem(a, b) => self.binop_rem(dst, a, b),
+            LirInstructionKind::Div(a, b) => self.binop_div(dst, a, b, instr.type_hint.as_ref()),
+            LirInstructionKind::Rem(a, b) => self.binop_rem(dst, a, b, instr.type_hint.as_ref()),
             LirInstructionKind::Eq(a, b) => self.cmp_raw(dst, a, b, |x, y| (x == y) as u64),
             LirInstructionKind::Ne(a, b) => self.cmp_raw(dst, a, b, |x, y| (x != y) as u64),
             LirInstructionKind::Lt(a, b) => self.cmp_signed(dst, a, b, |x, y| x < y),
@@ -263,11 +263,32 @@ impl LirInterpreter {
                 Ok(())
             }
             LirInstructionKind::FPTrunc(v, _)
-            | LirInstructionKind::FPExt(v, _)
-            | LirInstructionKind::FPToUI(v, _)
-            | LirInstructionKind::FPToSI(v, _)
-            | LirInstructionKind::UIToFP(v, _)
-            | LirInstructionKind::SIToFP(v, _) => self.unary(dst, v, |x| x),
+            | LirInstructionKind::FPExt(v, _) => self.unary(dst, v, |x| x),
+            LirInstructionKind::FPToUI(v, _) => {
+                let raw = self.resolve_raw(v)?;
+                let val = f64::from_bits(raw);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                {
+                    self.wr(dst, val as u64);
+                }
+                Ok(())
+            }
+            LirInstructionKind::FPToSI(v, _) => {
+                let raw = self.resolve_raw(v)?;
+                let val = f64::from_bits(raw);
+                self.wr(dst, (val as i64) as u64);
+                Ok(())
+            }
+            LirInstructionKind::UIToFP(v, _) => {
+                let raw = self.resolve_raw(v)?;
+                self.wr(dst, (raw as f64).to_bits());
+                Ok(())
+            }
+            LirInstructionKind::SIToFP(v, _) => {
+                let raw = self.resolve_raw(v)?;
+                self.wr(dst, ((raw as i64) as f64).to_bits());
+                Ok(())
+            }
             LirInstructionKind::ExtractValue { aggregate, indices } => {
                 self.extract_value(dst, aggregate, indices, instr.type_hint.as_ref())
             }
@@ -298,7 +319,7 @@ impl LirInterpreter {
     }
 
     fn wr(&mut self, dst: u32, val: u64) {
-        // r1 is the stack pointer — never overwrite it with
+        // JUSTIFY: r1 is the stack pointer — never overwrite it with
         // instruction results, as some LIR producers may assign
         // instruction IDs that alias the sp register.
         if dst == 1 {
@@ -599,7 +620,8 @@ impl LirInterpreter {
                 | Value::Struct(_)
                 | Value::Structural(_)
                 | Value::Bytes(_)
-                | Value::Pointer(_) => {
+                | Value::Pointer(_)
+                | Value::Map(_) => {
                     let handle = self.state.objects.len() as u64;
                     self.state.objects.push(value);
                     handle
@@ -801,21 +823,35 @@ impl LirInterpreter {
         Ok(())
     }
 
-    fn binop_div(&mut self, dst: u32, a: &LirValue, b: &LirValue) -> LirResult<()> {
-        let rhs = self.resolve_raw(b)? as i64;
+    fn binop_div(&mut self, dst: u32, a: &LirValue, b: &LirValue, ty: Option<&LirType>) -> LirResult<()> {
+        let rhs = self.resolve_raw(b)?;
         if rhs == 0 {
             return Err(VmError::DivisionByZero);
         }
-        self.wr(dst, (self.resolve_raw(a)? as i64).wrapping_div(rhs) as u64);
+        let lhs = self.resolve_raw(a)?;
+        let (_, signed) = ty.map(lir_type_info).unwrap_or((64, true));
+        let result = if signed {
+            (lhs as i64).wrapping_div(rhs as i64) as u64
+        } else {
+            lhs.wrapping_div(rhs)
+        };
+        self.wr(dst, result);
         Ok(())
     }
 
-    fn binop_rem(&mut self, dst: u32, a: &LirValue, b: &LirValue) -> LirResult<()> {
-        let rhs = self.resolve_raw(b)? as i64;
+    fn binop_rem(&mut self, dst: u32, a: &LirValue, b: &LirValue, ty: Option<&LirType>) -> LirResult<()> {
+        let rhs = self.resolve_raw(b)?;
         if rhs == 0 {
             return Err(VmError::DivisionByZero);
         }
-        self.wr(dst, (self.resolve_raw(a)? as i64).wrapping_rem(rhs) as u64);
+        let lhs = self.resolve_raw(a)?;
+        let (_, signed) = ty.map(lir_type_info).unwrap_or((64, true));
+        let result = if signed {
+            (lhs as i64).wrapping_rem(rhs as i64) as u64
+        } else {
+            lhs.wrapping_rem(rhs)
+        };
+        self.wr(dst, result);
         Ok(())
     }
 
@@ -864,8 +900,8 @@ impl LirInterpreter {
             "println" | "print" | "eprintln" | "eprint" | "printf" => Ok(0),
             "sizeof" | "strlen" => Ok(0),
             "malloc" => {
-                let _size = args.first().copied().unwrap_or(0) as usize;
-                let obj = Value::Unit(Default::default());
+                let size = args.first().copied().unwrap_or(0) as usize;
+                let obj = Value::Bytes(fp_core::ast::ValueBytes::zeroed(size));
                 let handle = self.state.objects.len() as u64;
                 self.state.objects.push(obj);
                 Ok(handle)
