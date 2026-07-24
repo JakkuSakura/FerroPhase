@@ -2278,7 +2278,9 @@ fn capstone_operand_width_bits(token: &str) -> Option<u16> {
     }
     // JUSTIFY: x86 operand strings from capstone do not always encode an
     // explicit width; callers apply context-appropriate defaults.
-    eprintln!("[fp-native] capstone_operand_width_bits: unable to determine width from token: {token:?}");
+    eprintln!(
+        "[fp-native] capstone_operand_width_bits: unable to determine width from token: {token:?}"
+    );
     None
 }
 

@@ -315,25 +315,22 @@ impl LirInterpreter {
                 .get(name.as_str())
                 .copied()
                 .ok_or_else(|| VmError::Runtime(format!("missing global {name}"))),
-            LirValue::Constant(c) => {
-                match c {
-                    LirConstant::String(_)
-                    | LirConstant::Array(..)
-                    | LirConstant::Struct(..)
-                    | LirConstant::Bytes(_) => {
-                        Err(VmError::Runtime(format!(
-                            "resolve_raw called on non-scalar constant: {c:?}"
-                        )))
-                    }
-                    _ => Ok(const_raw(c)),
-                }
-            }
+            LirValue::Constant(c) => match c {
+                LirConstant::String(_)
+                | LirConstant::Array(..)
+                | LirConstant::Struct(..)
+                | LirConstant::Bytes(_) => Err(VmError::Runtime(format!(
+                    "resolve_raw called on non-scalar constant: {c:?}"
+                ))),
+                _ => Ok(const_raw(c)),
+            },
             LirValue::Local(id) => self.state.mem.load_u64(self.state.local_addr(*id)),
             LirValue::StackSlot(id) => self.state.mem.load_u64(self.state.local_addr(*id)),
-            LirValue::Global(name, _) => {
-                self.global_values.get(name.as_str()).copied()
-                    .ok_or_else(|| VmError::Runtime(format!("missing global {name}")))
-            }
+            LirValue::Global(name, _) => self
+                .global_values
+                .get(name.as_str())
+                .copied()
+                .ok_or_else(|| VmError::Runtime(format!("missing global {name}"))),
             LirValue::Function(_) => Ok(0),
             LirValue::Undef(_) | LirValue::Null(_) => Ok(0),
         }
@@ -352,9 +349,7 @@ impl LirInterpreter {
         }
         // Collect C signatures from extern function declarations.
         for func in &program.functions {
-            if func.is_declaration
-                && func.calling_convention == CallingConvention::C
-            {
+            if func.is_declaration && func.calling_convention == CallingConvention::C {
                 let sig = lir_sig_to_ffi(&func.signature);
                 self.extern_sigs.insert(func.name.to_string(), sig);
             }
@@ -525,7 +520,9 @@ impl LirInterpreter {
                     .ok_or_else(|| VmError::Runtime(format!("missing global {name}")))?,
             ),
             LirConstant::FunctionRef(_, _) => Value::uint(0),
-            LirConstant::Bytes(bytes) => Value::Bytes(fp_core::ast::ValueBytes::from(bytes.as_slice())),
+            LirConstant::Bytes(bytes) => {
+                Value::Bytes(fp_core::ast::ValueBytes::from(bytes.as_slice()))
+            }
         })
     }
 
@@ -568,7 +565,9 @@ impl LirInterpreter {
         };
 
         let Some(backing) = self.state.objects.get(ptr_handle) else {
-            return Err(VmError::Runtime(format!("dangling object handle {ptr_handle}")));
+            return Err(VmError::Runtime(format!(
+                "dangling object handle {ptr_handle}"
+            )));
         };
         let bytes = match backing {
             Value::Bytes(bytes) => bytes.value.as_ref(),
@@ -643,9 +642,14 @@ impl LirInterpreter {
         let mut current = ty.clone();
         for index in indices {
             current = match current {
-                LirType::Struct { fields, .. } => fields.get(*index as usize).cloned().ok_or(
-                    VmError::Runtime(format!("struct index {index} out of range")),
-                )?,
+                LirType::Struct { fields, .. } => {
+                    fields
+                        .get(*index as usize)
+                        .cloned()
+                        .ok_or(VmError::Runtime(format!(
+                            "struct index {index} out of range"
+                        )))?
+                }
                 LirType::Array(elem, len) => {
                     if (*index as u64) >= len {
                         return Err(VmError::Runtime(format!(
@@ -738,7 +742,10 @@ impl LirInterpreter {
     }
 
     fn is_aggregate_runtime_type(ty: &LirType) -> bool {
-        matches!(ty, LirType::Struct { .. } | LirType::Array(..) | LirType::Vector(..))
+        matches!(
+            ty,
+            LirType::Struct { .. } | LirType::Array(..) | LirType::Vector(..)
+        )
     }
 
     fn binop(
@@ -965,7 +972,9 @@ impl LirInterpreter {
                 }
                 values[index] = Value::uint(raw_value);
                 let new_handle = self.state.objects.len() as u64;
-                self.state.objects.push(Value::Tuple(ValueTuple::new(values)));
+                self.state
+                    .objects
+                    .push(Value::Tuple(ValueTuple::new(values)));
                 Ok(new_handle)
             }
             "container_len" => {
@@ -1073,7 +1082,13 @@ impl LirInterpreter {
                 let items: Vec<String> = m
                     .entries
                     .iter()
-                    .map(|e| format!("{}: {}", self.render_value(&e.key), self.render_value(&e.value)))
+                    .map(|e| {
+                        format!(
+                            "{}: {}",
+                            self.render_value(&e.key),
+                            self.render_value(&e.value)
+                        )
+                    })
                     .collect();
                 format!("{{{}}}", items.join(", "))
             }

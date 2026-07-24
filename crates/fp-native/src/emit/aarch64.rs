@@ -4,8 +4,8 @@ use fp_core::asmir::{
 };
 use fp_core::container::ContainerKind;
 use fp_core::error::{Error, Result};
-use fp_core::lir::layout::{align_of, size_of, struct_layout};
 use fp_core::lir::CallingConvention;
+use fp_core::lir::layout::{align_of, size_of, struct_layout};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::emit::{CodegenOutput, RelocKind, Relocation, TargetFormat};
@@ -631,11 +631,7 @@ fn call_arg_units(
     local_types: &HashMap<u32, AsmType>,
 ) -> usize {
     let ty = value_type(arg, reg_types, local_types).unwrap_or(AsmType::I64);
-    if matches!(ty, AsmType::I128) {
-        2
-    } else {
-        1
-    }
+    if matches!(ty, AsmType::I128) { 2 } else { 1 }
 }
 
 fn vreg_slot_spec(id: u32, reg_types: &HashMap<u32, AsmType>) -> (i32, i32) {
@@ -781,22 +777,24 @@ fn build_reg_types(func: &AsmFunction) -> HashMap<u32, AsmType> {
                             .and_then(|agg_ty| {
                                 extract_value_type(&agg_ty, indices)
                                     .map_err(|e| {
-                                        eprintln!("[fp-native] aarch64 extract_value_type error: {e}");
+                                        eprintln!(
+                                            "[fp-native] aarch64 extract_value_type error: {e}"
+                                        );
                                         e
                                     })
                                     .ok()
                             })
                     }
-                    AsmInstructionKind::Phi { incoming } => incoming
-                        .first()
-                        .and_then(|(value, _)| {
+                    AsmInstructionKind::Phi { incoming } => {
+                        incoming.first().and_then(|(value, _)| {
                             value_type(value, &map, &local_types)
                                 .map_err(|e| {
                                     eprintln!("[fp-native] aarch64 type inference error: {e}");
                                     e
                                 })
                                 .ok()
-                        }),
+                        })
+                    }
                     AsmInstructionKind::Select { if_true, .. } => {
                         value_type(if_true, &map, &local_types)
                             .map_err(|e| {
@@ -4786,9 +4784,7 @@ fn store_constant_aggregate_to_reg(
             Ok(())
         }
         // String-data GlobalRef used as &str return: emit {ptr, len=0}.
-        AsmConstant::GlobalRef(name, _, indices)
-            if matches!(agg_ty, AsmType::Struct { .. }) =>
-        {
+        AsmConstant::GlobalRef(name, _, indices) if matches!(agg_ty, AsmType::Struct { .. }) => {
             let layout = struct_layout(agg_ty)
                 .ok_or_else(|| Error::from("missing struct layout for aggregate return"))?;
             let addend = indices.iter().map(|i| *i as i64).sum();

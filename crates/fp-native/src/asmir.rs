@@ -19,8 +19,8 @@ use fp_core::asmir::{
 use fp_core::error::Result;
 use fp_core::lir::layout::size_of;
 use fp_core::lir::{
-    Linkage, LirConstant,
-    LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirValue, Name, Visibility,
+    Linkage, LirConstant, LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator,
+    LirValue, Name, Visibility,
 };
 use std::collections::HashMap;
 
@@ -3163,7 +3163,10 @@ fn lift_x86_instruction(instruction: &X86InstructionDetail, id: u32) -> AsmInstr
         .collect::<Vec<_>>();
     let type_hint = output_type_from_asm_operands(&operands);
     let kind = semanticize_x86_detail(instruction, &operands).unwrap_or_else(|e| {
-        eprintln!("[fp-native] x86 semanticize failed for {:?}: {e}", instruction.opcode);
+        eprintln!(
+            "[fp-native] x86 semanticize failed for {:?}: {e}",
+            instruction.opcode
+        );
         // JUSTIFY: lifter must produce an instruction for every input;
         // InlineAsm preserves the original opcode/operands opaque to downstream.
         AsmInstructionKind::InlineAsm {
@@ -3197,7 +3200,10 @@ fn lift_aarch64_instruction(instruction: &Aarch64InstructionDetail, id: u32) -> 
         .collect::<Vec<_>>();
     let type_hint = output_type_from_asm_operands(&operands);
     let kind = semanticize_aarch64_detail(instruction, &operands).unwrap_or_else(|e| {
-        eprintln!("[fp-native] aarch64 semanticize failed for {}: {e}", instruction.opcode);
+        eprintln!(
+            "[fp-native] aarch64 semanticize failed for {}: {e}",
+            instruction.opcode
+        );
         // JUSTIFY: lifter must produce an instruction for every input;
         // InlineAsm preserves the original opcode/operands opaque to downstream.
         AsmInstructionKind::InlineAsm {
