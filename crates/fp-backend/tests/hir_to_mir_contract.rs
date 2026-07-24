@@ -261,6 +261,111 @@ fn lowers_identity_function_with_parameter() {
 }
 
 #[test]
+fn rejects_unresolved_value_path_in_function_body() {
+    let body_expr = Expr::new(
+        21,
+        ExprKind::Path(Path {
+            segments: vec![PathSegment {
+                name: Symbol::new("missing_value"),
+                args: None,
+            }],
+            res: None,
+        }),
+        span(),
+    );
+    let body = hir::Body {
+        hir_id: 22,
+        params: Vec::new(),
+        value: body_expr,
+    };
+
+    let sig = FunctionSig {
+        name: hir::Symbol::new("main"),
+        inputs: Vec::new(),
+        output: primitive_type(TypePrimitive::Int(TypeInt::I32)),
+        generics: Generics::default(),
+        abi: hir::Abi::Rust,
+    };
+
+    let function = Function::new(sig, Some(body), false, false);
+    let item = Item {
+        hir_id: 23,
+        def_id: 42,
+        visibility: Visibility::Public,
+        kind: ItemKind::Function(function),
+        span: span(),
+    };
+
+    let program = program_with_items(vec![item]);
+
+    let mut lowering = mir_lowering();
+    let err = lowering
+        .transform(program)
+        .expect_err("HIR→MIR lowering should reject unresolved value paths");
+    let message = err.to_string();
+    assert!(
+        message.contains("unresolved value path during MIR lowering: `missing_value`"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn rejects_binary_operations_with_unit_operands() {
+    let unit_expr = Expr::new(
+        30,
+        ExprKind::Block(hir::Block {
+            hir_id: 31,
+            stmts: Vec::new(),
+            expr: None,
+        }),
+        span(),
+    );
+    let body_expr = Expr::new(
+        32,
+        ExprKind::Binary(
+            hir::BinOp::Eq,
+            Box::new(unit_expr),
+            Box::new(literal_expr(33, 1)),
+        ),
+        span(),
+    );
+    let body = hir::Body {
+        hir_id: 34,
+        params: Vec::new(),
+        value: body_expr,
+    };
+
+    let sig = FunctionSig {
+        name: hir::Symbol::new("main"),
+        inputs: Vec::new(),
+        output: primitive_type(TypePrimitive::Bool),
+        generics: Generics::default(),
+        abi: hir::Abi::Rust,
+    };
+
+    let function = Function::new(sig, Some(body), false, false);
+    let item = Item {
+        hir_id: 35,
+        def_id: 43,
+        visibility: Visibility::Public,
+        kind: ItemKind::Function(function),
+        span: span(),
+    };
+
+    let program = program_with_items(vec![item]);
+
+    let mut lowering = mir_lowering();
+    let err = lowering
+        .transform(program)
+        .expect_err("HIR→MIR lowering should reject unit operands in binary operations");
+    let message = err.to_string();
+    assert!(
+        message.contains("binary operation `Eq` received unit operand(s)"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
 fn lowers_const_item_to_mir_static_with_integer_initializer() {
     let const_body = hir::Body {
         hir_id: 12,

@@ -8189,17 +8189,11 @@ impl<'a> BodyBuilder<'a> {
 
         let expected_return_ty = self.sig.output.clone();
         if self.locals[0].ty != expected_return_ty {
-            let fallback = self.fallback_operand_for_reference(&expected_return_ty, self.span);
-            if let Some(block) = self.blocks.last_mut() {
-                block.statements.push(mir::Statement {
-                    source_info: self.span,
-                    kind: mir::StatementKind::Assign(
-                        mir::Place::from_local(0),
-                        mir::Rvalue::Use(fallback.operand),
-                    ),
-                });
-            }
-            self.locals[0].ty = expected_return_ty;
+            return Err(fp_core::error::Error::from(format!(
+                "function body lowered to `{}` but expected return type `{}`",
+                self.locals[0].ty,
+                expected_return_ty
+            )));
         }
 
         self.ensure_terminated();
@@ -13518,11 +13512,6 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Path(path) => {
                 let mut resolved_path = path.clone();
                 self.resolve_self_path(&mut resolved_path);
-                let fallback_local = resolved_path
-                    .segments
-                    .first()
-                    .filter(|_| resolved_path.segments.len() == 1)
-                    .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied());
                 let explicit_args = resolved_path
                     .segments
                     .iter()
@@ -13807,117 +13796,15 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
-                if resolved_path.res.is_none() {
-                    let name = resolved_path
-                        .segments
-                        .iter()
-                        .map(|seg| seg.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join("::");
-                    let tail = resolved_path
-                        .segments
-                        .last()
-                        .map(|seg| seg.name.as_str())
-                        .unwrap_or(name.as_str());
-                    for (def_id, item) in &self.program.def_map {
-                        if let hir::ItemKind::Const(konst) = &item.kind {
-                            let konst_name = konst.name.as_str();
-                            let konst_tail = terminal_segment(konst_name);
-                            if konst_name == name || konst_tail == name || konst_tail == tail {
-                                self.lowering
-                                    .register_const_value(self.program, *def_id, konst);
-                                if let Some(const_info) = self.lowering.const_values.get(def_id) {
-                                    return Ok(OperandInfo {
-                                        operand: mir::Operand::Constant(const_info.value.clone()),
-                                        ty: const_info.ty.clone(),
-                                    });
-                                }
-                                let ty = self.lower_type_expr(&konst.ty);
-                                let local_id = self.allocate_temp(ty.clone(), expr.span);
-                                let place = mir::Place::from_local(local_id);
-                                self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
-                                if let Some(struct_def) = self.struct_def_from_ty(&ty) {
-                                    self.local_structs.insert(local_id, struct_def);
-                                }
-                                return Ok(OperandInfo {
-                                    operand: mir::Operand::copy(place),
-                                    ty,
-                                });
-                            }
-                        }
-                    }
-                }
-
-                if let Some(local_id) = fallback_local {
-                    let ty = self.locals[local_id as usize].ty.clone();
-                    return Ok(OperandInfo {
-                        operand: mir::Operand::copy(mir::Place::from_local(local_id)),
-                        ty,
-                    });
-                }
-
                 let name = resolved_path
                     .segments
                     .iter()
                     .map(|seg| seg.name.as_str())
                     .collect::<Vec<_>>()
                     .join("::");
-
-                let mut fallback_candidate: Option<(mir::FunctionSig, String)> = None;
-                for (_def_id, item) in &self.program.def_map {
-                    if let hir::ItemKind::Function(func) = &item.kind {
-                        let func_name = func.sig.name.as_str();
-                        if func_name == name || func_name.starts_with(&name) {
-                            let sig = self.lowering.lower_function_sig(&func.sig, None);
-                            if let Some(expected_sig) = &expected_sig {
-                                if &sig == expected_sig {
-                                    let fn_ty = self.lowering.function_pointer_ty(&sig);
-                                    return Ok(OperandInfo {
-                                        operand: mir::Operand::Constant(mir::Constant {
-                                            span: expr.span,
-                                            user_ty: None,
-                                            literal: mir::ConstantKind::Fn(
-                                                mir::Symbol::from(func.sig.name.clone()),
-                                                fn_ty.clone(),
-                                            ),
-                                        }),
-                                        ty: fn_ty,
-                                    });
-                                }
-                            } else if fallback_candidate.is_none() {
-                                fallback_candidate = Some((sig, func.sig.name.to_string()));
-                            }
-                        }
-                    }
-                }
-                if let Some((sig, func_name)) = fallback_candidate {
-                    let fn_ty = self.lowering.function_pointer_ty(&sig);
-                    return Ok(OperandInfo {
-                        operand: mir::Operand::Constant(mir::Constant {
-                            span: expr.span,
-                            user_ty: None,
-                            literal: mir::ConstantKind::Fn(
-                                mir::Symbol::from(func_name),
-                                fn_ty.clone(),
-                            ),
-                        }),
-                        ty: fn_ty,
-                    });
-                }
-                self.lowering.emit_warning(
-                    expr.span,
-                    format!(
-                        "treating path `{}` as opaque constant during MIR lowering",
-                        name
-                    ),
-                );
-                let ty = self.lowering.opaque_ty(&name);
-                let operand = mir::Operand::Constant(mir::Constant {
-                    span: expr.span,
-                    user_ty: None,
-                    literal: mir::ConstantKind::Global(Symbol::new(name), ty.clone()),
-                });
-                Ok(OperandInfo { operand, ty })
+                Err(fp_core::error::Error::from(format!(
+                    "unresolved value path during MIR lowering: `{name}`"
+                )))
             }
             hir::ExprKind::Cast(inner, ty_expr) => {
                 let operand = self.lower_operand(inner, None)?;
@@ -14929,34 +14816,6 @@ impl<'a> BodyBuilder<'a> {
         let place = mir::Place::from_local(local_id);
         self.lower_expr_into_place(expr, place.clone(), &Ty { kind: TyKind::Bool })?;
         Ok(mir::Operand::copy(place))
-    }
-
-    fn fallback_operand_for_reference(&self, reference_ty: &Ty, span: Span) -> OperandInfo {
-        match &reference_ty.kind {
-            TyKind::Uint(kind) => OperandInfo::constant(
-                span,
-                Ty {
-                    kind: TyKind::Uint(*kind),
-                },
-                mir::ConstantKind::UInt(0),
-            ),
-            TyKind::Int(kind) => OperandInfo::constant(
-                span,
-                Ty {
-                    kind: TyKind::Int(*kind),
-                },
-                mir::ConstantKind::Int(0),
-            ),
-            TyKind::Float(kind) => OperandInfo::constant(
-                span,
-                Ty {
-                    kind: TyKind::Float(*kind),
-                },
-                mir::ConstantKind::Float(0.0),
-            ),
-            TyKind::Bool => self.constant_bool_operand(false, span),
-            _ => self.constant_bool_operand(false, span),
-        }
     }
 
     fn allocate_temp(&mut self, ty: Ty, span: Span) -> mir::LocalId {
@@ -17040,19 +16899,14 @@ impl<'a> BodyBuilder<'a> {
                 self.lower_struct_literal(local_id, Some(expected_ty), path, fields, expr.span)?;
             }
             hir::ExprKind::Binary(op, lhs, rhs) => {
-                let mut left = self.lower_operand(lhs, None)?;
-                let mut right = self.lower_operand(rhs, None)?;
+                let left = self.lower_operand(lhs, None)?;
+                let right = self.lower_operand(rhs, None)?;
 
-                if MirLowering::is_unit_ty(&left.ty) {
-                    left = self.fallback_operand_for_reference(&right.ty, expr.span);
-                }
-                if MirLowering::is_unit_ty(&right.ty) {
-                    right = self.fallback_operand_for_reference(&left.ty, expr.span);
-                }
-
-                if MirLowering::is_unit_ty(&left.ty) && MirLowering::is_unit_ty(&right.ty) {
-                    left = self.constant_bool_operand(false, expr.span);
-                    right = self.constant_bool_operand(false, expr.span);
+                if MirLowering::is_unit_ty(&left.ty) || MirLowering::is_unit_ty(&right.ty) {
+                    return Err(fp_core::error::Error::from(format!(
+                        "binary operation `{op:?}` received unit operand(s): lhs=`{}`, rhs=`{}`",
+                        left.ty, right.ty
+                    )));
                 }
 
                 let mir_op = Self::convert_bin_op(op);

@@ -3,12 +3,25 @@ use fp_core::lir::{
     LirConstant, LirInstructionKind, LirRelocationKind, LirRelocationTarget, LirTerminator,
     LirType, LirValue,
 };
+use fp_core::mir::LocalInfo;
 use fp_core::mir::ty::{IntTy, Ty, TyKind, UintTy};
 use fp_core::mir::{self, FunctionSig, Item, ItemKind, Mutability, Operand};
 use fp_core::span::Span;
 use std::collections::HashMap;
 
 mod support;
+
+fn local_decl(ty: Ty, mutability: Mutability) -> mir::LocalDecl {
+    mir::LocalDecl {
+        mutability,
+        local_info: LocalInfo::Other,
+        internal: false,
+        is_block_tail: None,
+        ty,
+        user_ty: None,
+        source_info: Span::new(0, 0, 0),
+    }
+}
 
 #[test]
 fn lowers_return_function_from_support_helpers() {
@@ -156,7 +169,10 @@ fn lowers_slice_static_into_bytes_with_relocation() {
             assert_eq!(bytes.len(), 16);
             assert_eq!(&bytes[8..16], &(2u64).to_le_bytes());
         }
-        other => panic!("expected byte initializer for slice global, got {:?}", other),
+        other => panic!(
+            "expected byte initializer for slice global, got {:?}",
+            other
+        ),
     }
     assert_eq!(slice_global.relocations.len(), 1);
     let reloc = &slice_global.relocations[0];
@@ -170,7 +186,10 @@ fn lowers_slice_static_into_bytes_with_relocation() {
 
     match &data_global.initializer {
         Some(LirConstant::Bytes(bytes)) => assert_eq!(bytes, b"hi\0"),
-        other => panic!("expected byte initializer for backing string, got {:?}", other),
+        other => panic!(
+            "expected byte initializer for backing string, got {:?}",
+            other
+        ),
     }
     assert!(data_global.relocations.is_empty());
 }
@@ -242,4 +261,131 @@ fn lowers_single_case_switchint_as_equality_compare() {
         }
         other => panic!("expected CondBr terminator, got {:?}", other),
     }
+}
+
+#[test]
+fn rejects_slice_intrinsic_assignment_with_wrong_arity() {
+    let result_ty = Ty::int(IntTy::I32);
+    let stmt = mir::Statement {
+        source_info: Span::new(0, 0, 0),
+        kind: mir::StatementKind::Assign(
+            mir::Place::from_local(0),
+            mir::Rvalue::IntrinsicCall {
+                kind: fp_core::intrinsics::IntrinsicCallKind::Slice,
+                format: String::new(),
+                args: vec![
+                    Operand::Constant(mir::Constant {
+                        span: Span::new(0, 0, 0),
+                        user_ty: None,
+                        literal: mir::ConstantKind::Int(1),
+                    }),
+                    Operand::Constant(mir::Constant {
+                        span: Span::new(0, 0, 0),
+                        user_ty: None,
+                        literal: mir::ConstantKind::Int(2),
+                    }),
+                ],
+            },
+        ),
+    };
+    let mut block = mir::BasicBlockData::new(Some(mir::Terminator {
+        source_info: Span::new(0, 0, 0),
+        kind: mir::TerminatorKind::Return,
+    }));
+    block.statements.push(stmt);
+    let body = mir::Body::new(
+        vec![block],
+        vec![local_decl(result_ty.clone(), Mutability::Mut)],
+        0,
+        Span::new(0, 0, 0),
+    );
+    let body_id = mir::BodyId(0);
+    let function = mir::Function {
+        name: mir::Symbol::new("bad_slice"),
+        path: vec![mir::Symbol::new("bad_slice")],
+        def_id: None,
+        sig: FunctionSig {
+            inputs: Vec::new(),
+            output: result_ty,
+        },
+        body_id,
+        abi: mir::ty::Abi::Rust,
+        is_extern: false,
+        attrs: Vec::new(),
+    };
+    let program = mir::Program {
+        items: vec![Item {
+            mir_id: 0,
+            kind: ItemKind::Function(function),
+        }],
+        bodies: HashMap::from([(body_id, body)]),
+    };
+
+    let mut generator = LirGenerator::new();
+    let err = generator
+        .transform(program)
+        .expect_err("lowering should reject malformed slice intrinsic assignments");
+    let message = err.to_string();
+    assert!(
+        message.contains("slice intrinsic expects 3 arguments, got 2"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn rejects_unsupported_intrinsic_assignment() {
+    let result_ty = Ty::int(IntTy::I32);
+    let stmt = mir::Statement {
+        source_info: Span::new(0, 0, 0),
+        kind: mir::StatementKind::Assign(
+            mir::Place::from_local(0),
+            mir::Rvalue::IntrinsicCall {
+                kind: fp_core::intrinsics::IntrinsicCallKind::Len,
+                format: String::new(),
+                args: Vec::new(),
+            },
+        ),
+    };
+    let mut block = mir::BasicBlockData::new(Some(mir::Terminator {
+        source_info: Span::new(0, 0, 0),
+        kind: mir::TerminatorKind::Return,
+    }));
+    block.statements.push(stmt);
+    let body = mir::Body::new(
+        vec![block],
+        vec![local_decl(result_ty.clone(), Mutability::Mut)],
+        0,
+        Span::new(0, 0, 0),
+    );
+    let body_id = mir::BodyId(0);
+    let function = mir::Function {
+        name: mir::Symbol::new("bad_intrinsic"),
+        path: vec![mir::Symbol::new("bad_intrinsic")],
+        def_id: None,
+        sig: FunctionSig {
+            inputs: Vec::new(),
+            output: result_ty,
+        },
+        body_id,
+        abi: mir::ty::Abi::Rust,
+        is_extern: false,
+        attrs: Vec::new(),
+    };
+    let program = mir::Program {
+        items: vec![Item {
+            mir_id: 0,
+            kind: ItemKind::Function(function),
+        }],
+        bodies: HashMap::from([(body_id, body)]),
+    };
+
+    let mut generator = LirGenerator::new();
+    let err = generator
+        .transform(program)
+        .expect_err("lowering should reject unsupported intrinsic assignments");
+    let message = err.to_string();
+    assert!(
+        message.contains("unsupported intrinsic in assignment: Len"),
+        "unexpected error: {message}"
+    );
 }

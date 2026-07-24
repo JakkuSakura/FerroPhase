@@ -1007,7 +1007,9 @@ impl LirGenerator {
         size: usize,
     ) -> Option<()> {
         match size {
-            4 => Self::write_initializer_int(out, offset, (value as f32).to_bits() as u128, 4, false),
+            4 => {
+                Self::write_initializer_int(out, offset, (value as f32).to_bits() as u128, 4, false)
+            }
             8 => Self::write_initializer_int(out, offset, value.to_bits() as u128, 8, false),
             _ => None,
         }
@@ -1238,8 +1240,7 @@ impl LirGenerator {
                 }
                 mir::Operand::Constant(constant) => {
                     if let Some(place_ty) = place_ty.as_ref() {
-                        let constant_value =
-                            self.constant_to_lir_constant(constant, place_ty)?;
+                        let constant_value = self.constant_to_lir_constant(constant, place_ty)?;
                         result_value = Some(lir::LirValue::Constant(constant_value));
                     } else {
                         let value = self.transform_operand(operand)?;
@@ -1274,16 +1275,10 @@ impl LirGenerator {
                     }
                     IntrinsicCallKind::Slice => {
                         if args.len() != 3 {
-                            self.emit_warning(format!(
-                                "slice intrinsic expects 3 arguments, got {}; lowering to undef",
+                            return Err(fp_core::error::Error::from(format!(
+                                "slice intrinsic expects 3 arguments, got {}",
                                 args.len()
-                            ));
-                            let fallback_ty =
-                                destination_lir_ty.clone().unwrap_or(lir::LirType::I32);
-                            result_value = Some(lir::LirValue::Constant(lir::LirConstant::Undef(
-                                fallback_ty,
                             )));
-                            return Ok(instructions);
                         }
 
                         let base_op = &args[0];
@@ -1325,16 +1320,10 @@ impl LirGenerator {
                             }
                             Some(lir::LirType::Ptr(_)) => base_value,
                             other => {
-                                self.emit_warning(format!(
-                                    "slice intrinsic base type {:?} not supported; lowering to undef",
+                                return Err(fp_core::error::Error::from(format!(
+                                    "slice intrinsic base type {:?} is not supported in MIR→LIR lowering",
                                     other
-                                ));
-                                let fallback_ty =
-                                    destination_lir_ty.clone().unwrap_or(lir::LirType::I32);
-                                result_value = Some(lir::LirValue::Constant(
-                                    lir::LirConstant::Undef(fallback_ty),
-                                ));
-                                return Ok(instructions);
+                                )));
                             }
                         };
 
@@ -1378,15 +1367,10 @@ impl LirGenerator {
                         return Ok(instructions);
                     }
                     _ => {
-                        self.emit_warning(format!(
-                            "unsupported intrinsic in assignment: {:?}; lowering to undef",
+                        return Err(fp_core::error::Error::from(format!(
+                            "unsupported intrinsic in assignment: {:?}",
                             kind
-                        ));
-                        let fallback_ty = destination_lir_ty.clone().unwrap_or(lir::LirType::I32);
-                        result_value = Some(lir::LirValue::Constant(lir::LirConstant::Undef(
-                            fallback_ty,
                         )));
-                        return Ok(instructions);
                     }
                 };
                 let mut lir_args = Vec::with_capacity(args.len());
