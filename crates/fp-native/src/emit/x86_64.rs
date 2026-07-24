@@ -4429,6 +4429,13 @@ fn emit_store(
                 for (idx, elem) in values.iter().enumerate() {
                     let offset = dst_offset + (idx as i32) * elem_size;
                     match elem {
+                        AsmConstant::GlobalRef(name, _, indices) => {
+                            let addend = indices.iter().map(|index| *index as i64).sum();
+                            asm.emit_mov_imm64_reloc(Reg::R10, name.as_str(), addend);
+                        }
+                        AsmConstant::FunctionRef(name, _) => {
+                            asm.emit_mov_imm64_reloc(Reg::R10, name.as_str(), 0);
+                        }
                         AsmConstant::String(text) => {
                             let ro_offset = intern_cstring(rodata, rodata_pool, text);
                             asm.emit_mov_imm64_reloc(Reg::R10, ".rodata", ro_offset as i64);
@@ -4450,6 +4457,13 @@ fn emit_store(
                 for (idx, elem) in values.iter().enumerate() {
                     let offset = (idx as i32) * elem_size;
                     match elem {
+                        AsmConstant::GlobalRef(name, _, indices) => {
+                            let addend = indices.iter().map(|index| *index as i64).sum();
+                            asm.emit_mov_imm64_reloc(Reg::R10, name.as_str(), addend);
+                        }
+                        AsmConstant::FunctionRef(name, _) => {
+                            asm.emit_mov_imm64_reloc(Reg::R10, name.as_str(), 0);
+                        }
                         AsmConstant::String(text) => {
                             let ro_offset = intern_cstring(rodata, rodata_pool, text);
                             asm.emit_mov_imm64_reloc(Reg::R10, ".rodata", ro_offset as i64);
@@ -4473,6 +4487,13 @@ fn emit_store(
                 for (idx, elem) in values.iter().enumerate() {
                     let offset = (idx as i32) * elem_size;
                     match elem {
+                        AsmConstant::GlobalRef(name, _, indices) => {
+                            let addend = indices.iter().map(|index| *index as i64).sum();
+                            asm.emit_mov_imm64_reloc(Reg::R10, name.as_str(), addend);
+                        }
+                        AsmConstant::FunctionRef(name, _) => {
+                            asm.emit_mov_imm64_reloc(Reg::R10, name.as_str(), 0);
+                        }
                         AsmConstant::String(text) => {
                             let ro_offset = intern_cstring(rodata, rodata_pool, text);
                             asm.emit_mov_imm64_reloc(Reg::R10, ".rodata", ro_offset as i64);
@@ -5587,6 +5608,13 @@ fn store_constant_aggregate_to_reg(
                     .ok_or_else(|| Error::from("aggregate field out of range"))?;
                 let field_size = size_of(field_ty);
                 match field {
+                    AsmConstant::GlobalRef(name, _, indices) => {
+                        let addend = indices.iter().map(|index| *index as i64).sum();
+                        asm.emit_mov_imm64_reloc(Reg::R10, name.as_str(), addend);
+                    }
+                    AsmConstant::FunctionRef(name, _) => {
+                        asm.emit_mov_imm64_reloc(Reg::R10, name.as_str(), 0);
+                    }
                     AsmConstant::String(text) => {
                         let offset = intern_cstring(rodata, rodata_pool, text);
                         asm.emit_mov_imm64_reloc(Reg::R10, ".rodata", offset as i64);

@@ -65,7 +65,7 @@ impl LirInterpreter {
 
     pub fn run_function(
         &mut self,
-        program: &LirProgram,
+        _program: &LirProgram,
         func: &LirFunction,
         args: &[Value],
     ) -> LirResult<Value> {
@@ -176,9 +176,17 @@ impl LirInterpreter {
                 Ok(())
             }
             LirInstructionKind::Store { value, address, .. } => {
-                let val = self.resolve_raw(value)?;
-                let addr = self.resolve_addr(address)?;
                 let ty = self.infer_type(value);
+                let val = if Self::is_aggregate_runtime_type(&ty) {
+                    let aggregate_value = self.resolve_aggregate_value(value, &ty)?;
+                    self.value_to_slot_raw(aggregate_value, &ty)
+                } else if matches!(ty, LirType::Ptr(_)) {
+                    let runtime_value = self.resolve_runtime_value(value, &ty)?;
+                    self.value_to_slot_raw(runtime_value, &ty)
+                } else {
+                    self.resolve_raw(value)?
+                };
+                let addr = self.resolve_addr(address)?;
                 mem_store(&mut self.state.mem, addr, val, &ty)
             }
             LirInstructionKind::Load { address, .. } => {

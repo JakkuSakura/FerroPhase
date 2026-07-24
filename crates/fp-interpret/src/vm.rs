@@ -32,13 +32,11 @@ impl fmt::Display for VmError {
     }
 }
 
-const PAGE_SIZE: u64 = 4096;
 const STACK_SIZE: u64 = 8 * 1024 * 1024;
 const HEAP_DEFAULT: u64 = 64 * 1024 * 1024;
 
 pub struct VirtMem {
     bytes: Vec<u8>,
-    heap_ptr: u64,
     stack_top: u64,
     stack_low: u64,
 }
@@ -51,7 +49,6 @@ impl VirtMem {
         let stack_low = stack_top - STACK_SIZE;
         Self {
             bytes,
-            heap_ptr: 0x10000,
             stack_top,
             stack_low,
         }
@@ -62,16 +59,6 @@ impl VirtMem {
             return Err(VmError::InvalidAddress(addr));
         }
         Ok(())
-    }
-
-    pub fn heap_alloc(&mut self, size: u64, alignment: u32) -> Result<u64, VmError> {
-        let aligned = (self.heap_ptr + alignment as u64 - 1) & !(alignment as u64 - 1);
-        let end = aligned + size;
-        if end > self.stack_low {
-            return Err(VmError::StackOverflow);
-        }
-        self.heap_ptr = end;
-        Ok(aligned)
     }
 
     pub fn stack_alloc(&mut self, sp: u64, size: u64, alignment: u32) -> Result<u64, VmError> {
@@ -134,41 +121,8 @@ impl VirtMem {
         Ok(self.bytes[addr as usize])
     }
 
-    pub fn store_f32(&mut self, addr: u64, val: f32) -> Result<(), VmError> {
-        self.store_u32(addr, val.to_bits())
-    }
-
-    pub fn load_f32(&self, addr: u64) -> Result<f32, VmError> {
-        Ok(f32::from_bits(self.load_u32(addr)?))
-    }
-
-    pub fn store_f64(&mut self, addr: u64, val: f64) -> Result<(), VmError> {
-        self.store_u64(addr, val.to_bits())
-    }
-
-    pub fn load_f64(&self, addr: u64) -> Result<f64, VmError> {
-        Ok(f64::from_bits(self.load_u64(addr)?))
-    }
-
-    pub fn store_bytes(&mut self, addr: u64, data: &[u8]) -> Result<(), VmError> {
-        self.bounds(addr, data.len() as u64)?;
-        let a = addr as usize;
-        self.bytes[a..a + data.len()].copy_from_slice(data);
-        Ok(())
-    }
-
-    pub fn load_bytes(&self, addr: u64, len: usize) -> Result<&[u8], VmError> {
-        self.bounds(addr, len as u64)?;
-        let a = addr as usize;
-        Ok(&self.bytes[a..a + len])
-    }
-
     pub fn initial_sp(&self) -> u64 {
         self.stack_top
-    }
-
-    pub fn heap_base(&self) -> u64 {
-        0x10000
     }
 }
 
@@ -212,16 +166,14 @@ impl RegFile {
 }
 
 pub struct StackFrame {
-    pub function_name: String,
     pub caller_sp: u64,
     pub saved_regs: HashMap<RegisterId, u64>,
     pub local_offsets: HashMap<u32, u64>,
 }
 
 impl StackFrame {
-    pub fn new(function_name: String, caller_sp: u64) -> Self {
+    pub fn new(caller_sp: u64) -> Self {
         Self {
-            function_name,
             caller_sp,
             saved_regs: HashMap::new(),
             local_offsets: HashMap::new(),
@@ -249,8 +201,9 @@ impl ThreadState {
     }
 
     pub fn push_frame(&mut self, func_name: String) {
+        let _ = func_name;
         let sp = self.regs.sp();
-        self.call_stack.push(StackFrame::new(func_name, sp));
+        self.call_stack.push(StackFrame::new(sp));
     }
 
     pub fn pop_frame(&mut self) {

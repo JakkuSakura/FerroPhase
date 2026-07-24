@@ -3033,6 +3033,13 @@ fn emit_store(
                             continue;
                         }
                         match field {
+                            AsmConstant::GlobalRef(name, _, indices) => {
+                                let addend = indices.iter().map(|index| *index as i64).sum();
+                                emit_load_symbol_addr(asm, Reg::X16, name.as_str(), addend)?;
+                            }
+                            AsmConstant::FunctionRef(name, _) => {
+                                emit_load_symbol_addr(asm, Reg::X16, name.as_str(), 0)?;
+                            }
                             AsmConstant::String(text) => {
                                 let offset = intern_cstring(rodata, rodata_pool, text);
                                 emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
@@ -3085,6 +3092,13 @@ fn emit_store(
                             continue;
                         }
                         match field {
+                            AsmConstant::GlobalRef(name, _, indices) => {
+                                let addend = indices.iter().map(|index| *index as i64).sum();
+                                emit_load_symbol_addr(asm, Reg::X16, name.as_str(), addend)?;
+                            }
+                            AsmConstant::FunctionRef(name, _) => {
+                                emit_load_symbol_addr(asm, Reg::X16, name.as_str(), 0)?;
+                            }
                             AsmConstant::String(text) => {
                                 let offset = intern_cstring(rodata, rodata_pool, text);
                                 emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
@@ -3138,6 +3152,13 @@ fn emit_store(
                             continue;
                         }
                         match field {
+                            AsmConstant::GlobalRef(name, _, indices) => {
+                                let addend = indices.iter().map(|index| *index as i64).sum();
+                                emit_load_symbol_addr(asm, Reg::X16, name.as_str(), addend)?;
+                            }
+                            AsmConstant::FunctionRef(name, _) => {
+                                emit_load_symbol_addr(asm, Reg::X16, name.as_str(), 0)?;
+                            }
                             AsmConstant::String(text) => {
                                 let offset = intern_cstring(rodata, rodata_pool, text);
                                 emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;

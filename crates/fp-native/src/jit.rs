@@ -1,5 +1,4 @@
 use crate::emit::{EmitPlan, RelocKind, RelocSection, TargetArch, TargetFormat};
-use fp_ffi::DynamicLibrary;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, LirInstructionKind, LirProgram, LirType};
 #[cfg(unix)]

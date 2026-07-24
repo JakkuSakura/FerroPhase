@@ -75,6 +75,9 @@ impl LirGenerator {
         self.current_return_type
             .as_ref()
             .map(|ty| {
+                if Self::slice_element_type(ty).is_some() {
+                    return false;
+                }
                 matches!(
                     ty,
                     lir::LirType::Struct { .. }
@@ -2564,20 +2567,6 @@ impl LirGenerator {
                 })?;
 
             if let Some(storage) = self.local_storage.get(&place.local).cloned() {
-                if let Some(value) = self.register_map.get(&place.local).cloned() {
-                    let store_id = self.next_id();
-                    self.queued_instructions.push(lir::LirInstruction {
-                        id: store_id,
-                        kind: lir::LirInstructionKind::Store {
-                            value,
-                            address: storage.ptr_value.clone(),
-                            alignment: Some(storage.alignment),
-                            volatile: false,
-                        },
-                        type_hint: None,
-                        debug_info: None,
-                    });
-                }
                 return Ok(PlaceAccess::Address(PlaceAddress {
                     ptr: storage.ptr_value,
                     ty,

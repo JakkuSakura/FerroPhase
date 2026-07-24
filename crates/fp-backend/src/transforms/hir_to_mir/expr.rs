@@ -8348,7 +8348,7 @@ impl<'a> BodyBuilder<'a> {
 
         let implicit_ty = init
             .as_deref()
-            .map(Self::implicit_local_init_ty)
+            .map(|expr| self.implicit_local_init_ty(expr))
             .unwrap_or_else(|| Ty {
                 kind: TyKind::Tuple(Vec::new()),
             });
@@ -9535,14 +9535,61 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    fn implicit_local_init_ty(expr: &hir::Expr) -> Ty {
-        match expr.kind {
-            hir::ExprKind::Query(_) => Ty {
+    fn implicit_local_init_ty(&self, expr: &hir::Expr) -> Ty {
+        self.infer_initializer_ty(expr).unwrap_or_else(|| Ty {
+            kind: TyKind::Tuple(Vec::new()),
+        })
+    }
+
+    fn infer_initializer_ty(&self, expr: &hir::Expr) -> Option<Ty> {
+        match &expr.kind {
+            hir::ExprKind::Query(_) => Some(Ty {
                 kind: TyKind::Int(IntTy::I64),
-            },
-            _ => Ty {
-                kind: TyKind::Tuple(Vec::new()),
-            },
+            }),
+            hir::ExprKind::Literal(lit) => {
+                let constant = mir::Constant {
+                    span: expr.span,
+                    user_ty: None,
+                    literal: match lit {
+                        hir::Lit::Bool(value) => mir::ConstantKind::Bool(*value),
+                        hir::Lit::Integer(value) => mir::ConstantKind::Int(*value),
+                        hir::Lit::Float(value) => mir::ConstantKind::Float(*value),
+                        hir::Lit::Str(value) => mir::ConstantKind::Str(value.clone()),
+                        hir::Lit::Char(value) => mir::ConstantKind::Int(*value as i64),
+                        hir::Lit::Null => mir::ConstantKind::Null,
+                    },
+                };
+                self.constant_ty_from_constant(&constant)
+            }
+            hir::ExprKind::If(_, then_expr, else_expr) => {
+                let then_ty = self.infer_initializer_ty(then_expr)?;
+                let else_ty = else_expr
+                    .as_deref()
+                    .and_then(|expr| self.infer_initializer_ty(expr))?;
+                if then_ty == else_ty {
+                    Some(then_ty)
+                } else {
+                    None
+                }
+            }
+            hir::ExprKind::Block(block) => block
+                .expr
+                .as_deref()
+                .and_then(|expr| self.infer_initializer_ty(expr)),
+            hir::ExprKind::Reference(reference) => {
+                let inner_ty = self.infer_initializer_ty(reference.expr.as_ref())?;
+                Some(Ty {
+                    kind: TyKind::Ref(
+                        mir::ty::Region::ReErased,
+                        Box::new(inner_ty),
+                        match reference.mutable {
+                            hir::ty::Mutability::Mut => Mutability::Mut,
+                            hir::ty::Mutability::Not => Mutability::Not,
+                        },
+                    ),
+                })
+            }
+            _ => None,
         }
     }
 
@@ -9600,7 +9647,7 @@ impl<'a> BodyBuilder<'a> {
         let implicit_ty = local
             .init
             .as_ref()
-            .map(Self::implicit_local_init_ty)
+            .map(|expr| self.implicit_local_init_ty(expr))
             .unwrap_or_else(|| Ty {
                 kind: TyKind::Tuple(Vec::new()),
             });
@@ -14809,14 +14856,7 @@ impl<'a> BodyBuilder<'a> {
             ),
             hir::Lit::Str(value) => (
                 mir::ConstantKind::Str(value.clone()),
-                Ty {
-                    kind: TyKind::RawPtr(TypeAndMut {
-                        ty: Box::new(Ty {
-                            kind: TyKind::Int(IntTy::I8),
-                        }),
-                        mutbl: Mutability::Not,
-                    }),
-                },
+                self.lowering.string_slice_ty(),
             ),
             hir::Lit::Char(value) => (
                 mir::ConstantKind::Int(*value as i64),
