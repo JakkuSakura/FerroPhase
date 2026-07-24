@@ -1264,7 +1264,6 @@ impl LirGenerator {
                     type_hint: destination_lir_ty.clone().or_else(|| {
                         // JUSTIFY: SQL query lowering occasionally lacks a
                         // destination type from MIR; I64 is the safest default.
-                        eprintln!("[fp-backend] MIR→LIR: destination type missing for query, defaulting to I64");
                         Some(lir::LirType::I64)
                     }),
                     debug_info: None,
@@ -1311,7 +1310,6 @@ impl LirGenerator {
                                 _ => None,
                             })
                             .unwrap_or_else(|| {
-                                eprintln!("[fp-backend] MIR→LIR: slice element type unknown, defaulting to I8");
                                 lir::LirType::I8
                             });
 
@@ -1415,7 +1413,6 @@ impl LirGenerator {
                 let type_hint = destination_lir_ty
                     .clone()
                     .or_else(|| {
-                        eprintln!("[fp-backend] MIR→LIR: binary op type unknown, defaulting to I32");
                         Some(lir::LirType::I32)
                     });
 
@@ -1694,11 +1691,9 @@ impl LirGenerator {
                     _ => vec![lir::LirType::I64, lir::LirType::I64],
                 };
                 let key_ty = entry_fields.get(0).cloned().unwrap_or_else(|| {
-                    eprintln!("[fp-backend] MIR→LIR: map key type unknown, defaulting to I64");
                     lir::LirType::I64
                 });
                 let value_ty = entry_fields.get(1).cloned().unwrap_or_else(|| {
-                    eprintln!("[fp-backend] MIR→LIR: map value type unknown, defaulting to I64");
                     lir::LirType::I64
                 });
 
@@ -2656,6 +2651,40 @@ impl LirGenerator {
                 return Ok(PlaceAccess::Value { value, ty, lir_ty });
             }
 
+            // When storage is intentionally skipped for the return local
+            // (e.g. for large aggregate returns managed by prepare_return_value),
+            // create a zero-initialized stack slot so the place is still resolvable.
+            let lir_ty = self.lir_type_from_ty(&ty);
+            let alignment = Self::alignment_for_lir_type(&lir_ty);
+            if alignment > 0 {
+                let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
+                let alloca_id = self.next_id();
+                self.queued_instructions.push(lir::LirInstruction {
+                    id: alloca_id,
+                    kind: lir::LirInstructionKind::Alloca {
+                        size: lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32)),
+                        alignment,
+                    },
+                    type_hint: Some(pointer_type.clone()),
+                    debug_info: None,
+                });
+                let ptr_value = lir::LirValue::Register(alloca_id);
+                self.local_storage.insert(
+                    place.local,
+                    LocalStorage {
+                        ptr_value: ptr_value.clone(),
+                        element_type: lir_ty.clone(),
+                        alignment,
+                    },
+                );
+                return Ok(PlaceAccess::Address(PlaceAddress {
+                    ptr: ptr_value,
+                    ty,
+                    lir_ty,
+                    alignment,
+                }));
+            }
+
             return Err(crate::error::optimization_error(format!(
                 "MIR→LIR: unresolved place local {} — no register or storage allocated",
                 place.local
@@ -3034,7 +3063,6 @@ impl LirGenerator {
         let index_lir_ty = self
             .type_of_operand(&index_operand)
             .unwrap_or_else(|| {
-                eprintln!("[fp-backend] MIR→LIR: index operand type unknown, defaulting to I64");
                 lir::LirType::I64
             });
         if index_lir_ty != lir::LirType::I64 {
@@ -3255,7 +3283,6 @@ impl LirGenerator {
         let current_ty = self
             .infer_lir_value_type(&value)
             .unwrap_or_else(|| {
-                eprintln!("[fp-backend] MIR→LIR: value type unknown, defaulting to I64");
                 lir::LirType::I64
             });
         if current_ty == lir::LirType::I64 {
@@ -4026,7 +4053,6 @@ impl LirGenerator {
                         .clone()
                         .or_else(|| self.infer_lir_value_type(value))
                         .unwrap_or_else(|| {
-                            eprintln!("[fp-backend] MIR→LIR: field type unknown, defaulting to Ptr(I8)");
                             lir::LirType::Ptr(Box::new(lir::LirType::I8))
                         })
                 })
@@ -4087,7 +4113,6 @@ impl LirGenerator {
                             .get(0)
                             .cloned()
                             .unwrap_or_else(|| {
-                                eprintln!("[fp-backend] MIR→LIR: GEP result type unknown, defaulting to I64");
                                 lir::LirType::I64
                             });
                         Some(lir::LirType::Array(
@@ -4421,7 +4446,6 @@ impl LirGenerator {
                         .map(|(idx, field_const)| {
                             let field_ty =
                                 target_fields.get(idx).cloned().unwrap_or_else(|| {
-                                    eprintln!("[fp-backend] MIR→LIR: tuple field type unknown, defaulting to I64");
                                     lir::LirType::I64
                                 });
                             self.cast_constant_to_lir_type(field_const, &field_ty)
