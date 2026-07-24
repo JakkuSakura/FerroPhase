@@ -1105,7 +1105,7 @@ impl LirGenerator {
             // value has already been written to the designated return local. In
             // that case, synthesize a return terminator and let `prepare_return_value`
             // materialize the value (loading from the return slot if needed).
-            lir::LirTerminator::Return(self.prepare_return_value(&mut lir_block))
+            lir::LirTerminator::Return(self.prepare_return_value(&mut lir_block)?)
         };
 
         lir_block.terminator = terminator;
@@ -2267,7 +2267,7 @@ impl LirGenerator {
     ) -> Result<lir::LirTerminator> {
         match &terminator.kind {
             mir::TerminatorKind::Return => {
-                Ok(lir::LirTerminator::Return(self.prepare_return_value(block)))
+                Ok(lir::LirTerminator::Return(self.prepare_return_value(block)?))
             }
             mir::TerminatorKind::Goto { target } => Ok(lir::LirTerminator::Br(*target)),
             mir::TerminatorKind::Unreachable => Ok(lir::LirTerminator::Unreachable),
@@ -2639,13 +2639,10 @@ impl LirGenerator {
                 return Ok(PlaceAccess::Value { value, ty, lir_ty });
             }
 
-            let lir_ty = self.lir_type_from_ty(&ty);
-            let placeholder = lir::LirValue::Constant(lir::LirConstant::Undef(lir_ty.clone()));
-            return Ok(PlaceAccess::Value {
-                value: placeholder,
-                ty,
-                lir_ty,
-            });
+            return Err(crate::error::optimization_error(format!(
+                "MIR→LIR: unresolved place local {} — no register or storage allocated",
+                place.local
+            )));
         }
 
         let mut base_place = place.clone();
@@ -4792,10 +4789,11 @@ impl LirGenerator {
         }
     }
 
-    fn prepare_return_value(&mut self, block: &mut lir::LirBasicBlock) -> Option<lir::LirValue> {
-        let return_ty = self.current_return_type.clone()?;
+    fn prepare_return_value(&mut self, block: &mut lir::LirBasicBlock) -> Result<Option<lir::LirValue>> {
+        let return_ty = self.current_return_type.clone()
+            .ok_or_else(|| crate::error::optimization_error("MIR→LIR: no return type set"))?;
         if matches!(return_ty, lir::LirType::Void) {
-            return None;
+            return Ok(None);
         }
 
         if let Some(local) = self.return_local {
@@ -4817,20 +4815,22 @@ impl LirGenerator {
                 });
 
                 if element_ty == return_ty {
-                    return Some(lir::LirValue::Register(load_id));
+                    return Ok(Some(lir::LirValue::Register(load_id)));
                 } else if let Some(zero) = self.zero_value_for_lir_type(&return_ty) {
-                    return Some(zero);
+                    return Ok(Some(zero));
                 } else {
-                    return Some(lir::LirValue::Constant(lir::LirConstant::Undef(return_ty)));
+                    return Err(crate::error::optimization_error(format!(
+                        "MIR→LIR: return type mismatch — loaded {element_ty:?}, expected {return_ty:?}"
+                    )));
                 }
             }
 
             if let Some(value) = self.register_map.get(&local) {
                 if let Some(current_ty) = self.infer_lir_value_type(value) {
                     if current_ty == return_ty {
-                        return Some(value.clone());
+                        return Ok(Some(value.clone()));
                     } else if let Some(zero) = self.zero_value_for_lir_type(&return_ty) {
-                        return Some(zero);
+                        return Ok(Some(zero));
                     }
                 }
                 if let Some(local_ty) = self
@@ -4839,14 +4839,18 @@ impl LirGenerator {
                     .map(|ty| self.lir_type_from_ty(ty))
                 {
                     if local_ty == return_ty {
-                        return Some(value.clone());
+                        return Ok(Some(value.clone()));
                     }
                 }
-                return Some(lir::LirValue::Constant(lir::LirConstant::Undef(return_ty)));
+                return Err(crate::error::optimization_error(format!(
+                    "MIR→LIR: return value type mismatch for local {local} — expected {return_ty:?}"
+                )));
             }
         }
 
-        Some(lir::LirValue::Constant(lir::LirConstant::Undef(return_ty)))
+        Err(crate::error::optimization_error(
+            "MIR→LIR: could not determine return value".to_string()
+        ))
     }
 
     fn compute_block_order(&self, mir_body: &mir::Body) -> Vec<usize> {
