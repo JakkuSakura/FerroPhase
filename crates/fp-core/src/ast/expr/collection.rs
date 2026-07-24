@@ -203,6 +203,7 @@ fn make_const_collection_call(expr: Expr) -> Expr {
     let block = ExprBlock::new_expr(expr);
     ExprKind::ConstBlock(ExprConstBlock {
         span: Span::null(),
+        collected_items: Vec::new(),
         expr: Expr::block(block).into(),
     })
     .into()

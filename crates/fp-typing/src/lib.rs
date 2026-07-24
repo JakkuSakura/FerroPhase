@@ -575,6 +575,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub fn infer(&mut self, node: &mut Node) -> Result<TypingOutcome> {
         match node.kind_mut() {
             NodeKind::Expr(expr) => {
+                self.predeclare_expr_scope(expr);
                 let var = match self.infer_expr(expr) {
                     Ok(var) => var,
                     Err(err) => {
@@ -596,9 +597,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let previous_exception = self.exception_mode;
                 self.exception_mode = attrs_has_feature(&file.attrs, "exception");
                 self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new()));
-                for item in &file.items {
-                    self.predeclare_item(item);
-                }
+                self.predeclare_scope_items(&file.collected_items);
                 for item in &mut file.items {
                     if let Err(err) = self.infer_item(item) {
                         self.exception_mode = previous_exception;
@@ -627,15 +626,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         match node.kind() {
             NodeKind::File(file) => {
                 self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new()));
-                for item in &file.items {
-                    self.predeclare_item(item);
-                }
+                self.predeclare_scope_items(&file.collected_items);
             }
             NodeKind::Item(item) => {
                 self.predeclare_item(item);
             }
-            NodeKind::Expr(_) => {
-                // Nothing to predeclare for expressions
+            NodeKind::Expr(expr) => {
+                self.predeclare_expr_scope(expr);
             }
             NodeKind::Query(_) | NodeKind::Schema(_) => {
                 // Non-AST documents do not participate in type inference yet.
@@ -683,6 +680,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     /// Initialize the typer with a single item for incremental typing.
     pub fn initialize_from_item(&mut self, item: &Item) {
         self.predeclare_item(item);
+    }
+
+    fn predeclare_scope_items(&mut self, items: &[Item]) {
+        for item in items {
+            self.predeclare_item(item);
+        }
+    }
+
+    fn predeclare_expr_scope(&mut self, expr: &Expr) {
+        match expr.kind() {
+            ExprKind::Block(block) => self.predeclare_scope_items(&block.collected_items),
+            ExprKind::Quote(quote) => self.predeclare_scope_items(&quote.collected_items),
+            ExprKind::ConstBlock(block) => self.predeclare_scope_items(&block.collected_items),
+            ExprKind::Item(item) => self.predeclare_item(item.as_ref()),
+            _ => {}
+        }
     }
 
     fn finish(&mut self) -> TypingOutcome {
@@ -1885,9 +1898,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.enter_scope();
                 self.module_scope_depths
                     .push(self.env.len().saturating_sub(1));
-                for child in &module.items {
-                    self.predeclare_item(child);
-                }
+                self.predeclare_scope_items(&module.collected_items);
                 self.exit_scope();
                 self.module_scope_depths.pop();
                 self.pop_module_path();
@@ -1923,9 +1934,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
 
                 self.enter_scope();
-                for child in &impl_block.items {
-                    self.predeclare_item(child);
-                }
+                self.predeclare_scope_items(&impl_block.collected_items);
                 self.exit_scope();
                 self.impl_stack.pop();
             }
@@ -2519,9 +2528,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.enter_scope();
                     self.module_scope_depths
                         .push(self.env.len().saturating_sub(1));
-                    for child in &module.items {
-                        self.predeclare_item(child);
-                    }
+                    self.predeclare_scope_items(&module.collected_items);
                     for child in &mut module.items {
                         self.infer_item(child)?;
                     }
@@ -2545,6 +2552,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ItemKind::DefTrait(trait_def) => {
                     let trait_name = trait_def.name.as_str().to_string();
                     self.enter_scope();
+                    self.predeclare_scope_items(&trait_def.collected_items);
 
                     // Provide `Self` inside trait methods as a generic parameter
                     // bounded by the trait itself.
@@ -2614,9 +2622,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
                     self.impl_stack.push(ctx.clone());
                     self.enter_scope();
-                    for child in &impl_block.items {
-                        self.predeclare_item(child);
-                    }
+                    self.predeclare_scope_items(&impl_block.collected_items);
                     for child in &mut impl_block.items {
                         self.infer_item(child)?;
                     }
@@ -2762,6 +2768,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             let body_block = func.body.as_ref().clone().into_block();
             let mut quote_expr = Expr::from(ExprKind::Quote(ExprQuote {
                 span: Span::null(),
+                collected_items: body_block.collected_items.clone(),
                 block: body_block,
                 kind: Some(kind),
             }));

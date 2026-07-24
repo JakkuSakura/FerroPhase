@@ -20,6 +20,7 @@ fn type_inference_records_resolved_name_on_tast_expr() {
     let mut node = Node::new(NodeKind::File(File {
         path: "resolved_names.fp".into(),
         attrs: Vec::new(),
+        collected_items: Vec::new(),
         items: vec![const_item, Item::from(ItemKind::Expr(expr.clone()))],
     }));
 

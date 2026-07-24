@@ -361,6 +361,7 @@ fn parse_fn_item_core(
         ty_annotation: None,
         attrs,
         name,
+        collected_items: Vec::new(),
         ty: None,
         sig,
         body: Box::new(body),
@@ -393,6 +394,7 @@ fn parse_trait_item(
         name,
         generics_params,
         bounds,
+        collected_items: Vec::new(),
         items,
         visibility,
     })))
@@ -497,6 +499,7 @@ fn parse_trait_fn_member(
         ty_annotation: None,
         attrs,
         name,
+        collected_items: Vec::new(),
         ty: None,
         sig,
         body: Box::new(body),
@@ -551,6 +554,7 @@ fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) ->
         trait_ty,
         self_ty,
         generics_params,
+        collected_items: Vec::new(),
         items,
     })))
 }
@@ -910,6 +914,7 @@ fn parse_extern_fn_item(
         ty_annotation: None,
         attrs,
         name,
+        collected_items: Vec::new(),
         ty: None,
         sig,
         body: Box::new(body),
@@ -994,6 +999,7 @@ fn parse_abi_fn_item(
         ty_annotation: None,
         attrs,
         name,
+        collected_items: Vec::new(),
         ty: None,
         sig,
         body: Box::new(body),
@@ -1106,6 +1112,7 @@ fn parse_mod_item(
         return Ok(Item::from(ItemKind::Module(Module {
             attrs,
             name,
+            collected_items: Vec::new(),
             items: Vec::new(),
             visibility,
             is_external: true,
@@ -1121,6 +1128,7 @@ fn parse_mod_item(
     Ok(Item::from(ItemKind::Module(Module {
         attrs,
         name,
+        collected_items: Vec::new(),
         items,
         visibility,
         is_external: false,

@@ -13,6 +13,7 @@ mod attr;
 mod deserialize;
 mod expr;
 mod ident;
+mod item_collection;
 mod item;
 pub mod json;
 mod macros;
@@ -28,6 +29,7 @@ pub use attr::*;
 pub use expr::*;
 pub use expr::resolution::*;
 pub use ident::*;
+pub use item_collection::*;
 pub use item::*;
 pub use json::*;
 pub use macros::*;
@@ -41,10 +43,12 @@ pub use value::*;
 pub type TySlot = Option<Ty>;
 
 common_struct! {
-    pub struct File {
+pub struct File {
         pub path: PathBuf,
         #[serde(default)]
         pub attrs: Vec<Attribute>,
+        #[serde(default)]
+        pub collected_items: ItemChunk,
         pub items: ItemChunk,
     }
 }

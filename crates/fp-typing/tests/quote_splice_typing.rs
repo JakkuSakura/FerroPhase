@@ -10,6 +10,7 @@ fn make_quote_block(stmts: Vec<BlockStmt>, last_expr: Option<Expr>) -> Expr {
     };
     Expr::from(ExprKind::Quote(ExprQuote {
         span: Span::null(),
+        collected_items: Vec::new(),
         block,
         kind: None,
     }))
@@ -55,6 +56,7 @@ fn splice_in_expr_requires_expr_quote_token() {
     let block = ExprBlock::new_expr(Expr::value(Value::int(1)));
     let expr_token = Expr::from(ExprKind::Quote(ExprQuote {
         span: Span::null(),
+        collected_items: Vec::new(),
         block,
         kind: Some(QuoteFragmentKind::Expr),
     }));
@@ -93,6 +95,7 @@ fn splice_in_expr_requires_expr_quote_token() {
 fn splice_stmt_accepts_item_quote_list() {
     let item_token = Expr::from(ExprKind::Quote(ExprQuote {
         span: Span::null(),
+        collected_items: Vec::new(),
         block: ExprBlock::new_stmts(vec![BlockStmt::Item(Box::new(Item::from(
             ItemKind::DefStruct(ItemDefStruct::new(Ident::new("Generated"), vec![])),
         )))]),

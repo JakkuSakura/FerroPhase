@@ -31,6 +31,7 @@ pub fn lift_program(program: &hir::Program, path: PathBuf) -> Result<ast::Node> 
     Ok(ast::Node::file(ast::File {
         path,
         attrs: Vec::new(),
+        collected_items: Vec::new(),
         items,
     }))
 }
@@ -121,6 +122,7 @@ fn lift_function_item(item: &hir::Item, function: &hir::Function) -> Result<Item
             ty_annotation: None,
             attrs: function.attrs.clone(),
             name: Ident::new(function.sig.name.as_str()),
+            collected_items: Vec::new(),
             ty: Some(TypeFunction {
                 params: function
                     .sig
@@ -477,6 +479,7 @@ fn lift_block(block: &hir::Block) -> Result<ExprBlock> {
     }
     Ok(ExprBlock {
         span: Span::null(),
+        collected_items: Vec::new(),
         stmts,
     })
 }

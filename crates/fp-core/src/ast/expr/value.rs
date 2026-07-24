@@ -2,8 +2,8 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
 use crate::ast::{
-    get_threadlocal_serializer, BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident, Name,
-    Pattern, Ty, Value, ValueFunction,
+    get_threadlocal_serializer, BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident,
+    ItemChunk, Name, Pattern, Ty, Value, ValueFunction,
 };
 use crate::intrinsics::IntrinsicCallKind;
 use crate::ops::{BinOpKind, UnOpKind};
@@ -215,6 +215,8 @@ common_struct! {
     pub struct ExprQuote {
         #[serde(default)]
         pub span: Span,
+        #[serde(default)]
+        pub collected_items: ItemChunk,
         pub block: ExprBlock,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub kind: Option<QuoteFragmentKind>,
@@ -1438,6 +1440,8 @@ common_struct! {
     pub struct ExprConstBlock {
         #[serde(default)]
         pub span: Span,
+        #[serde(default)]
+        pub collected_items: ItemChunk,
         pub expr: BExpr,
     }
 }

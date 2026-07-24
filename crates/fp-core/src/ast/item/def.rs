@@ -174,6 +174,8 @@ common_struct! {
         pub ty_annotation: TySlot,
         pub attrs: Vec<Attribute>,
         pub name: Ident,
+        #[serde(default)]
+        pub collected_items: ItemChunk,
         pub ty: Option<TypeFunction>,
         pub sig: FunctionSignature,
         pub body: BExpr,
@@ -188,6 +190,7 @@ impl ItemDefFunction {
             ty_annotation: None,
             attrs: Vec::new(),
             name,
+            collected_items: Vec::new(),
             ty: None,
             sig,
             body,
@@ -249,6 +252,8 @@ common_struct! {
         #[serde(default)]
         pub generics_params: Vec<GenericParam>,
         pub bounds: TypeBounds,
+        #[serde(default)]
+        pub collected_items: ItemChunk,
         pub items: ItemChunk,
         pub visibility: Visibility,
     }

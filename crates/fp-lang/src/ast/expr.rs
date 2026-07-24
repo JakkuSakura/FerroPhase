@@ -345,6 +345,7 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
             *input = probe;
             let quote_expr = Expr::new(ExprKind::Quote(ExprQuote {
                 span: block.span,
+                collected_items: Vec::new(),
                 block,
                 kind: None,
             }));
@@ -428,6 +429,7 @@ fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Exp
             *input = probe;
             let quote_expr = Expr::new(ExprKind::Quote(ExprQuote {
                 span: block.span,
+                collected_items: Vec::new(),
                 block,
                 kind: None,
             }));
@@ -1340,6 +1342,7 @@ fn parse_quote_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     *input = probe;
     Ok(ExprKind::Quote(ExprQuote {
         span: block.span,
+        collected_items: Vec::new(),
         block,
         kind,
     })
@@ -2474,6 +2477,7 @@ fn parse_const_block_expr(input: &mut &[Token], file: FileId) -> ModalResult<Exp
     *input = probe;
     Ok(ExprKind::ConstBlock(ExprConstBlock {
         span: body.span(),
+        collected_items: Vec::new(),
         expr: Box::new(body),
     })
     .into())

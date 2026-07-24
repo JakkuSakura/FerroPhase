@@ -1,7 +1,8 @@
 use std::hash::Hash;
 
 use crate::ast::{
-    BExpr, BItem, Expr, ExprKind, Ident, Item, Pattern, PatternIdent, PatternKind, PatternType, Ty,
+    BExpr, BItem, Expr, ExprKind, Ident, Item, ItemChunk, Pattern, PatternIdent, PatternKind,
+    PatternType, Ty,
 };
 use crate::common_enum;
 use crate::common_struct;
@@ -139,6 +140,8 @@ common_struct! {
     pub struct ExprBlock {
         #[serde(default)]
         pub span: Span,
+        #[serde(default)]
+        pub collected_items: ItemChunk,
         pub stmts: StmtChunk,
     }
 }
@@ -146,18 +149,21 @@ impl ExprBlock {
     pub fn new() -> Self {
         Self {
             span: Span::null(),
+            collected_items: Vec::new(),
             stmts: Vec::new(),
         }
     }
     pub fn new_stmts(stmts: StmtChunk) -> Self {
         Self {
             span: Span::null(),
+            collected_items: Vec::new(),
             stmts,
         }
     }
     pub fn new_stmts_expr(stmts: StmtChunk, expr: impl Into<BExpr>) -> Self {
         let mut this = Self {
             span: Span::null(),
+            collected_items: Vec::new(),
             stmts,
         };
         this.push_expr(expr);
@@ -166,6 +172,7 @@ impl ExprBlock {
     pub fn new_expr(expr: Expr) -> Self {
         Self {
             span: Span::null(),
+            collected_items: Vec::new(),
             stmts: vec![BlockStmt::Expr(BlockStmtExpr::new(expr))],
         }
     }

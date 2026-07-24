@@ -5,7 +5,7 @@ pub use error::CompilerDriverError;
 pub use state::CompilerState;
 
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
-use fp_core::ast::{NodeKind, Value};
+use fp_core::ast::{annotate_collected_items, NodeKind, Value};
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
@@ -85,6 +85,7 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let mut ast = self.state.ast(ast_id)?.clone();
+        annotate_collected_items(&mut ast);
         let resolved_consts = self.collect_resolved_const_values();
         let module_resolution = self.state.module_resolution(ast_id);
         let outcome = annotate_with_resolved_state(
@@ -716,6 +717,7 @@ mod tests {
 
         let const_block = fp_core::ast::ExprConstBlock {
             span: fp_core::span::Span::null(),
+            collected_items: Vec::new(),
             expr: Box::new(Expr::value(fp_core::ast::Value::int(42))),
         };
         let expr = Expr::from(fp_core::ast::ExprKind::ConstBlock(const_block));
@@ -792,6 +794,7 @@ mod tests {
 
         let const_block = fp_core::ast::ExprConstBlock {
             span: fp_core::span::Span::null(),
+            collected_items: Vec::new(),
             expr: Box::new(Expr::value(fp_core::ast::Value::int(42))),
         };
         let expr = Expr::from(fp_core::ast::ExprKind::ConstBlock(const_block));

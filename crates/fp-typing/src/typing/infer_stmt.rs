@@ -30,12 +30,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub(crate) fn infer_block(&mut self, block: &mut ExprBlock) -> Result<TypeVarId> {
         self.enter_scope();
+        self.predeclare_scope_items(&block.collected_items);
         let mut last = self.fresh_type_var();
         self.bind(last, Ty::Unit(TypeUnit));
         for stmt in &mut block.stmts {
             match stmt {
                 BlockStmt::Item(item) => {
-                    self.predeclare_item(item);
                     self.infer_item(item)?;
                     last = self.fresh_type_var();
                     self.bind(last, Ty::Unit(TypeUnit));

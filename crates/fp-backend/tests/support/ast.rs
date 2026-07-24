@@ -10,6 +10,7 @@ pub fn empty_file() -> File {
     File {
         path: PathBuf::from("<memory>"),
         attrs: Vec::new(),
+        collected_items: Vec::new(),
         items: Vec::new(),
     }
 }
