@@ -23,22 +23,6 @@ impl HirGenerator {
         std::str::from_utf8(trimmed).ok().map(str::to_string)
     }
 
-    fn empty_block_expr_kind(&mut self) -> hir::ExprKind {
-        hir::ExprKind::Block(hir::Block {
-            hir_id: self.next_id(),
-            stmts: Vec::new(),
-            expr: None,
-        })
-    }
-
-    fn error_expr_kind(&mut self, message: impl Into<String>, span: Span) -> hir::ExprKind {
-        self.add_error(
-            Diagnostic::error(message.into())
-                .with_source_context(DIAGNOSTIC_CONTEXT)
-                .with_span(span),
-        );
-        self.empty_block_expr_kind()
-    }
     /// Transform an AST expression to HIR expression
     pub(super) fn transform_expr_to_hir(&mut self, ast_expr: &ast::Expr) -> Result<hir::Expr> {
         use ast::ExprKind;
@@ -259,37 +243,16 @@ impl HirGenerator {
                     let boxed: ast::BValue = Box::new(value.clone());
                     self.transform_value_to_hir(&boxed)?
                 } else {
-                    self.add_error(
-                        Diagnostic::error(
-                            "unsupported dynamic expression payload for `Any` node".to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT)
-                        .with_span(expr_span),
-                    );
-                    let block = hir::Block {
-                        hir_id: self.next_id(),
-                        stmts: Vec::new(),
-                        expr: None,
-                    };
-                    hir::ExprKind::Block(block)
+                    return Err(fp_core::error::Error::from(
+                        "unsupported dynamic expression payload for `Any` node",
+                    ));
                 }
             }
             ExprKind::Macro(mac) => {
-                // Hard error: macros must be lowered during normalization.
-                self.add_error(
-                    Diagnostic::error(format!(
-                        "macro `{}` was not lowered during normalization",
-                        mac.invocation.path
-                    ))
-                    .with_source_context(DIAGNOSTIC_CONTEXT)
-                    .with_span(expr_span),
-                );
-                let block = hir::Block {
-                    hir_id: self.next_id(),
-                    stmts: Vec::new(),
-                    expr: None,
-                };
-                hir::ExprKind::Block(block)
+                return Err(fp_core::error::Error::from(format!(
+                    "macro `{}` was not lowered during normalization",
+                    mac.invocation.path
+                )));
             }
             ExprKind::FormatString(format_str) => {
                 self.transform_format_string_to_hir(format_str)?
@@ -337,20 +300,10 @@ impl HirGenerator {
                 hir::ExprKind::Unary(hir::UnOp::Deref, Box::new(inner))
             }
             _ => {
-                self.add_error(
-                    Diagnostic::error(format!(
-                        "Unimplemented AST expression type for HIR transformation: {:?}",
-                        ast_expr
-                    ))
-                    .with_source_context(DIAGNOSTIC_CONTEXT)
-                    .with_span(expr_span),
-                );
-                let block = hir::Block {
-                    hir_id: self.next_id(),
-                    stmts: Vec::new(),
-                    expr: None,
-                };
-                hir::ExprKind::Block(block)
+                return Err(fp_core::error::Error::from(format!(
+                    "unimplemented AST expression type for HIR transformation: {:?}",
+                    ast_expr
+                )));
             }
         };
 
@@ -577,13 +530,10 @@ impl HirGenerator {
                     self.locator_to_hir_path_with_scope(&locator, PathResolutionScope::Value)?;
                 Ok(hir::ExprKind::Path(path))
             }
-            _ => Ok(self.error_expr_kind(
-                format!(
-                    "Unimplemented AST value type for HIR transformation: {:?}",
-                    std::mem::discriminant(value.as_ref())
-                ),
-                value.span(),
-            )),
+            _ => Err(fp_core::error::Error::from(format!(
+                "unimplemented AST value type for HIR transformation: {:?}",
+                std::mem::discriminant(value.as_ref())
+            ))),
         }
     }
 
@@ -675,9 +625,8 @@ impl HirGenerator {
             ast::ExprInvokeTarget::Function(locator) => {
                 if let Some(ident) = locator.as_ident() {
                     if ident.as_str() == "import" {
-                        return Ok(self.error_expr_kind(
-                            "dynamic import is only supported in interpret mode".to_string(),
-                            invoke.span(),
+                        return Err(fp_core::error::Error::from(
+                            "dynamic import is only supported in interpret mode",
                         ));
                     }
                 }
@@ -701,13 +650,10 @@ impl HirGenerator {
                 Ok(hir::ExprKind::Call(Box::new(func_expr), args))
             }
 
-            _ => Ok(self.error_expr_kind(
-                format!(
-                    "Unimplemented invoke target type for HIR transformation: {:?}",
-                    invoke.target
-                ),
-                invoke.span(),
-            )),
+            _ => Err(fp_core::error::Error::from(format!(
+                "unimplemented invoke target type for HIR transformation: {:?}",
+                invoke.target
+            ))),
         }
     }
 
@@ -940,23 +886,9 @@ impl HirGenerator {
             .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
             .transpose()?;
 
-        let scrutinee = match scrutinee {
-            Some(expr) => expr,
-            None => {
-                self.add_error(
-                    Diagnostic::error(
-                        "match expressions without scrutinee are not supported".to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT)
-                    .with_span(match_expr.span()),
-                );
-                hir::Expr {
-                    hir_id: self.next_id(),
-                    kind: self.empty_block_expr_kind(),
-                    span: self.create_span(1),
-                }
-            }
-        };
+        let scrutinee = scrutinee.ok_or_else(|| {
+            fp_core::error::Error::from("match expressions without scrutinee are not supported")
+        })?;
 
         let mut arms = Vec::with_capacity(match_expr.cases.len());
         for case in &match_expr.cases {
@@ -1050,7 +982,9 @@ impl HirGenerator {
                 .with_source_context(DIAGNOSTIC_CONTEXT)
                 .with_span(for_expr.span()),
             );
-            return Ok(self.empty_block_expr_kind());
+            return Err(fp_core::error::Error::from(
+                "`for` loop lowering only supports range iterators, iter(), and enumerate()",
+            ));
         }
 
         let (mut pat, _ty, _) = self.transform_pattern_with_metadata(&for_expr.pat)?;
@@ -1062,7 +996,9 @@ impl HirGenerator {
                         .with_source_context(DIAGNOSTIC_CONTEXT)
                         .with_span(for_expr.span()),
                 );
-                return Ok(self.empty_block_expr_kind());
+                return Err(fp_core::error::Error::from(
+                    "`for` loop pattern must be a simple binding",
+                ));
             }
         };
         if let hir::PatKind::Binding { mutable, .. } = &mut pat.kind {
@@ -1097,7 +1033,9 @@ impl HirGenerator {
                     .with_source_context(DIAGNOSTIC_CONTEXT)
                     .with_span(for_expr.span()),
                 );
-                return Ok(self.empty_block_expr_kind());
+                return Err(fp_core::error::Error::from(
+                    "`for` loop lowering currently only supports range iterators",
+                ));
             }
         };
 
@@ -1879,18 +1817,10 @@ impl HirGenerator {
                 self.transform_item_to_hir_stmt(item)?
             }
             _ => {
-                let expr_kind = self.error_expr_kind(
-                    format!(
-                        "Unimplemented block statement type for HIR transformation: {:?}",
-                        stmt
-                    ),
-                    stmt.span(),
-                );
-                hir::StmtKind::Expr(hir::Expr {
-                    hir_id: self.next_id(),
-                    kind: expr_kind,
-                    span: self.create_span(1),
-                })
+                return Err(fp_core::error::Error::from(format!(
+                    "unimplemented block statement type for HIR transformation: {:?}",
+                    stmt
+                )));
             }
         };
 

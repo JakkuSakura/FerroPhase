@@ -821,3 +821,89 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
 
     Ok(())
 }
+
+fn expect_lowering_error<T: std::fmt::Debug>(result: Result<T>, expected: &str) {
+    let err = result.expect_err("lowering should fail");
+    let message = err.to_string();
+    assert!(
+        message.contains(expected),
+        "expected error containing `{expected}`, got `{message}`"
+    );
+}
+
+#[test]
+fn transform_expr_rejects_dynamic_import() {
+    let mut generator = HirGenerator::new();
+    let expr = ast::Expr::from(ast::ExprKind::Invoke(ast::ExprInvoke {
+        span: Span::null(),
+        target: ast::ExprInvokeTarget::Function(ast::Name::Ident(ident("import"))),
+        args: Vec::new(),
+        kwargs: Vec::new(),
+    }));
+
+    expect_lowering_error(
+        generator.transform_expr_to_hir(&expr),
+        "dynamic import is only supported in interpret mode",
+    );
+}
+
+#[test]
+fn transform_expr_rejects_match_without_scrutinee() {
+    let mut generator = HirGenerator::new();
+    let expr = ast::Expr::from(ast::ExprKind::Match(ast::ExprMatch {
+        span: Span::null(),
+        scrutinee: None,
+        cases: vec![ast::ExprMatchCase {
+            span: Span::null(),
+            pat: None,
+            cond: Box::new(ast::Expr::value(ast::Value::bool(true))),
+            guard: None,
+            body: Box::new(ast::Expr::value(ast::Value::int(1))),
+        }],
+    }));
+
+    expect_lowering_error(
+        generator.transform_expr_to_hir(&expr),
+        "match expressions without scrutinee are not supported",
+    );
+}
+
+#[test]
+fn transform_expr_rejects_for_loop_non_binding_pattern() {
+    let mut generator = HirGenerator::new();
+    let pat = ast::Pattern::new(ast::PatternKind::Tuple(ast::PatternTuple {
+        patterns: vec![ast::Pattern::new(ast::PatternKind::Ident(
+            ast::PatternIdent::new(ident("i")),
+        ))],
+    }));
+    let iter = range_expr(
+        Some(ast::Expr::value(ast::Value::int(0))),
+        ast::ExprRangeLimit::Exclusive,
+        Some(ast::Expr::value(ast::Value::int(4))),
+    );
+    let body = ast::Expr::block(ast::ExprBlock::new_expr(ast::Expr::value(ast::Value::unit())));
+    let expr = ast::Expr::from(ast::ExprKind::For(ast::ExprFor {
+        span: Span::null(),
+        pat: Box::new(pat),
+        iter: Box::new(iter),
+        body: Box::new(body),
+    }));
+
+    expect_lowering_error(
+        generator.transform_expr_to_hir(&expr),
+        "`for` loop pattern must be a simple binding",
+    );
+}
+
+#[test]
+fn transform_block_rejects_unsupported_statement_kind() {
+    let mut generator = HirGenerator::new();
+    let expr = ast::Expr::block(ast::ExprBlock::new_stmts(vec![ast::BlockStmt::any(
+        "unsupported statement payload".to_string(),
+    )]));
+
+    expect_lowering_error(
+        generator.transform_expr_to_hir(&expr),
+        "unimplemented block statement type for HIR transformation",
+    );
+}
