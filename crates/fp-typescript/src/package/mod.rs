@@ -97,7 +97,15 @@ impl TypeScriptPackageProvider {
         for entry in WalkDir::new(&self.root)
             .into_iter()
             .filter_entry(|entry| should_descend(entry))
-            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                match entry {
+                    Ok(e) => Some(e),
+                    Err(err) => {
+                        eprintln!("[fp-typescript] error walking package dir: {err}");
+                        None
+                    }
+                }
+            })
             .filter(|entry| entry.file_type().is_file())
         {
             let path = entry.into_path();

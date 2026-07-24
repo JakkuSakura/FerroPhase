@@ -296,7 +296,7 @@ impl Parser {
             if let Some(id) = label.strip_prefix("bb") {
                 let block_id = id
                     .parse::<u32>()
-                    .map_err(|_| Error::from(format!("invalid aarch64 block label: {label}")))?;
+                    .map_err(|e| Error::from(format!("invalid aarch64 block label: {label}: {e}")))?;
                 self.start_block(block_id)?;
             } else {
                 self.start_function(Name::new(label.trim()))?;
@@ -498,7 +498,7 @@ fn parse_register(token: &str) -> Result<Aarch64Register> {
         return Ok(Aarch64Register::Virtual {
             id: id
                 .parse::<u32>()
-                .map_err(|_| Error::from(format!("invalid aarch64 virtual register: {token}")))?,
+                .map_err(|e| Error::from(format!("invalid aarch64 virtual register: {token}: {e}")))?,
             size_bits: parse_u16(size_bits, "aarch64 register size")?,
         });
     }
@@ -549,12 +549,12 @@ fn parse_memory(token: &str) -> Result<Aarch64MemoryOperand> {
         if let Some(amount) = part.strip_prefix("lsl #") {
             scale = amount
                 .parse::<u8>()
-                .map_err(|_| Error::from(format!("invalid aarch64 shift: {part}")))?;
+                .map_err(|e| Error::from(format!("invalid aarch64 shift: {part}: {e}")))?;
         } else if part.starts_with('#') || part.parse::<i64>().is_ok() {
             displacement = part
                 .trim_start_matches('#')
                 .parse::<i64>()
-                .map_err(|_| Error::from(format!("invalid aarch64 displacement: {part}")))?;
+                .map_err(|e| Error::from(format!("invalid aarch64 displacement: {part}: {e}")))?;
         } else {
             let reg = parse_register(part)?;
             if base.is_none() {

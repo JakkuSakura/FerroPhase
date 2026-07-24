@@ -369,7 +369,7 @@ impl Parser {
             if let Some(id) = label.strip_prefix("bb") {
                 let block_id = id
                     .parse::<u32>()
-                    .map_err(|_| Error::from(format!("invalid x86 block label: {label}")))?;
+                    .map_err(|e| Error::from(format!("invalid x86 block label: {label}: {e}")))?;
                 self.start_block(block_id)?;
             } else {
                 self.start_function(Name::new(label.trim()))?;
@@ -620,7 +620,7 @@ fn parse_register(token: &str) -> Result<X86Register> {
         return Ok(X86Register::Virtual {
             id: id
                 .parse::<u32>()
-                .map_err(|_| Error::from(format!("invalid x86 virtual register: {token}")))?,
+                .map_err(|e| Error::from(format!("invalid x86 virtual register: {token}: {e}")))?,
             size_bits: parse_u16(size_bits, "x86 register size")?,
         });
     }
@@ -706,7 +706,7 @@ fn parse_memory(token: &str) -> Result<X86MemoryOperand> {
             scale = factor
                 .trim()
                 .parse::<u8>()
-                .map_err(|_| Error::from(format!("invalid x86 scale: {token}")))?;
+                .map_err(|e| Error::from(format!("invalid x86 scale: {token}: {e}")))?;
             continue;
         }
         let reg = parse_register(part)?;

@@ -48,7 +48,7 @@ pub(crate) fn parse_block_id(token: &str) -> Result<u32> {
         .ok_or_else(|| Error::from(format!("invalid block label: {token}")))?;
     suffix
         .parse::<u32>()
-        .map_err(|_| Error::from(format!("invalid block id: {token}")))
+        .map_err(|e| Error::from(format!("invalid block id: {token}: {e}")))
 }
 
 pub(crate) fn render_signed_offset(value: i64) -> String {
@@ -66,11 +66,11 @@ pub(crate) fn parse_i128(token: &str) -> Result<i128> {
         .trim()
         .trim_start_matches('#')
         .parse::<i128>()
-        .map_err(|_| Error::from(format!("invalid immediate: {token}")))
+        .map_err(|e| Error::from(format!("invalid immediate: {token}: {e}")))
 }
 
 pub(crate) fn parse_u16(token: &str, what: &str) -> Result<u16> {
     token
         .parse::<u16>()
-        .map_err(|_| Error::from(format!("invalid {what}: {token}")))
+        .map_err(|e| Error::from(format!("invalid {what}: {token}: {e}")))
 }

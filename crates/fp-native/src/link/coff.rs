@@ -254,7 +254,15 @@ fn build_base_relocs(text_rva: u32, relocs: &[Relocation], extra_rvas: &[u32]) -
         .filter(|reloc| {
             reloc.kind == RelocKind::Abs64 && reloc.section == crate::emit::RelocSection::Text
         })
-        .filter_map(|reloc| u32::try_from(reloc.offset).ok())
+        .filter_map(|reloc| {
+            match u32::try_from(reloc.offset) {
+                Ok(offset) => Some(offset),
+                Err(_) => {
+                    eprintln!("[fp-native] COFF base relocation offset out of u32 range: {}", reloc.offset);
+                    None
+                }
+            }
+        })
         .map(|offset| text_rva + offset)
         .collect();
     entries.extend(extra_rvas.iter().copied());

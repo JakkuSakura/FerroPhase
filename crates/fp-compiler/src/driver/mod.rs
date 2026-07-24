@@ -1256,7 +1256,15 @@ fn calculate() {
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples");
         let mut entries: Vec<_> = std::fs::read_dir(&examples_dir)
             .expect("read examples dir")
-            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                match e {
+                    Ok(entry) => Some(entry),
+                    Err(err) => {
+                        eprintln!("[fp-compiler] error reading examples dir entry: {err}");
+                        None
+                    }
+                }
+            })
             .filter(|e| e.path().extension().map_or(false, |ext| ext == "fp"))
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
