@@ -454,3 +454,166 @@ fn rejects_unsupported_intrinsic_assignment() {
         "unexpected error: {message}"
     );
 }
+
+#[test]
+fn rejects_unhandled_mir_terminator() {
+    let terminator = mir::Terminator {
+        source_info: Span::new(0, 0, 0),
+        kind: mir::TerminatorKind::Abort,
+    };
+    let block = mir::BasicBlockData::new(Some(terminator));
+    let body = mir::Body::new(
+        vec![block],
+        vec![local_decl(Ty::int(IntTy::I32), Mutability::Not)],
+        0,
+        Span::new(0, 0, 0),
+    );
+    let body_id = mir::BodyId(0);
+    let function = mir::Function {
+        name: mir::Symbol::new("bad_term"),
+        path: vec![mir::Symbol::new("bad_term")],
+        def_id: None,
+        sig: FunctionSig {
+            inputs: Vec::new(),
+            output: Ty::int(IntTy::I32),
+        },
+        body_id,
+        abi: mir::ty::Abi::Rust,
+        is_extern: false,
+        attrs: Vec::new(),
+    };
+    let program = mir::Program {
+        items: vec![Item {
+            mir_id: 0,
+            kind: ItemKind::Function(function),
+        }],
+        bodies: HashMap::from([(body_id, body)]),
+    };
+
+    let mut generator = LirGenerator::new();
+    let err = generator
+        .transform(program)
+        .expect_err("lowering should reject unhandled MIR terminators");
+    let message = err.to_string();
+    assert!(
+        message.contains("unhandled MIR terminator"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn rejects_call_terminator_without_destination() {
+    let call_terminator = mir::Terminator {
+        source_info: Span::new(0, 0, 0),
+        kind: mir::TerminatorKind::Call {
+            func: Operand::Constant(mir::Constant {
+                span: Span::new(0, 0, 0),
+                user_ty: None,
+                literal: mir::ConstantKind::Str("no_dest_fn".to_string()),
+            }),
+            args: Vec::new(),
+            destination: None,
+            cleanup: None,
+            from_hir_call: false,
+            fn_span: Span::new(0, 0, 0),
+        },
+    };
+    let block = mir::BasicBlockData::new(Some(call_terminator));
+    let body = mir::Body::new(
+        vec![block],
+        vec![local_decl(Ty::int(IntTy::I32), Mutability::Not)],
+        0,
+        Span::new(0, 0, 0),
+    );
+    let body_id = mir::BodyId(0);
+    let function = mir::Function {
+        name: mir::Symbol::new("bad_call"),
+        path: vec![mir::Symbol::new("bad_call")],
+        def_id: None,
+        sig: FunctionSig {
+            inputs: Vec::new(),
+            output: Ty::int(IntTy::I32),
+        },
+        body_id,
+        abi: mir::ty::Abi::Rust,
+        is_extern: false,
+        attrs: Vec::new(),
+    };
+    let program = mir::Program {
+        items: vec![Item {
+            mir_id: 0,
+            kind: ItemKind::Function(function),
+        }],
+        bodies: HashMap::from([(body_id, body)]),
+    };
+
+    let mut generator = LirGenerator::new();
+    let err = generator
+        .transform(program)
+        .expect_err("lowering should reject call terminators without destination");
+    let message = err.to_string();
+    assert!(
+        message.contains("call terminator without destination"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn rejects_downcast_place_projection() {
+    let place = mir::Place {
+        local: 0,
+        projection: vec![mir::PlaceElem::Downcast(None, 0)],
+    };
+    let stmt = mir::Statement {
+        source_info: Span::new(0, 0, 0),
+        kind: mir::StatementKind::Assign(
+            mir::Place::from_local(1),
+            mir::Rvalue::Use(Operand::Copy(place)),
+        ),
+    };
+    let mut block = mir::BasicBlockData::new(Some(mir::Terminator {
+        source_info: Span::new(0, 0, 0),
+        kind: mir::TerminatorKind::Return,
+    }));
+    block.statements.push(stmt);
+    let body = mir::Body::new(
+        vec![block],
+        vec![
+            local_decl(Ty::int(IntTy::I32), Mutability::Not),
+            local_decl(Ty::int(IntTy::I32), Mutability::Mut),
+        ],
+        0,
+        Span::new(0, 0, 0),
+    );
+    let body_id = mir::BodyId(0);
+    let function = mir::Function {
+        name: mir::Symbol::new("downcast_test"),
+        path: vec![mir::Symbol::new("downcast_test")],
+        def_id: None,
+        sig: FunctionSig {
+            inputs: Vec::new(),
+            output: Ty::int(IntTy::I32),
+        },
+        body_id,
+        abi: mir::ty::Abi::Rust,
+        is_extern: false,
+        attrs: Vec::new(),
+    };
+    let program = mir::Program {
+        items: vec![Item {
+            mir_id: 0,
+            kind: ItemKind::Function(function),
+        }],
+        bodies: HashMap::from([(body_id, body)]),
+    };
+
+    let mut generator = LirGenerator::new();
+    let err = generator
+        .transform(program)
+        .expect_err("lowering should reject downcast place projections");
+    let message = err.to_string();
+    assert!(
+        message.contains("downcast place projection is not supported"),
+        "unexpected error: {message}"
+    );
+}

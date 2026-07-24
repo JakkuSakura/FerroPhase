@@ -187,6 +187,7 @@ impl LirGenerator {
         Ok(lir_program)
     }
 
+    #[allow(dead_code)]
     fn emit_warning(&self, message: impl Into<String>) {
         diagnostic_manager().add_diagnostic(
             Diagnostic::warning(message.into()).with_source_context(Self::DIAGNOSTIC_CONTEXT),
@@ -1125,11 +1126,10 @@ impl LirGenerator {
                         ))
                     }
                     _ => {
-                        self.emit_warning(format!(
-                            "unsupported MIR intrinsic in LIR lowering: {:?}; ignoring",
+                        return Err(fp_core::error::Error::from(format!(
+                            "unsupported MIR intrinsic in statement lowering: {:?}",
                             kind
-                        ));
-                        return Ok(Vec::new());
+                        )));
                     }
                 };
                 let mut instructions = Vec::new();
@@ -2262,11 +2262,9 @@ impl LirGenerator {
                 }
             }
             other => {
-                self.emit_warning(format!(
-                    "unhandled MIR terminator lowered to unreachable: {:?}",
-                    other
-                ));
-                Ok(lir::LirTerminator::Unreachable)
+                Err(crate::error::optimization_error(format!(
+                    "unhandled MIR terminator: {other:?}"
+                )))
             }
         }
     }
@@ -2753,8 +2751,9 @@ impl LirGenerator {
                 }
             }
             mir::PlaceElem::Downcast(_, _) => {
-                self.emit_warning("ignoring downcast place projection during lowering");
-                Ok(base_access)
+                Err(crate::error::optimization_error(
+                    "MIR→LIR: downcast place projection is not supported"
+                ))
             }
         }
     }
@@ -4676,8 +4675,9 @@ impl LirGenerator {
             return Ok(lir::LirTerminator::Br(*dest_bb));
         }
 
-        self.emit_warning("call terminator without destination lowered to unreachable");
-        Ok(lir::LirTerminator::Unreachable)
+        Err(crate::error::optimization_error(
+            "MIR→LIR: call terminator without destination"
+        ))
     }
 
     fn normalize_callee_value(
