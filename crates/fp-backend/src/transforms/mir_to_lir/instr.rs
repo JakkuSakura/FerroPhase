@@ -1120,6 +1120,8 @@ impl LirGenerator {
                 let lir_kind = match kind {
                     IntrinsicCallKind::Print => lir::LirIntrinsicKind::Print,
                     IntrinsicCallKind::Println => lir::LirIntrinsicKind::Println,
+                    IntrinsicCallKind::CreateStruct => lir::LirIntrinsicKind::CreateStruct,
+                    IntrinsicCallKind::AddField => lir::LirIntrinsicKind::AddField,
                     IntrinsicCallKind::Format => {
                         return Err(fp_core::error::Error::from(
                             "format intrinsic must be assigned to a place".to_string(),
@@ -1279,6 +1281,8 @@ impl LirGenerator {
                             "print/println must be emitted as statements".to_string(),
                         ))
                     }
+                    IntrinsicCallKind::CreateStruct => lir::LirIntrinsicKind::CreateStruct,
+                    IntrinsicCallKind::AddField => lir::LirIntrinsicKind::AddField,
                     IntrinsicCallKind::Slice => {
                         if args.len() != 3 {
                             return Err(fp_core::error::Error::from(format!(

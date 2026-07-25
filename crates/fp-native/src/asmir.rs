@@ -4762,6 +4762,7 @@ fn map_intrinsic(kind: &LirIntrinsicKind) -> AsmIntrinsicKind {
         LirIntrinsicKind::Println => AsmIntrinsicKind::Println,
         LirIntrinsicKind::Format => AsmIntrinsicKind::Format,
         LirIntrinsicKind::TimeNow => AsmIntrinsicKind::TimeNow,
+        LirIntrinsicKind::CreateStruct | LirIntrinsicKind::AddField => AsmIntrinsicKind::Unsupported,
     }
 }
 
