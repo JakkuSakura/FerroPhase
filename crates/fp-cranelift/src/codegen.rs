@@ -683,7 +683,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let zero = self.zero_value(ty);
                 self.record_result(instr, zero);
             }
-            LirInstructionKind::Unreachable => {
+            LirInstructionKind::Unreachable | LirInstructionKind::ComptimeOp(_) => {
                 self.builder
                     .ins()
                     .trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);

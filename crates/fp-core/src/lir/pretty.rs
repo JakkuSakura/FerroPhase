@@ -595,6 +595,7 @@ fn summarize_instruction(inst: &LirInstruction) -> String {
         }
         Unreachable => "unreachable".to_string(),
         Freeze(value) => format!("%r{} = freeze {}", inst.id, format_value(value)),
+        ComptimeOp(op) => format!("%r{} = comptime_{:?}", inst.id, op),
     }
 }
 

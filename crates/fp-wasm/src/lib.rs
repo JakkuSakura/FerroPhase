@@ -731,7 +731,8 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
                 if_false,
             } => self.emit_select(func, condition, if_true, if_false, instr)?,
             LirInstructionKind::Phi { .. } => {}
-            LirInstructionKind::Unreachable | LirInstructionKind::Freeze(_) => {
+            LirInstructionKind::Unreachable | LirInstructionKind::Freeze(_)
+            | LirInstructionKind::ComptimeOp(_) => {
                 func.instruction(&Instruction::Unreachable);
             }
             LirInstructionKind::InlineAsm { .. } | LirInstructionKind::LandingPad { .. } => {

@@ -1530,7 +1530,7 @@ fn validate_instruction(
         Phi { .. } => Err(Error::from("phi nodes must be lowered before fp-ebpf")),
         Select { .. } => Err(Error::from("select must be lowered before fp-ebpf")),
         InlineAsm { .. } => Err(Error::from("inline asm is not supported in fp-ebpf")),
-        LandingPad { .. } | Unreachable => Err(Error::from(
+        LandingPad { .. } | Unreachable  | LirInstructionKind::ComptimeOp(_) => Err(Error::from(
             "exception/unreachable instructions are not supported in fp-ebpf",
         )),
     };

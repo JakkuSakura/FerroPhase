@@ -165,7 +165,7 @@ fn emit_instruction(out: &mut String, inst: &LirInstruction) {
         LirInstructionKind::LandingPad { .. } => {
             writeln!(out, "    ; landingpad {}", dst).ok();
         }
-        LirInstructionKind::Unreachable => {
+        LirInstructionKind::Unreachable | LirInstructionKind::ComptimeOp(_) => {
             writeln!(out, "    HLT").ok();
         }
     }

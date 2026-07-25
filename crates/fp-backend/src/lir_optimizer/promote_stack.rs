@@ -636,6 +636,7 @@ fn rewrite_instruction_values(
             }
         }
         LirInstructionKind::Unreachable => {}
+        LirInstructionKind::ComptimeOp(_) => {}
     }
 }
 
@@ -763,6 +764,7 @@ fn instruction_values(kind: &LirInstructionKind) -> Vec<&LirValue> {
         LirInstructionKind::InlineAsm { inputs, .. } => inputs.iter().collect(),
         LirInstructionKind::LandingPad { personality, .. } => personality.iter().collect(),
         LirInstructionKind::Unreachable => Vec::new(),
+        LirInstructionKind::ComptimeOp(_) => Vec::new(),
     }
 }
 

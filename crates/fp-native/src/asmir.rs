@@ -4611,6 +4611,7 @@ fn map_instruction_kind(kind: &LirInstructionKind) -> AsmInstructionKind {
         },
         LirInstructionKind::Unreachable => AsmInstructionKind::Unreachable,
         LirInstructionKind::Freeze(value) => AsmInstructionKind::Freeze(map_value(value)),
+        LirInstructionKind::ComptimeOp(_) => AsmInstructionKind::Nop,
     }
 }
 

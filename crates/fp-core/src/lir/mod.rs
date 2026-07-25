@@ -206,6 +206,10 @@ pub enum LirInstructionKind {
     },
     ExecQuery(LirQuery),
 
+    // Comptime-only operations — only the interpreter handles these.
+    // Codegen backends can add a single catch-all arm.
+    ComptimeOp(ComptimeOp),
+
     // Backend runtime intrinsics
     IntrinsicCall {
         kind: LirIntrinsicKind,
@@ -255,6 +259,14 @@ pub enum LirIntrinsicKind {
     Println,
     Format,
     TimeNow,
+}
+
+/// Comptime-only operations that build struct metadata.
+/// Only the LIR interpreter handles these; codegen backends skip them.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ComptimeOp {
+    CreateStruct { name: LirValue },
+    AddField { struct_handle: LirValue, field_name: LirValue, field_type: LirValue },
 }
 
 #[derive(Debug, Clone, PartialEq)]
