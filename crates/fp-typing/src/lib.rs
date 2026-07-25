@@ -1726,7 +1726,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         ExprKind::IntrinsicCall(c) => Some(c),
                         ExprKind::ConstBlock(block) => match block.expr.kind() {
                             ExprKind::Block(body) => {
-                                // Extract tail expression from const block
                                 body.stmts.last().and_then(|s| match s {
                                     BlockStmt::Expr(e) => match e.expr.kind() {
                                         ExprKind::IntrinsicCall(c) => Some(c),
