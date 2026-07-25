@@ -5,8 +5,7 @@ use std::collections::HashMap;
 use fp_core::ast::{Value, ValueList, ValueMapEntry, ValueString, ValueTuple};
 use fp_core::lir::{
     BasicBlockId, CallingConvention, LirBasicBlock, LirConstant, LirFunction, LirInstruction,
-    LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirType, LirValue,
-    RegisterId,
+    LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, RegisterId,
 };
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
@@ -301,29 +300,9 @@ impl LirInterpreter {
             LirInstructionKind::Call { function, args, .. } => {
                 self.handle_call(dst, function, args)
             }
-            LirInstructionKind::IntrinsicCall { kind, args, .. } => {
-                match kind {
-                    LirIntrinsicKind::CreateStruct => {
-                        // Return a handle that downstream comptime evaluation
-                        // will resolve to a structural type.
-                        let obj = Value::Unit(Default::default());
-                        let handle = self.state.objects.len() as u64;
-                        self.state.objects.push(obj);
-                        self.wr(dst, handle);
-                        Ok(())
-                    }
-                    LirIntrinsicKind::AddField => {
-                        // Pass through the struct handle — the actual field
-                        // addition is handled by comptime evaluation.
-                        let handle = args.first().map(|a| self.resolve_raw(a)).transpose()?.unwrap_or(0);
-                        self.wr(dst, handle);
-                        Ok(())
-                    }
-                    _ => {
-                        self.wr(dst, 0);
-                        Ok(())
-                    }
-                }
+            LirInstructionKind::IntrinsicCall { .. } => {
+                self.wr(dst, 0);
+                Ok(())
             }
             LirInstructionKind::InlineAsm { .. }
             | LirInstructionKind::LandingPad { .. }

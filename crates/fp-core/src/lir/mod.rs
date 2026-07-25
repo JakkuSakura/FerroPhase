@@ -255,8 +255,6 @@ pub enum LirIntrinsicKind {
     Println,
     Format,
     TimeNow,
-    CreateStruct,
-    AddField,
 }
 
 #[derive(Debug, Clone, PartialEq)]

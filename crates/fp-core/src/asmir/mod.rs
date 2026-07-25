@@ -565,7 +565,6 @@ pub enum AsmIntrinsicKind {
     Println,
     Format,
     TimeNow,
-    Unsupported,
 }
 
 #[derive(Debug, Clone, PartialEq)]
