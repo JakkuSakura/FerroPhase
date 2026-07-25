@@ -623,6 +623,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             self.unify(pat_info.var, elem_var)?;
                         }
                     }
+                    eprintln!("[typing] for loop: pat_var={:?} resolved={:?}", pat_info.var, self.resolve_to_ty(pat_info.var));
                     // For now, treat `for` as producing unit.
                     let unit_var = self.fresh_type_var();
                     self.bind(unit_var, Ty::Unit(TypeUnit));

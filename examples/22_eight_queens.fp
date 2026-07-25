@@ -15,6 +15,8 @@ fn solve(
             for r in 0..8 {
                 first_solution[r] = positions[r];
             }
+        }
+        if !*found_first {
             *found_first = true;
         }
         return 1;
