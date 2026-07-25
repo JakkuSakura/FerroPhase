@@ -8169,6 +8169,14 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn lower_block(&mut self, block: &hir::Block) -> Result<()> {
+        self.lower_block_impl(block, true)
+    }
+
+    fn lower_block_as_statement(&mut self, block: &hir::Block) -> Result<()> {
+        self.lower_block_impl(block, false)
+    }
+
+    fn lower_block_impl(&mut self, block: &hir::Block, is_tail: bool) -> Result<()> {
         let scope_depth = self.defer_scopes.len();
         self.defer_scopes.push(DeferScope {
             deferred: Vec::new(),
@@ -8194,10 +8202,14 @@ impl<'a> BodyBuilder<'a> {
 
         if !self.control_flow_emitted {
             if let Some(expr) = tail_expr {
-                if let hir::ExprKind::Block(inner) = &expr.kind {
-                    self.lower_block(inner)?;
+                if is_tail {
+                    if let hir::ExprKind::Block(inner) = &expr.kind {
+                        self.lower_block(inner)?;
+                    } else {
+                        self.lower_tail_expr(expr)?;
+                    }
                 } else {
-                    self.lower_tail_expr(expr)?;
+                    self.lower_expr_as_statement(expr)?;
                 }
             }
         }
@@ -8508,7 +8520,7 @@ impl<'a> BodyBuilder<'a> {
         });
 
         self.current_block = body_block;
-        self.lower_block(block)?;
+        self.lower_block_as_statement(block)?;
 
         if self.blocks[self.current_block as usize]
             .terminator
@@ -9818,24 +9830,7 @@ impl<'a> BodyBuilder<'a> {
                 self.lower_let_expr(pat, ty, init, expr.span)?;
             }
             hir::ExprKind::Block(block) => {
-                // Inner block in statement position: lower the tail expression
-                // as a statement (dropped), not as a return value.
-                let mut tail = block.expr.as_deref();
-                let mut stmts = block.stmts.as_slice();
-                if tail.is_none() {
-                    if let Some(last) = block.stmts.last() {
-                        if let hir::StmtKind::Expr(expr) = &last.kind {
-                            tail = Some(expr);
-                            stmts = &block.stmts[..block.stmts.len().saturating_sub(1)];
-                        }
-                    }
-                }
-                for stmt in stmts {
-                    self.lower_stmt(stmt)?;
-                }
-                if let Some(expr) = tail {
-                    self.lower_expr_as_statement(expr)?;
-                }
+                self.lower_block_as_statement(block)?;
             }
             hir::ExprKind::Assign(place_expr, value_expr) => {
                 let place_info = match self.lower_place(place_expr)? {
@@ -9897,7 +9892,7 @@ impl<'a> BodyBuilder<'a> {
 
     fn lower_expr_as_statement(&mut self, expr: &hir::Expr) -> Result<()> {
         match &expr.kind {
-            hir::ExprKind::Block(block) => self.lower_block(block),
+            hir::ExprKind::Block(block) => self.lower_block_as_statement(block),
             hir::ExprKind::If(cond, then_expr, else_expr) => {
                 self.lower_if_statement(expr.span, cond, then_expr, else_expr)
             }
