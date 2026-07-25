@@ -67,6 +67,13 @@ pub trait IntrinsicNormalizer {
         Ok(NormalizeOutcome::Ignored(expr))
     }
 
+    /// Strategy hook for invoke (method call) expressions.
+    ///
+    /// The framework guarantees `expr.kind()` is `ExprKind::Invoke`.
+    fn normalize_invoke(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        Ok(NormalizeOutcome::Ignored(expr))
+    }
+
     /// Language-specific macro lowering hook. When provided by a frontend, the
     /// shared intrinsic normalizer will delegate `ExprKind::Macro` to this
     /// implementation. Return `NormalizeOutcome::Normalized(expr)` to replace

@@ -136,6 +136,9 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
             ExprKind::Structural(_) => {
                 Some(strategy.normalize_structural(std::mem::replace(expr, Expr::unit()))?)
             }
+            ExprKind::Invoke(_) => {
+                Some(strategy.normalize_invoke(std::mem::replace(expr, Expr::unit()))?)
+            }
             _ => None,
         };
 
