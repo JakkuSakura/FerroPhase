@@ -11,6 +11,7 @@ pub use typing::types::{
 
 use fp_core::ast::*;
 use fp_core::ast::{AttributesExt, ExprResolution, Ident, Name};
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::{Error, Result};
@@ -1719,9 +1720,39 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             ItemKind::DefType(def) => {
                 self.record_unimplemented_symbol(&def.name, &def.attrs);
-                // Type aliases / type-level expressions introduce a named type.
-                // The concrete shape (e.g. structural fields) is resolved during `infer_item`.
                 self.register_symbol(&def.name);
+                if let Ty::Expr(expr) = &def.value {
+                    let call = match expr.kind() {
+                        ExprKind::IntrinsicCall(c) => Some(c),
+                        ExprKind::ConstBlock(block) => match block.expr.kind() {
+                            ExprKind::Block(body) => {
+                                // Extract tail expression from const block
+                                body.stmts.last().and_then(|s| match s {
+                                    BlockStmt::Expr(e) => match e.expr.kind() {
+                                        ExprKind::IntrinsicCall(c) => Some(c),
+                                        _ => None,
+                                    },
+                                    _ => None,
+                                })
+                            }
+                            ExprKind::IntrinsicCall(c) => Some(c),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(call) = call {
+                        if call.kind == IntrinsicCallKind::CreateStruct {
+                            if let Some(struct_def) = create_struct_from_intrinsic(call) {
+                                self.insert_struct_def(&def.name, struct_def.clone());
+                                let var = self.symbol_var(&def.name);
+                                let ty = Ty::Struct(struct_def);
+                                if let Ok(struct_var) = self.type_from_ast_ty(&ty) {
+                                    let _ = self.unify(var, struct_var);
+                                }
+                            }
+                        }
+                    }
+                }
             }
             ItemKind::DefEnum(def) => {
                 self.record_unimplemented_symbol(&def.name, &def.attrs);
@@ -3960,4 +3991,39 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         }
     }
+}
+
+fn create_struct_from_intrinsic(call: &ExprIntrinsicCall) -> Option<TypeStruct> {
+    let mut args = call.args.iter();
+    let name = match args.next()?.kind() {
+        ExprKind::Value(v) => match v.as_ref() {
+            Value::String(s) => s.value.clone(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let mut fields: Vec<StructuralField> = Vec::new();
+    while let (Some(name_expr), Some(ty_expr)) = (args.next(), args.next()) {
+        let field_name = match name_expr.kind() {
+            ExprKind::Value(v) => match v.as_ref() {
+                Value::String(s) => s.value.clone(),
+                _ => break,
+            },
+            _ => break,
+        };
+        let field_ty = match ty_expr.kind() {
+            ExprKind::Value(v) => match v.as_ref() {
+                Value::Type(ty) => ty.clone(),
+                _ => break,
+            },
+            _ => break,
+        };
+        fields.push(StructuralField::new(Ident::new(field_name), field_ty));
+    }
+    Some(TypeStruct {
+        name: Ident::new(name),
+        generics_params: Vec::new(),
+        repr: ReprOptions::default(),
+        fields,
+    })
 }

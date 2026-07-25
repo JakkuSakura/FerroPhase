@@ -2,6 +2,7 @@ use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprUnOp, FormatArgRef, FormatPlaceholder,
     FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name, Path, StmtLet, Ty, Value,
+    TypePrimitive, TypeInt, TypeReference, DecimalType,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer, NormalizeOutcome};
@@ -227,6 +228,21 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             span,
             ExprKind::Macro(macro_expr),
         )))
+    }
+
+    fn normalize_invoke(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        let (id, ty_slot, span, kind) = expr.into_parts();
+        let ExprKind::Invoke(invoke) = kind else {
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, kind)));
+        };
+        if let Some(intrinsic) = try_build_type_builder_intrinsic(&invoke) {
+            let replacement = Expr::from_parts(
+                id, ty_slot, span,
+                ExprKind::IntrinsicCall(intrinsic),
+            );
+            return Ok(NormalizeOutcome::Normalized(replacement));
+        }
+        Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, ExprKind::Invoke(invoke))))
     }
 }
 
@@ -707,4 +723,140 @@ fn panic_call_with_message(message: &str) -> Expr {
         vec![Expr::value(Value::string(message.to_string()))],
         Vec::new(),
     )))
+}
+
+fn try_build_type_builder_intrinsic(invoke: &ExprInvoke) -> Option<ExprIntrinsicCall> {
+    // Recognize TypeBuilder::new("Name").with_field(...).build() chains
+    let mut name = String::new();
+    let mut fields: Vec<(String, Ty)> = Vec::new();
+
+    if !walk_type_builder_chain(invoke, &mut name, &mut fields) {
+        return None;
+    }
+    if name.is_empty() {
+        return None;
+    }
+
+    let mut args = vec![Expr::value(Value::string(name))];
+    // Encode fields as (name, type) pairs in the args
+    for (field_name, field_ty) in fields {
+        args.push(Expr::value(Value::string(field_name)));
+        args.push(Expr::value(Value::Type(field_ty)));
+    }
+    Some(ExprIntrinsicCall::new(
+        IntrinsicCallKind::CreateStruct,
+        args,
+        Vec::new(),
+    ))
+}
+
+fn walk_type_builder_chain(invoke: &ExprInvoke, name: &mut String, fields: &mut Vec<(String, Ty)>) -> bool {
+    match &invoke.target {
+        ExprInvokeTarget::Method(select) => {
+            let method = select.field.as_str();
+            match method {
+                "new" => {
+                    if let Some(a) = invoke.args.first() {
+                        if let ExprKind::Value(v) = a.kind() {
+                            if let Value::String(s) = v.as_ref() {
+                                *name = s.value.clone();
+                            }
+                        }
+                    }
+                    true
+                }
+                "with_field" => {
+                    if invoke.args.len() >= 2 {
+                        let field_name = match invoke.args[0].kind() {
+                            ExprKind::Value(v) => match v.as_ref() {
+                                Value::String(s) => Some(s.value.clone()),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        let field_ty = extract_type_from_expr(&invoke.args[1]);
+                        if let (Some(n), Some(t)) = (field_name, field_ty) {
+                            fields.push((n, t));
+                        }
+                    }
+                    // Recurse into the receiver for the next method in chain
+                    if let ExprKind::Invoke(inner) = select.obj.kind() {
+                        walk_type_builder_chain(inner, name, fields)
+                    } else {
+                        true
+                    }
+                }
+                "build" | "from" => {
+                    // Recurse into receiver to collect inner calls
+                    if let ExprKind::Invoke(inner) = select.obj.kind() {
+                        walk_type_builder_chain(inner, name, fields)
+                    } else {
+                        true
+                    }
+                }
+                _ => false,
+            }
+        }
+        ExprInvokeTarget::Function(func_path) => {
+            // TypeBuilder::new("name") — initial call
+            let is_tb = match func_path {
+                Name::Path(p) => p.segments.first()
+                    .map(|s| s.name.as_str() == "TypeBuilder").unwrap_or(false),
+                _ => false,
+            };
+            if is_tb {
+                if let Some(a) = invoke.args.first() {
+                    if let ExprKind::Value(v) = a.kind() {
+                        if let Value::String(s) = v.as_ref() {
+                            *name = s.value.clone();
+                        }
+                    }
+                }
+                return true;
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+fn extract_type_from_expr(expr: &Expr) -> Option<Ty> {
+    match expr.kind() {
+        ExprKind::Name(loc) => {
+            let s = loc.to_string();
+            match s.as_str() {
+                "i64" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
+                "i32" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I32))),
+                "i8"  => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I8))),
+                "u64" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U64))),
+                "bool" => Some(Ty::Primitive(TypePrimitive::Bool)),
+                "f64" => Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64))),
+                "str" => Some(Ty::Primitive(TypePrimitive::String)),
+                s if s.starts_with('&') => {
+                    let inner = s.trim_start_matches('&').trim().trim_start_matches("'static").trim();
+                    if inner == "str" {
+                        Some(Ty::Reference(TypeReference {
+                            ty: Box::new(Ty::Primitive(TypePrimitive::String)),
+                            mutability: None,
+                            lifetime: None,
+                        }))
+                    } else { None }
+                }
+                _ => None,
+            }
+        }
+        ExprKind::Reference(r) => {
+            let inner = extract_type_from_expr(r.referee.as_ref())?;
+            Some(Ty::Reference(TypeReference {
+                ty: Box::new(inner),
+                mutability: r.mutable.map(|_| true),
+                lifetime: None,
+            }))
+        }
+        ExprKind::Value(v) => match v.as_ref() {
+            Value::Type(ty) => Some(ty.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
 }
