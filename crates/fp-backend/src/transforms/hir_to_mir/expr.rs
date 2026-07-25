@@ -9818,7 +9818,24 @@ impl<'a> BodyBuilder<'a> {
                 self.lower_let_expr(pat, ty, init, expr.span)?;
             }
             hir::ExprKind::Block(block) => {
-                self.lower_block(block)?;
+                // Inner block in statement position: lower the tail expression
+                // as a statement (dropped), not as a return value.
+                let mut tail = block.expr.as_deref();
+                let mut stmts = block.stmts.as_slice();
+                if tail.is_none() {
+                    if let Some(last) = block.stmts.last() {
+                        if let hir::StmtKind::Expr(expr) = &last.kind {
+                            tail = Some(expr);
+                            stmts = &block.stmts[..block.stmts.len().saturating_sub(1)];
+                        }
+                    }
+                }
+                for stmt in stmts {
+                    self.lower_stmt(stmt)?;
+                }
+                if let Some(expr) = tail {
+                    self.lower_expr_as_statement(expr)?;
+                }
             }
             hir::ExprKind::Assign(place_expr, value_expr) => {
                 let place_info = match self.lower_place(place_expr)? {
