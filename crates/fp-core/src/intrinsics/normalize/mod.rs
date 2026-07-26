@@ -4,8 +4,13 @@ use crate::ast::{
 };
 use crate::error::Result;
 use crate::intrinsics::{IntrinsicNormalizer, NoopIntrinsicNormalizer, NormalizeOutcome};
+use std::cell::RefCell;
 use std::collections::HashMap;
 mod format;
+
+thread_local! {
+    static CONST_BOOLS: RefCell<HashMap<String, bool>> = RefCell::new(HashMap::new());
+}
 
 /// Normalize intrinsic expressions into a canonical AST form so that typing and
 /// downstream passes can assume consistent structures.
@@ -23,13 +28,11 @@ pub fn normalize_intrinsics_with(
 fn normalize_node(node: &mut Node, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
     match node.kind_mut() {
         NodeKind::File(file) => {
-            let const_bools = scan_const_bools(&file.items);
+            let mut const_bools = scan_const_bools(&file.items);
+            scan_items(&file.collected_items, &mut const_bools);
+            CONST_BOOLS.with(|cb| *cb.borrow_mut() = const_bools);
             for item in &mut file.items {
-                if let ItemKind::DefType(_) = item.kind() {
-                    normalize_def_type_item(item, strategy, &const_bools)?;
-                } else {
-                    normalize_item(item, strategy)?;
-                }
+                normalize_item(item, strategy)?;
             }
         }
         NodeKind::Item(item) => normalize_item(item, strategy)?,
@@ -41,28 +44,55 @@ fn normalize_node(node: &mut Node, strategy: &dyn IntrinsicNormalizer) -> Result
 
 fn scan_const_bools(items: &[Item]) -> HashMap<String, bool> {
     let mut map = HashMap::new();
+    scan_items(items, &mut map);
+    map
+}
+
+fn scan_items(items: &[Item], map: &mut HashMap<String, bool>) {
     for item in items {
-        if let ItemKind::DefConst(def) = item.kind() {
-            if let ExprKind::Value(v) = def.value.kind() {
-                if let Value::Bool(b) = v.as_ref() {
-                    map.insert(def.name.as_str().to_string(), b.value);
+        match item.kind() {
+            ItemKind::DefConst(def) => {
+                if let ExprKind::Value(v) = def.value.kind() {
+                    if let Value::Bool(b) = v.as_ref() {
+                        map.insert(def.name.as_str().to_string(), b.value);
+                    }
                 }
+            }
+            ItemKind::Module(m) => scan_items(&m.items, map),
+            ItemKind::DefFunction(f) => scan_block(&f.body, map),
+            _ => {}
+        }
+    }
+}
+
+fn scan_block(expr: &Expr, map: &mut HashMap<String, bool>) {
+    if let ExprKind::Block(block) = expr.kind() {
+        scan_items(&block.collected_items, map);
+        for stmt in &block.stmts {
+            match stmt {
+                BlockStmt::Item(item) => scan_items(std::slice::from_ref(item), map),
+                BlockStmt::Expr(e) => scan_block(&e.expr, map),
+                BlockStmt::Let(s) => {
+                    if let Some(init) = &s.init {
+                        scan_block(init, map);
+                    }
+                }
+                _ => {}
             }
         }
     }
-    map
 }
 
 fn normalize_def_type_item(
     item: &mut Item,
     strategy: &dyn IntrinsicNormalizer,
-    const_bools: &HashMap<String, bool>,
+    _const_bools: &HashMap<String, bool>,
 ) -> Result<()> {
     if let ItemKind::DefType(def) = item.kind_mut() {
-        normalize_ty(&mut def.value, strategy)?;
         if let Ty::Expr(expr) = &mut def.value {
-            try_lower_type_builder_const_block(expr, const_bools);
+            try_lower_type_builder_const_block(expr);
         }
+        normalize_ty(&mut def.value, strategy)?;
     } else {
         normalize_item(item, strategy)?;
     }
@@ -126,10 +156,10 @@ fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result
             }
         }
         ItemKind::DefType(def) => {
-            normalize_ty(&mut def.value, strategy)?;
             if let Ty::Expr(expr) = &mut def.value {
-                try_lower_type_builder_const_block(expr, &HashMap::new());
+                try_lower_type_builder_const_block(expr);
             }
+            normalize_ty(&mut def.value, strategy)?;
         }
         ItemKind::Expr(expr) => normalize_expr(expr, strategy)?,
     }
@@ -545,7 +575,7 @@ fn normalize_intrinsic_call(
     Ok(())
 }
 
-fn try_lower_type_builder_const_block(expr: &mut Expr, const_bools: &HashMap<String, bool>) {
+fn try_lower_type_builder_const_block(expr: &mut Expr) {
     let mut struct_name = String::new();
     let mut fields: Vec<(String, Ty)> = Vec::new();
 
@@ -584,7 +614,7 @@ fn try_lower_type_builder_const_block(expr: &mut Expr, const_bools: &HashMap<Str
                             }
                         }
                         ExprKind::If(expr_if) => {
-                            if let Some(cond_val) = eval_const_bool(&expr_if.cond, const_bools) {
+                            if let Some(cond_val) = eval_const_bool(&expr_if.cond) {
                                 if cond_val {
                                     if let ExprKind::Block(if_body) = expr_if.then.kind() {
                                         process_builder_if_body(&if_body.stmts, &builder_var, &mut struct_name, &mut fields);
@@ -630,9 +660,12 @@ fn try_lower_type_builder_const_block(expr: &mut Expr, const_bools: &HashMap<Str
     const_block.expr = Box::new(Expr::new(ExprKind::Block(new_block)));
 }
 
-fn eval_const_bool(cond: &Expr, const_bools: &HashMap<String, bool>) -> Option<bool> {
+fn eval_const_bool(cond: &Expr) -> Option<bool> {
     match cond.kind() {
-        ExprKind::Name(n) => const_bools.get(&n.to_string()).copied(),
+        ExprKind::Name(n) => {
+            let key = n.to_string();
+            CONST_BOOLS.with(|cb| cb.borrow().get(&key).copied())
+        }
         ExprKind::Value(v) => match v.as_ref() {
             Value::Bool(b) => Some(b.value),
             _ => None,
