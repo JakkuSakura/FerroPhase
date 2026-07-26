@@ -1742,7 +1742,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
                 if let ExprKind::IntrinsicCall(call) = expr.kind() {
-                    if call.kind == IntrinsicCallKind::CreateStruct {
+                    if call.kind == IntrinsicCallKind::CreateStruct
+                        || call.kind == IntrinsicCallKind::CloneStruct
+                    {
                         if let Some(struct_ty) = self.build_struct_from_create_call(call) {
                             self.bind(var, Ty::Struct(struct_ty));
                             return Ok(var);
@@ -1913,10 +1915,20 @@ fn locator_tail_name(locator: &Name) -> Option<String> {
 
 fn extract_create_struct_from_block(const_block: &ExprConstBlock) -> Option<&ExprIntrinsicCall> {
     match const_block.expr.kind() {
-        ExprKind::IntrinsicCall(c) if c.kind == IntrinsicCallKind::CreateStruct => Some(c),
+        ExprKind::IntrinsicCall(c)
+            if c.kind == IntrinsicCallKind::CreateStruct
+                || c.kind == IntrinsicCallKind::CloneStruct =>
+        {
+            Some(c)
+        }
         ExprKind::Block(body) => body.stmts.last().and_then(|s| match s {
             BlockStmt::Expr(e) => match e.expr.kind() {
-                ExprKind::IntrinsicCall(c) if c.kind == IntrinsicCallKind::CreateStruct => Some(c),
+                ExprKind::IntrinsicCall(c)
+                    if c.kind == IntrinsicCallKind::CreateStruct
+                        || c.kind == IntrinsicCallKind::CloneStruct =>
+                {
+                    Some(c)
+                }
                 _ => None,
             },
             _ => None,
@@ -1933,6 +1945,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Value::String(s) => s.value.clone(),
                 _ => return None,
             },
+            ExprKind::Name(loc) => loc.to_string(),
             _ => return None,
         };
         let mut fields: Vec<StructuralField> = Vec::new();

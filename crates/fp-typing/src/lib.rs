@@ -1732,7 +1732,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         _ => None,
                     };
                     if let Some(call) = call {
-                        if call.kind == IntrinsicCallKind::CreateStruct {
+                        if call.kind == IntrinsicCallKind::CreateStruct
+                            || call.kind == IntrinsicCallKind::CloneStruct
+                        {
                             if let Some(struct_def) = create_struct_from_intrinsic(call) {
                                 let mut struct_def = struct_def;
                                 // Merge fields from source struct for TypeBuilder::from(Type)
@@ -4024,6 +4026,7 @@ fn create_struct_from_intrinsic(call: &ExprIntrinsicCall) -> Option<TypeStruct> 
             Value::String(s) => s.value.clone(),
             _ => return None,
         },
+        ExprKind::Name(loc) => loc.to_string(),
         _ => return None,
     };
     let mut fields: Vec<StructuralField> = Vec::new();
