@@ -4,6 +4,7 @@ use crate::ast::{
 };
 use crate::error::Result;
 use crate::intrinsics::{IntrinsicNormalizer, NoopIntrinsicNormalizer, NormalizeOutcome};
+use std::collections::HashMap;
 mod format;
 
 /// Normalize intrinsic expressions into a canonical AST form so that typing and
@@ -22,13 +23,48 @@ pub fn normalize_intrinsics_with(
 fn normalize_node(node: &mut Node, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
     match node.kind_mut() {
         NodeKind::File(file) => {
+            let const_bools = scan_const_bools(&file.items);
             for item in &mut file.items {
-                normalize_item(item, strategy)?;
+                if let ItemKind::DefType(_) = item.kind() {
+                    normalize_def_type_item(item, strategy, &const_bools)?;
+                } else {
+                    normalize_item(item, strategy)?;
+                }
             }
         }
         NodeKind::Item(item) => normalize_item(item, strategy)?,
         NodeKind::Expr(expr) => normalize_expr(expr, strategy)?,
         NodeKind::Schema(_) | NodeKind::Query(_) | NodeKind::Workspace(_) => {}
+    }
+    Ok(())
+}
+
+fn scan_const_bools(items: &[Item]) -> HashMap<String, bool> {
+    let mut map = HashMap::new();
+    for item in items {
+        if let ItemKind::DefConst(def) = item.kind() {
+            if let ExprKind::Value(v) = def.value.kind() {
+                if let Value::Bool(b) = v.as_ref() {
+                    map.insert(def.name.as_str().to_string(), b.value);
+                }
+            }
+        }
+    }
+    map
+}
+
+fn normalize_def_type_item(
+    item: &mut Item,
+    strategy: &dyn IntrinsicNormalizer,
+    const_bools: &HashMap<String, bool>,
+) -> Result<()> {
+    if let ItemKind::DefType(def) = item.kind_mut() {
+        normalize_ty(&mut def.value, strategy)?;
+        if let Ty::Expr(expr) = &mut def.value {
+            try_lower_type_builder_const_block(expr, const_bools);
+        }
+    } else {
+        normalize_item(item, strategy)?;
     }
     Ok(())
 }
@@ -92,7 +128,7 @@ fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result
         ItemKind::DefType(def) => {
             normalize_ty(&mut def.value, strategy)?;
             if let Ty::Expr(expr) = &mut def.value {
-                try_lower_type_builder_const_block(expr);
+                try_lower_type_builder_const_block(expr, &HashMap::new());
             }
         }
         ItemKind::Expr(expr) => normalize_expr(expr, strategy)?,
@@ -509,7 +545,7 @@ fn normalize_intrinsic_call(
     Ok(())
 }
 
-fn try_lower_type_builder_const_block(expr: &mut Expr) {
+fn try_lower_type_builder_const_block(expr: &mut Expr, const_bools: &HashMap<String, bool>) {
     let mut struct_name = String::new();
     let mut fields: Vec<(String, Ty)> = Vec::new();
 
@@ -537,13 +573,30 @@ fn try_lower_type_builder_const_block(expr: &mut Expr) {
                     }
                 }
                 BlockStmt::Expr(stmt_expr) => {
-                    let ExprKind::Assign(assign) = stmt_expr.expr.kind() else { continue };
-                    let target_var = assign.target.single_name();
-                    if target_var != Some(builder_var.as_str()) { continue; }
-                    if let Some((field_name, field_ty)) =
-                        extract_with_field_from_assign(&assign.value)
-                    {
-                        fields.push((field_name, field_ty));
+                    match stmt_expr.expr.kind() {
+                        ExprKind::Assign(assign) => {
+                            let target_var = assign.target.single_name();
+                            if target_var != Some(builder_var.as_str()) { continue; }
+                            if let Some((field_name, field_ty)) =
+                                extract_with_field_from_assign(&assign.value)
+                            {
+                                fields.push((field_name, field_ty));
+                            }
+                        }
+                        ExprKind::If(expr_if) => {
+                            if let Some(cond_val) = eval_const_bool(&expr_if.cond, const_bools) {
+                                if cond_val {
+                                    if let ExprKind::Block(if_body) = expr_if.then.kind() {
+                                        process_builder_if_body(&if_body.stmts, &builder_var, &mut struct_name, &mut fields);
+                                    }
+                                } else if let Some(elze) = &expr_if.elze {
+                                    if let ExprKind::Block(else_body) = elze.kind() {
+                                        process_builder_if_body(&else_body.stmts, &builder_var, &mut struct_name, &mut fields);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -575,6 +628,38 @@ fn try_lower_type_builder_const_block(expr: &mut Expr) {
 
     let ExprKind::ConstBlock(const_block) = expr.kind_mut() else { return };
     const_block.expr = Box::new(Expr::new(ExprKind::Block(new_block)));
+}
+
+fn eval_const_bool(cond: &Expr, const_bools: &HashMap<String, bool>) -> Option<bool> {
+    match cond.kind() {
+        ExprKind::Name(n) => const_bools.get(&n.to_string()).copied(),
+        ExprKind::Value(v) => match v.as_ref() {
+            Value::Bool(b) => Some(b.value),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn process_builder_if_body(
+    stmts: &[BlockStmt],
+    builder_var: &str,
+    struct_name: &mut String,
+    fields: &mut Vec<(String, Ty)>,
+) {
+    for stmt in stmts {
+        if let BlockStmt::Expr(stmt_expr) = stmt {
+            if let ExprKind::Assign(assign) = stmt_expr.expr.kind() {
+                let target_var = assign.target.single_name();
+                if target_var != Some(builder_var) { continue; }
+                if let Some((field_name, field_ty)) =
+                    extract_with_field_from_assign(&assign.value)
+                {
+                    fields.push((field_name, field_ty));
+                }
+            }
+        }
+    }
 }
 
 fn extract_builder_from_invoke(expr: &Expr) -> Option<(String, bool)> {
