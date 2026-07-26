@@ -89,7 +89,12 @@ fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result
                 normalize_item(child, strategy)?;
             }
         }
-        ItemKind::DefType(def) => normalize_ty(&mut def.value, strategy)?,
+        ItemKind::DefType(def) => {
+            normalize_ty(&mut def.value, strategy)?;
+            if let Ty::Expr(expr) = &mut def.value {
+                try_lower_type_builder_const_block(expr);
+            }
+        }
         ItemKind::Expr(expr) => normalize_expr(expr, strategy)?,
     }
     Ok(())
@@ -502,6 +507,226 @@ fn normalize_intrinsic_call(
     }
 
     Ok(())
+}
+
+fn try_lower_type_builder_const_block(expr: &mut Expr) {
+    let mut struct_name = String::new();
+    let mut fields: Vec<(String, Ty)> = Vec::new();
+
+    // Phase 1: extract data (immutable borrow)
+    {
+        let ExprKind::ConstBlock(const_block) = expr.kind_mut() else { return };
+        let ExprKind::Block(body) = const_block.expr.kind() else { return };
+        if body.stmts.is_empty() { return; }
+
+        let last_idx = body.stmts.len() - 1;
+        let build_result = match &body.stmts[last_idx] {
+            BlockStmt::Expr(e) => extract_builder_from_invoke(&e.expr),
+            _ => None,
+        };
+        let Some((builder_var, _)) = build_result else { return };
+
+        for stmt in &body.stmts[..last_idx] {
+            match stmt {
+                BlockStmt::Let(stmt_let) => {
+                    let Some(pat_name) = stmt_let.pat.single_name() else { continue };
+                    if pat_name != builder_var { continue; }
+                    let Some(init) = &stmt_let.init else { continue };
+                    if let Some(n) = extract_type_builder_new_name(init) {
+                        struct_name = n;
+                    }
+                }
+                BlockStmt::Expr(stmt_expr) => {
+                    let ExprKind::Assign(assign) = stmt_expr.expr.kind() else { continue };
+                    let target_var = assign.target.single_name();
+                    if target_var != Some(builder_var.as_str()) { continue; }
+                    if let Some((field_name, field_ty)) =
+                        extract_with_field_from_assign(&assign.value)
+                    {
+                        fields.push((field_name, field_ty));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if struct_name.is_empty() {
+            struct_name = extract_name_from_build_target(&body.stmts);
+        }
+    } // immutable borrow ends
+
+    if struct_name.is_empty() { return; }
+
+    // Phase 2: mutate
+    let mut args = vec![Expr::value(Value::string(struct_name))];
+    for (field_name, field_ty) in fields {
+        args.push(Expr::value(Value::string(field_name)));
+        args.push(Expr::value(Value::Type(field_ty)));
+    }
+    let call = ExprIntrinsicCall::new(
+        crate::intrinsics::IntrinsicCallKind::CreateStruct,
+        args,
+        Vec::new(),
+    );
+    let new_block = ExprBlock::new_stmts(vec![BlockStmt::Expr(
+        crate::ast::BlockStmtExpr::new(Expr::new(ExprKind::IntrinsicCall(call)))
+            .with_semicolon(false),
+    )]);
+
+    let ExprKind::ConstBlock(const_block) = expr.kind_mut() else { return };
+    const_block.expr = Box::new(Expr::new(ExprKind::Block(new_block)));
+}
+
+fn extract_builder_from_invoke(expr: &Expr) -> Option<(String, bool)> {
+    let ExprKind::Invoke(invoke) = expr.kind() else { return None };
+    match &invoke.target {
+        ExprInvokeTarget::Method(select) if select.field.as_str() == "build" => {
+            let var = select.obj.single_name()?;
+            Some((var.to_string(), true))
+        }
+        _ => None,
+    }
+}
+
+fn extract_type_builder_new_name(expr: &Expr) -> Option<String> {
+    // Already normalized to CreateStruct
+    if let ExprKind::IntrinsicCall(call) = expr.kind() {
+        if call.kind == crate::intrinsics::IntrinsicCallKind::CreateStruct {
+            return call.args.first().and_then(|a| match a.kind() {
+                ExprKind::Value(v) => match v.as_ref() {
+                    Value::String(s) => Some(s.value.clone()),
+                    _ => None,
+                },
+                _ => None,
+            });
+        }
+    }
+    // Original TypeBuilder::new(...) invoke
+    let ExprKind::Invoke(invoke) = expr.kind() else { return None };
+    match &invoke.target {
+        ExprInvokeTarget::Function(path) => {
+            let is_tb = match path {
+                crate::ast::Name::Path(p) => p.segments.iter()
+                    .any(|s| s.name.as_str() == "TypeBuilder" || s.name.as_str() == "new"),
+                crate::ast::Name::Ident(i) => i.as_str() == "new",
+                _ => false,
+            };
+            if !is_tb { return None; }
+            invoke.args.first().and_then(|a| match a.kind() {
+                ExprKind::Value(v) => match v.as_ref() {
+                    Value::String(s) => Some(s.value.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn extract_with_field_from_assign(expr: &Expr) -> Option<(String, Ty)> {
+    let ExprKind::Invoke(invoke) = expr.kind() else { return None };
+    match &invoke.target {
+        ExprInvokeTarget::Method(select) if select.field.as_str() == "with_field" => {
+            if invoke.args.len() < 2 { return None; }
+            let field_name = match invoke.args[0].kind() {
+                ExprKind::Value(v) => match v.as_ref() {
+                    Value::String(s) => Some(s.value.clone()),
+                    _ => None,
+                },
+                _ => None,
+            }?;
+            let field_ty = extract_type_from_normalize_expr(&invoke.args[1])?;
+            Some((field_name, field_ty))
+        }
+        _ => None,
+    }
+}
+
+fn extract_type_from_normalize_expr(expr: &Expr) -> Option<Ty> {
+    // Direct type value
+    if let ExprKind::Value(v) = expr.kind() {
+        if let Value::Type(ty) = v.as_ref() {
+            return Some(ty.clone());
+        }
+    }
+    match expr.kind() {
+        ExprKind::Name(loc) => {
+            let s = loc.to_string();
+            match s.as_str() {
+                "i64" => Some(Ty::Primitive(crate::ast::TypePrimitive::Int(
+                    crate::ast::TypeInt::I64,
+                ))),
+                "i32" => Some(Ty::Primitive(crate::ast::TypePrimitive::Int(
+                    crate::ast::TypeInt::I32,
+                ))),
+                "i8" => Some(Ty::Primitive(crate::ast::TypePrimitive::Int(
+                    crate::ast::TypeInt::I8,
+                ))),
+                "u64" => Some(Ty::Primitive(crate::ast::TypePrimitive::Int(
+                    crate::ast::TypeInt::U64,
+                ))),
+                "bool" => Some(Ty::Primitive(crate::ast::TypePrimitive::Bool)),
+                "f64" => Some(Ty::Primitive(crate::ast::TypePrimitive::Decimal(
+                    crate::ast::DecimalType::F64,
+                ))),
+                "str" => Some(Ty::Primitive(crate::ast::TypePrimitive::String)),
+                s if s.starts_with('&') => {
+                    let inner = s.trim_start_matches('&').trim()
+                        .trim_start_matches("'static").trim();
+                    if inner == "str" {
+                        Some(Ty::Reference(crate::ast::TypeReference {
+                            ty: Box::new(Ty::Primitive(crate::ast::TypePrimitive::String)),
+                            mutability: None,
+                            lifetime: None,
+                        }))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn extract_name_from_build_target(stmts: &[BlockStmt]) -> String {
+    for stmt in stmts.iter() {
+        if let BlockStmt::Let(s) = stmt {
+            if let Some(init) = &s.init {
+                if let Some(name) = extract_type_builder_new_name(init) {
+                    return name;
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+trait SingleName {
+    fn single_name(&self) -> Option<&str>;
+}
+
+impl SingleName for Expr {
+    fn single_name(&self) -> Option<&str> {
+        match self.kind() {
+            ExprKind::Name(crate::ast::Name::Ident(ident)) => Some(ident.as_str()),
+            ExprKind::Name(crate::ast::Name::Path(path)) => {
+                path.segments.last().map(|s| s.name.as_str())
+            }
+            _ => None,
+        }
+    }
+}
+
+impl SingleName for crate::ast::Pattern {
+    fn single_name(&self) -> Option<&str> {
+        match &self.kind {
+            crate::ast::PatternKind::Ident(ident) => Some(ident.ident.name.as_str()),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

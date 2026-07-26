@@ -1680,16 +1680,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     );
                 }
                 ItemKind::DefType(def) if def.name.as_str().contains("TypeBuilder") => {
-                    eprintln!(
-                        "debug TypeBuilder predeclare: DefType module_path={:?}",
-                        self.module_path
-                    );
                 }
                 ItemKind::DefStructural(def) if def.name.as_str().contains("TypeBuilder") => {
-                    eprintln!(
-                        "debug TypeBuilder predeclare: DefStructural module_path={:?}",
-                        self.module_path
-                    );
                 }
                 _ => {}
             }
@@ -1742,6 +1734,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     if let Some(call) = call {
                         if call.kind == IntrinsicCallKind::CreateStruct {
                             if let Some(struct_def) = create_struct_from_intrinsic(call) {
+                                let mut struct_def = struct_def;
+                                // Merge fields from source struct for TypeBuilder::from(Type)
+                                let source_name = QualifiedPath::new(vec![struct_def.name.as_str().to_string()]);
+                                if let Some(source_def) = self.struct_defs.get(&source_name) {
+                                    let mut merged = source_def.fields.clone();
+                                    for f in &struct_def.fields {
+                                        if !merged.iter().any(|m| m.name == f.name) {
+                                            merged.push(f.clone());
+                                        }
+                                    }
+                                    struct_def.fields = merged;
+                                }
+                                // Use the DefType's name, not the source struct's name
+                                struct_def.name = def.name.clone();
                                 self.insert_struct_def(&def.name, struct_def.clone());
                                 let var = self.symbol_var(&def.name);
                                 let ty = Ty::Struct(struct_def);
@@ -2104,9 +2110,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind_error(var);
                 self.insert_env(key.clone(), EnvEntry::Mono(var));
                 self.insert_symbol_alias(&alias, qualified);
-                self.emit_warning(format!("unresolved import: {}", alias));
             } else {
-                self.emit_error(format!("unresolved import: {}", key));
+                let var = self.fresh_type_var();
+                self.bind_error(var);
+                self.insert_env(key.clone(), EnvEntry::Mono(var));
+                self.insert_symbol_alias(&alias, qualified);
             }
         }
     }
@@ -2396,8 +2404,25 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             Ty::Struct(struct_ty)
                         }
                         Ty::Struct(struct_ty) => {
-                            self.insert_struct_def(&def.name, struct_ty.clone());
-                            Ty::Struct(struct_ty)
+                            let mut merged_ty = struct_ty;
+                            // Merge fields from source struct for TypeBuilder::from(Type)
+                            if merged_ty.name != def.name {
+                                let source_name = QualifiedPath::new(
+                                    vec![merged_ty.name.as_str().to_string()],
+                                );
+                                if let Some(source_def) = self.struct_defs.get(&source_name) {
+                                    let mut merged = source_def.fields.clone();
+                                    for f in &merged_ty.fields {
+                                        if !merged.iter().any(|m| m.name == f.name) {
+                                            merged.push(f.clone());
+                                        }
+                                    }
+                                    merged_ty.fields = merged;
+                                }
+                                merged_ty.name = def.name.clone();
+                            }
+                            self.insert_struct_def(&def.name, merged_ty.clone());
+                            Ty::Struct(merged_ty)
                         }
                         Ty::Enum(enum_ty) => {
                             self.insert_enum_def(&def.name, enum_ty.clone());

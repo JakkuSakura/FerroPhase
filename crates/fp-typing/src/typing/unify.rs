@@ -1,6 +1,7 @@
 use crate::{AstTypeInferencer, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::{Error, Result};
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::path::{PathPrefix, QualifiedPath};
 
 fn is_std_task_future_ty(ty: &Ty) -> bool {
@@ -1732,6 +1733,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                     }
                 }
+                if let ExprKind::ConstBlock(const_block) = expr.kind() {
+                    if let Some(call) = extract_create_struct_from_block(const_block) {
+                        if let Some(struct_ty) = self.build_struct_from_create_call(call) {
+                            self.bind(var, Ty::Struct(struct_ty));
+                            return Ok(var);
+                        }
+                    }
+                }
+                if let ExprKind::IntrinsicCall(call) = expr.kind() {
+                    if call.kind == IntrinsicCallKind::CreateStruct {
+                        if let Some(struct_ty) = self.build_struct_from_create_call(call) {
+                            self.bind(var, Ty::Struct(struct_ty));
+                            return Ok(var);
+                        }
+                    }
+                }
                 // Fallback unresolved named types stay symbolic until later constraints refine them.
                 return Ok(var);
             }
@@ -1891,6 +1908,70 @@ fn locator_tail_name(locator: &Name) -> Option<String> {
             .segments
             .last()
             .map(|seg| seg.ident.as_str().to_string()),
+    }
+}
+
+fn extract_create_struct_from_block(const_block: &ExprConstBlock) -> Option<&ExprIntrinsicCall> {
+    match const_block.expr.kind() {
+        ExprKind::IntrinsicCall(c) if c.kind == IntrinsicCallKind::CreateStruct => Some(c),
+        ExprKind::Block(body) => body.stmts.last().and_then(|s| match s {
+            BlockStmt::Expr(e) => match e.expr.kind() {
+                ExprKind::IntrinsicCall(c) if c.kind == IntrinsicCallKind::CreateStruct => Some(c),
+                _ => None,
+            },
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+impl<'ctx> AstTypeInferencer<'ctx> {
+    fn build_struct_from_create_call(&self, call: &ExprIntrinsicCall) -> Option<TypeStruct> {
+        let mut args = call.args.iter();
+        let name = match args.next()?.kind() {
+            ExprKind::Value(v) => match v.as_ref() {
+                Value::String(s) => s.value.clone(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let mut fields: Vec<StructuralField> = Vec::new();
+        while let (Some(name_expr), Some(ty_expr)) = (args.next(), args.next()) {
+            let field_name = match name_expr.kind() {
+                ExprKind::Value(v) => match v.as_ref() {
+                    Value::String(s) => s.value.clone(),
+                    _ => break,
+                },
+                _ => break,
+            };
+            let field_ty = match ty_expr.kind() {
+                ExprKind::Value(v) => match v.as_ref() {
+                    Value::Type(ty) => ty.clone(),
+                    _ => break,
+                },
+                _ => break,
+            };
+            fields.push(StructuralField::new(Ident::new(field_name), field_ty));
+        }
+
+        // Merge fields from source struct for TypeBuilder::from(Type)
+        let source_name = QualifiedPath::new(vec![name.clone()]);
+        if let Some(source_def) = self.struct_defs.get(&source_name) {
+            let mut merged = source_def.fields.clone();
+            for f in &fields {
+                if !merged.iter().any(|m| m.name == f.name) {
+                    merged.push(f.clone());
+                }
+            }
+            fields = merged;
+        }
+
+        Some(TypeStruct {
+            name: Ident::new(name),
+            generics_params: Vec::new(),
+            repr: ReprOptions::default(),
+            fields,
+        })
     }
 }
 

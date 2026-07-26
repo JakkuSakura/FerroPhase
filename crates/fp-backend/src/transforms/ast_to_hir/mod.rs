@@ -2313,6 +2313,17 @@ impl HirGenerator {
                 Some(MaterializedTypeAlias::Structural(structural.clone()))
             }
             ast::Ty::Enum(enum_ty) => Some(MaterializedTypeAlias::Enum(enum_ty.clone())),
+            ast::Ty::Expr(expr) => {
+                let call = extract_create_struct_call(expr);
+                call.and_then(|c| {
+                    if c.kind == fp_core::intrinsics::IntrinsicCallKind::CreateStruct {
+                        create_struct_from_intrinsic_call(&c)
+                    } else {
+                        None
+                    }
+                })
+                .map(|struct_ty| MaterializedTypeAlias::Struct(struct_ty))
+            }
             _ => None,
         }
     }
@@ -2332,8 +2343,31 @@ impl HirGenerator {
                 self.push_type_scope();
                 let generics = self.transform_generics(&struct_ty.generics_params);
                 let name = hir::Symbol::new(self.qualify_name(&def_type.name.name));
-                let fields = struct_ty
-                    .fields
+
+                // Merge fields from source struct for TypeBuilder::from(Type)
+                let fields: Vec<ast::StructuralField> = if struct_ty.name != def_type.name {
+                    // Look up source struct fields
+                    let source_name = struct_ty.name.as_str();
+                    let source_def_id =
+                        self.lookup_symbol(source_name, &self.global_type_defs.clone());
+                    let source_fields: Vec<ast::StructuralField> = source_def_id
+                        .and_then(|res| match res {
+                            hir::Res::Def(def_id) => self.struct_field_defs.get(&def_id).cloned(),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    let mut merged = source_fields;
+                    for f in &struct_ty.fields {
+                        if !merged.iter().any(|m| m.name == f.name) {
+                            merged.push(f.clone());
+                        }
+                    }
+                    merged
+                } else {
+                    struct_ty.fields.clone()
+                };
+
+                let fields = fields
                     .iter()
                     .map(|field| {
                         Ok(hir::StructField {
@@ -4015,4 +4049,62 @@ fn is_doc_attr(attr: &ast::Attribute) -> bool {
         ast::AttrMeta::List(list) => list.name.last().as_str() == "doc",
         ast::AttrMeta::NameValue(nv) => nv.name.last().as_str() == "doc",
     }
+}
+
+fn extract_create_struct_call(expr: &ast::Expr) -> Option<ast::ExprIntrinsicCall> {
+    match expr.kind() {
+        ast::ExprKind::IntrinsicCall(c) => Some(c.clone()),
+        ast::ExprKind::ConstBlock(const_block) => match const_block.expr.kind() {
+            ast::ExprKind::IntrinsicCall(c) => Some(c.clone()),
+            ast::ExprKind::Block(body) => body.stmts.last().and_then(|s| match s {
+                ast::BlockStmt::Expr(e) => match e.expr.kind() {
+                    ast::ExprKind::IntrinsicCall(c) => Some(c.clone()),
+                    _ => None,
+                },
+                _ => None,
+            }),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn create_struct_from_intrinsic_call(
+    call: &ast::ExprIntrinsicCall,
+) -> Option<ast::TypeStruct> {
+    let mut args = call.args.iter();
+    let name = match args.next()?.kind() {
+        ast::ExprKind::Value(v) => match v.as_ref() {
+            ast::Value::String(s) => s.value.clone(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let mut fields: Vec<ast::StructuralField> = Vec::new();
+    while let (Some(name_expr), Some(ty_expr)) = (args.next(), args.next()) {
+        let field_name = match name_expr.kind() {
+            ast::ExprKind::Value(v) => match v.as_ref() {
+                ast::Value::String(s) => s.value.clone(),
+                _ => break,
+            },
+            _ => break,
+        };
+        let field_ty = match ty_expr.kind() {
+            ast::ExprKind::Value(v) => match v.as_ref() {
+                ast::Value::Type(ty) => ty.clone(),
+                _ => break,
+            },
+            _ => break,
+        };
+        fields.push(ast::StructuralField::new(
+            ast::Ident::new(field_name),
+            field_ty,
+        ));
+    }
+    Some(ast::TypeStruct {
+        name: ast::Ident::new(name),
+        generics_params: Vec::new(),
+        repr: fp_core::ast::ReprOptions::default(),
+        fields,
+    })
 }

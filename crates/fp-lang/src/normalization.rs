@@ -800,16 +800,27 @@ fn walk_type_builder_chain(invoke: &ExprInvoke, name: &mut String, fields: &mut 
         ExprInvokeTarget::Function(func_path) => {
             // TypeBuilder::new("name") — initial call
             let is_tb = match func_path {
-                Name::Path(p) => p.segments.first()
-                    .map(|s| s.name.as_str() == "TypeBuilder").unwrap_or(false),
+                Name::Path(p) => p.segments.iter()
+                    .any(|s| s.name.as_str() == "TypeBuilder"),
+                Name::Ident(ident) => ident.as_str() == "TypeBuilder",
                 _ => false,
             };
             if is_tb {
                 if let Some(a) = invoke.args.first() {
                     if let ExprKind::Value(v) = a.kind() {
-                        if let Value::String(s) = v.as_ref() {
-                            *name = s.value.clone();
+                        match v.as_ref() {
+                            Value::String(s) => *name = s.value.clone(),
+                            Value::Type(ty) => {
+                                if let Ty::Expr(ty_expr) = ty {
+                                    if let Some(n) = type_name_from_expr(ty_expr) {
+                                        *name = n;
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
+                    } else if let ExprKind::Name(loc) = a.kind() {
+                        *name = loc.to_string();
                     }
                 }
                 return true;
@@ -817,6 +828,13 @@ fn walk_type_builder_chain(invoke: &ExprInvoke, name: &mut String, fields: &mut 
             false
         }
         _ => false,
+    }
+}
+
+fn type_name_from_expr(expr: &Expr) -> Option<String> {
+    match expr.kind() {
+        ExprKind::Name(loc) => Some(loc.to_string()),
+        _ => None,
     }
 }
 

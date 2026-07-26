@@ -519,6 +519,21 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 self.resolve_struct_literal(struct_expr)?
                             }
                         }
+                    } else if let ExprKind::Name(locator) = struct_expr.name.kind() {
+                        // Try resolving through the environment first for
+                        // locally-defined type aliases (DefType).
+                        if let Some(var) = self.lookup_env_name(locator)? {
+                            if let Ok(ty) = self.resolve_to_ty(var) {
+                                if let Ty::Struct(struct_def) = ty {
+                                    if let Some(struct_var) = self
+                                        .resolve_struct_literal_from_def(struct_expr, &struct_def)?
+                                    {
+                                        return Ok(struct_var);
+                                    }
+                                }
+                            }
+                        }
+                        self.resolve_struct_literal(struct_expr)?
                     } else {
                         self.resolve_struct_literal(struct_expr)?
                     }
@@ -3819,5 +3834,57 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let var = self.fresh_type_var();
         self.bind(var, Ty::Enum(enum_ty.clone()));
         Ok(Some(var))
+    }
+
+    fn lookup_env_name(&mut self, locator: &Name) -> Result<Option<TypeVarId>> {
+        let key = locator.to_string();
+        let mut poly_ty: Option<Ty> = None;
+        for scope in self.env.iter().rev() {
+            if let Some(entry) = scope.get(&key) {
+                match entry {
+                    EnvEntry::Mono(var) => return Ok(Some(*var)),
+                    EnvEntry::Poly(ty) if matches!(ty, Ty::Struct(_)) => {
+                        poly_ty = Some(ty.clone());
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let Some(ty) = poly_ty {
+            let var = self.fresh_type_var();
+            self.bind(var, ty);
+            return Ok(Some(var));
+        }
+        Ok(None)
+    }
+
+    fn resolve_struct_literal_from_def(
+        &mut self,
+        struct_expr: &mut ExprStruct,
+        struct_def: &TypeStruct,
+    ) -> Result<Option<TypeVarId>> {
+        if struct_expr.fields.len() != struct_def.fields.len() {
+            return Ok(None);
+        }
+        // Sort def fields by name
+        let mut def_fields: Vec<_> = struct_def.fields.iter().collect();
+        def_fields.sort_by_key(|f| f.name.as_str());
+        // Collect expression field names for matching
+        let field_names: Vec<_> = struct_expr.fields.iter()
+            .map(|f| f.name.as_str().to_string())
+            .collect();
+        // Type-check each field
+        for (_i, def_field) in def_fields.iter().enumerate() {
+            let pos = field_names.iter().position(|n| n == def_field.name.as_str());
+            let Some(idx) = pos else { return Ok(None) };
+            let field_var = self.type_from_ast_ty(&def_field.value)?;
+            if let Some(value) = struct_expr.fields[idx].value.as_mut() {
+                let value_var = self.infer_expr(value)?;
+                self.unify(value_var, field_var)?;
+            }
+        }
+        let result_var = self.type_from_ast_ty(&Ty::Struct(struct_def.clone()))?;
+        Ok(Some(result_var))
     }
 }
