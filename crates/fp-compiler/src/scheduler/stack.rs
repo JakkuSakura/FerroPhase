@@ -176,7 +176,7 @@ impl CompilerScheduler {
 mod tests {
     use super::*;
     use crate::scheduler::{
-        AstId, ConstValueId, FullyQualifiedPath, SchedulerError, TypedAstId,
+        AstId, ConstValueId, FullyQualifiedPath, SchedulerError,
     };
 
     fn path(segments: &[&str]) -> FullyQualifiedPath {
@@ -237,7 +237,7 @@ mod tests {
     fn rejects_duplicate_answers() {
         let mut scheduler = CompilerScheduler::new();
         let request = scheduler.submit(CompilerWork::CompileUnitAnswerComptime {
-            typed_ast: TypedAstId::new("typed_ast:crate::build"),
+            ast: AstId::new("ast:crate::build"),
             path: path(&["crate", "build"]),
         });
         scheduler.next_request().expect("active request");
@@ -274,7 +274,7 @@ mod tests {
         // Simulate the handler: set current_processing, submit a dependent work item
         scheduler.begin_processing(native_id);
         let comptime_id = scheduler.submit(CompilerWork::CompileUnitAnswerComptime {
-            typed_ast: TypedAstId::new("typed_ast:crate::main"),
+            ast: AstId::new("ast:crate::main"),
             path: path(&["crate", "main"]),
         });
         scheduler.end_processing();

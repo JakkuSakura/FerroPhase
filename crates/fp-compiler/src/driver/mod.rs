@@ -7,7 +7,7 @@ pub use state::CompilerState;
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprKind, ExprSplice, ExprSplicePending,
-    Item, ItemChunk, ItemDefConst, ItemDefFunction, ItemKind, Node, NodeKind, Ty, Value,
+    Item, ItemChunk, ItemDefConst, ItemKind, Node, NodeKind, Ty, Value,
 };
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::mir;
@@ -15,7 +15,7 @@ use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use fp_interpret::{LirInterpreter, VmError};
-use fp_typing::{annotate_with_resolved_state, GenericMonorph, PendingTypingRequestKind};
+use fp_typing::{annotate_with_resolved_state, GenericMonorph};
 use std::collections::{BTreeMap, HashMap};
 
 use crate::scheduler::{
@@ -31,6 +31,14 @@ pub struct CompilerDriver {
     pub scheduler: CompilerScheduler,
     pub state: CompilerState,
     interpreter: LirInterpreter,
+}
+
+struct CompileUnitCoreResult {
+    typed_ast_id: TypedAstId,
+    hir_id: HirId,
+    mir_id: MirId,
+    lir_id: LirId,
+    pending_generics: Vec<GenericMonorph>,
 }
 
 impl CompilerDriver {
@@ -84,8 +92,8 @@ impl CompilerDriver {
                 ast,
                 path,
             } => self.compile_unit_compile_native(ast, path),
-            CompilerWork::CompileUnitAnswerComptime { typed_ast, path } => {
-                self.compile_unit_answer_comptime(typed_ast, path)
+            CompilerWork::CompileUnitAnswerComptime { ast, path } => {
+                self.compile_unit_answer_comptime(ast, path)
             }
             CompilerWork::EnqueueGeneric {
                 typed_ast,
@@ -96,18 +104,13 @@ impl CompilerDriver {
         }
     }
 
-    fn compile_unit_compile_native(
+    fn compile_unit_core(
         &mut self,
         ast_id: &AstId,
         path: &FullyQualifiedPath,
-    ) -> Result<CompilerAnswer, CompilerDriverError> {
+    ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
         let mut ast = self.state.ast(ast_id)?.clone();
         AstPreProcessor::new(&mut self.state.splice_results).walk(&mut ast);
-
-        let is_lowerable = matches!(
-            ast.kind(),
-            NodeKind::Expr(_) | NodeKind::File(_) | NodeKind::Query(_)
-        );
 
         let resolved_consts = self.collect_resolved_const_values();
         let module_resolution = self.state.module_resolution(ast_id);
@@ -119,43 +122,32 @@ impl CompilerDriver {
         )?;
         self.state.extend_typing_diagnostics(outcome.diagnostics);
 
-        let has_comptime = outcome.pending_requests.iter().any(|r| {
-            matches!(
-                r.kind,
-                PendingTypingRequestKind::Comptime | PendingTypingRequestKind::Unresolved
-            )
-        });
-
-        if is_lowerable && has_comptime {
-            if self.state.comptime_attempted.contains(ast_id) {
-                // Already attempted comptime — consts are resolved as globals.
-            } else {
-                self.state.comptime_attempted.insert(ast_id.clone());
-                let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
-                self.state.insert_typed_ast(typed_ast_id.clone(), ast);
-                self.scheduler.submit(CompilerWork::CompileUnitAnswerComptime {
-                    typed_ast: typed_ast_id,
-                    path: path.clone(),
-                });
-                return Ok(CompilerAnswer::CompileUnitCompileNative);
-            }
-        }
-
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
+        self.state.insert_typed_ast(typed_ast_id.clone(), ast);
 
-        if is_lowerable {
-            self.state.insert_typed_ast(typed_ast_id.clone(), ast);
+        let hir_id = self.lower_to_hir(&typed_ast_id, path)?;
+        let mir_id = self.lower_to_mir(&hir_id, path)?;
+        let lir_id = self.lower_to_lir(&mir_id, path)?;
 
-            let hir_id = self.lower_to_hir(&typed_ast_id, path)?;
-            let mir_id = self.lower_to_mir(&hir_id, path)?;
-            let lir_id = self.lower_to_lir(&mir_id, path)?;
-            let _ = self.evaluate_comptime_lir(&lir_id, path)?;
-            self.generate_bytecode(&mir_id, path)?;
-        } else {
-            self.state.insert_typed_ast(typed_ast_id.clone(), ast);
-        }
+        Ok(CompileUnitCoreResult {
+            typed_ast_id,
+            hir_id,
+            mir_id,
+            lir_id,
+            pending_generics: outcome.pending_generics,
+        })
+    }
 
-        for monomorph in &outcome.pending_generics {
+    fn compile_unit_compile_native(
+        &mut self,
+        ast_id: &AstId,
+        path: &FullyQualifiedPath,
+    ) -> Result<CompilerAnswer, CompilerDriverError> {
+        let core = self.compile_unit_core(ast_id, path)?;
+        self.evaluate_comptime_lir(&core.lir_id, path)?;
+        self.generate_bytecode(&core.mir_id, path)?;
+
+        for monomorph in &core.pending_generics {
             let fqp = FullyQualifiedPath::new(monomorph.function_path.clone());
             let cannon_key = Self::generic_cannon_key(&fqp, &monomorph.concrete_types);
             if self.state.generic_instantiations.contains(&cannon_key) {
@@ -167,7 +159,7 @@ impl CompilerDriver {
                 monomorph.concrete_types.clone(),
             );
             self.scheduler.submit(CompilerWork::EnqueueGeneric {
-                typed_ast: typed_ast_id.clone(),
+                typed_ast: core.typed_ast_id.clone(),
                 path: path.clone(),
                 generic,
             });
@@ -178,14 +170,11 @@ impl CompilerDriver {
 
     fn compile_unit_answer_comptime(
         &mut self,
-        typed_ast_id: &TypedAstId,
+        ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
-        let hir_id = self.lower_to_hir(typed_ast_id, path)?;
-        let mir_id = self.lower_to_mir(&hir_id, path)?;
-        let lir_id = self.lower_to_lir(&mir_id, path)?;
-
-        let _count = self.evaluate_comptime_lir(&lir_id, path)?;
+        let core = self.compile_unit_core(ast_id, path)?;
+        self.evaluate_comptime_lir(&core.lir_id, path)?;
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
         Ok(CompilerAnswer::CompileUnitAnswerComptime { value: value_id })
     }
@@ -504,12 +493,9 @@ impl CompilerDriver {
                 .with_expr_resolution(self.state.expr_resolutions().clone())
                 .transform_file(file)?,
             NodeKind::Query(query) => HirGenerator::new().transform_query_document(query)?,
-            NodeKind::Item(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {
-                return Err(CompilerDriverError::UnsupportedWork(format!(
-                    "cannot lower AST node kind to HIR: {:?}",
-                    ast.kind()
-                )));
-            }
+        NodeKind::Item(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {
+            panic!("cannot lower AST node kind to HIR: {:?}", ast.kind())
+        }
         };
         let hir = HirId::new(format!("hir:{}", path.to_key()));
         self.state.insert_hir(hir.clone(), hir_program);
@@ -1187,7 +1173,7 @@ impl Default for CompilerDriver {
 mod tests {
     use super::*;
     use fp_core::ast::{
-        Expr, FunctionSignature, GenericParam, Ident, Item, ItemDefFunction, Node, TypeBounds,
+        Expr, File, FunctionSignature, GenericParam, Ident, Item, ItemDefFunction, Node, TypeBounds,
     };
 
     fn path() -> FullyQualifiedPath {
@@ -1304,9 +1290,15 @@ mod tests {
         };
 
         let mut driver = CompilerDriver::new();
+        let file = File {
+            path: std::path::PathBuf::from("generic.fp"),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::from(generic_function)],
+        };
         driver
             .state
-            .insert_ast(ast_id.clone(), Node::item(Item::from(generic_function)));
+            .insert_ast(ast_id.clone(), Node::file(file));
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,

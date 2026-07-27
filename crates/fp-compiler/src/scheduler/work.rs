@@ -13,7 +13,7 @@ pub enum CompilerWork {
         path: FullyQualifiedPath,
     },
     CompileUnitAnswerComptime {
-        typed_ast: TypedAstId,
+        ast: AstId,
         path: FullyQualifiedPath,
     },
     EnqueueGeneric {
