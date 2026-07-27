@@ -22,27 +22,6 @@ impl Display for RequestId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct SourceId {
-    key: String,
-}
-
-impl SourceId {
-    pub fn new(key: impl Into<String>) -> Self {
-        Self { key: key.into() }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.key
-    }
-}
-
-impl Display for SourceId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.key.fmt(f)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// Resolved semantic identity for a work subject after identity-forming generic
 /// and comptime arguments are known.
@@ -129,7 +108,6 @@ macro_rules! define_storage_id {
     };
 }
 
-define_storage_id!(RawAstId, "Storage identity for parsed, unnormalized AST.");
 define_storage_id!(AstId, "Storage identity for canonical AST.");
 define_storage_id!(TypedAstId, "Storage identity for typed canonical AST.");
 define_storage_id!(HirId, "Storage identity for HIR.");

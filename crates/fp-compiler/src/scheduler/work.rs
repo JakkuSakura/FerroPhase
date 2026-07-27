@@ -2,18 +2,12 @@ use serde::{Deserialize, Serialize};
 
 use super::identity::{
     AstId, BytecodeId, ConstValueId, FullyQualifiedPath, HirId, JitObjectId, LirId, MirId,
-    NativeObjectId, RawAstId, RuntimeValueId, SavedOutputId, SourceId,
+    NativeObjectId, RuntimeValueId, SavedOutputId,
     TypedAstId,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CompilerWork {
-    ParseSource {
-        source: SourceId,
-    },
-    NormalizeAst {
-        raw_ast: RawAstId,
-    },
     CompileUnitCompileNative {
         ast: AstId,
         path: FullyQualifiedPath,
@@ -47,7 +41,6 @@ impl GenericWorkRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InvalidatedObjectId {
-    RawAst(RawAstId),
     Ast(AstId),
     TypedAst(TypedAstId),
     Hir(HirId),
@@ -63,13 +56,6 @@ pub enum InvalidatedObjectId {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CompilerAnswer {
-    RawAst {
-        raw_ast: RawAstId,
-    },
-    Ast {
-        ast: AstId,
-        path: FullyQualifiedPath,
-    },
     CompileUnitCompileNative,
     CompileUnitAnswerComptime {
         value: ConstValueId,

@@ -69,10 +69,8 @@ impl CompilerScheduler {
         let pending_deps = self.pending_dependencies(id);
 
         if pending_deps.is_empty() {
-            let followup_work = self.followup_work(&completed);
             self.answered.insert(id, completed.clone());
-            let mut followups = self.submit_followups(followup_work);
-            followups.extend(self.retry_requests_blocked_on(id));
+            let followups = self.retry_requests_blocked_on(id);
             Ok(ScheduledAnswer {
                 completed,
                 followups,
@@ -172,34 +170,13 @@ impl CompilerScheduler {
         self.submit_followups(followup_work)
     }
 
-    fn followup_work(&self, completed: &CompletedRequest) -> Vec<CompilerWork> {
-        match (&completed.request.work, &completed.answer) {
-            (CompilerWork::ParseSource { .. }, CompilerAnswer::RawAst { raw_ast }) => {
-                vec![CompilerWork::NormalizeAst {
-                    raw_ast: raw_ast.clone(),
-                }]
-            }
-            (
-                CompilerWork::NormalizeAst { .. },
-                CompilerAnswer::Ast {
-                    ast,
-                    path,
-                },
-            ) => vec![CompilerWork::CompileUnitCompileNative {
-                ast: ast.clone(),
-                path: path.clone(),
-            }],
-            _ => Vec::new(),
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::scheduler::{
-        AstId, ConstValueId, FullyQualifiedPath, RawAstId, SchedulerError,
-        SourceId, TypedAstId,
+        AstId, ConstValueId, FullyQualifiedPath, SchedulerError, TypedAstId,
     };
 
     fn path(segments: &[&str]) -> FullyQualifiedPath {
@@ -282,50 +259,6 @@ mod tests {
             )
             .expect_err("duplicate answer");
         assert_eq!(duplicate, SchedulerError::RequestAlreadyAnswered(request));
-    }
-
-    #[test]
-    fn wires_parse_normalize_and_compile_unit_steps() {
-        let mut scheduler = CompilerScheduler::new();
-        let source = scheduler.submit(CompilerWork::ParseSource {
-            source: SourceId::new("src/main.fp"),
-        });
-
-        let request = scheduler.next_request().expect("parse request");
-        assert_eq!(request.id, source);
-        let scheduled = scheduler
-            .answer_and_schedule(
-                request.id,
-                CompilerAnswer::RawAst {
-                    raw_ast: RawAstId::new("raw_ast:src/main.fp"),
-                },
-            )
-            .expect("raw AST schedules normalization");
-        assert_eq!(scheduled.followups.len(), 1);
-
-        let normalize = scheduler.next_request().expect("normalize request");
-        assert!(matches!(normalize.work, CompilerWork::NormalizeAst { .. }));
-        let scheduled = scheduler
-            .answer_and_schedule(
-                normalize.id,
-                CompilerAnswer::Ast {
-                    ast: AstId::new("ast:src/main.fp"),
-                    path: path(&["crate", "main"]),
-                },
-            )
-            .expect("AST schedules compile");
-        assert_eq!(scheduled.followups.len(), 1);
-
-        let compile = scheduler.next_request().expect("compile request");
-        assert!(matches!(
-            compile.work,
-            CompilerWork::CompileUnitCompileNative { .. }
-        ));
-        scheduler
-            .answer_and_schedule(compile.id, CompilerAnswer::CompileUnitCompileNative)
-            .expect("compilation succeeds");
-
-        assert!(scheduler.is_idle());
     }
 
     #[test]

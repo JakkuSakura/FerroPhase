@@ -8,6 +8,6 @@ pub use scheduler::{
     AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler,
     CompilerWork, CompletedRequest, ConstValueId, FullyQualifiedPath,
     GenericWorkRequest, HirId, InvalidatedObjectId, JitObjectId, LirId, MirId,
-    NativeObjectId, RawAstId, RequestId, RuntimeValueId,
-    SavedOutputId, ScheduledAnswer, SchedulerError, SourceId, TypedAstId,
+    NativeObjectId, RequestId, RuntimeValueId,
+    SavedOutputId, ScheduledAnswer, SchedulerError, TypedAstId,
 };
