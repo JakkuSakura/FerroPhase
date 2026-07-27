@@ -247,6 +247,7 @@ impl CompilerDriver {
                 Self::substitute_in_ty(ret_ty, &generic.generic_params, &generic.concrete_types);
             }
             def.sig.generics_params.clear();
+            Self::substitute_in_body(&mut def.body, &generic.generic_params, &generic.concrete_types);
         }
 
         let specialized_path = FullyQualifiedPath::new(
@@ -354,6 +355,108 @@ impl CompilerDriver {
                 for ty in &mut t.types {
                     Self::substitute_in_ty(ty, _param_names, concrete_types);
                 }
+            }
+            _ => {}
+        }
+    }
+
+    fn substitute_in_body(
+        expr: &mut Expr,
+        param_names: &[String],
+        concrete_types: &[Ty],
+    ) {
+        if let Some(ty) = expr.ty_mut() {
+            Self::substitute_in_ty(ty, param_names, concrete_types);
+        }
+        match expr.kind_mut() {
+            ExprKind::Block(block) => {
+                for stmt in &mut block.stmts {
+                    match stmt {
+                        BlockStmt::Expr(e) => Self::substitute_in_body(&mut e.expr, param_names, concrete_types),
+                        BlockStmt::Let(s) => {
+                            if let Some(init) = s.init.as_mut() {
+                                Self::substitute_in_body(init, param_names, concrete_types);
+                            }
+                        }
+                        BlockStmt::Defer(d) => {
+                            Self::substitute_in_body(d.expr.as_mut(), param_names, concrete_types);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            ExprKind::Invoke(invoke) => {
+                for arg in &mut invoke.args {
+                    Self::substitute_in_body(arg, param_names, concrete_types);
+                }
+            }
+            ExprKind::BinOp(bin) => {
+                Self::substitute_in_body(bin.lhs.as_mut(), param_names, concrete_types);
+                Self::substitute_in_body(bin.rhs.as_mut(), param_names, concrete_types);
+            }
+            ExprKind::UnOp(u) => {
+                Self::substitute_in_body(u.val.as_mut(), param_names, concrete_types);
+            }
+            ExprKind::If(if_expr) => {
+                Self::substitute_in_body(if_expr.then.as_mut(), param_names, concrete_types);
+                if let Some(elze) = if_expr.elze.as_mut() {
+                    Self::substitute_in_body(elze, param_names, concrete_types);
+                }
+            }
+            ExprKind::Return(ret) => {
+                if let Some(val) = ret.value.as_mut() {
+                    Self::substitute_in_body(val, param_names, concrete_types);
+                }
+            }
+            ExprKind::Match(m) => {
+                for case in &mut m.cases {
+                    Self::substitute_in_body(case.body.as_mut(), param_names, concrete_types);
+                }
+            }
+            ExprKind::Loop(l) => {
+                Self::substitute_in_body(l.body.as_mut(), param_names, concrete_types);
+            }
+            ExprKind::While(w) => {
+                Self::substitute_in_body(w.body.as_mut(), param_names, concrete_types);
+            }
+            ExprKind::For(f) => {
+                Self::substitute_in_body(f.body.as_mut(), param_names, concrete_types);
+            }
+            ExprKind::Assign(a) => {
+                Self::substitute_in_body(a.value.as_mut(), param_names, concrete_types);
+            }
+            ExprKind::Cast(c) => {
+                Self::substitute_in_body(c.expr.as_mut(), param_names, concrete_types);
+            }
+            ExprKind::Struct(s) => {
+                for field in &mut s.fields {
+                    if let Some(val) = field.value.as_mut() {
+                        Self::substitute_in_body(val, param_names, concrete_types);
+                    }
+                }
+            }
+            ExprKind::Tuple(t) => {
+                for v in &mut t.values {
+                    Self::substitute_in_body(v, param_names, concrete_types);
+                }
+            }
+            ExprKind::Array(a) => {
+                for v in &mut a.values {
+                    Self::substitute_in_body(v, param_names, concrete_types);
+                }
+            }
+            ExprKind::With(w) => {
+                Self::substitute_in_body(w.context.as_mut(), param_names, concrete_types);
+                Self::substitute_in_body(w.body.as_mut(), param_names, concrete_types);
+            }
+            ExprKind::Let(l) => {
+                Self::substitute_in_body(l.expr.as_mut(), param_names, concrete_types);
+            }
+            ExprKind::ConstBlock(cb) => {
+                Self::substitute_in_body(cb.expr.as_mut(), param_names, concrete_types);
+            }
+            ExprKind::SplicePending(_) | ExprKind::Splice(_) => {
+                // Splice nodes will be resolved by AstPreProcessor on re-compilation
             }
             _ => {}
         }
