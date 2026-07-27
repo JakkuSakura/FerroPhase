@@ -188,8 +188,13 @@ impl CompilerDriver {
         self.state.insert_typed_ast(typed_ast_id.clone(), ast.unwrap());
 
         for monomorph in &pending_generics {
+            let fqp = FullyQualifiedPath::new(monomorph.function_path.clone());
+            let cannon_key = Self::generic_cannon_key(&fqp, &monomorph.concrete_types);
+            if self.state.generic_instantiations.contains(&cannon_key) {
+                continue;
+            }
             let generic = GenericWorkRequest::new(
-                FullyQualifiedPath::new(monomorph.function_path.clone()),
+                fqp,
                 monomorph.generic_params.clone(),
                 monomorph.concrete_types.clone(),
             );
