@@ -31,6 +31,7 @@ fn normalize_node(node: &mut Node, strategy: &dyn IntrinsicNormalizer) -> Result
             let mut const_bools = scan_const_bools(&file.items);
             scan_items(&file.collected_items, &mut const_bools);
             CONST_BOOLS.with(|cb| *cb.borrow_mut() = const_bools);
+            resolve_all_splices(&mut file.items);
             for item in &mut file.items {
                 normalize_item(item, strategy)?;
             }
@@ -844,6 +845,62 @@ impl SingleName for crate::ast::Pattern {
             crate::ast::PatternKind::Ident(ident) => Some(ident.ident.name.as_str()),
             _ => None,
         }
+    }
+}
+
+fn resolve_all_splices(items: &mut [Item]) {
+    // Collect quote values from DefConst items
+    let mut quote_values: HashMap<String, Expr> = HashMap::new();
+    for item in items.iter() {
+        if let ItemKind::DefConst(def) = item.kind() {
+            if matches!(def.value.kind(), ExprKind::Quote(_)) {
+                quote_values.insert(
+                    def.name.as_str().to_string(),
+                    (*def.value).clone(),
+                );
+            }
+        }
+    }
+    // Replace splices in function bodies with quote items
+    for item in items.iter_mut() {
+        if let ItemKind::DefFunction(func) = item.kind_mut() {
+            resolve_splices_in_expr(&mut func.body, &quote_values);
+        }
+    }
+}
+
+fn resolve_splices_in_expr(expr: &mut Expr, quote_values: &HashMap<String, Expr>) {
+    if let ExprKind::Block(block) = expr.kind_mut() {
+        let mut new_stmts: Vec<BlockStmt> = Vec::new();
+        for stmt in block.stmts.drain(..) {
+            match stmt {
+                BlockStmt::Expr(mut expr_stmt)
+                    if matches!(expr_stmt.expr.kind(), ExprKind::Splice(_)) =>
+                {
+                    if let ExprKind::Splice(splice) = expr_stmt.expr.kind() {
+                        if let ExprKind::Name(name) = splice.token.kind() {
+                            let key = name.to_string();
+                            if let Some(quote_expr) = quote_values.get(&key) {
+                                if let ExprKind::Quote(quote) = quote_expr.kind() {
+                                    for quote_stmt in &quote.block.stmts {
+                                        if let BlockStmt::Item(item) = quote_stmt {
+                                            new_stmts.push(BlockStmt::Item(
+                                                item.clone(),
+                                            ));
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    // Couldn't resolve — keep the splice
+                    new_stmts.push(BlockStmt::Expr(expr_stmt));
+                }
+                other => new_stmts.push(other),
+            }
+        }
+        block.stmts = new_stmts;
     }
 }
 
