@@ -65,24 +65,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 BlockStmt::Expr(expr_stmt) => {
                     // If this is a splice in statement position, enforce stmt token
                     if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
-                        // Inject items from quote consts at typing time
-                        let mut items: Vec<Item> = Vec::new();
-                        if let ExprKind::Name(loc) = splice.token.kind() {
-                            let key = loc.to_string();
-                            if let Some(expr) = self.splice_quote_values.get(&key) {
-                                if let ExprKind::Quote(quote) = expr.kind() {
-                                    for stmt in &quote.block.stmts {
-                                        if let BlockStmt::Item(item) = stmt {
-                                            items.push(item.as_ref().clone());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        for mut item in items {
-                            self.predeclare_item(&item);
-                            let _ = self.infer_item(&mut item);
-                        }
                         let token_var = self.infer_expr(splice.token.as_mut())?;
                         let token_ty = self.resolve_to_ty(token_var)?;
                         if !self.is_stmt_or_item_quote(&token_ty) {

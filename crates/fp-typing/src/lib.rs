@@ -328,7 +328,6 @@ pub struct AstTypeInferencer<'ctx> {
     /// comptime evaluation.  Keyed by the const item's name.
     resolved_consts: HashMap<String, fp_core::ast::Value>,
     expr_resolution: Option<&'ctx dyn ExprResolution>,
-    splice_quote_values: HashMap<String, Expr>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -459,7 +458,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             comptime_exprs: Vec::new(),
             resolved_consts: HashMap::new(),
             expr_resolution: None,
-            splice_quote_values: HashMap::new(),
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -1810,12 +1808,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             ItemKind::DefConst(def) => {
                 self.register_symbol(&def.name);
-                if let ExprKind::Quote(_) = def.value.kind() {
-                    self.splice_quote_values.insert(
-                        def.name.as_str().to_string(),
-                        (*def.value).clone(),
-                    );
-                }
             }
             ItemKind::DefStatic(def) => {
                 self.register_symbol(&def.name);
