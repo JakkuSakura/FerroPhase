@@ -1650,18 +1650,11 @@ impl HirGenerator {
                 };
                 Ok(expr)
             }
-            ast::Ty::Quote(_) => {
-                self.add_error(
-                    Diagnostic::error(
-                        "quote token types should be removed by const-eval".to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT)
-                    .with_span(self.normalize_span(ty.span())),
-                );
+            ast::Ty::Quote(_quote_ty) => {
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TypeExprKind::Error,
-                    Span::new(self.current_file, 0, 0),
+                    hir::TypeExprKind::Never,
+                    self.normalize_span(ty.span()),
                 ))
             }
             ast::Ty::Expr(expr) => {
@@ -3159,6 +3152,9 @@ impl ClosureLowering {
             ast::ExprKind::Splice(s) => {
                 self.rewrite_in_expr(s.token.as_mut())?;
             }
+            ast::ExprKind::SplicePending(p) => {
+                self.rewrite_in_expr(p.token.as_mut())?;
+            }
             ast::ExprKind::Invoke(invoke) => {
                 for arg in &mut invoke.args {
                     self.rewrite_in_expr(arg)?;
@@ -3432,6 +3428,9 @@ impl CaptureCollector {
             }
             ast::ExprKind::Splice(s) => {
                 self.visit(s.token.as_ref());
+            }
+            ast::ExprKind::SplicePending(p) => {
+                self.visit(p.token.as_ref());
             }
             ast::ExprKind::Closure(_) | ast::ExprKind::Closured(_) => {}
             ast::ExprKind::IntrinsicContainer(collection) => {
@@ -3924,6 +3923,9 @@ impl CaptureReplacer {
             }
             ast::ExprKind::Splice(s) => {
                 self.visit(s.token.as_mut());
+            }
+            ast::ExprKind::SplicePending(p) => {
+                self.visit(p.token.as_mut());
             }
             ast::ExprKind::IntrinsicContainer(container) => {
                 let mut new_expr = container.clone().into_const_expr();

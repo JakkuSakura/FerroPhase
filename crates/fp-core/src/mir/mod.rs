@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::ast::QuoteFragmentKind;
+use crate::ast::QuoteItemKind;
 use crate::intrinsics::IntrinsicCallKind;
 use crate::query::{QueryIrDocument, QueryOrigin};
 
@@ -286,6 +288,13 @@ pub enum ConstantKind {
     Fn(Symbol, Ty),
     /// Reference to a global constant by name
     Global(Symbol, Ty),
+    /// Token stream — comptime-only quote token carrying AST items.
+    /// The payload is extracted from the typed AST by the driver.
+    TokenStream {
+        kind: QuoteFragmentKind,
+        item_kind: Option<QuoteItemKind>,
+        ty: Ty,
+    },
     Null,
     Int(i64),
     UInt(u64),

@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::{
-    ast::{Expr, ExprId, ExprResolutionTable, Node, Value},
+    ast::{BlockStmt, Expr, ExprId, ExprResolutionTable, Item, Node, Value},
     hir, lir, mir,
     module::resolution::ModuleResolutionContext,
 };
@@ -12,6 +12,13 @@ use fp_typing::TypingDiagnostic;
 use crate::driver::CompilerDriverError;
 use crate::module_resolution::CompilerModuleResolver;
 use crate::scheduler::{AstId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, TypedAstId};
+
+#[derive(Debug, Clone)]
+pub struct SpliceResult {
+    pub items: Vec<Item>,
+    pub stmts: Vec<BlockStmt>,
+    pub expr: Option<Expr>,
+}
 
 pub struct CompilerState {
     ast: BTreeMap<AstId, Node>,
@@ -39,6 +46,11 @@ pub struct CompilerState {
     pub(crate) mir_to_typed_ast: BTreeMap<MirId, TypedAstId>,
     /// Maps LirId to the TypedAstId that was lowered to produce it.
     pub(crate) lir_to_typed_ast: BTreeMap<LirId, TypedAstId>,
+    /// Resolved splice results, keyed by const name. Populated after comptime
+    /// evaluation of a splice's quote token. Queried by typing when encountering SplicePending.
+    pub(crate) splice_results: BTreeMap<String, SpliceResult>,
+    /// Maps request_id → const name for splices awaiting comptime evaluation.
+    pub(crate) pending_splices: HashMap<u64, String>,
 }
 
 impl CompilerState {
@@ -197,6 +209,10 @@ impl CompilerState {
     pub fn runtime_value_len(&self) -> usize {
         self.runtime_values.len()
     }
+
+    pub fn register_splice_need(&mut self, request_id: u64, const_name: &str) {
+        self.pending_splices.insert(request_id, const_name.to_string());
+    }
 }
 
 impl Default for CompilerState {
@@ -221,6 +237,8 @@ impl Default for CompilerState {
             hir_to_typed_ast: BTreeMap::new(),
             mir_to_typed_ast: BTreeMap::new(),
             lir_to_typed_ast: BTreeMap::new(),
+            splice_results: BTreeMap::new(),
+            pending_splices: HashMap::new(),
         }
     }
 }

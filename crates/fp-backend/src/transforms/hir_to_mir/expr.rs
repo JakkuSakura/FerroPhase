@@ -14750,7 +14750,8 @@ impl<'a> BodyBuilder<'a> {
             mir::ConstantKind::Str(_) => Some(self.lowering.string_slice_ty()),
             mir::ConstantKind::Val(_, ty)
             | mir::ConstantKind::Fn(_, ty)
-            | mir::ConstantKind::Global(_, ty) => Some(ty.clone()),
+            | mir::ConstantKind::Global(_, ty)
+            | mir::ConstantKind::TokenStream { ty, .. } => Some(ty.clone()),
             mir::ConstantKind::Ty(_) => None,
             mir::ConstantKind::Null => Some(Ty {
                 kind: TyKind::RawPtr(TypeAndMut {

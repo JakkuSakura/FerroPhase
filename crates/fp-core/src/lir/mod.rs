@@ -76,6 +76,9 @@ pub struct LirComptimeEntry {
     pub function: Name,
     pub key: String,
     pub ty: crate::mir::Ty,
+    /// When true, this entry represents a quote token stream whose items
+    /// must be extracted from the typed AST and stored in splice_results.
+    pub token_stream: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -83,6 +83,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.bind(last, Ty::Unit(TypeUnit));
                         continue;
                     }
+                    if let ExprKind::SplicePending(pending) = expr_stmt.expr.kind_mut() {
+                        let token_var = self.infer_expr(pending.token.as_mut())?;
+                        let token_ty = self.resolve_to_ty(token_var)?;
+                        if !self.is_stmt_or_item_quote(&token_ty) {
+                            match token_ty {
+                                Ty::Quote(quote) => {
+                                    self.emit_error(format!(
+                                        "splice in statement position requires stmt/item/expr token, found {:?}",
+                                        quote.kind
+                                    ));
+                                }
+                                _ => self.emit_error("splice expects a quote token expression"),
+                            }
+                        }
+                        last = self.fresh_type_var();
+                        self.bind(last, Ty::Unit(TypeUnit));
+                        continue;
+                    }
                     let expr_var = self.infer_expr(expr_stmt.expr.as_mut())?;
                     if expr_stmt.has_value() {
                         last = expr_var;

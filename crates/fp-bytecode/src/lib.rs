@@ -1830,6 +1830,18 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
             ));
             Ok(BytecodeConst::Unit)
         }
+        mir::ConstantKind::TokenStream { kind, .. } => {
+            diagnostic_manager().add_diagnostic(
+                Diagnostic::error(format!(
+                    "token stream constant ({:?}) should not appear in bytecode — must be resolved at comptime",
+                    kind
+                ))
+                .with_source_context(BYTECODE_LOWERING_CONTEXT),
+            );
+            Err(BytecodeError::Lowering {
+                message: "token stream in bytecode".into(),
+            })
+        }
     }
 }
 

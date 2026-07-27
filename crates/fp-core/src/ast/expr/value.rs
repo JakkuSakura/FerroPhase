@@ -233,6 +233,17 @@ common_struct! {
     }
 }
 
+common_struct! {
+    /// Placeholder for a splice whose evaluation has been delegated to the scheduler.
+    /// request_id maps to an entry in CompilerState::splice_results.
+    pub struct ExprSplicePending {
+        #[serde(default)]
+        pub span: Span,
+        pub request_id: u64,
+        pub token: BExpr,
+    }
+}
+
 impl Display for ExprStringTemplate {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "template!(\"")?;
@@ -379,6 +390,12 @@ impl ExprQuote {
 }
 
 impl ExprSplice {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.token.span())
+    }
+}
+
+impl ExprSplicePending {
     pub fn span(&self) -> Span {
         span_or(self.span, self.token.span())
     }

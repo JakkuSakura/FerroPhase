@@ -380,6 +380,10 @@ impl PrettyPrintable for ast::Expr {
                 ctx.writeln(f, format!("splice{}", suffix))?;
                 ctx.with_indent(|ctx| s.token.fmt_pretty(f, ctx))
             }
+            ast::ExprKind::SplicePending(p) => {
+                ctx.writeln(f, format!("splice_pending({}){}", p.request_id, suffix))?;
+                ctx.with_indent(|ctx| p.token.fmt_pretty(f, ctx))
+            }
             ast::ExprKind::Closured(closured) => {
                 ctx.writeln(f, format!("closured{}", suffix))?;
                 ctx.with_indent(|ctx| closured.expr.fmt_pretty(f, ctx))
@@ -1424,6 +1428,7 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
         | ast::ExprKind::Let(_)
         | ast::ExprKind::Quote(_)
         | ast::ExprKind::Splice(_)
+        | ast::ExprKind::SplicePending(_)
         | ast::ExprKind::Closure(_)
         | ast::ExprKind::IntrinsicCall(_)
         | ast::ExprKind::Closured(_)

@@ -5,20 +5,22 @@ pub use error::CompilerDriverError;
 pub use state::CompilerState;
 
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
-use fp_core::ast::{annotate_collected_items, BlockStmt, Expr, ExprKind, Item, ItemKind, Node, NodeKind, Value};
+use fp_core::ast::{annotate_collected_items, BlockStmt, Expr, ExprKind, ExprSplicePending, Item, ItemKind, Node, NodeKind, Value};
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::span::Span;
 use fp_interpret::{LirInterpreter, VmError};
 use fp_typing::{annotate_with_resolved_state, PendingTypingRequest, PendingTypingRequestKind};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::scheduler::{
     AstId, CompileTimeNeed, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
     ConstValueId, ExecutionMode, FullyQualifiedPath, GenericWorkRequest, HirId, LirId, MirId,
     RequestId, RuntimeValueId, ScheduledAnswer, TypeNeed, TypedAstId, TypingRequest,
 };
+
+use crate::driver::state::SpliceResult;
 
 pub struct CompilerDriver {
     pub scheduler: CompilerScheduler,
@@ -84,7 +86,11 @@ impl CompilerDriver {
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let mut ast = self.state.ast(ast_id)?.clone();
         annotate_collected_items(&mut ast);
-        AstPreProcessor::new().process(&mut ast);
+        let needs = AstPreProcessor::new(&self.state.splice_results).process(&mut ast);
+        for need in &needs {
+            self.state
+                .register_splice_need(need.request_id, &need.const_name);
+        }
         let resolved_consts = self.collect_resolved_const_values();
         let module_resolution = self.state.module_resolution(ast_id);
         let outcome = annotate_with_resolved_state(
@@ -93,6 +99,9 @@ impl CompilerDriver {
             resolved_consts,
             self.state.expr_resolutions(),
         )?;
+        // After typing, extract quote items from typed DefConst items so
+        // splice_results is populated before the retype pass.
+        self.extract_quote_items(&ast);
         let all_requests: Vec<TypingRequest> = outcome
             .pending_requests
             .iter()
@@ -724,43 +733,106 @@ impl CompilerDriver {
         let suffix = name.strip_prefix("__fp_expr_")?;
         suffix.parse().ok()
     }
-}
 
-
-struct AstPreProcessor {
-    quote_values: HashMap<String, Expr>,
-}
-
-impl AstPreProcessor {
-    fn new() -> Self {
-        Self { quote_values: HashMap::new() }
+    /// After typing, walk the typed AST and extract items from DefConst
+    /// items that hold quote expressions. This populates splice_results
+    /// so that AstPreProcessor can inject items on retype.
+    fn extract_quote_items(&mut self, node: &Node) {
+        match node.kind() {
+            NodeKind::File(file) => self.extract_quote_items_from_items(&file.items),
+            NodeKind::Item(item) => {
+                self.extract_quote_items_from_items(std::slice::from_ref(item));
+            }
+            NodeKind::Expr(expr) => {
+                // Walk the expression tree for DefConst items
+                self.extract_quote_from_expr(expr);
+            }
+            _ => {}
+        }
     }
 
-    fn process(&mut self, node: &mut Node) {
-        let NodeKind::File(file) = node.kind_mut() else { return };
-        self.collect_quotes(&file.items);
-        self.resolve_items(&mut file.items);
+    fn extract_quote_from_expr(&mut self, expr: &Expr) {
+        match expr.kind() {
+            ExprKind::Block(block) => {
+                for stmt in &block.stmts {
+                    if let BlockStmt::Item(item) = stmt {
+                        self.extract_quote_items_from_items(std::slice::from_ref(item));
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
-    fn collect_quotes(&mut self, items: &[Item]) {
+    fn extract_quote_items_from_items(&mut self, items: &[Item]) {
         for item in items {
             match item.kind() {
-                ItemKind::DefConst(def) if matches!(def.value.kind(), ExprKind::Quote(_)) => {
-                    self.quote_values.insert(
-                        def.name.as_str().to_string(),
-                        (*def.value).clone(),
-                    );
+                ItemKind::DefConst(def)
+                    if matches!(def.value.kind(), ExprKind::Quote(_))
+                        && !def.name.as_str().is_empty() =>
+                {
+                    if let ExprKind::Quote(quote) = def.value.kind() {
+                        let mut result = SpliceResult {
+                            items: Vec::new(),
+                            stmts: Vec::new(),
+                            expr: None,
+                        };
+                        for stmt in &quote.block.stmts {
+                            match stmt {
+                                BlockStmt::Item(item) => {
+                                    result.items.push(item.as_ref().clone());
+                                }
+                                BlockStmt::Expr(expr_stmt) => {
+                                    result.stmts.push(BlockStmt::Expr(expr_stmt.clone()));
+                                }
+                                other => {
+                                    result.stmts.push(other.clone());
+                                }
+                            }
+                        }
+                        if let Some(last_expr) = quote.block.last_expr() {
+                            result.expr = Some(last_expr.clone());
+                        }
+                        let const_name = def.name.as_str().to_string();
+                        self.state.splice_results.insert(const_name, result);
+                    }
                 }
-                ItemKind::Module(m) => self.collect_quotes(&m.items),
+                ItemKind::Module(m) => self.extract_quote_items_from_items(&m.items),
                 _ => {}
             }
         }
+    }
+}
+
+
+#[derive(Debug, Clone)]
+struct SpliceNeed {
+    request_id: u64,
+    const_name: String,
+}
+
+struct AstPreProcessor<'a> {
+    next_req_id: u64,
+    needs: Vec<SpliceNeed>,
+    splice_results: &'a BTreeMap<String, SpliceResult>,
+}
+
+impl<'a> AstPreProcessor<'a> {
+    fn new(splice_results: &'a BTreeMap<String, SpliceResult>) -> Self {
+        Self { next_req_id: 1, needs: Vec::new(), splice_results }
+    }
+
+    fn process(&mut self, node: &mut Node) -> Vec<SpliceNeed> {
+        self.needs.clear();
+        let NodeKind::File(file) = node.kind_mut() else { return Vec::new() };
+        self.resolve_items(&mut file.items);
+        std::mem::take(&mut self.needs)
     }
 
     fn resolve_items(&mut self, items: &mut [Item]) {
         for item in items {
             match item.kind_mut() {
-                ItemKind::DefFunction(func) => self.resolve_in_expr(&mut func.body),
+                ItemKind::DefFunction(func) => self.process_splices_in_expr(&mut func.body),
                 ItemKind::Module(m) => self.resolve_items(&mut m.items),
                 ItemKind::Impl(imp) => self.resolve_items(&mut imp.items),
                 ItemKind::DefTrait(t) => self.resolve_items(&mut t.items),
@@ -769,31 +841,27 @@ impl AstPreProcessor {
         }
     }
 
-    fn resolve_in_expr(&mut self, expr: &mut Expr) {
+    fn process_splices_in_expr(&mut self, expr: &mut Expr) {
         match expr.kind_mut() {
             ExprKind::Block(block) => {
                 let mut new_stmts: Vec<BlockStmt> = Vec::new();
                 for stmt in block.stmts.drain(..) {
                     match stmt {
-                        BlockStmt::Expr(mut e)
-                            if matches!(e.expr.kind(), ExprKind::Splice(_)) =>
-                        {
-                            let items = self.try_resolve(&e.expr);
-                            if items.is_empty() {
-                                new_stmts.push(BlockStmt::Expr(e));
-                            } else {
-                                for item in items {
-                                    new_stmts.push(BlockStmt::Item(Box::new(item)));
-                                }
-                            }
-                        }
                         BlockStmt::Expr(mut e) => {
-                            self.resolve_in_expr(&mut e.expr);
-                            new_stmts.push(BlockStmt::Expr(e));
+                            if matches!(e.expr.kind(), ExprKind::Splice(_)) {
+                                let had_resolved = self.process_splice_or_mark(&mut e.expr, &mut new_stmts);
+                                if !had_resolved {
+                                    // Splice was marked as pending — keep the stmt
+                                    new_stmts.push(BlockStmt::Expr(e));
+                                }
+                            } else {
+                                self.process_splices_in_expr(&mut e.expr);
+                                new_stmts.push(BlockStmt::Expr(e));
+                            }
                         }
                         BlockStmt::Let(mut s) => {
                             if let Some(init) = s.init.as_mut() {
-                                self.resolve_in_expr(init);
+                                self.process_splices_in_expr(init);
                             }
                             new_stmts.push(BlockStmt::Let(s));
                         }
@@ -803,39 +871,81 @@ impl AstPreProcessor {
                 block.stmts = new_stmts;
             }
             ExprKind::If(e) => {
-                self.resolve_in_expr(e.then.as_mut());
+                self.process_splices_in_expr(e.then.as_mut());
                 if let Some(elze) = e.elze.as_mut() {
-                    self.resolve_in_expr(elze);
+                    self.process_splices_in_expr(elze);
                 }
             }
-            ExprKind::Loop(e) => self.resolve_in_expr(e.body.as_mut()),
-            ExprKind::For(e) => self.resolve_in_expr(e.body.as_mut()),
-            ExprKind::While(e) => self.resolve_in_expr(e.body.as_mut()),
+            ExprKind::Loop(e) => self.process_splices_in_expr(e.body.as_mut()),
+            ExprKind::For(e) => self.process_splices_in_expr(e.body.as_mut()),
+            ExprKind::While(e) => self.process_splices_in_expr(e.body.as_mut()),
             ExprKind::Match(e) => {
                 for case in &mut e.cases {
-                    self.resolve_in_expr(case.body.as_mut());
+                    self.process_splices_in_expr(case.body.as_mut());
+                }
+            }
+            ExprKind::Splice(_splice) => {
+                // Splice in non-statement context (e.g. inside a let binding): mark as pending.
+                // The block-level handler above handles statement-position splices.
+                let old = std::mem::replace(expr.kind_mut(), ExprKind::Id(0));
+                if let ExprKind::Splice(splice) = old {
+                    let const_name = if let ExprKind::Name(ref name) = splice.token.kind() {
+                        name.to_string()
+                    } else {
+                        String::new()
+                    };
+                    let req_id = self.next_req_id;
+                    self.next_req_id += 1;
+                    *expr.kind_mut() = ExprKind::SplicePending(ExprSplicePending {
+                        span: splice.span,
+                        request_id: req_id,
+                        token: splice.token,
+                    });
+                    if !const_name.is_empty() {
+                        self.needs.push(SpliceNeed { request_id: req_id, const_name });
+                    }
                 }
             }
             _ => {}
         }
     }
 
-    fn try_resolve(&self, expr: &Expr) -> Vec<Item> {
-        let ExprKind::Splice(splice) = expr.kind() else { return Vec::new() };
-        if let ExprKind::Name(name) = splice.token.kind() {
-            if let Some(quote_expr) = self.quote_values.get(&name.to_string()) {
-                if let ExprKind::Quote(quote) = quote_expr.kind() {
-                    let mut items = Vec::new();
-                    for stmt in &quote.block.stmts {
-                        if let BlockStmt::Item(item) = stmt {
-                            items.push(item.as_ref().clone());
-                        }
-                    }
-                    return items;
+    fn process_splice_or_mark(&mut self, expr: &mut Expr, stmts: &mut Vec<BlockStmt>) -> bool {
+        let old = std::mem::replace(expr.kind_mut(), ExprKind::Id(0));
+        if let ExprKind::Splice(splice) = old {
+            let const_name = if let ExprKind::Name(ref name) = splice.token.kind() {
+                name.to_string()
+            } else {
+                String::new()
+            };
+            if let Some(result) = self.splice_results.get(&const_name) {
+                for item in &result.items {
+                    stmts.push(BlockStmt::Item(Box::new(item.clone())));
                 }
+                for stmt in &result.stmts {
+                    stmts.push(stmt.clone());
+                }
+                if let Some(ref e) = result.expr {
+                    stmts.push(BlockStmt::Expr(fp_core::ast::BlockStmtExpr {
+                        expr: Box::new(e.clone()),
+                        semicolon: None,
+                    }));
+                }
+                return true;
+            }
+            // Not resolved yet — mark as pending
+            let req_id = self.next_req_id;
+            self.next_req_id += 1;
+            *expr.kind_mut() = ExprKind::SplicePending(ExprSplicePending {
+                span: splice.span,
+                request_id: req_id,
+                token: splice.token,
+            });
+            if !const_name.is_empty() {
+                self.needs.push(SpliceNeed { request_id: req_id, const_name });
             }
         }
-        Vec::new()
+        false
     }
 }
 

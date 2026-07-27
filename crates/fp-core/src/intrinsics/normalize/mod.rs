@@ -387,6 +387,7 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
             }
             ExprKind::Quote(q) => normalize_block(&mut q.block, strategy)?,
             ExprKind::Splice(s) => normalize_expr(s.token.as_mut(), strategy)?,
+            ExprKind::SplicePending(p) => normalize_expr(p.token.as_mut(), strategy)?,
             ExprKind::Id(_) | ExprKind::Name(_) | ExprKind::Any(_) => {}
         }
         if let Some(new_expr) = replacement {

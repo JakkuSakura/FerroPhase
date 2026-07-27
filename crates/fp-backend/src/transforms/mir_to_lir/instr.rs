@@ -162,6 +162,7 @@ impl LirGenerator {
                         function: function_name,
                         key: konst.key,
                         ty: konst.ty,
+                        token_stream: false,
                     });
                 }
                 mir::ItemKind::Query(query) => {
@@ -508,6 +509,7 @@ impl LirGenerator {
                     "type-only constant is not a valid static initializer",
                 ))
             }
+            mir::ConstantKind::TokenStream { .. } => lir::LirConstant::Int(0, target_ty.clone()),
         };
 
         Ok(self.cast_constant_to_lir_type(lir_constant, &target_ty))

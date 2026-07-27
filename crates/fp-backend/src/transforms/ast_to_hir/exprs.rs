@@ -130,13 +130,6 @@ impl HirGenerator {
                 }
             }
             ExprKind::Quote(_quote) => {
-                self.add_error(
-                    Diagnostic::error(
-                        "quote expressions should be removed by const-eval".to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT)
-                    .with_span(expr_span),
-                );
                 let block = hir::Block {
                     hir_id: self.next_id(),
                     stmts: Vec::new(),
@@ -145,13 +138,14 @@ impl HirGenerator {
                 hir::ExprKind::Block(block)
             }
             ExprKind::Splice(_splice) => {
-                self.add_error(
-                    Diagnostic::error(
-                        "splice expressions should be removed by const-eval".to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT)
-                    .with_span(expr_span),
-                );
+                let block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                hir::ExprKind::Block(block)
+            }
+            ExprKind::SplicePending(_pending) => {
                 let block = hir::Block {
                     hir_id: self.next_id(),
                     stmts: Vec::new(),

@@ -229,6 +229,7 @@ fn expr_contains_return(expr: &Expr) -> bool {
         ExprKind::Paren(paren) => expr_contains_return(paren.expr.as_ref()),
         ExprKind::Quote(quote) => block_contains_return(&quote.block),
         ExprKind::Splice(splice) => expr_contains_return(splice.token.as_ref()),
+        ExprKind::SplicePending(pending) => expr_contains_return(pending.token.as_ref()),
         _ => false,
     }
 }
@@ -390,6 +391,36 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ExprKind::Splice(splice) => {
                     // Expression-position splice must carry an expr token
                     let token_var = self.infer_expr(splice.token.as_mut())?;
+                    let token_ty = self.resolve_to_ty(token_var)?;
+                    match token_ty {
+                        Ty::Quote(quote) if quote.kind == QuoteFragmentKind::Expr => {
+                            if let Some(inner) = quote.inner.clone() {
+                                let var = self.fresh_type_var();
+                                self.bind(var, (*inner).clone());
+                                expr.set_ty(*inner);
+                                var
+                            } else {
+                                self.emit_warning(
+                                    "splice expr token lacks inner type; leaving result unresolved",
+                                );
+                                self.fresh_type_var()
+                            }
+                        }
+                        Ty::Quote(quote) => {
+                            self.emit_error(format!(
+                                "splice in expression position requires expr token, found {:?}",
+                                quote.kind
+                            ));
+                            self.error_type_var()
+                        }
+                        _ => {
+                            self.emit_error("splice expects a quote token expression");
+                            self.error_type_var()
+                        }
+                    }
+                }
+                ExprKind::SplicePending(pending) => {
+                    let token_var = self.infer_expr(pending.token.as_mut())?;
                     let token_ty = self.resolve_to_ty(token_var)?;
                     match token_ty {
                         Ty::Quote(quote) if quote.kind == QuoteFragmentKind::Expr => {
