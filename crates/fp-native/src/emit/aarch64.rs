@@ -3107,6 +3107,7 @@ fn emit_store(
                 AsmValue::Register(id) => {
                     let addr_offset = vreg_offset(layout, *id)?;
                     emit_load_from_sp(asm, Reg::X17, addr_offset);
+                    emit_mov_reg(asm, Reg::X11, Reg::X17);
                     for (idx, field) in values.iter().enumerate() {
                         let field_offset = *struct_layout
                             .field_offsets
@@ -3117,7 +3118,7 @@ fn emit_store(
                             .ok_or_else(|| Error::from("aggregate field out of range"))?;
                         let field_size = size_of(field_ty);
                         if matches!(field, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
-                            emit_mov_reg(asm, Reg::X9, Reg::X17);
+                            emit_mov_reg(asm, Reg::X9, Reg::X11);
                             add_immediate_offset(asm, Reg::X9, field_offset as i64);
                             store_constant_aggregate_to_reg(
                                 asm,
@@ -3149,7 +3150,7 @@ fn emit_store(
                                 emit_mov_imm64(asm, Reg::X16, bits);
                             }
                         }
-                        emit_mov_reg(asm, Reg::X10, Reg::X17);
+                        emit_mov_reg(asm, Reg::X10, Reg::X11);
                         add_immediate_offset(asm, Reg::X10, field_offset as i64);
                         match field_size {
                             1 => emit_store8_to_reg(asm, Reg::X16, Reg::X10),
@@ -3176,6 +3177,7 @@ fn emit_store(
                 AsmValue::Local(id) => {
                     let addr_offset = local_offset(layout, *id)?;
                     emit_load_from_sp(asm, Reg::X17, addr_offset);
+                    emit_mov_reg(asm, Reg::X11, Reg::X17);
                     for (idx, field) in values.iter().enumerate() {
                         let field_offset = *struct_layout
                             .field_offsets
@@ -3186,7 +3188,7 @@ fn emit_store(
                             .ok_or_else(|| Error::from("aggregate field out of range"))?;
                         let field_size = size_of(field_ty);
                         if matches!(field, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
-                            emit_mov_reg(asm, Reg::X9, Reg::X17);
+                            emit_mov_reg(asm, Reg::X9, Reg::X11);
                             add_immediate_offset(asm, Reg::X9, field_offset as i64);
                             store_constant_aggregate_to_reg(
                                 asm,
@@ -3218,7 +3220,7 @@ fn emit_store(
                                 emit_mov_imm64(asm, Reg::X16, bits);
                             }
                         }
-                        emit_mov_reg(asm, Reg::X10, Reg::X17);
+                        emit_mov_reg(asm, Reg::X10, Reg::X11);
                         add_immediate_offset(asm, Reg::X10, field_offset as i64);
                         match field_size {
                             1 => emit_store8_to_reg(asm, Reg::X16, Reg::X10),
