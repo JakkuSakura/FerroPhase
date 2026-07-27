@@ -5,7 +5,7 @@ pub use error::CompilerDriverError;
 pub use state::CompilerState;
 
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
-use fp_core::ast::{annotate_collected_items, BlockStmt, Expr, ExprKind, ExprSplicePending, Item, ItemKind, Node, NodeKind, Value};
+use fp_core::ast::{annotate_collected_items, BlockStmt, Expr, ExprKind, ExprSplicePending, Item, ItemDefConst, ItemKind, Node, NodeKind, Value};
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
@@ -85,8 +85,10 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let mut ast = self.state.ast(ast_id)?.clone();
-        annotate_collected_items(&mut ast);
-        let needs = AstPreProcessor::new(&self.state.splice_results).process(&mut ast);
+        let needs = {
+            let splice_results = &mut self.state.splice_results;
+            AstPreProcessor::new(splice_results).process(&mut ast)
+        };
         for need in &needs {
             self.state
                 .register_splice_need(need.request_id, &need.const_name);
@@ -99,9 +101,6 @@ impl CompilerDriver {
             resolved_consts,
             self.state.expr_resolutions(),
         )?;
-        // After typing, extract quote items from typed DefConst items so
-        // splice_results is populated before the retype pass.
-        self.extract_quote_items(&ast);
         let all_requests: Vec<TypingRequest> = outcome
             .pending_requests
             .iter()
@@ -733,75 +732,6 @@ impl CompilerDriver {
         let suffix = name.strip_prefix("__fp_expr_")?;
         suffix.parse().ok()
     }
-
-    /// After typing, walk the typed AST and extract items from DefConst
-    /// items that hold quote expressions. This populates splice_results
-    /// so that AstPreProcessor can inject items on retype.
-    fn extract_quote_items(&mut self, node: &Node) {
-        match node.kind() {
-            NodeKind::File(file) => self.extract_quote_items_from_items(&file.items),
-            NodeKind::Item(item) => {
-                self.extract_quote_items_from_items(std::slice::from_ref(item));
-            }
-            NodeKind::Expr(expr) => {
-                // Walk the expression tree for DefConst items
-                self.extract_quote_from_expr(expr);
-            }
-            _ => {}
-        }
-    }
-
-    fn extract_quote_from_expr(&mut self, expr: &Expr) {
-        match expr.kind() {
-            ExprKind::Block(block) => {
-                for stmt in &block.stmts {
-                    if let BlockStmt::Item(item) = stmt {
-                        self.extract_quote_items_from_items(std::slice::from_ref(item));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn extract_quote_items_from_items(&mut self, items: &[Item]) {
-        for item in items {
-            match item.kind() {
-                ItemKind::DefConst(def)
-                    if matches!(def.value.kind(), ExprKind::Quote(_))
-                        && !def.name.as_str().is_empty() =>
-                {
-                    if let ExprKind::Quote(quote) = def.value.kind() {
-                        let mut result = SpliceResult {
-                            items: Vec::new(),
-                            stmts: Vec::new(),
-                            expr: None,
-                        };
-                        for stmt in &quote.block.stmts {
-                            match stmt {
-                                BlockStmt::Item(item) => {
-                                    result.items.push(item.as_ref().clone());
-                                }
-                                BlockStmt::Expr(expr_stmt) => {
-                                    result.stmts.push(BlockStmt::Expr(expr_stmt.clone()));
-                                }
-                                other => {
-                                    result.stmts.push(other.clone());
-                                }
-                            }
-                        }
-                        if let Some(last_expr) = quote.block.last_expr() {
-                            result.expr = Some(last_expr.clone());
-                        }
-                        let const_name = def.name.as_str().to_string();
-                        self.state.splice_results.insert(const_name, result);
-                    }
-                }
-                ItemKind::Module(m) => self.extract_quote_items_from_items(&m.items),
-                _ => {}
-            }
-        }
-    }
 }
 
 
@@ -814,16 +744,18 @@ struct SpliceNeed {
 struct AstPreProcessor<'a> {
     next_req_id: u64,
     needs: Vec<SpliceNeed>,
-    splice_results: &'a BTreeMap<String, SpliceResult>,
+    splice_results: &'a mut BTreeMap<String, SpliceResult>,
 }
 
 impl<'a> AstPreProcessor<'a> {
-    fn new(splice_results: &'a BTreeMap<String, SpliceResult>) -> Self {
+    fn new(splice_results: &'a mut BTreeMap<String, SpliceResult>) -> Self {
         Self { next_req_id: 1, needs: Vec::new(), splice_results }
     }
 
     fn process(&mut self, node: &mut Node) -> Vec<SpliceNeed> {
         self.needs.clear();
+        // Single pre-type walk: annotate blocks, collect quote items, handle splices.
+        annotate_collected_items(node);
         let NodeKind::File(file) = node.kind_mut() else { return Vec::new() };
         self.resolve_items(&mut file.items);
         std::mem::take(&mut self.needs)
@@ -832,6 +764,9 @@ impl<'a> AstPreProcessor<'a> {
     fn resolve_items(&mut self, items: &mut [Item]) {
         for item in items {
             match item.kind_mut() {
+                ItemKind::DefConst(def) => {
+                    self.collect_quote_from_def_const(def);
+                }
                 ItemKind::DefFunction(func) => self.process_splices_in_expr(&mut func.body),
                 ItemKind::Module(m) => self.resolve_items(&mut m.items),
                 ItemKind::Impl(imp) => self.resolve_items(&mut imp.items),
@@ -839,6 +774,38 @@ impl<'a> AstPreProcessor<'a> {
                 _ => {}
             }
         }
+    }
+
+    /// If a DefConst holds a literal quote expression, extract its items
+    /// into splice_results so splices referencing this const can resolve.
+    fn collect_quote_from_def_const(&mut self, def: &mut ItemDefConst) {
+        if !matches!(def.value.kind(), ExprKind::Quote(_)) || def.name.as_str().is_empty() {
+            return;
+        }
+        let ExprKind::Quote(quote) = def.value.kind_mut() else { return };
+        let mut result = SpliceResult {
+            items: Vec::new(),
+            stmts: Vec::new(),
+            expr: None,
+        };
+        for stmt in &quote.block.stmts {
+            match stmt {
+                BlockStmt::Item(item) => {
+                    result.items.push(item.as_ref().clone());
+                }
+                BlockStmt::Expr(expr_stmt) => {
+                    result.stmts.push(BlockStmt::Expr(expr_stmt.clone()));
+                }
+                other => {
+                    result.stmts.push(other.clone());
+                }
+            }
+        }
+        if let Some(last_expr) = quote.block.last_expr() {
+            result.expr = Some(last_expr.clone());
+        }
+        let const_name = def.name.as_str().to_string();
+        self.splice_results.insert(const_name, result);
     }
 
     fn process_splices_in_expr(&mut self, expr: &mut Expr) {
