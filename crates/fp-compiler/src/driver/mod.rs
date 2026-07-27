@@ -84,7 +84,7 @@ impl CompilerDriver {
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let mut ast = self.state.ast(ast_id)?.clone();
         annotate_collected_items(&mut ast);
-        resolve_all_splices(&mut ast);
+        AstPreProcessor::new().process(&mut ast);
         let resolved_consts = self.collect_resolved_const_values();
         let module_resolution = self.state.module_resolution(ast_id);
         let outcome = annotate_with_resolved_state(
@@ -726,121 +726,117 @@ impl CompilerDriver {
     }
 }
 
-pub fn resolve_all_splices(node: &mut Node) {
-    let NodeKind::File(file) = node.kind_mut() else { return };
-    let mut quote_values: HashMap<String, Expr> = HashMap::new();
-    collect_quote_values(&file.items, &mut quote_values);
-    resolve_splices_in_items(&mut file.items, &quote_values);
+
+struct AstPreProcessor {
+    quote_values: HashMap<String, Expr>,
 }
 
-fn collect_quote_values(items: &[Item], out: &mut HashMap<String, Expr>) {
-    for item in items {
-        match item.kind() {
-            ItemKind::DefConst(def) if matches!(def.value.kind(), ExprKind::Quote(_)) => {
-                out.insert(def.name.as_str().to_string(), (*def.value).clone());
+impl AstPreProcessor {
+    fn new() -> Self {
+        Self { quote_values: HashMap::new() }
+    }
+
+    fn process(&mut self, node: &mut Node) {
+        let NodeKind::File(file) = node.kind_mut() else { return };
+        self.collect_quotes(&file.items);
+        self.resolve_items(&mut file.items);
+    }
+
+    fn collect_quotes(&mut self, items: &[Item]) {
+        for item in items {
+            match item.kind() {
+                ItemKind::DefConst(def) if matches!(def.value.kind(), ExprKind::Quote(_)) => {
+                    self.quote_values.insert(
+                        def.name.as_str().to_string(),
+                        (*def.value).clone(),
+                    );
+                }
+                ItemKind::Module(m) => self.collect_quotes(&m.items),
+                _ => {}
             }
-            ItemKind::Module(m) => collect_quote_values(&m.items, out),
-            _ => {}
         }
     }
-}
 
-fn resolve_splices_in_items(items: &mut [Item], quote_values: &HashMap<String, Expr>) {
-    for item in items {
-        match item.kind_mut() {
-            ItemKind::DefFunction(func) => {
-                resolve_splices_in_expr(&mut func.body, quote_values);
+    fn resolve_items(&mut self, items: &mut [Item]) {
+        for item in items {
+            match item.kind_mut() {
+                ItemKind::DefFunction(func) => self.resolve_in_expr(&mut func.body),
+                ItemKind::Module(m) => self.resolve_items(&mut m.items),
+                ItemKind::Impl(imp) => self.resolve_items(&mut imp.items),
+                ItemKind::DefTrait(t) => self.resolve_items(&mut t.items),
+                _ => {}
             }
-            ItemKind::Module(module) => {
-                resolve_splices_in_items(&mut module.items, quote_values);
-            }
-            ItemKind::Impl(impl_block) => {
-                resolve_splices_in_items(&mut impl_block.items, quote_values);
-            }
-            ItemKind::DefTrait(trait_def) => {
-                resolve_splices_in_items(&mut trait_def.items, quote_values);
-            }
-            _ => {}
         }
     }
-}
 
-fn resolve_splices_in_expr(expr: &mut Expr, quote_values: &HashMap<String, Expr>) {
-    match expr.kind_mut() {
-        ExprKind::Block(block) => {
-            let mut new_stmts: Vec<BlockStmt> = Vec::new();
-            for stmt in block.stmts.drain(..) {
-                match stmt {
-                    BlockStmt::Expr(mut expr_stmt)
-                        if matches!(expr_stmt.expr.kind(), ExprKind::Splice(_)) =>
-                    {
-                        let items = try_resolve_splice_expr(&expr_stmt.expr, quote_values);
-                        if items.is_empty() {
-                            new_stmts.push(BlockStmt::Expr(expr_stmt));
-                        } else {
-                            for item in items {
-                                new_stmts.push(BlockStmt::Item(Box::new(item)));
+    fn resolve_in_expr(&mut self, expr: &mut Expr) {
+        match expr.kind_mut() {
+            ExprKind::Block(block) => {
+                let mut new_stmts: Vec<BlockStmt> = Vec::new();
+                for stmt in block.stmts.drain(..) {
+                    match stmt {
+                        BlockStmt::Expr(mut e)
+                            if matches!(e.expr.kind(), ExprKind::Splice(_)) =>
+                        {
+                            let items = self.try_resolve(&e.expr);
+                            if items.is_empty() {
+                                new_stmts.push(BlockStmt::Expr(e));
+                            } else {
+                                for item in items {
+                                    new_stmts.push(BlockStmt::Item(Box::new(item)));
+                                }
                             }
                         }
-                    }
-                    BlockStmt::Expr(mut expr_stmt) => {
-                        resolve_splices_in_expr(&mut expr_stmt.expr, quote_values);
-                        new_stmts.push(BlockStmt::Expr(expr_stmt));
-                    }
-                    BlockStmt::Let(mut s) => {
-                        if let Some(init) = s.init.as_mut() {
-                            resolve_splices_in_expr(init, quote_values);
+                        BlockStmt::Expr(mut e) => {
+                            self.resolve_in_expr(&mut e.expr);
+                            new_stmts.push(BlockStmt::Expr(e));
                         }
-                        new_stmts.push(BlockStmt::Let(s));
+                        BlockStmt::Let(mut s) => {
+                            if let Some(init) = s.init.as_mut() {
+                                self.resolve_in_expr(init);
+                            }
+                            new_stmts.push(BlockStmt::Let(s));
+                        }
+                        other => new_stmts.push(other),
                     }
-                    other => new_stmts.push(other),
+                }
+                block.stmts = new_stmts;
+            }
+            ExprKind::If(e) => {
+                self.resolve_in_expr(e.then.as_mut());
+                if let Some(elze) = e.elze.as_mut() {
+                    self.resolve_in_expr(elze);
                 }
             }
-            block.stmts = new_stmts;
-        }
-        ExprKind::If(e) => {
-            resolve_splices_in_expr(e.cond.as_mut(), quote_values);
-            resolve_splices_in_expr(e.then.as_mut(), quote_values);
-            if let Some(elze) = e.elze.as_mut() {
-                resolve_splices_in_expr(elze, quote_values);
+            ExprKind::Loop(e) => self.resolve_in_expr(e.body.as_mut()),
+            ExprKind::For(e) => self.resolve_in_expr(e.body.as_mut()),
+            ExprKind::While(e) => self.resolve_in_expr(e.body.as_mut()),
+            ExprKind::Match(e) => {
+                for case in &mut e.cases {
+                    self.resolve_in_expr(case.body.as_mut());
+                }
             }
+            _ => {}
         }
-        ExprKind::Loop(e) => resolve_splices_in_expr(e.body.as_mut(), quote_values),
-        ExprKind::For(e) => {
-            resolve_splices_in_expr(e.iter.as_mut(), quote_values);
-            resolve_splices_in_expr(e.body.as_mut(), quote_values);
-        }
-        ExprKind::While(e) => {
-            resolve_splices_in_expr(e.cond.as_mut(), quote_values);
-            resolve_splices_in_expr(e.body.as_mut(), quote_values);
-        }
-        ExprKind::Match(e) => {
-            for case in &mut e.cases {
-                resolve_splices_in_expr(case.cond.as_mut(), quote_values);
-                resolve_splices_in_expr(case.body.as_mut(), quote_values);
-            }
-        }
-        _ => {}
     }
-}
 
-fn try_resolve_splice_expr(expr: &Expr, quote_values: &HashMap<String, Expr>) -> Vec<Item> {
-    let ExprKind::Splice(splice) = expr.kind() else { return Vec::new() };
-    if let ExprKind::Name(name) = splice.token.kind() {
-        let key = name.to_string();
-        if let Some(quote_expr) = quote_values.get(&key) {
-            if let ExprKind::Quote(quote) = quote_expr.kind() {
-                let mut items = Vec::new();
-                for stmt in &quote.block.stmts {
-                    if let BlockStmt::Item(item) = stmt {
-                        items.push(item.as_ref().clone());
+    fn try_resolve(&self, expr: &Expr) -> Vec<Item> {
+        let ExprKind::Splice(splice) = expr.kind() else { return Vec::new() };
+        if let ExprKind::Name(name) = splice.token.kind() {
+            if let Some(quote_expr) = self.quote_values.get(&name.to_string()) {
+                if let ExprKind::Quote(quote) = quote_expr.kind() {
+                    let mut items = Vec::new();
+                    for stmt in &quote.block.stmts {
+                        if let BlockStmt::Item(item) = stmt {
+                            items.push(item.as_ref().clone());
+                        }
                     }
+                    return items;
                 }
-                return items;
             }
         }
+        Vec::new()
     }
-    Vec::new()
 }
 
 
