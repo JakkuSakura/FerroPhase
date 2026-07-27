@@ -75,7 +75,8 @@ pub fn materialize_item(
         | ast::ItemKind::DeclFunction(_)
         | ast::ItemKind::DeclType(_)
         | ast::ItemKind::Import(_)
-        | ast::ItemKind::DefTrait(_)
+        |         ast::ItemKind::DefTrait(_)
+        | ast::ItemKind::ConstBlock(_)
         | ast::ItemKind::Any(_) => kind,
     };
     Ok(ast::Item {

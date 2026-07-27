@@ -116,6 +116,7 @@ impl PythonEmitter {
             | ItemKind::Impl(_)
             | ItemKind::DefStructural(_)
             | ItemKind::Macro(_)
+            | ItemKind::ConstBlock(_)
             | ItemKind::Any(_) => {
                 // Unsupported in Python output for now.
             }
@@ -782,6 +783,7 @@ impl PythonEmitter {
             | Ty::Unknown(_)
             | Ty::Value(_)
             | Ty::Expr(_)
+            | Ty::ConstBlock(_)
             | Ty::TypeBinaryOp(_)
             | Ty::AnyBox(_)
             | Ty::Type(_) => {

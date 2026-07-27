@@ -43,6 +43,11 @@ common_enum! {
         Macro(ItemMacro),
         /// not for direct construction, but for interpretation and optimization
         Expr(Expr),
+        /// An item-level const block: evaluated at compile time.
+        /// Splices inside produce items injected into the parent scope.
+        /// The block's return value is a compile error — only splices
+        /// are meaningful at this level.
+        ConstBlock(ExprConstBlock),
         Any(AnyBox),
     }
 }
@@ -231,6 +236,7 @@ impl ItemKind {
             ItemKind::Impl(impl_block) => impl_block.span(),
             ItemKind::Macro(mac) => mac.span(),
             ItemKind::Expr(expr) => expr.span(),
+            ItemKind::ConstBlock(block) => block.span(),
             ItemKind::Any(_) => Span::null(),
         }
     }

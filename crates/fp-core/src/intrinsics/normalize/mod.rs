@@ -143,6 +143,7 @@ fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result
             normalize_ty(&mut def.value, strategy)?;
         }
         ItemKind::Expr(expr) => normalize_expr(expr, strategy)?,
+        ItemKind::ConstBlock(block) => normalize_expr(block.expr.as_mut(), strategy)?,
     }
     Ok(())
 }
@@ -388,6 +389,7 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
 fn normalize_ty(ty: &mut Ty, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
     match ty {
         Ty::Expr(expr) => normalize_expr(expr.as_mut(), strategy)?,
+        Ty::ConstBlock(block) => normalize_expr(block.expr.as_mut(), strategy)?,
         Ty::Array(array) => {
             normalize_ty(array.elem.as_mut(), strategy)?;
             normalize_expr(array.len.as_mut(), strategy)?;

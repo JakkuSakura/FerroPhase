@@ -31,6 +31,7 @@ fn annotate_item(item: &mut Item, module_path: &QualifiedPath) {
         ItemKind::DefTrait(def) => annotate_trait(def, module_path),
         ItemKind::Impl(impl_block) => annotate_impl(impl_block, module_path),
         ItemKind::Expr(expr) => annotate_expr(expr, module_path),
+        ItemKind::ConstBlock(block) => annotate_const_block(block, module_path),
         ItemKind::Macro(_)
         | ItemKind::DefStruct(_)
         | ItemKind::DefStructural(_)

@@ -288,6 +288,7 @@ impl GdscriptEmitter {
             | ItemKind::DefTrait(_)
             | ItemKind::DefStructural(_)
             | ItemKind::Macro(_)
+            | ItemKind::ConstBlock(_)
             | ItemKind::Any(_) => {
                 self.push_comment(&format!(
                     "unsupported item in gdscript output: {:?}",

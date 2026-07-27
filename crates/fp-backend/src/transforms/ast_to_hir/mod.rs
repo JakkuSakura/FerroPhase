@@ -2584,6 +2584,7 @@ fn ty_contains_quote(ty: &ast::Ty) -> bool {
             .any(|expr| expr_contains_quote_value(expr)),
         ast::Ty::Value(value) => value_contains_quote(value.value.as_ref()),
         ast::Ty::Expr(expr) => expr_contains_quote_value(expr.as_ref()),
+        ast::Ty::ConstBlock(block) => expr_contains_quote_value(block.expr.as_ref()),
         ast::Ty::Primitive(_)
         | ast::Ty::TokenStream(_)
         | ast::Ty::ImplTraits(_)
@@ -2602,7 +2603,7 @@ fn ty_contains_quote(ty: &ast::Ty) -> bool {
 
 fn ty_contains_type_type(ty: &ast::Ty) -> bool {
     match ty {
-        ast::Ty::Type(_) | ast::Ty::RequestedType(_) => true,
+        ast::Ty::Type(_) | ast::Ty::RequestedType(_) | ast::Ty::ConstBlock(_) => true,
         ast::Ty::Tuple(tuple) => tuple.types.iter().any(ty_contains_type_type),
         ast::Ty::Array(array) => ty_contains_type_type(&array.elem),
         ast::Ty::Vec(vec) => ty_contains_type_type(&vec.ty),

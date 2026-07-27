@@ -141,6 +141,8 @@ common_enum! {
         Slice(TypeSlice),
         RawPtr(TypeRawPtr),
         Expr(BExpr),
+        /// A type-level const block: evaluates at compile time to produce a concrete type.
+        ConstBlock(ExprConstBlock),
         Quote(TypeQuote),
         TypeBinaryOp(Box<TypeBinaryOp>),
         AnyBox(AnyBox),
@@ -263,6 +265,7 @@ impl Ty {
             Ty::Slice(ty) => ty.span(),
             Ty::GenericVar(_) => Span::null(),
             Ty::Expr(expr) => expr.span(),
+            Ty::ConstBlock(block) => block.span(),
             Ty::Quote(ty) => ty.span(),
             Ty::TypeBinaryOp(op) => op.span(),
             _ => Span::null(),

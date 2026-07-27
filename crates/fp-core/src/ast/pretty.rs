@@ -741,6 +741,10 @@ impl PrettyPrintable for ast::Item {
                 ctx.writeln(f, format!("expr_item{}", suffix))?;
                 ctx.with_indent(|ctx| expr.fmt_pretty(f, ctx))
             }
+            ast::ItemKind::ConstBlock(block) => {
+                ctx.writeln(f, format!("const_block_item{}", suffix))?;
+                ctx.with_indent(|ctx| block.expr.fmt_pretty(f, ctx))
+            }
             ast::ItemKind::Any(_) => ctx.writeln(f, format!("item.any{}", suffix)),
         }
     }
@@ -957,6 +961,7 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
         ast::Ty::Unknown(_) => "unknown".into(),
         ast::Ty::Nothing(_) => "!".into(),
         ast::Ty::Type(_) => "type".into(),
+        ast::Ty::ConstBlock(block) => format!("ConstBlock({})", render_expr_inline(&block.expr)),
         ast::Ty::RequestedType(r) => format!("requested#{}", r.id),
         ast::Ty::Reference(reference) => {
             let mut out = String::from("&");

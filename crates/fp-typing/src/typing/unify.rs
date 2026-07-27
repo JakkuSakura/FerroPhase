@@ -1405,6 +1405,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 // Quote tokens are currently opaque to the typer.
                 self.bind(var, ty.clone());
             }
+            Ty::ConstBlock(block) => {
+                let cv = self.fresh_type_var();
+                self.bind(cv, Ty::Expr(Box::new((*block.expr).clone())));
+                return Ok(cv);
+            }
             Ty::Expr(expr) => {
                 if let ExprKind::Value(value) = expr.kind() {
                     if let Value::Type(ty) = value.as_ref() {
