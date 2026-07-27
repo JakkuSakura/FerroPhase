@@ -114,13 +114,17 @@ impl CompilerDriver {
         let mut ast = self.state.ast(ast_id)?.clone();
         AstPreProcessor::new(&mut self.state.splice_results).walk(&mut ast);
 
+        // Extract resolved state first to avoid borrow conflicts
         let resolved_consts = self.collect_resolved_const_values();
+        let resolved_types = std::mem::take(&mut self.state.resolved_type_map);
+        let expr_resolutions = self.state.expr_resolutions().clone();
         let module_resolution = self.state.module_resolution(ast_id);
         let outcome = annotate_with_resolved_state(
             &mut ast,
-            module_resolution,
+            module_resolution.cloned().as_ref(),
             resolved_consts,
-            self.state.expr_resolutions(),
+            resolved_types,
+            &expr_resolutions,
         )?;
         self.state.extend_typing_diagnostics(outcome.diagnostics);
 

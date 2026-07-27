@@ -57,6 +57,8 @@ pub struct TypingOutcome {
     pub pending_requests: Vec<PendingTypingRequest>,
     /// Generic instantiations with resolved concrete types ready for monomorphization.
     pub pending_generics: Vec<GenericMonorph>,
+    /// Type requests that need const-eval to resolve (id → expression).
+    pub pending_types: Vec<(u64, Expr)>,
 }
 
 /// A generic function invocation whose concrete type arguments have been resolved

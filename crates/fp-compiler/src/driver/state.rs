@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -36,6 +36,7 @@ pub struct CompilerState {
     module_resolutions: BTreeMap<AstId, ModuleResolutionContext>,
     pub(crate) splice_results: BTreeMap<String, SpliceResult>,
     pub(crate) generic_instantiations: HashSet<String>,
+    pub(crate) resolved_type_map: HashMap<u64, fp_core::ast::TypeStruct>,
     bytecode: BTreeMap<BytecodeId, fp_bytecode::BytecodeProgram>,
 }
 
@@ -225,6 +226,7 @@ impl Default for CompilerState {
             module_resolutions: BTreeMap::new(),
             splice_results: BTreeMap::new(),
             generic_instantiations: HashSet::new(),
+            resolved_type_map: HashMap::new(),
             bytecode: BTreeMap::new(),
         }
     }

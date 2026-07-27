@@ -957,6 +957,7 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
         ast::Ty::Unknown(_) => "unknown".into(),
         ast::Ty::Nothing(_) => "!".into(),
         ast::Ty::Type(_) => "type".into(),
+        ast::Ty::RequestedType(r) => format!("requested#{}", r.id),
         ast::Ty::Reference(reference) => {
             let mut out = String::from("&");
             if let Some(lifetime) = &reference.lifetime {

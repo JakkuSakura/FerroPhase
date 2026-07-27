@@ -1331,6 +1331,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Type(_) => {
                 self.bind(var, ty.clone());
             }
+            Ty::RequestedType(_) => {
+                self.bind(var, ty.clone());
+            }
             Ty::TypeBounds(_) => {
                 // Higher-ranked or bounded types are treated as opaque for now.
                 self.bind_error(var);
@@ -1733,17 +1736,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                     }
                 }
-                if let ExprKind::ConstBlock(const_block) = expr.kind() {
-                    if let Some(call) = extract_create_struct_from_block(const_block) {
-                        if let Some(struct_ty) = self.build_struct_from_create_call(call) {
-                            self.bind(var, Ty::Struct(struct_ty));
-                            return Ok(var);
-                        }
-                    }
-                }
                 if let ExprKind::IntrinsicCall(call) = expr.kind() {
                     if call.kind == IntrinsicCallKind::CreateStruct
                         || call.kind == IntrinsicCallKind::CloneStruct
+                        || call.kind == IntrinsicCallKind::AddField
                     {
                         if let Some(struct_ty) = self.build_struct_from_create_call(call) {
                             self.bind(var, Ty::Struct(struct_ty));
@@ -1913,32 +1909,12 @@ fn locator_tail_name(locator: &Name) -> Option<String> {
     }
 }
 
-fn extract_create_struct_from_block(const_block: &ExprConstBlock) -> Option<&ExprIntrinsicCall> {
-    match const_block.expr.kind() {
-        ExprKind::IntrinsicCall(c)
-            if c.kind == IntrinsicCallKind::CreateStruct
-                || c.kind == IntrinsicCallKind::CloneStruct =>
-        {
-            Some(c)
-        }
-        ExprKind::Block(body) => body.stmts.last().and_then(|s| match s {
-            BlockStmt::Expr(e) => match e.expr.kind() {
-                ExprKind::IntrinsicCall(c)
-                    if c.kind == IntrinsicCallKind::CreateStruct
-                        || c.kind == IntrinsicCallKind::CloneStruct =>
-                {
-                    Some(c)
-                }
-                _ => None,
-            },
-            _ => None,
-        }),
-        _ => None,
-    }
-}
-
 impl<'ctx> AstTypeInferencer<'ctx> {
     fn build_struct_from_create_call(&self, call: &ExprIntrinsicCall) -> Option<TypeStruct> {
+        if call.kind == IntrinsicCallKind::AddField {
+            return self.build_struct_from_addfield_call(call);
+        }
+
         let mut args = call.args.iter();
         let name = match args.next()?.kind() {
             ExprKind::Value(v) => match v.as_ref() {
@@ -1985,6 +1961,68 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             repr: ReprOptions::default(),
             fields,
         })
+    }
+
+    fn build_struct_from_addfield_call(&self, call: &ExprIntrinsicCall) -> Option<TypeStruct> {
+        let mut args = call.args.iter();
+        let ty_expr = args.next()?;
+        let name_expr = args.next()?;
+        let field_ty_expr = args.next()?;
+
+        let field_name = match name_expr.kind() {
+            ExprKind::Value(v) => match v.as_ref() {
+                Value::String(s) => s.value.clone(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let field_ty = match field_ty_expr.kind() {
+            ExprKind::Value(v) => match v.as_ref() {
+                Value::Type(ty) => ty.clone(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+
+        let base_name = self.resolve_struct_name_from_ty_expr(ty_expr)?;
+        let source_path = QualifiedPath::new(vec![base_name.clone()]);
+
+        let mut fields: Vec<StructuralField> = self
+            .struct_defs
+            .get(&source_path)
+            .map(|def| def.fields.clone())
+            .unwrap_or_default();
+
+        if !fields.iter().any(|f| f.name.as_str() == &field_name) {
+            fields.push(StructuralField::new(Ident::new(field_name), field_ty));
+        }
+
+        Some(TypeStruct {
+            name: Ident::new(base_name),
+            generics_params: Vec::new(),
+            repr: ReprOptions::default(),
+            fields,
+        })
+    }
+
+    fn resolve_struct_name_from_ty_expr(&self, expr: &Expr) -> Option<String> {
+        match expr.kind() {
+            ExprKind::IntrinsicCall(call) => match call.kind {
+                IntrinsicCallKind::CreateStruct => call.args.first().and_then(|a| match a.kind() {
+                    ExprKind::Value(v) => match v.as_ref() {
+                        Value::String(s) => Some(s.value.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                }),
+                IntrinsicCallKind::AddField => {
+                    self.resolve_struct_name_from_ty_expr(call.args.first()?)
+                }
+                _ => None,
+            },
+            ExprKind::Name(loc) => Some(loc.to_string()),
+            _ => None,
+        }
     }
 }
 

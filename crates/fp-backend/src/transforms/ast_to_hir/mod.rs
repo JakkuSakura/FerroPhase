@@ -2595,13 +2595,14 @@ fn ty_contains_quote(ty: &ast::Ty) -> bool {
         | ast::Ty::Unknown(_)
         | ast::Ty::Nothing(_)
         | ast::Ty::Type(_)
+        | ast::Ty::RequestedType(_)
         | ast::Ty::AnyBox(_) => false,
     }
 }
 
 fn ty_contains_type_type(ty: &ast::Ty) -> bool {
     match ty {
-        ast::Ty::Type(_) => true,
+        ast::Ty::Type(_) | ast::Ty::RequestedType(_) => true,
         ast::Ty::Tuple(tuple) => tuple.types.iter().any(ty_contains_type_type),
         ast::Ty::Array(array) => ty_contains_type_type(&array.elem),
         ast::Ty::Vec(vec) => ty_contains_type_type(&vec.ty),

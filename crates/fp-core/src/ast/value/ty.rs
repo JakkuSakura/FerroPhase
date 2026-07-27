@@ -136,6 +136,7 @@ common_enum! {
         Nothing(TypeNothing),
         ErrorType(TypeError),
         Type(TypeType),
+        RequestedType(TypeRequested),
         Reference(TypeReference),
         Slice(TypeSlice),
         RawPtr(TypeRawPtr),
@@ -256,6 +257,7 @@ impl Ty {
             Ty::Vec(ty) => ty.span(),
             Ty::Array(ty) => ty.span(),
             Ty::Type(ty) => ty.span(),
+            Ty::RequestedType(ty) => ty.span(),
             Ty::Reference(ty) => ty.span(),
             Ty::RawPtr(ty) => ty.span(),
             Ty::Slice(ty) => ty.span(),
@@ -596,6 +598,27 @@ impl TypeType {
         self.span
     }
 }
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct TypeRequested {
+    pub id: u64,
+}
+
+impl PartialEq for TypeRequested {
+    fn eq(&self, _other: &Self) -> bool { true }
+}
+
+impl Eq for TypeRequested {}
+
+impl std::hash::Hash for TypeRequested {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) { 0u8.hash(state); }
+}
+
+impl TypeRequested {
+    pub fn new(id: u64) -> Self { Self { id } }
+    pub fn span(&self) -> Span { Span::null() }
+}
+
 
 common_struct! {
 pub struct TypeReference {

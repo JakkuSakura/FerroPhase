@@ -12,7 +12,6 @@ pub use typing::types::{
 
 use fp_core::ast::*;
 use fp_core::ast::{AttributesExt, ExprResolution, Ident, Name};
-use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::{Error, Result};
@@ -331,6 +330,9 @@ pub struct AstTypeInferencer<'ctx> {
     expr_resolution: Option<&'ctx dyn ExprResolution>,
     /// Generic invocations with resolved concrete types ready for monomorphization.
     pending_generics: Vec<GenericMonorph>,
+    /// Compile-time type requests that need const-eval to resolve.
+    pending_types: Vec<(u64, Expr)>,
+    next_type_id: u64,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -462,6 +464,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             resolved_consts: HashMap::new(),
             expr_resolution: None,
             pending_generics: Vec::new(),
+            pending_types: Vec::new(),
+            next_type_id: 0,
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -514,6 +518,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             let path = QualifiedPath::new(segments.iter().map(|seg| (*seg).to_string()).collect());
             scope.insert(alias.to_string(), path);
         }
+    }
+
+    pub fn alloc_type_request(&mut self, expr: Expr) -> u64 {
+        let id = self.next_type_id;
+        self.next_type_id += 1;
+        self.pending_types.push((id, expr));
+        id
     }
 
     pub fn set_resolution_hook(&mut self, hook: Box<dyn TypeResolutionHook + 'ctx>) {
@@ -711,6 +722,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             resolved_names: std::mem::take(&mut self.resolved_names),
             pending_requests,
             pending_generics: std::mem::take(&mut self.pending_generics),
+            pending_types: std::mem::take(&mut self.pending_types),
         }
     }
 
@@ -1718,51 +1730,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             ItemKind::DefType(def) => {
                 self.record_unimplemented_symbol(&def.name, &def.attrs);
                 self.register_symbol(&def.name);
-                if let Ty::Expr(expr) = &def.value {
-                    let call = match expr.kind() {
-                        ExprKind::IntrinsicCall(c) => Some(c),
-                        ExprKind::ConstBlock(block) => match block.expr.kind() {
-                            ExprKind::Block(body) => {
-                                body.stmts.last().and_then(|s| match s {
-                                    BlockStmt::Expr(e) => match e.expr.kind() {
-                                        ExprKind::IntrinsicCall(c) => Some(c),
-                                        _ => None,
-                                    },
-                                    _ => None,
-                                })
-                            }
-                            ExprKind::IntrinsicCall(c) => Some(c),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    if let Some(call) = call {
-                        if call.kind == IntrinsicCallKind::CreateStruct
-                            || call.kind == IntrinsicCallKind::CloneStruct
-                        {
-                            if let Some(struct_def) = create_struct_from_intrinsic(call) {
-                                let mut struct_def = struct_def;
-                                // Merge fields from source struct for TypeBuilder::from(Type)
-                                let source_name = QualifiedPath::new(vec![struct_def.name.as_str().to_string()]);
-                                if let Some(source_def) = self.struct_defs.get(&source_name) {
-                                    let mut merged = source_def.fields.clone();
-                                    for f in &struct_def.fields {
-                                        if !merged.iter().any(|m| m.name == f.name) {
-                                            merged.push(f.clone());
-                                        }
-                                    }
-                                    struct_def.fields = merged;
-                                }
-                                // Use the DefType's name, not the source struct's name
-                                struct_def.name = def.name.clone();
-                                self.insert_struct_def(&def.name, struct_def.clone());
-                                let var = self.symbol_var(&def.name);
-                                let ty = Ty::Struct(struct_def);
-                                if let Ok(struct_var) = self.type_from_ast_ty(&ty) {
-                                    let _ = self.unify(var, struct_var);
-                                }
-                            }
-                        }
+                // Type the value to let CreateStruct/AddField intrinsics populate struct_defs
+                let _ = self.type_from_ast_ty(&def.value);
+                // Look up the struct built by intrinsics (or from a prior comptime pass)
+                let path = QualifiedPath::new(vec![def.name.as_str().to_string()]);
+                if let Some(struct_def) = self.struct_defs.get(&path).cloned() {
+                    let var = self.symbol_var(&def.name);
+                    let ty = Ty::Struct(struct_def);
+                    if let Ok(struct_var) = self.type_from_ast_ty(&ty) {
+                        let _ = self.unify(var, struct_var);
                     }
                 }
             }
@@ -3955,6 +3931,7 @@ pub fn annotate_with_resolved_state(
     node: &mut Node,
     module_resolution: Option<&ModuleResolutionContext>,
     resolved_consts: HashMap<String, fp_core::ast::Value>,
+    resolved_types: HashMap<u64, fp_core::ast::TypeStruct>,
     expr_resolution: &dyn ExprResolution,
 ) -> Result<TypingOutcome> {
     let mut inferencer = AstTypeInferencer::new()
@@ -3964,6 +3941,10 @@ pub fn annotate_with_resolved_state(
         inferencer.seed_modules_from_resolution_context(ctx);
     }
     inferencer.resolved_consts = resolved_consts;
+    for (k, v) in resolved_types {
+        let path = QualifiedPath::new(vec![format!("_requested_{}", k)]);
+        inferencer.struct_defs.insert(path, v);
+    }
     inferencer.infer(node)
 }
 
@@ -4044,38 +4025,3 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 }
 
-fn create_struct_from_intrinsic(call: &ExprIntrinsicCall) -> Option<TypeStruct> {
-    let mut args = call.args.iter();
-    let name = match args.next()?.kind() {
-        ExprKind::Value(v) => match v.as_ref() {
-            Value::String(s) => s.value.clone(),
-            _ => return None,
-        },
-        ExprKind::Name(loc) => loc.to_string(),
-        _ => return None,
-    };
-    let mut fields: Vec<StructuralField> = Vec::new();
-    while let (Some(name_expr), Some(ty_expr)) = (args.next(), args.next()) {
-        let field_name = match name_expr.kind() {
-            ExprKind::Value(v) => match v.as_ref() {
-                Value::String(s) => s.value.clone(),
-                _ => break,
-            },
-            _ => break,
-        };
-        let field_ty = match ty_expr.kind() {
-            ExprKind::Value(v) => match v.as_ref() {
-                Value::Type(ty) => ty.clone(),
-                _ => break,
-            },
-            _ => break,
-        };
-        fields.push(StructuralField::new(Ident::new(field_name), field_ty));
-    }
-    Some(TypeStruct {
-        name: Ident::new(name),
-        generics_params: Vec::new(),
-        repr: ReprOptions::default(),
-        fields,
-    })
-}
