@@ -11,7 +11,7 @@ use fp_typing::TypingDiagnostic;
 
 use crate::driver::CompilerDriverError;
 use crate::module_resolution::CompilerModuleResolver;
-use crate::scheduler::{AstId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, TypedAstId};
+use crate::scheduler::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, TypedAstId};
 
 #[derive(Debug, Clone)]
 pub struct SpliceResult {
@@ -36,6 +36,7 @@ pub struct CompilerState {
     module_resolutions: BTreeMap<AstId, ModuleResolutionContext>,
     pub(crate) splice_results: BTreeMap<String, SpliceResult>,
     pub(crate) generic_instantiations: HashSet<String>,
+    bytecode: BTreeMap<BytecodeId, fp_bytecode::BytecodeProgram>,
 }
 
 impl CompilerState {
@@ -194,6 +195,16 @@ impl CompilerState {
     pub fn runtime_value_len(&self) -> usize {
         self.runtime_values.len()
     }
+
+    pub fn insert_bytecode(&mut self, id: BytecodeId, program: fp_bytecode::BytecodeProgram) {
+        self.bytecode.insert(id, program);
+    }
+
+    pub fn bytecode_program(&self, id: &BytecodeId) -> Result<&fp_bytecode::BytecodeProgram, CompilerDriverError> {
+        self.bytecode
+            .get(id)
+            .ok_or_else(|| CompilerDriverError::MissingBytecode(id.clone()))
+    }
 }
 
 impl Default for CompilerState {
@@ -214,6 +225,7 @@ impl Default for CompilerState {
             module_resolutions: BTreeMap::new(),
             splice_results: BTreeMap::new(),
             generic_instantiations: HashSet::new(),
+            bytecode: BTreeMap::new(),
         }
     }
 }

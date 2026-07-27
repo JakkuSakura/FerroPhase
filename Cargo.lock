@@ -1277,6 +1277,7 @@ name = "fp-compiler"
 version = "0.1.0"
 dependencies = [
  "fp-backend",
+ "fp-bytecode",
  "fp-core",
  "fp-interpret",
  "fp-lang",

@@ -2,12 +2,19 @@ use thiserror::Error;
 
 use crate::module_resolution::ModuleResolutionError;
 use crate::scheduler::{
-    AstId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, SchedulerError, TypedAstId,
+    AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, SchedulerError,
+    TypedAstId,
 };
 
 impl From<fp_interpret::VmError> for CompilerDriverError {
     fn from(e: fp_interpret::VmError) -> Self {
         CompilerDriverError::Interpreter(e.to_string())
+    }
+}
+
+impl From<fp_bytecode::BytecodeError> for CompilerDriverError {
+    fn from(e: fp_bytecode::BytecodeError) -> Self {
+        CompilerDriverError::UnsupportedWork(format!("bytecode: {}", e))
     }
 }
 
@@ -33,6 +40,8 @@ pub enum CompilerDriverError {
     MissingConstValue(ConstValueId),
     #[error("missing runtime value {0}")]
     MissingRuntimeValue(RuntimeValueId),
+    #[error("missing bytecode {0}")]
+    MissingBytecode(BytecodeId),
     #[error("module resolution failed: {0}")]
     ModuleResolution(#[from] ModuleResolutionError),
     #[error("unsupported compiler work: {0}")]

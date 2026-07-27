@@ -3,7 +3,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use fp_compiler::{
-    AstId, CompilerDriver, CompilerModuleResolver, CompilerWork, ConstValueId,
+    AstId, BytecodeId, CompilerDriver, CompilerModuleResolver, CompilerWork, ConstValueId,
     FullyQualifiedPath, LirId, MirId, RuntimeValueId, ScopeId,
 };
 use fp_core::{
@@ -282,9 +282,7 @@ pub fn compile_bytecode_file(
     options: &BytecodeCompileOptions,
 ) -> Result<PathBuf> {
     let lowered = lower_file(path, source_language, resolver, lossy)?;
-    let mir = lowered.mir()?;
-    let bytecode = fp_bytecode::lower_program(&mir)
-        .map_err(|err| CliError::Compilation(format!("MIR→Bytecode lowering failed: {}", err)))?;
+    let bytecode = lowered.bytecode()?;
 
     if let Some(parent) = options.output.parent() {
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
@@ -1075,6 +1073,14 @@ impl LoweredProgram {
         self.driver
             .state
             .lir(&LirId::new(format!("lir:{}", self.path_key)))
+            .map(|program| program.clone())
+            .map_err(|err| CliError::Compilation(err.to_string()))
+    }
+
+    fn bytecode(&self) -> Result<fp_bytecode::BytecodeProgram> {
+        self.driver
+            .state
+            .bytecode_program(&BytecodeId::new(format!("bytecode:{}", self.path_key)))
             .map(|program| program.clone())
             .map_err(|err| CliError::Compilation(err.to_string()))
     }

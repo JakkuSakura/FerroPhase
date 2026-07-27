@@ -19,7 +19,7 @@ use fp_typing::{annotate_with_resolved_state, GenericMonorph, PendingTypingReque
 use std::collections::{BTreeMap, HashMap};
 
 use crate::scheduler::{
-    AstId, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
+    AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
     ConstValueId, FullyQualifiedPath, GenericWorkRequest, HirId,
     LirId, MirId, ScheduledAnswer, ScopeId,
     TypedAstId,
@@ -140,6 +140,8 @@ impl CompilerDriver {
             let mir_id = self.lower_to_mir(&hir_id, path)?;
             let lir_id = self.lower_to_lir(&mir_id, path)?;
             let had_entries = self.evaluate_comptime_lir(&lir_id, path)? > 0;
+
+            self.generate_bytecode(&mir_id, path)?;
 
             // Check if we need another iteration: typing found comptime needs and
             // evaluation found entries to process.
@@ -355,6 +357,18 @@ impl CompilerDriver {
             }
             _ => {}
         }
+    }
+
+    fn generate_bytecode(
+        &mut self,
+        mir_id: &MirId,
+        path: &FullyQualifiedPath,
+    ) -> Result<(), CompilerDriverError> {
+        let mir = self.state.mir(mir_id)?.clone();
+        let program = fp_bytecode::lower_program(&mir)?;
+        let bytecode_id = BytecodeId::new(format!("bytecode:{}", path.to_key()));
+        self.state.insert_bytecode(bytecode_id, program);
+        Ok(())
     }
 
     fn evaluate_comptime_lir(
