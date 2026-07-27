@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::identity::{
     AstId, BytecodeId, ConstValueId, FullyQualifiedPath, HirId, JitObjectId, LirId, MirId,
-    NativeObjectId, RawAstId, RuntimeValueId, SavedOutputId, ScopeId, SourceId,
+    NativeObjectId, RawAstId, RuntimeValueId, SavedOutputId, SourceId,
     TypedAstId,
 };
 
@@ -68,7 +68,6 @@ pub enum CompilerAnswer {
     },
     Ast {
         ast: AstId,
-        scope: ScopeId,
         path: FullyQualifiedPath,
     },
     CompileUnitCompileNative,

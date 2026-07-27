@@ -9,5 +9,5 @@ pub use scheduler::{
     CompilerWork, CompletedRequest, ConstValueId, FullyQualifiedPath,
     GenericWorkRequest, HirId, InvalidatedObjectId, JitObjectId, LirId, MirId,
     NativeObjectId, RawAstId, RequestId, RuntimeValueId,
-    SavedOutputId, ScheduledAnswer, SchedulerError, ScopeId, SourceId, TypedAstId,
+    SavedOutputId, ScheduledAnswer, SchedulerError, SourceId, TypedAstId,
 };

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use fp_compiler::{
     AstId, BytecodeId, CompilerDriver, CompilerModuleResolver, CompilerWork, ConstValueId,
-    FullyQualifiedPath, LirId, MirId, RuntimeValueId, ScopeId,
+    FullyQualifiedPath, LirId, MirId, RuntimeValueId,
 };
 use fp_core::{
     ast::register_threadlocal_serializer,
@@ -794,7 +794,6 @@ fn lower_ast(
     lossy: LossyCompileOptions,
 ) -> Result<CompilerDriver> {
     let ast_id = identity.ast_id.clone();
-    let scope_id = identity.scope_id();
     let path = identity.path.clone();
     let mut driver = CompilerDriver::new();
     driver.state.set_lossy(lossy.enabled);
@@ -1099,9 +1098,5 @@ impl CompilerIdentity {
         let path = FullyQualifiedPath::from_segments(segments);
         let ast_id = AstId::new(format!("ast:{}", path.to_key()));
         Self { path, ast_id }
-    }
-
-    fn scope_id(&self) -> ScopeId {
-        ScopeId::new(self.path.to_key())
     }
 }

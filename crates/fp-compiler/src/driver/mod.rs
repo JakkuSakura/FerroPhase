@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::scheduler::{
     AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
     ConstValueId, FullyQualifiedPath, GenericWorkRequest, HirId,
-    LirId, MirId, RuntimeValueId, ScheduledAnswer, ScopeId,
+    LirId, MirId, RuntimeValueId, ScheduledAnswer,
     TypedAstId,
 };
 
@@ -1186,7 +1186,6 @@ impl Default for CompilerDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scheduler::ScopeId;
     use fp_core::ast::{
         Expr, FunctionSignature, GenericParam, Ident, Item, ItemDefFunction, Node, TypeBounds,
     };
@@ -1330,7 +1329,7 @@ mod tests {
 #[cfg(test)]
 mod comptime_source_tests {
     use super::*;
-    use crate::scheduler::{AstId, CompilerWork, FullyQualifiedPath, ScopeId};
+    use crate::scheduler::{AstId, CompilerWork, FullyQualifiedPath};
     use fp_core::frontend::LanguageFrontend;
 
     fn path() -> FullyQualifiedPath {

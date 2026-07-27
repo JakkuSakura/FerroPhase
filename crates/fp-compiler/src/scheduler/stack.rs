@@ -183,7 +183,6 @@ impl CompilerScheduler {
                 CompilerWork::NormalizeAst { .. },
                 CompilerAnswer::Ast {
                     ast,
-                    scope,
                     path,
                 },
             ) => vec![CompilerWork::CompileUnitCompileNative {
@@ -199,7 +198,7 @@ impl CompilerScheduler {
 mod tests {
     use super::*;
     use crate::scheduler::{
-        AstId, ConstValueId, FullyQualifiedPath, RawAstId, ScopeId, SchedulerError,
+        AstId, ConstValueId, FullyQualifiedPath, RawAstId, SchedulerError,
         SourceId, TypedAstId,
     };
 
@@ -311,7 +310,6 @@ mod tests {
                 normalize.id,
                 CompilerAnswer::Ast {
                     ast: AstId::new("ast:src/main.fp"),
-                    scope: ScopeId::new("crate::main"),
                     path: path(&["crate", "main"]),
                 },
             )
