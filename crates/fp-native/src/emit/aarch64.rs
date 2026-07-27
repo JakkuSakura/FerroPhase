@@ -3085,6 +3085,17 @@ fn emit_store(
                             2 => emit_store16_to_sp(asm, Reg::X16, store_offset)?,
                             4 => emit_store32_to_sp(asm, Reg::X16, store_offset)?,
                             8 => emit_store_to_sp(asm, Reg::X16, store_offset),
+                            16 => {
+                                emit_mov_reg(asm, Reg::X10, Reg::X31);
+                                add_immediate_offset(asm, Reg::X10, store_offset as i64);
+                                let len: u64 = if let AsmConstant::String(text) = field {
+                                    text.len() as u64
+                                } else {
+                                    0
+                                };
+                                emit_mov_imm64(asm, Reg::X17, len);
+                                emit_store_pair_base(asm, Reg::X10, Reg::X16, Reg::X17, 0);
+                            }
                             _ => {
                                 return Err(Error::from(
                                     "unsupported aggregate field size in constant store",
@@ -3138,13 +3149,22 @@ fn emit_store(
                                 emit_mov_imm64(asm, Reg::X16, bits);
                             }
                         }
-                        emit_mov_reg(asm, Reg::X9, Reg::X17);
-                        add_immediate_offset(asm, Reg::X9, field_offset as i64);
+                        emit_mov_reg(asm, Reg::X10, Reg::X17);
+                        add_immediate_offset(asm, Reg::X10, field_offset as i64);
                         match field_size {
-                            1 => emit_store8_to_reg(asm, Reg::X16, Reg::X9),
-                            2 => emit_store16_to_reg(asm, Reg::X16, Reg::X9),
-                            4 => emit_store32_to_reg(asm, Reg::X16, Reg::X9),
-                            8 => emit_store_to_reg(asm, Reg::X16, Reg::X9),
+                            1 => emit_store8_to_reg(asm, Reg::X16, Reg::X10),
+                            2 => emit_store16_to_reg(asm, Reg::X16, Reg::X10),
+                            4 => emit_store32_to_reg(asm, Reg::X16, Reg::X10),
+                            8 => emit_store_to_reg(asm, Reg::X16, Reg::X10),
+                            16 => {
+                                let len: u64 = if let AsmConstant::String(text) = field {
+                                    text.len() as u64
+                                } else {
+                                    0
+                                };
+                                emit_mov_imm64(asm, Reg::X17, len);
+                                emit_store_pair_base(asm, Reg::X10, Reg::X16, Reg::X17, 0);
+                            }
                             _ => {
                                 return Err(Error::from(
                                     "unsupported aggregate field size in constant store",
@@ -3198,13 +3218,22 @@ fn emit_store(
                                 emit_mov_imm64(asm, Reg::X16, bits);
                             }
                         }
-                        emit_mov_reg(asm, Reg::X9, Reg::X17);
-                        add_immediate_offset(asm, Reg::X9, field_offset as i64);
+                        emit_mov_reg(asm, Reg::X10, Reg::X17);
+                        add_immediate_offset(asm, Reg::X10, field_offset as i64);
                         match field_size {
-                            1 => emit_store8_to_reg(asm, Reg::X16, Reg::X9),
-                            2 => emit_store16_to_reg(asm, Reg::X16, Reg::X9),
-                            4 => emit_store32_to_reg(asm, Reg::X16, Reg::X9),
-                            8 => emit_store_to_reg(asm, Reg::X16, Reg::X9),
+                            1 => emit_store8_to_reg(asm, Reg::X16, Reg::X10),
+                            2 => emit_store16_to_reg(asm, Reg::X16, Reg::X10),
+                            4 => emit_store32_to_reg(asm, Reg::X16, Reg::X10),
+                            8 => emit_store_to_reg(asm, Reg::X16, Reg::X10),
+                            16 => {
+                                let len: u64 = if let AsmConstant::String(text) = field {
+                                    text.len() as u64
+                                } else {
+                                    0
+                                };
+                                emit_mov_imm64(asm, Reg::X17, len);
+                                emit_store_pair_base(asm, Reg::X10, Reg::X16, Reg::X17, 0);
+                            }
                             _ => {
                                 return Err(Error::from(
                                     "unsupported aggregate field size in constant store",
@@ -4686,11 +4715,11 @@ fn store_constant_aggregate_to_reg(
                     .ok_or_else(|| Error::from("aggregate field out of range"))?;
                 let field_size = size_of(field_ty);
                 if matches!(field, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)) {
-                    emit_mov_reg(asm, Reg::X9, base);
-                    add_immediate_offset(asm, Reg::X9, field_offset as i64);
+                    emit_mov_reg(asm, Reg::X10, base);
+                    add_immediate_offset(asm, Reg::X10, field_offset as i64);
                     store_constant_aggregate_to_reg(
                         asm,
-                        Reg::X9,
+                        Reg::X10,
                         field,
                         field_ty,
                         rodata,
@@ -4748,7 +4777,7 @@ fn store_constant_aggregate_to_reg(
                     add_immediate_offset(asm, Reg::X9, offset as i64);
                     store_constant_aggregate_to_reg(
                         asm,
-                        Reg::X9,
+                        Reg::X10,
                         elem,
                         elem_ty,
                         rodata,
