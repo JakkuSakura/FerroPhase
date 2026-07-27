@@ -7,14 +7,15 @@ pub use state::CompilerState;
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprKind, ExprSplice, ExprSplicePending,
-    Item, ItemChunk, ItemDefConst, ItemKind, Node, NodeKind, Value,
+    Item, ItemChunk, ItemDefConst, ItemDefFunction, ItemKind, Node, NodeKind, Ty, Value,
 };
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
+use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use fp_interpret::{LirInterpreter, VmError};
-use fp_typing::{annotate_with_resolved_state, PendingTypingRequestKind};
+use fp_typing::{annotate_with_resolved_state, GenericMonorph, PendingTypingRequestKind};
 use std::collections::{BTreeMap, HashMap};
 
 use crate::scheduler::{
@@ -71,9 +72,11 @@ impl CompilerDriver {
             CompilerWork::CompileUnitAnswerComptime { typed_ast, path } => {
                 self.compile_unit_answer_comptime(typed_ast, path)
             }
-            CompilerWork::EnqueueGeneric { generic, .. } => Ok(CompilerAnswer::GenericQueued {
-                generic: generic.clone(),
-            }),
+            CompilerWork::EnqueueGeneric {
+                typed_ast,
+                path,
+                generic,
+            } => self.enqueue_generic(typed_ast, path, generic),
             _ => Err(CompilerDriverError::UnsupportedWork(format!("{request:?}"))),
         }
     }
@@ -95,6 +98,7 @@ impl CompilerDriver {
         let mut pending_requests;
         let mut typed_first = false;
         let mut iterations = 0u32;
+        let mut pending_generics = Vec::new();
 
         loop {
             iterations += 1;
@@ -121,6 +125,7 @@ impl CompilerDriver {
             }
 
             pending_requests = outcome.pending_requests;
+            pending_generics = outcome.pending_generics;
 
             if !is_lowerable {
                 break;
@@ -175,19 +180,22 @@ impl CompilerDriver {
             )?;
             let _ = outcome.diagnostics;
             pending_requests = outcome.pending_requests;
+            pending_generics = outcome.pending_generics;
         }
 
         self.state.insert_typed_ast(typed_ast_id.clone(), ast.unwrap());
 
-        for request in &pending_requests {
-            if matches!(request.kind, PendingTypingRequestKind::Generic) {
-                let generic = GenericWorkRequest::new(path.clone(), request.expr.clone());
-                self.scheduler.submit(CompilerWork::EnqueueGeneric {
-                    typed_ast: typed_ast_id.clone(),
-                    path: path.clone(),
-                    generic,
-                });
-            }
+        for monomorph in &pending_generics {
+            let generic = GenericWorkRequest::new(
+                FullyQualifiedPath::new(monomorph.function_path.clone()),
+                monomorph.generic_params.clone(),
+                monomorph.concrete_types.clone(),
+            );
+            self.scheduler.submit(CompilerWork::EnqueueGeneric {
+                typed_ast: typed_ast_id.clone(),
+                path: path.clone(),
+                generic,
+            });
         }
 
         Ok(CompilerAnswer::CompileUnitCompileNative)
@@ -205,6 +213,148 @@ impl CompilerDriver {
         let _count = self.evaluate_comptime_lir(&lir_id, path)?;
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
         Ok(CompilerAnswer::CompileUnitAnswerComptime { value: value_id })
+    }
+
+    fn enqueue_generic(
+        &mut self,
+        typed_ast_id: &TypedAstId,
+        _path: &FullyQualifiedPath,
+        generic: &GenericWorkRequest,
+    ) -> Result<CompilerAnswer, CompilerDriverError> {
+        let cannon_key = Self::generic_cannon_key(&generic.path, &generic.concrete_types);
+
+        if self.state.generic_instantiations.contains(&cannon_key) {
+            return Ok(CompilerAnswer::GenericQueued {
+                generic: generic.clone(),
+            });
+        }
+        self.state.generic_instantiations.insert(cannon_key.clone());
+
+        let typed_ast = self.state.typed_ast(typed_ast_id)?;
+        let function_path = generic.path.path();
+        let mut func_item = Self::find_function_def(typed_ast, function_path)
+            .ok_or_else(|| CompilerDriverError::UnsupportedWork(format!(
+                "generic function not found: {}", function_path.to_key()
+            )))?;
+
+        if let ItemKind::DefFunction(def) = func_item.kind_mut() {
+            for param in &mut def.sig.params {
+                Self::substitute_in_ty(&mut param.ty, &generic.generic_params, &generic.concrete_types);
+            }
+            if let Some(ret_ty) = &mut def.sig.ret_ty {
+                Self::substitute_in_ty(ret_ty, &generic.generic_params, &generic.concrete_types);
+            }
+            def.sig.generics_params.clear();
+        }
+
+        let specialized_path = FullyQualifiedPath::new(
+            function_path.with_segment(cannon_key.clone())
+        );
+        let specialized_ast_id = AstId::new(format!("ast:{}", specialized_path.to_key()));
+        let node = Node::item(func_item);
+        self.state.insert_ast(specialized_ast_id.clone(), node);
+
+        self.scheduler.submit(CompilerWork::CompileUnitCompileNative {
+            ast: specialized_ast_id,
+            scope: ScopeId::new(specialized_path.to_key()),
+            path: specialized_path,
+        });
+
+        Ok(CompilerAnswer::GenericQueued {
+            generic: generic.clone(),
+        })
+    }
+
+    fn generic_cannon_key(path: &FullyQualifiedPath, concrete_types: &[Ty]) -> String {
+        let types_str: Vec<String> = concrete_types
+            .iter()
+            .map(|ty| format!("{:?}", ty))
+            .collect();
+        format!("{}#<{}>", path.to_key(), types_str.join(", "))
+    }
+
+    fn find_function_def(node: &Node, path: &QualifiedPath) -> Option<Item> {
+        match node.kind() {
+            NodeKind::File(file) => {
+                let key = path.to_key();
+                let segments: Vec<&str> = key.split("::").collect();
+                for item in &file.items {
+                    if let Some(found) = Self::find_in_items(item, &segments, 0) {
+                        return Some(found);
+                    }
+                }
+                None
+            }
+            NodeKind::Item(item) => {
+                let key = path.to_key();
+                let segments: Vec<&str> = key.split("::").collect();
+                Self::find_in_items(item, &segments, 0)
+            }
+            _ => None,
+        }
+    }
+
+    fn find_in_items(item: &Item, segments: &[&str], idx: usize) -> Option<Item> {
+        if idx >= segments.len() {
+            return None;
+        }
+        let target = segments[idx];
+        match item.kind() {
+            ItemKind::DefFunction(def) => {
+                if def.name.as_str() == target && idx == segments.len() - 1 {
+                    return Some(item.clone());
+                }
+                None
+            }
+            ItemKind::Module(module) => {
+                if module.name.as_str() == target {
+                    for child in &module.items {
+                        if let Some(found) = Self::find_in_items(child, segments, idx + 1) {
+                            return Some(found);
+                        }
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn substitute_in_ty(ty: &mut Ty, _param_names: &[String], concrete_types: &[Ty]) {
+        match ty {
+            Ty::GenericVar(gv) => {
+                let idx = gv.index as usize;
+                if idx < concrete_types.len() {
+                    *ty = concrete_types[idx].clone();
+                }
+            }
+            Ty::Function(f) => {
+                for param in &mut f.params {
+                    Self::substitute_in_ty(param, _param_names, concrete_types);
+                }
+                if let Some(ret_ty) = &mut f.ret_ty {
+                    Self::substitute_in_ty(ret_ty, _param_names, concrete_types);
+                }
+            }
+            Ty::Reference(r) => {
+                Self::substitute_in_ty(&mut *r.ty, _param_names, concrete_types);
+            }
+            Ty::Slice(s) => {
+                Self::substitute_in_ty(&mut *s.elem, _param_names, concrete_types);
+            }
+            Ty::Array(a) => {
+                Self::substitute_in_ty(&mut *a.elem, _param_names, concrete_types);
+            }
+            Ty::Vec(v) => {
+                Self::substitute_in_ty(&mut *v.ty, _param_names, concrete_types);
+            }
+            Ty::Tuple(t) => {
+                for ty in &mut t.types {
+                    Self::substitute_in_ty(ty, _param_names, concrete_types);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn evaluate_comptime_lir(

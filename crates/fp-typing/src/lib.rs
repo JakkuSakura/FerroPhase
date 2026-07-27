@@ -5,8 +5,9 @@ pub mod runtime_types;
 pub mod typing;
 pub use runtime_types::{materialize_type_with_hooks, type_from_value, TypeMaterializeHooks};
 pub use typing::types::{
-    ExprId, PendingTypingRequest, PendingTypingRequestKind, ResolvedName, ResolvedNameNamespace,
-    ResolvedNameTable, TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome,
+    ExprId, GenericMonorph, PendingTypingRequest, PendingTypingRequestKind, ResolvedName,
+    ResolvedNameNamespace, ResolvedNameTable, TypingDiagnostic, TypingDiagnosticLevel,
+    TypingOutcome,
 };
 
 use fp_core::ast::*;
@@ -328,6 +329,8 @@ pub struct AstTypeInferencer<'ctx> {
     /// comptime evaluation.  Keyed by the const item's name.
     resolved_consts: HashMap<String, fp_core::ast::Value>,
     expr_resolution: Option<&'ctx dyn ExprResolution>,
+    /// Generic invocations with resolved concrete types ready for monomorphization.
+    pending_generics: Vec<GenericMonorph>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -458,6 +461,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             comptime_exprs: Vec::new(),
             resolved_consts: HashMap::new(),
             expr_resolution: None,
+            pending_generics: Vec::new(),
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -706,6 +710,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             has_errors: std::mem::replace(&mut self.has_errors, false),
             resolved_names: std::mem::take(&mut self.resolved_names),
             pending_requests,
+            pending_generics: std::mem::take(&mut self.pending_generics),
         }
     }
 

@@ -1,4 +1,4 @@
-use fp_core::ast::Expr;
+use fp_core::ast::{Expr, Ty};
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use std::collections::HashMap;
@@ -55,6 +55,26 @@ pub struct TypingOutcome {
     pub resolved_names: ResolvedNameTable,
     /// Pending work discovered only after the full typing pass finishes.
     pub pending_requests: Vec<PendingTypingRequest>,
+    /// Generic instantiations with resolved concrete types ready for monomorphization.
+    pub pending_generics: Vec<GenericMonorph>,
+}
+
+/// A generic function invocation whose concrete type arguments have been resolved
+/// and are ready for monomorphization (specialization).
+#[derive(Debug, Clone)]
+pub struct GenericMonorph {
+    /// Qualified path of the generic function being called
+    pub function_path: QualifiedPath,
+    /// Names of the generic parameters (in definition order)
+    pub generic_params: Vec<String>,
+    /// Resolved concrete types for each generic parameter (in same order)
+    pub concrete_types: Vec<Ty>,
+}
+
+impl GenericMonorph {
+    pub fn new(function_path: QualifiedPath, generic_params: Vec<String>, concrete_types: Vec<Ty>) -> Self {
+        Self { function_path, generic_params, concrete_types }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

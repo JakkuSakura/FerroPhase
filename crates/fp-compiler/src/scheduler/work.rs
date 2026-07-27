@@ -36,12 +36,13 @@ pub enum CompilerWork {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GenericWorkRequest {
     pub path: FullyQualifiedPath,
-    pub expr: fp_core::ast::Expr,
+    pub generic_params: Vec<String>,
+    pub concrete_types: Vec<fp_core::ast::Ty>,
 }
 
 impl GenericWorkRequest {
-    pub fn new(path: FullyQualifiedPath, expr: fp_core::ast::Expr) -> Self {
-        Self { path, expr }
+    pub fn new(path: FullyQualifiedPath, generic_params: Vec<String>, concrete_types: Vec<fp_core::ast::Ty>) -> Self {
+        Self { path, generic_params, concrete_types }
     }
 }
 

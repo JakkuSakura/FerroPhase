@@ -1,7 +1,8 @@
 use crate::runtime_types::bytes_value_is_borrowed_string;
 use crate::typing::unify::TypeVarKind;
 use crate::{
-    std_result_inner_types, AstTypeInferencer, EnvEntry, PatternBinding, PatternInfo, TypeVarId,
+    std_result_inner_types, AstTypeInferencer, EnvEntry, GenericMonorph, PatternBinding,
+    PatternInfo, TypeVarId,
 };
 use fp_core::ast::*;
 use fp_core::error::Result;
@@ -1585,6 +1586,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         &sig,
                         &sig_module,
                         generic_args.as_deref(),
+                        &sig_path,
                     );
                 }
                 if sig.abi.is_c() && sig.generics_params.is_empty() && sig.receiver.is_none() {
@@ -2147,6 +2149,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         sig: &FunctionSignature,
         sig_module: &QualifiedPath,
         explicit_generic_args: Option<&[Ty]>,
+        sig_path: &QualifiedPath,
     ) -> Result<TypeVarId> {
         if invoke.args.len() != sig.params.len() {
             self.emit_error("call arity mismatch");
@@ -2189,6 +2192,30 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(unit, Ty::Unit(TypeUnit));
                 unit
             };
+
+            let mut concrete_types = Vec::with_capacity(generic_vars.len());
+            let mut param_names = Vec::with_capacity(generic_vars.len());
+            let mut all_resolved = true;
+            for (i, param) in sig.generics_params.iter().enumerate() {
+                param_names.push(param.name.as_str().to_string());
+                match self.resolve_to_ty(generic_vars[i]) {
+                    Ok(ty) if !matches!(ty, Ty::Unknown(_)) => {
+                        concrete_types.push(ty);
+                    }
+                    _ => {
+                        all_resolved = false;
+                        break;
+                    }
+                }
+            }
+            if all_resolved && !param_names.is_empty() {
+                self.pending_generics.push(GenericMonorph::new(
+                    sig_path.clone(),
+                    param_names,
+                    concrete_types,
+                ));
+            }
+
             Ok(ret_var)
         })();
         self.exit_scope();

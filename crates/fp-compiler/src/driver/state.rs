@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -35,6 +35,7 @@ pub struct CompilerState {
     module_resolver: Option<Arc<dyn CompilerModuleResolver>>,
     module_resolutions: BTreeMap<AstId, ModuleResolutionContext>,
     pub(crate) splice_results: BTreeMap<String, SpliceResult>,
+    pub(crate) generic_instantiations: HashSet<String>,
 }
 
 impl CompilerState {
@@ -212,6 +213,7 @@ impl Default for CompilerState {
             module_resolver: None,
             module_resolutions: BTreeMap::new(),
             splice_results: BTreeMap::new(),
+            generic_instantiations: HashSet::new(),
         }
     }
 }
