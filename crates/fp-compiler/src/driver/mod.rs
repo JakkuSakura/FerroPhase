@@ -111,17 +111,9 @@ impl CompilerDriver {
 
         let mut pending_requests;
         let mut typed_first = false;
-        let mut iterations = 0u32;
         let mut pending_generics = Vec::new();
 
         loop {
-            iterations += 1;
-            if iterations > 100 {
-                return Err(CompilerDriverError::UnsupportedWork(
-                    "compile unit stuck in comptime evaluation loop".to_string()
-                ));
-            }
-
             let resolved_consts = self.collect_resolved_const_values();
             let module_resolution = self.state.module_resolution(ast_id);
             let outcome = annotate_with_resolved_state(
@@ -166,8 +158,8 @@ impl CompilerDriver {
                 )
             });
 
-            if !has_comptime && iterations == 1 {
-                // No comptime needs and first pass — lowering is complete
+            if !has_comptime {
+                // No comptime needs — lowering is complete
                 break;
             }
 
