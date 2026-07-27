@@ -101,99 +101,61 @@ impl CompilerDriver {
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
-        let mut ast = Some(self.state.ast(ast_id)?.clone());
-        AstPreProcessor::new(&mut self.state.splice_results).walk(ast.as_mut().unwrap());
+        let mut ast = self.state.ast(ast_id)?.clone();
+        AstPreProcessor::new(&mut self.state.splice_results).walk(&mut ast);
 
         let is_lowerable = matches!(
-            ast.as_ref().unwrap().kind(),
+            ast.kind(),
             NodeKind::Expr(_) | NodeKind::File(_) | NodeKind::Query(_)
         );
 
-        let mut pending_requests;
-        let mut typed_first = false;
-        let mut pending_generics = Vec::new();
+        let resolved_consts = self.collect_resolved_const_values();
+        let module_resolution = self.state.module_resolution(ast_id);
+        let outcome = annotate_with_resolved_state(
+            &mut ast,
+            module_resolution,
+            resolved_consts,
+            self.state.expr_resolutions(),
+        )?;
+        self.state.extend_typing_diagnostics(outcome.diagnostics);
 
-        loop {
-            let resolved_consts = self.collect_resolved_const_values();
-            let module_resolution = self.state.module_resolution(ast_id);
-            let outcome = annotate_with_resolved_state(
-                ast.as_mut().unwrap(),
-                module_resolution,
-                resolved_consts,
-                self.state.expr_resolutions(),
-            )?;
+        let has_comptime = outcome.pending_requests.iter().any(|r| {
+            matches!(
+                r.kind,
+                PendingTypingRequestKind::Comptime | PendingTypingRequestKind::Unresolved
+            )
+        });
 
-            if !typed_first {
-                self.state.extend_typing_diagnostics(outcome.diagnostics);
-                typed_first = true;
+        if is_lowerable && has_comptime {
+            if self.state.comptime_attempted.contains(ast_id) {
+                // Already attempted comptime — consts are resolved as globals.
             } else {
-                let _ = outcome.diagnostics;
+                self.state.comptime_attempted.insert(ast_id.clone());
+                let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
+                self.state.insert_typed_ast(typed_ast_id.clone(), ast);
+                self.scheduler.submit(CompilerWork::CompileUnitAnswerComptime {
+                    typed_ast: typed_ast_id,
+                    path: path.clone(),
+                });
+                return Ok(CompilerAnswer::CompileUnitCompileNative);
             }
-
-            pending_requests = outcome.pending_requests;
-            pending_generics = outcome.pending_generics;
-
-            if !is_lowerable {
-                break;
-            }
-
-            // Lower and evaluate.
-            let tmp_typed_ast = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
-            let tmp_id = tmp_typed_ast.clone();
-            self.state.insert_typed_ast(tmp_typed_ast, ast.take().unwrap());
-
-            let hir_id = self.lower_to_hir(&tmp_id, path)?;
-            let mir_id = self.lower_to_mir(&hir_id, path)?;
-            let lir_id = self.lower_to_lir(&mir_id, path)?;
-            let had_entries = self.evaluate_comptime_lir(&lir_id, path)? > 0;
-
-            self.generate_bytecode(&mir_id, path)?;
-
-            // Check if we need another iteration: typing found comptime needs and
-            // evaluation found entries to process.
-            let has_comptime = pending_requests.iter().any(|r| {
-                matches!(
-                    r.kind,
-                    PendingTypingRequestKind::Comptime | PendingTypingRequestKind::Unresolved
-                )
-            });
-
-            if !has_comptime {
-                // No comptime needs — lowering is complete
-                break;
-            }
-
-            if !had_entries {
-                // No new entries to evaluate — done
-                break;
-            }
-
-            ast = Some(self.state.ast(ast_id)?.clone());
-            AstPreProcessor::new(&mut self.state.splice_results).walk(ast.as_mut().unwrap());
         }
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
 
         if is_lowerable {
-            // Re-clone and re-type on the final pass with all resolved const values
-            ast = Some(self.state.ast(ast_id)?.clone());
-            AstPreProcessor::new(&mut self.state.splice_results).walk(ast.as_mut().unwrap());
-            let resolved_consts = self.collect_resolved_const_values();
-            let module_resolution = self.state.module_resolution(ast_id);
-            let outcome = annotate_with_resolved_state(
-                ast.as_mut().unwrap(),
-                module_resolution,
-                resolved_consts,
-                self.state.expr_resolutions(),
-            )?;
-            let _ = outcome.diagnostics;
-            pending_requests = outcome.pending_requests;
-            pending_generics = outcome.pending_generics;
+            self.state.insert_typed_ast(typed_ast_id.clone(), ast);
+
+            let hir_id = self.lower_to_hir(&typed_ast_id, path)?;
+            let mir_id = self.lower_to_mir(&hir_id, path)?;
+            let lir_id = self.lower_to_lir(&mir_id, path)?;
+            let _ = self.evaluate_comptime_lir(&lir_id, path)?;
+            self.generate_bytecode(&mir_id, path)?;
+        } else {
+            self.state.insert_typed_ast(typed_ast_id.clone(), ast);
         }
 
-        self.state.insert_typed_ast(typed_ast_id.clone(), ast.unwrap());
-
-        for monomorph in &pending_generics {
+        for monomorph in &outcome.pending_generics {
             let fqp = FullyQualifiedPath::new(monomorph.function_path.clone());
             let cannon_key = Self::generic_cannon_key(&fqp, &monomorph.concrete_types);
             if self.state.generic_instantiations.contains(&cannon_key) {
@@ -1282,16 +1244,17 @@ mod tests {
             path: path.clone(),
         });
 
-        let scheduled = driver.run_next().expect("compile unit").expect("compiled answer");
-        assert!(
-            matches!(scheduled.completed.answer, CompilerAnswer::CompileUnitCompileNative),
-            "should return CompileUnitCompileNative"
-        );
+        // Drain the scheduler — comptime is resolved through auto-block + retry
+        let mut steps = 0;
+        while let Ok(Some(_s)) = driver.run_next() {
+            steps += 1;
+            assert!(steps <= 20, "driver loop should not run forever");
+        }
 
         assert_eq!(driver.state.const_value_len(), 1, "const block should produce const value");
         assert!(
             driver.scheduler.is_idle(),
-            "scheduler should be idle after compile handles comptime inline"
+            "scheduler should be idle after compile + comptime resolves"
         );
     }
 
