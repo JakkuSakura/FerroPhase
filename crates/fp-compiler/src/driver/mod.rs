@@ -15,7 +15,7 @@ use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use fp_interpret::{LirInterpreter, VmError};
-use fp_typing::{annotate_with_resolved_state, GenericMonorph};
+use fp_typing::{AstTypeInferencer, GenericMonorph, default_extern_prelude};
 use std::collections::{BTreeMap, HashMap};
 
 use crate::scheduler::{
@@ -114,19 +114,16 @@ impl CompilerDriver {
         let mut ast = self.state.ast(ast_id)?.clone();
         AstPreProcessor::new(&mut self.state.splice_results).walk(&mut ast);
 
-        // Extract resolved state first to avoid borrow conflicts
-        let resolved_consts = self.collect_resolved_const_values();
-        let resolved_types = std::mem::take(&mut self.state.resolved_type_map);
-        let expr_resolutions = self.state.expr_resolutions().clone();
-        let module_resolution = self.state.module_resolution(ast_id);
-        let outcome = annotate_with_resolved_state(
-            &mut ast,
-            module_resolution.cloned().as_ref(),
-            resolved_consts,
-            resolved_types,
-            &expr_resolutions,
-        )?;
-        self.state.extend_typing_diagnostics(outcome.diagnostics);
+        self.state.typing_ctx.module_resolution.replace(
+            self.state.module_resolution(ast_id).cloned()
+        );
+
+        let outcome = {
+            let mut inferencer = AstTypeInferencer::new()
+                .with_typing_context(&self.state.typing_ctx)
+                .with_extern_prelude(default_extern_prelude());
+            inferencer.infer(&mut ast)?
+        };
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
         self.state.insert_typed_ast(typed_ast_id.clone(), ast);
@@ -481,6 +478,8 @@ impl CompilerDriver {
             })?;
             self.state
                 .insert_resolved_const_value(entry.key.clone(), constant);
+            self.state
+                .insert_typing_const(entry.key.clone(), value.clone());
             if let Some(expr_id) = Self::expr_id_from_const_key(&entry.key) {
                 self.state
                     .insert_expr_resolution_value(expr_id, value.clone());
@@ -501,10 +500,10 @@ impl CompilerDriver {
         let ast = self.state.typed_ast(typed_ast_id)?;
         let hir_program = match ast.kind() {
             NodeKind::Expr(expr) => HirGenerator::new()
-                .with_expr_resolution(self.state.expr_resolutions().clone())
+                .with_expr_resolution(self.state.typing_ctx.expr_resolutions.borrow().clone())
                 .transform_expr(expr)?,
             NodeKind::File(file) => HirGenerator::with_file(&file.path)
-                .with_expr_resolution(self.state.expr_resolutions().clone())
+                .with_expr_resolution(self.state.typing_ctx.expr_resolutions.borrow().clone())
                 .transform_file(file)?,
             NodeKind::Query(query) => HirGenerator::new().transform_query_document(query)?,
         NodeKind::Item(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {
@@ -573,136 +572,7 @@ impl CompilerDriver {
     }
 
     fn collect_resolved_const_values(&self) -> HashMap<String, Value> {
-        let mut map = HashMap::new();
-        for (key, constant) in self.state.resolved_const_values() {
-            if let Some(value) = self.mir_constant_to_value(constant) {
-                map.insert(key.to_string(), value.clone());
-                if let Some(short) = key.rsplit(':').next() {
-                    map.insert(short.to_string(), value);
-                }
-            }
-        }
-        map
-    }
-
-    fn mir_constant_to_value(&self, constant: &mir::Constant) -> Option<Value> {
-        Some(match &constant.literal {
-            mir::ConstantKind::Bool(v) => Value::bool(*v),
-            mir::ConstantKind::Int(v) => Value::int(*v),
-            mir::ConstantKind::UInt(v) => Value::uint(*v),
-            mir::ConstantKind::Float(v) => Value::decimal(*v),
-            mir::ConstantKind::Str(v) => Value::string(v.clone()),
-            mir::ConstantKind::Null => Value::null(),
-            mir::ConstantKind::Val(value, ty) => self.const_value_to_value(value, Some(ty))?,
-            _ => {
-                return None;
-            }
-        })
-    }
-
-    fn const_value_to_value(&self, cv: &mir::ConstValue, ty: Option<&mir::Ty>) -> Option<Value> {
-        Some(match cv {
-            mir::ConstValue::Unit => Value::unit(),
-            mir::ConstValue::Bool(v) => Value::bool(*v),
-            mir::ConstValue::Int(v) => Value::int(*v),
-            mir::ConstValue::UInt(v) => Value::uint(*v),
-            mir::ConstValue::Float(v) => Value::decimal(*v),
-            mir::ConstValue::Str(v) => Value::string(v.clone()),
-            mir::ConstValue::Null => Value::null(),
-            mir::ConstValue::Tuple(fields) => {
-                let field_tys = match ty.map(|ty| &ty.kind) {
-                    Some(TyKind::Tuple(field_tys)) => Some(field_tys.as_slice()),
-                    _ => None,
-                };
-                Value::Tuple(fp_core::ast::ValueTuple::new(
-                    fields
-                        .iter()
-                        .enumerate()
-                        .map(|(index, value)| {
-                            self.const_value_to_value(
-                                value,
-                                field_tys.and_then(|tys| tys.get(index).map(|ty| ty.as_ref())),
-                            )
-                        })
-                        .collect::<Option<Vec<_>>>()?,
-                ))
-            }
-            mir::ConstValue::Array(elements) => {
-                let elem_ty = match ty.map(|ty| &ty.kind) {
-                    Some(TyKind::Array(elem_ty, _)) => Some(elem_ty.as_ref()),
-                    _ => None,
-                };
-                Value::List(fp_core::ast::ValueList::new(
-                    elements
-                        .iter()
-                        .map(|value| self.const_value_to_value(value, elem_ty))
-                        .collect::<Option<Vec<_>>>()?,
-                ))
-            }
-            mir::ConstValue::List { elements, elem_ty } => {
-                Value::List(fp_core::ast::ValueList::new(
-                    elements
-                        .iter()
-                        .map(|value| self.const_value_to_value(value, Some(elem_ty)))
-                        .collect::<Option<Vec<_>>>()?,
-                ))
-            }
-            mir::ConstValue::Map {
-                entries,
-                key_ty,
-                value_ty,
-            } => Value::Map(fp_core::ast::ValueMap::from_pairs(
-                entries
-                    .iter()
-                    .map(|(key, value)| {
-                        Some((
-                            self.const_value_to_value(key, Some(key_ty))?,
-                            self.const_value_to_value(value, Some(value_ty))?,
-                        ))
-                    })
-                    .collect::<Option<Vec<_>>>()?,
-            )),
-            mir::ConstValue::Struct(fields) => match ty.map(|ty| &ty.kind) {
-                Some(TyKind::Adt(adt_def, _)) => {
-                    let variant = adt_def.variants.first()?;
-                    if variant.fields.len() != fields.len() {
-                        return None;
-                    }
-                    Value::Structural(fp_core::ast::ValueStructural::new(
-                        variant
-                            .fields
-                            .iter()
-                            .zip(fields.iter())
-                            .map(|(field_def, field_value)| {
-                                Some(fp_core::ast::ValueField::new(
-                                    field_def.ident.as_str().into(),
-                                    self.const_value_to_value(field_value, None)?,
-                                ))
-                            })
-                            .collect::<Option<Vec<_>>>()?,
-                    ))
-                }
-                Some(TyKind::Tuple(field_tys)) => Value::Tuple(fp_core::ast::ValueTuple::new(
-                    fields
-                        .iter()
-                        .enumerate()
-                        .map(|(index, value)| {
-                            self.const_value_to_value(
-                                value,
-                                field_tys.get(index).map(|ty| ty.as_ref()),
-                            )
-                        })
-                        .collect::<Option<Vec<_>>>()?,
-                )),
-                _ => Value::Tuple(fp_core::ast::ValueTuple::new(
-                    fields
-                        .iter()
-                        .map(|value| self.const_value_to_value(value, None))
-                        .collect::<Option<Vec<_>>>()?,
-                )),
-            },
-            _ => return None,
-        })
+        self.state.typing_ctx.resolved_consts.borrow().clone()
     }
 
     fn value_to_mir_constant(&self, value: &Value, ty: &mir::Ty) -> Option<mir::Constant> {

@@ -3,6 +3,8 @@ use std::collections::{HashMap, HashSet};
 
 pub mod runtime_types;
 pub mod typing;
+pub mod typing_context;
+pub use typing_context::TypingContext;
 pub use runtime_types::{materialize_type_with_hooks, type_from_value, TypeMaterializeHooks};
 pub use typing::types::{
     ExprId, GenericMonorph, PendingTypingRequest, PendingTypingRequestKind, ResolvedName,
@@ -11,7 +13,7 @@ pub use typing::types::{
 };
 
 use fp_core::ast::*;
-use fp_core::ast::{AttributesExt, ExprResolution, Ident, Name};
+use fp_core::ast::{AttributesExt, Ident, Name};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::{Error, Result};
@@ -55,7 +57,7 @@ fn detect_lossy_mode() -> bool {
     config::lossy_mode()
 }
 
-fn default_extern_prelude() -> HashSet<String> {
+pub fn default_extern_prelude() -> HashSet<String> {
     ["std", "core", "alloc"]
         .into_iter()
         .map(|name| name.to_string())
@@ -324,15 +326,11 @@ pub struct AstTypeInferencer<'ctx> {
     resolved_names: ResolvedNameTable,
     generic_type_vars: HashMap<TypeVarId, String>,
     comptime_exprs: Vec<Expr>,
-    /// Const names whose values were already resolved by a prior
-    /// comptime evaluation.  Keyed by the const item's name.
-    resolved_consts: HashMap<String, fp_core::ast::Value>,
-    expr_resolution: Option<&'ctx dyn ExprResolution>,
+    /// Shared mutable state with the driver: resolved consts, types,
+    /// module resolution, expression resolution, diagnostics.
+    typing_ctx: Option<&'ctx crate::typing_context::TypingContext>,
     /// Generic invocations with resolved concrete types ready for monomorphization.
     pending_generics: Vec<GenericMonorph>,
-    /// Compile-time type requests that need const-eval to resolve.
-    pending_types: Vec<(u64, Expr)>,
-    next_type_id: u64,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -461,11 +459,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             resolved_names: HashMap::new(),
             generic_type_vars: HashMap::new(),
             comptime_exprs: Vec::new(),
-            resolved_consts: HashMap::new(),
-            expr_resolution: None,
+            typing_ctx: None,
             pending_generics: Vec::new(),
-            pending_types: Vec::new(),
-            next_type_id: 0,
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -476,8 +471,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self
     }
 
-    pub fn with_expr_resolution(mut self, expr_resolution: &'ctx dyn ExprResolution) -> Self {
-        self.expr_resolution = Some(expr_resolution);
+    pub fn inject_resolved_consts(&mut self, consts: HashMap<String, fp_core::ast::Value>) {
+        if let Some(ctx) = self.typing_ctx {
+            ctx.resolved_consts.borrow_mut().extend(consts);
+        }
+    }
+
+    pub fn with_typing_context(mut self, ctx: &'ctx crate::typing_context::TypingContext) -> Self {
+        ctx.seed_inferencer(&mut self);
+        self.typing_ctx = Some(ctx);
         self
     }
 
@@ -518,13 +520,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             let path = QualifiedPath::new(segments.iter().map(|seg| (*seg).to_string()).collect());
             scope.insert(alias.to_string(), path);
         }
-    }
-
-    pub fn alloc_type_request(&mut self, expr: Expr) -> u64 {
-        let id = self.next_type_id;
-        self.next_type_id += 1;
-        self.pending_types.push((id, expr));
-        id
     }
 
     pub fn set_resolution_hook(&mut self, hook: Box<dyn TypeResolutionHook + 'ctx>) {
@@ -716,13 +711,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn finish(&mut self) -> TypingOutcome {
         let pending_requests = self.collect_pending_requests();
+        // Flush diagnostics to shared context
+        if let Some(ctx) = self.typing_ctx {
+            let diags = std::mem::take(&mut self.diagnostics);
+            ctx.diagnostics.borrow_mut().extend(diags);
+        }
         TypingOutcome {
-            diagnostics: std::mem::take(&mut self.diagnostics),
-            has_errors: std::mem::replace(&mut self.has_errors, false),
             resolved_names: std::mem::take(&mut self.resolved_names),
             pending_requests,
             pending_generics: std::mem::take(&mut self.pending_generics),
-            pending_types: std::mem::take(&mut self.pending_types),
         }
     }
 
@@ -2475,7 +2472,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ItemKind::DefConst(def) => {
                     let name = def.name.as_str().to_string();
-                    if let Some(resolved) = self.resolved_consts.get(&name).cloned() {
+                    let resolved = self.typing_ctx
+                        .and_then(|ctx| ctx.resolved_consts.borrow().get(&name).cloned());
+                    if let Some(resolved) = resolved {
                         // Already evaluated in a prior pass — bind the
                         // symbol directly and skip comptime re-request. Keep
                         // its declared type: `Value::List` cannot retain an
@@ -3877,79 +3876,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             .find(|binding| binding.ty == param.ty)
             .map(|binding| binding.expr.clone())
     }
-}
-
-pub fn annotate_with_prelude<I, S>(node: &mut Node, extern_prelude: I) -> Result<TypingOutcome>
-where
-    I: IntoIterator<Item = S>,
-    S: Into<String>,
-{
-    let mut inferencer = AstTypeInferencer::new().with_extern_prelude(extern_prelude);
-    inferencer.infer(node)
-}
-
-pub fn annotate_with_module_resolution(
-    node: &mut Node,
-    module_resolution: Option<&ModuleResolutionContext>,
-) -> Result<TypingOutcome> {
-    annotate_with_module_resolution_and_prelude(node, module_resolution, default_extern_prelude())
-}
-
-pub fn annotate_with_module_resolution_and_prelude<I, S>(
-    node: &mut Node,
-    module_resolution: Option<&ModuleResolutionContext>,
-    extern_prelude: I,
-) -> Result<TypingOutcome>
-where
-    I: IntoIterator<Item = S>,
-    S: Into<String>,
-{
-    let mut inferencer = AstTypeInferencer::new().with_extern_prelude(extern_prelude);
-    if let Some(ctx) = module_resolution {
-        inferencer.seed_modules_from_resolution_context(ctx);
-    }
-    inferencer.infer(node)
-}
-
-/// Like [`annotate_with_module_resolution`] but seeds previously
-/// resolved const values so the typer does not re-request comptime
-/// evaluation for them.
-pub fn annotate_with_resolved_consts(
-    node: &mut Node,
-    module_resolution: Option<&ModuleResolutionContext>,
-    resolved_consts: HashMap<String, fp_core::ast::Value>,
-) -> Result<TypingOutcome> {
-    let mut inferencer = AstTypeInferencer::new().with_extern_prelude(default_extern_prelude());
-    if let Some(ctx) = module_resolution {
-        inferencer.seed_modules_from_resolution_context(ctx);
-    }
-    inferencer.resolved_consts = resolved_consts;
-    inferencer.infer(node)
-}
-
-pub fn annotate_with_resolved_state(
-    node: &mut Node,
-    module_resolution: Option<&ModuleResolutionContext>,
-    resolved_consts: HashMap<String, fp_core::ast::Value>,
-    resolved_types: HashMap<u64, fp_core::ast::TypeStruct>,
-    expr_resolution: &dyn ExprResolution,
-) -> Result<TypingOutcome> {
-    let mut inferencer = AstTypeInferencer::new()
-        .with_extern_prelude(default_extern_prelude())
-        .with_expr_resolution(expr_resolution);
-    if let Some(ctx) = module_resolution {
-        inferencer.seed_modules_from_resolution_context(ctx);
-    }
-    inferencer.resolved_consts = resolved_consts;
-    for (k, v) in resolved_types {
-        let path = QualifiedPath::new(vec![format!("_requested_{}", k)]);
-        inferencer.struct_defs.insert(path, v);
-    }
-    inferencer.infer(node)
-}
-
-pub fn annotate(node: &mut Node) -> Result<TypingOutcome> {
-    annotate_with_prelude(node, default_extern_prelude())
 }
 
 /// Pre-walk: collect quote-valued DefConst items and replace splice(NAME)

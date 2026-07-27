@@ -50,15 +50,11 @@ impl TypingDiagnostic {
 }
 
 pub struct TypingOutcome {
-    pub diagnostics: Vec<TypingDiagnostic>,
-    pub has_errors: bool,
     pub resolved_names: ResolvedNameTable,
     /// Pending work discovered only after the full typing pass finishes.
     pub pending_requests: Vec<PendingTypingRequest>,
     /// Generic instantiations with resolved concrete types ready for monomorphization.
     pub pending_generics: Vec<GenericMonorph>,
-    /// Type requests that need const-eval to resolve (id → expression).
-    pub pending_types: Vec<(u64, Expr)>,
 }
 
 /// A generic function invocation whose concrete type arguments have been resolved

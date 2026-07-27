@@ -1,13 +1,13 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::{
-    ast::{BlockStmt, Expr, ExprId, ExprResolutionTable, Item, Node, Value},
+    ast::{BlockStmt, Expr, ExprId, Item, Node, Value},
     hir, lir, mir,
     module::resolution::ModuleResolutionContext,
 };
-use fp_typing::TypingDiagnostic;
+use fp_typing::TypingContext;
 
 use crate::driver::CompilerDriverError;
 use crate::module_resolution::CompilerModuleResolver;
@@ -27,16 +27,15 @@ pub struct CompilerState {
     mir: BTreeMap<MirId, mir::Program>,
     lir: BTreeMap<LirId, lir::LirProgram>,
     const_values: BTreeMap<ConstValueId, Value>,
+    /// MIR-level const values for HIR→MIR lowering seed.
     resolved_const_values: BTreeMap<String, mir::Constant>,
-    expr_resolutions: ExprResolutionTable,
+    pub typing_ctx: TypingContext,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
-    typing_diagnostics: Vec<TypingDiagnostic>,
     lossy: bool,
     module_resolver: Option<Arc<dyn CompilerModuleResolver>>,
     module_resolutions: BTreeMap<AstId, ModuleResolutionContext>,
     pub(crate) splice_results: BTreeMap<String, SpliceResult>,
     pub(crate) generic_instantiations: HashSet<String>,
-    pub(crate) resolved_type_map: HashMap<u64, fp_core::ast::TypeStruct>,
     bytecode: BTreeMap<BytecodeId, fp_bytecode::BytecodeProgram>,
 }
 
@@ -73,12 +72,18 @@ impl CompilerState {
         self.resolved_const_values.insert(key.into(), value);
     }
 
+    /// Write a typed comptime value into the shared typing context so the
+    /// typer can see it on the next pass.
+    pub fn insert_typing_const(&mut self, key: impl Into<String>, value: Value) {
+        self.typing_ctx.resolved_consts.borrow_mut().insert(key.into(), value);
+    }
+
     pub fn insert_expr_resolution_source(&mut self, expr_id: ExprId, expr: Expr) {
-        self.expr_resolutions.insert_source(expr_id, expr);
+        self.typing_ctx.expr_resolutions.borrow_mut().insert_source(expr_id, expr);
     }
 
     pub fn insert_expr_resolution_value(&mut self, expr_id: ExprId, value: Value) {
-        self.expr_resolutions.insert_value(expr_id, value);
+        self.typing_ctx.expr_resolutions.borrow_mut().insert_value(expr_id, value);
     }
 
     pub fn insert_runtime_value(&mut self, value_id: RuntimeValueId, value: Value) {
@@ -100,13 +105,6 @@ impl CompilerState {
         let context = resolver.resolve_context(input)?;
         self.module_resolutions.insert(ast_id, context);
         Ok(())
-    }
-
-    pub fn extend_typing_diagnostics(
-        &mut self,
-        diagnostics: impl IntoIterator<Item = TypingDiagnostic>,
-    ) {
-        self.typing_diagnostics.extend(diagnostics);
     }
 
     pub fn set_lossy(&mut self, lossy: bool) {
@@ -155,18 +153,10 @@ impl CompilerState {
             .map(|(key, value)| (key.as_str(), value))
     }
 
-    pub fn expr_resolutions(&self) -> &ExprResolutionTable {
-        &self.expr_resolutions
-    }
-
     pub fn runtime_value(&self, value_id: &RuntimeValueId) -> Result<&Value, CompilerDriverError> {
         self.runtime_values
             .get(value_id)
             .ok_or_else(|| CompilerDriverError::MissingRuntimeValue(value_id.clone()))
-    }
-
-    pub fn typing_diagnostics(&self) -> &[TypingDiagnostic] {
-        &self.typing_diagnostics
     }
 
     pub fn lossy(&self) -> bool {
@@ -218,15 +208,13 @@ impl Default for CompilerState {
             lir: BTreeMap::new(),
             const_values: BTreeMap::new(),
             resolved_const_values: BTreeMap::new(),
-            expr_resolutions: ExprResolutionTable::default(),
+            typing_ctx: TypingContext::new(),
             runtime_values: BTreeMap::new(),
-            typing_diagnostics: Vec::new(),
             lossy: false,
             module_resolver: None,
             module_resolutions: BTreeMap::new(),
             splice_results: BTreeMap::new(),
             generic_instantiations: HashSet::new(),
-            resolved_type_map: HashMap::new(),
             bytecode: BTreeMap::new(),
         }
     }

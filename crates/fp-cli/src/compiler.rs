@@ -818,7 +818,7 @@ fn drain_driver(driver: &mut CompilerDriver, lossy: LossyCompileOptions) -> Resu
         .map_err(|err| CliError::Compilation(err.to_string()))?
         .is_some()
     {}
-    emit_typing_diagnostics(driver.state.typing_diagnostics(), lossy)
+    emit_typing_diagnostics(&driver.state.typing_ctx.diagnostics.borrow(), lossy)
 }
 
 pub fn parse_expr_with_mode(source: &str, parse_mode: FrontendParseMode) -> Result<Node> {

@@ -650,8 +650,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
                 ExprKind::ConstBlock(const_block) => {
-                    if let Some(expr_resolution) = self.expr_resolution {
-                        if let Some(value) = expr_resolution.resolved_value(expr_id).cloned() {
+                    if let Some(ctx) = self.typing_ctx {
+                        let table = ctx.expr_resolutions.borrow();
+                        if let Some(value) = table.resolved_value(expr_id).cloned() {
                             self.infer_value(&value)?
                         } else {
                             self.comptime_exprs.push(expr_snapshot.clone());
@@ -748,11 +749,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.error_type_var()
                 }
                 ExprKind::Id(expr_id) => {
-                    if let Some(expr_resolution) = self.expr_resolution {
-                        if let Some(value) = expr_resolution.resolved_value(*expr_id).cloned() {
+                    if let Some(ctx) = self.typing_ctx {
+                        let table = ctx.expr_resolutions.borrow();
+                        if let Some(value) = table.resolved_value(*expr_id).cloned() {
                             self.infer_value(&value)?
                         } else if let Some(mut source_expr) =
-                            expr_resolution.source_expr(*expr_id).cloned()
+                            table.source_expr(*expr_id).cloned()
                         {
                             self.infer_expr(&mut source_expr)?
                         } else {
