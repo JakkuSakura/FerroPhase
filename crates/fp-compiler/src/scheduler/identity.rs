@@ -61,26 +61,6 @@ impl Display for FullyQualifiedPath {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct ScopeId {
-    key: String,
-}
-
-impl ScopeId {
-    pub fn new(key: impl Into<String>) -> Self {
-        Self { key: key.into() }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.key
-    }
-}
-
-impl Display for ScopeId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.key.fmt(f)
-    }
-}
 
 macro_rules! define_storage_id {
     ($name:ident, $doc:literal) => {

@@ -83,22 +83,6 @@ fn scan_block(expr: &Expr, map: &mut HashMap<String, bool>) {
     }
 }
 
-fn normalize_def_type_item(
-    item: &mut Item,
-    strategy: &dyn IntrinsicNormalizer,
-    _const_bools: &HashMap<String, bool>,
-) -> Result<()> {
-    if let ItemKind::DefType(def) = item.kind_mut() {
-        if let Ty::Expr(expr) = &mut def.value {
-            try_lower_type_builder_const_block(expr);
-        }
-        normalize_ty(&mut def.value, strategy)?;
-    } else {
-        normalize_item(item, strategy)?;
-    }
-    Ok(())
-}
-
 fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
     match item.kind_mut() {
         ItemKind::Macro(_) => {}
@@ -576,6 +560,7 @@ fn normalize_intrinsic_call(
     Ok(())
 }
 
+// FIXME: this is sus. what does it do?
 fn try_lower_type_builder_const_block(expr: &mut Expr) {
     let mut struct_name = String::new();
     let mut fields: Vec<(String, Ty)> = Vec::new();
@@ -678,7 +663,7 @@ fn eval_const_bool(cond: &Expr) -> Option<bool> {
 fn process_builder_if_body(
     stmts: &[BlockStmt],
     builder_var: &str,
-    struct_name: &mut String,
+    _struct_name: &mut String,
     fields: &mut Vec<(String, Ty)>,
 ) {
     for stmt in stmts {

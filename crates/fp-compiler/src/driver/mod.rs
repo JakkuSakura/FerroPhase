@@ -35,7 +35,6 @@ pub struct CompilerDriver {
 
 struct CompileUnitCoreResult {
     typed_ast_id: TypedAstId,
-    hir_id: HirId,
     mir_id: MirId,
     lir_id: LirId,
     pending_generics: Vec<GenericMonorph>,
@@ -134,7 +133,6 @@ impl CompilerDriver {
 
         Ok(CompileUnitCoreResult {
             typed_ast_id,
-            hir_id,
             mir_id,
             lir_id,
             pending_generics: outcome.pending_generics,
