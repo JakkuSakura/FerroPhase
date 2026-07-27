@@ -16,7 +16,6 @@ pub enum CompilerWork {
     },
     CompileUnitCompileNative {
         ast: AstId,
-        scope: ScopeId,
         path: FullyQualifiedPath,
     },
     CompileUnitAnswerComptime {

@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::scheduler::{
     AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
     ConstValueId, FullyQualifiedPath, GenericWorkRequest, HirId,
-    LirId, MirId, ScheduledAnswer, ScopeId,
+    LirId, MirId, RuntimeValueId, ScheduledAnswer, ScopeId,
     TypedAstId,
 };
 
@@ -61,14 +61,29 @@ impl CompilerDriver {
         Ok(Some(scheduled))
     }
 
+    pub fn execute_runtime(
+        &mut self,
+        lir_id: &LirId,
+    ) -> Result<fp_core::ast::Value, CompilerDriverError> {
+        let lir = self.state.lir(lir_id)?.clone();
+        self.interpreter = LirInterpreter::new();
+        let resolved = self.collect_resolved_const_values();
+        self.interpreter.inject_globals(&resolved);
+        let value = self.interpreter.run_main(&lir)?;
+        let value_id = RuntimeValueId::new(format!("runtime_value:{}", lir_id.as_str()));
+        self.state.insert_runtime_value(value_id, value.clone());
+        Ok(value)
+    }
+
     fn handle_request(
         &mut self,
         request: &CompilerRequest,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         match &request.work {
-            CompilerWork::CompileUnitCompileNative { ast, scope, path } => {
-                self.compile_unit_compile_native(ast, scope, path)
-            }
+            CompilerWork::CompileUnitCompileNative {
+                ast,
+                path,
+            } => self.compile_unit_compile_native(ast, path),
             CompilerWork::CompileUnitAnswerComptime { typed_ast, path } => {
                 self.compile_unit_answer_comptime(typed_ast, path)
             }
@@ -84,7 +99,6 @@ impl CompilerDriver {
     fn compile_unit_compile_native(
         &mut self,
         ast_id: &AstId,
-        _scope: &ScopeId,
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let mut ast = Some(self.state.ast(ast_id)?.clone());
@@ -264,7 +278,6 @@ impl CompilerDriver {
 
         self.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: specialized_ast_id,
-            scope: ScopeId::new(specialized_path.to_key()),
             path: specialized_path,
         });
 
@@ -1239,7 +1252,6 @@ mod tests {
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
-            scope: ScopeId::new("crate::main"),
             path,
         });
 
@@ -1275,7 +1287,6 @@ mod tests {
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
-            scope: ScopeId::new("crate::answer"),
             path: path.clone(),
         });
 
@@ -1303,7 +1314,6 @@ mod tests {
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
-            scope: ScopeId::new("crate::const"),
             path,
         });
 
@@ -1346,7 +1356,6 @@ mod tests {
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
-            scope: ScopeId::new("crate::generic"),
             path,
         });
 
@@ -1394,7 +1403,6 @@ fn main() {
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
-            scope: ScopeId::new("test::main"),
             path: path(),
         });
 
@@ -1420,7 +1428,6 @@ fn main() {
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
-            scope: ScopeId::new("test::const"),
             path: path(),
         });
 
@@ -1456,7 +1463,6 @@ const AREA: i64 = WIDTH * HEIGHT;
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
-            scope: ScopeId::new("test::multi"),
             path: path(),
         });
 
@@ -1487,7 +1493,6 @@ fn calculate() {
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
-            scope: ScopeId::new("test::block"),
             path: path(),
         });
 
@@ -1519,7 +1524,6 @@ fn calculate() {
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
-            scope: ScopeId::new(label),
             path: FullyQualifiedPath::from_segments(vec!["example".into(), label.to_string()]),
         });
 
@@ -1621,7 +1625,6 @@ fn calculate() {
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
-            scope: ScopeId::new("inline"),
             path: FullyQualifiedPath::from_segments(vec!["example".into(), "inline".into()]),
         });
 

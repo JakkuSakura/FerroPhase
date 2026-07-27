@@ -188,7 +188,6 @@ impl CompilerScheduler {
                 },
             ) => vec![CompilerWork::CompileUnitCompileNative {
                 ast: ast.clone(),
-                scope: scope.clone(),
                 path: path.clone(),
             }],
             _ => Vec::new(),
@@ -213,12 +212,10 @@ mod tests {
         let mut scheduler = CompilerScheduler::new();
         let first = scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: AstId::new("ast:crate::main"),
-            scope: ScopeId::new("crate::main"),
             path: path(&["crate", "main"]),
         });
         let second = scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: AstId::new("ast:crate::dep"),
-            scope: ScopeId::new("crate::dep"),
             path: path(&["crate", "dep"]),
         });
 
@@ -242,7 +239,6 @@ mod tests {
         let mut scheduler = CompilerScheduler::new();
         let request = scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: AstId::new("ast:crate::main"),
-            scope: ScopeId::new("crate::main"),
             path: path(&["crate", "main"]),
         });
 
@@ -340,7 +336,6 @@ mod tests {
 
         let native_id = scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: AstId::new("ast:crate::main"),
-            scope: ScopeId::new("crate::main"),
             path: path(&["crate", "main"]),
         });
         let _active = scheduler.next_request().expect("active compile native");
@@ -396,7 +391,6 @@ mod tests {
 
         let native_id = scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: AstId::new("ast:crate::main"),
-            scope: ScopeId::new("crate::main"),
             path: path(&["crate", "main"]),
         });
         let _active = scheduler.next_request().expect("active compile");

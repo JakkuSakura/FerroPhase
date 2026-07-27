@@ -67,7 +67,6 @@ pub fn check_path(
     driver.state.insert_ast(identity.ast_id.clone(), ast);
     driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
         ast: identity.ast_id.clone(),
-        scope: identity.scope_id(),
         path: identity.path.clone(),
     });
     drain_driver(&mut driver, lossy)
@@ -764,11 +763,12 @@ fn execute_ast(
             .const_value(&ConstValueId::new(format!("const_value:{value_key}")))
             .map(|value| value.clone())
             .map_err(|err| CliError::Compilation(err.to_string())),
-        fp_core::context::ExecutionMode::Runtime => driver
-            .state
-            .runtime_value(&RuntimeValueId::new(format!("runtime_value:{value_key}")))
-            .map(|value| value.clone())
-            .map_err(|err| CliError::Compilation(err.to_string())),
+        fp_core::context::ExecutionMode::Runtime => {
+            let lir_id = LirId::new(format!("lir:{value_key}"));
+            driver
+                .execute_runtime(&lir_id)
+                .map_err(|err| CliError::Compilation(err.to_string()))
+        }
     }
 }
 
@@ -808,7 +808,6 @@ fn lower_ast(
     driver.state.insert_ast(ast_id.clone(), ast);
     driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
         ast: ast_id,
-        scope: scope_id,
         path,
     });
     Ok(driver)
