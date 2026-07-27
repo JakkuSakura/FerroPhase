@@ -3,8 +3,8 @@ use std::process::Command;
 use std::sync::Arc;
 
 use fp_compiler::{
-    AstId, CompilerDriver, CompilerModuleResolver, CompilerWork, ConstValueId, ExecutionMode,
-    FullyQualifiedPath, LirConsumer, LirId, MirId, RuntimeValueId, ScopeId,
+    AstId, CompilerDriver, CompilerModuleResolver, CompilerWork, ConstValueId,
+    FullyQualifiedPath, LirId, MirId, RuntimeValueId, ScopeId,
 };
 use fp_core::{
     ast::register_threadlocal_serializer,
@@ -65,11 +65,10 @@ pub fn check_path(
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     driver.state.insert_ast(identity.ast_id.clone(), ast);
-    driver.scheduler.submit(CompilerWork::TypeAst {
+    driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
         ast: identity.ast_id.clone(),
         scope: identity.scope_id(),
         path: identity.path.clone(),
-        consumers: Vec::new(),
     });
     drain_driver(&mut driver, lossy)
 }
@@ -79,7 +78,7 @@ pub fn eval_expr(source: &str) -> Result<Value> {
     execute_ast(
         ast,
         CompilerIdentity::for_expr(),
-        ExecutionMode::Comptime,
+        fp_core::context::ExecutionMode::CompileTime,
         Path::new("<eval>"),
         None,
         LossyCompileOptions::default(),
@@ -96,7 +95,7 @@ pub fn eval_file(path: &Path, resolver: Option<Arc<dyn CompilerModuleResolver>>)
     execute_ast(
         ast,
         CompilerIdentity::for_file(path),
-        ExecutionMode::Runtime,
+        fp_core::context::ExecutionMode::Runtime,
         path,
         resolver,
         LossyCompileOptions::default(),
@@ -116,7 +115,7 @@ pub fn interpret_file(
     execute_ast(
         ast,
         CompilerIdentity::for_file(path),
-        ExecutionMode::Runtime,
+        fp_core::context::ExecutionMode::Runtime,
         path,
         resolver,
         LossyCompileOptions::default(),
@@ -752,26 +751,22 @@ fn is_apple_target(target_triple: Option<&str>) -> bool {
 fn execute_ast(
     ast: Node,
     identity: CompilerIdentity,
-    mode: ExecutionMode,
+    mode: fp_core::context::ExecutionMode,
     source_path: &Path,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
     lossy: LossyCompileOptions,
 ) -> Result<Value> {
     let value_key = identity.path.to_key();
-    let consumer = match mode {
-        ExecutionMode::Comptime => LirConsumer::ExecuteComptime,
-        ExecutionMode::Runtime => LirConsumer::ExecuteRuntime,
-    };
-    let mut driver = lower_ast(ast, &identity, source_path, vec![consumer], resolver, lossy)?;
+    let mut driver = lower_ast(ast, &identity, source_path, resolver, lossy)?;
     drain_driver(&mut driver, lossy)?;
 
     match mode {
-        ExecutionMode::Comptime => driver
+        fp_core::context::ExecutionMode::CompileTime => driver
             .state
             .const_value(&ConstValueId::new(format!("const_value:{value_key}")))
             .map(|value| value.clone())
             .map_err(|err| CliError::Compilation(err.to_string())),
-        ExecutionMode::Runtime => driver
+        fp_core::context::ExecutionMode::Runtime => driver
             .state
             .runtime_value(&RuntimeValueId::new(format!("runtime_value:{value_key}")))
             .map(|value| value.clone())
@@ -788,7 +783,7 @@ fn lower_file(
     let ast = parse_file(path, source_language, lossy)?;
     let identity = CompilerIdentity::for_file(path);
     let path_key = identity.path.to_key();
-    let mut driver = lower_ast(ast, &identity, path, Vec::new(), resolver, lossy)?;
+    let mut driver = lower_ast(ast, &identity, path, resolver, lossy)?;
     drain_driver(&mut driver, lossy)?;
     Ok(LoweredProgram { driver, path_key })
 }
@@ -797,7 +792,6 @@ fn lower_ast(
     ast: Node,
     identity: &CompilerIdentity,
     source_path: &Path,
-    consumers: Vec<LirConsumer>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
     lossy: LossyCompileOptions,
 ) -> Result<CompilerDriver> {
@@ -814,11 +808,10 @@ fn lower_ast(
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     driver.state.insert_ast(ast_id.clone(), ast);
-    driver.scheduler.submit(CompilerWork::TypeAst {
+    driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
         ast: ast_id,
         scope: scope_id,
         path,
-        consumers,
     });
     Ok(driver)
 }
@@ -872,7 +865,7 @@ pub fn compile_file_to_lir_bundle(
     };
     let identity = CompilerIdentity::for_file(path);
     let path_key = identity.path.to_key();
-    let mut driver = lower_ast(parsed.ast, &identity, path, Vec::new(), None, lossy)?;
+    let mut driver = lower_ast(parsed.ast, &identity, path, None, lossy)?;
     drain_driver(&mut driver, lossy)?;
     let lowered = LoweredProgram { driver, path_key };
     Ok(LirBundle {

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -34,23 +34,7 @@ pub struct CompilerState {
     lossy: bool,
     module_resolver: Option<Arc<dyn CompilerModuleResolver>>,
     module_resolutions: BTreeMap<AstId, ModuleResolutionContext>,
-    /// Per-AST count of unresolved comptime needs. Decremented on each resolve.
-    pub(crate) comptime_pending: HashMap<AstId, usize>,
-    /// ASTs whose initial comptime needs have been counted (to avoid double-counting on retype).
-    pub(crate) comptime_seeded: HashSet<AstId>,
-    /// ASTs for which comptime evaluation has completed at least once.
-    pub(crate) comptime_evaluated: HashSet<AstId>,
-    /// Maps HirId to the TypedAstId that was lowered to produce it.
-    pub(crate) hir_to_typed_ast: BTreeMap<HirId, TypedAstId>,
-    /// Maps MirId to the TypedAstId that was lowered to produce it.
-    pub(crate) mir_to_typed_ast: BTreeMap<MirId, TypedAstId>,
-    /// Maps LirId to the TypedAstId that was lowered to produce it.
-    pub(crate) lir_to_typed_ast: BTreeMap<LirId, TypedAstId>,
-    /// Resolved splice results, keyed by const name. Populated after comptime
-    /// evaluation of a splice's quote token. Queried by typing when encountering SplicePending.
     pub(crate) splice_results: BTreeMap<String, SpliceResult>,
-    /// Maps request_id → const name for splices awaiting comptime evaluation.
-    pub(crate) pending_splices: HashMap<u64, String>,
 }
 
 impl CompilerState {
@@ -209,10 +193,6 @@ impl CompilerState {
     pub fn runtime_value_len(&self) -> usize {
         self.runtime_values.len()
     }
-
-    pub fn register_splice_need(&mut self, request_id: u64, const_name: &str) {
-        self.pending_splices.insert(request_id, const_name.to_string());
-    }
 }
 
 impl Default for CompilerState {
@@ -231,14 +211,7 @@ impl Default for CompilerState {
             lossy: false,
             module_resolver: None,
             module_resolutions: BTreeMap::new(),
-            comptime_pending: HashMap::new(),
-            comptime_seeded: HashSet::new(),
-            comptime_evaluated: HashSet::new(),
-            hir_to_typed_ast: BTreeMap::new(),
-            mir_to_typed_ast: BTreeMap::new(),
-            lir_to_typed_ast: BTreeMap::new(),
             splice_results: BTreeMap::new(),
-            pending_splices: HashMap::new(),
         }
     }
 }

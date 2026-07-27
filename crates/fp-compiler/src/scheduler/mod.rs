@@ -13,6 +13,5 @@ pub use identity::{
 pub use request::{CompilerRequest, CompletedRequest, ScheduledAnswer};
 pub use stack::CompilerScheduler;
 pub use work::{
-    CompileTimeNeed, CompilerAnswer, CompilerWork, ExecutionMode, GenericWorkRequest,
-    InvalidatedObjectId, LirConsumer, OutputDestination, OutputObjectId, TypeNeed, TypingRequest,
+    CompilerAnswer, CompilerWork, GenericWorkRequest, InvalidatedObjectId,
 };

@@ -3,10 +3,7 @@ use std::collections::BTreeMap;
 use super::error::SchedulerError;
 use super::identity::RequestId;
 use super::request::{CompilerRequest, CompletedRequest, ScheduledAnswer};
-use super::work::{
-    CompilerAnswer, CompilerWork, ExecutionMode, LirConsumer, OutputDestination, OutputObjectId,
-    TypingRequest,
-};
+use super::work::{CompilerAnswer, CompilerWork};
 
 #[derive(Debug, Default)]
 pub struct CompilerScheduler {
@@ -15,6 +12,8 @@ pub struct CompilerScheduler {
     active: BTreeMap<RequestId, CompilerRequest>,
     answered: BTreeMap<RequestId, CompletedRequest>,
     blocked: BTreeMap<RequestId, Vec<CompilerRequest>>,
+    current_processing: Option<RequestId>,
+    dependencies: BTreeMap<RequestId, Vec<RequestId>>,
 }
 
 impl CompilerScheduler {
@@ -22,8 +21,22 @@ impl CompilerScheduler {
         Self::default()
     }
 
+    pub fn begin_processing(&mut self, id: RequestId) {
+        self.current_processing = Some(id);
+    }
+
+    pub fn end_processing(&mut self) {
+        self.current_processing = None;
+    }
+
     pub fn submit(&mut self, work: CompilerWork) -> RequestId {
         let id = self.allocate_id();
+        if let Some(current) = self.current_processing {
+            self.dependencies
+                .entry(current)
+                .or_default()
+                .push(id);
+        }
         self.stack.push(CompilerRequest { id, work });
         id
     }
@@ -53,17 +66,31 @@ impl CompilerScheduler {
         answer: CompilerAnswer,
     ) -> Result<ScheduledAnswer, SchedulerError> {
         let completed = self.complete(id, answer)?;
-        let followup_work = self.followup_work(&completed);
-        self.record_blocked_request(&completed);
-        self.answered.insert(id, completed.clone());
+        let pending_deps = self.pending_dependencies(id);
 
-        let mut followups = self.submit_followups(followup_work);
-        followups.extend(self.retry_requests_blocked_on(id));
-
-        Ok(ScheduledAnswer {
-            completed,
-            followups,
-        })
+        if pending_deps.is_empty() {
+            let followup_work = self.followup_work(&completed);
+            self.answered.insert(id, completed.clone());
+            let mut followups = self.submit_followups(followup_work);
+            followups.extend(self.retry_requests_blocked_on(id));
+            Ok(ScheduledAnswer {
+                completed,
+                followups,
+            })
+        } else {
+            self.answered.insert(id, completed.clone());
+            for dep_id in &pending_deps {
+                self.blocked
+                    .entry(*dep_id)
+                    .or_default()
+                    .push(completed.request.clone());
+            }
+            let followups = self.retry_requests_blocked_on(id);
+            Ok(ScheduledAnswer {
+                completed,
+                followups,
+            })
+        }
     }
 
     pub fn pending_len(&self) -> usize {
@@ -76,6 +103,10 @@ impl CompilerScheduler {
 
     pub fn answered_len(&self) -> usize {
         self.answered.len()
+    }
+
+    pub fn blocked_len(&self) -> usize {
+        self.blocked.len()
     }
 
     pub fn is_idle(&self) -> bool {
@@ -108,6 +139,18 @@ impl CompilerScheduler {
         Ok(CompletedRequest { request, answer })
     }
 
+    fn pending_dependencies(&self, id: RequestId) -> Vec<RequestId> {
+        self.dependencies
+            .get(&id)
+            .map(|deps| {
+                deps.iter()
+                    .filter(|dep_id| !self.answered.contains_key(dep_id))
+                    .copied()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn submit_followups(&mut self, followup_work: Vec<CompilerWork>) -> Vec<RequestId> {
         let mut followups = Vec::with_capacity(followup_work.len());
         for work in followup_work.into_iter().rev() {
@@ -115,16 +158,6 @@ impl CompilerScheduler {
         }
         followups.reverse();
         followups
-    }
-
-    fn record_blocked_request(&mut self, completed: &CompletedRequest) {
-        let CompilerAnswer::BlockedOnRequest { request } = completed.answer else {
-            return;
-        };
-        self.blocked
-            .entry(request)
-            .or_default()
-            .push(completed.request.clone());
     }
 
     fn retry_requests_blocked_on(&mut self, answered: RequestId) -> Vec<RequestId> {
@@ -152,196 +185,11 @@ impl CompilerScheduler {
                     ast,
                     scope,
                     path,
-                    consumers,
                 },
-            ) => vec![CompilerWork::TypeAst {
+            ) => vec![CompilerWork::CompileUnitCompileNative {
                 ast: ast.clone(),
                 scope: scope.clone(),
                 path: path.clone(),
-                consumers: consumers.clone(),
-            }],
-            (
-                CompilerWork::TypeAst {
-                    scope,
-                    path,
-                    consumers,
-                    ..
-                },
-                CompilerAnswer::TypedAst {
-                    typed_ast,
-                    requests,
-                },
-            ) => {
-                if requests.is_empty() {
-                    return vec![CompilerWork::LowerToHir {
-                        typed_ast: typed_ast.clone(),
-                        scope: scope.clone(),
-                        path: path.clone(),
-                        consumers: consumers.clone(),
-                    }];
-                }
-
-                requests
-                    .iter()
-                    .map(|request| {
-                        self.typing_request_work(
-                            completed.request.id,
-                            typed_ast,
-                            scope,
-                            path,
-                            consumers,
-                            request,
-                        )
-                    })
-                    .collect()
-            }
-            (
-                CompilerWork::LowerToHir {
-                    path, consumers, ..
-                },
-                CompilerAnswer::Hir { hir },
-            ) => vec![CompilerWork::LowerToMir {
-                hir: hir.clone(),
-                path: path.clone(),
-                consumers: consumers.clone(),
-            }],
-            (
-                CompilerWork::LowerToMir {
-                    path, consumers, ..
-                },
-                CompilerAnswer::Mir { mir },
-            ) => {
-                vec![CompilerWork::LowerToLir {
-                    mir: mir.clone(),
-                    path: path.clone(),
-                    consumers: consumers.clone(),
-                }]
-            }
-            (
-                CompilerWork::LowerToLir {
-                    path, consumers, ..
-                },
-                CompilerAnswer::Lir { lir },
-            ) => consumers
-                .iter()
-                .map(|consumer| self.lir_consumer_work(path, lir, *consumer))
-                .collect(),
-            (CompilerWork::SerializeBytecode { .. }, CompilerAnswer::Bytecode { bytecode }) => {
-                vec![CompilerWork::SaveOutput {
-                    output: OutputObjectId::Bytecode(bytecode.clone()),
-                    destination: OutputDestination::new("bytecode"),
-                }]
-            }
-            (
-                CompilerWork::EmitNative { path, jit, .. },
-                CompilerAnswer::NativeArtifact { native_object },
-            ) => {
-                let mut work = vec![CompilerWork::SaveOutput {
-                    output: OutputObjectId::Native(native_object.clone()),
-                    destination: OutputDestination::new("native"),
-                }];
-                if *jit {
-                    work.push(CompilerWork::JitNative {
-                        path: path.clone(),
-                        native_object: native_object.clone(),
-                    });
-                }
-                work
-            }
-            (
-                CompilerWork::Execute {
-                    answer_to: Some(blocked),
-                    ..
-                },
-                CompilerAnswer::CompileTimeValue { .. },
-            ) => self.requeue_blocked_typing_work(*blocked),
-            _ => Vec::new(),
-        }
-    }
-
-    fn typing_request_work(
-        &self,
-        blocked: RequestId,
-        typed_ast: &super::identity::TypedAstId,
-        scope: &super::identity::ScopeId,
-        path: &super::identity::FullyQualifiedPath,
-        consumers: &[LirConsumer],
-        request: &TypingRequest,
-    ) -> CompilerWork {
-        match request {
-            TypingRequest::Unresolved(_) | TypingRequest::Comptime(_) => CompilerWork::LowerToHir {
-                typed_ast: typed_ast.clone(),
-                scope: scope.clone(),
-                path: path.clone(),
-                consumers: vec![LirConsumer::AnswerComptime(blocked)],
-            },
-            TypingRequest::Generic(generic) => CompilerWork::EnqueueGeneric {
-                typed_ast: typed_ast.clone(),
-                path: path.clone(),
-                generic: generic.clone(),
-                consumers: consumers.to_vec(),
-            },
-        }
-    }
-
-    fn lir_consumer_work(
-        &self,
-        path: &super::identity::FullyQualifiedPath,
-        lir: &super::identity::LirId,
-        consumer: LirConsumer,
-    ) -> CompilerWork {
-        match consumer {
-            LirConsumer::ExecuteComptime => CompilerWork::Execute {
-                lir: lir.clone(),
-                path: path.clone(),
-                mode: ExecutionMode::Comptime,
-                answer_to: None,
-            },
-            LirConsumer::AnswerComptime(blocked) => CompilerWork::Execute {
-                lir: lir.clone(),
-                path: path.clone(),
-                mode: ExecutionMode::Comptime,
-                answer_to: Some(blocked),
-            },
-            LirConsumer::ExecuteRuntime => CompilerWork::Execute {
-                lir: lir.clone(),
-                path: path.clone(),
-                mode: ExecutionMode::Runtime,
-                answer_to: None,
-            },
-            LirConsumer::Bytecode => CompilerWork::SerializeBytecode {
-                lir: lir.clone(),
-                path: path.clone(),
-            },
-            LirConsumer::Native => CompilerWork::EmitNative {
-                lir: lir.clone(),
-                path: path.clone(),
-                jit: false,
-            },
-            LirConsumer::NativeJit => CompilerWork::EmitNative {
-                lir: lir.clone(),
-                path: path.clone(),
-                jit: true,
-            },
-        }
-    }
-
-    fn requeue_blocked_typing_work(&self, blocked: RequestId) -> Vec<CompilerWork> {
-        let Some(completed) = self.answered.get(&blocked) else {
-            return Vec::new();
-        };
-
-        match &completed.request.work {
-            CompilerWork::TypeAst {
-                ast,
-                scope,
-                path,
-                consumers,
-            } => vec![CompilerWork::TypeAst {
-                ast: ast.clone(),
-                scope: scope.clone(),
-                path: path.clone(),
-                consumers: consumers.clone(),
             }],
             _ => Vec::new(),
         }
@@ -352,10 +200,9 @@ impl CompilerScheduler {
 mod tests {
     use super::*;
     use crate::scheduler::{
-        AstId, ExecutionMode, FullyQualifiedPath, HirId, LirConsumer, LirId, MirId, RawAstId,
-        SchedulerError, ScopeId, SourceId, TypeNeed, TypedAstId, TypingRequest,
+        AstId, ConstValueId, FullyQualifiedPath, RawAstId, ScopeId, SchedulerError,
+        SourceId, TypedAstId,
     };
-    use fp_core::ast::Expr;
 
     fn path(segments: &[&str]) -> FullyQualifiedPath {
         FullyQualifiedPath::from_segments(segments.iter().map(|seg| (*seg).to_string()).collect())
@@ -364,17 +211,15 @@ mod tests {
     #[test]
     fn independent_submit_uses_lifo_stack_order() {
         let mut scheduler = CompilerScheduler::new();
-        let first = scheduler.submit(CompilerWork::TypeAst {
+        let first = scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: AstId::new("ast:crate::main"),
             scope: ScopeId::new("crate::main"),
             path: path(&["crate", "main"]),
-            consumers: Vec::new(),
         });
-        let second = scheduler.submit(CompilerWork::LowerToHir {
-            typed_ast: TypedAstId::new("typed_ast:crate::main"),
-            scope: ScopeId::new("crate::main"),
-            path: path(&["crate", "main"]),
-            consumers: Vec::new(),
+        let second = scheduler.submit(CompilerWork::CompileUnitCompileNative {
+            ast: AstId::new("ast:crate::dep"),
+            scope: ScopeId::new("crate::dep"),
+            path: path(&["crate", "dep"]),
         });
 
         assert_eq!(first.as_u64(), 0);
@@ -383,42 +228,32 @@ mod tests {
 
         let next = scheduler.next_request().expect("last-submitted request");
         assert_eq!(next.id, second);
-        assert!(matches!(next.work, CompilerWork::LowerToHir { .. }));
+        assert!(matches!(next.work, CompilerWork::CompileUnitCompileNative { .. }));
         assert_eq!(scheduler.pending_len(), 1);
         assert_eq!(scheduler.active_len(), 1);
 
         let next = scheduler.next_request().expect("first-submitted request");
         assert_eq!(next.id, first);
-        assert!(matches!(next.work, CompilerWork::TypeAst { .. }));
+        assert!(matches!(next.work, CompilerWork::CompileUnitCompileNative { .. }));
     }
 
     #[test]
     fn answers_only_active_requests() {
         let mut scheduler = CompilerScheduler::new();
-        let request = scheduler.submit(CompilerWork::LowerToLir {
-            mir: MirId::new("mir:crate::main"),
+        let request = scheduler.submit(CompilerWork::CompileUnitCompileNative {
+            ast: AstId::new("ast:crate::main"),
+            scope: ScopeId::new("crate::main"),
             path: path(&["crate", "main"]),
-            consumers: Vec::new(),
         });
 
         let not_active = scheduler
-            .answer(
-                request,
-                CompilerAnswer::Lir {
-                    lir: LirId::new("lir:crate::main"),
-                },
-            )
+            .answer(request, CompilerAnswer::CompileUnitCompileNative)
             .expect_err("pending request is not active");
         assert_eq!(not_active, SchedulerError::RequestNotActive(request));
 
         let active = scheduler.next_request().expect("active request");
         let completed = scheduler
-            .answer(
-                active.id,
-                CompilerAnswer::Lir {
-                    lir: LirId::new("lir:crate::main"),
-                },
-            )
+            .answer(active.id, CompilerAnswer::CompileUnitCompileNative)
             .expect("answered request");
         assert_eq!(completed.request.id, request);
         assert_eq!(scheduler.active_len(), 0);
@@ -429,18 +264,16 @@ mod tests {
     #[test]
     fn rejects_duplicate_answers() {
         let mut scheduler = CompilerScheduler::new();
-        let request = scheduler.submit(CompilerWork::Execute {
-            lir: LirId::new("lir:crate::build#{const true}"),
-            path: path(&["crate", "build#{const true}"]),
-            mode: ExecutionMode::Comptime,
-            answer_to: None,
+        let request = scheduler.submit(CompilerWork::CompileUnitAnswerComptime {
+            typed_ast: TypedAstId::new("typed_ast:crate::build"),
+            path: path(&["crate", "build"]),
         });
         scheduler.next_request().expect("active request");
         scheduler
             .answer(
                 request,
-                CompilerAnswer::CompileTimeValue {
-                    value: crate::scheduler::ConstValueId::new("value:crate::build#{const true}"),
+                CompilerAnswer::CompileUnitAnswerComptime {
+                    value: crate::scheduler::ConstValueId::new("value:crate::build"),
                 },
             )
             .expect("first answer");
@@ -448,8 +281,8 @@ mod tests {
         let duplicate = scheduler
             .answer(
                 request,
-                CompilerAnswer::CompileTimeValue {
-                    value: crate::scheduler::ConstValueId::new("value:crate::build#{const true}"),
+                CompilerAnswer::CompileUnitAnswerComptime {
+                    value: crate::scheduler::ConstValueId::new("value:crate::build"),
                 },
             )
             .expect_err("duplicate answer");
@@ -457,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn wires_parse_normalize_and_lowering_steps() {
+    fn wires_parse_normalize_and_compile_unit_steps() {
         let mut scheduler = CompilerScheduler::new();
         let source = scheduler.submit(CompilerWork::ParseSource {
             source: SourceId::new("src/main.fp"),
@@ -484,271 +317,97 @@ mod tests {
                     ast: AstId::new("ast:src/main.fp"),
                     scope: ScopeId::new("crate::main"),
                     path: path(&["crate", "main"]),
-                    consumers: vec![
-                        LirConsumer::ExecuteRuntime,
-                        LirConsumer::Bytecode,
-                        LirConsumer::Native,
-                    ],
                 },
             )
-            .expect("AST schedules typing");
+            .expect("AST schedules compile");
         assert_eq!(scheduled.followups.len(), 1);
 
-        let type_ast = scheduler.next_request().expect("type request");
-        assert!(matches!(type_ast.work, CompilerWork::TypeAst { .. }));
-        scheduler
-            .answer_and_schedule(
-                type_ast.id,
-                CompilerAnswer::TypedAst {
-                    typed_ast: TypedAstId::new("typed_ast:crate::main"),
-                    requests: Vec::new(),
-                },
-            )
-            .expect("typed AST schedules HIR");
-
-        let hir = scheduler.next_request().expect("HIR request");
-        assert!(matches!(hir.work, CompilerWork::LowerToHir { .. }));
-        scheduler
-            .answer_and_schedule(
-                hir.id,
-                CompilerAnswer::Hir {
-                    hir: HirId::new("hir:crate::main"),
-                },
-            )
-            .expect("HIR schedules MIR");
-
-        let mir = scheduler.next_request().expect("MIR request");
-        assert!(matches!(mir.work, CompilerWork::LowerToMir { .. }));
-        scheduler
-            .answer_and_schedule(
-                mir.id,
-                CompilerAnswer::Mir {
-                    mir: MirId::new("mir:crate::main"),
-                },
-            )
-            .expect("MIR schedules LIR");
-
-        let lir = scheduler.next_request().expect("LIR request");
-        assert!(matches!(lir.work, CompilerWork::LowerToLir { .. }));
-        let scheduled = scheduler
-            .answer_and_schedule(
-                lir.id,
-                CompilerAnswer::Lir {
-                    lir: LirId::new("lir:crate::main"),
-                },
-            )
-            .expect("LIR schedules requested consumers");
-        assert_eq!(scheduled.followups.len(), 3);
-
-        let execute = scheduler.next_request().expect("execute request");
+        let compile = scheduler.next_request().expect("compile request");
         assert!(matches!(
-            execute.work,
-            CompilerWork::Execute {
-                mode: ExecutionMode::Runtime,
-                ..
-            }
+            compile.work,
+            CompilerWork::CompileUnitCompileNative { .. }
         ));
+        scheduler
+            .answer_and_schedule(compile.id, CompilerAnswer::CompileUnitCompileNative)
+            .expect("compilation succeeds");
 
-        let bytecode = scheduler.next_request().expect("bytecode request");
-        assert!(matches!(
-            bytecode.work,
-            CompilerWork::SerializeBytecode { .. }
-        ));
-
-        let native = scheduler.next_request().expect("native request");
-        assert!(matches!(native.work, CompilerWork::EmitNative { .. }));
+        assert!(scheduler.is_idle());
     }
 
     #[test]
-    fn wires_lir_to_comptime_execution() {
+    fn implicit_dependency_auto_blocks_and_retries() {
         let mut scheduler = CompilerScheduler::new();
-        let request = scheduler.submit(CompilerWork::LowerToLir {
-            mir: MirId::new("mir:crate::build"),
-            path: path(&["crate", "build"]),
-            consumers: vec![LirConsumer::ExecuteComptime],
-        });
-        scheduler.next_request().expect("active request");
 
-        let scheduled = scheduler
-            .answer_and_schedule(
-                request,
-                CompilerAnswer::Lir {
-                    lir: LirId::new("lir:crate::build"),
-                },
-            )
-            .expect("LIR schedules comptime execution");
-        assert_eq!(scheduled.followups.len(), 1);
-
-        let execute = scheduler.next_request().expect("execute request");
-        assert!(matches!(
-            execute.work,
-            CompilerWork::Execute {
-                mode: ExecutionMode::Comptime,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn unknown_type_requests_run_lowering_then_retype_after_comptime_answer() {
-        let mut scheduler = CompilerScheduler::new();
-        let request = scheduler.submit(CompilerWork::TypeAst {
+        let native_id = scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: AstId::new("ast:crate::main"),
             scope: ScopeId::new("crate::main"),
             path: path(&["crate", "main"]),
-            consumers: vec![LirConsumer::Bytecode],
         });
-        scheduler.next_request().expect("active type request");
+        let _active = scheduler.next_request().expect("active compile native");
 
-        let scheduled = scheduler
-            .answer_and_schedule(
-                request,
-                CompilerAnswer::TypedAst {
-                    typed_ast: TypedAstId::new("typed_ast:crate::main"),
-                    requests: vec![TypingRequest::Unresolved(TypeNeed::new(Expr::unit()))],
-                },
-            )
-            .expect("typed AST schedules comptime-backed type need");
-        assert_eq!(scheduled.followups.len(), 1);
-
-        let hir = scheduler
-            .next_request()
-            .expect("type need starts HIR lowering");
-        assert!(matches!(
-            hir.work,
-            CompilerWork::LowerToHir {
-                consumers,
-                ..
-            } if consumers == vec![LirConsumer::AnswerComptime(request)]
-        ));
-        scheduler
-            .answer_and_schedule(
-                hir.id,
-                CompilerAnswer::Hir {
-                    hir: HirId::new("hir:crate::main"),
-                },
-            )
-            .expect("HIR schedules MIR");
-
-        let mir = scheduler.next_request().expect("MIR request");
-        scheduler
-            .answer_and_schedule(
-                mir.id,
-                CompilerAnswer::Mir {
-                    mir: MirId::new("mir:crate::main"),
-                },
-            )
-            .expect("MIR schedules LIR");
-
-        let lir = scheduler.next_request().expect("LIR request");
-        scheduler
-            .answer_and_schedule(
-                lir.id,
-                CompilerAnswer::Lir {
-                    lir: LirId::new("lir:crate::main"),
-                },
-            )
-            .expect("LIR schedules interpreter answer");
-
-        let execute = scheduler.next_request().expect("execute request");
-        assert!(matches!(
-            execute.work,
-            CompilerWork::Execute {
-                mode: ExecutionMode::Comptime,
-                answer_to: Some(blocked),
-                ..
-            } if blocked == request
-        ));
-
-        let scheduled = scheduler
-            .answer_and_schedule(
-                execute.id,
-                CompilerAnswer::CompileTimeValue {
-                    value: crate::scheduler::ConstValueId::new("const_value:crate::main"),
-                },
-            )
-            .expect("comptime answer requeues blocked typing");
-        assert_eq!(scheduled.followups.len(), 1);
-
-        let retry = scheduler.next_request().expect("typing retry");
-        assert!(matches!(retry.work, CompilerWork::TypeAst { .. }));
-    }
-
-    #[test]
-    fn execute_can_answer_blocked_on_request() {
-        let mut scheduler = CompilerScheduler::new();
-        let blocked = scheduler.submit(CompilerWork::TypeAst {
-            ast: AstId::new("ast:crate::main"),
-            scope: ScopeId::new("crate::main"),
+        // Simulate the handler: set current_processing, submit a dependent work item
+        scheduler.begin_processing(native_id);
+        let comptime_id = scheduler.submit(CompilerWork::CompileUnitAnswerComptime {
+            typed_ast: TypedAstId::new("typed_ast:crate::main"),
             path: path(&["crate", "main"]),
-            consumers: vec![LirConsumer::Bytecode],
         });
-        let _active_blocked = scheduler.next_request().expect("active type request");
+        scheduler.end_processing();
 
-        let dependent_id = scheduler.submit(CompilerWork::Execute {
-            lir: LirId::new("lir:crate::dep"),
-            path: path(&["crate", "dep"]),
-            mode: ExecutionMode::Comptime,
-            answer_to: None,
-        });
-        let _active_dependent = scheduler.next_request().expect("active execute request");
+        // Answer the native unit — it should auto-block because CompileUnitAnswerComptime is pending
+        let scheduled = scheduler
+            .answer_and_schedule(native_id, CompilerAnswer::CompileUnitCompileNative)
+            .expect("auto-blocked on comptime dependency");
+        assert!(scheduled.followups.is_empty(), "should have no followups when auto-blocked");
 
+        // Verify the blocked relationship
+        assert_eq!(
+            scheduler.blocked.get(&comptime_id).map(|v| v.len()),
+            Some(1),
+            "compile native should be blocked on comptime"
+        );
+
+        // Now complete the comptime work
+        let _active = scheduler.next_request().expect("comptime work");
         let scheduled = scheduler
             .answer_and_schedule(
-                dependent_id,
-                CompilerAnswer::BlockedOnRequest { request: blocked },
-            )
-            .expect("execute returns BlockedOnRequest");
-        assert!(scheduled.followups.is_empty());
-        assert_eq!(scheduler.blocked.get(&blocked).map(|v| v.len()), Some(1));
-    }
-
-    #[test]
-    fn dependency_answer_retries_blocked_execute_request() {
-        let mut scheduler = CompilerScheduler::new();
-
-        let blocked = scheduler.submit(CompilerWork::TypeAst {
-            ast: AstId::new("ast:crate::main"),
-            scope: ScopeId::new("crate::main"),
-            path: path(&["crate", "main"]),
-            consumers: vec![LirConsumer::Bytecode],
-        });
-        let _active_blocked = scheduler.next_request().expect("active type request");
-
-        let dependent_id = scheduler.submit(CompilerWork::Execute {
-            lir: LirId::new("lir:crate::dep"),
-            path: path(&["crate", "dep"]),
-            mode: ExecutionMode::Comptime,
-            answer_to: None,
-        });
-        let _active_dependent = scheduler.next_request().expect("active execute request");
-
-        scheduler
-            .answer_and_schedule(
-                dependent_id,
-                CompilerAnswer::BlockedOnRequest { request: blocked },
-            )
-            .expect("execute blocked on type request");
-
-        let scheduled = scheduler
-            .answer_and_schedule(
-                blocked,
-                CompilerAnswer::TypedAst {
-                    typed_ast: TypedAstId::new("typed_ast:crate::main"),
-                    requests: Vec::new(),
+                comptime_id,
+                CompilerAnswer::CompileUnitAnswerComptime {
+                    value: ConstValueId::new("value:crate::main"),
                 },
             )
-            .expect("type request answered");
+            .expect("comptime answered");
 
-        assert_eq!(scheduled.followups.len(), 2);
-        let retried = scheduler.next_request().expect("retried execute");
+        // Should retry the blocked CompileUnitCompileNative
+        assert_eq!(
+            scheduled.followups.len(),
+            1,
+            "completing dependency should retry blocked work"
+        );
+        let retried = scheduler.next_request().expect("retried compile native");
         assert!(matches!(
             retried.work,
-            CompilerWork::Execute {
-                mode: ExecutionMode::Comptime,
-                answer_to: None,
-                ..
-            }
+            CompilerWork::CompileUnitCompileNative { .. }
         ));
+    }
+
+    #[test]
+    fn no_auto_block_when_no_pending_dependencies() {
+        let mut scheduler = CompilerScheduler::new();
+
+        let native_id = scheduler.submit(CompilerWork::CompileUnitCompileNative {
+            ast: AstId::new("ast:crate::main"),
+            scope: ScopeId::new("crate::main"),
+            path: path(&["crate", "main"]),
+        });
+        let _active = scheduler.next_request().expect("active compile");
+
+        // No dependencies submitted — should complete normally
+        let scheduled = scheduler
+            .answer_and_schedule(native_id, CompilerAnswer::CompileUnitCompileNative)
+            .expect("direct compile");
+        assert!(scheduled.followups.is_empty(), "no followup when no deps");
+
+        assert!(scheduler.blocked.is_empty(), "nothing blocked");
+        assert!(scheduler.is_idle());
     }
 }
