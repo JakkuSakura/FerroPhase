@@ -1772,6 +1772,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         let peeled = Self::peel_reference(obj_ty.clone());
                         if matches!(peeled, Ty::Primitive(TypePrimitive::String))
                             || Self::is_collection_with_len(&obj_ty)
+                            || matches!(peeled, Ty::Quote(_))
                         {
                             let result_var = self.fresh_type_var();
                             self.bind(result_var, Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
@@ -3547,6 +3548,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 .as_str()
             {
                 "name" => Ok(self.borrowed_string_var()),
+                "len" | "count" => {
+                    let var = self.fresh_type_var();
+                    self.bind(var, Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
+                    Ok(var)
+                }
                 "value" | "fn" => {
                     if matches!(quote.item, Some(QuoteItemKind::Function) | None) {
                         let fn_ty = Ty::Function(TypeFunction {
