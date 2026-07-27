@@ -82,7 +82,7 @@ impl HirGenerator {
                 self.transform_array_repeat_to_hir(array_repeat)?
             }
             ExprKind::Range(_range) => {
-                self.add_warning(
+                self.add_error(
                     Diagnostic::warning(
                         "range expressions are only supported in for loops and slicing; treating as empty array"
                             .to_string(),
@@ -94,7 +94,7 @@ impl HirGenerator {
             ExprKind::Index(index_expr) => {
                 if let ast::ExprKind::Range(range) = index_expr.index.kind() {
                     if range.step.is_some() {
-                        self.add_warning(
+                        self.add_error(
                             Diagnostic::warning(
                                 "range steps are not supported in slicing; ignoring step"
                                     .to_string(),
@@ -2044,7 +2044,7 @@ impl HirGenerator {
                 .first()
                 .map(|arg| arg.span())
                 .unwrap_or_else(Span::null);
-            self.add_error_or_warning(
+            self.add_error(
                 Diagnostic::error(
                     "call arguments do not match function parameter count".to_string(),
                 )

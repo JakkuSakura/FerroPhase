@@ -128,19 +128,6 @@ impl HirGenerator {
         diagnostic_manager().add_diagnostic(diag);
     }
 
-    fn add_warning(&mut self, diag: Diagnostic) {
-        diagnostic_manager().add_diagnostic(diag);
-    }
-
-    fn add_error_or_warning(&mut self, mut diag: Diagnostic) {
-        if self.is_std_module() {
-            diag.level = fp_core::diagnostics::DiagnosticLevel::Warning;
-            self.add_warning(diag);
-        } else {
-            self.add_error(diag);
-        }
-    }
-
     fn item_enabled_by_cfg(&self, item: &ast::Item) -> bool {
         !self.respect_cfg || fp_core::cfg::item_enabled_by_cfg(item, &self.target_env)
     }
@@ -1038,7 +1025,7 @@ impl HirGenerator {
                 Ok(())
             }
             ItemKind::Macro(_) => {
-                self.add_warning(
+                self.add_error(
                     Diagnostic::warning(
                         "dropping macro item during AST→HIR in lossy mode".to_string(),
                     )
@@ -1122,7 +1109,7 @@ impl HirGenerator {
                 }
             }
             ItemKind::Macro(_) => {
-                self.add_warning(
+                self.add_error(
                     Diagnostic::warning(
                         "dropping macro item in statement position during AST→HIR".to_string(),
                     )
@@ -1763,7 +1750,7 @@ impl HirGenerator {
                 ))
             }
             unsupported => {
-                self.add_warning(
+                self.add_error(
                     Diagnostic::warning(format!(
                         "unsupported type in AST→HIR lowering: {:?}",
                         unsupported

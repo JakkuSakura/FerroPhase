@@ -341,7 +341,7 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     if let Ok(emit_token) = expect_keyword(&mut probe, Keyword::Emit) {
         let emit_span = token_span_to_span(&emit_token);
         if expect_symbol(&mut probe, "!").is_ok() && peek_symbol(probe) == Some("{") {
-            let block = parse_balanced_quote_block(&mut probe)?;
+            let block = parse_balanced_quote_block(&mut probe, file)?;
             *input = probe;
             let quote_expr = Expr::new(ExprKind::Quote(ExprQuote {
                 span: block.span,
@@ -425,7 +425,7 @@ fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Exp
     if let Ok(emit_token) = expect_keyword(&mut probe, Keyword::Emit) {
         let emit_span = token_span_to_span(&emit_token);
         if expect_symbol(&mut probe, "!").is_ok() && peek_symbol(probe) == Some("{") {
-            let block = parse_balanced_quote_block(&mut probe)?;
+            let block = parse_balanced_quote_block(&mut probe, file)?;
             *input = probe;
             let quote_expr = Expr::new(ExprKind::Quote(ExprQuote {
                 span: block.span,
@@ -1331,7 +1331,7 @@ fn parse_quote_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
         }
     }
     let block = if matches!(kind, Some(QuoteFragmentKind::Item)) {
-        parse_balanced_quote_block(&mut probe)?
+        parse_balanced_quote_block(&mut probe, file)?
     } else {
         let body = parse_block_expr(&mut probe, file)?;
         let ExprKind::Block(block) = body.kind().clone() else {
@@ -1349,11 +1349,14 @@ fn parse_quote_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     .into())
 }
 
-fn parse_balanced_quote_block(input: &mut &[Token]) -> ModalResult<ExprBlock> {
+fn parse_balanced_quote_block(input: &mut &[Token], file: FileId) -> ModalResult<ExprBlock> {
     expect_symbol(input, "{")?;
     let mut depth = 1usize;
+    let start = *input;
+    let mut token_count = 0usize;
     while let Some((token, rest)) = input.split_first() {
         *input = rest;
+        token_count += 1;
         if token.kind != TokenKind::Symbol {
             continue;
         }
@@ -1362,7 +1365,20 @@ fn parse_balanced_quote_block(input: &mut &[Token]) -> ModalResult<ExprBlock> {
             "}" => {
                 depth -= 1;
                 if depth == 0 {
-                    return Ok(ExprBlock::new());
+                    let inner = &start[..token_count - 1];
+                    if inner.is_empty() {
+                        return Ok(ExprBlock::new());
+                    }
+                    match crate::ast::parse_items_tokens(inner, file) {
+                        Ok(items) => {
+                            let mut block = ExprBlock::new();
+                            for item in items {
+                                block.stmts.push(BlockStmt::Item(Box::new(item)));
+                            }
+                            return Ok(block);
+                        }
+                        Err(_) => return Ok(ExprBlock::new()),
+                    }
                 }
             }
             _ => {}
