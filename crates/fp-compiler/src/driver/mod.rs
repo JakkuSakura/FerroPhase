@@ -83,6 +83,7 @@ impl CompilerDriver {
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let mut ast = self.state.ast(ast_id)?.clone();
         annotate_collected_items(&mut ast);
+        fp_typing::resolve_all_splices(&mut ast);
         let resolved_consts = self.collect_resolved_const_values();
         let module_resolution = self.state.module_resolution(ast_id);
         let outcome = annotate_with_resolved_state(

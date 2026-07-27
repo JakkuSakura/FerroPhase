@@ -3951,6 +3951,61 @@ pub fn annotate(node: &mut Node) -> Result<TypingOutcome> {
     annotate_with_prelude(node, default_extern_prelude())
 }
 
+/// Pre-walk splice resolution: collect quote-valued DefConst items and
+/// replace splice(NAME) expressions with the extracted items inside
+/// function bodies. Called by the scheduler before typing.
+pub fn resolve_all_splices(node: &mut Node) {
+    let NodeKind::File(file) = node.kind_mut() else { return };
+    let mut quote_values: HashMap<String, Expr> = HashMap::new();
+    for item in file.items.iter() {
+        if let ItemKind::DefConst(def) = item.kind() {
+            if matches!(def.value.kind(), ExprKind::Quote(_)) {
+                quote_values.insert(
+                    def.name.as_str().to_string(),
+                    (*def.value).clone(),
+                );
+            }
+        }
+    }
+    for item in file.items.iter_mut() {
+        if let ItemKind::DefFunction(func) = item.kind_mut() {
+            resolve_splices_in_block(&mut func.body, &quote_values);
+        }
+    }
+}
+
+fn resolve_splices_in_block(body: &mut Expr, quote_values: &HashMap<String, Expr>) {
+    if let ExprKind::Block(block) = body.kind_mut() {
+        let mut new_stmts: Vec<BlockStmt> = Vec::new();
+        for stmt in block.stmts.drain(..) {
+            match stmt {
+                BlockStmt::Expr(mut expr_stmt)
+                    if matches!(expr_stmt.expr.kind(), ExprKind::Splice(_)) =>
+                {
+                    if let ExprKind::Splice(splice) = expr_stmt.expr.kind() {
+                        if let ExprKind::Name(name) = splice.token.kind() {
+                            let key = name.to_string();
+                            if let Some(quote_expr) = quote_values.get(&key) {
+                                if let ExprKind::Quote(quote) = quote_expr.kind() {
+                                    for quote_stmt in &quote.block.stmts {
+                                        if let BlockStmt::Item(item) = quote_stmt {
+                                            new_stmts.push(BlockStmt::Item(item.clone()));
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    new_stmts.push(BlockStmt::Expr(expr_stmt));
+                }
+                other => new_stmts.push(other),
+            }
+        }
+        block.stmts = new_stmts;
+    }
+}
+
 impl<'ctx> AstTypeInferencer<'ctx> {
     fn locator_tail_name(&self, locator: &Name) -> Option<String> {
         match locator {
