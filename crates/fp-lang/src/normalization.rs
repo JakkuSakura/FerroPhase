@@ -766,7 +766,7 @@ fn walk_type_builder_chain(invoke: &ExprInvoke, name: &mut String, fields: &mut 
                     true
                 }
                 "with_field" => {
-                    if invoke.args.len() >= 2 {
+                    let field_info = if invoke.args.len() >= 2 {
                         let field_name = match invoke.args[0].kind() {
                             ExprKind::Value(v) => match v.as_ref() {
                                 Value::String(s) => Some(s.value.clone()),
@@ -775,16 +775,24 @@ fn walk_type_builder_chain(invoke: &ExprInvoke, name: &mut String, fields: &mut 
                             _ => None,
                         };
                         let field_ty = extract_type_from_expr(&invoke.args[1]);
-                        if let (Some(n), Some(t)) = (field_name, field_ty) {
-                            fields.push((n, t));
+                        match (field_name, field_ty) {
+                            (Some(n), Some(t)) => Some((n, t)),
+                            _ => None,
                         }
-                    }
-                    // Recurse into the receiver for the next method in chain
-                    if let ExprKind::Invoke(inner) = select.obj.kind() {
+                    } else {
+                        None
+                    };
+                    // Recurse FIRST to process inner calls, then push
+                    // so fields are in source order (innermost first).
+                    let ok = if let ExprKind::Invoke(inner) = select.obj.kind() {
                         walk_type_builder_chain(inner, name, fields)
                     } else {
                         true
+                    };
+                    if let Some((n, t)) = field_info {
+                        fields.push((n, t));
                     }
+                    ok
                 }
                 "build" | "from" => {
                     // Recurse into receiver to collect inner calls
