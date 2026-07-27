@@ -70,7 +70,9 @@ impl CompilerScheduler {
 
         if pending_deps.is_empty() {
             self.answered.insert(id, completed.clone());
-            let followups = self.retry_requests_blocked_on(id);
+            let mut followups = self.retry_requests_blocked_on(id);
+            let additional = self.followup_from_answer(&completed.answer, &completed.request);
+            followups.extend(self.submit_followups(additional));
             Ok(ScheduledAnswer {
                 completed,
                 followups,
@@ -170,6 +172,20 @@ impl CompilerScheduler {
         self.submit_followups(followup_work)
     }
 
+    fn followup_from_answer(&self, answer: &CompilerAnswer, request: &CompilerRequest) -> Vec<CompilerWork> {
+        match answer {
+            CompilerAnswer::CompileUnitCompileNative => match &request.work {
+                CompilerWork::CompileUnitCompileNative { ast, path } => {
+                    vec![CompilerWork::CompileUnitCompileBytecode {
+                        ast: ast.clone(),
+                        path: path.clone(),
+                    }]
+                }
+                _ => vec![],
+            },
+            _ => vec![],
+        }
+    }
 }
 
 #[cfg(test)]
@@ -326,13 +342,17 @@ mod tests {
         });
         let _active = scheduler.next_request().expect("active compile");
 
-        // No dependencies submitted — should complete normally
+        // No dependencies submitted — should complete normally with bytecode followup
         let scheduled = scheduler
             .answer_and_schedule(native_id, CompilerAnswer::CompileUnitCompileNative)
             .expect("direct compile");
-        assert!(scheduled.followups.is_empty(), "no followup when no deps");
+        assert_eq!(scheduled.followups.len(), 1, "bytecode followup");
 
         assert!(scheduler.blocked.is_empty(), "nothing blocked");
+        // Drain the bytecode followup
+        assert!(!scheduler.is_idle(), "bytecode work pending");
+        scheduler.next_request();
+        scheduler.answer(scheduled.followups[0], CompilerAnswer::CompileUnitCompileBytecode).ok();
         assert!(scheduler.is_idle());
     }
 }

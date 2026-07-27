@@ -100,6 +100,9 @@ impl CompilerDriver {
                 path,
                 generic,
             } => self.enqueue_generic(typed_ast, path, generic),
+            CompilerWork::CompileUnitCompileBytecode { ast, path } => {
+                self.compile_unit_compile_bytecode(ast, path)
+            }
             _ => Err(CompilerDriverError::UnsupportedWork(format!("{request:?}"))),
         }
     }
@@ -145,7 +148,6 @@ impl CompilerDriver {
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let core = self.compile_unit_core(ast_id, path)?;
         self.evaluate_comptime_lir(&core.lir_id, path)?;
-        self.generate_bytecode(&core.mir_id, path)?;
 
         for monomorph in &core.pending_generics {
             let fqp = FullyQualifiedPath::new(monomorph.function_path.clone());
@@ -166,6 +168,16 @@ impl CompilerDriver {
         }
 
         Ok(CompilerAnswer::CompileUnitCompileNative)
+    }
+
+    fn compile_unit_compile_bytecode(
+        &mut self,
+        ast_id: &AstId,
+        path: &FullyQualifiedPath,
+    ) -> Result<CompilerAnswer, CompilerDriverError> {
+        let core = self.compile_unit_core(ast_id, path)?;
+        self.generate_bytecode(&core.mir_id, path)?;
+        Ok(CompilerAnswer::CompileUnitCompileBytecode)
     }
 
     fn compile_unit_answer_comptime(
@@ -1203,6 +1215,9 @@ mod tests {
             CompilerAnswer::CompileUnitCompileNative
         ));
 
+        // Drain bytecode followup
+        while let Ok(Some(_)) = driver.run_next() {}
+
         assert_eq!(driver.state.hir_len(), 1);
         assert_eq!(driver.state.mir_len(), 1);
         assert_eq!(driver.state.lir_len(), 1);
@@ -1310,11 +1325,10 @@ mod tests {
             matches!(scheduled.completed.answer, CompilerAnswer::CompileUnitCompileNative)
         );
 
-        // Generic work item enqueued
-        if !scheduled.followups.is_empty() {
-            let next = driver.scheduler.next_request().expect("generic work");
-            assert!(matches!(next.work, CompilerWork::EnqueueGeneric { .. }));
-        }
+        // Bytecode followup work enqueued
+        assert!(!scheduled.followups.is_empty(), "should have bytecode followup");
+        let next = driver.scheduler.next_request().expect("bytecode work");
+        assert!(matches!(next.work, CompilerWork::CompileUnitCompileBytecode { .. }));
     }
 }
 

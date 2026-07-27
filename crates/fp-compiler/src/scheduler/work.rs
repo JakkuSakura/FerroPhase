@@ -21,6 +21,10 @@ pub enum CompilerWork {
         path: FullyQualifiedPath,
         generic: GenericWorkRequest,
     },
+    CompileUnitCompileBytecode {
+        ast: AstId,
+        path: FullyQualifiedPath,
+    },
     Revalidate {
         invalidated: Vec<InvalidatedObjectId>,
     },
@@ -60,6 +64,7 @@ pub enum CompilerAnswer {
     CompileUnitAnswerComptime {
         value: ConstValueId,
     },
+    CompileUnitCompileBytecode,
     GenericQueued {
         generic: GenericWorkRequest,
     },
