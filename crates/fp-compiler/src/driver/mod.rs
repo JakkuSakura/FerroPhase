@@ -116,7 +116,6 @@ impl CompilerDriver {
 
 let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             .with_extern_prelude(default_extern_prelude());
-        inferencer.seed_package_modules();
         let outcome = inferencer.infer(&mut ast)?;
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
@@ -499,16 +498,13 @@ if lir.comptime_entries.is_empty() {
         path: &FullyQualifiedPath,
     ) -> Result<HirId, CompilerDriverError> {
         let ast = self.state.typed_ast(typed_ast_id)?;
-        let std_items = self.state.typing_ctx.std_items.borrow().clone();
         let expr_res = self.state.typing_ctx.expr_resolutions.borrow().clone();
         let hir_program = match ast.kind() {
             NodeKind::Expr(expr) => HirGenerator::new()
                 .with_expr_resolution(expr_res)
-                .with_extern_items(std_items.clone())
                 .transform_expr(expr)?,
             NodeKind::File(file) => HirGenerator::with_file(&file.path)
                 .with_expr_resolution(expr_res)
-                .with_extern_items(std_items.clone())
                 .transform_file(file)?,
             NodeKind::Query(query) => HirGenerator::new().transform_query_document(query)?,
         NodeKind::Item(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {

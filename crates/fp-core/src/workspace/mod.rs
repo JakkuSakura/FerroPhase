@@ -185,3 +185,51 @@ impl WorkspaceDependency {
         }
     }
 }
+
+// ── Compiled workspace context (typer lookup) ────────────────────
+
+use crate::ast::{FunctionSignature, TypeStruct};
+use crate::module::path::QualifiedPath;
+use crate::package::PackageCrate;
+
+/// Compiled form of a workspace — all crates in topological order.
+/// The typer queries this for fully-qualified symbol lookups after
+/// checking local and module scopes.
+#[derive(Clone, Debug, Default)]
+pub struct WorkspaceContext {
+    pub crates: Vec<PackageCrate>,
+}
+
+impl WorkspaceContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push_crate(&mut self, krate: PackageCrate) {
+        self.crates.push(krate);
+    }
+
+    pub fn find_struct(&self, path: &QualifiedPath) -> Option<&TypeStruct> {
+        for krate in self.crates.iter().rev() {
+            if let Some(s) = krate.struct_defs.get(path) {
+                return Some(s);
+            }
+        }
+        None
+    }
+
+    pub fn find_function_sig(&self, path: &QualifiedPath) -> Option<&FunctionSignature> {
+        for krate in self.crates.iter().rev() {
+            if let Some(sig) = krate.function_sigs.get(path) {
+                return Some(sig);
+            }
+        }
+        None
+    }
+
+    pub fn has_module(&self, path: &QualifiedPath) -> bool {
+        self.crates
+            .iter()
+            .any(|krate| krate.module_paths.contains(path))
+    }
+}

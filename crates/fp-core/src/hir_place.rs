@@ -1,3 +1,4 @@
+//! TODO: merge into hir::place
 use crate::hir::{self, Expr, ExprKind, Symbol};
 use crate::intrinsics::IntrinsicCallKind;
 use crate::place::{

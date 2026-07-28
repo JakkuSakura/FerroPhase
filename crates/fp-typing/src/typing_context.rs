@@ -1,9 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use fp_core::ast::{ExprResolutionTable, Item, TypeStruct, Value};
-use fp_core::module::path::QualifiedPath;
-use fp_core::package::graph::PackageGraph;
+use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
+use fp_core::workspace::WorkspaceContext;
 
 use crate::TypingDiagnostic;
 
@@ -22,14 +21,9 @@ pub struct TypingContext {
     /// Driver writes after comptime pass; typer merges into `struct_defs`.
     pub resolved_types: RefCell<HashMap<String, TypeStruct>>,
 
-    /// Package graph containing module topology and pre-parsed std items.
-    /// Set once by the CLI driver; the typer reads it for lazy module loading.
-    pub package_graph: RefCell<Option<std::rc::Rc<PackageGraph>>>,
-
-    /// Pre-parsed std-library module items, keyed by module path.
-    /// Populated by the CLI before typing. The typer loads these
-    /// lazily via `ensure_module_loaded`.
-    pub std_items: RefCell<HashMap<QualifiedPath, Vec<Item>>>,
+    /// Compiled dependency crates in topological order.
+    /// The typer queries this for fully-qualified symbol lookups.
+    pub env_ctx: std::rc::Rc<WorkspaceContext>,
 
     /// Expression resolution table: maps `ExprId` → source expression and
     /// optionally a pre-evaluated comptime value.
@@ -41,20 +35,13 @@ pub struct TypingContext {
 }
 
 impl TypingContext {
-    pub fn new() -> Self {
+    pub fn new(env_ctx: std::rc::Rc<WorkspaceContext>) -> Self {
         Self {
             resolved_consts: RefCell::new(HashMap::new()),
             resolved_types: RefCell::new(HashMap::new()),
-            package_graph: RefCell::new(None),
-            std_items: RefCell::new(HashMap::new()),
+            env_ctx,
             expr_resolutions: RefCell::new(ExprResolutionTable::default()),
             diagnostics: RefCell::new(Vec::new()),
         }
-    }
-}
-
-impl Default for TypingContext {
-    fn default() -> Self {
-        Self::new()
     }
 }

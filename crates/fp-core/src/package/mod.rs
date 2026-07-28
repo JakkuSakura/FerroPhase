@@ -90,3 +90,48 @@ pub struct PackageDescriptor {
 
 pub mod graph;
 pub mod provider;
+
+use crate::ast::{FunctionSignature, TypeEnum, TypeStruct};
+use crate::module::path::QualifiedPath;
+use std::collections::{HashMap, HashSet};
+
+/// A compiled crate — the result of type-checking a package.
+/// The driver compiles dependency packages first (embedded std,
+/// workspace dependencies) and stores the results here so the
+/// typer can look up fully-qualified symbols without re-parsing
+/// or re-type-checking.
+#[derive(Clone, Debug, Default)]
+pub struct PackageCrate {
+    pub name: String,
+    pub graph: graph::PackageGraph,
+
+    /// Compiled type and function definitions, keyed by
+    /// fully-qualified path (e.g. `["std","meta","TypeBuilder"]`).
+    pub struct_defs: HashMap<QualifiedPath, TypeStruct>,
+    pub enum_defs: HashMap<QualifiedPath, TypeEnum>,
+    pub function_sigs: HashMap<QualifiedPath, FunctionSignature>,
+    pub trait_defs: HashSet<QualifiedPath>,
+
+    /// All known module paths within this crate.
+    pub module_paths: HashSet<QualifiedPath>,
+}
+
+impl PackageCrate {
+    pub fn new(name: impl Into<String>, graph: graph::PackageGraph) -> Self {
+        let module_paths: HashSet<QualifiedPath> = graph
+            .modules()
+            .filter(|m| !m.module_path.is_empty())
+            .map(|m| QualifiedPath::new(m.module_path.clone()))
+            .collect();
+
+        Self {
+            name: name.into(),
+            graph,
+            struct_defs: HashMap::new(),
+            enum_defs: HashMap::new(),
+            function_sigs: HashMap::new(),
+            trait_defs: HashSet::new(),
+            module_paths,
+        }
+    }
+}

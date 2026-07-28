@@ -418,42 +418,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    /// Load a module's pre-parsed items from the package graph into the
-    /// typer's lookup tables. Called lazily when resolution encounters a
-    /// module path for the first time.
-    #[allow(dead_code)]
-    fn ensure_module_loaded(&mut self, path: &QualifiedPath) {
-        let items = self.typing_ctx.std_items.borrow().get(path).cloned();
-        if let Some(items) = items {
-            self.module_defs.insert(path.clone());
-            if path.segments.len() == 1 {
-                self.root_modules.insert(path.segments[0].clone());
-            }
-            self.register_qualified_items(&items, path);
-        }
-    }
-
-    /// Populate module_defs and root_modules from the package graph.
-    /// Called once at the start of typing so that name resolution
-    /// can see all known modules without mutation during lookups.
-    /// Populate module_defs and root_modules from the package graph,
-    /// and eagerly register all pre-parsed std module items.
-    /// Populate module_defs and root_modules from the package graph.
-    /// Items are loaded lazily via `ensure_module_loaded` when first
-    /// referenced during name resolution — no std-specific treatment.
-    pub fn seed_package_modules(&mut self) {
-        let graph = self.typing_ctx.package_graph.borrow();
-        let Some(ref graph) = *graph else { return };
-        for module in graph.modules() {
-            if module.module_path.is_empty() { continue; }
-            let path = QualifiedPath::new(module.module_path.clone());
-            self.module_defs.insert(path);
-            if let Some(head) = module.module_path.first() {
-                self.root_modules.insert(head.clone());
-            }
-        }
-    }
-
     pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Self {
         let mut inferencer = Self {
             ctx: None,
@@ -1241,6 +1205,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             || self.trait_defs.contains(path)
             || self.unimplemented_symbols.contains(path)
             || self.env_contains(&key)
+            || self.typing_ctx.env_ctx.find_struct(path).is_some()
+            || self.typing_ctx.env_ctx.find_function_sig(path).is_some()
     }
 
     fn resolve_locator_key(&self, locator: &Name) -> Option<QualifiedPath> {
@@ -2113,22 +2079,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             if self.module_defs.contains(&qualified) {
                 self.insert_module_alias(&alias, qualified);
                 continue;
-            }
-            // Lazy-load items from the package graph if this module
-            // is known but its items haven't been loaded yet.
-            if !self.item_exists_path(&qualified) {
-                // Try loading the parent module (e.g. for std::meta::TypeBuilder,
-                // load std::meta module items)
-                for depth in (1..qualified.segments.len()).rev() {
-                    let parent = QualifiedPath::new(
-                        qualified.segments[..depth].to_vec()
-                    );
-                    if self.module_defs.contains(&parent) {
-                        self.ensure_module_loaded(&parent);
-                    }
-                }
-                // Also try the full path (could be a module itself)
-                self.ensure_module_loaded(&qualified);
             }
             if self.item_exists_path(&qualified) {
                 self.insert_symbol_alias(&alias, qualified);

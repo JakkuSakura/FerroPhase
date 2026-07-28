@@ -4,7 +4,7 @@ use crate::module::ModuleDescriptor;
 use crate::module::ModuleId;
 use crate::package::{PackageDescriptor, PackageId};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PackageGraph {
     packages: HashMap<PackageId, PackageDescriptor>,
     modules: HashMap<ModuleId, ModuleDescriptor>,

@@ -798,16 +798,6 @@ fn lower_ast(
     let mut driver = CompilerDriver::new();
     driver.state.set_lossy(lossy.enabled);
 
-    // Always inject the embedded Ferro standard library as a package
-    // so that imports like `use std::meta::TypeBuilder` resolve.
-    let (std_graph, std_items) = crate::std_package::build_ferro_std_package_graph();
-    driver.state.typing_ctx.package_graph.replace(Some(
-        std::rc::Rc::new(std_graph)
-    ));
-    for (path, items) in std_items {
-        driver.state.typing_ctx.std_items.borrow_mut().insert(path, items);
-    }
-
     if let Some(resolver) = resolver {
         driver.state.set_module_resolver(resolver);
         driver

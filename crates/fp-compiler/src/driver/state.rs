@@ -208,7 +208,8 @@ impl Default for CompilerState {
             lir: BTreeMap::new(),
             const_values: BTreeMap::new(),
             resolved_const_values: BTreeMap::new(),
-            typing_ctx: std::rc::Rc::new(TypingContext::new()),
+            typing_ctx: std::rc::Rc::new(TypingContext::new(
+                std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()))),
             runtime_values: BTreeMap::new(),
             lossy: false,
             module_resolver: None,

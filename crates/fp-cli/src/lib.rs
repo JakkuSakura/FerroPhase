@@ -13,7 +13,6 @@ pub mod container;
 pub mod diagnostics;
 pub mod languages;
 pub mod materialize;
-pub mod std_package;
 pub mod utils;
 
 // Re-export core types for convenience, avoiding conflicts

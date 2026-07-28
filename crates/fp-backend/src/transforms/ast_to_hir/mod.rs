@@ -60,12 +60,6 @@ pub struct HirGenerator {
     module_resolution: Option<fp_core::module::resolution::ModuleResolutionContext>,
     resolved_names: ResolvedNameTable,
     expr_resolution: ExprResolutionTable,
-    /// External module items for lazy name resolution (e.g., std library).
-    /// Keyed by QualifiedPath (module path), value is the module's items.
-    extern_items: Option<std::collections::HashMap<
-        fp_core::module::path::QualifiedPath,
-        Vec<ast::Item>,
-    >>,
     target_env: TargetEnv,
     respect_cfg: bool,
 }
@@ -311,7 +305,6 @@ impl HirGenerator {
             module_resolution: None,
             resolved_names: ResolvedNameTable::new(),
             expr_resolution: ExprResolutionTable::default(),
-            extern_items: None,
             target_env: TargetEnv::host(),
             respect_cfg: true,
         }
@@ -324,24 +317,6 @@ impl HirGenerator {
 
     pub fn with_expr_resolution(mut self, expr_resolution: ExprResolutionTable) -> Self {
         self.expr_resolution = expr_resolution;
-        self
-    }
-
-    /// Store a reference to external module items (e.g., standard library)
-    /// for lazy lookup during name resolution. The HIR lowerer uses this
-    /// when a symbol isn't found in the current file — it falls back to
-    /// the external items map.
-    pub fn with_extern_items(
-        mut self,
-        items: std::collections::HashMap<
-            fp_core::module::path::QualifiedPath,
-            Vec<ast::Item>,
-        >,
-    ) -> Self {
-        for path in items.keys() {
-            self.module_defs.insert(path.clone());
-        }
-        self.extern_items = Some(items);
         self
     }
 
