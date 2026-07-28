@@ -939,6 +939,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 let direct = QualifiedPath::new(vec![name.clone()]);
                 let def = if let Some(def) = self.struct_defs.get(&direct) {
                     def.clone()
+                } else if let Some(def) = self.typing_ctx.env_ctx.find_struct(&direct) {
+                    def.clone()
                 } else {
                     let mut match_def = None;
                     for (key, def) in &self.struct_defs {
@@ -947,6 +949,19 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                                 return None;
                             }
                             match_def = Some(def.clone());
+                        }
+                    }
+                    // Also check workspace
+                    if match_def.is_none() {
+                        for krate in &self.typing_ctx.env_ctx.crates {
+                            for (key, def) in &krate.struct_defs {
+                                if key.tail() == Some(name.as_str()) {
+                                    if match_def.is_some() {
+                                        return None;
+                                    }
+                                    match_def = Some(def.clone());
+                                }
+                            }
                         }
                     }
                     let Some(def) = match_def else {
@@ -1093,6 +1108,9 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
         if let Some(def) = self.struct_defs.get(&name_path).cloned() {
             return Some((name_path, def));
+        }
+        if let Some(def) = self.typing_ctx.env_ctx.find_struct(&name_path) {
+            return Some((name_path, def.clone()));
         }
         if let Some(stripped) = Self::strip_std_prefix(&name_path) {
             if let Some(def) = self.struct_defs.get(&stripped).cloned() {

@@ -164,6 +164,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
+    fn lookup_struct(&self, path: &QualifiedPath) -> Option<TypeStruct> {
+        self.struct_defs.get(path).cloned()
+            .or_else(|| self.typing_ctx.env_ctx.find_struct(path).cloned())
+    }
+
     fn lower_infer_vars_in_ty(
         &mut self,
         ty: Ty,
@@ -1405,9 +1410,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(var, ty.clone());
             }
             Ty::ConstBlock(block) => {
-                let cv = self.fresh_type_var();
-                self.bind(cv, Ty::Expr(Box::new((*block.expr).clone())));
-                return Ok(cv);
+                let mut inner = (*block.expr).clone();
+                let var = self.infer_expr(&mut inner)?;
+                return Ok(var);
             }
             Ty::Expr(expr) => {
                 if let ExprKind::Value(value) = expr.kind() {
@@ -1425,9 +1430,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     if let Some((key_var, value_var)) = self.hashmap_args_from_locator(loc)? {
                         let map_var = self.fresh_type_var();
-                        if let Some(key) = self.resolve_locator_key(loc) {
-                            if let Some(struct_ty) = self.struct_defs.get(&key) {
+                    if let Some(key) = self.resolve_locator_key(loc) {
+                            if let Some(struct_ty) = self.lookup_struct(&key) {
                                 self.bind(map_var, Ty::Struct(struct_ty.clone()));
+                            } else if let Some(s) = self.typing_ctx.env_ctx.find_struct(&key) {
+                                self.bind(map_var, Ty::Struct(s.clone()));
                             } else {
                                 let map_ty = self.make_hashmap_struct();
                                 self.bind(map_var, Ty::Struct(map_ty));
@@ -1509,12 +1516,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         }
                                     }
                                     if !handled {
-                                        if let Some(struct_ty) = self.struct_defs.get(&key) {
+                                        if let Some(struct_ty) = self.lookup_struct(&key) {
                                             if struct_ty.generics_params.len()
                                                 == concrete_args.len()
                                             {
                                                 let concrete = self.apply_generic_args_to_struct(
-                                                    struct_ty,
+                                                    &struct_ty,
                                                     &concrete_args,
                                                 );
                                                 self.bind(var, Ty::Struct(concrete));
@@ -1670,7 +1677,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         return Ok(var);
                     }
                     if let Some(key) = resolved.clone() {
-                        if let Some(struct_ty) = self.struct_defs.get(&key) {
+                        if let Some(struct_ty) = self.lookup_struct(&key) {
                             self.bind(var, Ty::Struct(struct_ty.clone()));
                             return Ok(var);
                         }
@@ -1679,7 +1686,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             return Ok(var);
                         }
                         if let Some(stripped) = Self::strip_std_prefix(&key) {
-                            if let Some(struct_ty) = self.struct_defs.get(&stripped) {
+                            if let Some(struct_ty) = self.lookup_struct(&stripped) {
                                 self.bind(var, Ty::Struct(struct_ty.clone()));
                                 return Ok(var);
                             }
@@ -1701,7 +1708,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             }
                         }
                         for candidate in &candidates {
-                            if let Some(struct_ty) = self.struct_defs.get(candidate) {
+                            if let Some(struct_ty) = self.lookup_struct(candidate) {
                                 self.bind(var, Ty::Struct(struct_ty.clone()));
                                 return Ok(var);
                             }
