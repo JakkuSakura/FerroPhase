@@ -1473,6 +1473,7 @@ fn build_package_graph_from_workspace(
                 source: module_source,
                 exports: Vec::new(),
                 requires_features: module.required_features.clone(),
+                items: None,
             };
             graph.insert_module(module_desc);
         }

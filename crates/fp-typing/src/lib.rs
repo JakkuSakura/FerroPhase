@@ -188,7 +188,6 @@ pub trait TypeResolutionHook {
 }
 
 use crate::typing::unify::{TypeVar, TypeVarKind};
-use fp_core::module::resolution::ModuleResolutionContext;
 
 #[derive(Clone, Debug)]
 struct MethodRecord {
@@ -415,6 +414,55 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.register_qualified_symbol(&name);
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// Load a module's pre-parsed items from the package graph into the
+    /// typer's lookup tables. Called lazily when resolution encounters a
+    /// module path for the first time.
+    fn ensure_module_loaded(&mut self, path: &QualifiedPath) {
+        let items_to_load = {
+            let graph = self.typing_ctx.package_graph.borrow();
+            let Some(ref graph) = *graph else { return };
+            let mut found = None;
+            for module in graph.modules() {
+                if module.module_path.is_empty() { continue; }
+                if module.module_path.as_slice() == path.segments.as_slice() {
+                    if let Some(ref items) = module.items {
+                        found = Some((module.module_path.clone(), items.clone()));
+                    }
+                    break;
+                }
+            }
+            found
+        };
+        if let Some((module_path, items)) = items_to_load {
+            let mod_path = QualifiedPath::new(module_path.clone());
+            self.module_defs.insert(mod_path.clone());
+            if module_path.len() == 1 {
+                self.root_modules.insert(module_path[0].clone());
+            }
+            self.register_qualified_items(&items, &mod_path);
+        }
+    }
+
+    /// Populate module_defs and root_modules from the package graph.
+    /// Called once at the start of typing so that name resolution
+    /// can see all known modules without mutation during lookups.
+    pub fn seed_package_modules(&mut self) {
+        let module_paths: Vec<(Vec<String>, Option<String>)> = {
+            let graph = self.typing_ctx.package_graph.borrow();
+            let Some(ref graph) = *graph else { return };
+            graph.modules()
+                .filter(|m| !m.module_path.is_empty())
+                .map(|m| (m.module_path.clone(), m.module_path.first().cloned()))
+                .collect()
+        };
+        for (path_segments, head) in module_paths {
+            self.module_defs.insert(QualifiedPath::new(path_segments.clone()));
+            if let Some(head) = head {
+                self.root_modules.insert(head);
             }
         }
     }
@@ -3918,33 +3966,5 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
-    pub fn seed_modules_from_resolution_context(&mut self, ctx: &ModuleResolutionContext) {
-        let Some(module_id) = ctx.current_module.as_ref() else {
-            return;
-        };
-        let Some(current_module) = ctx.graph.module(module_id) else {
-            return;
-        };
-        let Some(modules) = ctx.graph.modules_for_package(&current_module.package) else {
-            return;
-        };
-
-        for module_id in modules {
-            let Some(module) = ctx.graph.module(module_id) else {
-                continue;
-            };
-            if module.module_path.is_empty() {
-                continue;
-            }
-            // `module_defs`/`root_modules` are used as a coarse existence filter for imports during
-            // typing. When compiling a single entrypoint file (e.g. `src/bin/*.fp`), we still want
-            // imports to see other crate modules listed in the workspace graph.
-            let path = QualifiedPath::new(module.module_path.clone());
-            self.module_defs.insert(path);
-            if let Some(head) = module.module_path.first() {
-                self.root_modules.insert(head.clone());
-            }
-        }
-    }
 }
 

@@ -130,6 +130,7 @@ impl TypeScriptPackageProvider {
                 source: virtual_path,
                 exports: Vec::new(),
                 requires_features: Vec::new(),
+                items: None,
             });
         }
         Ok(descriptors)

@@ -63,4 +63,12 @@ impl PackageGraph {
     pub fn modules(&self) -> impl Iterator<Item = &ModuleDescriptor> {
         self.modules.values()
     }
+
+    pub fn module_by_path(&self, path: &[String]) -> Option<&ModuleDescriptor> {
+        self.modules.values().find(|m| m.module_path == path)
+    }
+
+    pub fn module_items(&self, path: &[String]) -> Option<std::rc::Rc<Vec<crate::ast::Item>>> {
+        self.module_by_path(path).and_then(|m| m.items.clone())
+    }
 }

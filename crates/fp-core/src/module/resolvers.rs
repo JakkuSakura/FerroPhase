@@ -247,6 +247,7 @@ mod tests {
             source: VirtualPath::from_path("src/bin/fptest.fp"),
             exports: Vec::new(),
             requires_features: Vec::new(),
+            items: None,
         });
         graph.insert_module(ModuleDescriptor {
             id: config_module_id.clone(),
@@ -256,6 +257,7 @@ mod tests {
             source: VirtualPath::from_path("src/fptest/config.fp"),
             exports: Vec::new(),
             requires_features: Vec::new(),
+            items: None,
         });
 
         let resolver = FerroResolver::default();
