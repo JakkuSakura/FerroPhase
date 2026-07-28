@@ -1657,6 +1657,28 @@ impl HirGenerator {
                     self.normalize_span(ty.span()),
                 ))
             }
+            ast::Ty::ConstBlock(block) => {
+                if let ast::ExprKind::Value(value) = block.expr.kind() {
+                    match value.as_ref() {
+                        ast::Value::Type(ty) => return self.transform_type_to_hir(ty),
+                        _ => {}
+                    }
+                }
+                if let Ok(path) = self.ast_expr_to_hir_path(block.expr.as_ref(), PathResolutionScope::Type) {
+                    return Ok(hir::TypeExpr::new(
+                        self.next_id(),
+                        hir::TypeExprKind::Path(path),
+                        Span::new(self.current_file, 0, 0),
+                    ));
+                }
+                // Fall through — the const block will produce a type at comptime.
+                // Return an Infer type that gets refined on retry.
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Infer,
+                    Span::new(self.current_file, 0, 0),
+                ))
+            }
             ast::Ty::Expr(expr) => {
                 if let ast::ExprKind::Value(value) = expr.kind() {
                     match value.as_ref() {
@@ -2464,7 +2486,35 @@ impl HirGenerator {
                     self.map_visibility(&def_type.visibility),
                 )
             }
-            None => return Ok(None),
+            None => {
+                if let ast::Ty::ConstBlock(const_block) = &def_type.value {
+                    let vis = self.map_visibility(&def_type.visibility);
+                    let body_expr = self.transform_expr_to_hir(const_block.expr.as_ref())?;
+                    let ty = self.transform_type_to_hir(&def_type.value)?;
+                    let hir_item_id = self.next_id();
+                    let const_def_id = self.next_def_id();
+                    let hir_const = hir::Const {
+                        name: hir::Symbol::new(format!("__fp_type_{}", def_type.name.as_str())),
+                        ty,
+                        body: hir::Body { hir_id: self.next_id(), params: Vec::new(), value: body_expr },
+                    };
+                    self.program_def_map.insert(const_def_id, hir::Item {
+                        hir_id: hir_item_id,
+                        def_id: const_def_id,
+                        kind: hir::ItemKind::Const(hir_const.clone()),
+                        visibility: vis.clone(),
+                        span,
+                    });
+                    return Ok(Some(hir::Item {
+                        hir_id,
+                        def_id,
+                        kind: hir::ItemKind::Const(hir_const),
+                        visibility: vis,
+                        span,
+                    }));
+                }
+                return Ok(None);
+            },
         };
 
         Ok(Some(hir::Item {
