@@ -464,7 +464,8 @@ fn normalize_ty(ty: &mut Ty, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
         | Ty::Type(_)
         | Ty::RequestedType(_)
         | Ty::AnyBox(_)
-        | Ty::InferVar(_) => {}
+        | Ty::InferVar(_)
+        | Ty::Wildcard(_) => {}
     }
     Ok(())
 }

@@ -1275,7 +1275,7 @@ impl LirGenerator {
             mir::Rvalue::IntrinsicCall { kind, format, args } => {
                 let mut instructions = Vec::new();
 
-                if matches!(kind, IntrinsicCallKind::CreateStruct | IntrinsicCallKind::AddField) {
+                if matches!(kind, IntrinsicCallKind::CreateStruct | IntrinsicCallKind::AddField | IntrinsicCallKind::BuildType) {
                     let mut lir_args = Vec::with_capacity(args.len());
                     for arg in args {
                         let value = self.transform_operand(arg)?;
@@ -1294,6 +1294,11 @@ impl LirGenerator {
                                 struct_handle: iter.next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
                                 field_name: iter.next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
                                 field_type: iter.next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
+                            }
+                        }
+                        IntrinsicCallKind::BuildType => {
+                            lir::ComptimeOp::IntoType {
+                                value: lir_args.into_iter().next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
                             }
                         }
                         _ => unreachable!(),

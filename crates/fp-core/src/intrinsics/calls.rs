@@ -90,6 +90,8 @@ pub enum IntrinsicCallKind {
     AddField,
     /// `clone_struct!` — intercepted by lang system
     CloneStruct,
+    /// `build_type` — intercepted by lang system (wraps struct handle into Ty::Type)
+    BuildType,
     /// `hasfield!` - check if a struct has a specific field
     HasField,
     /// `field_count!` - get the number of fields in a struct

@@ -2637,7 +2637,8 @@ fn ty_contains_quote(ty: &ast::Ty) -> bool {
         | ast::Ty::Nothing(_)
         | ast::Ty::Type(_)
         | ast::Ty::RequestedType(_)
-        | ast::Ty::AnyBox(_) => false,
+        | ast::Ty::AnyBox(_)
+        | ast::Ty::Wildcard(_) => false,
     }
 }
 
@@ -2683,7 +2684,8 @@ fn ty_contains_type_type(ty: &ast::Ty) -> bool {
         | ast::Ty::Unknown(_)
         | ast::Ty::Nothing(_)
         | ast::Ty::Quote(_)
-        | ast::Ty::AnyBox(_) => false,
+        | ast::Ty::AnyBox(_)
+        | ast::Ty::Wildcard(_) => false,
     }
 }
 

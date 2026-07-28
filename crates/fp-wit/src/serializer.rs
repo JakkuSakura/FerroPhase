@@ -685,6 +685,7 @@ impl InterfaceBuilder {
             | Ty::GenericVar(_)
             | Ty::ErrorType(_)
             | Ty::InferVar(_)
+            | Ty::Wildcard(_)
             | Ty::TypeBinaryOp(_)
             | Ty::AnyBox(_)
             | Ty::Unknown(_)
@@ -1502,6 +1503,7 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
         | Ty::GenericVar(_)
         | Ty::ErrorType(_)
         | Ty::InferVar(_)
+        | Ty::Wildcard(_)
         | Ty::TypeBinaryOp(_)
         | Ty::AnyBox(_) => "json".to_string(),
         Ty::Expr(expr) => expr_to_wit_type(expr, self_name).unwrap_or_else(|| "json".to_string()),

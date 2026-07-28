@@ -14,6 +14,7 @@ pub enum LangInstrinstic {
     TimeNow,
     CreateStruct,
     AddField,
+    BuildType,
     FsReadDir,
     FsWalkDir,
     FsReadToString,
@@ -75,6 +76,12 @@ const LANG_INSTRINSTICS: &[LangInstrinsticSpec] = &[
         lang_item: "addfield",
         capability: LangInstrinsticCapability::ConstOnly,
         call_kind: Some(IntrinsicCallKind::AddField),
+    },
+    LangInstrinsticSpec {
+        intrinsic: LangInstrinstic::BuildType,
+        lang_item: "build_type",
+        capability: LangInstrinsticCapability::ConstOnly,
+        call_kind: Some(IntrinsicCallKind::BuildType),
     },
     LangInstrinsticSpec {
         intrinsic: LangInstrinstic::FsReadDir,

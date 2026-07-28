@@ -1334,6 +1334,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             | IntrinsicCallKind::CloneStruct => {
                 self.bind(result_var, Ty::Type(TypeType::new(Span::null())));
             }
+            IntrinsicCallKind::BuildType => {
+                let inner_var = self.fresh_type_var();
+                self.bind(result_var, Ty::Type(TypeType {
+                    span: Span::null(),
+                    inner: Some(Box::new(Ty::InferVar(TypeInferVar { id: inner_var }))),
+                }));
+            }
             IntrinsicCallKind::GenerateMethod => {
                 if arg_vars.len() != 2 {
                     self.emit_error(format!(

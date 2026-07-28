@@ -3442,6 +3442,30 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         let key = match self.resolve_locator_key(locator) {
             Some(key) => key,
             None => {
+                // In value position, names like i64, bool, str, type
+                // refer to types — bind them as type-level values.
+                if let Some(ident) = locator.as_ident() {
+                    let name = ident.as_str();
+                    if name == "type" {
+                        let var = self.fresh_type_var();
+                        self.bind(var, Ty::Type(TypeType::new(Span::null())));
+                        return Ok((var, Some(ResolvedName {
+                            namespace: ResolvedNameNamespace::Type,
+                            path: QualifiedPath::new(vec![name.to_string()]),
+                        })));
+                    }
+                    if let Some(prim) = crate::typing::unify::primitive_from_name(name) {
+                        let var = self.fresh_type_var();
+                        self.bind(var, Ty::Type(TypeType {
+                            span: Span::null(),
+                            inner: Some(Box::new(Ty::Primitive(prim))),
+                        }));
+                        return Ok((var, Some(ResolvedName {
+                            namespace: ResolvedNameNamespace::Type,
+                            path: QualifiedPath::new(vec![name.to_string()]),
+                        })));
+                    }
+                }
                 self.emit_error(format!("unresolved symbol: {}", locator));
                 return Ok((self.error_type_var(), None));
             }

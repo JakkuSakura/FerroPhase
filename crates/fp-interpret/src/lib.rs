@@ -2,7 +2,7 @@ mod vm;
 
 use std::collections::HashMap;
 
-use fp_core::ast::{Ty, TypeStruct, TypeUnknown, Value, ValueList, ValueMapEntry, ValueString, ValueTuple};
+use fp_core::ast::{Ty, TypeStruct, TypeType, TypeUnknown, Value, ValueList, ValueMapEntry, ValueString, ValueTuple};
 use fp_core::lir::{
     BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirConstant, LirFunction,
     LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue,
@@ -344,6 +344,23 @@ impl LirInterpreter {
                     }
                     self.state.objects[handle] = new_val;
                     self.wr(dst, handle as u64);
+                    Ok(())
+                }
+                ComptimeOp::IntoType { value } => {
+                    let handle = self.resolve_raw(value)? as usize;
+                    let struct_val = self.state.objects.get(handle)
+                        .ok_or_else(|| VmError::Runtime("type handle out of range".into()))?;
+                    let struct_ty = match struct_val {
+                        Value::Type(Ty::Struct(s)) => s.clone(),
+                        _ => return Err(VmError::Runtime("expected struct type in IntoType".into())),
+                    };
+                    let wrapped = Value::Type(Ty::Type(TypeType {
+                        span: fp_core::span::Span::null(),
+                        inner: Some(Box::new(Ty::Struct(struct_ty))),
+                    }));
+                    let new_handle = self.state.objects.len() as u64;
+                    self.state.objects.push(wrapped);
+                    self.wr(dst, new_handle);
                     Ok(())
                 }
             },

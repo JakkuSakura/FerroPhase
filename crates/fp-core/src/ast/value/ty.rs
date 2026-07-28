@@ -149,6 +149,7 @@ common_enum! {
         TypeBinaryOp(Box<TypeBinaryOp>),
         AnyBox(AnyBox),
         InferVar(TypeInferVar),
+        Wildcard(TypeWildcard),
     }
 
 }
@@ -577,7 +578,8 @@ common_struct! {
 }
 plain_type! { TypeUnknown }
 plain_type! { TypeNothing }
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+plain_type! { TypeWildcard }
+#[derive(Clone, Debug, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TypeType {
     #[serde(default)]
     pub span: Span,
@@ -585,20 +587,6 @@ pub struct TypeType {
     /// None = opaque (not yet evaluated); Some = known concrete type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inner: Option<Box<Ty>>,
-}
-
-impl PartialEq for TypeType {
-    fn eq(&self, other: &Self) -> bool {
-        self.inner == other.inner
-    }
-}
-
-impl Eq for TypeType {}
-
-impl std::hash::Hash for TypeType {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.inner.hash(state);
-    }
 }
 impl TypeType {
     pub fn new(span: Span) -> Self {

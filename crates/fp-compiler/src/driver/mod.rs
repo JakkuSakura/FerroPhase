@@ -7,7 +7,7 @@ pub use state::CompilerState;
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprKind, ExprSplice, ExprSplicePending,
-    Item, ItemChunk, ItemDefConst, ItemKind, Node, NodeKind, Ty, Value,
+    Item, ItemChunk, ItemDefConst, ItemKind, Node, NodeKind, Ty, TypeType, Value,
 };
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::mir;
@@ -484,9 +484,21 @@ if lir.comptime_entries.is_empty() {
 
         // If the final evaluated value is a struct type, store it in
         // resolved_types so the typer can find it on the retry pass.
-        if let Value::Type(Ty::Struct(ref struct_ty)) = last {
+        // Also handles struct types wrapped in Ty::Type(TypeType { inner: ... }).
+        let struct_ty = match &last {
+            Value::Type(Ty::Struct(ref struct_ty)) => Some(struct_ty.clone()),
+            Value::Type(Ty::Type(TypeType { inner: Some(ref inner), .. })) => {
+                if let Ty::Struct(ref struct_ty) = **inner {
+                    Some(struct_ty.clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(struct_ty) = struct_ty {
             self.state.typing_ctx.resolved_types.borrow_mut()
-                .insert(struct_ty.name.as_str().to_string(), struct_ty.clone());
+                .insert(struct_ty.name.as_str().to_string(), struct_ty);
         }
 
         self.state.insert_const_value(value_id.clone(), last);

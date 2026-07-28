@@ -1038,6 +1038,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(())
             }
             (Ty::Nothing(_), _) | (_, Ty::Nothing(_)) => Ok(()),
+            (Ty::Type(a), Ty::Type(b)) => {
+                match (&a.inner, &b.inner) {
+                    (None, None) => Ok(()),
+                    (None, Some(_)) | (Some(_), None) => Ok(()),
+                    (Some(a_inner), Some(b_inner)) => {
+                        let a_var = self.bind_concrete_ty((**a_inner).clone());
+                        let b_var = self.bind_concrete_ty((**b_inner).clone());
+                        self.unify(a_var, b_var)
+                    }
+                }
+            }
             (left, right) if left == right || quote_item_compatible(&left, &right) => Ok(()),
             (left, right) => Err(self.error_with_current_span(format!(
                 "concrete type mismatch: {} vs {}{}",
@@ -1157,6 +1168,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Any(_) => self.bind(var, Ty::Any(TypeAny)),
             Ty::ErrorType(_) => self.bind_error(var),
             Ty::InferVar(infer) => return Ok(infer.id),
+            Ty::Wildcard(_) => {
+                let var = self.fresh_type_var();
+                return Ok(var);
+            }
             Ty::TypeBinaryOp(op) => {
                 let op = op.as_ref();
                 match op.kind {
@@ -1333,10 +1348,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(var, resolved);
             }
             Ty::Type(tt) => {
-                if let Some(ref inner) = tt.inner {
-                    return self.type_from_ast_ty(inner);
+                match &tt.inner {
+                    None => {
+                        self.bind(var, Ty::Type(TypeType { span: tt.span, inner: None }));
+                    }
+                    Some(inner) if matches!(inner.as_ref(), Ty::Wildcard(_)) => {
+                        let inner_var = self.fresh_type_var();
+                        self.bind(var, Ty::Type(TypeType {
+                            span: tt.span,
+                            inner: Some(Box::new(Ty::InferVar(TypeInferVar { id: inner_var }))),
+                        }));
+                    }
+                    Some(inner_ty) => {
+                        let inner_var = self.type_from_ast_ty(inner_ty)?;
+                        let resolved = self.resolve_to_ty(inner_var)?;
+                        self.bind(var, Ty::Type(TypeType {
+                            span: tt.span,
+                            inner: Some(Box::new(resolved)),
+                        }));
+                    }
                 }
-                self.bind(var, ty.clone());
             }
             Ty::RequestedType(_) => {
                 self.bind(var, ty.clone());
@@ -1852,7 +1883,7 @@ fn quote_item_kind(ty: &Ty) -> Option<&'static str> {
     }
 }
 
-fn primitive_from_name(name: &str) -> Option<TypePrimitive> {
+pub(crate) fn primitive_from_name(name: &str) -> Option<TypePrimitive> {
     use TypePrimitive::Int;
     match name {
         "i8" => Some(Int(TypeInt::I8)),

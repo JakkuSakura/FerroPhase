@@ -284,13 +284,22 @@ fn parse_cast(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
         }
         let ty = parse_simple_type(&mut probe)?;
         *input = probe;
-        let span = span_from_expr(&expr);
-        expr = ExprKind::Cast(ExprCast {
-            span,
-            expr: Box::new(expr),
-            ty,
-        })
-        .into();
+        // `expr as type<_>` or `expr as type<Concrete>` → intrinsic call
+        if let Ty::Type(_) = ty {
+            expr = ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                IntrinsicCallKind::BuildType,
+                vec![expr.clone()],
+                Vec::new(),
+            )).into();
+        } else {
+            let span = span_from_expr(&expr);
+            expr = ExprKind::Cast(ExprCast {
+                span,
+                expr: Box::new(expr),
+                ty,
+            })
+            .into();
+        }
     }
     Ok(expr)
 }
@@ -304,13 +313,21 @@ fn parse_cast_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr>
         }
         let ty = parse_simple_type(&mut probe)?;
         *input = probe;
-        let span = span_from_expr(&expr);
-        expr = ExprKind::Cast(ExprCast {
-            span,
-            expr: Box::new(expr),
-            ty,
-        })
-        .into();
+        if let Ty::Type(_) = ty {
+            expr = ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                IntrinsicCallKind::BuildType,
+                vec![expr.clone()],
+                Vec::new(),
+            )).into();
+        } else {
+            let span = span_from_expr(&expr);
+            expr = ExprKind::Cast(ExprCast {
+                span,
+                expr: Box::new(expr),
+                ty,
+            })
+            .into();
+        }
     }
     Ok(expr)
 }

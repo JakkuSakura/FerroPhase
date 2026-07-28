@@ -1,6 +1,8 @@
 use super::*;
 use fp_core::ast::ImplTraits;
 use fp_core::ast::TypeNothing;
+use fp_core::ast::TypeType;
+use fp_core::ast::TypeWildcard;
 
 pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     let _is_unsafe = expect_keyword(input, Keyword::Unsafe).is_ok();
@@ -291,11 +293,42 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             }));
         }
     }
-    let path = match &name {
-        Name::Path(path) => Some(path),
-        _ => None,
+    let (bare_path, parameter_path) = match &name {
+        Name::Path(p) => (Some(p), None),
+        Name::ParameterPath(p) => (None, Some(p)),
+        _ => (None, None),
     };
-    if let Some(path) = path {
+    // Handle `type` keyword — both bare and with type args like `type<_>`, `type<i64>`
+    let type_name = match (&bare_path, &parameter_path) {
+        (Some(path), _) if path.prefix == PathPrefix::Plain && path.segments.len() == 1 => {
+            path.segments[0].as_str().to_string()
+        }
+        (_, Some(ppath)) if ppath.prefix == PathPrefix::Plain && ppath.segments.len() == 1 => {
+            ppath.segments[0].ident.as_str().to_string()
+        }
+        _ => String::new(),
+    };
+    if type_name == "type" {
+        if let Some(ppath) = parameter_path {
+            let args = &ppath.segments[0].args;
+            if args.len() == 1 {
+                let inner = if is_path_ident(&args[0], "_") {
+                    Some(Box::new(Ty::Wildcard(TypeWildcard)))
+                } else {
+                    Some(Box::new(args[0].clone()))
+                };
+                return Ok(Ty::Type(TypeType { span: Span::null(), inner }));
+            }
+        }
+        // bare `type` keyword (no type args) — keep old behavior via Quote
+        return Ok(Ty::Quote(TypeQuote {
+            span: Span::null(),
+            kind: QuoteFragmentKind::Type,
+            item: None,
+            inner: None,
+        }));
+    }
+    if let Some(path) = bare_path {
         if path.prefix == PathPrefix::Plain && path.segments.len() == 1 {
             match path.segments[0].as_str() {
                 "item" => {
@@ -322,14 +355,6 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                         inner: None,
                     }));
                 }
-                "type" => {
-                    return Ok(Ty::Quote(TypeQuote {
-                        span: Span::null(),
-                        kind: QuoteFragmentKind::Type,
-                        item: None,
-                        inner: None,
-                    }));
-                }
                 "bool" => return Ok(Ty::Primitive(TypePrimitive::Bool)),
                 "str" | "string" => return Ok(Ty::Primitive(TypePrimitive::String)),
                 "i8" => return Ok(Ty::Primitive(TypePrimitive::Int(TypeInt::I8))),
@@ -344,6 +369,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                 "u128" => return Ok(Ty::Primitive(TypePrimitive::Int(TypeInt::U128))),
                 "f32" => return Ok(Ty::Primitive(TypePrimitive::Decimal(DecimalType::F32))),
                 "f64" => return Ok(Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64))),
+                "_" => return Ok(Ty::Wildcard(TypeWildcard)),
                 _ => {}
             }
         }
@@ -646,4 +672,19 @@ pub(crate) fn parse_optional_generic_params(
     expect_symbol(&mut probe, ">")?;
     *input = probe;
     Ok(params)
+}
+
+fn is_path_ident(ty: &Ty, name: &str) -> bool {
+    match ty {
+        Ty::Expr(expr) => match expr.kind() {
+            ExprKind::Name(Name::Path(path)) => {
+                path.prefix == PathPrefix::Plain
+                    && path.segments.len() == 1
+                    && path.segments[0].as_str() == name
+            }
+            _ => false,
+        },
+        Ty::Wildcard(_) => name == "_",
+        _ => false,
+    }
 }

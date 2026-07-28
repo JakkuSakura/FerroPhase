@@ -270,6 +270,7 @@ pub enum LirIntrinsicKind {
 pub enum ComptimeOp {
     CreateStruct { name: LirValue },
     AddField { struct_handle: LirValue, field_name: LirValue, field_type: LirValue },
+    IntoType { value: LirValue },
 }
 
 #[derive(Debug, Clone, PartialEq)]
