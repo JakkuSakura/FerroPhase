@@ -629,6 +629,7 @@ fn parse_type_node(node: TsNode, source: &str) -> Result<Ty> {
                 name,
                 generics_params: Vec::new(),
                 repr: fp_core::ast::ReprOptions::default(),
+                method_sigs: vec![],
                 fields,
             }))
         }

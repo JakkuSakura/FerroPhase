@@ -184,6 +184,7 @@ impl<'a> Lowering<'a> {
                 name: type_name_or_fallback(typedef, type_id),
                 generics_params: Vec::new(),
                 repr: ReprOptions::default(),
+                method_sigs: vec![],
                 fields: self.lower_record_fields(record)?,
             })),
             TypeDefKind::Tuple(tuple) => Ok(Ty::Tuple(TypeTuple {
@@ -197,6 +198,7 @@ impl<'a> Lowering<'a> {
                 name: type_name_or_fallback(typedef, type_id),
                 generics_params: Vec::new(),
                 repr: ReprOptions::default(),
+                method_sigs: vec![],
                 fields: flags
                     .flags
                     .iter()

@@ -415,10 +415,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ItemKind::Impl(impl_block) => {
                     if let Some(self_name) = impl_self_ty_name(&impl_block.self_ty) {
+                        let struct_path = prefix.with_segment(self_name);
                         for child in &impl_block.items {
                             if let ItemKind::DefFunction(func) = child.kind() {
-                                let key = prefix.with_segment(self_name.clone()).with_segment(func.name.as_str().to_string());
-                                self.function_signatures.insert(key, func.sig.clone());
+                                // Store the method sig directly on the struct
+                                if let Some(s) = self.struct_defs.get_mut(&struct_path) {
+                                    s.method_sigs.push((func.name.as_str().to_string(), func.sig.clone()));
+                                }
                             }
                         }
                     }

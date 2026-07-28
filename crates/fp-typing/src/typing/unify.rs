@@ -164,7 +164,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    fn lookup_struct(&self, path: &QualifiedPath) -> Option<TypeStruct> {
+    pub(crate) fn lookup_struct(&self, path: &QualifiedPath) -> Option<TypeStruct> {
         self.struct_defs.get(path).cloned()
             .or_else(|| self.typing_ctx.env_ctx.find_struct(path).cloned())
     }

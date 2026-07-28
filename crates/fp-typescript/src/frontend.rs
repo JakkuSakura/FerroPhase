@@ -632,6 +632,7 @@ fn lower_type_alias(
                 name: ident.clone(),
                 generics_params: Vec::new(),
                 repr: ReprOptions::default(),
+                method_sigs: vec![],
                 fields: structural.fields.clone(),
             },
         };
@@ -745,6 +746,7 @@ fn lower_interface_decl(
             name: ident.clone(),
             generics_params: Vec::new(),
             repr: ReprOptions::default(),
+            method_sigs: vec![],
             fields: merged_fields,
         },
     };

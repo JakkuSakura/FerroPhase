@@ -3202,6 +3202,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     break;
                 }
             }
+            // Check TypeStruct.method_sigs (workspace structs)
+            if let Some(struct_ty) = self.lookup_struct(candidate) {
+                if let Some((_, sig)) = struct_ty.method_sigs.iter().find(|(n, _)| n == field.as_str()) {
+                    let sig = sig.clone();
+                    let ret_var = if let Some(ret_ty) = &sig.ret_ty {
+                        self.type_from_ast_ty(ret_ty)?
+                    } else {
+                        let unit = self.fresh_type_var();
+                        self.bind(unit, Ty::Unit(TypeUnit));
+                        unit
+                    };
+                    return Ok(ret_var);
+                }
+            }
         }
         if let Some(record) = record {
             if let Some(expected) = record.receiver_ty.as_ref() {

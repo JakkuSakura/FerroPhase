@@ -334,6 +334,7 @@ fn lower_class_def(def: &py_ast::StmtClassDef<TextRange>) -> CoreResult<ItemDefS
             name: Ident::new(def.name.as_str()),
             generics_params: Vec::new(),
             repr: ReprOptions::default(),
+            method_sigs: vec![],
             fields,
         },
     })
