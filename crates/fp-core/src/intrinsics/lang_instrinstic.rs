@@ -68,13 +68,13 @@ const LANG_INSTRINSTICS: &[LangInstrinsticSpec] = &[
         intrinsic: LangInstrinstic::CreateStruct,
         lang_item: "create_struct",
         capability: LangInstrinsticCapability::ConstOnly,
-        call_kind: None,
+        call_kind: Some(IntrinsicCallKind::CreateStruct),
     },
     LangInstrinsticSpec {
         intrinsic: LangInstrinstic::AddField,
         lang_item: "addfield",
         capability: LangInstrinsticCapability::ConstOnly,
-        call_kind: None,
+        call_kind: Some(IntrinsicCallKind::AddField),
     },
     LangInstrinsticSpec {
         intrinsic: LangInstrinstic::FsReadDir,

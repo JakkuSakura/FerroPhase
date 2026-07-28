@@ -240,6 +240,7 @@ fn intrinsic_macro_kind(name: &str) -> Option<IntrinsicCallKind> {
         "type_name" => Some(IntrinsicCallKind::TypeName),
         "type_info" => Some(IntrinsicCallKind::TypeOf),
         "type_of" => Some(IntrinsicCallKind::TypeOf),
+        "clone_struct" => Some(IntrinsicCallKind::CloneStruct),
         "hasfield" => Some(IntrinsicCallKind::HasField),
         "count_fields" => Some(IntrinsicCallKind::FieldCount),
         "field_count" => Some(IntrinsicCallKind::FieldCount),

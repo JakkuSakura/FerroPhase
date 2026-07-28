@@ -28,6 +28,12 @@ pub fn read(path: &Path) -> Option<&'static str> {
     generated::get(&normalized)
 }
 
+/// All embedded std source file paths relative to the virtual root.
+/// e.g. `["mod.fp", "meta/mod.fp", "intrinsics/mod.fp", ...]`
+pub fn module_paths() -> &'static [&'static str] {
+    generated::PATHS
+}
+
 fn normalize_relative_path(path: &Path) -> Option<String> {
     let mut parts = Vec::new();
     for component in path.components() {

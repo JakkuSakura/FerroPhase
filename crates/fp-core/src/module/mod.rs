@@ -72,10 +72,6 @@ pub struct ModuleDescriptor {
     pub source: VirtualPath,
     pub exports: Vec<SymbolDescriptor>,
     pub requires_features: Vec<FeatureRef>,
-    /// Pre-parsed AST items for this module. Populated by the CLI
-    /// for embedded standard-library modules. The typer loads these
-    /// lazily via `register_qualified_items` on first reference.
-    pub items: Option<std::rc::Rc<Vec<crate::ast::Item>>>,
 }
 
 pub mod path;

@@ -84,6 +84,12 @@ pub enum IntrinsicCallKind {
     TypeName,
     /// `type_of!` - get the type of an expression as a type value
     TypeOf,
+    /// `create_struct` — intercepted by lang system (typer treats as normal fn)
+    CreateStruct,
+    /// `addfield` — intercepted by lang system
+    AddField,
+    /// `clone_struct!` — intercepted by lang system
+    CloneStruct,
     /// `hasfield!` - check if a struct has a specific field
     HasField,
     /// `field_count!` - get the number of fields in a struct

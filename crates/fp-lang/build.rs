@@ -14,12 +14,18 @@ fn main() {
 
     let mut generated =
         String::from("pub fn get(path: &str) -> Option<&'static str> {\n    match path {\n");
-    for (relative, absolute) in files {
+    for (relative, absolute) in &files {
         generated.push_str(&format!(
             "        {relative:?} => Some(include_str!({absolute:?})),\n"
         ));
     }
-    generated.push_str("        _ => None,\n    }\n}\n");
+    generated.push_str("        _ => None,\n    }\n}\n\n");
+
+    generated.push_str("pub const PATHS: &[&str] = &[\n");
+    for (relative, _) in &files {
+        generated.push_str(&format!("    {relative:?},\n"));
+    }
+    generated.push_str("];\n");
 
     fs::write(output, generated).expect("write embedded std");
 }

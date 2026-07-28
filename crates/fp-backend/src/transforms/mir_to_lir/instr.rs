@@ -1275,6 +1275,40 @@ impl LirGenerator {
             mir::Rvalue::IntrinsicCall { kind, format, args } => {
                 let mut instructions = Vec::new();
 
+                if matches!(kind, IntrinsicCallKind::CreateStruct | IntrinsicCallKind::AddField) {
+                    let mut lir_args = Vec::with_capacity(args.len());
+                    for arg in args {
+                        let value = self.transform_operand(arg)?;
+                        instructions.extend(self.take_queued_instructions());
+                        lir_args.push(value);
+                    }
+                    let comptime_op = match kind {
+                        IntrinsicCallKind::CreateStruct => {
+                            lir::ComptimeOp::CreateStruct {
+                                name: lir_args.into_iter().next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
+                            }
+                        }
+                        IntrinsicCallKind::AddField => {
+                            let mut iter = lir_args.into_iter();
+                            lir::ComptimeOp::AddField {
+                                struct_handle: iter.next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
+                                field_name: iter.next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
+                                field_type: iter.next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
+                            }
+                        }
+                        _ => unreachable!(),
+                    };
+                    let instr_id = self.next_id();
+                    instructions.push(lir::LirInstruction {
+                        id: instr_id,
+                        kind: lir::LirInstructionKind::ComptimeOp(comptime_op),
+                        type_hint: destination_lir_ty.clone(),
+                        debug_info: None,
+                    });
+                    result_value = Some(lir::LirValue::Register(instr_id));
+                    return Ok(instructions);
+                }
+
                 let lir_kind = match kind {
                     IntrinsicCallKind::Format => lir::LirIntrinsicKind::Format,
                     IntrinsicCallKind::TimeNow => lir::LirIntrinsicKind::TimeNow,

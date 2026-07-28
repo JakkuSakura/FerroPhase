@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use fp_core::ast::{Value, ValueList, ValueMapEntry, ValueString, ValueTuple};
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, LirBasicBlock, LirConstant, LirFunction,
+    BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirConstant, LirFunction,
     LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue,
     RegisterId,
 };
@@ -305,8 +305,19 @@ impl LirInterpreter {
                 self.wr(dst, 0);
                 Ok(())
             }
-            LirInstructionKind::ComptimeOp(_op) => {
-                Ok(())
+            LirInstructionKind::ComptimeOp(op) => match op {
+                ComptimeOp::CreateStruct { .. } => {
+                    let obj = Value::Unit(Default::default());
+                    let handle = self.state.objects.len() as u64;
+                    self.state.objects.push(obj);
+                    self.wr(dst, handle);
+                    Ok(())
+                }
+                ComptimeOp::AddField { struct_handle, .. } => {
+                    let handle = self.resolve_raw(struct_handle)?;
+                    self.wr(dst, handle);
+                    Ok(())
+                }
             },
             LirInstructionKind::InlineAsm { .. }
             | LirInstructionKind::LandingPad { .. }

@@ -422,48 +422,46 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     /// typer's lookup tables. Called lazily when resolution encounters a
     /// module path for the first time.
     fn ensure_module_loaded(&mut self, path: &QualifiedPath) {
-        let items_to_load = {
-            let graph = self.typing_ctx.package_graph.borrow();
-            let Some(ref graph) = *graph else { return };
-            let mut found = None;
-            for module in graph.modules() {
-                if module.module_path.is_empty() { continue; }
-                if module.module_path.as_slice() == path.segments.as_slice() {
-                    if let Some(ref items) = module.items {
-                        found = Some((module.module_path.clone(), items.clone()));
-                    }
-                    break;
-                }
+        let items = self.typing_ctx.std_items.borrow().get(path).cloned();
+        if let Some(items) = items {
+            self.module_defs.insert(path.clone());
+            if path.segments.len() == 1 {
+                self.root_modules.insert(path.segments[0].clone());
             }
-            found
-        };
-        if let Some((module_path, items)) = items_to_load {
-            let mod_path = QualifiedPath::new(module_path.clone());
-            self.module_defs.insert(mod_path.clone());
-            if module_path.len() == 1 {
-                self.root_modules.insert(module_path[0].clone());
-            }
-            self.register_qualified_items(&items, &mod_path);
+            self.register_qualified_items(&items, path);
         }
     }
 
     /// Populate module_defs and root_modules from the package graph.
     /// Called once at the start of typing so that name resolution
     /// can see all known modules without mutation during lookups.
+    /// Populate module_defs and root_modules from the package graph,
+    /// and eagerly register all pre-parsed std module items.
     pub fn seed_package_modules(&mut self) {
-        let module_paths: Vec<(Vec<String>, Option<String>)> = {
+        {
             let graph = self.typing_ctx.package_graph.borrow();
-            let Some(ref graph) = *graph else { return };
-            graph.modules()
-                .filter(|m| !m.module_path.is_empty())
-                .map(|m| (m.module_path.clone(), m.module_path.first().cloned()))
-                .collect()
-        };
-        for (path_segments, head) in module_paths {
-            self.module_defs.insert(QualifiedPath::new(path_segments.clone()));
-            if let Some(head) = head {
-                self.root_modules.insert(head);
+            if let Some(ref graph) = *graph {
+                for module in graph.modules() {
+                    if module.module_path.is_empty() { continue; }
+                    let path = QualifiedPath::new(module.module_path.clone());
+                    self.module_defs.insert(path);
+                    if let Some(head) = module.module_path.first() {
+                        self.root_modules.insert(head.clone());
+                    }
+                }
             }
+        }
+        // Eagerly load all pre-parsed std items
+        let std_items: Vec<_> = self.typing_ctx.std_items.borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        for (path, items) in std_items {
+            self.module_defs.insert(path.clone());
+            if path.segments.len() == 1 {
+                self.root_modules.insert(path.segments[0].clone());
+            }
+            self.register_qualified_items(&items, &path);
         }
     }
 

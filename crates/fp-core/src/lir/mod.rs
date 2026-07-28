@@ -268,6 +268,8 @@ pub enum LirIntrinsicKind {
 /// Only the LIR interpreter handles these; codegen backends skip them.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComptimeOp {
+    CreateStruct { name: LirValue },
+    AddField { struct_handle: LirValue, field_name: LirValue, field_type: LirValue },
 }
 
 #[derive(Debug, Clone, PartialEq)]

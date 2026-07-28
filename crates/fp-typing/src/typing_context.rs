@@ -1,7 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
+use fp_core::ast::{ExprResolutionTable, Item, TypeStruct, Value};
+use fp_core::module::path::QualifiedPath;
 use fp_core::package::graph::PackageGraph;
 
 use crate::TypingDiagnostic;
@@ -25,6 +26,11 @@ pub struct TypingContext {
     /// Set once by the CLI driver; the typer reads it for lazy module loading.
     pub package_graph: RefCell<Option<std::rc::Rc<PackageGraph>>>,
 
+    /// Pre-parsed std-library module items, keyed by module path.
+    /// Populated by the CLI before typing. The typer loads these
+    /// lazily via `ensure_module_loaded`.
+    pub std_items: RefCell<HashMap<QualifiedPath, Vec<Item>>>,
+
     /// Expression resolution table: maps `ExprId` → source expression and
     /// optionally a pre-evaluated comptime value.
     pub expr_resolutions: RefCell<ExprResolutionTable>,
@@ -40,6 +46,7 @@ impl TypingContext {
             resolved_consts: RefCell::new(HashMap::new()),
             resolved_types: RefCell::new(HashMap::new()),
             package_graph: RefCell::new(None),
+            std_items: RefCell::new(HashMap::new()),
             expr_resolutions: RefCell::new(ExprResolutionTable::default()),
             diagnostics: RefCell::new(Vec::new()),
         }
