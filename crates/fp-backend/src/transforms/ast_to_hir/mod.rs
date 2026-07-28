@@ -1650,12 +1650,22 @@ impl HirGenerator {
                 };
                 Ok(expr)
             }
-            ast::Ty::Quote(_)
-            | ast::Ty::Type(_) => {
+            ast::Ty::Quote(_) => {
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Never,
                     self.normalize_span(ty.span()),
+                ))
+            }
+            // FIXME: Ty::Type lowered as I64 is a pragmatic hack — the
+            // comptime type handle is stored as u64, so I64 allows struct
+            // construction without tripping over Never/Infer→error_ty().
+            // Should be a dedicated HIR/MIR variant for comp time type values.
+            ast::Ty::Type(_) => {
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I64)),
+                    ty.span(),
                 ))
             }
             ast::Ty::ConstBlock(block) => {
