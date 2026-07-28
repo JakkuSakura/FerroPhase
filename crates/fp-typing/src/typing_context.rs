@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
+use fp_core::module::path::QualifiedPath;
 use fp_core::module::resolution::ModuleResolutionContext;
 
 use crate::TypingDiagnostic;
@@ -20,7 +21,7 @@ pub struct TypingContext {
 
     /// Struct type definitions resolved via comptime evaluation.
     /// Driver writes after comptime pass; typer merges into `struct_defs`.
-    pub resolved_types: RefCell<HashMap<u64, TypeStruct>>,
+    pub resolved_types: RefCell<HashMap<String, TypeStruct>>,
 
     /// Per-AST module resolution context (package graph, resolvers).
     /// Driver sets before each typing pass.
@@ -53,6 +54,11 @@ impl TypingContext {
     pub(crate) fn seed_inferencer<'ctx>(&self, inferencer: &mut AstTypeInferencer<'ctx>) {
         if let Some(ctx) = self.module_resolution.borrow().as_ref() {
             inferencer.seed_modules_from_resolution_context(ctx);
+        }
+        let types = std::mem::take(&mut *self.resolved_types.borrow_mut());
+        for (name, struct_ty) in types {
+            let path = QualifiedPath::new(vec![name.clone()]);
+            inferencer.struct_defs.insert(path, struct_ty);
         }
     }
 }

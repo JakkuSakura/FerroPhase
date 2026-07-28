@@ -980,26 +980,6 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::CreateStruct => {
-            if invoke.args.len() != 1 {
-                return None;
-            }
-            Some(ExprIntrinsicCall::new(
-                kind,
-                vec![invoke.args[0].clone()],
-                invoke.kwargs.clone(),
-            ))
-        }
-        IntrinsicCallKind::AddField => {
-            if invoke.args.len() != 3 {
-                return None;
-            }
-            Some(ExprIntrinsicCall::new(
-                kind,
-                invoke.args.clone(),
-                invoke.kwargs.clone(),
-            ))
-        }
         IntrinsicCallKind::CatchUnwind => Some(ExprIntrinsicCall::new(
             kind,
             invoke.args.clone(),
@@ -1050,7 +1030,6 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         | IntrinsicCallKind::ReflectFields
         | IntrinsicCallKind::HasMethod
         | IntrinsicCallKind::TypeName
-        | IntrinsicCallKind::CloneStruct
         | IntrinsicCallKind::HasField
         | IntrinsicCallKind::FieldCount
         | IntrinsicCallKind::MethodCount

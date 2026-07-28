@@ -305,19 +305,8 @@ impl LirInterpreter {
                 self.wr(dst, 0);
                 Ok(())
             }
-            LirInstructionKind::ComptimeOp(op) => match op {
-                ComptimeOp::CreateStruct { .. } => {
-                    let obj = Value::Unit(Default::default());
-                    let handle = self.state.objects.len() as u64;
-                    self.state.objects.push(obj);
-                    self.wr(dst, handle);
-                    Ok(())
-                }
-                ComptimeOp::AddField { struct_handle, .. } => {
-                    let handle = self.resolve_raw(struct_handle)?;
-                    self.wr(dst, handle);
-                    Ok(())
-                }
+            LirInstructionKind::ComptimeOp(_op) => {
+                Ok(())
             },
             LirInstructionKind::InlineAsm { .. }
             | LirInstructionKind::LandingPad { .. }

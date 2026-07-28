@@ -488,6 +488,13 @@ impl CompilerDriver {
             count += 1;
         }
 
+        // If the final evaluated value is a struct type, store it in
+        // resolved_types so the typer can find it on the retry pass.
+        if let Value::Type(Ty::Struct(ref struct_ty)) = last {
+            self.state.typing_ctx.resolved_types.borrow_mut()
+                .insert(struct_ty.name.as_str().to_string(), struct_ty.clone());
+        }
+
         self.state.insert_const_value(value_id.clone(), last);
         Ok(count)
     }

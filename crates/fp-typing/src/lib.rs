@@ -1727,10 +1727,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             ItemKind::DefType(def) => {
                 self.record_unimplemented_symbol(&def.name, &def.attrs);
                 self.register_symbol(&def.name);
-                // Type the value to let CreateStruct/AddField intrinsics populate struct_defs
+                // Type the value (const block or direct expression). Struct types
+                // are resolved via comptime eval and seeded into struct_defs on retry.
                 let _ = self.type_from_ast_ty(&def.value);
-                // Look up the struct built by intrinsics (or from a prior comptime pass)
-                let path = QualifiedPath::new(vec![def.name.as_str().to_string()]);
+                // Look up the struct by its qualified name
+                let path = if self.module_path.is_empty() {
+                    QualifiedPath::new(vec![def.name.as_str().to_string()])
+                } else {
+                    self.module_path.with_segment(def.name.as_str().to_string())
+                };
                 if let Some(struct_def) = self.struct_defs.get(&path).cloned() {
                     let var = self.symbol_var(&def.name);
                     let ty = Ty::Struct(struct_def);

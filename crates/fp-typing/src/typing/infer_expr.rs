@@ -1316,13 +1316,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(elem_var, Ty::Structural(struct_ty));
                 self.bind_vec_term(result_var, elem_var);
             }
-            IntrinsicCallKind::CreateStruct
-            | IntrinsicCallKind::CloneStruct
-            | IntrinsicCallKind::AddField
-            | IntrinsicCallKind::FieldType
+            IntrinsicCallKind::FieldType
             | IntrinsicCallKind::VecType => {
                 let expected = match call.kind {
-                    IntrinsicCallKind::AddField => 3,
                     IntrinsicCallKind::FieldType => 2,
                     IntrinsicCallKind::VecType => 1,
                     _ => 1,

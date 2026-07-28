@@ -179,6 +179,9 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         || matches!(peek_ident_like(*input), Some("true" | "false" | "null"))
     {
         let expr = parse_expr_winnow_no_struct(input, 0)?;
+        if let ExprKind::ConstBlock(const_block) = expr.kind() {
+            return Ok(Ty::ConstBlock(const_block.clone()));
+        }
         return Ok(Ty::Expr(Box::new(expr)));
     }
     let name = parse_name(input)?;
