@@ -20,7 +20,7 @@ fn make_quote_block(stmts: Vec<BlockStmt>, last_expr: Option<Expr>) -> Expr {
 fn quote_without_kind_infers_expr_when_trailing_expr_present() {
     let quote_expr = make_quote_block(vec![], Some(Expr::value(Value::int(42))));
     let mut node = Node::new(NodeKind::Expr(quote_expr));
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(!outcome.has_errors);
     match node.ty().expect("ty") {
@@ -39,7 +39,7 @@ fn quote_without_kind_infers_expr_when_trailing_expr_present() {
 fn quote_without_kind_infers_stmt_when_no_trailing_expr() {
     let quote_expr = make_quote_block(vec![BlockStmt::Noop], None);
     let mut node = Node::new(NodeKind::Expr(quote_expr));
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(!outcome.has_errors);
     match node.ty().expect("ty") {
@@ -65,7 +65,7 @@ fn splice_in_expr_requires_expr_quote_token() {
         token: Box::new(expr_token),
     }));
     let mut node_ok = Node::new(NodeKind::Expr(splice_ok));
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let out_ok = typer.infer(&mut node_ok).expect("infer ok");
     assert!(
         !out_ok.has_errors,
@@ -79,7 +79,7 @@ fn splice_in_expr_requires_expr_quote_token() {
         token: Box::new(stmt_token),
     }));
     let mut node_bad = Node::new(NodeKind::Expr(splice_bad));
-    let mut typer2 = AstTypeInferencer::new();
+    let mut typer2 = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let out_bad = typer2.infer(&mut node_bad).expect("infer bad");
     assert!(
         out_bad.has_errors,
@@ -118,7 +118,7 @@ fn splice_stmt_accepts_item_quote_list() {
     let mut node = Node::new(NodeKind::Expr(Expr::block(ExprBlock::new_stmts(vec![
         splice_stmt,
     ]))));
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(
         !outcome.has_errors,

@@ -23,7 +23,7 @@ fn loop_bottom_allows_i64_return() {
     };
 
     let mut node = Node::new(NodeKind::File(file));
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(!outcome.has_errors, "loop should be bottom type");
 }

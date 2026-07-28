@@ -39,7 +39,7 @@ fn recursive_struct_rejected_without_box() {
     };
 
     let mut node = Node::new(NodeKind::File(file));
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(outcome.has_errors, "expected recursion error");
 }
@@ -58,7 +58,7 @@ fn recursive_struct_allowed_with_box() {
     };
 
     let mut node = Node::new(NodeKind::File(file));
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(!outcome.has_errors, "boxed recursion should be allowed");
 }
@@ -81,7 +81,7 @@ fn recursive_struct_allowed_with_vec() {
     };
 
     let mut node = Node::new(NodeKind::File(file));
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(!outcome.has_errors, "vec recursion should be allowed");
 }
@@ -106,7 +106,7 @@ fn recursive_struct_allowed_with_ref() {
     };
 
     let mut node = Node::new(NodeKind::File(file));
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(!outcome.has_errors, "reference recursion should be allowed");
 }
@@ -127,7 +127,7 @@ fn recursive_struct_allowed_with_arc() {
     };
 
     let mut node = Node::new(NodeKind::File(file));
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(!outcome.has_errors, "arc recursion should be allowed");
 }
@@ -148,7 +148,7 @@ fn recursive_struct_allowed_with_rc() {
     };
 
     let mut node = Node::new(NodeKind::File(file));
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(!outcome.has_errors, "rc recursion should be allowed");
 }
@@ -169,7 +169,7 @@ fn recursive_struct_allowed_with_weak() {
     };
 
     let mut node = Node::new(NodeKind::File(file));
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(!outcome.has_errors, "weak recursion should be allowed");
 }

@@ -1,7 +1,6 @@
 use crate::{AstTypeInferencer, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::{Error, Result};
-use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::path::{PathPrefix, QualifiedPath};
 
 fn is_std_task_future_ty(ty: &Ty) -> bool {
@@ -1910,7 +1909,7 @@ mod tests {
 
     #[test]
     fn merges_structural_types_with_plus() {
-        let mut typer = AstTypeInferencer::new();
+        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new()));
 
         let lhs = Ty::Structural(TypeStructural {
             fields: vec![StructuralField::new(
@@ -1945,7 +1944,7 @@ mod tests {
 
     #[test]
     fn rejects_conflicting_field_types_on_merge() {
-        let mut typer = AstTypeInferencer::new();
+        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new()));
 
         let lhs = Ty::Structural(TypeStructural {
             fields: vec![StructuralField::new(
@@ -1974,7 +1973,7 @@ mod tests {
 
     #[test]
     fn intersects_structural_types_with_ampersand() {
-        let mut typer = AstTypeInferencer::new();
+        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new()));
 
         let lhs = Ty::Structural(TypeStructural {
             fields: vec![
@@ -2020,7 +2019,7 @@ mod tests {
 
     #[test]
     fn unify_errors_carry_active_span() {
-        let mut typer = AstTypeInferencer::new();
+        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new()));
         let span = Span::new(1, 10, 12);
         typer.current_span = Some(span);
 
@@ -2052,7 +2051,7 @@ mod tests {
 
     #[test]
     fn subtracts_fields_with_minus() {
-        let mut typer = AstTypeInferencer::new();
+        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new()));
 
         let lhs = Ty::Structural(TypeStructural {
             fields: vec![

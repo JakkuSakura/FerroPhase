@@ -2,11 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
-use fp_core::module::path::QualifiedPath;
 use fp_core::module::resolution::ModuleResolutionContext;
 
 use crate::TypingDiagnostic;
-use crate::AstTypeInferencer;
 
 /// Shared mutable state between the compiler driver and the type inferencer.
 ///
@@ -44,21 +42,6 @@ impl TypingContext {
             module_resolution: RefCell::new(None),
             expr_resolutions: RefCell::new(ExprResolutionTable::default()),
             diagnostics: RefCell::new(Vec::new()),
-        }
-    }
-
-    /// Seed an inferencer's fields from the context. Called once before each
-    /// `infer()` invocation.  The resolved consts and types stay in the
-    /// context's `RefCell`s; the inferencer reads them on-the-fly during
-    /// typing via `self.typing_ctx`.
-    pub(crate) fn seed_inferencer<'ctx>(&self, inferencer: &mut AstTypeInferencer<'ctx>) {
-        if let Some(ctx) = self.module_resolution.borrow().as_ref() {
-            inferencer.seed_modules_from_resolution_context(ctx);
-        }
-        let types = std::mem::take(&mut *self.resolved_types.borrow_mut());
-        for (name, struct_ty) in types {
-            let path = QualifiedPath::new(vec![name.clone()]);
-            inferencer.struct_defs.insert(path, struct_ty);
         }
     }
 }

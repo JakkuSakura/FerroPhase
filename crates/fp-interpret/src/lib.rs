@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use fp_core::ast::{Value, ValueList, ValueMapEntry, ValueString, ValueTuple};
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirConstant, LirFunction,
+    BasicBlockId, CallingConvention, LirBasicBlock, LirConstant, LirFunction,
     LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue,
     RegisterId,
 };

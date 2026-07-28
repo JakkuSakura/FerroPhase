@@ -29,7 +29,7 @@ pub struct CompilerState {
     const_values: BTreeMap<ConstValueId, Value>,
     /// MIR-level const values for HIR→MIR lowering seed.
     resolved_const_values: BTreeMap<String, mir::Constant>,
-    pub typing_ctx: TypingContext,
+    pub typing_ctx: std::rc::Rc<TypingContext>,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
     lossy: bool,
     module_resolver: Option<Arc<dyn CompilerModuleResolver>>,
@@ -208,7 +208,7 @@ impl Default for CompilerState {
             lir: BTreeMap::new(),
             const_values: BTreeMap::new(),
             resolved_const_values: BTreeMap::new(),
-            typing_ctx: TypingContext::new(),
+            typing_ctx: std::rc::Rc::new(TypingContext::new()),
             runtime_values: BTreeMap::new(),
             lossy: false,
             module_resolver: None,

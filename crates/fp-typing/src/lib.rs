@@ -328,7 +328,7 @@ pub struct AstTypeInferencer<'ctx> {
     comptime_exprs: Vec<Expr>,
     /// Shared mutable state with the driver: resolved consts, types,
     /// module resolution, expression resolution, diagnostics.
-    typing_ctx: Option<&'ctx crate::typing_context::TypingContext>,
+    typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>,
     /// Generic invocations with resolved concrete types ready for monomorphization.
     pending_generics: Vec<GenericMonorph>,
 }
@@ -419,9 +419,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    pub fn new() -> Self {
+    pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Self {
         let mut inferencer = Self {
             ctx: None,
+            typing_ctx,
             type_vars: Vec::new(),
             env: vec![HashMap::new()],
             generic_scopes: vec![HashSet::new()],
@@ -459,7 +460,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             resolved_names: HashMap::new(),
             generic_type_vars: HashMap::new(),
             comptime_exprs: Vec::new(),
-            typing_ctx: None,
             pending_generics: Vec::new(),
         };
         inferencer.insert_default_prelude_aliases();
@@ -468,18 +468,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub fn with_context(mut self, ctx: &'ctx SharedScopedContext) -> Self {
         self.ctx = Some(ctx);
-        self
-    }
-
-    pub fn inject_resolved_consts(&mut self, consts: HashMap<String, fp_core::ast::Value>) {
-        if let Some(ctx) = self.typing_ctx {
-            ctx.resolved_consts.borrow_mut().extend(consts);
-        }
-    }
-
-    pub fn with_typing_context(mut self, ctx: &'ctx crate::typing_context::TypingContext) -> Self {
-        ctx.seed_inferencer(&mut self);
-        self.typing_ctx = Some(ctx);
         self
     }
 
@@ -712,10 +700,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn finish(&mut self) -> TypingOutcome {
         let pending_requests = self.collect_pending_requests();
         // Flush diagnostics to shared context
-        if let Some(ctx) = self.typing_ctx {
-            let diags = std::mem::take(&mut self.diagnostics);
-            ctx.diagnostics.borrow_mut().extend(diags);
-        }
+        let diags = std::mem::take(&mut self.diagnostics);
+        self.typing_ctx.diagnostics.borrow_mut().extend(diags);
         TypingOutcome {
             resolved_names: std::mem::take(&mut self.resolved_names),
             pending_requests,
@@ -1736,7 +1722,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 } else {
                     self.module_path.with_segment(def.name.as_str().to_string())
                 };
-                if let Some(struct_def) = self.struct_defs.get(&path).cloned() {
+                let struct_def = self.struct_defs.get(&path).cloned().or_else(|| {
+                    self.typing_ctx.resolved_types.borrow().get(def.name.as_str()).cloned()
+                        .map(|s| {
+                            self.struct_defs.insert(path.clone(), s.clone());
+                            s
+                        })
+                });
+                if let Some(struct_def) = struct_def {
                     let var = self.symbol_var(&def.name);
                     let ty = Ty::Struct(struct_def);
                     if let Ok(struct_var) = self.type_from_ast_ty(&ty) {
@@ -2477,8 +2470,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ItemKind::DefConst(def) => {
                     let name = def.name.as_str().to_string();
-                    let resolved = self.typing_ctx
-                        .and_then(|ctx| ctx.resolved_consts.borrow().get(&name).cloned());
+                    let resolved = self.typing_ctx.resolved_consts.borrow().get(&name).cloned();
                     if let Some(resolved) = resolved {
                         // Already evaluated in a prior pass — bind the
                         // symbol directly and skip comptime re-request. Keep
@@ -3926,7 +3918,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
-    fn seed_modules_from_resolution_context(&mut self, ctx: &ModuleResolutionContext) {
+    pub fn seed_modules_from_resolution_context(&mut self, ctx: &ModuleResolutionContext) {
         let Some(module_id) = ctx.current_module.as_ref() else {
             return;
         };

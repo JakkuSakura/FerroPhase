@@ -118,12 +118,12 @@ impl CompilerDriver {
             self.state.module_resolution(ast_id).cloned()
         );
 
-        let outcome = {
-            let mut inferencer = AstTypeInferencer::new()
-                .with_typing_context(&self.state.typing_ctx)
-                .with_extern_prelude(default_extern_prelude());
-            inferencer.infer(&mut ast)?
-        };
+        let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
+            .with_extern_prelude(default_extern_prelude());
+        if let Some(ref ctx) = self.state.typing_ctx.module_resolution.borrow().as_ref() {
+            inferencer.seed_modules_from_resolution_context(ctx);
+        }
+        let outcome = inferencer.infer(&mut ast)?;
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
         self.state.insert_typed_ast(typed_ast_id.clone(), ast);

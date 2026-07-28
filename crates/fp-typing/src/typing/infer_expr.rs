@@ -650,18 +650,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
                 ExprKind::ConstBlock(const_block) => {
-                    if let Some(ctx) = self.typing_ctx {
+                    let ctx = self.typing_ctx.clone();
+                    {
                         let table = ctx.expr_resolutions.borrow();
                         if let Some(value) = table.resolved_value(expr_id).cloned() {
-                            self.infer_value(&value)?
-                        } else {
-                            self.comptime_exprs.push(expr_snapshot.clone());
-                            self.infer_expr(const_block.expr.as_mut())?
+                            return self.infer_value(&value);
                         }
-                    } else {
-                        self.comptime_exprs.push(expr_snapshot.clone());
-                        self.infer_expr(const_block.expr.as_mut())?
                     }
+                    self.comptime_exprs.push(expr_snapshot.clone());
+                    self.infer_expr(const_block.expr.as_mut())?
                 }
                 ExprKind::For(for_expr) => {
                     let pat_info = self.infer_pattern(for_expr.pat.as_mut())?;
@@ -749,24 +746,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.error_type_var()
                 }
                 ExprKind::Id(expr_id) => {
-                    if let Some(ctx) = self.typing_ctx {
+                    let ctx = self.typing_ctx.clone();
+                    {
                         let table = ctx.expr_resolutions.borrow();
                         if let Some(value) = table.resolved_value(*expr_id).cloned() {
-                            self.infer_value(&value)?
-                        } else if let Some(mut source_expr) =
-                            table.source_expr(*expr_id).cloned()
-                        {
-                            self.infer_expr(&mut source_expr)?
-                        } else {
-                            self.emit_error(format!(
-                                "missing source expression for expression id {expr_id}"
-                            ));
-                            self.error_type_var()
+                            return self.infer_value(&value);
                         }
-                    } else {
-                        self.emit_error("expression resolution is not configured");
-                        self.error_type_var()
+                        if let Some(source_expr) = table.source_expr(*expr_id).cloned() {
+                            return self.infer_expr(&mut source_expr.clone());
+                        }
                     }
+                    self.emit_error(format!(
+                        "missing source expression for expression id {expr_id}"
+                    ));
+                    self.error_type_var()
                 }
             };
 

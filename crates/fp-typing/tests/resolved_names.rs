@@ -24,7 +24,7 @@ fn type_inference_records_resolved_name_on_tast_expr() {
         items: vec![const_item, Item::from(ItemKind::Expr(expr.clone()))],
     }));
 
-    let mut typer = AstTypeInferencer::new();
+    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(!outcome.has_errors, "expected typing to succeed");
 
