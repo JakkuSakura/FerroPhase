@@ -1437,7 +1437,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_invoke(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
-        if let Some(result) = self.try_infer_query_pipeline_call(invoke) {
+                        if let Some(result) = self.try_infer_query_pipeline_call(invoke) {
             return result;
         }
 
@@ -1550,6 +1550,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         Some((sig_path, sig))
                     })
             } {
+                
                 let sig_module = {
                     let locator = match &invoke.target {
                         ExprInvokeTarget::Function(locator) => locator,
@@ -1948,7 +1949,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     {
                         eprintln!("debug unwrap invoke: before lookup_struct_method");
                     }
-                    self.lookup_struct_method(obj_var, &select.field)?
+                    self.lookup_struct_method(obj_var, &select.field, &mut invoke.args)?
                 }
             }
         };
@@ -3129,7 +3130,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(info)
     }
 
-    fn lookup_struct_method(&mut self, obj_var: TypeVarId, field: &Ident) -> Result<TypeVarId> {
+    fn lookup_struct_method(&mut self, obj_var: TypeVarId, field: &Ident, args: &mut [Expr]) -> Result<TypeVarId> {
         let ty = self.resolve_to_ty(obj_var)?;
         let resolved_ty = Self::peel_reference(ty.clone());
         let (type_name, struct_path) = match &resolved_ty {
@@ -3181,18 +3182,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             _ => false,
         };
-        let mut candidates = self.struct_name_variants_for_path(&struct_path, true);
-        if let Some(resolved) = self.resolve_segments_key(PathPrefix::Plain, &struct_path.segments)
-        {
-            for candidate in
-                self.struct_name_variants_for_path(&resolved, resolved.segments.len() == 1)
-            {
-                if !candidates.contains(&candidate) {
-                    candidates.push(candidate);
-                }
-            }
-        }
-        let mut struct_key: Option<QualifiedPath> = None;
         let mut sig_found: Option<FunctionSignature> = None;
         let method_sigs = match &resolved_ty {
             Ty::Struct(s) => s.method_sigs.clone(),
@@ -3201,7 +3190,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         };
         if let Some((_, sig)) = method_sigs.iter().find(|(n, _)| n == field.as_str()) {
             sig_found = Some(sig.clone());
-            struct_key = Some(struct_path.clone());
         }
 
         if let Some(sig) = sig_found {
@@ -3219,6 +3207,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     return Ok(self.instantiate_scheme(&scheme));
                 }
             }
+            // Type the invoke arguments against the method params
+            if args.len() == sig.params.len() {
+                for (arg_expr, param) in args.iter_mut().zip(sig.params.iter()) {
+                    let arg_var = self.infer_expr(arg_expr)?;
+                    let param_var = self.type_from_ast_ty(&param.ty)?;
+                    self.unify(arg_var, param_var)?;
+                }
+            }
+            let ret_var = if let Some(ret_ty) = &sig.ret_ty {
+                self.type_from_ast_ty(ret_ty)?
+            } else {
+                let unit = self.fresh_type_var();
+                self.bind(unit, Ty::Unit(TypeUnit));
+                unit
+            };
+            return Ok(ret_var);
         }
 
         if type_name == "Result" || is_result_like {
@@ -3274,18 +3278,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         }
 
-        if let Some(struct_key) = struct_key.as_ref() {
-            let qualified = struct_key.with_segment(field.as_str().to_string());
-            if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
-                return Ok(var);
-            }
-        }
-        for candidate in candidates {
-            let qualified = candidate.with_segment(field.as_str().to_string());
-            if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
-                return Ok(var);
-            }
-        }
         if let Some(var) = self.lookup_env_var(field.as_str()) {
             return Ok(var);
         }

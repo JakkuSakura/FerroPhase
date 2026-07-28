@@ -411,10 +411,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         let struct_path = prefix.with_segment(self_name);
                         for child in &impl_block.items {
                             if let ItemKind::DefFunction(func) = child.kind() {
-                                // Store the method sig directly on the struct
+                                // Store on the struct for method lookup
                                 if let Some(s) = self.struct_defs.get_mut(&struct_path) {
                                     s.method_sigs.push((func.name.as_str().to_string(), func.sig.clone()));
                                 }
+                                // Also store as a function sig for ::call syntax
+                                let fn_path = struct_path.with_segment(func.name.as_str().to_string());
+                                self.function_signatures.insert(fn_path, func.sig.clone());
                             }
                         }
                     }
@@ -1389,6 +1392,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             return Some((candidate, sig.clone()));
         }
         if let Some(sig) = self.typing_ctx.env_ctx.find_function_sig(&candidate) {
+            
             return Some((candidate, sig.clone()));
         }
         if let Some(stripped) = Self::strip_std_prefix(&candidate) {

@@ -1411,6 +1411,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             Ty::ConstBlock(block) => {
                 let mut inner = (*block.expr).clone();
+                
                 let var = self.infer_expr(&mut inner)?;
                 return Ok(var);
             }
