@@ -3192,45 +3192,31 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
         }
-        let mut struct_key = None;
-        let mut record = None;
-        for candidate in &candidates {
-            if let Some(methods) = self.struct_methods.get(candidate) {
-                if let Some(found) = methods.get(field.as_str()) {
-                    struct_key = Some(candidate.clone());
-                    record = Some(found.clone());
-                    break;
-                }
-            }
-            // Check TypeStruct.method_sigs (workspace structs)
-            if let Some(struct_ty) = self.lookup_struct(candidate) {
-                if let Some((_, sig)) = struct_ty.method_sigs.iter().find(|(n, _)| n == field.as_str()) {
-                    let sig = sig.clone();
-                    let ret_var = if let Some(ret_ty) = &sig.ret_ty {
-                        self.type_from_ast_ty(ret_ty)?
-                    } else {
-                        let unit = self.fresh_type_var();
-                        self.bind(unit, Ty::Unit(TypeUnit));
-                        unit
-                    };
-                    return Ok(ret_var);
-                }
-            }
+        let mut struct_key: Option<QualifiedPath> = None;
+        let mut sig_found: Option<FunctionSignature> = None;
+        let method_sigs = match &resolved_ty {
+            Ty::Struct(s) => s.method_sigs.clone(),
+            Ty::Enum(_) => Vec::new(),
+            _ => Vec::new(),
+        };
+        if let Some((_, sig)) = method_sigs.iter().find(|(n, _)| n == field.as_str()) {
+            sig_found = Some(sig.clone());
+            struct_key = Some(struct_path.clone());
         }
-        if let Some(record) = record {
-            if let Some(expected) = record.receiver_ty.as_ref() {
-                let receiver_var = self.type_from_ast_ty(expected)?;
-                let expect_ref = matches!(expected, Ty::Reference(_));
+
+        if let Some(sig) = sig_found {
+            if sig.receiver.is_some() {
+                let rec_ty = resolved_ty.clone();
+                let receiver_var = self.type_from_ast_ty(&rec_ty)?;
+                let expect_ref = matches!(rec_ty, Ty::Reference(_));
                 let actual_ref = matches!(ty, Ty::Reference(_));
                 if !expect_ref || actual_ref {
                     self.unify(obj_var, receiver_var)?;
                 }
             }
-            let skip_scheme =
-                field.as_str() == "unwrap" && (type_name == "Result" || is_result_like);
-            if !skip_scheme {
-                if let Some(scheme) = record.scheme.as_ref() {
-                    return Ok(self.instantiate_scheme(scheme));
+            if !sig.generics_params.is_empty() {
+                if let Ok(scheme) = self.scheme_from_method_signature(&sig) {
+                    return Ok(self.instantiate_scheme(&scheme));
                 }
             }
         }

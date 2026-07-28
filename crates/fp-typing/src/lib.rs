@@ -190,12 +190,6 @@ pub trait TypeResolutionHook {
 use crate::typing::unify::{TypeVar, TypeVarKind};
 
 #[derive(Clone, Debug)]
-struct MethodRecord {
-    receiver_ty: Option<Ty>,
-    scheme: Option<Ty>,
-}
-
-#[derive(Clone, Debug)]
 struct ImplContext {
     struct_name: QualifiedPath,
     self_ty: Ty,
@@ -294,7 +288,6 @@ pub struct AstTypeInferencer<'ctx> {
     struct_defs: HashMap<QualifiedPath, TypeStruct>,
     enum_defs: HashMap<QualifiedPath, TypeEnum>,
     enum_variants: HashMap<QualifiedPath, Vec<QualifiedPath>>,
-    struct_methods: HashMap<QualifiedPath, HashMap<String, MethodRecord>>,
     trait_method_sigs: HashMap<String, HashMap<String, FunctionSignature>>,
     function_signatures: HashMap<QualifiedPath, FunctionSignature>,
     extern_function_signatures: HashMap<QualifiedPath, FunctionSignature>,
@@ -476,7 +469,6 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
             enum_variants: HashMap::new(),
-            struct_methods: HashMap::new(),
             trait_method_sigs: HashMap::new(),
             function_signatures: HashMap::new(),
             extern_function_signatures: HashMap::new(),
@@ -1712,22 +1704,12 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
     }
 
     fn register_method_stub(&mut self, ctx: &ImplContext, func: &ItemDefFunction) {
-        let receiver_ty = func
-            .sig
-            .receiver
-            .as_ref()
-            .map(|receiver| self.ty_for_receiver(ctx, receiver));
-        let scheme = self.scheme_from_method_signature(&func.sig).ok();
         for candidate in self
             .struct_name_variants_for_path(&ctx.struct_name, ctx.struct_name.segments.len() == 1)
         {
-            let entry = self.struct_methods.entry(candidate).or_default();
-            entry
-                .entry(func.name.as_str().to_string())
-                .or_insert(MethodRecord {
-                    receiver_ty: receiver_ty.clone(),
-                    scheme: scheme.clone(),
-                });
+            if let Some(s) = self.struct_defs.get_mut(&candidate) {
+                s.method_sigs.push((func.name.as_str().to_string(), func.sig.clone()));
+            }
         }
     }
 
@@ -2700,26 +2682,16 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                                 }
                                 // Ensure default trait methods are callable as inherent methods
                                 // on this concrete receiver type.
-                                let scheme = self.scheme_from_method_signature(&sig)?;
-                                let receiver_ty = sig
-                                    .receiver
-                                    .as_ref()
-                                    .map(|receiver| self.ty_for_receiver(ctx, receiver));
                                 for candidate in self.struct_name_variants_for_path(
                                     &ctx.struct_name,
                                     ctx.struct_name.segments.len() == 1,
                                 ) {
-                                    let entry = self.struct_methods.entry(candidate).or_default();
-                                    if entry.contains_key(&method_name) {
-                                        continue;
+                                    if let Some(s) = self.struct_defs.get_mut(&candidate) {
+                                        if s.method_sigs.iter().any(|(n, _)| n == &method_name) {
+                                            continue;
+                                        }
+                                        s.method_sigs.push((method_name.clone(), sig.clone()));
                                     }
-                                    entry.insert(
-                                        method_name.clone(),
-                                        MethodRecord {
-                                            receiver_ty: receiver_ty.clone(),
-                                            scheme: Some(scheme.clone()),
-                                        },
-                                    );
                                 }
                             }
                         }
@@ -2837,15 +2809,13 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
         self.enter_scope();
 
-        let mut receiver_ty: Option<Ty> = None;
+        let _receiver_ty: Option<Ty> = None;
         if let Some(receiver) = func.sig.receiver.as_ref() {
             if let Some(ctx) = impl_ctx.as_ref() {
                 let receiver_type = self.ty_for_receiver(ctx, receiver);
                 let self_var = self.fresh_type_var();
                 let expected = self.type_from_ast_ty(&receiver_type)?;
                 self.unify(self_var, expected)?;
-                self.insert_env("self".to_string(), EnvEntry::Mono(self_var));
-                receiver_ty = Some(receiver_type);
             } else {
                 self.emit_error(format!(
                     "method {} defined without an impl context",
@@ -3002,17 +2972,11 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 &ctx.struct_name,
                 ctx.struct_name.segments.len() == 1,
             ) {
-                let entry = self.struct_methods.entry(candidate).or_default();
-                let record = entry
-                    .entry(func.name.as_str().to_string())
-                    .or_insert(MethodRecord {
-                        receiver_ty: receiver_ty.clone(),
-                        scheme: None,
-                    });
-                if record.receiver_ty.is_none() && receiver_ty.is_some() {
-                    record.receiver_ty = receiver_ty.clone();
+                if let Some(s) = self.struct_defs.get_mut(&candidate) {
+                    if !s.method_sigs.iter().any(|(n, _)| n == func.name.as_str()) {
+                        s.method_sigs.push((func.name.as_str().to_string(), func.sig.clone()));
+                    }
                 }
-                record.scheme = Some(scheme.clone());
             }
         }
 
@@ -3350,10 +3314,14 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                             if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
                                 return Ok(Some(var));
                             }
-                            if let Some(methods) = self.struct_methods.get(&candidate) {
-                                if let Some(record) = methods.get(method_name) {
-                                    if let Some(scheme) = record.scheme.as_ref() {
-                                        return Ok(Some(self.instantiate_scheme(&scheme.clone())));
+                            if let Some(s) = self.struct_defs.get(&candidate) {
+                                if let Some((_, sig)) = s.method_sigs.iter().find(|(n, _)| n == method_name) {
+                                    let sig = sig.clone();
+                                    if !sig.generics_params.is_empty() {
+                                        let scheme = self.scheme_from_method_signature(&sig).ok();
+                                        if let Some(scheme) = scheme {
+                                            return Ok(Some(self.instantiate_scheme(&scheme)));
+                                        }
                                     }
                                     if let Some(var) = self.lookup_env_var(method_name) {
                                         return Ok(Some(var));
