@@ -2,7 +2,7 @@ mod vm;
 
 use std::collections::HashMap;
 
-use fp_core::ast::{Value, ValueList, ValueMapEntry, ValueString, ValueTuple};
+use fp_core::ast::{Ty, TypeStruct, TypeUnknown, Value, ValueList, ValueMapEntry, ValueString, ValueTuple};
 use fp_core::lir::{
     BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirConstant, LirFunction,
     LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue,
@@ -306,16 +306,43 @@ impl LirInterpreter {
                 Ok(())
             }
             LirInstructionKind::ComptimeOp(op) => match op {
-                ComptimeOp::CreateStruct { .. } => {
-                    let obj = Value::Unit(Default::default());
+                ComptimeOp::CreateStruct { name } => {
+                    let struct_name = self.resolve_string_value(name);
+                    let fields: Vec<fp_core::ast::StructuralField> = vec![];
+                    let struct_ty = Ty::Struct(TypeStruct {
+                        name: fp_core::ast::Ident::new(struct_name),
+                        generics_params: vec![],
+                        repr: fp_core::ast::ReprOptions::default(),
+                        fields,
+                    });
+                    let obj = Value::Type(struct_ty);
                     let handle = self.state.objects.len() as u64;
                     self.state.objects.push(obj);
                     self.wr(dst, handle);
                     Ok(())
                 }
-                ComptimeOp::AddField { struct_handle, .. } => {
-                    let handle = self.resolve_raw(struct_handle)?;
-                    self.wr(dst, handle);
+                ComptimeOp::AddField { struct_handle, field_name, field_type } => {
+                    let handle = self.resolve_raw(struct_handle)? as usize;
+                    let struct_val = self.state.objects.get(handle)
+                        .ok_or_else(|| VmError::Runtime("struct handle out of range".into()))?;
+                    let field_name_str = self.resolve_string_value(field_name);
+                    let field_ty = match self.resolve_runtime_value(field_type, &LirType::Ptr(Box::new(LirType::I8))) {
+                        Ok(Value::Type(ty)) => ty,
+                        _ => Ty::Unknown(TypeUnknown),
+                    };
+                    let mut new_val = struct_val.clone();
+                    if let Value::Type(ref mut ty) = new_val {
+                        if let Ty::Struct(ref mut s) = ty {
+                            if !s.fields.iter().any(|f| f.name.as_str() == &field_name_str) {
+                                s.fields.push(fp_core::ast::StructuralField::new(
+                                    fp_core::ast::Ident::new(field_name_str),
+                                    field_ty,
+                                ));
+                            }
+                        }
+                    }
+                    self.state.objects[handle] = new_val;
+                    self.wr(dst, handle as u64);
                     Ok(())
                 }
             },
@@ -341,6 +368,29 @@ impl LirInterpreter {
             return;
         }
         self.state.regs.write(dst, val);
+    }
+
+    fn resolve_string_value(&self, val: &LirValue) -> String {
+        // Try string constant first
+        if let LirValue::Constant(LirConstant::String(s)) = val {
+            return s.clone();
+        }
+        // Try as ptr type resolution
+        let ptr_ty = LirType::Ptr(Box::new(LirType::I8));
+        if let Ok(v) = self.resolve_runtime_value(val, &ptr_ty) {
+            if let Value::String(s) = v {
+                return s.value.clone();
+            }
+        }
+        // Fallback: resolve raw handle, look up in objects
+        if let Ok(handle) = self.resolve_raw(val) {
+            if let Some(v) = self.state.objects.get(handle as usize) {
+                if let Value::String(s) = v {
+                    return s.value.clone();
+                }
+            }
+        }
+        "unnamed".to_string()
     }
 
     fn resolve_raw(&self, val: &LirValue) -> LirResult<u64> {
