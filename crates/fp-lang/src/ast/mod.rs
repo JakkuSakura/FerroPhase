@@ -189,7 +189,7 @@ use winnow::combinator::{alt, opt, repeat};
 use winnow::error::{ContextError, ErrMode};
 use winnow::{ModalResult, Parser};
 
-use crate::ast::lower_common::{decode_string_literal, split_path_prefix};
+use crate::ast::lower_common::{decode_string_literal, split_parameter_path_prefix, split_path_prefix};
 use crate::lexer::tokenizer::{strip_number_suffix, Keyword, Token, TokenKind};
 
 mod expr;
@@ -360,23 +360,14 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         segments.push(ParameterPathSegment::new(next, args));
     }
     let has_args = segments.iter().any(|segment| !segment.args.is_empty());
-    let idents: Vec<Ident> = segments
-        .iter()
-        .map(|segment| segment.ident.clone())
-        .collect();
-    let (prefix, plain_segments) = split_path_prefix(idents, saw_root);
+    let (prefix, segments) = split_parameter_path_prefix(segments, saw_root);
     if has_args {
-        let stripped_len = plain_segments.len();
-        let segments = segments
-            .into_iter()
-            .rev()
-            .take(stripped_len)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
         Ok(Name::parameter_path(ParameterPath::new(prefix, segments)))
     } else {
+        let plain_segments: Vec<Ident> = segments
+            .into_iter()
+            .map(|segment| segment.ident)
+            .collect();
         Ok(Name::path(Path::new(prefix, plain_segments)))
     }
 }

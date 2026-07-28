@@ -1650,7 +1650,8 @@ impl HirGenerator {
                 };
                 Ok(expr)
             }
-            ast::Ty::Quote(_quote_ty) => {
+            ast::Ty::Quote(_)
+            | ast::Ty::Type(_) => {
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Never,

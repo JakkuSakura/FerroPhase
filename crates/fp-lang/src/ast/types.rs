@@ -320,13 +320,8 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                 return Ok(Ty::Type(TypeType { span: Span::null(), inner }));
             }
         }
-        // bare `type` keyword (no type args) — keep old behavior via Quote
-        return Ok(Ty::Quote(TypeQuote {
-            span: Span::null(),
-            kind: QuoteFragmentKind::Type,
-            item: None,
-            inner: None,
-        }));
+        // bare `type` keyword (no type args) — meta-type
+        return Ok(Ty::Type(TypeType { span: Span::null(), inner: None }));
     }
     if let Some(path) = bare_path {
         if path.prefix == PathPrefix::Plain && path.segments.len() == 1 {

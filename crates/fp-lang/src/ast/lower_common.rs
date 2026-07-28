@@ -1,6 +1,6 @@
 use crate::lexer::lexeme::Lexeme;
 use crate::lexer::tokenizer::Span as LexSpan;
-use fp_core::ast::{Ident, MacroDelimiter, MacroTokenTree};
+use fp_core::ast::{Ident, MacroDelimiter, MacroTokenTree, ParameterPathSegment};
 use fp_core::module::path::PathPrefix;
 use fp_core::span::Span;
 
@@ -28,6 +28,40 @@ pub(crate) fn split_path_prefix(
             while segments
                 .first()
                 .is_some_and(|ident| ident.as_str() == "super")
+            {
+                segments.remove(0);
+                depth += 1;
+            }
+            (PathPrefix::Super(depth), segments)
+        }
+        _ => (PathPrefix::Plain, segments),
+    }
+}
+
+pub(crate) fn split_parameter_path_prefix(
+    mut segments: Vec<ParameterPathSegment>,
+    saw_root: bool,
+) -> (PathPrefix, Vec<ParameterPathSegment>) {
+    if saw_root {
+        return (PathPrefix::Root, segments);
+    }
+    let Some(first) = segments.first().map(|seg| seg.ident.as_str()) else {
+        return (PathPrefix::Plain, segments);
+    };
+    match first {
+        "crate" => {
+            segments.remove(0);
+            (PathPrefix::Crate, segments)
+        }
+        "self" => {
+            segments.remove(0);
+            (PathPrefix::SelfMod, segments)
+        }
+        "super" => {
+            let mut depth = 0;
+            while segments
+                .first()
+                .is_some_and(|seg| seg.ident.as_str() == "super")
             {
                 segments.remove(0);
                 depth += 1;
