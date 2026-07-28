@@ -1787,10 +1787,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 });
                 if let Some(struct_def) = struct_def {
                     let var = self.symbol_var(&def.name);
-                    let ty = Ty::Struct(struct_def);
-                    if let Ok(struct_var) = self.type_from_ast_ty(&ty) {
-                        let _ = self.unify(var, struct_var);
-                    }
+                    self.bind(var, Ty::Struct(struct_def));
                 }
             }
             ItemKind::DefEnum(def) => {

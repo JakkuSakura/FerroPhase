@@ -132,6 +132,8 @@ common_enum! {
         Any(TypeAny),
         Unit(TypeUnit),
         GenericVar(TypeGenericVar),
+        /// TypeScript's explicit `unknown` type — not a sentinel for
+        /// unresolved inference variables (use `Ty::InferVar` for that).
         Unknown(TypeUnknown),
         Nothing(TypeNothing),
         ErrorType(TypeError),
