@@ -116,6 +116,7 @@ impl CompilerDriver {
 
 let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             .with_extern_prelude(default_extern_prelude());
+        inferencer.seed_workspace_graph();
         let outcome = inferencer.infer(&mut ast)?;
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));

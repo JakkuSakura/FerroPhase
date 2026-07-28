@@ -798,6 +798,12 @@ fn lower_ast(
     let mut driver = CompilerDriver::new();
     driver.state.set_lossy(lossy.enabled);
 
+    // Compile embedded std into the workspace context
+    let workspace = crate::compile_std::build_workspace_with_std();
+    driver.state.typing_ctx = std::rc::Rc::new(
+        fp_typing::TypingContext::new(std::rc::Rc::new(workspace))
+    );
+
     if let Some(resolver) = resolver {
         driver.state.set_module_resolver(resolver);
         driver

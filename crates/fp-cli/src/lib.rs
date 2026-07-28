@@ -8,6 +8,7 @@ pub mod codegen;
 pub mod commands;
 pub mod compilation;
 pub mod compile_options;
+pub mod compile_std;
 pub mod compiler;
 pub mod container;
 pub mod diagnostics;

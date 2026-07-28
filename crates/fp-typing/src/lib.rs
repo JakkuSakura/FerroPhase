@@ -413,12 +413,57 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.trait_defs.insert(name.clone());
                     self.register_qualified_symbol(&name);
                 }
+                ItemKind::Impl(impl_block) => {
+                    if let Some(self_name) = impl_self_ty_name(&impl_block.self_ty) {
+                        for child in &impl_block.items {
+                            if let ItemKind::DefFunction(func) = child.kind() {
+                                let key = prefix.with_segment(self_name.clone()).with_segment(func.name.as_str().to_string());
+                                self.function_signatures.insert(key, func.sig.clone());
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
     }
 
-    pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Self {
+    /// Populate `module_defs` and `root_modules` from all known
+    /// crates in the workspace so that import resolution can see
+    /// module paths like `std::meta`.
+    pub fn seed_workspace_graph(&mut self) {
+        for krate in &self.typing_ctx.env_ctx.crates {
+            for path in &krate.module_paths {
+                self.module_defs.insert(path.clone());
+                if let Some(head) = path.segments.first() {
+                    self.root_modules.insert(head.clone());
+                }
+            }
+        }
+    }
+
+    /// Register pre-parsed items from an external module into the
+    /// typer's lookup tables. Used when compiling dependency crates
+    /// (e.g. std) whose items need to be available for name resolution.
+    pub fn inject_module(&mut self, path: &QualifiedPath, items: &[Item]) {
+        self.module_defs.insert(path.clone());
+        if path.segments.len() == 1 {
+            self.root_modules.insert(path.segments[0].clone());
+        }
+        self.register_qualified_items(items, path);
+    }
+
+    /// Collect compiled tables into a PackageCrate after all modules
+    /// have been injected.
+    pub fn into_package_crate(self, name: impl Into<String>, graph: fp_core::package::graph::PackageGraph) -> fp_core::package::PackageCrate {
+        let mut krate = fp_core::package::PackageCrate::new(name, graph);
+        krate.struct_defs = self.struct_defs;
+        krate.function_sigs = self.function_signatures;
+        krate.trait_defs = self.trait_defs;
+        krate
+    }
+
+pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Self {
         let mut inferencer = Self {
             ctx: None,
             typing_ctx,
@@ -1214,7 +1259,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return Some(qualified);
         }
         let parsed = self.resolution_parsed_path(locator)?;
-        let qualified = resolve_item_path(
+        if let Some(qualified) = resolve_item_path(
             &parsed,
             &self.module_path,
             &self.root_modules,
@@ -1222,8 +1267,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             &self.module_defs,
             |candidate| self.item_exists_path(candidate),
             |name| self.scope_contains_non_module(name),
-        )?;
-        Some(qualified)
+        ) {
+            return Some(qualified);
+        }
+        // Fallback: try the raw segments as a fully-qualified path
+        let raw = QualifiedPath::new(parsed.segments);
+        if self.item_exists_path(&raw) {
+            return Some(raw);
+        }
+        None
     }
 
     fn resolve_segments_key(
@@ -1321,6 +1373,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return Some((candidate, sig.clone()));
         }
         if let Some(sig) = self.function_signatures.get(&candidate) {
+            return Some((candidate, sig.clone()));
+        }
+        if let Some(sig) = self.typing_ctx.env_ctx.find_function_sig(&candidate) {
             return Some((candidate, sig.clone()));
         }
         if let Some(stripped) = Self::strip_std_prefix(&candidate) {
@@ -3921,3 +3976,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 impl<'ctx> AstTypeInferencer<'ctx> {
 }
 
+
+fn impl_self_ty_name(expr: &Expr) -> Option<String> {
+    match expr.kind() {
+        ExprKind::Name(name) => Some(name.to_string()),
+        _ => None,
+    }
+}
