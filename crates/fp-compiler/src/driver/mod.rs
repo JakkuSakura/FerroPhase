@@ -504,11 +504,11 @@ if lir.comptime_entries.is_empty() {
         let hir_program = match ast.kind() {
             NodeKind::Expr(expr) => HirGenerator::new()
                 .with_expr_resolution(expr_res)
-                .with_std_items(&std_items)
+                .with_extern_items(std_items.clone())
                 .transform_expr(expr)?,
             NodeKind::File(file) => HirGenerator::with_file(&file.path)
                 .with_expr_resolution(expr_res)
-                .with_std_items(&std_items)
+                .with_extern_items(std_items.clone())
                 .transform_file(file)?,
             NodeKind::Query(query) => HirGenerator::new().transform_query_document(query)?,
         NodeKind::Item(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {

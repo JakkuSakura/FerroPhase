@@ -438,31 +438,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     /// can see all known modules without mutation during lookups.
     /// Populate module_defs and root_modules from the package graph,
     /// and eagerly register all pre-parsed std module items.
+    /// Populate module_defs and root_modules from the package graph.
+    /// Items are loaded lazily via `ensure_module_loaded` when first
+    /// referenced during name resolution — no std-specific treatment.
     pub fn seed_package_modules(&mut self) {
-        {
-            let graph = self.typing_ctx.package_graph.borrow();
-            if let Some(ref graph) = *graph {
-                for module in graph.modules() {
-                    if module.module_path.is_empty() { continue; }
-                    let path = QualifiedPath::new(module.module_path.clone());
-                    self.module_defs.insert(path);
-                    if let Some(head) = module.module_path.first() {
-                        self.root_modules.insert(head.clone());
-                    }
-                }
+        let graph = self.typing_ctx.package_graph.borrow();
+        let Some(ref graph) = *graph else { return };
+        for module in graph.modules() {
+            if module.module_path.is_empty() { continue; }
+            let path = QualifiedPath::new(module.module_path.clone());
+            self.module_defs.insert(path);
+            if let Some(head) = module.module_path.first() {
+                self.root_modules.insert(head.clone());
             }
-        }
-        // Eagerly load all pre-parsed std items
-        let std_items: Vec<_> = self.typing_ctx.std_items.borrow()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        for (path, items) in std_items {
-            self.module_defs.insert(path.clone());
-            if path.segments.len() == 1 {
-                self.root_modules.insert(path.segments[0].clone());
-            }
-            self.register_qualified_items(&items, &path);
         }
     }
 
@@ -2125,6 +2113,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             if self.module_defs.contains(&qualified) {
                 self.insert_module_alias(&alias, qualified);
                 continue;
+            }
+            // Lazy-load items from the package graph if this module
+            // is known but its items haven't been loaded yet.
+            if !self.item_exists_path(&qualified) {
+                // Try loading the parent module (e.g. for std::meta::TypeBuilder,
+                // load std::meta module items)
+                for depth in (1..qualified.segments.len()).rev() {
+                    let parent = QualifiedPath::new(
+                        qualified.segments[..depth].to_vec()
+                    );
+                    if self.module_defs.contains(&parent) {
+                        self.ensure_module_loaded(&parent);
+                    }
+                }
+                // Also try the full path (could be a module itself)
+                self.ensure_module_loaded(&qualified);
             }
             if self.item_exists_path(&qualified) {
                 self.insert_symbol_alias(&alias, qualified);
