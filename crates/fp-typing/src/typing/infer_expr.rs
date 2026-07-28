@@ -3237,7 +3237,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(unit, Ty::Unit(TypeUnit));
                 unit
             };
-            return Ok(ret_var);
+            let sig_params: Vec<_> = sig.params.iter().map(|p| p.ty.clone()).collect();
+            let fn_ty = Ty::Function(TypeFunction {
+                params: sig_params,
+                generics_params: Vec::new(),
+                ret_ty: Some(Box::new(Ty::infer_var(ret_var))),
+            });
+            let fn_var = self.type_from_ast_ty(&fn_ty)?;
+            return Ok(fn_var);
         }
 
         if type_name == "Result" || is_result_like {

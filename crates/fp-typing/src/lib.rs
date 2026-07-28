@@ -417,7 +417,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 }
                                 // Also store as a function sig for ::call syntax
                                 let fn_path = struct_path.with_segment(func.name.as_str().to_string());
-                                self.function_signatures.insert(fn_path, func.sig.clone());
+                                self.function_signatures.insert(fn_path.clone(), func.sig.clone());
+                                self.register_qualified_symbol(&fn_path);
                             }
                         }
                     }
@@ -3307,10 +3308,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         .take(path.segments.len() - 1)
                         .map(|seg| seg.as_str().to_string())
                         .collect::<Vec<_>>();
-                    if let Some(struct_name) =
-                        self.resolve_segments_key(path.prefix, &struct_segments)
-                    {
-                        for candidate in self.struct_name_variants_for_path(
+                        if let Some(struct_name) =
+                            self.resolve_segments_key(path.prefix, &struct_segments)
+                        {
+                            for candidate in self.struct_name_variants_for_path(
                             &struct_name,
                             struct_name.segments.len() == 1,
                         ) {
@@ -3330,6 +3331,9 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                                     if let Some(var) = self.lookup_env_var(method_name) {
                                         return Ok(Some(var));
                                     }
+                                    let fn_ty = self.ty_from_function_signature(&sig)?;
+                                    let fn_var = self.type_from_ast_ty(&fn_ty)?;
+                                    return Ok(Some(fn_var));
                                 }
                             }
                         }
