@@ -581,11 +581,15 @@ plain_type! { TypeNothing }
 pub struct TypeType {
     #[serde(default)]
     pub span: Span,
+    /// Concrete type carried inside the meta-type wrapper.
+    /// None = opaque (not yet evaluated); Some = known concrete type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner: Option<Box<Ty>>,
 }
 
 impl PartialEq for TypeType {
-    fn eq(&self, _other: &Self) -> bool {
-        true
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
     }
 }
 
@@ -593,12 +597,17 @@ impl Eq for TypeType {}
 
 impl std::hash::Hash for TypeType {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        0u8.hash(state);
+        self.inner.hash(state);
     }
 }
 impl TypeType {
     pub fn new(span: Span) -> Self {
-        Self { span }
+        Self { span, inner: None }
+    }
+
+    pub fn with_inner(mut self, ty: Ty) -> Self {
+        self.inner = Some(Box::new(ty));
+        self
     }
 
     pub fn span(&self) -> Span {

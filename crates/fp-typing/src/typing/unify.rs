@@ -1332,7 +1332,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 };
                 self.bind(var, resolved);
             }
-            Ty::Type(_) => {
+            Ty::Type(tt) => {
+                if let Some(ref inner) = tt.inner {
+                    return self.type_from_ast_ty(inner);
+                }
                 self.bind(var, ty.clone());
             }
             Ty::RequestedType(_) => {
@@ -1674,7 +1677,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         return Ok(var);
                     }
                     if name == "type" {
-                        self.bind(var, Ty::Type(TypeType { span: fp_core::span::Span::null() }));
+                        self.bind(var, Ty::Type(TypeType { span: fp_core::span::Span::null(), inner: None }));
                         return Ok(var);
                     }
                     if let Some(prim) = primitive_from_name(&name) {

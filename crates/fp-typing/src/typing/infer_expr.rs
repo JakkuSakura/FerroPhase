@@ -2678,8 +2678,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             Value::Type(inner) => {
                 if let Ty::Struct(_) = inner {
-                    let concrete_var = self.type_from_ast_ty(inner)?;
-                    self.unify(var, concrete_var)?;
+                    // Wrap the concrete type inside Ty::Type with inner set
+                    let type_var = self.type_from_ast_ty(
+                        &Ty::Type(TypeType::new(Span::null()).with_inner(inner.clone()))
+                    )?;
+                    self.unify(var, type_var)?;
                 } else {
                     let type_var = self.type_from_ast_ty(&Ty::Type(TypeType::new(Span::null())))?;
                     self.unify(var, type_var)?;
