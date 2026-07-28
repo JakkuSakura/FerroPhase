@@ -320,6 +320,26 @@ impl HirGenerator {
         self
     }
 
+    /// Predeclare items from an external source (e.g., the standard library)
+    /// into the HIR generator's symbol tables so that name resolution can
+    /// find them during lowering.
+    pub fn with_std_items(mut self, items: &std::collections::HashMap<
+        fp_core::module::path::QualifiedPath,
+        Vec<ast::Item>,
+    >) -> Self {
+        for (path, items) in items {
+            let saved = self.module_path.clone();
+            self.module_path = path.clone();
+            self.module_defs.insert(path.clone());
+            if let Err(e) = self.predeclare_items(items) {
+                // Std predeclaration errors are non-fatal
+                let _ = e;
+            }
+            self.module_path = saved;
+        }
+        self
+    }
+
     pub fn with_module_resolution(
         mut self,
         module_resolution: fp_core::module::resolution::ModuleResolutionContext,

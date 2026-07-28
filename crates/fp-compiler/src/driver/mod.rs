@@ -114,7 +114,7 @@ impl CompilerDriver {
         let mut ast = self.state.ast(ast_id)?.clone();
         AstPreProcessor::new(&mut self.state.splice_results).walk(&mut ast);
 
-        let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
+let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             .with_extern_prelude(default_extern_prelude());
         inferencer.seed_package_modules();
         let outcome = inferencer.infer(&mut ast)?;
@@ -448,7 +448,7 @@ impl CompilerDriver {
         let lir = self.state.lir(lir_id)?.clone();
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
 
-        if lir.comptime_entries.is_empty() {
+if lir.comptime_entries.is_empty() {
             self.state.insert_const_value(value_id.clone(), Value::unit());
             return Ok(0);
         }
@@ -499,12 +499,16 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
     ) -> Result<HirId, CompilerDriverError> {
         let ast = self.state.typed_ast(typed_ast_id)?;
+        let std_items = self.state.typing_ctx.std_items.borrow().clone();
+        let expr_res = self.state.typing_ctx.expr_resolutions.borrow().clone();
         let hir_program = match ast.kind() {
             NodeKind::Expr(expr) => HirGenerator::new()
-                .with_expr_resolution(self.state.typing_ctx.expr_resolutions.borrow().clone())
+                .with_expr_resolution(expr_res)
+                .with_std_items(&std_items)
                 .transform_expr(expr)?,
             NodeKind::File(file) => HirGenerator::with_file(&file.path)
-                .with_expr_resolution(self.state.typing_ctx.expr_resolutions.borrow().clone())
+                .with_expr_resolution(expr_res)
+                .with_std_items(&std_items)
                 .transform_file(file)?,
             NodeKind::Query(query) => HirGenerator::new().transform_query_document(query)?,
         NodeKind::Item(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {
