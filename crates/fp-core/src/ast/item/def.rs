@@ -24,6 +24,7 @@ impl ItemDefStruct {
                 name: name.clone(),
                 generics_params: Vec::new(),
                 repr: ReprOptions::default(),
+                method_sigs: Vec::new(),
                 fields,
             },
             name,

@@ -2972,6 +2972,7 @@ impl ClosureLowering {
             name: struct_ident.clone(),
             generics_params: Vec::new(),
             repr: ast::ReprOptions::default(),
+            method_sigs: vec![],
             fields: struct_fields,
         };
         let env_struct_ty = ast::Ty::Struct(struct_decl.clone());

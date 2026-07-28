@@ -1740,6 +1740,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 name: Ident::new("HashMap"),
                                 generics_params: Vec::new(),
                                 repr: ReprOptions::default(),
+                                method_sigs: Vec::new(),
                                 fields: Vec::new(),
                             };
                             self.bind(var, Ty::Struct(struct_ty));

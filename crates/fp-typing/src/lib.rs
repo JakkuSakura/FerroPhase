@@ -1639,6 +1639,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 name: Ident::new(placeholder_name),
                 generics_params: Vec::new(),
                 repr: ReprOptions::default(),
+                method_sigs: Vec::new(),
                 fields: Vec::new(),
             };
             self.emit_warning(format!(
@@ -1779,6 +1780,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     name: def.name.clone(),
                     generics_params: Vec::new(),
                     repr: ReprOptions::default(),
+                    method_sigs: Vec::new(),
                     fields: def.value.fields.clone(),
                 };
                 self.insert_struct_def(&def.name, struct_ty);
@@ -2070,6 +2072,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             name: Ident::new(name),
             generics_params: Vec::new(),
             repr: ReprOptions::default(),
+            method_sigs: Vec::new(),
             fields: Vec::new(),
         };
         self.struct_defs.insert(key, ty);
@@ -2424,6 +2427,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         name: def.name.clone(),
                         generics_params: Vec::new(),
                         repr: ReprOptions::default(),
+                        method_sigs: Vec::new(),
                         fields: def.value.fields.clone(),
                     };
                     self.insert_struct_def(&def.name, struct_ty.clone());
@@ -2447,6 +2451,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                                 name: def.name.clone(),
                                 generics_params: Vec::new(),
                                 repr: ReprOptions::default(),
+                                method_sigs: Vec::new(),
                                 fields: structural.fields.clone(),
                             };
                             self.insert_struct_def(&def.name, struct_ty.clone());
