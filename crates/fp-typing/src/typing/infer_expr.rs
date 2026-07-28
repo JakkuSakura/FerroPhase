@@ -2676,9 +2676,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let fn_var = self.type_from_ast_ty(&fn_ty)?;
                 self.unify(var, fn_var)?;
             }
-            Value::Type(_) => {
-                let type_var = self.type_from_ast_ty(&Ty::Type(TypeType::new(Span::null())))?;
-                self.unify(var, type_var)?;
+            Value::Type(inner) => {
+                if let Ty::Struct(_) = inner {
+                    let concrete_var = self.type_from_ast_ty(inner)?;
+                    self.unify(var, concrete_var)?;
+                } else {
+                    let type_var = self.type_from_ast_ty(&Ty::Type(TypeType::new(Span::null())))?;
+                    self.unify(var, type_var)?;
+                }
             }
             Value::QuoteToken(token) => {
                 let quote_ty = match token.kind {

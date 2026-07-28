@@ -1673,6 +1673,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.bind_reference_term(var, inner);
                         return Ok(var);
                     }
+                    if name == "type" {
+                        self.bind(var, Ty::Type(TypeType { span: fp_core::span::Span::null() }));
+                        return Ok(var);
+                    }
                     if let Some(prim) = primitive_from_name(&name) {
                         self.bind(var, Ty::Primitive(prim));
                         return Ok(var);
