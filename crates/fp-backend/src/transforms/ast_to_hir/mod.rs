@@ -322,7 +322,8 @@ impl HirGenerator {
 
     /// Predeclare items from an external source (e.g., the standard library)
     /// into the HIR generator's symbol tables so that name resolution can
-    /// find them during lowering.
+    /// find them during lowering.  Also registers impl methods so that
+    /// function calls like `TypeBuilder::new("Foo")` resolve correctly.
     pub fn with_std_items(mut self, items: &std::collections::HashMap<
         fp_core::module::path::QualifiedPath,
         Vec<ast::Item>,
@@ -332,12 +333,45 @@ impl HirGenerator {
             self.module_path = path.clone();
             self.module_defs.insert(path.clone());
             if let Err(e) = self.predeclare_items(items) {
-                // Std predeclaration errors are non-fatal
                 let _ = e;
             }
+            // Register impl methods as value defs so that
+            // TypeBuilder::new / TypeBuilder::with_field resolve
+            self.prebind_impl_methods(items);
             self.module_path = saved;
         }
         self
+    }
+
+    fn prebind_impl_methods(&mut self, items: &[ast::Item]) {
+        for item in items {
+            if let ItemKind::Impl(impl_) = item.kind() {
+                let self_name = self.impl_self_name(impl_);
+                if self_name.is_empty() { continue; }
+                for child in &impl_.items {
+                    if let ItemKind::DefFunction(func) = child.kind() {
+                        let qualified = format!("{}::{}", self_name, func.name.as_str());
+                        let def_id = self.next_def_id();
+                        self.record_value_symbol(
+                            &qualified,
+                            hir::Res::Def(def_id),
+                            &func.visibility,
+                        );
+                    }
+                }
+            }
+            if let ItemKind::Module(module) = item.kind() {
+                self.prebind_impl_methods(&module.items);
+            }
+        }
+    }
+
+    fn impl_self_name(&self, impl_: &ast::ItemImpl) -> String {
+        use ast::ExprKind;
+        match impl_.self_ty.kind() {
+            ExprKind::Name(name) => name.to_string(),
+            _ => String::new(),
+        }
     }
 
     pub fn with_module_resolution(
