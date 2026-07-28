@@ -1326,9 +1326,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 self.bind(result_var, Ty::Type(TypeType::new(Span::null())));
             }
-            /// create_struct, addfield, clone_struct — intercepted by lang
-            /// system but typed opaquely here. Struct building happens at
-            /// comptime via LIR interpreter; typer just binds to a type-type.
+            // create_struct, addfield, clone_struct — intercepted by lang
+            // system but typed opaquely here. Struct building happens at
+            // comptime via LIR interpreter; typer just binds to a type-type.
             IntrinsicCallKind::CreateStruct
             | IntrinsicCallKind::AddField
             | IntrinsicCallKind::CloneStruct => {

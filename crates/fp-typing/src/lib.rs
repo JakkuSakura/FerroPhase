@@ -421,6 +421,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     /// Load a module's pre-parsed items from the package graph into the
     /// typer's lookup tables. Called lazily when resolution encounters a
     /// module path for the first time.
+    #[allow(dead_code)]
     fn ensure_module_loaded(&mut self, path: &QualifiedPath) {
         let items = self.typing_ctx.std_items.borrow().get(path).cloned();
         if let Some(items) = items {

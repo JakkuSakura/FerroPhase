@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use fp_core::ast::Item;
 use fp_core::frontend::LanguageFrontend;
