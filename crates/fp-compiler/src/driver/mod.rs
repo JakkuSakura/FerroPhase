@@ -542,19 +542,18 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         }
         let mir = lowering.transform(hir);
         let (diagnostics, had_errors) = lowering.take_diagnostics();
-        let mir = match (mir, had_errors, self.state.lossy()) {
-            (Ok(program), false, _) => program,
-            (Ok(_), true, true) => fp_core::mir::Program::new(),
-            (Err(_), _, true) => fp_core::mir::Program::new(),
-            (Ok(_), true, false) => {
+        // First-pass MIR lowering: accept programs with diagnostics
+        // so comptime eval can proceed. Errors will validate on retry.
+        let mir = match (mir, had_errors) {
+            (Ok(program), _) => program,
+            (Err(err), _) => {
                 let message = diagnostics
                     .iter()
                     .find(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
                     .map(|diagnostic| diagnostic.message.clone())
-                    .unwrap_or_else(|| "HIR→MIR lowering reported errors".to_string());
+                    .unwrap_or_else(|| format!("HIR→MIR lowering error: {err}"));
                 return Err(CompilerDriverError::UnsupportedWork(message));
             }
-            (Err(err), _, false) => return Err(err.into()),
         };
         let mir_id = MirId::new(format!("mir:{}", path.to_key()));
         self.state.insert_mir(mir_id.clone(), mir);
