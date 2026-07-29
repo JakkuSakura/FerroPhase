@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use fp_core::ast::{Ty, TypeStruct, TypeType, TypeUnknown, Value, ValueList, ValueMapEntry, ValueString, ValueTuple};
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirConstant, LirFunction,
-    LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue,
-    RegisterId,
+    BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirCompileUnit, LirConstant,
+    LirFunction, LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType,
+    LirValue, RegisterId,
 };
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
@@ -51,7 +51,7 @@ impl LirInterpreter {
     }
 
     pub fn run_main(&mut self, program: &LirProgram) -> LirResult<Value> {
-        self.populate_functions(program);
+        self.populate_functions_from_program(program);
         self.populate_globals(program);
         let entry = program
             .functions
@@ -62,15 +62,17 @@ impl LirInterpreter {
         self.run_function(program, func, &[])
     }
 
-    pub fn run_function_named(&mut self, program: &LirProgram, name: &str) -> LirResult<Value> {
-        self.populate_functions(program);
-        self.populate_globals(program);
-        let func = program
-            .functions
-            .iter()
-            .find(|func| func.name.as_str() == name)
-            .ok_or_else(|| VmError::Runtime(format!("missing function {name}")))?;
-        self.run_function(program, func, &[])
+    pub fn run_function_named(&mut self, units: &[LirCompileUnit], name: &str) -> LirResult<Value> {
+        self.populate_functions_from_units(units);
+        for unit in units {
+            self.populate_globals(&unit.program);
+        }
+        for unit in units {
+            if let Some(func) = unit.program.functions.iter().find(|f| f.name.as_str() == name) {
+                return self.run_function(&unit.program, func, &[]);
+            }
+        }
+        Err(VmError::Runtime(format!("missing function {name}")))
     }
 
     /// Look up an object handle from the objects table.
@@ -78,7 +80,13 @@ impl LirInterpreter {
         self.state.objects.get(handle as usize).cloned()
     }
 
-    fn populate_functions(&mut self, program: &LirProgram) {
+    fn populate_functions_from_units(&mut self, units: &[LirCompileUnit]) {
+        for unit in units {
+            self.populate_functions_from_program(&unit.program);
+        }
+    }
+
+    fn populate_functions_from_program(&mut self, program: &LirProgram) {
         for func in &program.functions {
             self.program_functions.insert(func.name.as_str().to_string(), func.clone());
         }

@@ -62,6 +62,14 @@ impl RuntimeSymbol {
     }
 }
 
+/// A compiled LIR module — the result of lowering one module through
+/// the full pipeline. Multiple LirCompileUnits form a Package.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LirCompileUnit {
+    pub module_path: crate::module::path::QualifiedPath,
+    pub program: LirProgram,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirProgram {
     pub functions: Vec<LirFunction>,

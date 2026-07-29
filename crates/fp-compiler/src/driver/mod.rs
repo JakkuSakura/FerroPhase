@@ -473,18 +473,17 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
     /// Compile all items in a workspace crate through the full pipeline
     /// (typer → HIR → MIR → LIR) and return the merged LirProgram.
     /// Used for on-demand compilation when a crate's lir_program is None.
-    fn compile_items_to_lir(
+    fn compile_items_to_lir_units(
         &mut self,
         items_map: &HashMap<QualifiedPath, Vec<Item>>,
-    ) -> Option<fp_core::lir::LirProgram> {
+    ) -> Option<Vec<fp_core::lir::LirCompileUnit>> {
+        use fp_core::lir::LirCompileUnit;
         use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
-        use std::path::PathBuf;
-
-        let mut merged = fp_core::lir::LirProgram::new();
+        let mut units = Vec::new();
         for (path, items) in items_map {
             if items.is_empty() { continue; }
             let mut file = fp_core::ast::File {
-                path: PathBuf::from(path.to_key()),
+                path: std::path::PathBuf::from(path.to_key()),
                 items: items.clone(),
                 collected_items: Vec::new(),
                 attrs: Vec::new(),
@@ -497,7 +496,6 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                 continue;
             }
 
-            // HIR → MIR → LIR
             let mut hir_gen = HirGenerator::new();
             let hir = match hir_gen.transform_file(&file) {
                 Ok(h) => h,
@@ -506,20 +504,19 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             let mut mir_lowering = MirLowering::new();
             let mir = match mir_lowering.transform(hir) {
                 Ok(m) => m,
-                Err(e) => {
-                    eprintln!("DEBUG compile_items: MIR failed for {}: {e:?}", path.to_key());
-                    continue;
-                }
+                Err(_) => continue,
             };
-            // Allow diagnostics during std compilation — unresolved refs are expected
             let mut lir_gen = LirGenerator::new();
             let lir = match lir_gen.transform(mir) {
                 Ok(l) => l,
                 Err(_) => continue,
             };
-            merged.extend(lir);
+            units.push(fp_core::lir::LirCompileUnit {
+                module_path: path.clone(),
+                program: lir,
+            });
         }
-        if merged.functions.is_empty() { None } else { Some(merged) }
+        if units.is_empty() { None } else { Some(units) }
     }
 
     fn evaluate_comptime_lir(
@@ -527,25 +524,30 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         lir_id: &LirId,
         path: &FullyQualifiedPath,
     ) -> Result<usize, CompilerDriverError> {
-        let mut lir = self.state.lir(lir_id)?.clone();
+         let mut lir = self.state.lir(lir_id)?.clone();
 
-        // On-demand: compile workspace crates that have no LIR yet.
-        let crates_to_compile: Vec<_> = self.state.typing_ctx.env_ctx.crates
-            .iter()
-            .filter(|c| c.lir_program.is_none() && !c.items.is_empty())
-            .map(|c| c.items.clone())
-            .collect();
-        for items_map in &crates_to_compile {
-            if let Some(compiled) = self.compile_items_to_lir(items_map) {
-                lir.extend(compiled);
+        // Collect all LirCompileUnits: user's module + workspace crates
+        let mut all_units: Vec<fp_core::lir::LirCompileUnit> = Vec::new();
+        all_units.push(fp_core::lir::LirCompileUnit {
+            module_path: path.path().clone(),
+            program: lir.clone(),
+        });
+        // Workspace crates with pre-compiled LIR
+        for krate in &self.state.typing_ctx.env_ctx.crates {
+            for unit in &krate.lir_units {
+                all_units.push(unit.clone());
             }
         }
 
-        // Merge LIR from all workspace crates so the interpreter can
-        // resolve cross-module const fn calls during comptime evaluation.
-        for krate in &self.state.typing_ctx.env_ctx.crates {
-            if let Some(ref workspace_lir) = krate.lir_program {
-                lir.extend(workspace_lir.clone());
+        // On-demand: compile workspace crate items that have no LIR
+        let crates_to_compile: Vec<_> = self.state.typing_ctx.env_ctx.crates
+            .iter()
+            .filter(|c| c.lir_units.is_empty() && !c.items.is_empty())
+            .map(|c| c.items.clone())
+            .collect();
+        for items_map in &crates_to_compile {
+            if let Some(compiled_units) = self.compile_items_to_lir_units(items_map) {
+                all_units.extend(compiled_units);
             }
         }
 
@@ -558,16 +560,13 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
 
         let mut count = 0usize;
         let mut last = Value::unit();
+        self.interpreter = LirInterpreter::new();
+        let resolved = self.collect_resolved_const_values();
+        self.interpreter.inject_globals(&resolved);
         for entry in &lir.comptime_entries {
-            let mut value = match self.evaluate_lir_function(&lir, entry.function.as_str()) {
-                Ok(v) => {
-                    eprintln!("DEBUG comptime: entry {} returned {v:?}", entry.key);
-                    v
-                }
-                Err(e) => {
-                    eprintln!("DEBUG comptime: entry {} FAILED: {e:?}", entry.key);
-                    continue;
-                }
+            let mut value = match self.interpreter.run_function_named(&all_units, entry.function.as_str()) {
+                Ok(v) => v,
+                Err(_) => continue,
             };
             // If the returned value is a raw handle (u64 from comptime
             // struct construction), resolve it from the interpreter's objects.
@@ -717,7 +716,11 @@ fn lower_to_hir(
         self.interpreter = LirInterpreter::new();
         let resolved = self.collect_resolved_const_values();
         self.interpreter.inject_globals(&resolved);
-        self.interpreter.run_function_named(lir, name)
+        let units = vec![fp_core::lir::LirCompileUnit {
+            module_path: QualifiedPath::new(Vec::new()),
+            program: lir.clone(),
+        }];
+        self.interpreter.run_function_named(&units, name)
     }
 
     fn collect_resolved_const_values(&self) -> HashMap<String, Value> {

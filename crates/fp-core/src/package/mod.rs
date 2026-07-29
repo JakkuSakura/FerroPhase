@@ -92,7 +92,7 @@ pub mod graph;
 pub mod provider;
 
 use crate::ast::{FunctionSignature, Item, TypeEnum, TypeStruct};
-use crate::lir::LirProgram;
+use crate::lir::LirCompileUnit;
 use crate::module::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
 
@@ -116,13 +116,12 @@ pub struct PackageCrate {
     /// All known module paths within this crate.
     pub module_paths: HashSet<QualifiedPath>,
 
-    /// Compiled LIR for this crate, produced after the full lowering
-    /// pipeline. Used to merge into the caller's LirProgram so the
-    /// interpreter can resolve cross-module function calls.
-    pub lir_program: Option<LirProgram>,
+    /// Compiled LIR modules for this crate — one unit per module.
+    /// The interpreter searches across all units for function definitions.
+    pub lir_units: Vec<LirCompileUnit>,
 
     /// Parsed items per module path, available for on-demand compilation
-    /// when lir_program is None. The CompilerDriver uses these to type-check
+    /// when lir_units is empty. The CompilerDriver uses these to type-check
     /// and lower modules as needed during comptime evaluation.
     pub items: HashMap<QualifiedPath, Vec<Item>>,
 }
@@ -143,7 +142,7 @@ impl PackageCrate {
             function_sigs: HashMap::new(),
             trait_defs: HashSet::new(),
             module_paths,
-            lir_program: None,
+            lir_units: Vec::new(),
             items: HashMap::new(),
         }
     }
