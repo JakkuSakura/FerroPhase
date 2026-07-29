@@ -3668,6 +3668,52 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(result_var, Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
                 Ok(result_var)
             }
+            Ty::Type(ref tt) => {
+                // For const-block type aliases, the struct may have been
+                // resolved via comptime eval since the field access was typed.
+                // Try to resolve the inner struct from resolved_types.
+                if let Some(inner) = &tt.inner {
+                    if let Ty::Struct(ref struct_ty) = inner.as_ref() {
+                        if let Some(def_field) = struct_ty.fields.iter().find(|f| f.name == *field) {
+                            let var = self.type_from_ast_ty(&def_field.value)?;
+                            return Ok(var);
+                        }
+                    }
+                }
+                // Look up by struct name from resolved_types
+                let struct_name = {
+                    let ty = self.resolve_to_ty(obj_var).ok();
+                    ty.and_then(|t| match t {
+                        Ty::Type(TypeType { inner: Some(inner), .. }) => {
+                            if let Ty::Struct(s) = *inner {
+                                Some(s.name.as_str().to_string())
+                            } else { None }
+                        }
+                        _ => None,
+                    })
+                };
+                if let Some(name) = struct_name {
+                    let cached = self.typing_ctx.resolved_types.borrow().get(&name).cloned();
+                    if let Some(struct_ty) = cached {
+                        if let Some(def_field) = struct_ty.fields.iter().find(|f| f.name == *field) {
+                            let var = self.type_from_ast_ty(&def_field.value)?;
+                            return Ok(var);
+                        }
+                    }
+                }
+                // Defer: const-block type alias not yet resolved by comptime.
+                // Return placeholder bound to opaque type; retry pass resolves it.
+                if tt.inner.is_none() {
+                    let placeholder = self.fresh_type_var();
+                    self.bind(placeholder, Ty::Type(TypeType::new(fp_core::span::Span::null())));
+                    return Ok(placeholder);
+                }
+                self.emit_error(format!(
+                    "cannot access field {} on value of type {}",
+                    field, resolved_ty
+                ));
+                Ok(self.error_type_var())
+            }
             Ty::Struct(struct_ty) => {
                 if let Some(def_field) = struct_ty.fields.iter().find(|f| f.name == *field) {
                     let var = self.type_from_ast_ty(&def_field.value)?;
