@@ -5209,7 +5209,8 @@ impl LirGenerator {
             | TyKind::Bound(_, _)
             | TyKind::Placeholder(_)
             | TyKind::Infer(_)
-            | TyKind::Error(_) => lir::LirType::Ptr(Box::new(lir::LirType::I8)),
+            | TyKind::Error(_)
+            | TyKind::Type => lir::LirType::Ptr(Box::new(lir::LirType::I8)),
             TyKind::Never => lir::LirType::Void,
             TyKind::FnPtr(poly_fn_sig) => {
                 let fn_sig = &poly_fn_sig.binder.value;

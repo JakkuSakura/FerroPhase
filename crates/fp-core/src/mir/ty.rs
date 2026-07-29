@@ -91,6 +91,11 @@ pub enum TyKind {
     /// A placeholder for a type which could not be computed; this is
     /// propagated to avoid useless error messages.
     Error(ErrorGuaranteed),
+
+    /// The FerroPhase meta-type `type`. Values of this type carry
+    /// compile-time type information and are manipulated by comptime
+    /// intrinsics (create_struct, addfield, build_type).
+    Type,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

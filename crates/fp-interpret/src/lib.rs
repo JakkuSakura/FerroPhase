@@ -129,6 +129,7 @@ impl LirInterpreter {
                         Some(v) => self.resolve_typed(v, ret_ty)?,
                         None => Value::unit(),
                     };
+                    eprintln!("DEBUG run_function returning: {v:?}");
                     break Ok(v);
                 }
                 LirTerminator::Br(dest) => {
@@ -325,6 +326,7 @@ impl LirInterpreter {
             LirInstructionKind::ComptimeOp(op) => match op {
                 ComptimeOp::CreateStruct { name } => {
                     let struct_name = self.resolve_string_value(name);
+                    eprintln!("DEBUG CreateStruct: name={struct_name}");
                     let fields: Vec<fp_core::ast::StructuralField> = vec![];
                     let struct_ty = Ty::Struct(TypeStruct {
                         name: fp_core::ast::Ident::new(struct_name),

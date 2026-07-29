@@ -480,8 +480,20 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
         use std::path::PathBuf;
 
+        // First pass: inject all modules into the typer so cross-module
+        // references (like std::meta calling std::intrinsics::create_struct)
+        // resolve correctly.
+        let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
+            .with_extern_prelude(default_extern_prelude());
+        inferencer.seed_workspace_graph();
+        for (path, items) in items_map {
+            inferencer.inject_module(path, items);
+        }
+
+        // Second pass: type each module and lower to LIR
         let mut merged = fp_core::lir::LirProgram::new();
         for (path, items) in items_map {
+            if items.is_empty() { continue; }
             let mut file = fp_core::ast::File {
                 path: PathBuf::from(path.to_key()),
                 items: items.clone(),
@@ -489,11 +501,8 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                 attrs: Vec::new(),
             };
 
-            // Type the module
-            let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
-                .with_extern_prelude(default_extern_prelude());
-            inferencer.seed_workspace_graph();
-            if inferencer.infer_file(&mut file).is_err() {
+            if let Err(e) = inferencer.infer_file(&mut file) {
+                eprintln!("DEBUG compile_items: typing failed for {}: {e:?}", path.to_key());
                 continue;
             }
 
@@ -506,7 +515,10 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             let mut mir_lowering = MirLowering::new();
             let mir = match mir_lowering.transform(hir) {
                 Ok(m) => m,
-                Err(_) => continue,
+                Err(e) => {
+                    eprintln!("DEBUG compile_items: MIR failed for {}: {e:?}", path.to_key());
+                    continue;
+                }
             };
             // Allow diagnostics during std compilation — unresolved refs are expected
             let mut lir_gen = LirGenerator::new();
@@ -557,8 +569,12 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         let mut last = Value::unit();
         for entry in &lir.comptime_entries {
             let mut value = match self.evaluate_lir_function(&lir, entry.function.as_str()) {
-                Ok(v) => v,
-                Err(_) => {
+                Ok(v) => {
+                    eprintln!("DEBUG comptime: entry {} returned {v:?}", entry.key);
+                    v
+                }
+                Err(e) => {
+                    eprintln!("DEBUG comptime: entry {} FAILED: {e:?}", entry.key);
                     continue;
                 }
             };

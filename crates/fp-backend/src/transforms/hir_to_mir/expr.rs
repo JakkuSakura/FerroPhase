@@ -6517,6 +6517,12 @@ impl MirLowering {
         }
     }
 
+    fn type_ty() -> Ty {
+        Ty {
+            kind: TyKind::Type,
+        }
+    }
+
     fn is_unit_ty(ty: &Ty) -> bool {
         matches!(&ty.kind, TyKind::Tuple(elements) if elements.is_empty())
     }
@@ -6690,7 +6696,8 @@ impl MirLowering {
             | TyKind::Dynamic(_, _)
             | TyKind::Generator(_, _, _)
             | TyKind::GeneratorWitness(_)
-            | TyKind::Closure(_, _) => true,
+            | TyKind::Closure(_, _)
+            | TyKind::Type => true,
             TyKind::Ref(_, inner, _) => self.has_unresolved_ty(inner.as_ref()),
             TyKind::RawPtr(type_and_mut) => self.has_unresolved_ty(type_and_mut.ty.as_ref()),
             TyKind::Slice(inner) => self.has_unresolved_ty(inner.as_ref()),
@@ -14487,6 +14494,43 @@ impl<'a> BodyBuilder<'a> {
                         _ => unreachable!(),
                     }
                 }
+                // Comptime struct-building intrinsics — lowered as
+                // mir::Rvalue::IntrinsicCall so MIR→LIR can convert
+                // them to ComptimeOp instructions.
+                if matches!(
+                    call.kind,
+                    IntrinsicCallKind::CreateStruct
+                        | IntrinsicCallKind::AddField
+                        | IntrinsicCallKind::BuildType
+                ) {
+                    let lowered_args: Vec<OperandInfo> = call
+                        .callargs
+                        .iter()
+                        .map(|arg| self.lower_operand(&arg.value, None))
+                        .collect::<Result<Vec<_>>>()?;
+                    let operands: Vec<mir::Operand> = lowered_args
+                        .iter()
+                        .map(|a| a.operand.clone())
+                        .collect();
+                    let ty = MirLowering::type_ty();
+                    let local_id = self.allocate_temp(ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    self.push_statement(mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            local_place.clone(),
+                            mir::Rvalue::IntrinsicCall {
+                                kind: call.kind,
+                                format: String::new(),
+                                args: operands,
+                            },
+                        ),
+                    });
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(local_place),
+                        ty,
+                    });
+                }
                 if let Some((literal, ty)) = self.lower_intrinsic_constant(call, expr.span) {
                     let operand = mir::Operand::Constant(mir::Constant {
                         span: expr.span,
@@ -14496,24 +14540,23 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(OperandInfo { operand, ty });
                 }
 
-                self.lowering.emit_warning(
+                self.lowering.emit_error(
                     expr.span,
                     format!(
-                        "treating intrinsic {:?} as opaque value during MIR operand lowering",
+                        "unsupported intrinsic {:?} during MIR operand lowering",
                         call.kind
                     ),
                 );
-                let unit_ty = MirLowering::unit_ty();
+                let unit_ty = self.lowering.error_ty();
                 let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
                 let local_place = mir::Place::from_local(local_id);
-                let statement = mir::Statement {
+                self.push_statement(mir::Statement {
                     source_info: expr.span,
                     kind: mir::StatementKind::Assign(
                         local_place.clone(),
                         mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
                     ),
-                };
-                self.push_statement(statement);
+                });
                 Ok(OperandInfo {
                     operand: mir::Operand::copy(local_place),
                     ty: unit_ty,
@@ -16311,7 +16354,8 @@ impl<'a> BodyBuilder<'a> {
             | TyKind::Param(_)
             | TyKind::Placeholder(_)
             | TyKind::Bound(_, _)
-            | TyKind::Infer(_) => {
+            | TyKind::Infer(_)
+            | TyKind::Type => {
                 if let TyKind::Adt(_, _) = &ty.kind {
                     if let Some(layout) = self.lowering.struct_layout_for_ty(ty) {
                         let mut total = 0u64;
