@@ -480,17 +480,6 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
         use std::path::PathBuf;
 
-        // First pass: inject all modules into the typer so cross-module
-        // references (like std::meta calling std::intrinsics::create_struct)
-        // resolve correctly.
-        let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
-            .with_extern_prelude(default_extern_prelude());
-        inferencer.seed_workspace_graph();
-        for (path, items) in items_map {
-            inferencer.inject_module(path, items);
-        }
-
-        // Second pass: type each module and lower to LIR
         let mut merged = fp_core::lir::LirProgram::new();
         for (path, items) in items_map {
             if items.is_empty() { continue; }
@@ -501,8 +490,10 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                 attrs: Vec::new(),
             };
 
-            if let Err(e) = inferencer.infer_file(&mut file) {
-                eprintln!("DEBUG compile_items: typing failed for {}: {e:?}", path.to_key());
+            let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
+                .with_extern_prelude(default_extern_prelude());
+            inferencer.seed_workspace_graph();
+            if inferencer.infer_file(&mut file).is_err() {
                 continue;
             }
 
