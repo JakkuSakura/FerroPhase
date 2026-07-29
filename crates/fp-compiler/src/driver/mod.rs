@@ -476,7 +476,7 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
     fn compile_items_to_lir_units(
         &mut self,
         items_map: &HashMap<QualifiedPath, Vec<Item>>,
-    ) -> Option<Vec<fp_core::lir::LirCompileUnit>> {
+    ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
         use fp_core::lir::LirCompileUnit;
         use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
         let mut units = Vec::new();
@@ -492,7 +492,8 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                 .with_extern_prelude(default_extern_prelude());
             inferencer.seed_workspace_graph();
-            if inferencer.infer_file(&mut file).is_err() {
+            if let Err(e) = inferencer.infer_file(&mut file) {
+                eprintln!("WARNING: typing failed for {}: {e}", path.to_key());
                 continue;
             }
 
@@ -516,7 +517,7 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                 program: lir,
             });
         }
-        if units.is_empty() { None } else { Some(units) }
+        Ok(units)
     }
 
     fn evaluate_comptime_lir(
@@ -546,8 +547,9 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             .map(|c| c.items.clone())
             .collect();
         for items_map in &crates_to_compile {
-            if let Some(compiled_units) = self.compile_items_to_lir_units(items_map) {
-                all_units.extend(compiled_units);
+            match self.compile_items_to_lir_units(items_map) {
+                Ok(compiled_units) => all_units.extend(compiled_units),
+                Err(e) => return Err(e),
             }
         }
 
