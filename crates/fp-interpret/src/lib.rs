@@ -67,8 +67,11 @@ impl LirInterpreter {
         for unit in units {
             self.populate_globals(&unit.program);
         }
+        eprintln!("DEBUG interp: looking for {name} among {} units ({} funcs)", 
+            units.len(), self.program_functions.len());
         for unit in units {
             if let Some(func) = unit.program.functions.iter().find(|f| f.name.as_str() == name) {
+                eprintln!("DEBUG interp: found {name} in unit {}", unit.module_path.to_key());
                 return self.run_function(&unit.program, func, &[]);
             }
         }
@@ -84,6 +87,8 @@ impl LirInterpreter {
         for unit in units {
             self.populate_functions_from_program(&unit.program);
         }
+        eprintln!("DEBUG interp: total {} functions loaded from {} units", 
+            self.program_functions.len(), units.len());
     }
 
     fn populate_functions_from_program(&mut self, program: &LirProgram) {
