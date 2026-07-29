@@ -1730,7 +1730,6 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 self.predeclare_macro_item(mac);
             }
             ItemKind::DefStruct(def) => {
-                self.record_unimplemented_symbol(&def.name, &def.attrs);
                 self.insert_struct_def(&def.name, def.value.clone());
                 let var = self.symbol_var(&def.name);
                 let ty = Ty::Struct(def.value.clone());
@@ -1739,7 +1738,6 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 }
             }
             ItemKind::DefStructural(def) => {
-                self.record_unimplemented_symbol(&def.name, &def.attrs);
                 let struct_ty = TypeStruct {
                     name: def.name.clone(),
                     generics_params: Vec::new(),
