@@ -1040,94 +1040,103 @@ pub(crate) fn parse_block_expr(input: &mut &[Token], file: FileId) -> ModalResul
     expect_symbol(input, "{")?;
     let mut stmts = Vec::new();
     while peek_symbol(input) != Some("}") {
-        if peek_symbol(input) == Some("#") {
-            let mut attr_probe = *input;
-            let attrs = crate::ast::items::parse_outer_attrs(&mut attr_probe, file)?;
-            if !attrs.is_empty() {
-                let mut item_probe = *input;
-                if let Ok(item) = parse_block_item(&mut item_probe, file) {
-                    *input = item_probe;
-                    stmts.push(BlockStmt::Item(Box::new(item)));
-                    continue;
-                }
-                *input = attr_probe;
-            }
-        }
-        if starts_block_item(*input) {
-            let mut item_probe = *input;
-            if let Ok(item) = parse_block_item(&mut item_probe, file) {
-                *input = item_probe;
-                stmts.push(BlockStmt::Item(Box::new(item)));
-                continue;
-            }
-        }
-        let mut probe = *input;
-        if expect_keyword(&mut probe, Keyword::Let).is_ok() {
-            let mut pat = if expect_keyword(&mut probe, Keyword::Mut).is_ok() {
-                let name = ident_like(&mut probe)?;
-                Pattern::new(PatternKind::Ident(PatternIdent {
-                    ident: name,
-                    mutability: Some(true),
-                }))
-            } else {
-                parse_general_pattern(&mut probe)?
-            };
-            if expect_symbol(&mut probe, ":").is_ok() {
-                let ty = parse_simple_type(&mut probe)?;
-                pat = Pattern::new(PatternKind::Type(PatternType::new(pat, ty)));
-            }
-            if expect_symbol(&mut probe, "=").is_err() {
-                if expect_symbol(&mut probe, ";").is_ok() {
-                    *input = probe;
-                    stmts.push(BlockStmt::Let(StmtLet::new(pat, None, None)));
-                    continue;
-                }
-                return Err(ErrMode::Cut(ContextError::new()));
-            }
-            let init = parse_expr_winnow(&mut probe, file)?;
-            let diverge = if expect_keyword(&mut probe, Keyword::Else).is_ok() {
-                Some(parse_block_expr(&mut probe, file)?)
-            } else {
-                None
-            };
-            let had_semi = expect_symbol(&mut probe, ";").is_ok();
-            if !had_semi {
-                return Err(ErrMode::Cut(ContextError::new()));
-            }
-            *input = probe;
-            stmts.push(BlockStmt::Let(StmtLet::new(pat, Some(init), diverge)));
-            continue;
-        }
-        let mut probe = *input;
-        if expect_keyword(&mut probe, Keyword::Defer).is_ok() {
-            let expr = parse_expr_winnow(&mut probe, file)?;
-            let had_semi = expect_symbol(&mut probe, ";").is_ok();
-            if !had_semi {
-                return Err(ErrMode::Cut(ContextError::new()));
-            }
-            *input = probe;
-            stmts.push(BlockStmt::Defer(StmtDefer {
-                span: span_from_expr(&expr),
-                expr: Box::new(expr),
-            }));
-            continue;
-        }
-
-        let expr = parse_expr_winnow(input, file)?;
-        let mut semicolon = false;
-        let mut probe = *input;
-        if expect_symbol(&mut probe, ";").is_ok() {
-            *input = probe;
-            semicolon = true;
-        } else if !expr_can_omit_semicolon_in_block(&expr) && peek_symbol(input) != Some("}") {
-            return Err(ErrMode::Cut(ContextError::new()));
-        }
-        stmts.push(BlockStmt::Expr(
-            BlockStmtExpr::new(expr).with_semicolon(semicolon),
-        ));
+        stmts.push(parse_block_stmt_entry(input, file)?);
     }
     expect_symbol(input, "}")?;
     Ok(ExprKind::Block(ExprBlock::new_stmts(stmts)).into())
+}
+
+/// Parse one `BlockStmt` entry (item / let / defer / trailing expr), the
+/// same dispatch `parse_block_expr` uses per loop iteration. Shared with
+/// `parse_script_tokens` (top-level `ScriptBlock` parsing), which loops this
+/// same dispatch until end-of-input instead of a closing `}`. A missing
+/// trailing semicolon is only tolerated when this is the last entry before
+/// the block's `}` *or* before end-of-input — both are "nothing more to
+/// parse here" in their respective contexts.
+pub(crate) fn parse_block_stmt_entry(input: &mut &[Token], file: FileId) -> ModalResult<BlockStmt> {
+    if peek_symbol(*input) == Some("#") {
+        let mut attr_probe = *input;
+        let attrs = crate::ast::items::parse_outer_attrs(&mut attr_probe, file)?;
+        if !attrs.is_empty() {
+            let mut item_probe = *input;
+            if let Ok(item) = parse_block_item(&mut item_probe, file) {
+                *input = item_probe;
+                return Ok(BlockStmt::Item(Box::new(item)));
+            }
+            *input = attr_probe;
+        }
+    }
+    if starts_block_item(*input) {
+        let mut item_probe = *input;
+        if let Ok(item) = parse_block_item(&mut item_probe, file) {
+            *input = item_probe;
+            return Ok(BlockStmt::Item(Box::new(item)));
+        }
+    }
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Let).is_ok() {
+        let mut pat = if expect_keyword(&mut probe, Keyword::Mut).is_ok() {
+            let name = ident_like(&mut probe)?;
+            Pattern::new(PatternKind::Ident(PatternIdent {
+                ident: name,
+                mutability: Some(true),
+            }))
+        } else {
+            parse_general_pattern(&mut probe)?
+        };
+        if expect_symbol(&mut probe, ":").is_ok() {
+            let ty = parse_simple_type(&mut probe)?;
+            pat = Pattern::new(PatternKind::Type(PatternType::new(pat, ty)));
+        }
+        if expect_symbol(&mut probe, "=").is_err() {
+            if expect_symbol(&mut probe, ";").is_ok() {
+                *input = probe;
+                return Ok(BlockStmt::Let(StmtLet::new(pat, None, None)));
+            }
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        let init = parse_expr_winnow(&mut probe, file)?;
+        let diverge = if expect_keyword(&mut probe, Keyword::Else).is_ok() {
+            Some(parse_block_expr(&mut probe, file)?)
+        } else {
+            None
+        };
+        let had_semi = expect_symbol(&mut probe, ";").is_ok();
+        if !had_semi {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        *input = probe;
+        return Ok(BlockStmt::Let(StmtLet::new(pat, Some(init), diverge)));
+    }
+    let mut probe = *input;
+    if expect_keyword(&mut probe, Keyword::Defer).is_ok() {
+        let expr = parse_expr_winnow(&mut probe, file)?;
+        let had_semi = expect_symbol(&mut probe, ";").is_ok();
+        if !had_semi {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        *input = probe;
+        return Ok(BlockStmt::Defer(StmtDefer {
+            span: span_from_expr(&expr),
+            expr: Box::new(expr),
+        }));
+    }
+
+    let expr = parse_expr_winnow(input, file)?;
+    let mut semicolon = false;
+    let mut probe = *input;
+    if expect_symbol(&mut probe, ";").is_ok() {
+        *input = probe;
+        semicolon = true;
+    } else if !expr_can_omit_semicolon_in_block(&expr)
+        && peek_symbol(input) != Some("}")
+        && !input.is_empty()
+    {
+        return Err(ErrMode::Cut(ContextError::new()));
+    }
+    Ok(BlockStmt::Expr(
+        BlockStmtExpr::new(expr).with_semicolon(semicolon),
+    ))
 }
 
 fn expr_can_omit_semicolon_in_block(expr: &Expr) -> bool {

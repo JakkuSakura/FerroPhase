@@ -53,6 +53,45 @@ pub(crate) fn parse_file_tokens(
     Ok((attrs, items))
 }
 
+/// Parse top-level content into a `ScriptBlock` — the same ordered
+/// item/let/defer/expr dispatch `parse_block_expr` uses for function/block
+/// bodies (via the shared `parse_block_stmt_entry`), applied at file scope
+/// instead of `parse_file_tokens`'s item-or-bare-expr-only dispatch. This is
+/// what lets a top-level `let`/`defer` parse at all, and gives callers like
+/// `FerroFrontend::parse_script` an ordered, `File`-free representation.
+pub(crate) fn parse_script_tokens(
+    tokens: &[Token],
+    file: FileId,
+) -> Result<(Vec<Attribute>, ScriptBlock), DirectParseError> {
+    let mut input = tokens;
+    let attrs = parse_inner_attrs(&mut input, file).map_err(|err| map_err(err, input))?;
+    let mut stmts = Vec::new();
+    while !input.is_empty() {
+        if looks_like_extern_block(input) {
+            let parsed =
+                parse_extern_block_items(&mut input, file).map_err(|err| map_err(err, input))?;
+            stmts.extend(parsed.into_iter().map(|item| BlockStmt::Item(Box::new(item))));
+            continue;
+        }
+        if starts_unsafe_extern_block(input) {
+            let parsed = parse_prefixed_unsafe_extern_block_items(&mut input, file)
+                .map_err(|err| map_err(err, input))?;
+            stmts.extend(parsed.into_iter().map(|item| BlockStmt::Item(Box::new(item))));
+            continue;
+        }
+        let stmt =
+            parse_block_stmt_entry(&mut input, file).map_err(|err| map_err(err, input))?;
+        stmts.push(stmt);
+    }
+    Ok((
+        attrs,
+        ScriptBlock {
+            span: Span::null(),
+            stmts,
+        },
+    ))
+}
+
 fn parse_item_or_expr_winnow(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
     let mut probe = *input;
     if let Ok(item) = parse_item_winnow(&mut probe, file) {

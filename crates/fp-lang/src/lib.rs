@@ -8,7 +8,7 @@ mod normalization;
 mod serializer;
 use crate::macro_parser::FerroMacroExpansionParser;
 use crate::normalization::FerroIntrinsicNormalizer;
-use fp_core::ast::{AstSerializer, File};
+use fp_core::ast::{AstSerializer, File, ScriptBlock};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::IntrinsicNormalizer;
@@ -133,6 +133,22 @@ impl FerroFrontend {
             snapshot: None,
             diagnostics,
         })
+    }
+
+    /// Parse top-level content into a `ScriptBlock` directly — no `File`,
+    /// no `ItemKind::Expr` wrapping. A plain inherent method (not part of
+    /// `LanguageFrontend`): `FerroFrontend` is used concretely wherever this
+    /// matters, so this needs no changes to the trait or its other
+    /// implementors. Unlike `parse_expr`, top-level `let`/`defer` parse
+    /// natively here (via `parse_script_tokens`'s block-body-style
+    /// dispatch), so no statement-wrapping workaround is needed.
+    pub fn parse_script(&self, source: &str) -> CoreResult<ScriptBlock> {
+        let cleaned = self.clean_source(source);
+        let file_id = register_source(PathBuf::from("<script>"), &cleaned);
+        self.ferro.clear_diagnostics();
+        self.ferro
+            .parse_script_ast_with_file(cleaned.as_str(), file_id)
+            .map_err(|err| self.diagnostic_err(format!("failed to parse script: {err}")))
     }
 }
 

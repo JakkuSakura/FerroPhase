@@ -158,6 +158,36 @@ impl FerroPhaseParser {
             items,
         })
     }
+
+    /// Parse top-level content into a `ScriptBlock` directly — no `File`,
+    /// no item wrapping. Mirrors `parse_file_ast_with_file` but calls
+    /// `parse_script_tokens` (ordered item/let/defer/expr dispatch) instead
+    /// of `parse_file_tokens` (item-or-bare-expr-only).
+    pub fn parse_script_ast_with_file(
+        &self,
+        source: &str,
+        file: FileId,
+    ) -> Result<ScriptBlock> {
+        let file_id = resolve_file_id(file, source, None);
+        let tokens = crate::lexer::tokenizer::lex(source).map_err(|err| {
+            if let Some(span) = err.span() {
+                let span = fp_core::span::Span::new(file_id, span.start as u32, span.end as u32);
+                self.record_error_with_span(format!("failed to lex script: {err}"), span);
+            } else {
+                self.record_error(format!("failed to lex script: {err}"));
+            }
+            eyre::eyre!(err)
+        })?;
+        let (_attrs, script) = crate::ast::parse_script_tokens(&tokens, file_id).map_err(|err| {
+            if let Some(span) = err.span() {
+                self.record_error_with_span(format!("failed to parse script: {err}"), span);
+            } else {
+                self.record_error(format!("failed to parse script: {err}"));
+            }
+            eyre::eyre!(err)
+        })?;
+        Ok(script)
+    }
 }
 
 use eyre::Result;
@@ -176,9 +206,9 @@ use fp_core::ast::{
     MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Module, Name, ParameterPath,
     ParameterPathSegment, Path, Pattern, PatternIdent, PatternKind, PatternQuote, PatternTuple,
     PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind,
-    QuoteItemKind, ReprOptions, StmtDefer, StmtLet, StructuralField, Ty, TypeBinaryOp,
-    TypeBinaryOpKind, TypeBounds, TypeEnum, TypeFunction, TypeInt, TypePrimitive, TypeQuote,
-    TypeReference, TypeSlice, TypeStruct, Value, ValueNone, Visibility,
+    QuoteItemKind, ReprOptions, ScriptBlock, StmtDefer, StmtLet, StructuralField, Ty,
+    TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeFunction, TypeInt, TypePrimitive,
+    TypeQuote, TypeReference, TypeSlice, TypeStruct, Value, ValueNone, Visibility,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::path::PathPrefix;

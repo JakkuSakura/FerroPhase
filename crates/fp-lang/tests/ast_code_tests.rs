@@ -6,11 +6,14 @@ use std::path::PathBuf;
 
 // --- Small test helpers to streamline assertions ---
 
-fn unwrap_node_expr<'a>(node: &'a Node) -> &'a Expr {
-    match node.kind() {
-        NodeKind::Expr(e) => e,
-        other => panic!("expected NodeKind::Expr, found {:?}", other),
-    }
+fn unwrap_node_expr(file: &File) -> &Expr {
+    file.items
+        .first()
+        .and_then(|item| match item.kind() {
+            ItemKind::Expr(e) => Some(e),
+            _ => None,
+        })
+        .expect("expected expr item")
 }
 
 fn unwrap_expr_quote<'a>(expr: &'a Expr) -> &'a ExprQuote {
@@ -194,7 +197,7 @@ mod libc {
     );
 }
 
-fn node_contains_splice_quote(node: &Node) -> bool {
+fn node_contains_splice_quote(file: &File) -> bool {
     fn expr_contains(e: &Expr) -> bool {
         match e.kind() {
             ExprKind::Splice(s) => matches!(s.token.kind(), ExprKind::Quote(_)),
@@ -254,12 +257,7 @@ fn node_contains_splice_quote(node: &Node) -> bool {
             _ => false,
         }
     }
-    match node.kind() {
-        NodeKind::Expr(e) => expr_contains(e),
-        NodeKind::Item(i) => item_contains(i),
-        NodeKind::File(f) => f.items.iter().any(|it| item_contains(it)),
-        _ => false,
-    }
+    file.items.iter().any(|it| item_contains(it))
 }
 
 fn expect_parse_err(src: &str) {
@@ -301,11 +299,8 @@ fn parse_quote_splice_example_file() {
     let res = fe
         .parse(EXAMPLE_QUOTE_SPLICE, Some(&path))
         .expect("parse example");
-    // Must produce a file node; example includes splice/quote sugar
-    match res.ast.kind() {
-        NodeKind::File(_) => {}
-        other => panic!("expected NodeKind::File for example, found {:?}", other),
-    }
+    // Must produce a non-empty file; example includes splice/quote sugar
+    assert!(!res.ast.items.is_empty(), "expected file items for example");
 }
 
 #[test]
@@ -322,10 +317,7 @@ fn nested_splice_inside_if_parses() {
     "#;
     let path = PathBuf::from("test.fp");
     let res = fe.parse(code, Some(&path)).expect("parse");
-    assert!(
-        matches!(res.ast.kind(), NodeKind::File(_)),
-        "expected file AST"
-    );
+    assert!(!res.ast.items.is_empty(), "expected file AST");
     assert!(node_contains_splice_quote(&res.ast));
 }
 
@@ -362,7 +354,7 @@ fn emit_outside_const_errors() {
     let res = fe
         .parse("fn main() { emit! ( let x = 1; ) }", None)
         .expect("parse");
-    assert!(matches!(res.ast.kind(), NodeKind::File(_)));
+    assert!(!res.ast.items.is_empty());
 }
 
 #[test]
@@ -372,7 +364,7 @@ fn parse_const_eval_basics_example_file() {
     let res = fe
         .parse(EXAMPLE_CONST_EVAL, Some(&path))
         .expect("parse example file");
-    assert!(matches!(res.ast.kind(), NodeKind::File(_)));
+    assert!(!res.ast.items.is_empty());
 }
 
 #[test]

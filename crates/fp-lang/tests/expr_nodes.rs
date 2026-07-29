@@ -2,11 +2,14 @@ use fp_core::ast::*;
 use fp_core::frontend::LanguageFrontend;
 use fp_lang::FerroFrontend;
 
-fn unwrap_expr(expr_node: &Node) -> &Expr {
-    match expr_node.kind() {
-        NodeKind::Expr(e) => e,
-        other => panic!("expected NodeKind::Expr, found {:?}", other),
-    }
+fn unwrap_expr(file: &File) -> &Expr {
+    file.items
+        .first()
+        .and_then(|item| match item.kind() {
+            ItemKind::Expr(e) => Some(e),
+            _ => None,
+        })
+        .expect("expected expr item")
 }
 
 #[test]

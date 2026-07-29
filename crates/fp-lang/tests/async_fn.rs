@@ -1,4 +1,4 @@
-use fp_core::ast::{ExprKind, ItemKind, NodeKind};
+use fp_core::ast::{ExprKind, ItemKind};
 use fp_core::frontend::LanguageFrontend;
 use fp_lang::FerroFrontend;
 
@@ -8,11 +8,7 @@ fn async_fn_body_wrapped() {
     let res = fe
         .parse("async fn foo() -> i64 { 1 }", None)
         .expect("parse");
-    let item = match res.ast.kind() {
-        NodeKind::Item(it) => it.clone(),
-        NodeKind::File(file) => file.items.first().cloned().expect("file item"),
-        other => panic!("expected Item/File, got {:?}", other),
-    };
+    let item = res.ast.items.first().cloned().expect("file item");
     match item.kind() {
         ItemKind::DefFunction(def) => {
             assert!(matches!(def.body.kind(), ExprKind::Async(_)));
@@ -27,11 +23,7 @@ fn async_trait_method_body_wrapped() {
     let res = fe
         .parse("trait T { async fn f() { 1 } }", None)
         .expect("parse");
-    let item = match res.ast.kind() {
-        NodeKind::Item(it) => it.clone(),
-        NodeKind::File(file) => file.items.first().cloned().expect("file item"),
-        other => panic!("expected Item/File, got {:?}", other),
-    };
+    let item = res.ast.items.first().cloned().expect("file item");
     match item.kind() {
         ItemKind::DefTrait(def) => {
             let first = def.items.first().expect("trait item");

@@ -16,14 +16,28 @@ fn make_quote_block(stmts: Vec<BlockStmt>, last_expr: Option<Expr>) -> Expr {
     }))
 }
 
+fn new_typing_ctx() -> std::rc::Rc<fp_typing::TypingContext> {
+    std::rc::Rc::new(fp_typing::TypingContext::new(std::rc::Rc::new(
+        fp_core::workspace::WorkspaceContext::new(),
+    )))
+}
+
+fn has_errors(typing_ctx: &fp_typing::TypingContext) -> bool {
+    typing_ctx
+        .diagnostics
+        .borrow()
+        .iter()
+        .any(|d| matches!(d.level, TypingDiagnosticLevel::Error))
+}
+
 #[test]
 fn quote_without_kind_infers_expr_when_trailing_expr_present() {
-    let quote_expr = make_quote_block(vec![], Some(Expr::value(Value::int(42))));
-    let mut node = Node::new(NodeKind::Expr(quote_expr));
-    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
-    let outcome = typer.infer(&mut node).expect("infer");
-    assert!(!outcome.has_errors);
-    match node.ty().expect("ty") {
+    let mut quote_expr = make_quote_block(vec![], Some(Expr::value(Value::int(42))));
+    let typing_ctx = new_typing_ctx();
+    let mut typer = AstTypeInferencer::new(typing_ctx.clone());
+    typer.infer_expr(&mut quote_expr).expect("infer");
+    assert!(!has_errors(&typing_ctx));
+    match quote_expr.ty().expect("ty") {
         Ty::Quote(quote) => {
             assert_eq!(quote.kind, QuoteFragmentKind::Expr);
             assert!(
@@ -37,12 +51,12 @@ fn quote_without_kind_infers_expr_when_trailing_expr_present() {
 
 #[test]
 fn quote_without_kind_infers_stmt_when_no_trailing_expr() {
-    let quote_expr = make_quote_block(vec![BlockStmt::Noop], None);
-    let mut node = Node::new(NodeKind::Expr(quote_expr));
-    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
-    let outcome = typer.infer(&mut node).expect("infer");
-    assert!(!outcome.has_errors);
-    match node.ty().expect("ty") {
+    let mut quote_expr = make_quote_block(vec![BlockStmt::Noop], None);
+    let typing_ctx = new_typing_ctx();
+    let mut typer = AstTypeInferencer::new(typing_ctx.clone());
+    typer.infer_expr(&mut quote_expr).expect("infer");
+    assert!(!has_errors(&typing_ctx));
+    match quote_expr.ty().expect("ty") {
         Ty::Quote(quote) => {
             assert_eq!(quote.kind, QuoteFragmentKind::Stmt);
         }
@@ -60,35 +74,31 @@ fn splice_in_expr_requires_expr_quote_token() {
         block,
         kind: Some(QuoteFragmentKind::Expr),
     }));
-    let splice_ok = Expr::from(ExprKind::Splice(ExprSplice {
+    let mut splice_ok = Expr::from(ExprKind::Splice(ExprSplice {
         span: Span::null(),
         token: Box::new(expr_token),
     }));
-    let mut node_ok = Node::new(NodeKind::Expr(splice_ok));
-    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
-    let out_ok = typer.infer(&mut node_ok).expect("infer ok");
+    let typing_ctx_ok = new_typing_ctx();
+    let mut typer = AstTypeInferencer::new(typing_ctx_ok.clone());
+    typer.infer_expr(&mut splice_ok).expect("infer ok");
     assert!(
-        !out_ok.has_errors,
+        !has_errors(&typing_ctx_ok),
         "splice with expr token should type-check"
     );
 
     // Build a splice with stmt token (no trailing expr)
     let stmt_token = make_quote_block(vec![BlockStmt::Noop], None);
-    let splice_bad = Expr::from(ExprKind::Splice(ExprSplice {
+    let mut splice_bad = Expr::from(ExprKind::Splice(ExprSplice {
         span: Span::null(),
         token: Box::new(stmt_token),
     }));
-    let mut node_bad = Node::new(NodeKind::Expr(splice_bad));
-    let mut typer2 = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
-    let out_bad = typer2.infer(&mut node_bad).expect("infer bad");
+    let typing_ctx_bad = new_typing_ctx();
+    let mut typer2 = AstTypeInferencer::new(typing_ctx_bad.clone());
+    let result = typer2.infer_expr(&mut splice_bad);
     assert!(
-        out_bad.has_errors,
+        result.is_err() || has_errors(&typing_ctx_bad),
         "splice with non-expr token should error"
     );
-    assert!(out_bad
-        .diagnostics
-        .iter()
-        .any(|d| matches!(d.level, TypingDiagnosticLevel::Error)));
 }
 
 #[test]
@@ -115,13 +125,12 @@ fn splice_stmt_accepts_item_quote_list() {
         .with_semicolon(true),
     );
 
-    let mut node = Node::new(NodeKind::Expr(Expr::block(ExprBlock::new_stmts(vec![
-        splice_stmt,
-    ]))));
-    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
-    let outcome = typer.infer(&mut node).expect("infer");
+    let mut splice_stmt_expr = Expr::block(ExprBlock::new_stmts(vec![splice_stmt]));
+    let typing_ctx = new_typing_ctx();
+    let mut typer = AstTypeInferencer::new(typing_ctx.clone());
+    typer.infer_expr(&mut splice_stmt_expr).expect("infer");
     assert!(
-        !outcome.has_errors,
+        !has_errors(&typing_ctx),
         "splice with item quote list should type-check"
     );
 }

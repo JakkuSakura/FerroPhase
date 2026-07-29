@@ -17,20 +17,25 @@ fn type_inference_records_resolved_name_on_tast_expr() {
         fp_core::module::path::PathPrefix::Crate,
         vec![Ident::new("VALUE")],
     )));
-    let mut node = Node::new(NodeKind::File(File {
+    let mut file = File {
         path: "resolved_names.fp".into(),
         attrs: Vec::new(),
         collected_items: Vec::new(),
         items: vec![const_item, Item::from(ItemKind::Expr(expr.clone()))],
-    }));
-
-    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
-    let outcome = typer.infer(&mut node).expect("infer");
-    assert!(!outcome.has_errors, "expected typing to succeed");
-
-    let NodeKind::File(file) = node.kind else {
-        panic!("expected file node");
     };
+
+    let typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(std::rc::Rc::new(
+        fp_core::workspace::WorkspaceContext::new(),
+    )));
+    let mut typer = AstTypeInferencer::new(typing_ctx.clone());
+    let outcome = typer.infer_file(&mut file).expect("infer");
+    let has_errors = typing_ctx
+        .diagnostics
+        .borrow()
+        .iter()
+        .any(|d| matches!(d.level, fp_typing::TypingDiagnosticLevel::Error));
+    assert!(!has_errors, "expected typing to succeed");
+
     let ItemKind::Expr(typed_expr) = file.items[1].kind() else {
         panic!("expected expr item");
     };

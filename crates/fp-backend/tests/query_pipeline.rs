@@ -1,6 +1,4 @@
 use fp_backend::transforms::{HirGenerator, LirGenerator, MirLowering};
-use fp_core::ast::NodeKind;
-use fp_core::frontend::LanguageFrontend;
 use fp_core::hir;
 use fp_core::mir;
 use fp_core::query::{
@@ -137,15 +135,12 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
 #[test]
 fn fp_query_feature_lowers_in_ast_to_hir_pass() {
     let frontend = FerroFrontend::new();
-    let result = frontend
-        .parse(
-            "from(ticks).where(symbol == \"AAPL\").select(struct { value })",
-            None,
-        )
+    let script = frontend
+        .parse_script("from(ticks).where(symbol == \"AAPL\").select(struct { value })")
         .expect("parse");
-    let NodeKind::Expr(expr) = result.ast.kind() else {
-        panic!("expected host AST expr before feature pass");
-    };
+    let expr = script
+        .as_single_expr()
+        .expect("expected a single top-level expression");
 
     let mut hir_generator = HirGenerator::new();
     let hir_program = hir_generator.transform_expr(expr).expect("hir program");

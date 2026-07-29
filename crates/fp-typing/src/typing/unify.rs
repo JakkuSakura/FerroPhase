@@ -1951,11 +1951,14 @@ fn locator_tail_name(locator: &Name) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TypingContext;
     use fp_core::span::Span;
 
     #[test]
     fn merges_structural_types_with_plus() {
-        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new()));
+        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
+            std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
+        )));
 
         let lhs = Ty::Structural(TypeStructural {
             fields: vec![StructuralField::new(
@@ -1990,7 +1993,9 @@ mod tests {
 
     #[test]
     fn rejects_conflicting_field_types_on_merge() {
-        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new()));
+        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
+            std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
+        )));
 
         let lhs = Ty::Structural(TypeStructural {
             fields: vec![StructuralField::new(
@@ -2019,7 +2024,9 @@ mod tests {
 
     #[test]
     fn intersects_structural_types_with_ampersand() {
-        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new()));
+        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
+            std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
+        )));
 
         let lhs = Ty::Structural(TypeStructural {
             fields: vec![
@@ -2065,7 +2072,9 @@ mod tests {
 
     #[test]
     fn unify_errors_carry_active_span() {
-        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new()));
+        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
+            std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
+        )));
         let span = Span::new(1, 10, 12);
         typer.current_span = Some(span);
 
@@ -2078,6 +2087,7 @@ mod tests {
                 generics_params: Vec::new(),
                 repr: Default::default(),
                 fields: Vec::new(),
+                method_sigs: Vec::new(),
             }),
         );
         let ret_var = typer.unit_type_var();
@@ -2097,7 +2107,9 @@ mod tests {
 
     #[test]
     fn subtracts_fields_with_minus() {
-        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new()));
+        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
+            std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
+        )));
 
         let lhs = Ty::Structural(TypeStructural {
             fields: vec![

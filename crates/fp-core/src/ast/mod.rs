@@ -1,6 +1,7 @@
 //! AST are trees, so Box<T> is fine
 
 use crate::query::QueryDocument;
+use crate::span::Span;
 use crate::workspace::WorkspaceDocument;
 use crate::{common_enum, common_struct};
 use std::path::PathBuf;
@@ -63,11 +64,24 @@ impl std::fmt::Display for File {
 
 /// A block that can contain both items and statements, like Python's
 /// module/class bodies where `def`, `class`, assignments, and expressions
-/// are interleaved.
+/// are interleaved. One ordered list — same model as `ExprBlock`'s `stmts`
+/// (function/block bodies already support this exact mix via `BlockStmt`)
+/// — rather than separate item/statement lists, which would lose source
+/// order.
 common_struct! {
     pub struct ScriptBlock {
         #[serde(default)]
-        pub items: Vec<Item>,
+        pub span: Span,
         pub stmts: Vec<BlockStmt>,
+    }
+}
+impl ScriptBlock {
+    /// The expression the whole script consists of, if it's exactly one
+    /// bare expression and nothing else (no items, no lets, no defers).
+    pub fn as_single_expr(&self) -> Option<&Expr> {
+        match self.stmts.as_slice() {
+            [BlockStmt::Expr(stmt)] => Some(&stmt.expr),
+            _ => None,
+        }
     }
 }

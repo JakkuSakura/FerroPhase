@@ -1,15 +1,11 @@
-use fp_core::ast::{ItemImpl, NodeKind};
+use fp_core::ast::ItemImpl;
 use fp_core::frontend::LanguageFrontend;
 use fp_lang::FerroFrontend;
 
 fn parse_impl(src: &str) -> ItemImpl {
     let fe = FerroFrontend::new();
     let res = fe.parse(src, None).expect("parse");
-    let item = match res.ast.kind() {
-        NodeKind::Item(it) => it.clone(),
-        NodeKind::File(file) => file.items.first().cloned().expect("file item"),
-        other => panic!("expected Item/File, got {:?}", other),
-    };
+    let item = res.ast.items.first().cloned().expect("file item");
     match item.kind() {
         fp_core::ast::ItemKind::Impl(im) => im.clone(),
         other => panic!("expected impl item, got {:?}", other),

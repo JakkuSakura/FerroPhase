@@ -15,15 +15,22 @@ fn loop_bottom_allows_i64_return() {
     let func = ItemDefFunction::new_simple(Ident::new("spin"), loop_expr.into())
         .with_ret_ty(Ty::Primitive(TypePrimitive::i64()));
 
-    let file = File {
+    let mut file = File {
         path: "loop_bottom.fp".into(),
         attrs: Vec::new(),
         collected_items: Vec::new(),
         items: vec![Item::from(ItemKind::DefFunction(func))],
     };
 
-    let mut node = Node::new(NodeKind::File(file));
-    let mut typer = AstTypeInferencer::new(std::rc::Rc::new(crate::TypingContext::new()));
-    let outcome = typer.infer(&mut node).expect("infer");
-    assert!(!outcome.has_errors, "loop should be bottom type");
+    let typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(std::rc::Rc::new(
+        fp_core::workspace::WorkspaceContext::new(),
+    )));
+    let mut typer = AstTypeInferencer::new(typing_ctx.clone());
+    typer.infer_file(&mut file).expect("infer");
+    let has_errors = typing_ctx
+        .diagnostics
+        .borrow()
+        .iter()
+        .any(|d| matches!(d.level, fp_typing::TypingDiagnosticLevel::Error));
+    assert!(!has_errors, "loop should be bottom type");
 }

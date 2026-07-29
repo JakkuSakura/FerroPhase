@@ -1,4 +1,4 @@
-use fp_core::ast::{AttributesExt, FunctionParam, ItemKind, NodeKind};
+use fp_core::ast::{AttributesExt, FunctionParam, ItemKind};
 use fp_core::frontend::LanguageFrontend;
 use fp_lang::FerroFrontend;
 
@@ -8,11 +8,7 @@ fn const_fn_and_const_param_flags_set() {
     let res = fe
         .parse("const fn foo(const x: i32) -> i32 { x }", None)
         .expect("parse");
-    let item = match res.ast.kind() {
-        NodeKind::Item(it) => it.clone(),
-        NodeKind::File(file) => file.items.first().cloned().expect("file item"),
-        other => panic!("expected Item/File, got {:?}", other),
-    };
+    let item = res.ast.items.first().cloned().expect("file item");
     let is_const = match item.kind() {
         ItemKind::DeclFunction(decl) => {
             assert_eq!(decl.sig.params.len(), 1);
@@ -43,11 +39,7 @@ fn const_struct_marker_parsed() {
     let res = fe
         .parse("const struct TypeBuilder { ty: type }", None)
         .expect("parse");
-    let item = match res.ast.kind() {
-        NodeKind::Item(it) => it.clone(),
-        NodeKind::File(file) => file.items.first().cloned().expect("file item"),
-        other => panic!("expected Item/File, got {:?}", other),
-    };
+    let item = res.ast.items.first().cloned().expect("file item");
     match item.kind() {
         ItemKind::DefStruct(def) => {
             assert!(
