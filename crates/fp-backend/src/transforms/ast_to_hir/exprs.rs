@@ -508,6 +508,28 @@ impl HirGenerator {
                 Ok(hir::ExprKind::Array(entries))
             }
             Value::Expr(expr) => self.transform_expr_to_hir(expr).map(|e| e.kind),
+            // Deferred const-block types (Escaped) — placeholder until retry
+            Value::Escaped(_) => {
+                let path = hir::Path {
+                    segments: vec![hir::PathSegment {
+                        name: hir::Symbol::new("__fp_escaped"),
+                        args: None,
+                    }],
+                    res: None,
+                };
+                Ok(hir::ExprKind::Path(path))
+            }
+            // Type-level values (Ty::Type, used by type(Config) etc.)
+            Value::Type(_) => {
+                let path = hir::Path {
+                    segments: vec![hir::PathSegment {
+                        name: hir::Symbol::new("__fp_type"),
+                        args: None,
+                    }],
+                    res: None,
+                };
+                Ok(hir::ExprKind::Path(path))
+            }
             Value::Function(func) => {
                 let name = func.sig.name.clone().unwrap_or_else(|| {
                     self.add_error(
