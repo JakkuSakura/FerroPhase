@@ -470,12 +470,73 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         Ok(())
     }
 
+    /// Compile all items in a workspace crate through the full pipeline
+    /// (typer → HIR → MIR → LIR) and return the merged LirProgram.
+    /// Used for on-demand compilation when a crate's lir_program is None.
+    fn compile_items_to_lir(
+        &mut self,
+        items_map: &HashMap<QualifiedPath, Vec<Item>>,
+    ) -> Option<fp_core::lir::LirProgram> {
+        use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
+        use std::path::PathBuf;
+
+        let mut merged = fp_core::lir::LirProgram::new();
+        for (path, items) in items_map {
+            let mut file = fp_core::ast::File {
+                path: PathBuf::from(path.to_key()),
+                items: items.clone(),
+                collected_items: Vec::new(),
+                attrs: Vec::new(),
+            };
+
+            // Type the module
+            let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
+                .with_extern_prelude(default_extern_prelude());
+            inferencer.seed_workspace_graph();
+            if inferencer.infer_file(&mut file).is_err() {
+                continue;
+            }
+
+            // HIR → MIR → LIR
+            let mut hir_gen = HirGenerator::new();
+            let hir = match hir_gen.transform_file(&file) {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+            let mut mir_lowering = MirLowering::new();
+            let mir = match mir_lowering.transform(hir) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            // Allow diagnostics during std compilation — unresolved refs are expected
+            let mut lir_gen = LirGenerator::new();
+            let lir = match lir_gen.transform(mir) {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+            merged.extend(lir);
+        }
+        if merged.functions.is_empty() { None } else { Some(merged) }
+    }
+
     fn evaluate_comptime_lir(
         &mut self,
         lir_id: &LirId,
         path: &FullyQualifiedPath,
     ) -> Result<usize, CompilerDriverError> {
         let mut lir = self.state.lir(lir_id)?.clone();
+
+        // On-demand: compile workspace crates that have no LIR yet.
+        let crates_to_compile: Vec<_> = self.state.typing_ctx.env_ctx.crates
+            .iter()
+            .filter(|c| c.lir_program.is_none() && !c.items.is_empty())
+            .map(|c| c.items.clone())
+            .collect();
+        for items_map in &crates_to_compile {
+            if let Some(compiled) = self.compile_items_to_lir(items_map) {
+                lir.extend(compiled);
+            }
+        }
 
         // Merge LIR from all workspace crates so the interpreter can
         // resolve cross-module const fn calls during comptime evaluation.

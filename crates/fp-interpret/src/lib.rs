@@ -984,11 +984,16 @@ impl LirInterpreter {
                 // If the intrinsic returned 0 AND it's not a known intrinsic,
                 // try regular LIR function call (cross-module const fn).
                 if r == 0 && !Self::is_known_intrinsic(name) {
+                    let sanitized = name.replace("::", "__");
                     let func = self.program_functions.get(name)
+                        .or_else(|| self.program_functions.get(&sanitized))
                         .or_else(|| {
                             self.program_functions.values().find(|f| {
-                                f.name.as_str().ends_with(&format!("::{name}"))
-                                    || f.name.as_str() == name
+                                let fn_name = f.name.as_str();
+                                fn_name.ends_with(&format!("::{name}"))
+                                    || fn_name.ends_with(&format!("__{}", sanitized))
+                                    || fn_name == name
+                                    || fn_name == sanitized
                             })
                         })
                         .cloned();
@@ -1041,18 +1046,6 @@ impl LirInterpreter {
             } else {
                 0
             }),
-            n if n.starts_with("opaque__") || n.starts_with("type__") => {
-                let obj = Value::Unit(Default::default());
-                let handle = self.state.objects.len() as u64;
-                self.state.objects.push(obj);
-                Ok(handle)
-            }
-            n if n.ends_with("__new") => {
-                let obj = Value::Unit(Default::default());
-                let handle = self.state.objects.len() as u64;
-                self.state.objects.push(obj);
-                Ok(handle)
-            }
             _ => Ok(0),
         }
     }
@@ -1063,8 +1056,7 @@ impl LirInterpreter {
             "println" | "print" | "eprintln" | "eprint" | "printf"
             | "sizeof" | "strlen" | "malloc" | "free" | "realloc"
             | "sin" | "cos" | "tan" | "sqrt" | "pow" | "strcmp"
-        ) || name.starts_with("opaque__") || name.starts_with("type__")
-        || name.ends_with("__new")
+        )
     }
 
     fn call_bc_intrinsic(&mut self, name: &str, args: &[u64]) -> LirResult<u64> {

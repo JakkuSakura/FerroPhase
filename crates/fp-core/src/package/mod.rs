@@ -91,7 +91,7 @@ pub struct PackageDescriptor {
 pub mod graph;
 pub mod provider;
 
-use crate::ast::{FunctionSignature, TypeEnum, TypeStruct};
+use crate::ast::{FunctionSignature, Item, TypeEnum, TypeStruct};
 use crate::lir::LirProgram;
 use crate::module::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
@@ -120,6 +120,11 @@ pub struct PackageCrate {
     /// pipeline. Used to merge into the caller's LirProgram so the
     /// interpreter can resolve cross-module function calls.
     pub lir_program: Option<LirProgram>,
+
+    /// Parsed items per module path, available for on-demand compilation
+    /// when lir_program is None. The CompilerDriver uses these to type-check
+    /// and lower modules as needed during comptime evaluation.
+    pub items: HashMap<QualifiedPath, Vec<Item>>,
 }
 
 impl PackageCrate {
@@ -139,6 +144,7 @@ impl PackageCrate {
             trait_defs: HashSet::new(),
             module_paths,
             lir_program: None,
+            items: HashMap::new(),
         }
     }
 }

@@ -76,7 +76,9 @@ pub fn build_workspace_with_std() -> WorkspaceContext {
         inferencer.inject_module(path, items);
     }
 
-    let std_crate = inferencer.into_package_crate("std", graph);
+    let mut std_crate = inferencer.into_package_crate("std", graph);
+    // Save parsed items for on-demand LIR compilation by the CompilerDriver
+    std_crate.items = items_by_path;
     // LIR bodies for std modules are compiled on-demand by the
     // CompilerDriver when needed for comptime evaluation.
 
