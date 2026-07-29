@@ -114,6 +114,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             TypeVarKind::Bound(Ty::Function(func)) => {
                 if func.params.len() != arity {
+                    eprintln!("DEBUG ensure_function arity mismatch: arity={arity} func.params.len={} span={:?}", func.params.len(), self.current_span);
                     self.emit_error(format!(
                         "function arity mismatch: expected {}, found {}",
                         arity,
@@ -156,6 +157,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(super::super::FunctionTypeInfo { params, ret })
             }
             other => {
+                eprintln!("DEBUG ensure_function other: arity={arity} other={other:?} span={:?}", self.current_span);
                 self.emit_error(format!("expected function, found {:?}", other));
                 let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
                 let ret = self.error_type_var();

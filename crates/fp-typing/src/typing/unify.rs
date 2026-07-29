@@ -1318,7 +1318,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             Ty::AnyBox(_) => {
-                // Treat AnyBox payloads as fully dynamic until a specific handler exists.
+                eprintln!("DEBUG bind_error AtAnyBox: span={:?}", self.current_span);
                 self.bind_error(var);
             }
             Ty::TokenStream(_) => {
@@ -1373,6 +1373,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(var, ty.clone());
             }
             Ty::TypeBounds(_) => {
+                eprintln!("DEBUG bind_error AtTypeBounds: span={:?}", self.current_span);
                 // Higher-ranked or bounded types are treated as opaque for now.
                 self.bind_error(var);
             }

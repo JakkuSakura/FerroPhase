@@ -3676,7 +3676,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         self.diagnostics.push(TypingDiagnostic::warning(message));
     }
 
-    fn error_type_var(&mut self) -> TypeVarId {
+     fn error_type_var(&mut self) -> TypeVarId {
         let var = self.fresh_type_var();
         self.bind_error(var);
         var
