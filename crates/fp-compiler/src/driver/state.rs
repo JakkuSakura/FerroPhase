@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::{
-    ast::{BlockStmt, Expr, ExprId, Item, Node, Value},
+    ast::{BlockStmt, Expr, ExprId, File, Item, Value},
     hir, lir, mir,
     module::resolution::ModuleResolutionContext,
 };
@@ -21,8 +21,8 @@ pub struct SpliceResult {
 }
 
 pub struct CompilerState {
-    ast: BTreeMap<AstId, Node>,
-    typed_ast: BTreeMap<TypedAstId, Node>,
+    ast: BTreeMap<AstId, File>,
+    typed_ast: BTreeMap<TypedAstId, File>,
     hir: BTreeMap<HirId, hir::Program>,
     mir: BTreeMap<MirId, mir::Program>,
     lir: BTreeMap<LirId, lir::LirProgram>,
@@ -44,11 +44,11 @@ impl CompilerState {
         Self::default()
     }
 
-    pub fn insert_ast(&mut self, ast_id: AstId, ast: Node) {
+    pub fn insert_ast(&mut self, ast_id: AstId, ast: File) {
         self.ast.insert(ast_id, ast);
     }
 
-    pub fn insert_typed_ast(&mut self, typed_ast_id: TypedAstId, ast: Node) {
+    pub fn insert_typed_ast(&mut self, typed_ast_id: TypedAstId, ast: File) {
         self.typed_ast.insert(typed_ast_id, ast);
     }
 
@@ -111,13 +111,13 @@ impl CompilerState {
         self.lossy = lossy;
     }
 
-    pub fn ast(&self, ast_id: &AstId) -> Result<&Node, CompilerDriverError> {
+    pub fn ast(&self, ast_id: &AstId) -> Result<&File, CompilerDriverError> {
         self.ast
             .get(ast_id)
             .ok_or_else(|| CompilerDriverError::MissingAst(ast_id.clone()))
     }
 
-    pub fn typed_ast(&self, typed_ast_id: &TypedAstId) -> Result<&Node, CompilerDriverError> {
+    pub fn typed_ast(&self, typed_ast_id: &TypedAstId) -> Result<&File, CompilerDriverError> {
         self.typed_ast
             .get(typed_ast_id)
             .ok_or_else(|| CompilerDriverError::MissingTypedAst(typed_ast_id.clone()))

@@ -8,7 +8,7 @@ use crate::compiler::{
 };
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
-use fp_core::ast::{AstTarget, AstTargetOutput, Node};
+use fp_core::ast::{AstSerializer, AstTarget, AstTargetOutput, File};
 use fp_core::config;
 use fp_core::module::resolution::ModuleResolutionContext;
 use fp_core::module::resolver::ResolverRegistry;
@@ -928,7 +928,7 @@ async fn compile_ast_target(
 
 #[allow(unused_variables)]
 fn emit_ast_target(
-    node: &Node,
+    node: &File,
     target: crate::languages::backend::AstLanguageTarget,
     emit_type_defs: bool,
     input: &Path,
@@ -939,9 +939,13 @@ fn emit_ast_target(
             #[cfg(feature = "lang-typescript")]
             {
                 let serializer = TypeScriptSerializer::new(emit_type_defs);
-                let mut result = serializer
-                    .emit_node(node)
+                let code = serializer
+                    .serialize_file(node)
                     .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+                let mut result = fp_core::ast::AstTargetOutput {
+                    code,
+                    side_files: Vec::new(),
+                };
                 if let Some(defs) = serializer.take_type_defs() {
                     result.side_files.push(fp_core::ast::AstTargetSideFile {
                         extension: "d.ts".to_string(),
@@ -962,9 +966,10 @@ fn emit_ast_target(
             #[cfg(feature = "lang-typescript")]
             {
                 let serializer = JavaScriptSerializer;
-                serializer
-                    .emit_node(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+                let code = serializer
+                    .serialize_file(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
             }
             #[cfg(not(feature = "lang-typescript"))]
             {
@@ -978,9 +983,10 @@ fn emit_ast_target(
             #[cfg(feature = "lang-csharp")]
             {
                 let serializer = CSharpSerializer;
-                serializer
-                    .emit_node(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+                let code = serializer
+                    .serialize_file(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
             }
             #[cfg(not(feature = "lang-csharp"))]
             {
@@ -991,9 +997,10 @@ fn emit_ast_target(
             #[cfg(feature = "lang-python")]
             {
                 let serializer = PythonSerializer;
-                serializer
-                    .emit_node(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+                let code = serializer
+                    .serialize_file(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
             }
             #[cfg(not(feature = "lang-python"))]
             {
@@ -1004,9 +1011,10 @@ fn emit_ast_target(
             #[cfg(feature = "lang-golang")]
             {
                 let serializer = GoSerializer::default();
-                serializer
-                    .emit_node(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+                let code = serializer
+                    .serialize_file(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
             }
             #[cfg(not(feature = "lang-golang"))]
             {
@@ -1017,9 +1025,10 @@ fn emit_ast_target(
             #[cfg(feature = "lang-godot")]
             {
                 let serializer = GdscriptSerializer;
-                serializer
-                    .emit_node(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+                let code = serializer
+                    .serialize_file(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
             }
             #[cfg(not(feature = "lang-godot"))]
             {
@@ -1033,9 +1042,10 @@ fn emit_ast_target(
             #[cfg(feature = "lang-zig")]
             {
                 let serializer = ZigSerializer;
-                serializer
-                    .emit_node(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+                let code = serializer
+                    .serialize_file(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
             }
             #[cfg(not(feature = "lang-zig"))]
             {
@@ -1046,9 +1056,10 @@ fn emit_ast_target(
             #[cfg(feature = "lang-sycl")]
             {
                 let serializer = SyclSerializer;
-                serializer
-                    .emit_node(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+                let code = serializer
+                    .serialize_file(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
             }
             #[cfg(not(feature = "lang-sycl"))]
             {
@@ -1057,18 +1068,20 @@ fn emit_ast_target(
         }
         crate::languages::backend::AstLanguageTarget::Rust => {
             let serializer = PrettyAstSerializer::new();
-            serializer
-                .emit_node(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))
+            let code = serializer
+                .serialize_file(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
         }
         crate::languages::backend::AstLanguageTarget::Wit => {
             #[cfg(feature = "lang-wit")]
             {
                 let serializer =
                     WitSerializer::with_options(build_wit_options(input, single_world));
-                serializer
-                    .emit_node(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))
+                let code = serializer
+                    .serialize_file(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
             }
             #[cfg(not(feature = "lang-wit"))]
             {

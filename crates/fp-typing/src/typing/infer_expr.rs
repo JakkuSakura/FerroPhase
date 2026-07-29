@@ -297,7 +297,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         sig_module
     }
 
-    pub(crate) fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypeVarId> {
+    pub(crate) fn infer_expr_inner(&mut self, expr: &mut Expr) -> Result<TypeVarId> {
         let expr_id = self.expr_id(expr);
         let span = expr.span();
         let previous = self.current_span;
@@ -391,7 +391,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ExprKind::Splice(splice) => {
                     // Expression-position splice must carry an expr token
-                    let token_var = self.infer_expr(splice.token.as_mut())?;
+                    let token_var = self.infer_expr_inner(splice.token.as_mut())?;
                     let token_ty = self.resolve_to_ty(token_var)?;
                     match token_ty {
                         Ty::Quote(quote) if quote.kind == QuoteFragmentKind::Expr => {
@@ -421,7 +421,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
                 ExprKind::SplicePending(pending) => {
-                    let token_var = self.infer_expr(pending.token.as_mut())?;
+                    let token_var = self.infer_expr_inner(pending.token.as_mut())?;
                     let token_ty = self.resolve_to_ty(token_var)?;
                     match token_ty {
                         Ty::Quote(quote) if quote.kind == QuoteFragmentKind::Expr => {
@@ -506,17 +506,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ExprKind::BinOp(binop) => self.infer_binop(binop)?,
                 ExprKind::UnOp(unop) => self.infer_unop(unop)?,
                 ExprKind::Assign(assign) => {
-                    let target = self.infer_expr(assign.target.as_mut())?;
-                    let value = self.infer_expr(assign.value.as_mut())?;
+                    let target = self.infer_expr_inner(assign.target.as_mut())?;
+                    let value = self.infer_expr_inner(assign.value.as_mut())?;
                     self.unify(target, value)?;
                     self.unit_type_var()
                 }
                 ExprKind::Cast(cast) => {
-                    let _ = self.infer_expr(cast.expr.as_mut())?;
+                    let _ = self.infer_expr_inner(cast.expr.as_mut())?;
                     self.type_from_ast_ty(&cast.ty)?
                 }
                 ExprKind::Let(expr_let) => {
-                    let value = self.infer_expr(expr_let.expr.as_mut())?;
+                    let value = self.infer_expr_inner(expr_let.expr.as_mut())?;
                     let pattern_info = self.infer_pattern(expr_let.pat.as_mut())?;
                     self.unify(pattern_info.var, value)?;
                     self.apply_pattern_generalization(&pattern_info)?;
@@ -524,7 +524,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ExprKind::Invoke(invoke) => self.infer_invoke(invoke)?,
                 ExprKind::Select(select) => {
-                    let obj_var = self.infer_expr(select.obj.as_mut())?;
+                    let obj_var = self.infer_expr_inner(select.obj.as_mut())?;
                     self.lookup_struct_field(obj_var, &select.field)?
                 }
                 ExprKind::Struct(struct_expr) => {
@@ -581,7 +581,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ExprKind::Tuple(tuple) => {
                     let mut element_vars = Vec::new();
                     for expr in &mut tuple.values {
-                        element_vars.push(self.infer_expr(expr)?);
+                        element_vars.push(self.infer_expr_inner(expr)?);
                     }
                     let tuple_var = self.fresh_type_var();
                     self.bind_tuple_term(tuple_var, element_vars);
@@ -590,9 +590,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ExprKind::Array(array) => {
                     let mut iter = array.values.iter_mut();
                     let elem_var = if let Some(first) = iter.next() {
-                        let first_var = self.infer_expr(first)?;
+                        let first_var = self.infer_expr_inner(first)?;
                         for value in iter {
-                            let next = self.infer_expr(value)?;
+                            let next = self.infer_expr_inner(value)?;
                             self.unify(first_var, next)?;
                         }
                         first_var
@@ -607,14 +607,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     array_var
                 }
                 ExprKind::ArrayRepeat(array_repeat) => {
-                    let elem_var = self.infer_expr(array_repeat.elem.as_mut())?;
+                    let elem_var = self.infer_expr_inner(array_repeat.elem.as_mut())?;
                     let array_var = self.fresh_type_var();
                     self.bind_array_term(array_var, elem_var, Some(array_repeat.len.clone()));
                     let array_ty = self.resolve_to_ty(array_var)?;
                     expr.set_ty(array_ty);
                     array_var
                 }
-                ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
+                ExprKind::Paren(paren) => self.infer_expr_inner(paren.expr.as_mut())?,
                 ExprKind::FormatString(_) => {
                     let var = self.fresh_type_var();
                     self.bind(var, Ty::Primitive(TypePrimitive::String));
@@ -624,14 +624,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ExprKind::Loop(loop_expr) => self.infer_loop(loop_expr)?,
                 ExprKind::Return(ret) => {
                     if let Some(value) = ret.value.as_mut() {
-                        self.infer_expr(value)?;
+                        self.infer_expr_inner(value)?;
                     }
                     // Diverging expression.
                     self.nothing_type_var()
                 }
                 ExprKind::Break(brk) => {
                     let value_var = if let Some(value) = brk.value.as_mut() {
-                        self.infer_expr(value)?
+                        self.infer_expr_inner(value)?
                     } else {
                         self.unit_type_var()
                     };
@@ -666,11 +666,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                     }
                     self.comptime_exprs.push(expr_snapshot.clone());
-                    self.infer_expr(const_block.expr.as_mut())?
+                    self.infer_expr_inner(const_block.expr.as_mut())?
                 }
                 ExprKind::For(for_expr) => {
                     let pat_info = self.infer_pattern(for_expr.pat.as_mut())?;
-                    let iter_var = self.infer_expr(for_expr.iter.as_mut())?;
+                    let iter_var = self.infer_expr_inner(for_expr.iter.as_mut())?;
                     if let Ok(iter_ty) = self.resolve_to_ty(iter_var) {
                         if let Some(elem_var) = self.iter_element_var_from_ty(&iter_ty) {
                             self.unify(pat_info.var, elem_var)?;
@@ -680,7 +680,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     // For now, treat `for` as producing unit.
                     let unit_var = self.fresh_type_var();
                     self.bind(unit_var, Ty::Unit(TypeUnit));
-                    self.infer_expr(for_expr.body.as_mut())?;
+                    self.infer_expr_inner(for_expr.body.as_mut())?;
                     unit_var
                 }
                 ExprKind::While(while_expr) => self.infer_while(while_expr)?,
@@ -691,7 +691,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     {
                         return self.infer_try_operator(try_expr);
                     }
-                    let result_var = self.infer_expr(try_expr.expr.as_mut())?;
+                    let result_var = self.infer_expr_inner(try_expr.expr.as_mut())?;
                     for catch in &mut try_expr.catches {
                         self.enter_scope();
                         if let Some(pat) = catch.pat.as_mut() {
@@ -701,16 +701,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             self.unify(pattern_info.var, panic_var)?;
                             self.apply_pattern_generalization(&pattern_info)?;
                         }
-                        let catch_var = self.infer_expr(catch.body.as_mut())?;
+                        let catch_var = self.infer_expr_inner(catch.body.as_mut())?;
                         self.unify(result_var, catch_var)?;
                         self.exit_scope();
                     }
                     if let Some(elze) = try_expr.elze.as_mut() {
-                        let else_var = self.infer_expr(elze.as_mut())?;
+                        let else_var = self.infer_expr_inner(elze.as_mut())?;
                         self.unify(result_var, else_var)?;
                     }
                     if let Some(finally) = try_expr.finally.as_mut() {
-                        let _ = self.infer_expr(finally.as_mut())?;
+                        let _ = self.infer_expr_inner(finally.as_mut())?;
                     }
                     result_var
                 }
@@ -721,7 +721,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ExprKind::IntrinsicCall(call) => self.infer_intrinsic(call)?,
                 ExprKind::Range(range) => self.infer_range(range)?,
                 ExprKind::Await(await_expr) => {
-                    let base_var = self.infer_expr(await_expr.base.as_mut())?;
+                    let base_var = self.infer_expr_inner(await_expr.base.as_mut())?;
                     let base_ty = self.resolve_to_ty(base_var)?;
 
                     if let Some(inner_ty) = extract_std_task_inner_ty(&base_ty, "Future") {
@@ -731,7 +731,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
                 ExprKind::Async(async_expr) => {
-                    let inner_var = self.infer_expr(async_expr.expr.as_mut())?;
+                    let inner_var = self.infer_expr_inner(async_expr.expr.as_mut())?;
                     let inner_ty = self.resolve_to_ty(inner_var)?;
                     let future_ty = make_std_task_param_ty("Future", inner_ty);
                     self.type_from_ast_ty(&future_ty)?
@@ -761,7 +761,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             return self.infer_value(&value);
                         }
                         if let Some(source_expr) = table.source_expr(*expr_id).cloned() {
-                            return self.infer_expr(&mut source_expr.clone());
+                            return self.infer_expr_inner(&mut source_expr.clone());
                         }
                     }
                     self.emit_error(format!(
@@ -787,8 +787,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_binop(&mut self, binop: &mut ExprBinOp) -> Result<TypeVarId> {
-        let lhs = self.infer_expr(binop.lhs.as_mut())?;
-        let rhs = self.infer_expr(binop.rhs.as_mut())?;
+        let lhs = self.infer_expr_inner(binop.lhs.as_mut())?;
+        let rhs = self.infer_expr_inner(binop.rhs.as_mut())?;
         match binop.kind {
             BinOpKind::Add
             | BinOpKind::Sub
@@ -839,7 +839,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_unop(&mut self, unop: &mut ExprUnOp) -> Result<TypeVarId> {
-        let value_var = self.infer_expr(unop.val.as_mut())?;
+        let value_var = self.infer_expr_inner(unop.val.as_mut())?;
         match unop.op {
             UnOpKind::Not => {
                 self.ensure_bool(value_var, "unary not")?;
@@ -855,7 +855,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_reference(&mut self, reference: &mut ExprReference) -> Result<TypeVarId> {
-        let inner_var = self.infer_expr(reference.referee.as_mut())?;
+        let inner_var = self.infer_expr_inner(reference.referee.as_mut())?;
         let reference_var = self.fresh_type_var();
         self.bind_reference_term(reference_var, inner_var);
         Ok(reference_var)
@@ -865,12 +865,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         &mut self,
         dereference: &mut ExprDereference,
     ) -> Result<TypeVarId> {
-        let target_var = self.infer_expr(dereference.referee.as_mut())?;
+        let target_var = self.infer_expr_inner(dereference.referee.as_mut())?;
         self.expect_reference(target_var, "dereference expression")
     }
 
     pub(crate) fn infer_index(&mut self, index: &mut ExprIndex) -> Result<TypeVarId> {
-        let object_var = self.infer_expr(index.obj.as_mut())?;
+        let object_var = self.infer_expr_inner(index.obj.as_mut())?;
         if matches!(index.index.kind(), ExprKind::Range(_)) {
             if let ExprKind::Range(range) = index.index.kind_mut() {
                 let _ = self.infer_range(range)?;
@@ -878,7 +878,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return self.infer_slice_index(object_var);
         }
 
-        let idx_var = self.infer_expr(index.index.as_mut())?;
+        let idx_var = self.infer_expr_inner(index.index.as_mut())?;
 
         if let Some((key_var, value_var)) = self.lookup_hashmap_args(object_var) {
             self.unify(key_var, idx_var)?;
@@ -1138,17 +1138,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let element_var = self.fresh_type_var();
 
         if let Some(start) = range.start.as_mut() {
-            let start_var = self.infer_expr(start)?;
+            let start_var = self.infer_expr_inner(start)?;
             self.unify(element_var, start_var)?;
         }
 
         if let Some(end) = range.end.as_mut() {
-            let end_var = self.infer_expr(end)?;
+            let end_var = self.infer_expr_inner(end)?;
             self.unify(element_var, end_var)?;
         }
 
         if let Some(step) = range.step.as_mut() {
-            let step_var = self.infer_expr(step)?;
+            let step_var = self.infer_expr_inner(step)?;
             self.ensure_numeric(step_var, "range step")?;
         }
 
@@ -1160,21 +1160,21 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_splat(&mut self, splat: &mut ExprSplat) -> Result<TypeVarId> {
-        self.infer_expr(splat.iter.as_mut())
+        self.infer_expr_inner(splat.iter.as_mut())
     }
 
     pub(crate) fn infer_splat_dict(&mut self, splat: &mut ExprSplatDict) -> Result<TypeVarId> {
-        self.infer_expr(splat.dict.as_mut())
+        self.infer_expr_inner(splat.dict.as_mut())
     }
 
     pub(crate) fn infer_intrinsic(&mut self, call: &mut ExprIntrinsicCall) -> Result<TypeVarId> {
         let mut arg_vars = Vec::new();
 
         for arg in &mut call.args {
-            arg_vars.push(self.infer_expr(arg)?);
+            arg_vars.push(self.infer_expr_inner(arg)?);
         }
         for kwarg in &mut call.kwargs {
-            arg_vars.push(self.infer_expr(&mut kwarg.value)?);
+            arg_vars.push(self.infer_expr_inner(&mut kwarg.value)?);
         }
 
         match call.kind {
@@ -1398,7 +1398,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             param_vars.push(info.var);
         }
 
-        let body_var = self.infer_expr(closure.body.as_mut())?;
+        let body_var = self.infer_expr_inner(closure.body.as_mut())?;
         let ret_var = if matches!(
             exception_policy,
             super::super::ExceptionReturnPolicy::AutoResult
@@ -1432,7 +1432,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return Ok(self.error_type_var());
         }
 
-        let result_var = self.infer_expr(try_expr.expr.as_mut())?;
+        let result_var = self.infer_expr_inner(try_expr.expr.as_mut())?;
         let result_ty = self.resolve_to_ty(result_var)?;
         let Some((ok_ty, _err_ty)) = std_result_inner_types(&result_ty) else {
             self.emit_error("`?` expects a Result value");
@@ -1442,11 +1442,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_with(&mut self, expr_with: &mut ExprWith) -> Result<TypeVarId> {
-        let context_var = self.infer_expr(expr_with.context.as_mut())?;
+        let context_var = self.infer_expr_inner(expr_with.context.as_mut())?;
         let context_ty = self.resolve_to_ty(context_var)?;
         self.enter_scope();
         self.push_context_binding(context_ty, expr_with.context.as_ref().clone());
-        let result = self.infer_expr(expr_with.body.as_mut());
+        let result = self.infer_expr_inner(expr_with.body.as_mut());
         self.exit_scope();
         result
     }
@@ -1475,7 +1475,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.emit_error("type() expects exactly one argument");
                         return Ok(self.error_type_var());
                     }
-                    let _ = self.infer_expr(&mut invoke.args[0])?;
+                    let _ = self.infer_expr_inner(&mut invoke.args[0])?;
                     let type_var = self.fresh_type_var();
                     self.bind(type_var, Ty::Type(TypeType::new(Span::null())));
                     return Ok(type_var);
@@ -1506,7 +1506,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     return Ok(self.error_type_var());
                 }
                 for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
-                    let arg_var = self.infer_expr(arg_expr)?;
+                    let arg_var = self.infer_expr_inner(arg_expr)?;
                     let param_var = self.type_from_ast_ty_in_module(&param.ty, &sig_module)?;
                     let expects_cstr = self
                         .resolve_to_ty(param_var)
@@ -1610,7 +1610,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         return Ok(self.error_type_var());
                     }
                     for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
-                        let arg_var = self.infer_expr(arg_expr)?;
+                        let arg_var = self.infer_expr_inner(arg_expr)?;
                         let param_var = self.type_from_ast_ty_in_module(&param.ty, &sig_module)?;
                         let expects_cstr = self
                             .resolve_to_ty(param_var)
@@ -1660,7 +1660,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         return Ok(self.error_type_var());
                     }
                     for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
-                        let arg_var = self.infer_expr(arg_expr)?;
+                        let arg_var = self.infer_expr_inner(arg_expr)?;
                         let param_var = self.type_from_ast_ty_in_module(&param.ty, &sig_module)?;
                         self.unify(arg_var, param_var)?;
                     }
@@ -1690,7 +1690,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             self.emit_error("panic expects at most one argument");
                         }
                         for arg in &mut invoke.args {
-                            let _ = self.infer_expr(arg)?;
+                            let _ = self.infer_expr_inner(arg)?;
                         }
                         return Ok(self.nothing_type_var());
                     }
@@ -1714,7 +1714,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     var
                 }
             }
-            ExprInvokeTarget::Expr(expr) => self.infer_expr(expr.as_mut())?,
+            ExprInvokeTarget::Expr(expr) => self.infer_expr_inner(expr.as_mut())?,
             ExprInvokeTarget::Closure(_) => {
                 let fn_ty = match &invoke.target {
                     ExprInvokeTarget::Closure(func) => {
@@ -1730,8 +1730,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.emit_error(message.clone());
                     return Ok(self.error_type_var());
                 }
-                let lhs = self.infer_expr(&mut invoke.args[0])?;
-                let rhs = self.infer_expr(&mut invoke.args[1])?;
+                let lhs = self.infer_expr_inner(&mut invoke.args[0])?;
+                let rhs = self.infer_expr_inner(&mut invoke.args[1])?;
                 let result = match kind {
                     BinOpKind::Add
                     | BinOpKind::Sub
@@ -1791,7 +1791,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 {
                     eprintln!("debug unwrap invoke: method field=unwrap");
                 }
-                let obj_var = match self.infer_expr(select.obj.as_mut()) {
+                let obj_var = match self.infer_expr_inner(select.obj.as_mut()) {
                     Ok(var) => var,
                     Err(err) => {
                         if std::env::var("FP_DEBUG_UNWRAP").is_ok()
@@ -1833,7 +1833,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.emit_error("contains expects exactly one argument");
                         return Ok(self.error_type_var());
                     }
-                    let _ = self.infer_expr(&mut invoke.args[0])?;
+                    let _ = self.infer_expr_inner(&mut invoke.args[0])?;
                     if let Ok(obj_ty) = self.resolve_to_ty(obj_var) {
                         let peeled = Self::peel_reference(obj_ty);
                         if !matches!(peeled, Ty::Primitive(TypePrimitive::List))
@@ -1857,7 +1857,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     self.emit_error("has_field expects exactly one argument");
                                     return Ok(self.error_type_var());
                                 }
-                                let arg_var = self.infer_expr(&mut invoke.args[0])?;
+                                let arg_var = self.infer_expr_inner(&mut invoke.args[0])?;
                                 let string_var = self.borrowed_string_var();
                                 self.unify(arg_var, string_var)?;
                                 let result_var = self.fresh_type_var();
@@ -1869,7 +1869,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     self.emit_error("has_method expects exactly one argument");
                                     return Ok(self.error_type_var());
                                 }
-                                let arg_var = self.infer_expr(&mut invoke.args[0])?;
+                                let arg_var = self.infer_expr_inner(&mut invoke.args[0])?;
                                 let string_var = self.borrowed_string_var();
                                 self.unify(arg_var, string_var)?;
                                 let result_var = self.fresh_type_var();
@@ -1905,7 +1905,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     self.emit_error("field_name_at expects exactly one argument");
                                     return Ok(self.error_type_var());
                                 }
-                                let arg_var = self.infer_expr(&mut invoke.args[0])?;
+                                let arg_var = self.infer_expr_inner(&mut invoke.args[0])?;
                                 let int_var = self.fresh_type_var();
                                 self.bind(int_var, Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
                                 self.unify(arg_var, int_var)?;
@@ -1916,7 +1916,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     self.emit_error("field_type expects exactly one argument");
                                     return Ok(self.error_type_var());
                                 }
-                                let arg_var = self.infer_expr(&mut invoke.args[0])?;
+                                let arg_var = self.infer_expr_inner(&mut invoke.args[0])?;
                                 let string_var = self.borrowed_string_var();
                                 self.unify(arg_var, string_var)?;
                                 let result_var = self.fresh_type_var();
@@ -1982,7 +1982,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let func_info = self.ensure_function(func_var, invoke.args.len())?;
         let mut arg_vars = Vec::with_capacity(invoke.args.len());
         for (arg_expr, param_var) in invoke.args.iter_mut().zip(func_info.params.iter()) {
-            let arg_var = self.infer_expr(arg_expr)?;
+            let arg_var = self.infer_expr_inner(arg_expr)?;
             arg_vars.push(arg_var);
             self.unify(*param_var, arg_var)?;
         }
@@ -2195,7 +2195,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
 
             for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
-                let arg_var = self.infer_expr(arg_expr)?;
+                let arg_var = self.infer_expr_inner(arg_expr)?;
                 let param_var = self.type_from_ast_ty_in_module(&param.ty, sig_module)?;
                 self.unify(arg_var, param_var)?;
             }
@@ -2313,7 +2313,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn infer_vec_new(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if !invoke.args.is_empty() {
             for arg in &mut invoke.args {
-                let _ = self.infer_expr(arg);
+                let _ = self.infer_expr_inner(arg);
             }
             self.emit_error("Vec::new does not take arguments");
         }
@@ -2326,11 +2326,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn infer_vec_with_capacity(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if invoke.args.len() != 1 {
             for arg in &mut invoke.args {
-                let _ = self.infer_expr(arg);
+                let _ = self.infer_expr_inner(arg);
             }
             self.emit_error("Vec::with_capacity expects a single capacity argument");
         } else {
-            let capacity_var = self.infer_expr(&mut invoke.args[0])?;
+            let capacity_var = self.infer_expr_inner(&mut invoke.args[0])?;
             let expected = self.fresh_type_var();
             self.bind(expected, Ty::Primitive(TypePrimitive::Int(TypeInt::U64)));
             self.unify(capacity_var, expected)?;
@@ -2344,11 +2344,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn infer_vec_from(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if invoke.args.len() != 1 {
             for arg in &mut invoke.args {
-                let _ = self.infer_expr(arg);
+                let _ = self.infer_expr_inner(arg);
             }
             self.emit_error("Vec::from expects a single iterable argument");
         } else {
-            let _ = self.infer_expr(&mut invoke.args[0])?;
+            let _ = self.infer_expr_inner(&mut invoke.args[0])?;
         }
         let elem_var = self.fresh_type_var();
         let vec_var = self.fresh_type_var();
@@ -2359,7 +2359,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn infer_hashmap_new(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if !invoke.args.is_empty() {
             for arg in &mut invoke.args {
-                let _ = self.infer_expr(arg);
+                let _ = self.infer_expr_inner(arg);
             }
             self.emit_error("HashMap::new does not take arguments");
         }
@@ -2375,11 +2375,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn infer_hashmap_with_capacity(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if invoke.args.len() != 1 {
             for arg in &mut invoke.args {
-                let _ = self.infer_expr(arg);
+                let _ = self.infer_expr_inner(arg);
             }
             self.emit_error("HashMap::with_capacity expects a single capacity argument");
         } else {
-            let capacity_var = self.infer_expr(&mut invoke.args[0])?;
+            let capacity_var = self.infer_expr_inner(&mut invoke.args[0])?;
             let expected = self.fresh_type_var();
             self.bind(expected, Ty::Primitive(TypePrimitive::Int(TypeInt::U64)));
             self.unify(capacity_var, expected)?;
@@ -2398,7 +2398,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let mut value_var = self.fresh_type_var();
         if invoke.args.len() != 1 {
             for arg in &mut invoke.args {
-                let _ = self.infer_expr(arg);
+                let _ = self.infer_expr_inner(arg);
             }
             self.emit_error("HashMap::from expects a single iterable argument");
         } else {
@@ -2416,8 +2416,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             }
                         }
                         if let (Some(key_expr), Some(value_expr)) = (key_expr, value_expr) {
-                            let key = self.infer_expr(key_expr)?;
-                            let value = self.infer_expr(value_expr)?;
+                            let key = self.infer_expr_inner(key_expr)?;
+                            let value = self.infer_expr_inner(value_expr)?;
                             if idx == 0 {
                                 key_var = key;
                                 value_var = value;
@@ -2430,8 +2430,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     if let ExprKind::Tuple(tuple_expr) = entry.kind_mut() {
                         if tuple_expr.values.len() == 2 {
-                            let key = self.infer_expr(&mut tuple_expr.values[0])?;
-                            let value = self.infer_expr(&mut tuple_expr.values[1])?;
+                            let key = self.infer_expr_inner(&mut tuple_expr.values[0])?;
+                            let value = self.infer_expr_inner(&mut tuple_expr.values[1])?;
                             if idx == 0 {
                                 key_var = key;
                                 value_var = value;
@@ -2444,8 +2444,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     if let ExprKind::Array(array_expr) = entry.kind_mut() {
                         if array_expr.values.len() == 2 {
-                            let key = self.infer_expr(&mut array_expr.values[0])?;
-                            let value = self.infer_expr(&mut array_expr.values[1])?;
+                            let key = self.infer_expr_inner(&mut array_expr.values[0])?;
+                            let value = self.infer_expr_inner(&mut array_expr.values[1])?;
                             if idx == 0 {
                                 key_var = key;
                                 value_var = value;
@@ -2456,11 +2456,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             continue;
                         }
                     }
-                    let _ = self.infer_expr(entry)?;
+                    let _ = self.infer_expr_inner(entry)?;
                     self.emit_error("HashMap::from expects HashMapEntry { key, value } entries");
                 }
             } else {
-                let _ = self.infer_expr(arg)?;
+                let _ = self.infer_expr_inner(arg)?;
                 self.emit_error("HashMap::from expects an array literal of entries");
             }
         }
@@ -2547,12 +2547,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.emit_error("printf requires a format string argument");
             return Ok(self.error_type_var());
         }
-        let format_var = self.infer_expr(&mut invoke.args[0])?;
+        let format_var = self.infer_expr_inner(&mut invoke.args[0])?;
         let expected_format = self.fresh_type_var();
         self.bind(expected_format, Ty::Primitive(TypePrimitive::String));
         self.unify(format_var, expected_format)?;
         for arg in invoke.args.iter_mut().skip(1) {
-            let _ = self.infer_expr(arg)?;
+            let _ = self.infer_expr_inner(arg)?;
         }
         let result_var = self.fresh_type_var();
         self.bind(result_var, Ty::Unit(TypeUnit));
@@ -2582,9 +2582,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         match collection {
             ExprIntrinsicContainer::VecElements { elements } => {
                 let elem_var = if let Some(first) = elements.first_mut() {
-                    let first_var = self.infer_expr(first)?;
+                    let first_var = self.infer_expr_inner(first)?;
                     for expr in elements.iter_mut().skip(1) {
-                        let next_var = self.infer_expr(expr)?;
+                        let next_var = self.infer_expr_inner(expr)?;
                         self.unify(first_var, next_var)?;
                     }
                     first_var
@@ -2596,8 +2596,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(vec_var)
             }
             ExprIntrinsicContainer::VecRepeat { elem, len } => {
-                let elem_var = self.infer_expr(elem.as_mut())?;
-                let len_var = self.infer_expr(len.as_mut())?;
+                let elem_var = self.infer_expr_inner(elem.as_mut())?;
+                let len_var = self.infer_expr_inner(len.as_mut())?;
                 let expected = self.fresh_type_var();
                 self.bind(expected, Ty::Primitive(TypePrimitive::Int(TypeInt::U64)));
                 self.unify(len_var, expected)?;
@@ -2607,8 +2607,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             ExprIntrinsicContainer::HashMapEntries { entries } => {
                 for entry in entries {
-                    let _ = self.infer_expr(&mut entry.key)?;
-                    let _ = self.infer_expr(&mut entry.value)?;
+                    let _ = self.infer_expr_inner(&mut entry.key)?;
+                    let _ = self.infer_expr_inner(&mut entry.value)?;
                 }
                 let map_var = self.fresh_type_var();
                 let map_ty = self.make_hashmap_struct();
@@ -3136,7 +3136,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     _ => {
                         // Literal pattern.
-                        let lit_var = self.infer_expr(&mut variant.name)?;
+                        let lit_var = self.infer_expr_inner(&mut variant.name)?;
                         PatternInfo::new(lit_var)
                     }
                 }
@@ -3233,7 +3233,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             // Type the invoke arguments against the method params
             if args.len() == sig.params.len() {
                 for (arg_expr, param) in args.iter_mut().zip(sig.params.iter()) {
-                    let arg_var = self.infer_expr(arg_expr)?;
+                    let arg_var = self.infer_expr_inner(arg_expr)?;
                     let param_var = self.type_from_ast_ty(&param.ty)?;
                     self.unify(arg_var, param_var)?;
                 }
@@ -3799,7 +3799,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.bind(var, Ty::Struct(def.clone()));
             for field in &mut struct_expr.fields {
                 if let Some(value) = field.value.as_mut() {
-                    let value_var = self.infer_expr(value)?;
+                    let value_var = self.infer_expr_inner(value)?;
                     if let Some(struct_field) = def.fields.iter().find(|f| f.name == field.name) {
                         let ty_var = self.type_from_ast_ty(&struct_field.value)?;
                         self.unify(value_var, ty_var)?;
@@ -3834,7 +3834,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 if let Ty::Structural(structural) = &variant.value {
                                     for field in &mut struct_expr.fields {
                                         if let Some(value) = field.value.as_mut() {
-                                            let value_var = self.infer_expr(value)?;
+                                            let value_var = self.infer_expr_inner(value)?;
                                             if let Some(def_field) = structural
                                                 .fields
                                                 .iter()
@@ -3949,7 +3949,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         for field in &mut struct_expr.fields {
             if let Some(value) = field.value.as_mut() {
-                let value_var = self.infer_expr(value)?;
+                let value_var = self.infer_expr_inner(value)?;
                 if let Some(def_field) = structural.iter().find(|f| f.name == field.name) {
                     let expected = self.type_from_ast_ty(&def_field.value)?;
                     self.unify(value_var, expected)?;
@@ -4012,7 +4012,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             let Some(idx) = pos else { return Ok(None) };
             let field_var = self.type_from_ast_ty(&def_field.value)?;
             if let Some(value) = struct_expr.fields[idx].value.as_mut() {
-                let value_var = self.infer_expr(value)?;
+                let value_var = self.infer_expr_inner(value)?;
                 self.unify(value_var, field_var)?;
             }
         }

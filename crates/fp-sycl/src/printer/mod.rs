@@ -1,7 +1,7 @@
 mod serializer;
 
 use fp_core::ast::{
-    File, FunctionParam, Item, ItemKind, Module, Node, NodeKind, StructuralField, Ty, TypeEnum,
+    File, FunctionParam, Item, ItemKind, Module, StructuralField, Ty, TypeEnum,
     TypeInt, TypePrimitive, TypeStruct, TypeTuple, TypeVec, Value, Visibility,
 };
 use fp_core::error::Result;
@@ -28,34 +28,6 @@ impl SyclEmitter {
             self.code.push('\n');
         }
         self.code.trim_end().to_string()
-    }
-
-    pub(crate) fn emit_node(&mut self, node: &Node) -> Result<()> {
-        match node.kind() {
-            NodeKind::File(file) => self.emit_file(file)?,
-            NodeKind::Item(item) => self.emit_item(item)?,
-            NodeKind::Expr(_) => {
-                self.ensure_header();
-                self.push_placeholder_comment(
-                    "top-level expressions are not supported for SYCL output yet",
-                );
-            }
-            NodeKind::Query(_) => {
-                self.ensure_header();
-                self.push_placeholder_comment("query documents are not supported for SYCL output");
-            }
-            NodeKind::Schema(_) => {
-                self.ensure_header();
-                self.push_placeholder_comment("schema documents are not supported for SYCL output");
-            }
-            NodeKind::Workspace(_) => {
-                self.ensure_header();
-                self.push_placeholder_comment(
-                    "workspace snapshots are not supported for SYCL output",
-                );
-            }
-        }
-        Ok(())
     }
 
     fn emit_file(&mut self, file: &File) -> Result<()> {

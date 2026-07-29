@@ -1,4 +1,4 @@
-use crate::ast::{self, ItemKind, Node, NodeKind};
+use crate::ast::{self, File, ItemKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetEnv {
@@ -22,16 +22,8 @@ impl TargetEnv {
     }
 }
 
-pub fn filter_items_in_node(node: &mut Node, env: &TargetEnv) {
-    match &mut node.kind {
-        NodeKind::File(file) => {
-            filter_items(&mut file.items, env);
-        }
-        NodeKind::Item(item) => {
-            filter_item(item, env);
-        }
-        NodeKind::Expr(_) | NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {}
-    }
+pub fn filter_items_in_file(file: &mut File, env: &TargetEnv) {
+    filter_items(&mut file.items, env);
 }
 
 fn filter_items(items: &mut Vec<ast::Item>, env: &TargetEnv) {

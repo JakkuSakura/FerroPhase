@@ -1,7 +1,7 @@
 use fp_core::ast::{
     AstSerializer, BlockStmt, EnumTypeVariant, Expr, ExprBlock, ExprField, ExprKind, ExprMatch,
     ExprMatchCase, ExprStruct, File, Ident, Item, ItemDefConst, ItemDefEnum, ItemDefFunction,
-    ItemDefStruct, ItemImpl, ItemKind, Name, Node, NodeKind, Path, Pattern, PatternKind,
+    ItemDefStruct, ItemImpl, ItemKind, Name, Path, Pattern, PatternKind,
     PatternVariant, StmtLet, StructuralField, Ty, TypeEnum, TypePrimitive, TypeStructural, Value,
     Visibility,
 };
@@ -44,11 +44,11 @@ fn serialize_basic_gdscript_module() {
             Item::new(ItemKind::DefFunction(func)),
         ],
     };
-    let node = Node::from(NodeKind::File(file));
+    let node = file;
 
     let serializer = GdscriptSerializer;
     let output = serializer
-        .serialize_node(&node)
+        .serialize_file(&node)
         .expect("serialize should succeed");
 
     assert!(output.contains("class User:"));
@@ -163,10 +163,10 @@ fn serialize_enum_with_impl_and_struct_variant_construction() {
         ],
     };
 
-    let node = Node::from(NodeKind::File(file));
+    let node = file;
     let serializer = GdscriptSerializer;
     let output = serializer
-        .serialize_node(&node)
+        .serialize_file(&node)
         .expect("serialize should succeed");
 
     assert!(output.contains("class Shape:"));

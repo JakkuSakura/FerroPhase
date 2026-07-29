@@ -4,8 +4,8 @@ use eyre::eyre;
 use fp_core::ast::{
     self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprBreak, ExprContinue, ExprFor, ExprIf,
     ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprReturn,
-    ExprStringTemplate, ExprStruct, ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart,
-    FunctionParam, Item, ItemImport, ItemImportTree, ItemKind, Node, NodeKind, Pattern,
+    ExprStringTemplate, ExprStruct, ExprUnOp, ExprWhile, File, FormatArgRef, FormatTemplatePart,
+    FunctionParam, Item, ItemImport, ItemImportTree, ItemKind, Pattern,
     PatternKind, Ty, TypeEnum, TypePrimitive, TypeStruct, TypeTuple, TypeVec, Value, ValueList,
     ValueMap, ValueMapEntry, ValueStruct, ValueTuple,
 };
@@ -17,9 +17,9 @@ use itertools::Itertools;
 pub struct PythonSerializer;
 
 impl AstSerializer for PythonSerializer {
-    fn serialize_node(&self, node: &Node) -> Result<String> {
+    fn serialize_file(&self, file: &File) -> Result<String> {
         let mut emitter = PythonEmitter::new();
-        emitter.visit_node(node)?;
+        emitter.visit_file(file)?;
         Ok(emitter.finish())
     }
 }
@@ -49,33 +49,9 @@ impl PythonEmitter {
         }
     }
 
-    fn visit_node(&mut self, node: &Node) -> Result<()> {
-        match node.kind() {
-            NodeKind::File(file) => {
-                for item in &file.items {
-                    self.emit_item(item)?;
-                }
-            }
-            NodeKind::Item(item) => self.emit_item(item)?,
-            NodeKind::Expr(expr) => {
-                if let ExprKind::Block(block) = expr.kind() {
-                    self.emit_script_block(block)?;
-                } else {
-                    self.emit_expr_statement(expr, false)?;
-                }
-            }
-            NodeKind::Query(_) => {
-                self.ensure_blank_line();
-                self.push_line("# Query documents are not yet supported for Python output");
-            }
-            NodeKind::Schema(_) => {
-                self.ensure_blank_line();
-                self.push_line("# Schema documents are not yet supported for Python output");
-            }
-            NodeKind::Workspace(_) => {
-                self.ensure_blank_line();
-                self.push_line("# Workspace snapshots are not supported for Python output");
-            }
+    fn visit_file(&mut self, file: &File) -> Result<()> {
+        for item in &file.items {
+            self.emit_item(item)?;
         }
         Ok(())
     }
@@ -100,7 +76,11 @@ impl PythonEmitter {
                 }
             }
             ItemKind::Expr(expr) => {
-                self.emit_expr_statement(expr, false)?;
+                if let ExprKind::Block(block) = expr.kind() {
+                    self.emit_script_block(block)?;
+                } else {
+                    self.emit_expr_statement(expr, false)?;
+                }
             }
             ItemKind::Import(import) => {
                 self.emit_import(import)?;
@@ -1073,7 +1053,7 @@ mod tests {
         let parsed = frontend.parse(source, None).expect("parse python");
         let serializer = PythonSerializer;
         serializer
-            .serialize_node(&parsed.ast)
+            .serialize_file(&parsed.ast)
             .expect("serialize python")
     }
 

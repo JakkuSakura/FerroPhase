@@ -1,11 +1,11 @@
 use crate::ShellError;
-use fp_core::ast::{ItemKind, Node, NodeKind};
+use fp_core::ast::{File, ItemKind};
 use fp_core::frontend::LanguageFrontend;
 use fp_lang::FerroFrontend;
 use std::fs;
 use std::path::Path;
 
-pub fn load_inventory(path: &Path) -> Result<Node, ShellError> {
+pub fn load_inventory(path: &Path) -> Result<File, ShellError> {
     let extension = path
         .extension()
         .and_then(|ext| ext.to_str())
@@ -22,7 +22,7 @@ pub fn load_inventory(path: &Path) -> Result<Node, ShellError> {
     let parsed = frontend
         .parse(&content, Some(path))
         .map_err(|err| ShellError::Inventory(format!("invalid inventory fp: {}", err)))?;
-    let NodeKind::File(file) = parsed.ast.kind() else {
+    let file = parsed.ast else {
         return Err(ShellError::Inventory(
             "inventory fp must be a file document".to_string(),
         ));

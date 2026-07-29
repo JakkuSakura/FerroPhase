@@ -182,7 +182,7 @@ fn parse_file(
     Ok(())
 }
 
-fn persist_snapshot(ast: &fp_core::ast::Node, snapshot: Option<&Path>) -> Result<()> {
+fn persist_snapshot(ast: &fp_core::ast::File, snapshot: Option<&Path>) -> Result<()> {
     if let Some(path) = snapshot {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|err| {

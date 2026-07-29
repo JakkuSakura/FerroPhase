@@ -6,8 +6,8 @@ use fp_core::ast::{
     DecimalType, EnumTypeVariant, Expr, ExprBlock, ExprInvoke, ExprInvokeTarget, ExprKind, File,
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclConst, ItemDefConst, ItemDefEnum,
     ItemDefFunction, ItemDefStruct, ItemDefType, ItemImport, ItemImportGroup, ItemImportPath,
-    ItemImportRename, ItemImportStyle, ItemImportTree, ItemKind, Module as AstModule, Name, Node,
-    NodeKind, ReprOptions, StructuralField, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct,
+    ItemImportRename, ItemImportStyle, ItemImportTree, ItemKind, Module as AstModule, Name,
+    ReprOptions, StructuralField, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct,
     TypeStructural, TypeTuple, TypeVec, Value, Visibility,
 };
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
@@ -43,7 +43,7 @@ const EXTENSIONS: &[&str] = &["ts", "tsx"];
 
 #[derive(Debug, Default)]
 pub struct DependencyParseOutcome {
-    pub modules: Vec<(PathBuf, Node)>,
+    pub modules: Vec<(PathBuf, File)>,
     pub warnings: Vec<String>,
 }
 
@@ -187,11 +187,10 @@ impl LanguageFrontend for TypeScriptFrontend {
             collected_items: Vec::new(),
             items,
         };
-        let node = Node::from(NodeKind::File(file.clone()));
 
         Ok(FrontendResult {
-            last: node.clone(),
-            ast: node,
+            last: file.clone(),
+            ast: file,
             serializer: self.serializer.clone(),
             intrinsic_normalizer: None,
             macro_parser: None,
@@ -1702,11 +1701,7 @@ mod tests {
             )
             .expect("parsing import failed");
 
-        let node = result.ast;
-        let file = match node.kind() {
-            NodeKind::File(file) => file,
-            _ => panic!("expected file node"),
-        };
+        let file = result.ast;
         assert_eq!(file.items.len(), 1);
 
         let import = file.items[0].as_import().expect("expected import item");
@@ -1825,11 +1820,7 @@ mod tests {
         "#;
 
         let result = frontend.parse(source, None).expect("class lowering failed");
-        let node = result.ast;
-        let file = match node.kind() {
-            NodeKind::File(file) => file,
-            _ => panic!("expected file node"),
-        };
+        let file = result.ast;
         let module = file
             .items
             .iter()

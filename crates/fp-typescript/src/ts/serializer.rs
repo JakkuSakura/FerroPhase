@@ -5,8 +5,8 @@ use std::sync::RwLock;
 use eyre::eyre;
 use fp_core::ast::{
     self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprConstBlock, ExprIntrinsicCall, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprStruct, FormatArgRef, FormatTemplatePart,
-    FunctionParam, Ident, Item, Name, Node, NodeKind, Pattern, Ty, TypeEnum, TypePrimitive,
+    ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprStruct, File, FormatArgRef, FormatTemplatePart,
+    FunctionParam, Ident, Item, Name, Pattern, Ty, TypeEnum, TypePrimitive,
     TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry, ValueStruct,
     ValueTuple,
 };
@@ -37,11 +37,11 @@ impl TypeScriptSerializer {
 }
 
 impl AstSerializer for TypeScriptSerializer {
-    fn serialize_node(&self, node: &Node) -> Result<String> {
+    fn serialize_file(&self, file: &File) -> Result<String> {
         let mut emitter = ScriptEmitter::new(ScriptFlavor::TypeScript {
             emit_type_defs: self.emit_type_defs,
         });
-        emitter.visit_node(node)?;
+        emitter.visit_file(file)?;
         let (code, defs) = emitter.finish();
         match self.type_defs.write() {
             Ok(mut w) => *w = defs,
@@ -54,9 +54,9 @@ impl AstSerializer for TypeScriptSerializer {
 pub struct JavaScriptSerializer;
 
 impl AstSerializer for JavaScriptSerializer {
-    fn serialize_node(&self, node: &Node) -> Result<String> {
+    fn serialize_file(&self, file: &File) -> Result<String> {
         let mut emitter = ScriptEmitter::new(ScriptFlavor::JavaScript);
-        emitter.visit_node(node)?;
+        emitter.visit_file(file)?;
         let (code, _) = emitter.finish();
         Ok(code)
     }
@@ -95,41 +95,12 @@ impl ScriptEmitter {
         }
     }
 
-    fn visit_node(&mut self, node: &Node) -> Result<()> {
-        match node.kind() {
-            NodeKind::File(file) => self.visit_file(file)?,
-            NodeKind::Item(item) => self.emit_item(item)?,
-            NodeKind::Expr(expr) => {
-                if let ExprKind::Block(block) = expr.kind() {
-                    self.emit_script_block(block)?;
-                } else {
-                    let rendered = self.render_expr(expr)?;
-                    self.push_line(&format!("{};", rendered));
-                }
-            }
-            NodeKind::Query(_) => {
-                self.ensure_blank_line();
-                self.push_line(
-                    "// query documents are not yet supported in the TypeScript serializer",
-                );
-            }
-            NodeKind::Schema(_) => {
-                self.ensure_blank_line();
-                self.push_line(
-                    "// schema documents are not yet supported in the TypeScript serializer",
-                );
-            }
-            NodeKind::Workspace(_) => {
-                self.ensure_blank_line();
-                self.push_line(
-                    "// workspace snapshots are not supported in the TypeScript serializer",
-                );
-            }
-        }
+    fn visit_file(&mut self, file: &File) -> Result<()> {
+        self.visit_file_items(file)?;
         Ok(())
     }
 
-    fn visit_file(&mut self, file: &ast::File) -> Result<()> {
+    fn visit_file_items(&mut self, file: &File) -> Result<()> {
         for item in &file.items {
             self.emit_item(item)?;
         }

@@ -778,68 +778,6 @@ impl PrettyPrintable for ast::File {
     }
 }
 
-impl PrettyPrintable for ast::Node {
-    fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
-        match &self.kind {
-            ast::NodeKind::File(file) => file.fmt_pretty(f, ctx),
-            ast::NodeKind::Item(item) => item.fmt_pretty(f, ctx),
-            ast::NodeKind::Expr(expr) => expr.fmt_pretty(f, ctx),
-            ast::NodeKind::Query(query) => query.fmt_pretty(f, ctx),
-            ast::NodeKind::Schema(schema) => schema.fmt_pretty(f, ctx),
-            ast::NodeKind::Workspace(workspace) => {
-                ctx.writeln(f, format!("workspace {}", workspace.manifest))?;
-                ctx.with_indent(|ctx| {
-                    for package in &workspace.packages {
-                        let version = package
-                            .version
-                            .as_deref()
-                            .map(|v| format!(" {}", v))
-                            .unwrap_or_default();
-                        ctx.writeln(f, format!("package {}{}", package.name, version))?;
-                        ctx.with_indent(|ctx| {
-                            ctx.writeln(f, format!("manifest: {}", package.manifest_path))?;
-                            ctx.writeln(f, format!("root: {}", package.root))?;
-                            if !package.features.is_empty() {
-                                ctx.writeln(
-                                    f,
-                                    format!("features: {}", package.features.join(", ")),
-                                )?;
-                            }
-                            if !package.dependencies.is_empty() {
-                                let deps = package
-                                    .dependencies
-                                    .iter()
-                                    .map(|dep| {
-                                        dep.kind
-                                            .as_deref()
-                                            .map(|kind| format!("{} ({kind})", dep.name))
-                                            .unwrap_or_else(|| dep.name.clone())
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join(", ");
-                                ctx.writeln(f, format!("dependencies: {}", deps))?;
-                            }
-                            if !package.modules.is_empty() {
-                                ctx.writeln(f, "modules:")?;
-                                ctx.with_indent(|ctx| {
-                                    for module in &package.modules {
-                                        let language =
-                                            module.language.as_deref().unwrap_or("unknown");
-                                        ctx.writeln(f, format!("{} [{}]", module.path, language))?;
-                                    }
-                                    Ok(())
-                                })?;
-                            }
-                            Ok(())
-                        })?;
-                    }
-                    Ok(())
-                })
-            }
-        }
-    }
-}
-
 fn ty_suffix(ty: Option<&ast::Ty>, ctx: &PrettyCtx<'_>) -> String {
     if ctx.options.show_types {
         if let Some(ty) = ty {

@@ -14,26 +14,30 @@ use fp_core::ast::{
 use fp_core::error::Result;
 use fp_core::hir;
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_core::query::QueryDocument;
 use fp_core::span::Span;
 
-pub fn lift_program(program: &hir::Program, path: PathBuf) -> Result<ast::Node> {
+pub fn lift_program(program: &hir::Program, path: PathBuf) -> Result<ast::File> {
     if let [item] = program.items.as_slice() {
-        if let hir::ItemKind::Query(query) = &item.kind {
-            let document = QueryDocument::from_semantic(query.ir.clone(), query.origin.clone());
-            return Ok(ast::Node::query(document));
+        if let hir::ItemKind::Query(_query) = &item.kind {
+            // Queries are returned as a File with no items for now
+            return Ok(ast::File {
+                path,
+                attrs: Vec::new(),
+                collected_items: Vec::new(),
+                items: Vec::new(),
+            });
         }
     }
     let mut items = Vec::with_capacity(program.items.len());
     for item in &program.items {
         items.push(lift_item(item)?);
     }
-    Ok(ast::Node::file(ast::File {
+    Ok(ast::File {
         path,
         attrs: Vec::new(),
         collected_items: Vec::new(),
         items,
-    }))
+    })
 }
 
 fn lift_item(item: &hir::Item) -> Result<Item> {

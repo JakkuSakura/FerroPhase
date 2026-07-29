@@ -6,10 +6,9 @@ use std::sync::Arc;
 use fp_core::ast::{
     AstSerializer, Expr, ExprArray, ExprBinOp, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, ExprParen, ExprSelect, ExprSelectType, ExprStringTemplate,
-    ExprUnOp, FormatArgRef, FormatPlaceholder, FormatTemplatePart, Node, Path as AstPath, Value,
-    ValueList, ValueMap,
+    ExprUnOp, File, FormatArgRef, FormatPlaceholder, FormatTemplatePart, Ident, Item, ItemKind, Name,
+    Path as AstPath, Value, ValueList, ValueMap,
 };
-use fp_core::ast::{Ident, Name};
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
@@ -67,11 +66,20 @@ impl LanguageFrontend for HclFrontend {
             serialized,
         };
 
-        let node = Node::expr(expr);
+        let file_path = path
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("<stdin>"));
+
+        let file = File {
+            path: file_path,
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::Expr(expr))],
+        };
 
         Ok(FrontendResult {
-            last: node.clone(),
-            ast: node,
+            last: file.clone(),
+            ast: file,
             serializer,
             intrinsic_normalizer: None,
             macro_parser: None,
@@ -744,8 +752,10 @@ mod tests {
         let input = "result = sum(1, 2)";
         let frontend = HclFrontend::new();
         let result = frontend.parse(input, None).expect("parse hcl");
-        let fp_core::ast::NodeKind::Expr(expr) = result.ast.kind() else {
-            panic!("expected expr node");
+        let items = result.ast.items;
+        assert_eq!(items.len(), 1);
+        let ItemKind::Expr(expr) = items[0].kind() else {
+            panic!("expected expr item");
         };
         let ExprKind::Value(value) = expr.kind() else {
             panic!("expected value expression");
@@ -762,8 +772,10 @@ mod tests {
         let input = "message = \"hi ${name}\"";
         let frontend = HclFrontend::new();
         let result = frontend.parse(input, None).expect("parse hcl");
-        let fp_core::ast::NodeKind::Expr(expr) = result.ast.kind() else {
-            panic!("expected expr node");
+        let items = result.ast.items;
+        assert_eq!(items.len(), 1);
+        let ItemKind::Expr(expr) = items[0].kind() else {
+            panic!("expected expr item");
         };
         let ExprKind::Value(value) = expr.kind() else {
             panic!("expected value expression");

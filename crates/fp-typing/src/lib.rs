@@ -614,89 +614,63 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         }
     }
 
-    pub fn infer(&mut self, node: &mut Node) -> Result<TypingOutcome> {
-        match node.kind_mut() {
-            NodeKind::Expr(expr) => {
-                self.predeclare_expr_scope(expr);
-                let var = match self.infer_expr(expr) {
-                    Ok(var) => var,
-                    Err(err) => {
-                        return Err(self.error_with_span(err, self.span_option(expr.span())))
-                    }
-                };
-                let ty = self.resolve_to_ty(var)?;
-                node.set_ty(ty);
-            }
-            NodeKind::Item(item) => {
-                self.predeclare_item(item);
-                if let Err(err) = self.infer_item(item) {
-                    return Err(self.error_with_span(err, self.span_option(item.span())));
-                }
-                let ty = item.ty().cloned().unwrap_or_else(|| Ty::Unit(TypeUnit));
-                node.set_ty(ty);
-            }
-            NodeKind::File(file) => {
-                let previous_exception = self.exception_mode;
-                self.exception_mode = attrs_has_feature(&file.attrs, "exception");
-                self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new()));
-                self.predeclare_scope_items(&file.collected_items);
-                for item in &mut file.items {
-                    if let Err(err) = self.infer_item(item) {
-                        self.exception_mode = previous_exception;
-                        return Err(self.error_with_span(err, self.span_option(item.span())));
-                    }
-                }
+    pub fn infer_file(&mut self, file: &mut File) -> Result<TypingOutcome> {
+        let previous_exception = self.exception_mode;
+        self.exception_mode = attrs_has_feature(&file.attrs, "exception");
+        self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new()));
+        self.predeclare_scope_items(&file.collected_items);
+        for item in &mut file.items {
+            if let Err(err) = self.infer_item_inner(item) {
                 self.exception_mode = previous_exception;
-                node.set_ty(Ty::Unit(TypeUnit));
-            }
-            NodeKind::Query(_) => {
-                node.set_ty(Ty::any());
-            }
-            NodeKind::Schema(_) => {
-                node.set_ty(Ty::any());
-            }
-            NodeKind::Workspace(_) => {
-                node.set_ty(Ty::any());
+                return Err(self.error_with_span(err, self.span_option(item.span())));
             }
         }
+        self.exception_mode = previous_exception;
         Ok(self.finish())
     }
 
-    /// Initialize the typer with declarations from a node without doing full inference.
-    /// This is useful for preparing the typer for incremental type inference.
-    pub fn initialize_from_node(&mut self, node: &Node) {
-        match node.kind() {
-            NodeKind::File(file) => {
-                self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new()));
-                self.predeclare_scope_items(&file.collected_items);
-            }
-            NodeKind::Item(item) => {
-                self.predeclare_item(item);
-            }
-            NodeKind::Expr(expr) => {
-                self.predeclare_expr_scope(expr);
-            }
-            NodeKind::Query(_) | NodeKind::Schema(_) => {
-                // Non-AST documents do not participate in type inference yet.
-            }
-            NodeKind::Workspace(_) => {}
+    pub fn infer_item(&mut self, item: &mut Item) -> Result<TypingOutcome> {
+        self.predeclare_item(item);
+        if let Err(err) = self.infer_item_inner(item) {
+            return Err(self.error_with_span(err, self.span_option(item.span())));
         }
+        let ty = item.ty().cloned().unwrap_or_else(|| Ty::Unit(TypeUnit));
+        item.set_ty(ty);
+        Ok(self.finish())
+    }
+
+    pub fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypingOutcome> {
+        self.predeclare_expr_scope(expr);
+        let var = match self.infer_expr_inner(expr) {
+            Ok(var) => var,
+            Err(err) => {
+                return Err(self.error_with_span(err, self.span_option(expr.span())))
+            }
+        };
+        let ty = self.resolve_to_ty(var)?;
+        expr.set_ty(ty);
+        Ok(self.finish())
+    }
+
+    /// Initialize the typer with declarations from a file without doing full inference.
+    pub fn initialize_from_file(&mut self, file: &File) {
+        self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new()));
+        self.predeclare_scope_items(&file.collected_items);
+    }
+
+    /// Initialize the typer with an expression scope without doing full inference.
+    pub fn initialize_from_expr(&mut self, expr: &Expr) {
+        self.predeclare_expr_scope(expr);
     }
 
     /// Initialize import aliases without running full inference.
-    pub fn initialize_imports_from_node(&mut self, node: &Node) {
-        match node.kind() {
-            NodeKind::File(file) => {
-                self.register_import_aliases_for_items(&file.items);
-            }
-            NodeKind::Item(item) => {
-                self.register_import_aliases_for_item(item);
-            }
-            NodeKind::Expr(_)
-            | NodeKind::Query(_)
-            | NodeKind::Schema(_)
-            | NodeKind::Workspace(_) => {}
-        }
+    pub fn initialize_imports_from_file(&mut self, file: &File) {
+        self.register_import_aliases_for_items(&file.items);
+    }
+
+    /// Initialize import aliases from a single item.
+    pub fn initialize_imports_from_item(&mut self, item: &Item) {
+        self.register_import_aliases_for_item(item);
     }
 
     fn register_import_aliases_for_items(&mut self, items: &[Item]) {
@@ -2402,7 +2376,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         self.bind_function_term(fn_var, param_vars, ret_var);
     }
 
-    fn infer_item(&mut self, item: &mut Item) -> Result<()> {
+    fn infer_item_inner(&mut self, item: &mut Item) -> Result<()> {
         let span = item.span();
         let previous = self.current_span;
         let active = self.span_or_previous(span, previous);
@@ -2570,7 +2544,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         }
                         let expr_var = {
                             let mut value = def.value.as_mut();
-                            self.infer_expr(&mut value)?
+                            self.infer_expr_inner(&mut value)?
                         };
 
                         if let Some(annot) = &def.ty {
@@ -2590,7 +2564,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     let placeholder = self.symbol_var(&def.name);
                     let expr_var = {
                         let mut value = def.value.as_mut();
-                        self.infer_expr(&mut value)?
+                        self.infer_expr_inner(&mut value)?
                     };
                     let ty_var = self.type_from_ast_ty(&def.ty)?;
                     self.unify(expr_var, ty_var)?;
@@ -2630,7 +2604,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         .push(self.env.len().saturating_sub(1));
                     self.predeclare_scope_items(&module.collected_items);
                     for child in &mut module.items {
-                        self.infer_item(child)?;
+                        self.infer_item_inner(child)?;
                     }
                     self.exit_scope();
                     self.module_scope_depths.pop();
@@ -2714,7 +2688,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     self.enter_scope();
                     self.predeclare_scope_items(&impl_block.collected_items);
                     for child in &mut impl_block.items {
-                        self.infer_item(child)?;
+                        self.infer_item_inner(child)?;
                     }
                     self.exit_scope();
                     self.impl_stack.pop();
@@ -2722,7 +2696,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 }
                 ItemKind::Expr(expr) => {
                     if let ExprKind::Splice(splice) = expr.kind_mut() {
-                        let token_var = self.infer_expr(splice.token.as_mut())?;
+                        let token_var = self.infer_expr_inner(splice.token.as_mut())?;
                         let token_ty = self.resolve_to_ty(token_var)?;
                         if !self.is_item_quote(&token_ty) {
                             match token_ty {
@@ -2737,7 +2711,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         }
                         Ty::Unit(TypeUnit)
                     } else if let ExprKind::SplicePending(pending) = expr.kind_mut() {
-                        let token_var = self.infer_expr(pending.token.as_mut())?;
+                        let token_var = self.infer_expr_inner(pending.token.as_mut())?;
                         let token_ty = self.resolve_to_ty(token_var)?;
                         if !self.is_item_quote(&token_ty) {
                             match token_ty {
@@ -2752,7 +2726,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         }
                         Ty::Unit(TypeUnit)
                     } else {
-                        let var = self.infer_expr(expr)?;
+                        let var = self.infer_expr_inner(expr)?;
                         self.resolve_to_ty(var)?
                     }
                 }
@@ -2875,10 +2849,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 block: body_block,
                 kind: Some(kind),
             }));
-            self.infer_expr(&mut quote_expr)?
+            self.infer_expr_inner(&mut quote_expr)?
         } else {
             let mut body = func.body.as_mut();
-            self.infer_expr(&mut body)?
+            self.infer_expr_inner(&mut body)?
         };
 
         let ret_var = if matches!(exception_policy, ExceptionReturnPolicy::AutoResult) {
@@ -3068,7 +3042,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
         let body_var = {
             let mut body = func.body.as_mut();
-            self.infer_expr(&mut body)?
+            self.infer_expr_inner(&mut body)?
         };
 
         let ret_var = if matches!(exception_policy, ExceptionReturnPolicy::AutoResult) {
@@ -3920,7 +3894,7 @@ fn find_first_type_ident(tokens: &[&str]) -> Option<String> {
 
 impl<'ctx> AstTypeInferencer<'ctx> {
     pub fn infer_expression(&mut self, expr: &mut Expr) -> Result<()> {
-        let var = self.infer_expr(expr)?;
+        let var = self.infer_expr_inner(expr)?;
         let ty = self.resolve_to_ty(var)?;
         expr.set_ty(ty);
         Ok(())

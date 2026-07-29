@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fp_core::ast::{
-    AstSerializer, File, Ident, Item, ItemDefEnum, ItemDefStruct, Node, ReprOptions, TypeEnum,
-    Visibility,
+    AstSerializer, File, Ident, Item, ItemDefEnum, ItemDefStruct, ReprOptions, TypeEnum, Visibility,
 };
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::Result as CoreResult;
@@ -56,8 +55,8 @@ impl LanguageFrontend for FlatbuffersFrontend {
         };
 
         Ok(FrontendResult {
-            last: Node::file(file.clone()),
-            ast: Node::file(file),
+            last: file.clone(),
+            ast: file,
             serializer,
             intrinsic_normalizer: None,
             macro_parser: None,
@@ -130,9 +129,7 @@ enum Color: byte { Red, Green, Blue }
 
         let frontend = FlatbuffersFrontend::new();
         let result = frontend.parse(source, None).expect("parse flatbuffers");
-        let fp_core::ast::NodeKind::File(file) = result.ast.kind() else {
-            panic!("expected file node");
-        };
+        let file = result.ast;
         assert!(file.items.iter().any(
             |item| matches!(item.kind(), ItemKind::DefStruct(def) if def.name.name == "Monster")
         ));

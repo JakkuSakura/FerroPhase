@@ -8,7 +8,7 @@ use fp_compiler::{
 };
 use fp_core::{
     ast::register_threadlocal_serializer,
-    ast::{Node, Value},
+    ast::{File, Value},
     diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager},
     frontend::{FrontendParseMode, FrontendResult, FrontendSnapshot, LanguageFrontend},
 };
@@ -196,7 +196,7 @@ pub struct LossyCompileOptions {
 #[derive(Debug, Clone)]
 pub struct FrontendBundle {
     pub source_language: String,
-    pub ast: Node,
+    pub ast: File,
     pub frontend_snapshot: Option<FrontendSnapshot>,
 }
 
@@ -579,7 +579,7 @@ pub fn compile_cranelift_file(
     }
 }
 
-fn compile_cil_ast(ast: &Node) -> Result<String> {
+fn compile_cil_ast(ast: &File) -> Result<String> {
     #[cfg(feature = "lang-dotnet")]
     {
         fp_dotnet::emit_cil(ast)
@@ -594,7 +594,7 @@ fn compile_cil_ast(ast: &Node) -> Result<String> {
     }
 }
 
-fn compile_dotnet_ast(ast: &Node, output: &Path, save_intermediates: bool) -> Result<PathBuf> {
+fn compile_dotnet_ast(ast: &File, output: &Path, save_intermediates: bool) -> Result<PathBuf> {
     #[cfg(feature = "lang-dotnet")]
     {
         fp_dotnet::emit_assembly(ast, output, save_intermediates)
@@ -746,7 +746,7 @@ fn is_apple_target(target_triple: Option<&str>) -> bool {
 }
 
 fn execute_ast(
-    ast: Node,
+    ast: File,
     identity: CompilerIdentity,
     mode: fp_core::context::ExecutionMode,
     source_path: &Path,
@@ -787,7 +787,7 @@ fn lower_file(
 }
 
 fn lower_ast(
-    ast: Node,
+    ast: File,
     identity: &CompilerIdentity,
     source_path: &Path,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
@@ -828,7 +828,7 @@ fn drain_driver(driver: &mut CompilerDriver, lossy: LossyCompileOptions) -> Resu
     emit_typing_diagnostics(&driver.state.typing_ctx.diagnostics.borrow(), lossy)
 }
 
-pub fn parse_expr_with_mode(source: &str, parse_mode: FrontendParseMode) -> Result<Node> {
+pub fn parse_expr_with_mode(source: &str, parse_mode: FrontendParseMode) -> Result<File> {
     let frontend = FerroFrontend::new();
     frontend.set_parse_mode(parse_mode);
     let FrontendResult {
@@ -847,11 +847,11 @@ fn parse_file(
     path: &Path,
     source_language: Option<&str>,
     lossy: LossyCompileOptions,
-) -> Result<Node> {
+) -> Result<File> {
     parse_file_with_mode(path, source_language, FrontendParseMode::Strict, lossy)
 }
 
-pub fn parse_ast_target_file(path: &Path, source_language: Option<&str>) -> Result<Node> {
+pub fn parse_ast_target_file(path: &Path, source_language: Option<&str>) -> Result<File> {
     parse_file(path, source_language, LossyCompileOptions::default())
 }
 
@@ -884,12 +884,12 @@ pub fn parse_file_with_mode(
     source_language: Option<&str>,
     parse_mode: FrontendParseMode,
     lossy: LossyCompileOptions,
-) -> Result<Node> {
+) -> Result<File> {
     parse_file_with_context(path, source_language, parse_mode, lossy).map(|parsed| parsed.ast)
 }
 
 pub fn prepare_ast_target(
-    ast: &mut Node,
+    ast: &mut File,
     path: &Path,
     source_language: Option<&str>,
     _run_const_eval: bool,
@@ -1050,7 +1050,7 @@ struct LoweredProgram {
 }
 
 struct ParsedAst {
-    ast: Node,
+    ast: File,
     source_language: String,
     frontend_snapshot: Option<FrontendSnapshot>,
     serializer: Arc<dyn fp_core::ast::AstSerializer>,

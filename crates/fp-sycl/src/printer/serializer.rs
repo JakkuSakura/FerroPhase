@@ -1,4 +1,4 @@
-use fp_core::ast::{AstSerializer, Node};
+use fp_core::ast::{AstSerializer, File};
 
 use super::SyclEmitter;
 
@@ -6,9 +6,9 @@ use super::SyclEmitter;
 pub struct SyclSerializer;
 
 impl AstSerializer for SyclSerializer {
-    fn serialize_node(&self, node: &Node) -> fp_core::error::Result<String> {
+    fn serialize_file(&self, file: &File) -> fp_core::error::Result<String> {
         let mut emitter = SyclEmitter::new();
-        emitter.emit_node(node)?;
+        emitter.emit_file(file)?;
         Ok(emitter.finish())
     }
 }

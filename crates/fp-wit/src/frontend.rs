@@ -4,7 +4,7 @@ use std::sync::Arc;
 use fp_core::ast::AstSerializer;
 use fp_core::ast::{
     File, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefEnum,
-    ItemDefStruct, ItemDefType, Module, Node, Ty, TypeTuple, Visibility,
+    ItemDefStruct, ItemDefType, Module, Ty, TypeTuple, Visibility,
 };
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
@@ -40,11 +40,11 @@ impl LanguageFrontend for WitFrontend {
         let document = parse_str(parse_path, source).map_err(into_core_error)?;
 
         let file = lower_document(&document, parse_path);
-        let last = Node::file(file.clone());
-        let ast = Node::file(file);
+        let last = file.clone();
+        let ast = file;
 
         let serializer: Arc<dyn AstSerializer> = Arc::new(WitSerializer::new());
-        let serialized = serializer.serialize_node(&ast).ok();
+        let serialized = serializer.serialize_file(&ast).ok();
 
         let snapshot = FrontendSnapshot {
             language: self.language().to_string(),

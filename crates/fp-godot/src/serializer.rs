@@ -2,9 +2,9 @@ use eyre::eyre;
 use fp_core::ast::{
     AstSerializer, BlockStmt, EnumTypeVariant, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprIf,
     ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch,
-    ExprRange, ExprRangeLimit, ExprReturn, ExprSelect, ExprStruct, ExprUnOp, ExprWhile,
+    ExprRange, ExprRangeLimit, ExprReturn, ExprSelect, ExprStruct, ExprUnOp, ExprWhile, File,
     FunctionParam, Item, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemImpl, ItemKind, Name,
-    Node, NodeKind, Pattern, PatternKind, PatternTupleStruct, Ty, TypeStruct, Value, ValueList,
+    Pattern, PatternKind, PatternTupleStruct, Ty, TypeStruct, Value, ValueList,
     ValueMap, ValueMapEntry, ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
@@ -17,9 +17,9 @@ use std::collections::HashMap;
 pub struct GdscriptSerializer;
 
 impl AstSerializer for GdscriptSerializer {
-    fn serialize_node(&self, node: &Node) -> Result<String> {
+    fn serialize_file(&self, file: &File) -> Result<String> {
         let mut emitter = GdscriptEmitter::new();
-        emitter.emit_node(node)?;
+        emitter.emit_file(file)?;
         Ok(emitter.finish())
     }
 }
@@ -233,28 +233,10 @@ impl GdscriptEmitter {
         self.code.trim_end().to_string()
     }
 
-    fn emit_node(&mut self, node: &Node) -> Result<()> {
-        match node.kind() {
-            NodeKind::File(file) => {
-                self.collect_symbols(&file.items);
-                for item in &file.items {
-                    self.emit_item(item)?;
-                }
-            }
-            NodeKind::Item(item) => self.emit_item(item)?,
-            NodeKind::Expr(expr) => {
-                let rendered = self.render_expr(expr)?;
-                self.push_line(&rendered);
-            }
-            NodeKind::Query(_) => {
-                self.push_comment("query documents are not supported for gdscript output");
-            }
-            NodeKind::Schema(_) => {
-                self.push_comment("schema documents are not supported for gdscript output");
-            }
-            NodeKind::Workspace(_) => {
-                self.push_comment("workspace snapshots are not supported for gdscript output");
-            }
+    fn emit_file(&mut self, file: &File) -> Result<()> {
+        self.collect_symbols(&file.items);
+        for item in &file.items {
+            self.emit_item(item)?;
         }
         Ok(())
     }

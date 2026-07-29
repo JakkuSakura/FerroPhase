@@ -1,4 +1,4 @@
-use crate::ast::Node;
+use crate::ast::File;
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -12,7 +12,7 @@ pub struct AstSnapshot {
     pub tool_version: String,
     /// Milliseconds since UNIX epoch when the snapshot was produced.
     pub created_ms: u64,
-    pub ast: Node,
+    pub ast: File,
 }
 
 pub fn load_snapshot_from_file(path: &Path) -> Result<AstSnapshot> {

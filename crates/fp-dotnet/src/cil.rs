@@ -5,21 +5,21 @@ use std::process::Command;
 use eyre::{Result as EyreResult, bail};
 use fp_core::ast::{
     BlockStmt, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
-    ExprKind, ExprLet, ExprReturn, FunctionParam, Item, ItemDefFunction, ItemKind, Name, Node,
-    NodeKind, Pattern, PatternKind, Ty, TypeInt, TypePrimitive, Value,
+    ExprKind, ExprLet, ExprReturn, File, FunctionParam, Item, ItemDefFunction, ItemKind, Name,
+    Pattern, PatternKind, Ty, TypeInt, TypePrimitive, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use tempfile::TempDir;
 
-pub fn emit_cil(node: &Node) -> Result<String> {
-    let program = CilProgram::from_node(node).map_err(fp_core::error::Error::from)?;
+pub fn emit_cil(file: &File) -> Result<String> {
+    let program = CilProgram::from_file(file).map_err(fp_core::error::Error::from)?;
     program.render().map_err(fp_core::error::Error::from)
 }
 
-pub fn emit_assembly(node: &Node, output_path: &Path, keep_cil: bool) -> Result<PathBuf> {
-    let cil = emit_cil(node)?;
+pub fn emit_assembly(file: &File, output_path: &Path, keep_cil: bool) -> Result<PathBuf> {
+    let cil = emit_cil(file)?;
     assemble_cil(&cil, output_path, keep_cil).map_err(fp_core::error::Error::from)
 }
 
@@ -119,9 +119,9 @@ struct CollectedFunction<'a> {
 }
 
 impl<'a> CilProgram<'a> {
-    fn from_node(node: &'a Node) -> EyreResult<Self> {
+    fn from_file(file: &'a File) -> EyreResult<Self> {
         let mut methods = Vec::new();
-        collect_functions(node, &mut Vec::new(), &mut methods)?;
+        collect_functions_from_file(file, &mut Vec::new(), &mut methods)?;
         Ok(Self { methods })
     }
 
@@ -174,22 +174,13 @@ impl<'a> CilProgram<'a> {
     }
 }
 
-fn collect_functions<'a>(
-    node: &'a Node,
+fn collect_functions_from_file<'a>(
+    file: &'a File,
     module_path: &mut Vec<String>,
     methods: &mut Vec<CollectedFunction<'a>>,
 ) -> EyreResult<()> {
-    match node.kind() {
-        NodeKind::File(file) => {
-            for item in &file.items {
-                collect_from_item(item, module_path, methods)?;
-            }
-        }
-        NodeKind::Item(item) => collect_from_item(item, module_path, methods)?,
-        NodeKind::Expr(expr) => collect_from_expr(expr, module_path, methods)?,
-        NodeKind::Query(_) => bail!("CIL backend does not support query documents"),
-        NodeKind::Schema(_) => bail!("CIL backend does not support schema documents"),
-        NodeKind::Workspace(_) => bail!("CIL backend does not support workspace documents"),
+    for item in &file.items {
+        collect_from_item(item, module_path, methods)?;
     }
     Ok(())
 }

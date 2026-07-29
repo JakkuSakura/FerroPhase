@@ -1,4 +1,4 @@
-use fp_core::ast::{BlockStmt, Expr, ExprKind, Item, ItemKind, Node, NodeKind};
+use fp_core::ast::{BlockStmt, Expr, ExprKind, File, Item, ItemKind};
 use std::collections::HashMap;
 
 pub(crate) struct AstPreProcessor {
@@ -12,8 +12,8 @@ impl AstPreProcessor {
         }
     }
 
-    pub(crate) fn process(&mut self, node: &mut Node) {
-        let NodeKind::File(file) = node.kind_mut() else { return };
+    pub(crate) fn process(&mut self, file: &mut File) {
+        let file = file else { return };
         self.collect_quotes(&file.items);
         self.resolve_items(&mut file.items);
     }

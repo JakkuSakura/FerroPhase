@@ -1,6 +1,6 @@
 use fp_core::ast::{
     AstSerializer, Expr, ExprBlock, ExprKind, File, Ident, Item, ItemDefConst, ItemDefFunction,
-    ItemDefStruct, ItemKind, Node, NodeKind, StructuralField, Ty, TypePrimitive, Value,
+    ItemDefStruct, ItemKind, StructuralField, Ty, TypePrimitive, Value,
 };
 
 use crate::{GoParser, GoSerializer};
@@ -25,10 +25,7 @@ func main() {
 "#;
 
     let mut parser = GoParser::default();
-    let node = parser.parse_str(source).expect("parse should succeed");
-    let NodeKind::File(file) = node.kind() else {
-        panic!("expected file node");
-    };
+    let file = parser.parse_str(source).expect("parse should succeed");
 
     let has_struct = file.items.iter().any(|item| match item.kind() {
         ItemKind::DefStruct(def) => def.name.name == "User",
@@ -76,6 +73,7 @@ fn serialize_basic_go_ast() {
     let file = File {
         path: Default::default(),
         attrs: Vec::new(),
+        collected_items: Vec::new(),
         items: vec![
             Item::new(ItemKind::DefStruct(user_struct)),
             Item::new(ItemKind::DefConst(const_item)),
@@ -83,10 +81,9 @@ fn serialize_basic_go_ast() {
         ],
     };
 
-    let node = Node::from(NodeKind::File(file));
     let serializer = GoSerializer::default();
     let output = serializer
-        .serialize_node(&node)
+        .serialize_file(&file)
         .expect("serialize should succeed");
 
     assert!(output.contains("package main"));

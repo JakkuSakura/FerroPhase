@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use crate::ast::{
-    Expr, ExprField, ExprInvoke, ExprInvokeTarget, ExprKind, ExprSelect, File, Name, Node,
-    NodeKind, Value,
+    Expr, ExprField, ExprInvoke, ExprInvokeTarget, ExprKind, ExprSelect, File, Name, Value,
 };
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::query::{
@@ -34,25 +33,6 @@ pub fn lower_fp_file_to_query(file: &File, path: Option<&Path>) -> Option<QueryD
         return None;
     }
     lower_fp_expr_to_query(file.items[0].as_expr()?, path)
-}
-
-pub fn lower_fp_node_to_query(node: &Node, path: Option<&Path>) -> Option<QueryDocument> {
-    match node.kind() {
-        NodeKind::Expr(expr) => lower_fp_expr_to_query(expr, path),
-        NodeKind::File(file) => {
-            let fallback_path = (file.path.as_os_str() != "<expr>").then_some(file.path.as_path());
-            lower_fp_file_to_query(file, path.or(fallback_path))
-        }
-        _ => None,
-    }
-}
-
-pub fn promote_fp_query_node(node: &mut Node, path: Option<&Path>) -> bool {
-    let Some(query) = lower_fp_node_to_query(node, path) else {
-        return false;
-    };
-    *node = Node::query(query);
-    true
 }
 
 #[derive(Default)]

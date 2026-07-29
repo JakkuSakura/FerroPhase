@@ -6,7 +6,7 @@ use fp_core::ast::{
     AstSerializer, BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, File, Item, ItemDefConst, ItemDefEnum, ItemDefFunction,
     ItemDefStruct, ItemDefType, ItemImport, ItemImportPath, ItemImportRename, ItemImportTree,
-    ItemKind, Node, NodeKind, PatternKind, Ty, TypeArray, TypePrimitive, TypeTuple, TypeVec, Value,
+    ItemKind, PatternKind, Ty, TypeArray, TypePrimitive, TypeTuple, TypeVec, Value,
     ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
@@ -33,9 +33,9 @@ impl Default for GoSerializer {
 }
 
 impl AstSerializer for GoSerializer {
-    fn serialize_node(&self, node: &Node) -> Result<String> {
+    fn serialize_file(&self, file: &File) -> Result<String> {
         let mut emitter = GoEmitter::new(self.package.clone());
-        emitter.emit_node(node)?;
+        emitter.emit_file(file)?;
         Ok(emitter.finish())
     }
 }
@@ -64,42 +64,6 @@ impl GoEmitter {
             self.code.push('\n');
         }
         self.code.trim_end().to_string()
-    }
-
-    fn emit_node(&mut self, node: &Node) -> Result<()> {
-        match node.kind() {
-            NodeKind::File(file) => self.emit_file(file),
-            NodeKind::Item(item) => self.emit_file(&File {
-                path: Default::default(),
-                attrs: Vec::new(),
-                collected_items: Vec::new(),
-                items: vec![item.clone()],
-            }),
-            NodeKind::Expr(expr) => {
-                self.emit_header();
-                if let Some(rendered) = self.render_expr(expr)? {
-                    self.push_line(&rendered);
-                } else {
-                    self.push_comment("unsupported top-level expression");
-                }
-                Ok(())
-            }
-            NodeKind::Query(_) => {
-                self.emit_header();
-                self.push_comment("query documents are not supported for Go output");
-                Ok(())
-            }
-            NodeKind::Schema(_) => {
-                self.emit_header();
-                self.push_comment("schema documents are not supported for Go output");
-                Ok(())
-            }
-            NodeKind::Workspace(_) => {
-                self.emit_header();
-                self.push_comment("workspace snapshots are not supported for Go output");
-                Ok(())
-            }
-        }
     }
 
     fn emit_file(&mut self, file: &File) -> Result<()> {

@@ -1,5 +1,5 @@
 use fp_core::ast::{
-    AstSerializer, BlockStmt, Expr, ExprBlock, File, Item, ItemDefFunction, Node, Ty, Value,
+    AstSerializer, BlockStmt, Expr, ExprBlock, File, Item, ItemDefFunction, Ty, Value,
     ValueFunction,
 };
 use fp_core::pretty::{pretty, PrettyOptions};
@@ -28,8 +28,8 @@ impl Default for PrettyAstSerializer {
 }
 
 impl AstSerializer for PrettyAstSerializer {
-    fn serialize_node(&self, node: &Node) -> Result<String, fp_core::Error> {
-        Ok(format!("{}", pretty(node, self.options.clone())))
+    fn serialize_file(&self, file: &File) -> Result<String, fp_core::Error> {
+        Ok(format!("{}", pretty(file, self.options.clone())))
     }
 
     fn serialize_expr(&self, node: &Expr) -> Result<String, fp_core::Error> {
@@ -37,10 +37,6 @@ impl AstSerializer for PrettyAstSerializer {
     }
 
     fn serialize_item(&self, node: &Item) -> Result<String, fp_core::Error> {
-        Ok(format!("{}", pretty(node, self.options.clone())))
-    }
-
-    fn serialize_file(&self, node: &File) -> Result<String, fp_core::Error> {
         Ok(format!("{}", pretty(node, self.options.clone())))
     }
 

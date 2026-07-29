@@ -1,18 +1,13 @@
 use crate::ast::{
     BlockStmt, Expr, ExprBlock, ExprConstBlock, ExprFor, ExprIf, ExprIntrinsicContainer,
     ExprInvokeTarget, ExprKind, ExprMatch, ExprTry, ExprWhile, File, Item, ItemChunk,
-    ItemDefFunction, ItemDefTrait, ItemImpl, ItemKind, Module, Node, NodeKind, Value,
+    ItemDefFunction, ItemDefTrait, ItemImpl, ItemKind, Module, Value,
 };
 use crate::module::path::QualifiedPath;
 
-pub fn annotate_collected_items(node: &mut Node) {
+pub fn annotate_collected_items(file: &mut File) {
     let root = QualifiedPath::new(Vec::new());
-    match node.kind_mut() {
-        NodeKind::File(file) => annotate_file(file, &root),
-        NodeKind::Item(item) => annotate_item(item, &root),
-        NodeKind::Expr(expr) => annotate_expr(expr, &root),
-        NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {}
-    }
+    annotate_file(file, &root);
 }
 
 fn annotate_file(file: &mut File, module_path: &QualifiedPath) {

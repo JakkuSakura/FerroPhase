@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 
 use fp_core::ast::{
-    AstSerializer, BlockStmt, Expr, ExprKind, Item, Node, NodeKind, Ty, TypePrimitive, TypeStruct,
+    AstSerializer, BlockStmt, Expr, ExprKind, File, Item, Ty, TypePrimitive, TypeStruct,
 };
 
 #[derive(Default)]
@@ -12,25 +12,16 @@ struct CSharpContext {
 pub struct CSharpSerializer;
 
 impl AstSerializer for CSharpSerializer {
-    fn serialize_node(&self, node: &Node) -> fp_core::error::Result<String> {
+    fn serialize_file(&self, file: &File) -> fp_core::error::Result<String> {
         let mut context = CSharpContext::default();
-        collect_from_node(node, &mut context);
+        collect_from_file(file, &mut context);
         Ok(render_csharp(&context))
     }
 }
 
-fn collect_from_node(node: &Node, context: &mut CSharpContext) {
-    match node.kind() {
-        NodeKind::File(file) => {
-            for item in &file.items {
-                collect_from_item(item, context);
-            }
-        }
-        NodeKind::Item(item) => collect_from_item(item, context),
-        NodeKind::Expr(expr) => collect_from_expr(expr, context),
-        NodeKind::Query(_) => {}
-        NodeKind::Schema(_) => {}
-        NodeKind::Workspace(_) => {}
+fn collect_from_file(file: &File, context: &mut CSharpContext) {
+    for item in &file.items {
+        collect_from_item(item, context);
     }
 }
 
@@ -78,29 +69,20 @@ fn render_csharp(context: &CSharpContext) -> String {
 
 fn csharp_type_from_ty(ty: &Ty) -> String {
     match ty {
-        Ty::Primitive(primitive) => match primitive {
-            TypePrimitive::Bool => "bool".into(),
-            TypePrimitive::String | TypePrimitive::Char => "string".into(),
+        Ty::Primitive(prim) => match prim {
+            TypePrimitive::Bool => "bool".to_string(),
+            TypePrimitive::Char => "char".to_string(),
+            TypePrimitive::String => "string".to_string(),
             TypePrimitive::Int(int_ty) => match int_ty {
-                fp_core::ast::TypeInt::I64 => "long".into(),
-                fp_core::ast::TypeInt::I32 => "int".into(),
-                fp_core::ast::TypeInt::I16 => "short".into(),
-                fp_core::ast::TypeInt::I8 => "sbyte".into(),
-                fp_core::ast::TypeInt::U64 => "ulong".into(),
-                fp_core::ast::TypeInt::U32 => "uint".into(),
-                fp_core::ast::TypeInt::U16 => "ushort".into(),
-                fp_core::ast::TypeInt::U8 => "byte".into(),
-                _ => "long".into(),
+                fp_core::ast::TypeInt::I8 => "sbyte".to_string(),
+                fp_core::ast::TypeInt::I16 => "short".to_string(),
+                fp_core::ast::TypeInt::I32 => "int".to_string(),
+                fp_core::ast::TypeInt::I64 => "long".to_string(),
+                _ => "int".to_string(),
             },
-            TypePrimitive::Decimal(decimal_ty) => match decimal_ty {
-                fp_core::ast::DecimalType::F64 => "double".into(),
-                fp_core::ast::DecimalType::F32 => "float".into(),
-                _ => "double".into(),
-            },
-            TypePrimitive::List => "System.Collections.Generic.List<object>".into(),
+            TypePrimitive::Decimal(_) => "double".to_string(),
+            TypePrimitive::List => "List<object>".to_string(),
         },
-        Ty::Struct(struct_ty) => struct_ty.name.name.clone(),
-        Ty::Reference(reference) => csharp_type_from_ty(&reference.ty),
-        _ => "object".into(),
+        _ => "object".to_string(),
     }
 }

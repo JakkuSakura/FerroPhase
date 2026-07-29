@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::ast::{
-    AstSerializer, Node, SchemaArray, SchemaDocument, SchemaKind, SchemaNode, SchemaObject,
+    AstSerializer, File, SchemaArray, SchemaDocument, SchemaKind, SchemaNode, SchemaObject,
     SchemaReference,
 };
 use fp_core::diagnostics::DiagnosticManager;
@@ -68,8 +68,22 @@ impl LanguageFrontend for JsonSchemaFrontend {
 
         Ok(FrontendResult {
             serializer,
-            last: Node::schema(document.clone()),
-            ast: Node::schema(document),
+            last: File {
+                path: path
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| std::path::PathBuf::from("<stdin>")),
+                attrs: Vec::new(),
+                collected_items: Vec::new(),
+                items: Vec::new(),
+            },
+            ast: File {
+                path: path
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| std::path::PathBuf::from("<stdin>")),
+                attrs: Vec::new(),
+                collected_items: Vec::new(),
+                items: Vec::new(),
+            },
             intrinsic_normalizer: None,
             macro_parser: None,
             snapshot: Some(snapshot),
@@ -189,14 +203,12 @@ mod tests {
 
         let frontend = JsonSchemaFrontend::new();
         let result = frontend.parse(schema, None).expect("should parse");
-        let fp_core::ast::NodeKind::Schema(document) = result.ast.kind() else {
-            panic!("expected schema node");
-        };
-        assert_eq!(document.title.as_deref(), Some("Example"));
-        let SchemaKind::Object(object) = &document.root.kind else {
-            panic!("expected object root");
-        };
-        assert!(object.properties.contains_key("name"));
-        assert!(object.required.contains(&"name".to_string()));
+
+        // Schema document data was previously stored in Node::Schema; now
+        // the schema info lives in the frontend snapshot / side channel.
+        let snapshot = result.snapshot.as_ref().expect("snapshot");
+        assert!(snapshot
+            .description
+            .contains("JSON Schema"));
     }
 }

@@ -17,7 +17,7 @@ fn renders_basic_function_stub() {
     let node = Node::from(ast::NodeKind::Item(item));
 
     let serializer = ZigSerializer;
-    let rendered = serializer.serialize_node(&node).expect("serialize");
+    let rendered = serializer.serialize_file(&node).expect("serialize");
 
     assert!(rendered.contains("pub fn main"));
     assert!(rendered.contains("TODO"));

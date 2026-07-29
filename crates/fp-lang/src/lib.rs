@@ -8,7 +8,7 @@ mod normalization;
 mod serializer;
 use crate::macro_parser::FerroMacroExpansionParser;
 use crate::normalization::FerroIntrinsicNormalizer;
-use fp_core::ast::{AstSerializer, Node};
+use fp_core::ast::{AstSerializer, File};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::IntrinsicNormalizer;
@@ -120,7 +120,7 @@ impl FerroFrontend {
             .parse_file_ast_with_file(&cleaned, file_id, None, source_path.clone())
             .map_err(|err| self.diagnostic_err(format!("failed to parse file: {err}")))?;
         let diagnostics = self.ferro.diagnostics();
-        let last = Node::file(file);
+        let last = file;
         let mut ast = last.clone();
         fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
@@ -165,7 +165,13 @@ impl LanguageFrontend for FerroFrontend {
             }
             _ => expr,
         };
-        let last = Node::expr(expr.clone());
+        let file = File {
+            path: std::path::PathBuf::from("<expr>"),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![fp_core::ast::Item::new(fp_core::ast::ItemKind::Expr(expr.clone()))],
+        };
+        let last = file;
         let mut ast = last.clone();
         fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
@@ -192,7 +198,7 @@ impl LanguageFrontend for FerroFrontend {
             .parse_file_ast_with_file(&cleaned, file_id, Some(&source_path), source_path.clone())
             .map_err(|err| self.diagnostic_err(format!("failed to parse file: {err}")))?;
         let diagnostics = self.ferro.diagnostics();
-        let last = Node::file(file);
+        let last = file;
         let mut ast = last.clone();
         fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
@@ -224,7 +230,7 @@ impl LanguageFrontend for FerroFrontend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fp_core::ast::NodeKind;
+    use fp_core::ast::ItemKind;
     use std::fs;
     use std::path::Path;
 
@@ -341,7 +347,7 @@ mod tests {
                 None,
             )
             .expect("parse");
-        assert!(matches!(result.ast.kind(), NodeKind::Expr(_)));
+        assert!(matches!(result.ast.items.first().map(|i| i.kind()), Some(ItemKind::Expr(_))));
     }
 
     #[test]

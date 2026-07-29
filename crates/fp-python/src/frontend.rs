@@ -10,7 +10,7 @@ use fp_core::ast::{
     ExprInvokeTarget, ExprKind, ExprKwArg, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect,
     ExprSelectType, ExprStringTemplate, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile,
     ExprWith, File, FormatTemplatePart, FunctionParam, FunctionSignature, Ident, Item,
-    ItemDefFunction, ItemDefStruct, ItemKind, Name, Node, NodeKind, Pattern, PatternIdent,
+    ItemDefFunction, ItemDefStruct, ItemKind, Name, Pattern, PatternIdent,
     PatternKind, PatternTuple, ReprOptions, StructuralField, Ty, TypeStruct, Value, ValueBytes,
     ValueMap, ValueTuple,
 };
@@ -76,11 +76,10 @@ impl LanguageFrontend for PythonFrontend {
             collected_items: Vec::new(),
             items,
         };
-        let node = Node::from(NodeKind::File(file));
 
         Ok(FrontendResult {
-            last: node.clone(),
-            ast: node,
+            last: file.clone(),
+            ast: file,
             serializer: self.serializer.clone(),
             intrinsic_normalizer: None,
             macro_parser: None,
@@ -1090,9 +1089,7 @@ mod tests {
         let source = "def add(a, b):\n    return a + b\n\nresult = add(1, 2)\n";
         let frontend = PythonFrontend::new();
         let result = frontend.parse(source, None).expect("parse python");
-        let fp_core::ast::NodeKind::File(file) = result.ast.kind() else {
-            panic!("expected file node");
-        };
+        let file = result.ast;
         assert!(matches!(file.items[0].kind(), ItemKind::DefFunction(_)));
         assert!(matches!(file.items[1].kind(), ItemKind::Expr(_)));
     }
@@ -1102,9 +1099,7 @@ mod tests {
         let source = "message = f\"hi {name}\"";
         let frontend = PythonFrontend::new();
         let result = frontend.parse(source, None).expect("parse python");
-        let fp_core::ast::NodeKind::File(file) = result.ast.kind() else {
-            panic!("expected file node");
-        };
+        let file = result.ast;
         let ItemKind::Expr(expr) = file.items[0].kind() else {
             panic!("expected expr item");
         };
@@ -1123,9 +1118,7 @@ mod tests {
             "model = None\n\ndef load_model():\n    global model\n    model = create_model()\n";
         let frontend = PythonFrontend::new();
         let result = frontend.parse(source, None).expect("parse python");
-        let fp_core::ast::NodeKind::File(file) = result.ast.kind() else {
-            panic!("expected file node");
-        };
+        let file = result.ast;
         assert!(matches!(file.items[0].kind(), ItemKind::Expr(_)));
         assert!(matches!(file.items[1].kind(), ItemKind::DefFunction(_)));
     }
@@ -1135,9 +1128,7 @@ mod tests {
         let source = "def generate():\n    with torch.no_grad():\n        outputs = model.generate(**inputs)\n";
         let frontend = PythonFrontend::new();
         let result = frontend.parse(source, None).expect("parse python");
-        let fp_core::ast::NodeKind::File(file) = result.ast.kind() else {
-            panic!("expected file node");
-        };
+        let file = result.ast;
         let ItemKind::DefFunction(function) = file.items[0].kind() else {
             panic!("expected function item");
         };

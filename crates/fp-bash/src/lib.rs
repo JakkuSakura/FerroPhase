@@ -1,7 +1,7 @@
 use fp_core::ast::{
     Abi, AttrMeta, AttributesExt, BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind,
-    ExprMatch, ExprStringTemplate, ExprTry, FormatArgRef, FormatTemplatePart, ItemDeclFunction,
-    ItemDefFunction, ItemKind, Node, NodeKind, Pattern, PatternKind, Ty, Value,
+    ExprMatch, ExprStringTemplate, ExprTry, File, FormatArgRef, FormatTemplatePart,
+    ItemDeclFunction, ItemDefFunction, ItemKind, Pattern, PatternKind, Ty, Value,
 };
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
@@ -23,9 +23,9 @@ impl Default for BashTarget {
 }
 
 impl BashTarget {
-    pub fn render(&self, node: &Node, inventory: &ShellInventory) -> Result<String, String> {
+    pub fn render(&self, file: &File, inventory: &ShellInventory) -> Result<String, String> {
         let mut renderer = BashRenderer::new(inventory);
-        renderer.render_program(node)?;
+        renderer.render_program(file)?;
         Ok(renderer.finish())
     }
 }
@@ -181,10 +181,7 @@ impl<'a> BashRenderer<'a> {
         script
     }
 
-    fn render_program(&mut self, node: &Node) -> Result<(), String> {
-        let NodeKind::File(file) = node.kind() else {
-            return Err("bash renderer requires file AST".to_string());
-        };
+    fn render_program(&mut self, file: &File) -> Result<(), String> {
         self.externs = extern_decl_map(file.items.iter(), ScriptTarget::Bash)?;
         for item in &file.items {
             match item.kind() {
@@ -1381,7 +1378,7 @@ mod tests {
     use fp_core::ast::{
         Abi, AttrMeta, AttrMetaNameValue, AttrStyle, Attribute, Expr, ExprInvoke, ExprInvokeTarget,
         ExprKind, File, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemKind,
-        Name, Node, Path, Ty,
+        Name, Path, Ty,
     };
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -1414,13 +1411,13 @@ mod tests {
     fn render_node(decls: Vec<Item>, expr: Expr, inventory: &ShellInventory) -> String {
         let mut items = decls;
         items.push(Item::from(ItemKind::Expr(expr)));
-        let node = Node::file(File {
+        let file = File {
             path: PathBuf::from("test.fp"),
             attrs: Vec::new(),
             items,
-        });
+        };
         BashTarget::new()
-            .render(&node, inventory)
+            .render(&file, inventory)
             .expect("render should succeed")
     }
 

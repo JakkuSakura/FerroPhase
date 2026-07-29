@@ -1,7 +1,6 @@
 //! AST are trees, so Box<T> is fine
 
 use crate::query::QueryDocument;
-use crate::span::Span;
 use crate::workspace::WorkspaceDocument;
 use crate::{common_enum, common_struct};
 use std::path::PathBuf;
@@ -43,7 +42,7 @@ pub use value::*;
 pub type TySlot = Option<Ty>;
 
 common_struct! {
-pub struct File {
+    pub struct File {
         pub path: PathBuf,
         #[serde(default)]
         pub attrs: Vec<Attribute>,
@@ -61,102 +60,14 @@ impl std::fmt::Display for File {
         Ok(())
     }
 }
-common_enum! {
-    /// Tree is any syntax tree element.
-    ///
-    /// The enum deliberately distinguishes between:
-    /// - `Item`/`Expr`/`File`: the canonical FerroPhase AST hierarchy.
-    /// - `Query`: textual query documents (SQL, PRQL, ...).
-    /// - `Schema`: validation schemas such as JSON Schema.
-    /// - `Workspace`: metadata describing a Rust workspace.
-    pub enum NodeKind {
-        Item(Item),
-        Expr(Expr),
-        File(File),
-        Query(QueryDocument),
-        Schema(schema::SchemaDocument),
-        Workspace(WorkspaceDocument),
-    }
-}
 
+/// A block that can contain both items and statements, like Python's
+/// module/class bodies where `def`, `class`, assignments, and expressions
+/// are interleaved.
 common_struct! {
-    pub struct Node {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub ty: TySlot,
-        #[serde(flatten)]
-        pub kind: NodeKind,
-    }
-}
-
-impl Node {
-    pub fn new(kind: NodeKind) -> Self {
-        Self { ty: None, kind }
-    }
-
-    pub fn with_ty(kind: NodeKind, ty: TySlot) -> Self {
-        Self { ty, kind }
-    }
-
-    pub fn ty(&self) -> Option<&Ty> {
-        self.ty.as_ref()
-    }
-
-    pub fn ty_mut(&mut self) -> &mut TySlot {
-        &mut self.ty
-    }
-
-    pub fn set_ty(&mut self, ty: Ty) {
-        self.ty = Some(ty);
-    }
-
-    pub fn kind(&self) -> &NodeKind {
-        &self.kind
-    }
-
-    pub fn kind_mut(&mut self) -> &mut NodeKind {
-        &mut self.kind
-    }
-
-    pub fn span(&self) -> Span {
-        match &self.kind {
-            NodeKind::Item(item) => item.span(),
-            NodeKind::Expr(expr) => expr.span(),
-            _ => Span::null(),
-        }
-    }
-
-    pub fn with_ty_slot(mut self, ty: TySlot) -> Self {
-        self.ty = ty;
-        self
-    }
-
-    pub fn file(file: File) -> Self {
-        Node::from(NodeKind::File(file))
-    }
-
-    pub fn item(item: Item) -> Self {
-        Node::from(NodeKind::Item(item))
-    }
-
-    pub fn expr(expr: Expr) -> Self {
-        Node::from(NodeKind::Expr(expr))
-    }
-
-    pub fn query(query: QueryDocument) -> Self {
-        Node::from(NodeKind::Query(query))
-    }
-
-    pub fn schema(schema: schema::SchemaDocument) -> Self {
-        Node::from(NodeKind::Schema(schema))
-    }
-
-    pub fn workspace(workspace: WorkspaceDocument) -> Self {
-        Node::from(NodeKind::Workspace(workspace))
-    }
-}
-
-impl From<NodeKind> for Node {
-    fn from(kind: NodeKind) -> Self {
-        Node::new(kind)
+    pub struct ScriptBlock {
+        #[serde(default)]
+        pub items: Vec<Item>,
+        pub stmts: Vec<BlockStmt>,
     }
 }

@@ -7,7 +7,7 @@ pub use state::CompilerState;
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprKind, ExprSplice, ExprSplicePending,
-    Item, ItemChunk, ItemDefConst, ItemKind, Node, NodeKind, Ty, TypeType, Value,
+    File, Item, ItemChunk, ItemDefConst, ItemKind, Ty, TypeType, Value,
 };
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::mir;
@@ -117,7 +117,7 @@ impl CompilerDriver {
 let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             .with_extern_prelude(default_extern_prelude());
         inferencer.seed_workspace_graph();
-        let outcome = inferencer.infer(&mut ast)?;
+        let outcome = inferencer.infer_file(&mut ast)?;
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
         self.state.insert_typed_ast(typed_ast_id.clone(), ast);
@@ -146,7 +146,7 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                 .with_extern_prelude(default_extern_prelude());
             inferencer.seed_workspace_graph();
-            let outcome = inferencer.infer(&mut ast)?;
+            let outcome = inferencer.infer_file(&mut ast)?;
             let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
             self.state.insert_typed_ast(typed_ast_id.clone(), ast);
             outcome.pending_requests.iter().any(|r| matches!(r.kind, PendingTypingRequestKind::Comptime))
@@ -169,7 +169,7 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                 .with_extern_prelude(default_extern_prelude());
             inferencer.seed_workspace_graph();
-            inferencer.infer(&mut ast)?;
+            inferencer.infer_file(&mut ast)?;
             let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
             self.state.insert_typed_ast(typed_ast_id.clone(), ast);
         }
@@ -256,8 +256,13 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             function_path.with_segment(cannon_key.clone())
         );
         let specialized_ast_id = AstId::new(format!("ast:{}", specialized_path.to_key()));
-        let node = Node::item(func_item);
-        self.state.insert_ast(specialized_ast_id.clone(), node);
+        let file = File {
+            path: std::path::PathBuf::new(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![func_item],
+        };
+        self.state.insert_ast(specialized_ast_id.clone(), file);
 
         self.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: specialized_ast_id,
@@ -277,25 +282,15 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         format!("{}#<{}>", path.to_key(), types_str.join(", "))
     }
 
-    fn find_function_def(node: &Node, path: &QualifiedPath) -> Option<Item> {
-        match node.kind() {
-            NodeKind::File(file) => {
-                let key = path.to_key();
-                let segments: Vec<&str> = key.split("::").collect();
-                for item in &file.items {
-                    if let Some(found) = Self::find_in_items(item, &segments, 0) {
-                        return Some(found);
-                    }
-                }
-                None
+    fn find_function_def(file: &File, path: &QualifiedPath) -> Option<Item> {
+        let key = path.to_key();
+        let segments: Vec<&str> = key.split("::").collect();
+        for item in &file.items {
+            if let Some(found) = Self::find_in_items(item, &segments, 0) {
+                return Some(found);
             }
-            NodeKind::Item(item) => {
-                let key = path.to_key();
-                let segments: Vec<&str> = key.split("::").collect();
-                Self::find_in_items(item, &segments, 0)
-            }
-            _ => None,
         }
+        None
     }
 
     fn find_in_items(item: &Item, segments: &[&str], idx: usize) -> Option<Item> {
@@ -554,18 +549,9 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
     ) -> Result<HirId, CompilerDriverError> {
         let ast = self.state.typed_ast(typed_ast_id)?;
         let expr_res = self.state.typing_ctx.expr_resolutions.borrow().clone();
-        let hir_program = match ast.kind() {
-            NodeKind::Expr(expr) => HirGenerator::new()
-                .with_expr_resolution(expr_res)
-                .transform_expr(expr)?,
-            NodeKind::File(file) => HirGenerator::with_file(&file.path)
-                .with_expr_resolution(expr_res)
-                .transform_file(file)?,
-            NodeKind::Query(query) => HirGenerator::new().transform_query_document(query)?,
-        NodeKind::Item(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {
-            panic!("cannot lower AST node kind to HIR: {:?}", ast.kind())
-        }
-        };
+        let hir_program = HirGenerator::with_file(&ast.path)
+            .with_expr_resolution(expr_res)
+            .transform_file(&ast)?;
         let hir = HirId::new(format!("hir:{}", path.to_key()));
         self.state.insert_hir(hir.clone(), hir_program);
         Ok(hir)
@@ -870,14 +856,9 @@ impl<'a> AstPreProcessor<'a> {
         Self { splice_results }
     }
 
-    fn walk(&mut self, node: &mut Node) {
-        match node.kind_mut() {
-            NodeKind::File(file) => {
-                file.collected_items = direct_items(&file.items);
-                self.resolve_items(&mut file.items);
-            }
-            _ => {}
-        }
+    fn walk(&mut self, file: &mut File) {
+        file.collected_items = direct_items(&file.items);
+        self.resolve_items(&mut file.items);
     }
 
     fn resolve_items(&mut self, items: &mut [Item]) {
@@ -1132,7 +1113,7 @@ impl Default for CompilerDriver {
 mod tests {
     use super::*;
     use fp_core::ast::{
-        Expr, File, FunctionSignature, GenericParam, Ident, Item, ItemDefFunction, Node, TypeBounds,
+        Expr, File, FunctionSignature, GenericParam, Ident, Item, ItemDefFunction, TypeBounds,
     };
 
     fn path() -> FullyQualifiedPath {
@@ -1146,7 +1127,12 @@ mod tests {
         let mut driver = CompilerDriver::new();
         driver
             .state
-            .insert_ast(ast_id.clone(), Node::expr(Expr::unit()));
+            .insert_ast(ast_id.clone(), File {
+            path: std::path::PathBuf::new(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::Expr(Expr::unit()))],
+        });
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
@@ -1184,7 +1170,12 @@ mod tests {
         let expr = Expr::from(fp_core::ast::ExprKind::ConstBlock(const_block));
 
         let mut driver = CompilerDriver::new();
-        driver.state.insert_ast(ast_id.clone(), Node::expr(expr));
+        driver.state.insert_ast(ast_id.clone(), File {
+            path: std::path::PathBuf::new(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::Expr(expr))],
+        });
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
@@ -1212,7 +1203,12 @@ mod tests {
         let mut driver = CompilerDriver::new();
         driver
             .state
-            .insert_ast(ast_id.clone(), Node::expr(Expr::unit()));
+            .insert_ast(ast_id.clone(), File {
+            path: std::path::PathBuf::new(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::Expr(Expr::unit()))],
+        });
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,
@@ -1260,7 +1256,7 @@ mod tests {
         };
         driver
             .state
-            .insert_ast(ast_id.clone(), Node::file(file));
+            .insert_ast(ast_id.clone(), file);
 
         driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
             ast: ast_id,

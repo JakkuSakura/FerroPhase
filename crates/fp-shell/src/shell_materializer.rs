@@ -1,19 +1,19 @@
 use fp_core::Result;
 use fp_core::ast::{
     BlockStmt, Expr, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, File,
-    FunctionSignature, Item, ItemKind, Name, NodeKind, Value,
+    FunctionSignature, Item, ItemKind, Name, Value,
 };
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicMaterializer};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 pub struct ShellMaterializer<'a> {
-    inventory: Option<&'a fp_core::ast::Node>,
+    inventory: Option<&'a File>,
     sigs: RefCell<Option<HashMap<String, FunctionSignature>>>,
 }
 
 impl<'a> ShellMaterializer<'a> {
-    pub fn new(inventory: Option<&'a fp_core::ast::Node>) -> Self {
+    pub fn new(inventory: Option<&'a File>) -> Self {
         Self {
             inventory,
             sigs: RefCell::new(None),
@@ -24,10 +24,7 @@ impl<'a> ShellMaterializer<'a> {
         if host == "localhost" {
             return Some("local".into());
         }
-        let node = self.inventory?;
-        let NodeKind::File(file) = node.kind() else {
-            return None;
-        };
+        let file = self.inventory?;
         let item = file.items.iter().find_map(|i| match i.kind() {
             ItemKind::DefFunction(f) if f.name.as_str() == "inventory" => Some(f),
             _ => None,

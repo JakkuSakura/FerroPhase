@@ -1,6 +1,6 @@
 use crate::ast::{
     BlockStmt, Expr, ExprBlock, ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprStringTemplate, Item, ItemKind, Node, NodeKind, Ty, Value,
+    ExprInvokeTarget, ExprKind, ExprStringTemplate, File, Item, ItemKind, Ty, Value,
 };
 use crate::error::Result;
 use crate::intrinsics::{IntrinsicNormalizer, NoopIntrinsicNormalizer, NormalizeOutcome};
@@ -14,30 +14,23 @@ thread_local! {
 
 /// Normalize intrinsic expressions into a canonical AST form so that typing and
 /// downstream passes can assume consistent structures.
-pub fn normalize_intrinsics(node: &mut Node) -> Result<()> {
-    normalize_intrinsics_with(node, &NoopIntrinsicNormalizer)
+pub fn normalize_intrinsics(file: &mut File) -> Result<()> {
+    normalize_intrinsics_with(file, &NoopIntrinsicNormalizer)
 }
 
 pub fn normalize_intrinsics_with(
-    node: &mut Node,
+    file: &mut File,
     strategy: &dyn IntrinsicNormalizer,
 ) -> Result<()> {
-    normalize_node(node, strategy)
+    normalize_file(file, strategy)
 }
 
-fn normalize_node(node: &mut Node, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
-    match node.kind_mut() {
-        NodeKind::File(file) => {
-            let mut const_bools = scan_const_bools(&file.items);
-            scan_items(&file.collected_items, &mut const_bools);
-            CONST_BOOLS.with(|cb| *cb.borrow_mut() = const_bools);
-            for item in &mut file.items {
-                normalize_item(item, strategy)?;
-            }
-        }
-        NodeKind::Item(item) => normalize_item(item, strategy)?,
-        NodeKind::Expr(expr) => normalize_expr(expr, strategy)?,
-        NodeKind::Schema(_) | NodeKind::Query(_) | NodeKind::Workspace(_) => {}
+fn normalize_file(file: &mut File, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
+    let mut const_bools = scan_const_bools(&file.items);
+    scan_items(&file.collected_items, &mut const_bools);
+    CONST_BOOLS.with(|cb| *cb.borrow_mut() = const_bools);
+    for item in &mut file.items {
+        normalize_item(item, strategy)?;
     }
     Ok(())
 }

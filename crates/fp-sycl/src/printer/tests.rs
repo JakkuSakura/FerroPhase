@@ -10,7 +10,7 @@ fn renders_sycl_header() {
     let node = Node::from(NodeKind::Item(item));
 
     let serializer = SyclSerializer;
-    let rendered = serializer.serialize_node(&node).expect("serialize");
+    let rendered = serializer.serialize_file(&node).expect("serialize");
 
     assert!(rendered.contains("#include <sycl/sycl.hpp>"));
     assert!(rendered.contains("FerroPhase SYCL backend"));
@@ -24,7 +24,7 @@ fn renders_function_stub() {
     let node = Node::from(NodeKind::Item(item));
 
     let serializer = SyclSerializer;
-    let rendered = serializer.serialize_node(&node).expect("serialize");
+    let rendered = serializer.serialize_file(&node).expect("serialize");
 
     assert!(rendered.contains("int main"));
     assert!(rendered.contains("return 0;"));

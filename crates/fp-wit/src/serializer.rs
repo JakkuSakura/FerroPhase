@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use fp_core::ast::{
-    self, AstSerializer, AttrMeta, Attribute, Expr, ExprInvokeTarget, ExprKind, FunctionSignature,
-    Ident, Item, ItemImpl, ItemKind, Name, Node, NodeKind, Ty, TypeInt, TypePrimitive,
+    self, AstSerializer, AttrMeta, Attribute, Expr, ExprInvokeTarget, ExprKind, File,
+    FunctionSignature, Ident, Item, ItemImpl, ItemKind, Name, Ty, TypeInt, TypePrimitive,
     TypeStructural, Value, Visibility,
 };
 use fp_core::error::{Error as CoreError, Result};
@@ -54,9 +54,9 @@ pub enum WorldMode {
 }
 
 impl AstSerializer for WitSerializer {
-    fn serialize_node(&self, node: &Node) -> Result<String> {
+    fn serialize_file(&self, file: &File) -> Result<String> {
         let mut emitter = WitEmitter::new(self.options.clone());
-        emitter.emit_node(node)?;
+        emitter.emit_file(file)?;
         Ok(emitter.finish())
     }
 }
@@ -118,28 +118,11 @@ impl WitEmitter {
         }
     }
 
-    fn emit_node(&mut self, node: &Node) -> Result<()> {
-        match node.kind() {
-            NodeKind::File(file) => {
-                for item in &file.items {
-                    self.emit_item(item, None, None, None, None)?;
-                }
-                Ok(())
-            }
-            NodeKind::Item(item) => self.emit_item(item, None, None, None, None),
-            NodeKind::Expr(_) => Err(CoreError::from(
-                "WIT serialization expects a file or module-level item".to_string(),
-            )),
-            NodeKind::Query(_) => Err(CoreError::from(
-                "WIT serialization does not support query documents".to_string(),
-            )),
-            NodeKind::Schema(_) => Err(CoreError::from(
-                "WIT serialization does not support schema documents".to_string(),
-            )),
-            NodeKind::Workspace(_) => Err(CoreError::from(
-                "WIT serialization does not support workspace documents".to_string(),
-            )),
+    fn emit_file(&mut self, file: &File) -> Result<()> {
+        for item in &file.items {
+            self.emit_item(item, None, None, None, None)?;
         }
+        Ok(())
     }
 
     fn emit_item(
@@ -1132,7 +1115,7 @@ mod tests {
     use super::*;
     use fp_core::ast::{
         AttrMeta, AttrMetaNameValue, AttrStyle, Attribute, Expr, File as AstFile, Ident, Item,
-        ItemDefFunction, Node, NodeKind, Path, Value,
+        ItemDefFunction, Path, Value,
     };
     use std::path::PathBuf;
 
@@ -1157,10 +1140,9 @@ mod tests {
             attrs: Vec::new(),
             items: vec![item],
         };
-        let node = Node::from(NodeKind::File(file));
 
         let serializer = WitSerializer::new();
-        let wit = serializer.serialize_node(&node).expect("serialize to wit");
+        let wit = serializer.serialize_file(&file).expect("serialize to wit");
 
         assert!(wit.contains("/// Greets the caller"));
     }

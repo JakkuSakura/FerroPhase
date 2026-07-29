@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::ast::{AttrMeta, Attribute, ExprKind, Ident, Item, ItemKind, Name, Node, Path, Value};
+use crate::ast::{AttrMeta, Attribute, ExprKind, File, Ident, Item, ItemKind, Name, Path, Value};
 use crate::intrinsics::{
     lang_instrinstic_call_kind, lang_instrinstic_for_lang_item, IntrinsicCallKind,
 };
@@ -41,25 +41,10 @@ pub fn try_get_threadlocal_lang_items() -> Option<LangItemRegistry> {
     LANG_ITEMS.with(|slot| slot.borrow().clone())
 }
 
-pub fn collect_lang_items(node: &Node) -> LangItemRegistry {
+pub fn collect_lang_items(file: &File) -> LangItemRegistry {
     let mut registry = LangItemRegistry::default();
     let mut module_path = Vec::new();
-    match node.kind() {
-        crate::ast::NodeKind::File(file) => {
-            collect_lang_items_from_items(&file.items, &mut module_path, &mut registry);
-        }
-        crate::ast::NodeKind::Item(item) => {
-            collect_lang_items_from_items(
-                std::slice::from_ref(item),
-                &mut module_path,
-                &mut registry,
-            );
-        }
-        crate::ast::NodeKind::Expr(_)
-        | crate::ast::NodeKind::Query(_)
-        | crate::ast::NodeKind::Schema(_)
-        | crate::ast::NodeKind::Workspace(_) => {}
-    }
+    collect_lang_items_from_items(&file.items, &mut module_path, &mut registry);
     registry
 }
 

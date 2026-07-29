@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use fp_core::ast::{Item, Node, NodeKind};
+use fp_core::ast::{File, Item};
 use fp_core::frontend::LanguageFrontend;
 use fp_core::module::path::QualifiedPath;
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
@@ -98,10 +98,6 @@ fn relative_to_module_segments(relative: &str) -> Vec<String> {
     segments
 }
 
-fn extract_module_items(ast: Node) -> Vec<Item> {
-    match ast.kind() {
-        NodeKind::File(file) => file.items.clone(),
-        NodeKind::Item(item) => vec![(*item).clone()],
-        _ => Vec::new(),
-    }
+fn extract_module_items(file: File) -> Vec<Item> {
+    file.items
 }

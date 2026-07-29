@@ -55,7 +55,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         if let PatternKind::Type(typed) = &stmt_let.pat.kind {
                             init.set_ty(typed.ty.clone());
                         }
-                        self.infer_expr(init)?
+                        self.infer_expr_inner(init)?
                     } else {
                         let unit = self.fresh_type_var();
                         self.bind(unit, Ty::Unit(TypeUnit));
@@ -68,14 +68,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.bind(last, Ty::Unit(TypeUnit));
                 }
                 BlockStmt::Defer(stmt_defer) => {
-                    self.infer_expr(stmt_defer.expr.as_mut())?;
+                    self.infer_expr_inner(stmt_defer.expr.as_mut())?;
                     last = self.fresh_type_var();
                     self.bind(last, Ty::Unit(TypeUnit));
                 }
                 BlockStmt::Expr(expr_stmt) => {
                     // If this is a splice in statement position, enforce stmt token
                     if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
-                        let token_var = self.infer_expr(splice.token.as_mut())?;
+                        let token_var = self.infer_expr_inner(splice.token.as_mut())?;
                         let token_ty = self.resolve_to_ty(token_var)?;
                         if !self.is_stmt_or_item_quote(&token_ty) {
                             match token_ty {
@@ -94,7 +94,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         continue;
                     }
                     if let ExprKind::SplicePending(pending) = expr_stmt.expr.kind_mut() {
-                        let token_var = self.infer_expr(pending.token.as_mut())?;
+                        let token_var = self.infer_expr_inner(pending.token.as_mut())?;
                         let token_ty = self.resolve_to_ty(token_var)?;
                         if !self.is_stmt_or_item_quote(&token_ty) {
                             match token_ty {
@@ -111,7 +111,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.bind(last, Ty::Unit(TypeUnit));
                         continue;
                     }
-                    let expr_var = self.infer_expr(expr_stmt.expr.as_mut())?;
+                    let expr_var = self.infer_expr_inner(expr_stmt.expr.as_mut())?;
                     if expr_stmt.has_value() {
                         last = expr_var;
                     } else {
@@ -134,11 +134,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_if(&mut self, if_expr: &mut ExprIf) -> Result<TypeVarId> {
-        let cond = self.infer_expr(if_expr.cond.as_mut())?;
+        let cond = self.infer_expr_inner(if_expr.cond.as_mut())?;
         self.ensure_bool(cond, "if condition")?;
-        let then_ty = self.infer_expr(if_expr.then.as_mut())?;
+        let then_ty = self.infer_expr_inner(if_expr.then.as_mut())?;
         if let Some(elze) = if_expr.elze.as_mut() {
-            let else_ty = self.infer_expr(elze)?;
+            let else_ty = self.infer_expr_inner(elze)?;
             self.unify(then_ty, else_ty)?;
             if let (Ok(then_resolved), Ok(else_resolved)) =
                 (self.resolve_to_ty(then_ty), self.resolve_to_ty(else_ty))
@@ -168,7 +168,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let loop_result_var = self.fresh_type_var();
         self.loop_stack.push(LoopContext::new(loop_result_var));
 
-        let body_var = match self.infer_expr(expr_loop.body.as_mut()) {
+        let body_var = match self.infer_expr_inner(expr_loop.body.as_mut()) {
             Ok(var) => var,
             Err(err) => {
                 self.loop_stack.pop();
@@ -196,12 +196,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_while(&mut self, expr_while: &mut ExprWhile) -> Result<TypeVarId> {
-        let cond_var = self.infer_expr(expr_while.cond.as_mut())?;
+        let cond_var = self.infer_expr_inner(expr_while.cond.as_mut())?;
         self.ensure_bool(cond_var, "while condition")?;
         let loop_unit_var = self.unit_type_var();
         self.loop_stack.push(LoopContext::new(loop_unit_var));
 
-        let body_var = match self.infer_expr(expr_while.body.as_mut()) {
+        let body_var = match self.infer_expr_inner(expr_while.body.as_mut()) {
             Ok(var) => var,
             Err(err) => {
                 self.loop_stack.pop();
@@ -227,7 +227,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let mut result_var: Option<TypeVarId> = None;
 
         if let Some(scrutinee) = match_expr.scrutinee.as_mut() {
-            let scrutinee_var = self.infer_expr(scrutinee.as_mut())?;
+            let scrutinee_var = self.infer_expr_inner(scrutinee.as_mut())?;
             let scrutinee_ty_initial = self.resolve_to_ty(scrutinee_var).ok();
             let scrutinee_enum_hint =
                 self.scrutinee_enum_from_explicit_generic_invoke(scrutinee.as_ref());
@@ -268,11 +268,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
 
                 if let Some(guard) = case.guard.as_mut() {
-                    let guard_var = self.infer_expr(guard.as_mut())?;
+                    let guard_var = self.infer_expr_inner(guard.as_mut())?;
                     self.ensure_bool(guard_var, "match guard")?;
                 }
 
-                let body_var = self.infer_expr(case.body.as_mut())?;
+                let body_var = self.infer_expr_inner(case.body.as_mut())?;
                 if let Some(existing) = result_var {
                     self.unify(existing, body_var)?;
                 } else {
@@ -283,10 +283,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         } else {
             // Legacy lowering: cases are boolean conditions.
             for case in &mut match_expr.cases {
-                let cond_var = self.infer_expr(case.cond.as_mut())?;
+                let cond_var = self.infer_expr_inner(case.cond.as_mut())?;
                 self.ensure_bool(cond_var, "match case condition")?;
 
-                let body_var = self.infer_expr(case.body.as_mut())?;
+                let body_var = self.infer_expr_inner(case.body.as_mut())?;
                 if let Some(existing) = result_var {
                     self.unify(existing, body_var)?;
                 } else {
@@ -821,7 +821,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             item.kind(),
             ItemKind::DefType(def) if matches!(&def.value, Ty::ConstBlock(_))
         );
-        self.infer_item(item)?;
+        self.infer_item_inner(item)?;
         Ok(is_const_block_type)
     }
 }

@@ -4,7 +4,7 @@ mod shell_materializer;
 
 use fp_core::ast::{
     Abi, AstTargetOutput, AttrMeta, AttributesExt, BlockStmt, Expr, ExprInvokeTarget, ExprKind,
-    Ident, Item, ItemDeclFunction, ItemKind, Module, Name, Node, NodeKind, Value, Visibility,
+    File, Ident, Item, ItemDeclFunction, ItemKind, Module, Name, Value, Visibility,
 };
 use fp_core::frontend::LanguageFrontend;
 use fp_lang::FerroFrontend;
@@ -33,14 +33,14 @@ impl ScriptTarget {
 
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
-    pub inventory: Option<Node>,
+    pub inventory: Option<File>,
     pub dry_run: bool,
     pub limit: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct InterpretOptions {
-    pub inventory: Option<Node>,
+    pub inventory: Option<File>,
     pub target: ScriptTarget,
 }
 
@@ -102,12 +102,12 @@ pub fn compile_source_with_options(
 
     // Save std items before HIR strips #[command] attrs from extern declarations
     let pre_hir_items = match ast.kind() {
-        NodeKind::File(f) => f.items.clone(),
+        f => f.items.clone(),
         _ => Vec::new(),
     };
 
     let mut lowered = match ast.kind() {
-        NodeKind::File(file) => fp_backend::roundtrip_ast_file_via_hir(&file)
+        file.clone() => fp_backend::roundtrip_ast_file_via_hir(&file)
             .map_err(|err| ShellError::Lower(err.to_string()))?,
         _ => {
             return Err(ShellError::Lower(
@@ -116,12 +116,11 @@ pub fn compile_source_with_options(
         }
     };
     let materializer = shell_materializer::ShellMaterializer::new(options.inventory.as_ref());
-    lowered = fp_cli::materialize::materialize_node(lowered, &materializer)
+    lowered = fp_cli::materialize::materialize_file(lowered, &materializer)
         .map_err(|err| ShellError::Lower(err.to_string()))?;
 
     // Re-insert pre-HIR items (HIR strips #[command] attrs, const-evaluates fn bodies)
-    if let NodeKind::File(f) = lowered.kind_mut() {
-        f.items
+    lowered.items
             .extend(shell_materializer::flatten_keep_externs(pre_hir_items));
     }
     validate_extern_decls(&lowered, target).map_err(ShellError::Lower)?;
@@ -216,9 +215,9 @@ fn execute_generated_script(script: &str, target: ScriptTarget) -> Result<Value,
     Ok(Value::unit())
 }
 
-fn merge_runtime_helpers(ast: Node, inventory: Option<&Node>) -> Result<Node, ShellError> {
+fn merge_runtime_helpers(ast: Node, inventory: Option<&NodeFile>) -> Result<Node, ShellError> {
     let frontend = FerroFrontend::new();
-    let NodeKind::File(mut user_file) = ast.kind else {
+    let user_file = ast.kind else {
         return Err(ShellError::Lower(
             "shell compilation requires file AST nodes".to_string(),
         ));
@@ -230,7 +229,7 @@ fn merge_runtime_helpers(ast: Node, inventory: Option<&Node>) -> Result<Node, Sh
     if let Some(inventory) = inventory {
         merge_inventory_items(&frontend, &mut user_file, inventory)?;
     }
-    Ok(Node::file(user_file))
+    Ok(user_file))
 }
 
 fn merge_core_std_tree(
@@ -335,7 +334,7 @@ fn merge_source_items(
                 err
             ))
         })?;
-    let NodeKind::File(file) = parsed.ast.kind else {
+    let file.clone() = parsed.ast.kind else {
         return Err(ShellError::Lower(format!(
             "embedded std must be a file document: {embedded_path}"
         )));
@@ -440,9 +439,9 @@ fn ensure_nested_module<'a>(
 fn merge_inventory_items(
     frontend: &FerroFrontend,
     user_file: &mut fp_core::ast::File,
-    inventory: &Node,
+    inventory: &NodeFile,
 ) -> Result<(), ShellError> {
-    let NodeKind::File(inventory_file) = inventory.kind() else {
+    let inventory_file = inventory.kind() else {
         return Err(ShellError::Inventory(
             "inventory must be a file document".to_string(),
         ));
@@ -474,7 +473,7 @@ fn merge_inventory_items(
             .map_err(|err| {
                 ShellError::Inventory(format!("invalid generated inventory accessors: {}", err))
             })?;
-        let NodeKind::File(file) = parsed.ast.kind() else {
+        let file.clone() = parsed.ast.kind() else {
             return Err(ShellError::Inventory(
                 "generated inventory accessors must be a file document".to_string(),
             ));
@@ -484,7 +483,7 @@ fn merge_inventory_items(
     Ok(())
 }
 
-fn generate_inventory_accessors(inventory: &Node) -> Result<String, ShellError> {
+fn generate_inventory_accessors(inventory: &NodeFile) -> Result<String, ShellError> {
     let Some(inventory_expr) = inventory_root_expr(inventory) else {
         return Err(ShellError::Inventory(
             "inventory fp must define `const fn inventory() -> Inventory`".to_string(),
@@ -548,8 +547,8 @@ struct InventoryGroupAccessor {
     hosts: Vec<String>,
 }
 
-fn inventory_root_expr(node: &Node) -> Option<&Expr> {
-    let NodeKind::File(file) = node.kind() else {
+fn inventory_root_expr(node: &NodeFile) -> Option<&Expr> {
+    let file.clone() = file else {
         return None;
     };
     let function = file.items.iter().find_map(|item| match item.kind() {
@@ -741,9 +740,9 @@ fn name_to_segments(name: &Name) -> Vec<String> {
         .collect()
 }
 
-fn validate_extern_decls(node: &Node, target: ScriptTarget) -> Result<(), String> {
-    match node.kind() {
-        NodeKind::File(file) => {
+fn validate_extern_decls(node: &NodeFile, target: ScriptTarget) -> Result<(), String> {
+    match file {
+        file.clone() => {
             for item in &file.items {
                 validate_externs_in_item(item, target)?;
             }

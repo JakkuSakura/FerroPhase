@@ -30,7 +30,7 @@ impl GoParser {
     }
 
     /// Parse Go source into a FerroPhase AST node.
-    pub fn parse_str(&mut self, source: &str) -> Result<Node> {
+    pub fn parse_str(&mut self, source: &str) -> Result<File> {
         let tree = self
             .parser
             .parse(source, None)
@@ -38,7 +38,7 @@ impl GoParser {
 
         let root = tree.root_node();
         let file = parse_file(root, source)?;
-        Ok(Node::from(NodeKind::File(file)))
+        Ok(file)
     }
 }
 
@@ -47,8 +47,6 @@ impl Default for GoParser {
         Self::new().expect("GoParser::new should succeed")
     }
 }
-
-use fp_core::ast::{Node, NodeKind};
 
 fn parse_file(root: TsNode, source: &str) -> Result<File> {
     let mut cursor = root.walk();

@@ -1,7 +1,6 @@
 use crate::ast::SchemaDocument;
 use crate::ast::{
-    BExpr, BlockStmt, Expr, ExprBlock, ExprInvoke, File, Item, ItemDefFunction, Module, Node,
-    NodeKind,
+    BExpr, BlockStmt, Expr, ExprBlock, ExprInvoke, File, Item, ItemDefFunction, Module,
 };
 use crate::ast::{Ty, Value, ValueFunction};
 use crate::query::QueryDocument;
@@ -11,16 +10,6 @@ use std::sync::Arc;
 
 #[allow(unused_variables)]
 pub trait AstSerializer: Send + Sync {
-    fn serialize_node(&self, node: &Node) -> Result<String, crate::Error> {
-        match node.kind() {
-            NodeKind::Item(item) => self.serialize_item(item),
-            NodeKind::Expr(expr) => self.serialize_expr(expr),
-            NodeKind::File(file) => self.serialize_file(file),
-            NodeKind::Query(query) => self.serialize_query(query),
-            NodeKind::Schema(schema) => self.serialize_schema(schema),
-            NodeKind::Workspace(workspace) => self.serialize_workspace(workspace),
-        }
-    }
     fn serialize_expr(&self, node: &Expr) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_expr")
     }
@@ -105,15 +94,15 @@ pub struct AstTargetSideFile {
 }
 
 pub trait AstTarget: Send + Sync {
-    fn emit_node(&self, node: &Node) -> Result<AstTargetOutput, crate::Error>;
+    fn emit_file(&self, file: &File) -> Result<AstTargetOutput, crate::Error>;
 }
 
 impl<T> AstTarget for T
 where
     T: AstSerializer + Send + Sync,
 {
-    fn emit_node(&self, node: &Node) -> Result<AstTargetOutput, crate::Error> {
-        let code = self.serialize_node(node)?;
+    fn emit_file(&self, file: &File) -> Result<AstTargetOutput, crate::Error> {
+        let code = self.serialize_file(file)?;
         Ok(AstTargetOutput {
             code,
             side_files: Vec::new(),

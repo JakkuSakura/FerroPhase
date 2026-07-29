@@ -1,7 +1,7 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_core::ast::{AstSerializer, Node};
+use fp_core::ast::{AstSerializer, File};
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::error::Result as CoreResult;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
@@ -61,11 +61,18 @@ impl LanguageFrontend for PrqlFrontend {
             serialized,
         };
 
-        let node = Node::query(document.clone());
+        let file = File {
+            path: path
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("<prql>")),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: Vec::new(),
+        };
 
         Ok(FrontendResult {
-            last: node.clone(),
-            ast: node,
+            last: file.clone(),
+            ast: file,
             serializer,
             intrinsic_normalizer: None,
             macro_parser: None,

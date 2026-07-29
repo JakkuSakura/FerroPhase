@@ -8,7 +8,7 @@ mod utils;
 mod value;
 
 use eyre::Result;
-use fp_core::ast::{Node, NodeKind};
+use fp_core::ast::File;
 
 pub use serializer::ZigSerializer;
 
@@ -32,41 +32,6 @@ impl ZigEmitter {
             self.code.push('\n');
         }
         self.code.trim_end().to_string()
-    }
-
-    pub(crate) fn emit_node(&mut self, node: &Node) -> Result<()> {
-        match node.kind() {
-            NodeKind::File(file) => self.emit_file(file)?,
-            NodeKind::Item(item) => self.emit_item(item)?,
-            NodeKind::Expr(expr) => {
-                self.ensure_header();
-                self.push_placeholder_comment(
-                    "top-level expressions are not supported for Zig output yet",
-                );
-                if let Some(rendered) = self.render_expr(expr) {
-                    self.push_comment(&format!("Original expression: {}", rendered));
-                }
-            }
-            NodeKind::Query(_) => {
-                self.ensure_header();
-                self.push_placeholder_comment(
-                    "query documents are not yet supported for Zig output",
-                );
-            }
-            NodeKind::Schema(_) => {
-                self.ensure_header();
-                self.push_placeholder_comment(
-                    "schema documents are not yet supported for Zig output",
-                );
-            }
-            NodeKind::Workspace(_) => {
-                self.ensure_header();
-                self.push_placeholder_comment(
-                    "workspace snapshots are not supported for Zig output",
-                );
-            }
-        }
-        Ok(())
     }
 
     fn ensure_header(&mut self) {

@@ -15,7 +15,7 @@ pub use transforms as transformations;
 
 pub fn roundtrip_ast_file_via_hir(
     file: &fp_core::ast::File,
-) -> fp_core::Result<fp_core::ast::Node> {
+) -> fp_core::Result<fp_core::ast::File> {
     let mut generator = transforms::ast_to_hir::HirGenerator::with_file(&file.path);
     generator.set_cfg_filtering(false);
     let program = generator.transform_file(file)?;
@@ -27,7 +27,7 @@ pub fn roundtrip_ast_file_via_hir(
 
 pub fn roundtrip_ast_file_via_hir_dce(
     file: &fp_core::ast::File,
-) -> fp_core::Result<fp_core::ast::Node> {
+) -> fp_core::Result<fp_core::ast::File> {
     let mut generator = transforms::ast_to_hir::HirGenerator::with_file(&file.path);
     generator.set_cfg_filtering(false);
     let mut program = generator.transform_file(file)?;
@@ -42,7 +42,7 @@ pub fn roundtrip_ast_file_via_hir_dce(
 mod tests {
     use super::*;
     use fp_core::ast::{
-        self, Expr, ExprInvoke, ExprInvokeTarget, File, Ident, Item, ItemKind, Name, NodeKind, Ty,
+        self, Expr, ExprInvoke, ExprInvokeTarget, File, Ident, Item, ItemKind, Name, Ty,
     };
     use fp_core::span::Span;
     use std::path::PathBuf;
@@ -84,9 +84,8 @@ mod tests {
         };
 
         let lowered = roundtrip_ast_file_via_hir_dce(&file).expect("roundtrip should succeed");
-        let NodeKind::File(file) = lowered.kind() else {
-            panic!("expected file node");
-        };
+        let file = lowered;
+
 
         assert!(file.items.iter().any(|item| matches!(
             item.kind(),

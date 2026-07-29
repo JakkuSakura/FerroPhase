@@ -1,4 +1,4 @@
-use fp_core::ast::{AstSerializer, Node};
+use fp_core::ast::{AstSerializer, File};
 
 use super::ZigEmitter;
 
@@ -6,9 +6,9 @@ use super::ZigEmitter;
 pub struct ZigSerializer;
 
 impl AstSerializer for ZigSerializer {
-    fn serialize_node(&self, node: &Node) -> fp_core::error::Result<String> {
+    fn serialize_file(&self, file: &File) -> fp_core::error::Result<String> {
         let mut emitter = ZigEmitter::new();
-        emitter.emit_node(node)?;
+        emitter.emit_file(file)?;
         Ok(emitter.finish())
     }
 }

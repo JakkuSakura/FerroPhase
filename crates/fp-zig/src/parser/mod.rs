@@ -8,7 +8,7 @@ use eyre::{eyre, Result};
 use fp_core::ast::{DecimalType, TypeInt};
 use fp_core::ast::{
     EnumTypeVariant, Expr, File, FunctionParam, Ident, Item, ItemDefConst, ItemDefEnum,
-    ItemDefFunction, ItemDefStruct, ItemKind, Node, NodeKind, StructuralField, Ty, TypePrimitive,
+    ItemDefFunction, ItemDefStruct, ItemKind, StructuralField, Ty, TypePrimitive,
     TypeVec, Visibility,
 };
 use tree_sitter::{Node as TsNode, Parser as TsParser};
@@ -29,7 +29,7 @@ impl ZigParser {
     }
 
     /// Parse Zig source into a FerroPhase AST node.
-    pub fn parse_str(&mut self, source: &str) -> Result<Node> {
+    pub fn parse_str(&mut self, source: &str) -> Result<File> {
         let tree = self
             .parser
             .parse(source, None)
@@ -37,7 +37,7 @@ impl ZigParser {
 
         let root = tree.root_node();
         let file = parse_file(root, source)?;
-        Ok(Node::from(NodeKind::File(file)))
+        Ok(file)
     }
 }
 

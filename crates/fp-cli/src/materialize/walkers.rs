@@ -1,20 +1,7 @@
-use fp_core::ast::{self, Node, NodeKind};
+use fp_core::ast::{self, File};
 use fp_core::error::Result as CoreResult;
 use fp_core::intrinsics::IntrinsicMaterializer;
 use fp_core::span::Span;
-
-pub fn materialize_node(node: Node, strategy: &dyn IntrinsicMaterializer) -> CoreResult<Node> {
-    let Node { ty, kind } = node;
-    let new_kind = match kind {
-        NodeKind::File(file) => NodeKind::File(materialize_file(file, strategy)?),
-        NodeKind::Item(item) => NodeKind::Item(materialize_item(item, strategy)?),
-        NodeKind::Expr(expr) => NodeKind::Expr(materialize_expr(expr, strategy)?),
-        NodeKind::Query(query) => NodeKind::Query(query),
-        NodeKind::Schema(schema) => NodeKind::Schema(schema),
-        NodeKind::Workspace(workspace) => NodeKind::Workspace(workspace),
-    };
-    Ok(Node { ty, kind: new_kind })
-}
 
 pub fn materialize_file(
     mut file: ast::File,
