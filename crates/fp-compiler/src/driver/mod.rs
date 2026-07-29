@@ -38,6 +38,7 @@ struct CompileUnitCoreResult {
     mir_id: MirId,
     lir_id: LirId,
     pending_generics: Vec<GenericMonorph>,
+    pending_comptime: bool,
 }
 
 impl CompilerDriver {
@@ -112,12 +113,14 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
     ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
         let mut ast = self.state.ast(ast_id)?.clone();
-        AstPreProcessor::new(&mut self.state.splice_results).walk(&mut ast);
 
-let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
+        let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             .with_extern_prelude(default_extern_prelude());
         inferencer.seed_workspace_graph();
         let outcome = inferencer.infer_file(&mut ast)?;
+
+        let pending_comptime = outcome.pending_requests.iter()
+            .any(|r| matches!(r.kind, PendingTypingRequestKind::Comptime));
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
         self.state.insert_typed_ast(typed_ast_id.clone(), ast);
@@ -131,6 +134,7 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             mir_id,
             lir_id,
             pending_generics: outcome.pending_generics,
+            pending_comptime,
         })
     }
 
@@ -139,42 +143,32 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
-        // Pass 1: type to discover comptime needs
-        let needs_retry = {
-            let mut ast = self.state.ast(ast_id)?.clone();
-            AstPreProcessor::new(&mut self.state.splice_results).walk(&mut ast);
-            let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
-                .with_extern_prelude(default_extern_prelude());
-            inferencer.seed_workspace_graph();
-            let outcome = inferencer.infer_file(&mut ast)?;
-            let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
-            self.state.insert_typed_ast(typed_ast_id.clone(), ast);
-            outcome.pending_requests.iter().any(|r| matches!(r.kind, PendingTypingRequestKind::Comptime))
-        };
-
-        if needs_retry {
-            // Generate LIR from typed AST to create comptime entries,
-            // then evaluate them to populate resolved_types.
-            // Use lossy MIR lowering — unresolved calls are expected
-            // before comptime eval resolves them.
+        let core = self.compile_unit_core(ast_id, path)?;
+        if core.pending_comptime {
             let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
             let hir_id = self.lower_to_hir(&typed_ast_id, path)?;
             let mir_id = self.lower_to_mir_lossy(&hir_id, path, true)?;
             let lir_id = self.lower_to_lir(&mir_id, path)?;
             self.evaluate_comptime_lir(&lir_id, path)?;
 
-            // Pass 2: retype with resolved structs from comptime eval
-            let mut ast = self.state.ast(ast_id)?.clone();
-            AstPreProcessor::new(&mut self.state.splice_results).walk(&mut ast);
-            let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
-                .with_extern_prelude(default_extern_prelude());
-            inferencer.seed_workspace_graph();
-            inferencer.infer_file(&mut ast)?;
-            let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
-            self.state.insert_typed_ast(typed_ast_id.clone(), ast);
+            // Retype with resolved structs from comptime eval
+            let core = self.compile_unit_core(ast_id, path)?;
+            self.evaluate_comptime_lir(&core.lir_id, path)?;
+
+            for monomorph in &core.pending_generics {
+                let fqp = FullyQualifiedPath::new(monomorph.function_path.clone());
+                let cannon_key = Self::generic_cannon_key(&fqp, &monomorph.concrete_types);
+                if self.state.generic_instantiations.contains(&cannon_key) { continue; }
+                let generic = GenericWorkRequest::new(
+                    fqp, monomorph.generic_params.clone(), monomorph.concrete_types.clone(),
+                );
+                self.scheduler.submit(CompilerWork::EnqueueGeneric {
+                    typed_ast: core.typed_ast_id.clone(), path: path.clone(), generic,
+                });
+            }
+            return Ok(CompilerAnswer::CompileUnitCompileNative);
         }
 
-        let core = self.compile_unit_core(ast_id, path)?;
         self.evaluate_comptime_lir(&core.lir_id, path)?;
 
         for monomorph in &core.pending_generics {
@@ -499,9 +493,6 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                 }
             };
             let lir = self.state.lir(&core.lir_id)?.clone();
-            eprintln!("DEBUG on-demand: {} has {} LIR functions: {:?}", 
-                path.to_key(), lir.functions.len(),
-                lir.functions.iter().map(|f| f.name.as_str()).collect::<Vec<_>>());
             units.push(fp_core::lir::LirCompileUnit {
                 module_path: path.clone(),
                 program: lir,

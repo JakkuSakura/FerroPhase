@@ -67,11 +67,8 @@ impl LirInterpreter {
         for unit in units {
             self.populate_globals(&unit.program);
         }
-        eprintln!("DEBUG interp: looking for {name} among {} units ({} funcs)", 
-            units.len(), self.program_functions.len());
         for unit in units {
             if let Some(func) = unit.program.functions.iter().find(|f| f.name.as_str() == name) {
-                eprintln!("DEBUG interp: found {name} in unit {}", unit.module_path.to_key());
                 return self.run_function(&unit.program, func, &[]);
             }
         }
@@ -87,8 +84,6 @@ impl LirInterpreter {
         for unit in units {
             self.populate_functions_from_program(&unit.program);
         }
-        eprintln!("DEBUG interp: total {} functions loaded from {} units", 
-            self.program_functions.len(), units.len());
     }
 
     fn populate_functions_from_program(&mut self, program: &LirProgram) {
@@ -142,7 +137,6 @@ impl LirInterpreter {
                         Some(v) => self.resolve_typed(v, ret_ty)?,
                         None => Value::unit(),
                     };
-                    eprintln!("DEBUG run_function returning: {v:?}");
                     break Ok(v);
                 }
                 LirTerminator::Br(dest) => {
@@ -339,7 +333,6 @@ impl LirInterpreter {
             LirInstructionKind::ComptimeOp(op) => match op {
                 ComptimeOp::CreateStruct { name } => {
                     let struct_name = self.resolve_string_value(name);
-                    eprintln!("DEBUG CreateStruct: name={struct_name}");
                     let fields: Vec<fp_core::ast::StructuralField> = vec![];
                     let struct_ty = Ty::Struct(TypeStruct {
                         name: fp_core::ast::Ident::new(struct_name),
