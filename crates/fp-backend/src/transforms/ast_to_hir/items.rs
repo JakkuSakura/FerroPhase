@@ -1,7 +1,11 @@
 use super::*;
 
 impl HirGenerator {
-    pub(super) fn create_main_function(&mut self, body_expr: hir::Expr) -> Result<hir::Function> {
+    pub(super) fn create_main_function(
+        &mut self,
+        body_expr: hir::Expr,
+        output: hir::TypeExpr,
+    ) -> Result<hir::Function> {
         let body = hir::Body {
             hir_id: self.next_id(),
             params: Vec::new(),
@@ -11,11 +15,7 @@ impl HirGenerator {
         let sig = hir::FunctionSig {
             name: hir::Symbol::new("main"),
             inputs: Vec::new(),
-            output: hir::TypeExpr::new(
-                self.next_id(),
-                hir::TypeExprKind::Tuple(Vec::new()),
-                body.value.span,
-            ),
+            output,
             generics: hir::Generics::default(),
             abi: hir::Abi::Rust,
         };

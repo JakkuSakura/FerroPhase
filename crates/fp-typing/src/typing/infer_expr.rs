@@ -665,8 +665,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             return self.infer_value(&value);
                         }
                     }
-                    self.comptime_exprs.push(expr_snapshot.clone());
-                    self.infer_expr_inner(const_block.expr.as_mut())?
+                    // Type the inner expression first (structural inference
+                    // alone — it doesn't need the comptime result), *then*
+                    // try to resolve its compile-time value: the hook needs
+                    // a concretely-typed expression to lower.
+                    let inner_var = self.infer_expr_inner(const_block.expr.as_mut())?;
+                    let key = format!("__fp_expr_{expr_id}");
+                    let made_progress = self
+                        .resolution_hook
+                        .as_mut()
+                        .map(|hook| hook.request_comptime(&key, &const_block.expr))
+                        .unwrap_or(false);
+                    if made_progress {
+                        let table = ctx.expr_resolutions.borrow();
+                        if let Some(value) = table.resolved_value(expr_id).cloned() {
+                            return self.infer_value(&value);
+                        }
+                    } else {
+                        self.comptime_exprs.push(expr_snapshot.clone());
+                    }
+                    inner_var
                 }
                 ExprKind::For(for_expr) => {
                     let pat_info = self.infer_pattern(for_expr.pat.as_mut())?;

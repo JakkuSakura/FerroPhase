@@ -184,7 +184,15 @@ fn is_future_like_ty(ty: &Ty) -> bool {
 
 pub trait TypeResolutionHook {
     fn resolve_symbol(&mut self, name: &str) -> bool;
-    fn comptime_resolved(&mut self, key: &str) -> bool;
+    /// Try to resolve `expr` as a compile-time value right now, via scoped
+    /// lowering and evaluation of just this expression. On success the
+    /// implementation stores the value under `key` (and any other lookup
+    /// keys the caller checks, e.g. `typing_ctx.expr_resolutions` for a
+    /// `__fp_expr_<id>`-shaped key) and returns `true`, so the caller
+    /// re-checks its resolved-value lookup. Returns `false` if genuinely
+    /// blocked (e.g. a nested unresolved dependency) — the caller falls back
+    /// to registering deferred scheduler work.
+    fn request_comptime(&mut self, key: &str, expr: &Expr) -> bool;
 }
 
 use crate::typing::unify::{TypeVar, TypeVarKind};
@@ -2535,11 +2543,14 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         self.generalize_symbol(def.name.as_str(), placeholder)?;
                         ty
                     } else {
-                        self.comptime_exprs.push((*def.value).clone());
                         let placeholder = self.symbol_var(&def.name);
                         if let Some(annot) = def.ty.as_ref() {
                             def.value.set_ty(annot.clone());
                         }
+                        // Type the value first (structural inference alone —
+                        // it doesn't need the comptime result), *then* try to
+                        // resolve its compile-time value: the hook needs a
+                        // concretely-typed expression to lower.
                         let expr_var = {
                             let mut value = def.value.as_mut();
                             self.infer_expr_inner(&mut value)?
@@ -2555,6 +2566,34 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         def.ty_annotation = Some(ty.clone());
                         def.ty.get_or_insert(ty.clone());
                         self.generalize_symbol(def.name.as_str(), placeholder)?;
+
+                        // If the value is itself a `const { ... }` block, it
+                        // may already have resolved via its own hook call
+                        // (recorded in `expr_resolutions`, keyed by that
+                        // block's own expr id) earlier in this same pass —
+                        // in which case there's nothing left to request, only
+                        // to copy over under this item's name.
+                        let already_resolved_inner = self
+                            .typing_ctx
+                            .expr_resolutions
+                            .borrow()
+                            .resolved_value(self.expr_id(&def.value))
+                            .cloned();
+                        let made_progress = if let Some(value) = already_resolved_inner {
+                            self.typing_ctx
+                                .resolved_consts
+                                .borrow_mut()
+                                .insert(name.clone(), value);
+                            true
+                        } else {
+                            self.resolution_hook
+                                .as_mut()
+                                .map(|hook| hook.request_comptime(&name, &def.value))
+                                .unwrap_or(false)
+                        };
+                        if !made_progress {
+                            self.comptime_exprs.push((*def.value).clone());
+                        }
                         ty
                     }
                 }

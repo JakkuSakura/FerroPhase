@@ -6,17 +6,19 @@ pub use state::CompilerState;
 
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprKind, ExprSplice, ExprSplicePending,
-    File, Item, ItemChunk, ItemDefConst, ItemKind, Ty, TypeStruct, TypeType, Value,
+    BlockStmt, Expr, ExprKind, File, Item, ItemKind, Name, Ty, TypeStruct, TypeType, Value,
 };
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
-use fp_interpret::{LirInterpreter, VmError};
-use fp_typing::{AstTypeInferencer, GenericMonorph, PendingTypingRequestKind, default_extern_prelude};
-use std::collections::{BTreeMap, HashMap};
+use fp_interpret::LirInterpreter;
+use fp_typing::{
+    AstTypeInferencer, GenericMonorph, PendingTypingRequestKind, TypeResolutionHook,
+    default_extern_prelude,
+};
+use std::collections::HashMap;
 
 use crate::scheduler::{
     AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
@@ -25,12 +27,31 @@ use crate::scheduler::{
     TypedAstId,
 };
 
-use crate::driver::state::SpliceResult;
-
 pub struct CompilerDriver {
     pub scheduler: CompilerScheduler,
     pub state: CompilerState,
     interpreter: LirInterpreter,
+}
+
+/// Bridges the typer's `TypeResolutionHook` extension point to the driver so
+/// comptime needs are resolved synchronously, in place, while typing is in
+/// progress — instead of the typer only reporting "something is pending"
+/// after the fact and the driver relowering the whole compile unit lossily
+/// to try to catch up. See `CompilerDriver::resolve_comptime_now`.
+struct ComptimeHook<'a> {
+    driver: &'a mut CompilerDriver,
+}
+
+impl<'a> TypeResolutionHook for ComptimeHook<'a> {
+    fn resolve_symbol(&mut self, _name: &str) -> bool {
+        // Unknown item/module resolution isn't wired through this hook yet;
+        // callers fall back to their existing deferred handling.
+        false
+    }
+
+    fn request_comptime(&mut self, key: &str, expr: &Expr) -> bool {
+        self.driver.resolve_comptime_now(key, expr)
+    }
 }
 
 struct CompileUnitCoreResult {
@@ -42,6 +63,12 @@ struct CompileUnitCoreResult {
 }
 
 impl CompilerDriver {
+    /// Cap on scheduler-driven comptime retries for a single compile unit
+    /// (see `compile_unit_compile_native`). Chained dependencies converge in
+    /// as many rounds as their depth requires; this only guards against a
+    /// dependency that can never resolve.
+    const MAX_COMPTIME_RETRIES: usize = 64;
+
     pub fn new() -> Self {
         Self {
             scheduler: CompilerScheduler::new(),
@@ -114,10 +141,13 @@ impl CompilerDriver {
     ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
         let mut ast = self.state.ast(ast_id)?.clone();
 
-        let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
-            .with_extern_prelude(default_extern_prelude());
-        inferencer.seed_workspace_graph();
-        let outcome = inferencer.infer_file(&mut ast)?;
+        let outcome = {
+            let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
+                .with_extern_prelude(default_extern_prelude());
+            inferencer.seed_workspace_graph();
+            inferencer.set_resolution_hook(Box::new(ComptimeHook { driver: &mut *self }));
+            inferencer.infer_file(&mut ast)?
+        };
 
         let pending_comptime = outcome.pending_requests.iter()
             .any(|r| matches!(r.kind, PendingTypingRequestKind::Comptime));
@@ -144,6 +174,171 @@ impl CompilerDriver {
         })
     }
 
+    /// Try to resolve `expr` as a compile-time value right now, scoped to
+    /// just this expression — no synthetic file/item, no re-typing. `expr`
+    /// arrives already fully typed (the caller in fp-typing only invokes
+    /// this after its own `infer_expr_inner` pass, which stamps a concrete
+    /// `Ty` on every node). Before lowering, any reference to an
+    /// already-resolved const (by name) is inlined as a literal value —
+    /// MIR lowering only resolves free identifiers against items actually
+    /// declared in the same program, and this probe deliberately declares
+    /// none, so a bare cross-reference would otherwise be unresolvable.
+    /// The inlined expression then goes through `HirGenerator::transform_expr`
+    /// (lowers one expression into a minimal HIR program with a
+    /// synthesized `main`), non-lossy `MirLowering`, and `LirGenerator`,
+    /// then runs through the interpreter. On success the value is stored
+    /// under `key` (and, if `key` is a `__fp_expr_<id>` key, also into
+    /// `expr_resolutions` so the originating `ConstBlock` expression sees
+    /// it). This is the `TypeResolutionHook::request_comptime`
+    /// implementation's real work — see `ComptimeHook` below.
+    ///
+    /// Returns `false` on any lowering/evaluation failure — e.g. the
+    /// expression references another dependency this scoped lowering can't
+    /// see (a sibling function, an as-yet-unresolved const) — leaving the
+    /// caller to fall back to deferred scheduler work (see
+    /// `compile_unit_compile_native`'s pending_comptime branch).
+    fn resolve_comptime_now(&mut self, key: &str, expr: &Expr) -> bool {
+        let mut probe_expr = expr.clone();
+        let resolved_names = self.collect_resolved_const_values();
+        Self::inline_resolved_names(&mut probe_expr, &resolved_names);
+
+        let resolved = (|| -> Result<Value, CompilerDriverError> {
+            let hir_program = HirGenerator::new().transform_expr(&probe_expr)?;
+            let mir_program = MirLowering::new().transform(hir_program)?;
+            let lir_program = LirGenerator::new().transform(mir_program)?;
+
+            let mut units = vec![fp_core::lir::LirCompileUnit {
+                module_path: QualifiedPath::new(Vec::new()),
+                program: lir_program,
+            }];
+            // Struct construction (and any other intrinsic-backed runtime
+            // support) may depend on workspace crates' compiled LIR, exactly
+            // as `evaluate_comptime_lir` includes for the whole-file path —
+            // a bare single-expression unit alone doesn't carry that support.
+            for krate in &self.state.typing_ctx.env_ctx.crates {
+                units.extend(krate.lir_units.iter().cloned());
+            }
+            let mut interpreter = LirInterpreter::new();
+            interpreter.inject_globals(&self.collect_resolved_const_values());
+            let mut value = interpreter.run_function_named(&units, "main")?;
+            // Only int/uint results that are *actually* comptime struct
+            // construction (per the expression's own type) are raw object
+            // handles needing resolution — treating every plain integer as a
+            // possible handle risks coincidentally resolving to an unrelated
+            // object in this probe's otherwise-mostly-empty object table.
+            let is_struct_construction = matches!(expr.ty(), Some(Ty::Type(_)) | Some(Ty::Struct(_)));
+            if is_struct_construction {
+                if let Some(resolved) = Self::resolve_comptime_value(&mut interpreter, &value) {
+                    value = resolved;
+                }
+            }
+            Ok(value)
+        })();
+
+        let Ok(value) = resolved else {
+            return false;
+        };
+
+        if let Some(struct_ty) = Self::extract_struct_type(&value) {
+            self.state
+                .typing_ctx
+                .resolved_types
+                .borrow_mut()
+                .insert(struct_ty.name.as_str().to_string(), struct_ty);
+        }
+
+        // Store under `typing_ctx.resolved_consts` (checked by name for
+        // `DefConst`) and, if this is a `ConstBlock`'s key, also into
+        // `expr_resolutions` (checked by expr id) — the two lookups the
+        // fp-typing call sites use to recognize an already-resolved value.
+        self.state.insert_typing_const(key.to_string(), value.clone());
+        if let Some(expr_id) = Self::expr_id_from_const_key(key) {
+            self.state.insert_expr_resolution_value(expr_id, value);
+        }
+        true
+    }
+
+    /// Replace any reference to an already-resolved const (matched by bare
+    /// name against `resolved`) with its literal value. Used by
+    /// `resolve_comptime_now` to make a probed expression self-contained
+    /// before lowering, since the probe declares no sibling items for
+    /// cross-references to resolve against. Not exhaustive over every
+    /// `ExprKind` — only the shapes const initializers actually use.
+    fn inline_resolved_names(expr: &mut Expr, resolved: &HashMap<String, Value>) {
+        if let ExprKind::Name(locator) = expr.kind() {
+            if let Some(name) = Self::simple_name_key(locator) {
+                if let Some(value) = resolved.get(&name) {
+                    let ty = expr.ty().cloned();
+                    let mut literal = Expr::value(value.clone());
+                    if let Some(ty) = ty {
+                        literal.set_ty(ty);
+                    }
+                    *expr = literal;
+                    return;
+                }
+            }
+        }
+        match expr.kind_mut() {
+            ExprKind::Struct(s) => {
+                for field in &mut s.fields {
+                    if let Some(value) = field.value.as_mut() {
+                        Self::inline_resolved_names(value, resolved);
+                    }
+                }
+            }
+            ExprKind::Tuple(t) => {
+                for value in &mut t.values {
+                    Self::inline_resolved_names(value, resolved);
+                }
+            }
+            ExprKind::Array(a) => {
+                for value in &mut a.values {
+                    Self::inline_resolved_names(value, resolved);
+                }
+            }
+            ExprKind::BinOp(b) => {
+                Self::inline_resolved_names(b.lhs.as_mut(), resolved);
+                Self::inline_resolved_names(b.rhs.as_mut(), resolved);
+            }
+            ExprKind::UnOp(u) => Self::inline_resolved_names(u.val.as_mut(), resolved),
+            ExprKind::Cast(c) => Self::inline_resolved_names(c.expr.as_mut(), resolved),
+            ExprKind::Invoke(invoke) => {
+                for arg in &mut invoke.args {
+                    Self::inline_resolved_names(arg, resolved);
+                }
+            }
+            ExprKind::If(if_expr) => {
+                Self::inline_resolved_names(if_expr.cond.as_mut(), resolved);
+                Self::inline_resolved_names(if_expr.then.as_mut(), resolved);
+                if let Some(elze) = if_expr.elze.as_mut() {
+                    Self::inline_resolved_names(elze, resolved);
+                }
+            }
+            ExprKind::Block(block) => {
+                for stmt in &mut block.stmts {
+                    match stmt {
+                        BlockStmt::Expr(e) => Self::inline_resolved_names(&mut e.expr, resolved),
+                        BlockStmt::Let(s) => {
+                            if let Some(init) = s.init.as_mut() {
+                                Self::inline_resolved_names(init, resolved);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn simple_name_key(locator: &Name) -> Option<String> {
+        match locator {
+            Name::Ident(ident) => Some(ident.as_str().to_string()),
+            Name::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string()),
+            Name::ParameterPath(_) => None,
+        }
+    }
+
     fn compile_unit_compile_native(
         &mut self,
         ast_id: &AstId,
@@ -151,32 +346,41 @@ impl CompilerDriver {
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let core = self.compile_unit_core(ast_id, path)?;
         if core.pending_comptime {
-            let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
-            let hir_id = self.lower_to_hir(&typed_ast_id, path)?;
-            let mir_id = self.lower_to_mir_lossy(&hir_id, path, true)?;
-            let lir_id = self.lower_to_lir(&mir_id, path)?;
-            self.evaluate_comptime_lir(&lir_id, path)?;
-
-            // Retype with resolved structs from comptime eval
-            let core = self.compile_unit_core(ast_id, path)?;
-            self.evaluate_comptime_lir(&core.lir_id, path)?;
-
-            for monomorph in &core.pending_generics {
-                let fqp = FullyQualifiedPath::new(monomorph.function_path.clone());
-                let cannon_key = Self::generic_cannon_key(&fqp, &monomorph.concrete_types);
-                if self.state.generic_instantiations.contains(&cannon_key) { continue; }
-                let generic = GenericWorkRequest::new(
-                    fqp, monomorph.generic_params.clone(), monomorph.concrete_types.clone(),
-                );
-                self.scheduler.submit(CompilerWork::EnqueueGeneric {
-                    typed_ast: core.typed_ast_id.clone(), path: path.clone(), generic,
-                });
+            // Don't resolve comptime inline here. Submit it as scheduler work
+            // instead: `submit` (called while this request is being
+            // processed) registers a dependency on the current request, so
+            // `answer_and_schedule` will block this answer until the comptime
+            // request completes, then automatically retry this same
+            // `CompileUnitCompileNative` work item (scheduler/stack.rs).
+            // This lets chained comptime dependencies (a const depending on
+            // another unresolved const) resolve over as many scheduler
+            // round-trips as needed, instead of a hardcoded single retry.
+            //
+            // A genuinely non-convergent dependency (one `resolve_comptime_now`
+            // can never resolve) would otherwise retry this forever, so cap
+            // it and fail with a clear error rather than hang.
+            let retries = self
+                .state
+                .comptime_retry_counts
+                .entry(path.to_key())
+                .or_insert(0);
+            *retries += 1;
+            if *retries > Self::MAX_COMPTIME_RETRIES {
+                return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
             }
+            self.scheduler.submit(CompilerWork::CompileUnitAnswerComptime {
+                ast: ast_id.clone(),
+                path: path.clone(),
+            });
             return Ok(CompilerAnswer::CompileUnitCompileNative);
         }
 
         self.evaluate_comptime_lir(&core.lir_id, path)?;
+        self.enqueue_pending_generics(&core, path);
+        Ok(CompilerAnswer::CompileUnitCompileNative)
+    }
 
+    fn enqueue_pending_generics(&mut self, core: &CompileUnitCoreResult, path: &FullyQualifiedPath) {
         for monomorph in &core.pending_generics {
             let fqp = FullyQualifiedPath::new(monomorph.function_path.clone());
             let cannon_key = Self::generic_cannon_key(&fqp, &monomorph.concrete_types);
@@ -194,8 +398,6 @@ impl CompilerDriver {
                 generic,
             });
         }
-
-        Ok(CompilerAnswer::CompileUnitCompileNative)
     }
 
     fn compile_unit_compile_bytecode(
@@ -274,6 +476,14 @@ impl CompilerDriver {
         })
     }
 
+    /// Canonical identity for a generic instantiation, matching the doc's
+    /// `FullyQualifiedPath#{...}` convention (docs/Compiler.md, "Compile-Time
+    /// Needs And Requests"). Uses `Debug` rather than `Display` for the
+    /// concrete types because `Ty`'s `Display` impl depends on a thread-local
+    /// serializer that may not be registered, which would make the key
+    /// non-deterministic; `Debug` is derived and stable for a given `Ty`
+    /// shape. This key participates in `generic_instantiations` dedup, so it
+    /// must not change across calls for the same concrete types.
     fn generic_cannon_key(path: &FullyQualifiedPath, concrete_types: &[Ty]) -> String {
         let types_str: Vec<String> = concrete_types
             .iter()
@@ -452,7 +662,8 @@ impl CompilerDriver {
                 Self::substitute_in_body(cb.expr.as_mut(), param_names, concrete_types);
             }
             ExprKind::SplicePending(_) | ExprKind::Splice(_) => {
-                // Splice nodes will be resolved by AstPreProcessor on re-compilation
+                // Splice resolution is not yet wired into the scheduler; these
+                // nodes are left as-is for a future staging work item.
             }
             _ => {}
         }
@@ -697,21 +908,6 @@ fn lower_to_hir(
         Ok(lir_id)
     }
 
-    fn evaluate_lir_function(
-        &mut self,
-        lir: &fp_core::lir::LirProgram,
-        name: &str,
-    ) -> Result<fp_core::ast::Value, VmError> {
-        self.interpreter = LirInterpreter::new();
-        let resolved = self.collect_resolved_const_values();
-        self.interpreter.inject_globals(&resolved);
-        let units = vec![fp_core::lir::LirCompileUnit {
-            module_path: QualifiedPath::new(Vec::new()),
-            program: lir.clone(),
-        }];
-        self.interpreter.run_function_named(&units, name)
-    }
-
     fn collect_resolved_const_values(&self) -> HashMap<String, Value> {
         self.state.typing_ctx.resolved_consts.borrow().clone()
     }
@@ -925,263 +1121,6 @@ fn lower_to_hir(
         suffix.parse().ok()
     }
 }
-
-
-struct AstPreProcessor<'a> {
-    splice_results: &'a mut BTreeMap<String, SpliceResult>,
-}
-
-impl<'a> AstPreProcessor<'a> {
-    fn new(splice_results: &'a mut BTreeMap<String, SpliceResult>) -> Self {
-        Self { splice_results }
-    }
-
-    fn walk(&mut self, file: &mut File) {
-        file.collected_items = direct_items(&file.items);
-        self.resolve_items(&mut file.items);
-    }
-
-    fn resolve_items(&mut self, items: &mut [Item]) {
-        for item in items {
-            match item.kind_mut() {
-                ItemKind::Module(m) => {
-                    m.collected_items = direct_items(&m.items);
-                    self.resolve_items(&mut m.items);
-                }
-                ItemKind::DefFunction(func) => {
-                    func.collected_items = direct_expr_items(func.body.as_ref());
-                    self.process_expr(&mut func.body);
-                }
-                ItemKind::DefConst(def) => {
-                    self.collect_quote(def);
-                }
-                ItemKind::Impl(imp) => {
-                    imp.collected_items = direct_items(&imp.items);
-                    self.resolve_items(&mut imp.items);
-                }
-                ItemKind::DefTrait(t) => {
-                    t.collected_items = direct_items(&t.items);
-                    self.resolve_items(&mut t.items);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn process_expr(&mut self, expr: &mut Expr) {
-        match expr.kind_mut() {
-            ExprKind::Block(block) => {
-                block.collected_items = direct_block_items(block);
-                let mut new_stmts: Vec<BlockStmt> = Vec::new();
-                for stmt in block.stmts.drain(..) {
-                    match stmt {
-                        BlockStmt::Item(item) => {
-                            new_stmts.push(BlockStmt::Item(item));
-                        }
-                        BlockStmt::Expr(mut e) => {
-                            if matches!(e.expr.kind(), ExprKind::Splice(_)) {
-                                let resolved = self.resolve_splice(&mut e.expr, &mut new_stmts);
-                                if !resolved {
-                                    new_stmts.push(BlockStmt::Expr(e));
-                                }
-                            } else {
-                                self.process_expr(&mut e.expr);
-                                new_stmts.push(BlockStmt::Expr(e));
-                            }
-                        }
-                        BlockStmt::Let(mut s) => {
-                            if let Some(init) = s.init.as_mut() {
-                                self.process_expr(init);
-                            }
-                            new_stmts.push(BlockStmt::Let(s));
-                        }
-                        BlockStmt::Defer(mut d) => {
-                            self.process_expr(d.expr.as_mut());
-                            new_stmts.push(BlockStmt::Defer(d));
-                        }
-                        other => new_stmts.push(other),
-                    }
-                }
-                block.stmts = new_stmts;
-            }
-            ExprKind::If(e) => {
-                self.process_expr(e.then.as_mut());
-                if let Some(elze) = e.elze.as_mut() {
-                    self.process_expr(elze);
-                }
-            }
-            ExprKind::Loop(e) => self.process_expr(e.body.as_mut()),
-            ExprKind::For(e) => self.process_expr(e.body.as_mut()),
-            ExprKind::While(e) => self.process_expr(e.body.as_mut()),
-            ExprKind::Match(e) => {
-                for case in &mut e.cases {
-                    self.process_expr(case.body.as_mut());
-                }
-            }
-            ExprKind::ConstBlock(cb) => {
-                cb.collected_items = direct_expr_items(cb.expr.as_ref());
-                self.process_expr(cb.expr.as_mut());
-            }
-            ExprKind::Quote(q) => {
-                q.collected_items = direct_block_items(&q.block);
-                self.process_expr_block_items(&mut q.block.stmts);
-            }
-            ExprKind::Splice(_splice) => {
-                let old = std::mem::replace(expr.kind_mut(), ExprKind::Id(0));
-                if let ExprKind::Splice(splice) = old {
-                    self.mark_splice_pending(expr, splice);
-                }
-            }
-            ExprKind::Invoke(invoke) => {
-                for arg in &mut invoke.args {
-                    self.process_expr(arg);
-                }
-            }
-            ExprKind::Struct(s) => {
-                for field in &mut s.fields {
-                    if let Some(value) = field.value.as_mut() {
-                        self.process_expr(value);
-                    }
-                }
-            }
-            ExprKind::Tuple(t) => {
-                for value in &mut t.values {
-                    self.process_expr(value);
-                }
-            }
-            ExprKind::Array(a) => {
-                for value in &mut a.values {
-                    self.process_expr(value);
-                }
-            }
-            ExprKind::With(w) => {
-                self.process_expr(w.context.as_mut());
-                self.process_expr(w.body.as_mut());
-            }
-            ExprKind::BinOp(b) => {
-                self.process_expr(b.lhs.as_mut());
-                self.process_expr(b.rhs.as_mut());
-            }
-            ExprKind::UnOp(u) => self.process_expr(u.val.as_mut()),
-            ExprKind::Assign(a) => {
-                self.process_expr(a.value.as_mut());
-            }
-            ExprKind::Cast(c) => self.process_expr(c.expr.as_mut()),
-            ExprKind::Return(r) => {
-                if let Some(value) = r.value.as_mut() {
-                    self.process_expr(value.as_mut());
-                }
-            }
-            ExprKind::Let(l) => self.process_expr(l.expr.as_mut()),
-            _ => {}
-        }
-    }
-
-    fn process_expr_block_items(&mut self, stmts: &mut Vec<BlockStmt>) {
-        for stmt in stmts {
-            match stmt {
-                BlockStmt::Item(item) => {
-                    if let ItemKind::DefConst(def) = item.kind_mut() {
-                        self.collect_quote(def);
-                    }
-                }
-                BlockStmt::Expr(e) => self.process_expr(&mut e.expr),
-                BlockStmt::Let(s) => {
-                    if let Some(init) = s.init.as_mut() {
-                        self.process_expr(init);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn collect_quote(&mut self, def: &mut ItemDefConst) {
-        if !matches!(def.value.kind(), ExprKind::Quote(_)) || def.name.as_str().is_empty() {
-            return;
-        }
-        let ExprKind::Quote(quote) = def.value.kind_mut() else {
-            return;
-        };
-        let mut result = SpliceResult {
-            items: Vec::new(),
-            stmts: Vec::new(),
-            expr: None,
-        };
-        for stmt in &quote.block.stmts {
-            match stmt {
-                BlockStmt::Item(item) => result.items.push(item.as_ref().clone()),
-                BlockStmt::Expr(e) => result.stmts.push(BlockStmt::Expr(e.clone())),
-                other => result.stmts.push(other.clone()),
-            }
-        }
-        if let Some(e) = quote.block.last_expr() {
-            result.expr = Some(e.clone());
-        }
-        let key = def.name.as_str().to_string();
-        self.splice_results.insert(key, result);
-    }
-
-    fn resolve_splice(&mut self, expr: &mut Expr, stmts: &mut Vec<BlockStmt>) -> bool {
-        let old = std::mem::replace(expr.kind_mut(), ExprKind::Id(0));
-        let ExprKind::Splice(splice) = old else {
-            return false;
-        };
-        let const_name = if let ExprKind::Name(ref name) = splice.token.kind() {
-            name.to_string()
-        } else {
-            String::new()
-        };
-        if let Some(result) = self.splice_results.get(&const_name) {
-            for item in &result.items {
-                stmts.push(BlockStmt::Item(Box::new(item.clone())));
-            }
-            for stmt in &result.stmts {
-                stmts.push(stmt.clone());
-            }
-            if let Some(ref e) = result.expr {
-                stmts.push(BlockStmt::Expr(BlockStmtExpr {
-                    expr: Box::new(e.clone()),
-                    semicolon: None,
-                }));
-            }
-            return true;
-        }
-        self.mark_splice_pending(expr, splice);
-        false
-    }
-
-    fn mark_splice_pending(&mut self, expr: &mut Expr, splice: ExprSplice) {
-        *expr.kind_mut() = ExprKind::SplicePending(ExprSplicePending {
-            span: splice.span,
-            request_id: 0,
-            token: splice.token.clone(),
-        });
-    }
-}
-
-fn direct_items(items: &[Item]) -> ItemChunk {
-    items.to_vec()
-}
-
-fn direct_expr_items(expr: &Expr) -> ItemChunk {
-    match expr.kind() {
-        ExprKind::Block(block) => block.collected_items.clone(),
-        _ => Vec::new(),
-    }
-}
-
-fn direct_block_items(block: &ExprBlock) -> ItemChunk {
-    block
-        .stmts
-        .iter()
-        .filter_map(|stmt| match stmt {
-            BlockStmt::Item(item) => Some(item.as_ref().clone()),
-            _ => None,
-        })
-        .collect()
-}
-
 
 impl Default for CompilerDriver {
     fn default() -> Self {

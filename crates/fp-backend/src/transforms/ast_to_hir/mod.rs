@@ -822,9 +822,19 @@ impl HirGenerator {
             self.append_item(&mut hir_program, item)?;
         }
 
-        // Transform the root expression into a main function.
+        // Transform the root expression into a main function. The
+        // synthesized `main`'s return type must match the expression's own
+        // type — callers that lower this program all the way through MIR
+        // (e.g. a comptime probe that needs the expression's value) rely on
+        // the declared output type matching the body, which HIR→MIR lowering
+        // checks; a hardcoded `()` output would then be a mismatch for any
+        // non-unit expression.
+        let output = match ast_expr.ty() {
+            Some(ty) => self.transform_type_to_hir(ty)?,
+            None => self.create_unit_type(),
+        };
         let main_body = self.transform_expr_to_hir(&lowered_expr)?;
-        let main_fn = self.create_main_function(main_body)?;
+        let main_fn = self.create_main_function(main_body, output)?;
 
         // Add main function to program
         let main_item = hir::Item {

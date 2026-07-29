@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::{
-    ast::{BlockStmt, Expr, ExprId, File, Item, Value},
+    ast::{Expr, ExprId, File, Value},
     hir, lir, mir,
     module::resolution::ModuleResolutionContext,
 };
@@ -12,13 +12,6 @@ use fp_typing::TypingContext;
 use crate::driver::CompilerDriverError;
 use crate::module_resolution::CompilerModuleResolver;
 use crate::scheduler::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, TypedAstId};
-
-#[derive(Debug, Clone)]
-pub struct SpliceResult {
-    pub items: Vec<Item>,
-    pub stmts: Vec<BlockStmt>,
-    pub expr: Option<Expr>,
-}
 
 pub struct CompilerState {
     ast: BTreeMap<AstId, File>,
@@ -34,9 +27,14 @@ pub struct CompilerState {
     lossy: bool,
     module_resolver: Option<Arc<dyn CompilerModuleResolver>>,
     module_resolutions: BTreeMap<AstId, ModuleResolutionContext>,
-    pub(crate) splice_results: BTreeMap<String, SpliceResult>,
     pub(crate) generic_instantiations: HashSet<String>,
     bytecode: BTreeMap<BytecodeId, fp_bytecode::BytecodeProgram>,
+    /// Number of times a `CompileUnitCompileNative` work item has been
+    /// retried (via the scheduler's block/retry mechanism) because comptime
+    /// was still pending, keyed by compile-unit path. A genuinely
+    /// non-convergent comptime dependency would otherwise retry forever;
+    /// see `CompilerDriver::compile_unit_compile_native`.
+    pub(crate) comptime_retry_counts: BTreeMap<String, usize>,
 }
 
 impl CompilerState {
@@ -214,9 +212,9 @@ impl Default for CompilerState {
             lossy: false,
             module_resolver: None,
             module_resolutions: BTreeMap::new(),
-            splice_results: BTreeMap::new(),
             generic_instantiations: HashSet::new(),
             bytecode: BTreeMap::new(),
+            comptime_retry_counts: BTreeMap::new(),
         }
     }
 }
