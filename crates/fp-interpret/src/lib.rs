@@ -98,8 +98,6 @@ impl LirInterpreter {
         func: &LirFunction,
         args: &[Value],
     ) -> LirResult<Value> {
-        eprintln!("DEBUG interp run_function: {} ({} blocks, {} locals)", 
-            func.name, func.basic_blocks.len(), func.locals.len());
         self.state.push_frame(func.name.as_str().to_string());
         self.register_types.clear();
         for local in &func.locals {
@@ -332,9 +330,7 @@ impl LirInterpreter {
                 self.wr(dst, 0);
                 Ok(())
             }
-            LirInstructionKind::ComptimeOp(op) => {
-                eprintln!("DEBUG interp ComptimeOp: {op:?}");
-                match op {
+            LirInstructionKind::ComptimeOp(op) => match op {
                 ComptimeOp::CreateStruct { name } => {
                     let struct_name = self.resolve_string_value(name);
                     let fields: Vec<fp_core::ast::StructuralField> = vec![];
@@ -391,7 +387,6 @@ impl LirInterpreter {
                     self.state.objects.push(wrapped);
                     self.wr(dst, new_handle);
                     Ok(())
-                }
                 }
             },
             LirInstructionKind::InlineAsm { .. }
@@ -1031,7 +1026,6 @@ impl LirInterpreter {
     fn handle_call(&mut self, dst: u32, function: &LirValue, args: &[LirValue]) -> LirResult<()> {
         match function {
             LirValue::Function(name) => {
-                eprintln!("DEBUG interp call: {name} with {} args", args.len());
                 let raws: Vec<u64> = args
                     .iter()
                     .map(|a| self.resolve_raw(a))

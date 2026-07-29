@@ -121,8 +121,6 @@ impl CompilerDriver {
 
         let pending_comptime = outcome.pending_requests.iter()
             .any(|r| matches!(r.kind, PendingTypingRequestKind::Comptime));
-        eprintln!("DEBUG compile_unit_core: pending_requests={} comptime={pending_comptime}",
-            outcome.pending_requests.len());
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
         self.state.insert_typed_ast(typed_ast_id.clone(), ast);
@@ -153,21 +151,11 @@ impl CompilerDriver {
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let core = self.compile_unit_core(ast_id, path)?;
         if core.pending_comptime {
-            eprintln!("DEBUG retry: starting comptime eval");
             let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
             let hir_id = self.lower_to_hir(&typed_ast_id, path)?;
-            eprintln!("DEBUG retry: HIR done");
             let mir_id = self.lower_to_mir_lossy(&hir_id, path, true)?;
-            eprintln!("DEBUG retry: MIR done");
             let lir_id = self.lower_to_lir(&mir_id, path)?;
-            eprintln!("DEBUG retry: LIR done, evaluating");
-            let result = self.evaluate_comptime_lir(&lir_id, path);
-            match result {
-                Ok(_) => eprintln!("DEBUG retry: comptime eval OK"),
-                Err(ref e) => eprintln!("DEBUG retry: comptime eval FAILED: {e:?}"),
-            }
-            result?;
-            eprintln!("DEBUG retry: comptime eval done");
+            self.evaluate_comptime_lir(&lir_id, path)?;
 
             // Retype with resolved structs from comptime eval
             let core = self.compile_unit_core(ast_id, path)?;
@@ -524,7 +512,6 @@ impl CompilerDriver {
         lir_id: &LirId,
         path: &FullyQualifiedPath,
     ) -> Result<usize, CompilerDriverError> {
-        eprintln!("DEBUG evaluate_comptime_lir START: lir_id={lir_id:?}");
         let mut lir = self.state.lir(lir_id)?.clone();
 
         // Collect all LirCompileUnits: user's module + workspace crates
@@ -555,8 +542,6 @@ impl CompilerDriver {
 
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
 
-        eprintln!("DEBUG evaluate_comptime_lir: {} comptime entries, {} all_units", 
-            lir.comptime_entries.len(), all_units.len());
         if lir.comptime_entries.is_empty() {
             self.state.insert_const_value(value_id.clone(), Value::unit());
             return Ok(0);
@@ -569,14 +554,8 @@ impl CompilerDriver {
         self.interpreter.inject_globals(&resolved);
         for entry in &lir.comptime_entries {
             let mut value = match self.interpreter.run_function_named(&all_units, entry.function.as_str()) {
-                Ok(v) => {
-                    eprintln!("DEBUG comptime: {} returned {v:?}", entry.key);
-                    v
-                }
-                Err(e) => {
-                    eprintln!("DEBUG comptime: {} FAILED: {e:?}", entry.key);
-                    continue;
-                }
+                Ok(v) => v,
+                Err(_) => continue,
             };
             // If the returned value is a raw handle (u64 from comptime
             // struct construction), resolve it from the interpreter's objects.

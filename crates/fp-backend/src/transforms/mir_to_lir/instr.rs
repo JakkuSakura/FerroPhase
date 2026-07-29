@@ -1273,7 +1273,6 @@ impl LirGenerator {
                 result_value = Some(lir::LirValue::Register(query_id));
             }
             mir::Rvalue::IntrinsicCall { kind, format, args } => {
-                eprintln!("DEBUG MIR→LIR IntrinsicCall: {kind:?}");
                 let mut instructions = Vec::new();
 
                 if matches!(kind, IntrinsicCallKind::CreateStruct | IntrinsicCallKind::AddField | IntrinsicCallKind::BuildType) {

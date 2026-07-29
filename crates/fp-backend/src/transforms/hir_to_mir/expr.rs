@@ -14503,7 +14503,6 @@ impl<'a> BodyBuilder<'a> {
                         | IntrinsicCallKind::AddField
                         | IntrinsicCallKind::BuildType
                 ) {
-                    eprintln!("DEBUG HIR→MIR comptime intrinsic: {:?}", call.kind);
                     let lowered_args: Vec<OperandInfo> = call
                         .callargs
                         .iter()

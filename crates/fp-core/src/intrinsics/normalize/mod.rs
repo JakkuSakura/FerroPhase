@@ -26,7 +26,6 @@ pub fn normalize_intrinsics_with(
 }
 
 fn normalize_file(file: &mut File, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
-    eprintln!("DEBUG normalize: normalizing file with {} items", file.items.len());
     let mut const_bools = scan_const_bools(&file.items);
     scan_items(&file.collected_items, &mut const_bools);
     CONST_BOOLS.with(|cb| *cb.borrow_mut() = const_bools);
