@@ -993,25 +993,16 @@ impl LirInterpreter {
                         })
                         .cloned();
                     if let Some(func) = func {
-                        eprintln!("DEBUG interpreter: calling regular fn {name} → {} ({} args)", func.name, args.len());
                         let resolved_args: Vec<Value> = args
                             .iter()
                             .map(|a| self.resolve_runtime_value(a, &LirType::Void)
                                 .unwrap_or(Value::unit()))
                             .collect();
                         let prog = LirProgram::new();
-                        match self.run_function(&prog, &func, &resolved_args) {
-                            Ok(v) => {
-                                eprintln!("DEBUG interpreter: call to {name} returned {v:?}");
-                                self.wr(dst, value_to_raw(&v));
-                                return Ok(());
-                            }
-                            Err(e) => {
-                                eprintln!("DEBUG interpreter: call to {name} failed: {e:?}");
-                            }
+                        if let Ok(v) = self.run_function(&prog, &func, &resolved_args) {
+                            self.wr(dst, value_to_raw(&v));
+                            return Ok(());
                         }
-                    } else {
-                        eprintln!("DEBUG interpreter: {name} not found in program_functions ({count} total)", count = self.program_functions.len());
                     }
                 }
                 self.wr(dst, r);
