@@ -7,7 +7,7 @@ pub use state::CompilerState;
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprKind, ExprSplice, ExprSplicePending,
-    File, Item, ItemChunk, ItemDefConst, ItemKind, Ty, TypeType, Value,
+    File, Item, ItemChunk, ItemDefConst, ItemKind, Ty, TypeStruct, TypeType, Value,
 };
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::mir;
@@ -562,6 +562,13 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                     continue;
                 }
             };
+            // Store struct types from ALL entries, not just the last one.
+            // Each const-block type alias produces its own struct.
+            let entry_struct = Self::extract_struct_type(&value);
+            if let Some(ref struct_ty) = entry_struct {
+                self.state.typing_ctx.resolved_types.borrow_mut()
+                    .insert(struct_ty.name.as_str().to_string(), struct_ty.clone());
+            }
             let constant = self.value_to_mir_constant(&value, &entry.ty).ok_or_else(|| {
                 CompilerDriverError::UnsupportedWork(format!(
                     "unsupported comptime result for {}",
@@ -580,30 +587,26 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             count += 1;
         }
 
-        // If the final evaluated value is a struct type, store it in
-        // resolved_types so the typer can find it on the retry pass.
-        // Also handles struct types wrapped in Ty::Type(TypeType { inner: ... }).
-        let struct_ty = match &last {
-            Value::Type(Ty::Struct(ref struct_ty)) => Some(struct_ty.clone()),
-            Value::Type(Ty::Type(TypeType { inner: Some(ref inner), .. })) => {
-                if let Ty::Struct(ref struct_ty) = **inner {
-                    Some(struct_ty.clone())
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-        if let Some(struct_ty) = struct_ty {
-            self.state.typing_ctx.resolved_types.borrow_mut()
-                .insert(struct_ty.name.as_str().to_string(), struct_ty);
-        }
+        // Store the final value for const evaluation purposes
 
         self.state.insert_const_value(value_id.clone(), last);
         Ok(count)
     }
 
-    fn lower_to_hir(
+fn extract_struct_type(value: &Value) -> Option<TypeStruct> {
+    match value {
+        Value::Type(Ty::Struct(s)) => Some(s.clone()),
+        Value::Type(Ty::Type(TypeType { inner: Some(inner), .. })) => {
+            match inner.as_ref() {
+                Ty::Struct(s) => Some(s.clone()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn lower_to_hir(
         &mut self,
         typed_ast_id: &TypedAstId,
         path: &FullyQualifiedPath,
