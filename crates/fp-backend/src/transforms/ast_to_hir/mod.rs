@@ -803,12 +803,27 @@ impl HirGenerator {
 
     /// Transform an AST expression tree to HIR
     pub fn transform_expr(&mut self, ast_expr: &ast::Expr) -> Result<hir::Program> {
+        self.transform_expr_with_items(ast_expr, &[])
+    }
+
+    /// Transform an AST expression tree to HIR, predeclaring `extra_items`
+    /// (e.g. nominal struct/enum definitions the expression's type
+    /// references) alongside whatever closure-lowering generates. Used by
+    /// comptime probes that lower a single expression in isolation and need
+    /// its referenced struct/enum types visible to `MirLowering`'s
+    /// registration pass, which only scans `program.items`.
+    pub fn transform_expr_with_items(
+        &mut self,
+        ast_expr: &ast::Expr,
+        extra_items: &[ast::Item],
+    ) -> Result<hir::Program> {
         let mut lowered_expr = ast_expr.clone();
-        let (generated_items, closure_diagnostics) = lower_closures_in_expr(&mut lowered_expr)?;
+        let (mut generated_items, closure_diagnostics) = lower_closures_in_expr(&mut lowered_expr)?;
         diagnostic_manager().add_diagnostics(closure_diagnostics);
         if let Some(query) = lower_fp_expr_to_query(&lowered_expr, None) {
             return self.transform_query_document(&query);
         }
+        generated_items.extend(extra_items.iter().cloned());
 
         self.reset_file_context("<expr>");
         self.prepare_lowering_state();

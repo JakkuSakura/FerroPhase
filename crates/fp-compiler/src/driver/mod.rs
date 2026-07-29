@@ -6,7 +6,8 @@ pub use state::CompilerState;
 
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::ast::{
-    BlockStmt, Expr, ExprKind, File, Item, ItemKind, Name, Ty, TypeStruct, TypeType, Value,
+    BlockStmt, Expr, ExprKind, File, Item, ItemDefEnum, ItemDefStruct, ItemKind, Name, Ty,
+    TypeStruct, TypeType, Value, Visibility,
 };
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::mir;
@@ -18,7 +19,7 @@ use fp_typing::{
     AstTypeInferencer, GenericMonorph, PendingTypingRequestKind, TypeResolutionHook,
     default_extern_prelude,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::scheduler::{
     AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
@@ -202,8 +203,13 @@ impl CompilerDriver {
         let resolved_names = self.collect_resolved_const_values();
         Self::inline_resolved_names(&mut probe_expr, &resolved_names);
 
+        let mut extra_items = Vec::new();
+        let mut seen_types = HashSet::new();
+        Self::collect_referenced_struct_enum_items(&probe_expr, &mut extra_items, &mut seen_types);
+
         let resolved = (|| -> Result<Value, CompilerDriverError> {
-            let hir_program = HirGenerator::new().transform_expr(&probe_expr)?;
+            let hir_program =
+                HirGenerator::new().transform_expr_with_items(&probe_expr, &extra_items)?;
             let mir_program = MirLowering::new().transform(hir_program)?;
             let lir_program = LirGenerator::new().transform(mir_program)?;
 
@@ -336,6 +342,120 @@ impl CompilerDriver {
             Name::Ident(ident) => Some(ident.as_str().to_string()),
             Name::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string()),
             Name::ParameterPath(_) => None,
+        }
+    }
+
+    /// Collect nominal struct/enum declarations referenced by `expr`'s type
+    /// (and the types of its sub-expressions), synthesizing an
+    /// `ItemKind::DefStruct`/`DefEnum` for each so `resolve_comptime_now`'s
+    /// isolated probe can predeclare them — `MirLowering`'s struct/enum
+    /// registration pass only scans a program's own items, so a struct type
+    /// that exists only in the AST's type annotations (never as a sibling
+    /// item in the probe) would otherwise be invisible to it. `seen` dedupes
+    /// by name across the whole walk. Not exhaustive over every `ExprKind` —
+    /// only the shapes const initializers actually use (mirrors
+    /// `inline_resolved_names`'s scope).
+    fn collect_referenced_struct_enum_items(
+        expr: &Expr,
+        out: &mut Vec<Item>,
+        seen: &mut HashSet<String>,
+    ) {
+        if let Some(ty) = expr.ty() {
+            Self::collect_struct_enum_from_ty(ty, out, seen);
+        }
+        match expr.kind() {
+            ExprKind::Struct(s) => {
+                for field in &s.fields {
+                    if let Some(value) = field.value.as_ref() {
+                        Self::collect_referenced_struct_enum_items(value, out, seen);
+                    }
+                }
+            }
+            ExprKind::Tuple(t) => {
+                for value in &t.values {
+                    Self::collect_referenced_struct_enum_items(value, out, seen);
+                }
+            }
+            ExprKind::Array(a) => {
+                for value in &a.values {
+                    Self::collect_referenced_struct_enum_items(value, out, seen);
+                }
+            }
+            ExprKind::BinOp(b) => {
+                Self::collect_referenced_struct_enum_items(&b.lhs, out, seen);
+                Self::collect_referenced_struct_enum_items(&b.rhs, out, seen);
+            }
+            ExprKind::UnOp(u) => Self::collect_referenced_struct_enum_items(&u.val, out, seen),
+            ExprKind::Cast(c) => Self::collect_referenced_struct_enum_items(&c.expr, out, seen),
+            ExprKind::Invoke(invoke) => {
+                for arg in &invoke.args {
+                    Self::collect_referenced_struct_enum_items(arg, out, seen);
+                }
+            }
+            ExprKind::If(if_expr) => {
+                Self::collect_referenced_struct_enum_items(&if_expr.cond, out, seen);
+                Self::collect_referenced_struct_enum_items(&if_expr.then, out, seen);
+                if let Some(elze) = if_expr.elze.as_ref() {
+                    Self::collect_referenced_struct_enum_items(elze, out, seen);
+                }
+            }
+            ExprKind::Block(block) => {
+                for stmt in &block.stmts {
+                    match stmt {
+                        BlockStmt::Expr(e) => {
+                            Self::collect_referenced_struct_enum_items(&e.expr, out, seen)
+                        }
+                        BlockStmt::Let(s) => {
+                            if let Some(init) = s.init.as_ref() {
+                                Self::collect_referenced_struct_enum_items(init, out, seen);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_struct_enum_from_ty(ty: &Ty, out: &mut Vec<Item>, seen: &mut HashSet<String>) {
+        match ty {
+            Ty::Struct(struct_ty) => {
+                if seen.insert(struct_ty.name.as_str().to_string()) {
+                    for field in &struct_ty.fields {
+                        Self::collect_struct_enum_from_ty(&field.value, out, seen);
+                    }
+                    out.push(Item::new(ItemKind::DefStruct(ItemDefStruct {
+                        attrs: Vec::new(),
+                        visibility: Visibility::Public,
+                        name: struct_ty.name.clone(),
+                        value: struct_ty.clone(),
+                    })));
+                }
+            }
+            Ty::Enum(enum_ty) => {
+                if seen.insert(enum_ty.name.as_str().to_string()) {
+                    for variant in &enum_ty.variants {
+                        Self::collect_struct_enum_from_ty(&variant.value, out, seen);
+                    }
+                    out.push(Item::new(ItemKind::DefEnum(ItemDefEnum {
+                        attrs: Vec::new(),
+                        visibility: Visibility::Public,
+                        name: enum_ty.name.clone(),
+                        value: enum_ty.clone(),
+                    })));
+                }
+            }
+            Ty::Reference(r) => Self::collect_struct_enum_from_ty(&r.ty, out, seen),
+            Ty::Slice(s) => Self::collect_struct_enum_from_ty(&s.elem, out, seen),
+            Ty::Array(a) => Self::collect_struct_enum_from_ty(&a.elem, out, seen),
+            Ty::Vec(v) => Self::collect_struct_enum_from_ty(&v.ty, out, seen),
+            Ty::Tuple(t) => {
+                for elem in &t.types {
+                    Self::collect_struct_enum_from_ty(elem, out, seen);
+                }
+            }
+            _ => {}
         }
     }
 
