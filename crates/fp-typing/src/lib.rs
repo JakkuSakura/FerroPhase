@@ -2803,6 +2803,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 let self_var = self.fresh_type_var();
                 let expected = self.type_from_ast_ty(&receiver_type)?;
                 self.unify(self_var, expected)?;
+                self.insert_env("self".to_string(), EnvEntry::Mono(self_var));
             } else {
                 self.emit_error(format!(
                     "method {} defined without an impl context",
