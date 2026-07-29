@@ -13755,6 +13755,19 @@ impl<'a> BodyBuilder<'a> {
                     .map(|seg| seg.name.as_str())
                     .collect::<Vec<_>>()
                     .join("::");
+                // Type names used as values (i64, bool, str, etc.) —
+                // return an opaque placeholder constant.
+                if is_known_type_name(&name) {
+                    let ty = self.lowering.error_ty();
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::Constant(mir::Constant {
+                            span: expr.span,
+                            user_ty: None,
+                            literal: mir::ConstantKind::Val(mir::ConstValue::Unit, ty.clone()),
+                        }),
+                        ty,
+                    });
+                }
                 Err(fp_core::error::Error::from(format!(
                     "unresolved value path during MIR lowering: `{name}`"
                 )))
@@ -18682,4 +18695,14 @@ impl<'a> BodyBuilder<'a> {
             block.statements.push(statement);
         }
     }
+}
+
+fn is_known_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
+        | "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+        | "f32" | "f64" | "bool" | "char" | "str" | "string"
+        | "type" | "__fp_type" | "__fp_escaped"
+    )
 }
