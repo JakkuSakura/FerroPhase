@@ -229,6 +229,34 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         )))
     }
 
+    fn normalize_invoke(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        let (id, ty_slot, span, kind) = expr.into_parts();
+        let ExprKind::Invoke(invoke) = kind else {
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, kind)));
+        };
+
+        if let Some(intrinsic_kind) = resolve_lang_intrinsic(&invoke) {
+            let replacement = Expr::from_parts(
+                id, ty_slot, span,
+                ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                    intrinsic_kind, invoke.args, Vec::new())),
+            );
+            return Ok(NormalizeOutcome::Normalized(replacement));
+        }
+
+        Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, ExprKind::Invoke(invoke))))
+    }
+
+}
+
+fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<IntrinsicCallKind> {
+    let name = match &invoke.target {
+        ExprInvokeTarget::Function(name) => name.to_string(),
+        _ => return None,
+    };
+    // Check both qualified (std::intrinsics::create_struct) and bare names
+    let fn_name = name.rsplit("::").next().unwrap_or(&name);
+    intrinsic_macro_kind(fn_name)
 }
 
 fn intrinsic_macro_kind(name: &str) -> Option<IntrinsicCallKind> {
@@ -241,6 +269,8 @@ fn intrinsic_macro_kind(name: &str) -> Option<IntrinsicCallKind> {
         "type_info" => Some(IntrinsicCallKind::TypeOf),
         "type_of" => Some(IntrinsicCallKind::TypeOf),
         "clone_struct" => Some(IntrinsicCallKind::CloneStruct),
+        "create_struct" => Some(IntrinsicCallKind::CreateStruct),
+        "addfield" => Some(IntrinsicCallKind::AddField),
         "hasfield" => Some(IntrinsicCallKind::HasField),
         "count_fields" => Some(IntrinsicCallKind::FieldCount),
         "field_count" => Some(IntrinsicCallKind::FieldCount),

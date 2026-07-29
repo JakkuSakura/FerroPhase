@@ -276,7 +276,10 @@ impl HirGenerator {
             ExprKind::IntrinsicContainer(container) => {
                 self.transform_intrinsic_container_to_hir(container)?
             }
-            ExprKind::IntrinsicCall(call) => self.transform_intrinsic_call_to_hir(call)?,
+            ExprKind::IntrinsicCall(call) => {
+                eprintln!("DEBUG AST→HIR IntrinsicCall: {:?}", call.kind);
+                self.transform_intrinsic_call_to_hir(call)?
+            },
             ExprKind::Reference(reference) => {
                 let inner = self.transform_expr_to_hir(reference.referee.as_ref())?;
                 let mutable = match reference.mutable {
