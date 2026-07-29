@@ -31,14 +31,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn infer_block(&mut self, block: &mut ExprBlock) -> Result<TypeVarId> {
         self.enter_scope();
         self.predeclare_scope_items(&block.collected_items);
+
+        // Phase 1: infer items (type aliases, consts, nested fn sigs)
+        let mut needs_retry = false;
+        for stmt in &mut block.stmts {
+            if let BlockStmt::Item(item) = stmt {
+                if self.infer_block_item(item)? {
+                    needs_retry = true;
+                }
+            }
+        }
+
+        // Phase 2: infer locals (let bindings, expressions)
         let mut last = self.fresh_type_var();
         self.bind(last, Ty::Unit(TypeUnit));
         for stmt in &mut block.stmts {
             match stmt {
-                BlockStmt::Item(item) => {
-                    self.infer_item(item)?;
-                    last = self.fresh_type_var();
-                    self.bind(last, Ty::Unit(TypeUnit));
+                BlockStmt::Item(_) => {
+                    // Already processed in Phase 1; skip
                 }
                 BlockStmt::Let(stmt_let) => {
                     let init_var = if let Some(init) = stmt_let.init.as_mut() {
@@ -801,6 +811,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             PatternKind::Quote(_) | PatternKind::QuotePlural(_) | PatternKind::Wildcard(_) => {}
         }
         Ok(())
+    }
+
+    /// Process a single item inside a block. Returns `true` if a comptime
+    /// dependency was discovered and the block should be retried after
+    /// comptime eval.
+    fn infer_block_item(&mut self, item: &mut Item) -> Result<bool> {
+        let is_const_block_type = matches!(
+            item.kind(),
+            ItemKind::DefType(def) if matches!(&def.value, Ty::ConstBlock(_))
+        );
+        self.infer_item(item)?;
+        Ok(is_const_block_type)
     }
 }
 

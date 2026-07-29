@@ -556,12 +556,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         // locally-defined type aliases (DefType).
                         if let Some(var) = self.lookup_env_name(locator)? {
                             if let Ok(ty) = self.resolve_to_ty(var) {
-                                if let Ty::Struct(struct_def) = ty {
+                                if let Ty::Struct(ref struct_def) = ty {
                                     if let Some(struct_var) = self
                                         .resolve_struct_literal_from_def(struct_expr, &struct_def)?
                                     {
                                         return Ok(struct_var);
                                     }
+                                }
+                                // Const-block type aliases (Ty::Type) — the struct
+                                // will be resolved by comptime eval on retry.
+                                // Defer to a placeholder for now.
+                                if matches!(ty, Ty::Type(_)) {
+                                    let placeholder = self.fresh_type_var();
+                                    self.bind(placeholder, Ty::Type(TypeType::new(fp_core::span::Span::null())));
+                                    return Ok(placeholder);
                                 }
                             }
                         }
@@ -3921,7 +3929,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             if let Some(entry) = scope.get(&key) {
                 match entry {
                     EnvEntry::Mono(var) => return Ok(Some(*var)),
-                    EnvEntry::Poly(ty) if matches!(ty, Ty::Struct(_)) => {
+                    EnvEntry::Poly(ty) if matches!(ty, Ty::Struct(_) | Ty::Type(_)) => {
                         poly_ty = Some(ty.clone());
                         break;
                     }

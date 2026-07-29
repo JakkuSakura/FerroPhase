@@ -1777,11 +1777,16 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 self.register_symbol(&def.name);
             }
             ItemKind::DefType(def) => {
-                self.record_unimplemented_symbol(&def.name, &def.attrs);
                 self.register_symbol(&def.name);
                 // Type the value (const block or direct expression). Struct types
                 // are resolved via comptime eval and seeded into struct_defs on retry.
                 let _ = self.type_from_ast_ty(&def.value);
+                // For const-block type aliases, defer the unimplemented marker
+                // — the struct is computed at comptime and resolved on retry.
+                let is_const_block = matches!(&def.value, Ty::ConstBlock(_));
+                if !is_const_block {
+                    self.record_unimplemented_symbol(&def.name, &def.attrs);
+                }
                 // Look up the struct by its qualified name
                 let path = if self.module_path.is_empty() {
                     QualifiedPath::new(vec![def.name.as_str().to_string()])
@@ -2436,7 +2441,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     let resolved = self.resolve_to_ty(value_var)?;
 
                     let normalized = match resolved {
-                        Ty::Structural(structural) => {
+                            Ty::Structural(structural) => {
                             let struct_ty = TypeStruct {
                                 name: def.name.clone(),
                                 generics_params: Vec::new(),

@@ -448,7 +448,7 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         let lir = self.state.lir(lir_id)?.clone();
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
 
-if lir.comptime_entries.is_empty() {
+        if lir.comptime_entries.is_empty() {
             self.state.insert_const_value(value_id.clone(), Value::unit());
             return Ok(0);
         }
