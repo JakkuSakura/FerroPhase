@@ -499,6 +499,9 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                 }
             };
             let lir = self.state.lir(&core.lir_id)?.clone();
+            eprintln!("DEBUG on-demand: {} has {} LIR functions: {:?}", 
+                path.to_key(), lir.functions.len(),
+                lir.functions.iter().map(|f| f.name.as_str()).collect::<Vec<_>>());
             units.push(fp_core::lir::LirCompileUnit {
                 module_path: path.clone(),
                 program: lir,
