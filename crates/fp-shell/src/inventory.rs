@@ -22,11 +22,7 @@ pub fn load_inventory(path: &Path) -> Result<File, ShellError> {
     let parsed = frontend
         .parse(&content, Some(path))
         .map_err(|err| ShellError::Inventory(format!("invalid inventory fp: {}", err)))?;
-    let file = parsed.ast else {
-        return Err(ShellError::Inventory(
-            "inventory fp must be a file document".to_string(),
-        ));
-    };
+    let file = parsed.ast;
     let has_inventory = file.items.iter().any(|item| {
         matches!(
             item.kind(),
@@ -38,5 +34,5 @@ pub fn load_inventory(path: &Path) -> Result<File, ShellError> {
             "inventory fp must define `const fn inventory() -> Inventory`".to_string(),
         ));
     }
-    Ok(parsed.ast)
+    Ok(file)
 }

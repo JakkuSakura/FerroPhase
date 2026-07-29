@@ -101,28 +101,17 @@ pub fn compile_source_with_options(
     let ast = merge_runtime_helpers(parsed.ast, options.inventory.as_ref())?;
 
     // Save std items before HIR strips #[command] attrs from extern declarations
-    let pre_hir_items = match ast.kind() {
-        f => f.items.clone(),
-        _ => Vec::new(),
-    };
+    let pre_hir_items = ast.items.clone();
 
-    let mut lowered = match ast.kind() {
-        file.clone() => fp_backend::roundtrip_ast_file_via_hir(&file)
-            .map_err(|err| ShellError::Lower(err.to_string()))?,
-        _ => {
-            return Err(ShellError::Lower(
-                "shell compilation requires file AST nodes".to_string(),
-            ));
-        }
-    };
+    let mut lowered = fp_backend::roundtrip_ast_file_via_hir(&ast)
+        .map_err(|err| ShellError::Lower(err.to_string()))?;
     let materializer = shell_materializer::ShellMaterializer::new(options.inventory.as_ref());
     lowered = fp_cli::materialize::materialize_file(lowered, &materializer)
         .map_err(|err| ShellError::Lower(err.to_string()))?;
 
     // Re-insert pre-HIR items (HIR strips #[command] attrs, const-evaluates fn bodies)
     lowered.items
-            .extend(shell_materializer::flatten_keep_externs(pre_hir_items));
-    }
+        .extend(shell_materializer::flatten_keep_externs(pre_hir_items));
     validate_extern_decls(&lowered, target).map_err(ShellError::Lower)?;
 
     let code = match target {
@@ -215,13 +204,12 @@ fn execute_generated_script(script: &str, target: ScriptTarget) -> Result<Value,
     Ok(Value::unit())
 }
 
-fn merge_runtime_helpers(ast: Node, inventory: Option<&NodeFile>) -> Result<Node, ShellError> {
+fn merge_runtime_helpers(
+    ast: fp_core::ast::File,
+    inventory: Option<&fp_core::ast::File>,
+) -> Result<fp_core::ast::File, ShellError> {
     let frontend = FerroFrontend::new();
-    let user_file = ast.kind else {
-        return Err(ShellError::Lower(
-            "shell compilation requires file AST nodes".to_string(),
-        ));
-    };
+    let mut user_file = ast;
 
     ensure_std_module(&mut user_file);
     merge_core_std_tree(&frontend, &mut user_file)?;
@@ -229,7 +217,7 @@ fn merge_runtime_helpers(ast: Node, inventory: Option<&NodeFile>) -> Result<Node
     if let Some(inventory) = inventory {
         merge_inventory_items(&frontend, &mut user_file, inventory)?;
     }
-    Ok(user_file))
+    Ok(user_file)
 }
 
 fn merge_core_std_tree(
@@ -278,6 +266,7 @@ fn ensure_std_module(user_file: &mut fp_core::ast::File) {
             Item::from(ItemKind::Module(Module {
                 attrs: Vec::new(),
                 name: Ident::new("std"),
+                collected_items: Vec::new(),
                 items: Vec::new(),
                 visibility: Visibility::Public,
                 is_external: false,
@@ -334,11 +323,7 @@ fn merge_source_items(
                 err
             ))
         })?;
-    let file.clone() = parsed.ast.kind else {
-        return Err(ShellError::Lower(format!(
-            "embedded std must be a file document: {embedded_path}"
-        )));
-    };
+    let file = parsed.ast;
     let target = ensure_nested_module(user_file, module_path)?;
     target.items.extend(file.items);
     Ok(())
@@ -421,6 +406,7 @@ fn ensure_nested_module<'a>(
                 current.items.push(Item::from(ItemKind::Module(Module {
                     attrs: Vec::new(),
                     name: Ident::new(*segment),
+                    collected_items: Vec::new(),
                     items: Vec::new(),
                     visibility: Visibility::Public,
                     is_external: false,
@@ -439,13 +425,9 @@ fn ensure_nested_module<'a>(
 fn merge_inventory_items(
     frontend: &FerroFrontend,
     user_file: &mut fp_core::ast::File,
-    inventory: &NodeFile,
+    inventory: &fp_core::ast::File,
 ) -> Result<(), ShellError> {
-    let inventory_file = inventory.kind() else {
-        return Err(ShellError::Inventory(
-            "inventory must be a file document".to_string(),
-        ));
-    };
+    let inventory_file = inventory;
     let std_module = user_file
         .items
         .iter_mut()
@@ -473,17 +455,13 @@ fn merge_inventory_items(
             .map_err(|err| {
                 ShellError::Inventory(format!("invalid generated inventory accessors: {}", err))
             })?;
-        let file.clone() = parsed.ast.kind() else {
-            return Err(ShellError::Inventory(
-                "generated inventory accessors must be a file document".to_string(),
-            ));
-        };
+        let file = parsed.ast;
         hosts_module.items.extend(file.items.clone());
     }
     Ok(())
 }
 
-fn generate_inventory_accessors(inventory: &NodeFile) -> Result<String, ShellError> {
+fn generate_inventory_accessors(inventory: &fp_core::ast::File) -> Result<String, ShellError> {
     let Some(inventory_expr) = inventory_root_expr(inventory) else {
         return Err(ShellError::Inventory(
             "inventory fp must define `const fn inventory() -> Inventory`".to_string(),
@@ -547,10 +525,7 @@ struct InventoryGroupAccessor {
     hosts: Vec<String>,
 }
 
-fn inventory_root_expr(node: &NodeFile) -> Option<&Expr> {
-    let file.clone() = file else {
-        return None;
-    };
+fn inventory_root_expr(file: &fp_core::ast::File) -> Option<&Expr> {
     let function = file.items.iter().find_map(|item| match item.kind() {
         ItemKind::DefFunction(function) if function.name.as_str() == "inventory" => Some(function),
         _ => None,
@@ -740,16 +715,11 @@ fn name_to_segments(name: &Name) -> Vec<String> {
         .collect()
 }
 
-fn validate_extern_decls(node: &NodeFile, target: ScriptTarget) -> Result<(), String> {
-    match file {
-        file.clone() => {
-            for item in &file.items {
-                validate_externs_in_item(item, target)?;
-            }
-            Ok(())
-        }
-        _ => Err("shell compilation requires file AST nodes".to_string()),
+fn validate_extern_decls(file: &fp_core::ast::File, target: ScriptTarget) -> Result<(), String> {
+    for item in &file.items {
+        validate_externs_in_item(item, target)?;
     }
+    Ok(())
 }
 
 fn validate_externs_in_item(item: &Item, target: ScriptTarget) -> Result<(), String> {
