@@ -3502,6 +3502,16 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 }),
             ));
         }
+        // Fallback: workspace crates may have this function registered
+        let workspace_sig = self.typing_ctx.env_ctx.find_function_sig(&key).cloned();
+        if let Some(sig) = workspace_sig {
+            let fn_ty = self.ty_from_function_signature(&sig)?;
+            let var = self.type_from_ast_ty(&fn_ty)?;
+            return Ok((var, Some(ResolvedName {
+                namespace: ResolvedNameNamespace::Value,
+                path: key,
+            })));
+        }
         self.emit_error(format!("unresolved symbol: {}", key.to_key()));
         Ok((self.error_type_var(), None))
     }

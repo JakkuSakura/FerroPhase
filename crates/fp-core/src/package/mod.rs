@@ -92,6 +92,7 @@ pub mod graph;
 pub mod provider;
 
 use crate::ast::{FunctionSignature, TypeEnum, TypeStruct};
+use crate::lir::LirProgram;
 use crate::module::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
 
@@ -114,6 +115,11 @@ pub struct PackageCrate {
 
     /// All known module paths within this crate.
     pub module_paths: HashSet<QualifiedPath>,
+
+    /// Compiled LIR for this crate, produced after the full lowering
+    /// pipeline. Used to merge into the caller's LirProgram so the
+    /// interpreter can resolve cross-module function calls.
+    pub lir_program: Option<LirProgram>,
 }
 
 impl PackageCrate {
@@ -132,6 +138,7 @@ impl PackageCrate {
             function_sigs: HashMap::new(),
             trait_defs: HashSet::new(),
             module_paths,
+            lir_program: None,
         }
     }
 }

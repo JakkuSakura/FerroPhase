@@ -480,7 +480,21 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         lir_id: &LirId,
         path: &FullyQualifiedPath,
     ) -> Result<usize, CompilerDriverError> {
-        let lir = self.state.lir(lir_id)?.clone();
+        let mut lir = self.state.lir(lir_id)?.clone();
+
+        // Merge LIR from all workspace crates so the interpreter can
+        // resolve cross-module const fn calls during comptime evaluation.
+        let mut total_merged = 0usize;
+        for krate in &self.state.typing_ctx.env_ctx.crates {
+            if let Some(ref workspace_lir) = krate.lir_program {
+                let count = workspace_lir.functions.len();
+                eprintln!("DEBUG merging {} LIR functions from crate {}", count, krate.name);
+                total_merged += count;
+                lir.extend(workspace_lir.clone());
+            }
+        }
+        eprintln!("DEBUG total LIR functions after merge: {} (was {})", lir.functions.len(), lir.functions.len() - total_merged);
+
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
 
         if lir.comptime_entries.is_empty() {
@@ -530,8 +544,11 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             _ => None,
         };
         if let Some(struct_ty) = struct_ty {
+            eprintln!("DEBUG storing struct {} in resolved_types", struct_ty.name);
             self.state.typing_ctx.resolved_types.borrow_mut()
                 .insert(struct_ty.name.as_str().to_string(), struct_ty);
+        } else {
+            eprintln!("DEBUG last value is not a struct: {last:?}");
         }
 
         self.state.insert_const_value(value_id.clone(), last);

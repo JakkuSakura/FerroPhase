@@ -32,6 +32,9 @@ pub struct LirInterpreter {
     extern_sigs: HashMap<String, FfiSignature>,
     /// Tracks the predecessor block ID for correct Phi resolution.
     last_predecessor: Option<BasicBlockId>,
+    /// All LIR functions keyed by name, for cross-module call resolution.
+    /// Populated from the LirProgram on each call to run_function_named.
+    program_functions: HashMap<String, LirFunction>,
 }
 
 impl LirInterpreter {
@@ -43,10 +46,12 @@ impl LirInterpreter {
             ffi: FfiRuntime::new().ok(),
             extern_sigs: HashMap::new(),
             last_predecessor: None,
+            program_functions: HashMap::new(),
         }
     }
 
     pub fn run_main(&mut self, program: &LirProgram) -> LirResult<Value> {
+        self.populate_functions(program);
         self.populate_globals(program);
         let entry = program
             .functions
@@ -58,6 +63,7 @@ impl LirInterpreter {
     }
 
     pub fn run_function_named(&mut self, program: &LirProgram, name: &str) -> LirResult<Value> {
+        self.populate_functions(program);
         self.populate_globals(program);
         let func = program
             .functions
@@ -65,6 +71,12 @@ impl LirInterpreter {
             .find(|func| func.name.as_str() == name)
             .ok_or_else(|| VmError::Runtime(format!("missing function {name}")))?;
         self.run_function(program, func, &[])
+    }
+
+    fn populate_functions(&mut self, program: &LirProgram) {
+        for func in &program.functions {
+            self.program_functions.insert(func.name.as_str().to_string(), func.clone());
+        }
     }
 
     pub fn run_function(
@@ -968,6 +980,40 @@ impl LirInterpreter {
                 }
 
                 let r = self.call_intrinsic(name, &raws)?;
+
+                // If the intrinsic returned 0 AND it's not a known intrinsic,
+                // try regular LIR function call (cross-module const fn).
+                if r == 0 && !Self::is_known_intrinsic(name) {
+                    let func = self.program_functions.get(name)
+                        .or_else(|| {
+                            self.program_functions.values().find(|f| {
+                                f.name.as_str().ends_with(&format!("::{name}"))
+                                    || f.name.as_str() == name
+                            })
+                        })
+                        .cloned();
+                    if let Some(func) = func {
+                        eprintln!("DEBUG interpreter: calling regular fn {name} → {} ({} args)", func.name, args.len());
+                        let resolved_args: Vec<Value> = args
+                            .iter()
+                            .map(|a| self.resolve_runtime_value(a, &LirType::Void)
+                                .unwrap_or(Value::unit()))
+                            .collect();
+                        let prog = LirProgram::new();
+                        match self.run_function(&prog, &func, &resolved_args) {
+                            Ok(v) => {
+                                eprintln!("DEBUG interpreter: call to {name} returned {v:?}");
+                                self.wr(dst, value_to_raw(&v));
+                                return Ok(());
+                            }
+                            Err(e) => {
+                                eprintln!("DEBUG interpreter: call to {name} failed: {e:?}");
+                            }
+                        }
+                    } else {
+                        eprintln!("DEBUG interpreter: {name} not found in program_functions ({count} total)", count = self.program_functions.len());
+                    }
+                }
                 self.wr(dst, r);
                 Ok(())
             }
@@ -1018,6 +1064,16 @@ impl LirInterpreter {
             }
             _ => Ok(0),
         }
+    }
+
+    fn is_known_intrinsic(name: &str) -> bool {
+        if name.starts_with("__bc_") { return true; }
+        matches!(name,
+            "println" | "print" | "eprintln" | "eprint" | "printf"
+            | "sizeof" | "strlen" | "malloc" | "free" | "realloc"
+            | "sin" | "cos" | "tan" | "sqrt" | "pow" | "strcmp"
+        ) || name.starts_with("opaque__") || name.starts_with("type__")
+        || name.ends_with("__new")
     }
 
     fn call_bc_intrinsic(&mut self, name: &str, args: &[u64]) -> LirResult<u64> {

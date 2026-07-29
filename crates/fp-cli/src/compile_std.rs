@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::ast::{Item, Node, NodeKind};
 use fp_core::frontend::LanguageFrontend;
+use fp_core::lir::LirProgram;
 use fp_core::module::path::QualifiedPath;
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::package::graph::PackageGraph;
@@ -76,11 +78,82 @@ pub fn build_workspace_with_std() -> WorkspaceContext {
         inferencer.inject_module(path, items);
     }
 
-    let std_crate = inferencer.into_package_crate("std", graph);
+    // Lower each std module to LIR so interpreter can resolve cross-module
+    // const fn calls at comptime. Merge all into a single LirProgram.
+    let mut merged_lir = LirProgram::new();
+    for (path, items) in &items_by_path {
+        eprintln!("DEBUG compile_std: module path={}", path.to_key());
+        if let Some(lir) = lower_module(&typing_ctx, path, items) {
+            merged_lir.extend(lir);
+        }
+    }
+
+    let mut std_crate = inferencer.into_package_crate("std", graph);
+    std_crate.lir_program = Some(merged_lir);
 
     let mut workspace = WorkspaceContext::new();
     workspace.push_crate(std_crate);
     workspace
+}
+
+fn lower_module(
+    typing_ctx: &Rc<TypingContext>,
+    path: &QualifiedPath,
+    items: &[Item],
+) -> Option<LirProgram> {
+    use fp_core::ast::File;
+    use std::path::PathBuf;
+
+    let file = File {
+        path: PathBuf::from(format!("std::{}", path.to_key())),
+        items: items.to_vec(),
+        collected_items: Vec::new(),
+        attrs: Vec::new(),
+    };
+    let mut file_node = Node::new(NodeKind::File(file));
+
+    let mut inferencer = AstTypeInferencer::new(typing_ctx.clone())
+        .with_extern_prelude(default_extern_prelude());
+    inferencer.seed_workspace_graph();
+    if let Err(e) = inferencer.infer(&mut file_node) {
+        eprintln!("DEBUG compile_std: typing failed for {}: {e:?}", path.to_key());
+        return None;
+    }
+
+    let file = match file_node.kind() {
+        NodeKind::File(f) => f.clone(),
+        _ => return None,
+    };
+
+    let mut hir_gen = HirGenerator::new();
+    let hir_program = match hir_gen.transform_file(&file) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("DEBUG compile_std: HIR lowering failed for {}: {e:?}", path.to_key());
+            return None;
+        }
+    };
+
+    let mut mir_lowering = MirLowering::new();
+    let mir_program = match mir_lowering.transform(hir_program) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("DEBUG compile_std: MIR lowering failed for {}: {e:?}", path.to_key());
+            return None;
+        }
+    };
+
+    let mut lir_gen = LirGenerator::new();
+    let lir = match lir_gen.transform(mir_program) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("DEBUG compile_std: LIR lowering failed: {e:?}");
+            return None;
+        }
+    };
+    eprintln!("DEBUG compile_std: lowered {} LIR functions for {}", lir.functions.len(), path.to_key());
+
+    Some(lir)
 }
 
 fn relative_to_module_segments(relative: &str) -> Vec<String> {
