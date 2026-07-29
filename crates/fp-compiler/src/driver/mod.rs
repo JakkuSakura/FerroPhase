@@ -15,7 +15,7 @@ use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use fp_interpret::{LirInterpreter, VmError};
-use fp_typing::{AstTypeInferencer, GenericMonorph, default_extern_prelude};
+use fp_typing::{AstTypeInferencer, GenericMonorph, PendingTypingRequestKind, default_extern_prelude};
 use std::collections::{BTreeMap, HashMap};
 
 use crate::scheduler::{
@@ -139,6 +139,41 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
+        // Pass 1: type to discover comptime needs
+        let needs_retry = {
+            let mut ast = self.state.ast(ast_id)?.clone();
+            AstPreProcessor::new(&mut self.state.splice_results).walk(&mut ast);
+            let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
+                .with_extern_prelude(default_extern_prelude());
+            inferencer.seed_workspace_graph();
+            let outcome = inferencer.infer(&mut ast)?;
+            let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
+            self.state.insert_typed_ast(typed_ast_id.clone(), ast);
+            outcome.pending_requests.iter().any(|r| matches!(r.kind, PendingTypingRequestKind::Comptime))
+        };
+
+        if needs_retry {
+            // Generate LIR from typed AST to create comptime entries,
+            // then evaluate them to populate resolved_types.
+            // Use lossy MIR lowering — unresolved calls are expected
+            // before comptime eval resolves them.
+            let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
+            let hir_id = self.lower_to_hir(&typed_ast_id, path)?;
+            let mir_id = self.lower_to_mir_lossy(&hir_id, path, true)?;
+            let lir_id = self.lower_to_lir(&mir_id, path)?;
+            self.evaluate_comptime_lir(&lir_id, path)?;
+
+            // Pass 2: retype with resolved structs from comptime eval
+            let mut ast = self.state.ast(ast_id)?.clone();
+            AstPreProcessor::new(&mut self.state.splice_results).walk(&mut ast);
+            let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
+                .with_extern_prelude(default_extern_prelude());
+            inferencer.seed_workspace_graph();
+            inferencer.infer(&mut ast)?;
+            let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
+            self.state.insert_typed_ast(typed_ast_id.clone(), ast);
+        }
+
         let core = self.compile_unit_core(ast_id, path)?;
         self.evaluate_comptime_lir(&core.lir_id, path)?;
 
@@ -459,8 +494,6 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
             let value = match self.evaluate_lir_function(&lir, entry.function.as_str()) {
                 Ok(v) => v,
                 Err(_) => {
-                    // Dependency not yet resolved — skip this entry,
-                    // it will be evaluated on the next pass.
                     continue;
                 }
             };
@@ -534,25 +567,45 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         hir_id: &HirId,
         path: &FullyQualifiedPath,
     ) -> Result<MirId, CompilerDriverError> {
+        self.lower_to_mir_lossy(hir_id, path, false)
+    }
+
+    /// Lower HIR to MIR, optionally tolerating diagnostic errors.
+    /// Used for comptime LIR generation where unresolved types are
+    /// expected to resolve after evaluation.
+    fn lower_to_mir_lossy(
+        &mut self,
+        hir_id: &HirId,
+        path: &FullyQualifiedPath,
+        allow_errors: bool,
+    ) -> Result<MirId, CompilerDriverError> {
         let hir = self.state.hir(hir_id)?.clone();
         let mut lowering = MirLowering::new();
-        lowering.set_lossy(self.state.lossy());
+        lowering.set_lossy(self.state.lossy() || allow_errors);
         for (key, value) in self.state.resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
         let mir = lowering.transform(hir);
         let (diagnostics, had_errors) = lowering.take_diagnostics();
-        // First-pass MIR lowering: accept programs with diagnostics
-        // so comptime eval can proceed. Errors will validate on retry.
-        let mir = match (mir, had_errors) {
-            (Ok(program), _) => program,
-            (Err(err), _) => {
-                let message = diagnostics
-                    .iter()
-                    .find(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
-                    .map(|diagnostic| diagnostic.message.clone())
-                    .unwrap_or_else(|| format!("HIR→MIR lowering error: {err}"));
-                return Err(CompilerDriverError::UnsupportedWork(message));
+        let mir = if allow_errors {
+            match mir {
+                Ok(program) => program,
+                Err(err) => return Err(err.into()),
+            }
+        } else {
+            match (mir, had_errors, self.state.lossy()) {
+                (Ok(program), false, _) => program,
+                (Ok(_), true, true) => fp_core::mir::Program::new(),
+                (Err(_), _, true) => fp_core::mir::Program::new(),
+                (Ok(_), true, false) => {
+                    let message = diagnostics
+                        .iter()
+                        .find(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
+                        .map(|diagnostic| diagnostic.message.clone())
+                        .unwrap_or_else(|| "HIR→MIR lowering reported errors".to_string());
+                    return Err(CompilerDriverError::UnsupportedWork(message));
+                }
+                (Err(err), _, false) => return Err(err.into()),
             }
         };
         let mir_id = MirId::new(format!("mir:{}", path.to_key()));

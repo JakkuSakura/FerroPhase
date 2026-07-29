@@ -1786,6 +1786,9 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 let is_const_block = matches!(&def.value, Ty::ConstBlock(_));
                 if !is_const_block {
                     self.record_unimplemented_symbol(&def.name, &def.attrs);
+                } else if let Ty::ConstBlock(ref block) = def.value {
+                    // Register as comptime need so the driver evaluates it before retry
+                    self.comptime_exprs.push((*block.expr).clone());
                 }
                 // Look up the struct by its qualified name
                 let path = if self.module_path.is_empty() {
