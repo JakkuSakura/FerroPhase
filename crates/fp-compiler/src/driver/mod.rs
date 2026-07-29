@@ -477,41 +477,28 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         &mut self,
         items_map: &HashMap<QualifiedPath, Vec<Item>>,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
-        use fp_core::lir::LirCompileUnit;
-        use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
         let mut units = Vec::new();
         for (path, items) in items_map {
             if items.is_empty() { continue; }
-            let mut file = fp_core::ast::File {
+            let file = fp_core::ast::File {
                 path: std::path::PathBuf::from(path.to_key()),
                 items: items.clone(),
                 collected_items: Vec::new(),
                 attrs: Vec::new(),
             };
 
-            let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
-                .with_extern_prelude(default_extern_prelude());
-            inferencer.seed_workspace_graph();
-            if let Err(e) = inferencer.infer_file(&mut file) {
-                eprintln!("WARNING: typing failed for {}: {e}", path.to_key());
-                continue;
-            }
+            let ast_id = AstId::new(format!("on_demand:{}", path.to_key()));
+            self.state.insert_ast(ast_id.clone(), file);
 
-            let mut hir_gen = HirGenerator::new();
-            let hir = match hir_gen.transform_file(&file) {
-                Ok(h) => h,
-                Err(_) => continue,
+            let fqp = FullyQualifiedPath::new(path.clone());
+            let core = match self.compile_unit_core(&ast_id, &fqp) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("WARNING: compile_unit_core failed for {}: {e}", path.to_key());
+                    continue;
+                }
             };
-            let mut mir_lowering = MirLowering::new();
-            let mir = match mir_lowering.transform(hir) {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            let mut lir_gen = LirGenerator::new();
-            let lir = match lir_gen.transform(mir) {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
+            let lir = self.state.lir(&core.lir_id)?.clone();
             units.push(fp_core::lir::LirCompileUnit {
                 module_path: path.clone(),
                 program: lir,
