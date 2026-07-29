@@ -73,6 +73,11 @@ impl LirInterpreter {
         self.run_function(program, func, &[])
     }
 
+    /// Look up an object handle from the objects table.
+    pub fn resolve_object(&self, handle: u64) -> Option<Value> {
+        self.state.objects.get(handle as usize).cloned()
+    }
+
     fn populate_functions(&mut self, program: &LirProgram) {
         for func in &program.functions {
             self.program_functions.insert(func.name.as_str().to_string(), func.clone());
@@ -530,10 +535,22 @@ impl LirInterpreter {
             .cloned()
             .unwrap_or_else(|| self.infer_type(aggregate));
         let element_ty = self.aggregate_element_type(&aggregate_ty, indices)?;
-        let mut aggregate_value = self.resolve_aggregate_value(aggregate, &aggregate_ty)?;
+        // If the aggregate is Undef (initial state from handle_aggregate),
+        // resolve it to a default aggregate value based on the type.
+        let mut aggregate_value = match aggregate {
+            LirValue::Constant(LirConstant::Undef(_)) => {
+                Self::default_value_for_type(&aggregate_ty)
+            }
+            _ => self.resolve_aggregate_value(aggregate, &aggregate_ty)?,
+        };
         let element_value = self.resolve_runtime_value(element, &element_ty)?;
         Self::aggregate_insert(&mut aggregate_value, &element_ty, indices, element_value)?;
-        self.store_runtime_value(dst, &aggregate_ty, aggregate_value)
+        // Store updated aggregate in objects table so subsequent
+        // InsertValue / ExtractValue instructions can resolve it by handle.
+        let handle = self.state.objects.len() as u64;
+        self.state.objects.push(aggregate_value);
+        self.wr(dst, handle);
+        Ok(())
     }
 
     fn extract_value(
@@ -832,8 +849,38 @@ impl LirInterpreter {
                 }
                 Self::aggregate_insert(slot, element_ty, rest, element)
             }
+            Value::Struct(vs) => {
+                let idx = *first as usize;
+                if idx >= vs.structural.fields.len() {
+                    return Err(VmError::Runtime(format!(
+                        "InsertValue index {} out of bounds for struct {} ({} fields)",
+                        first, vs.ty.name, vs.structural.fields.len()
+                    )));
+                }
+                let slot = &mut vs.structural.fields[idx].value;
+                if rest.is_empty() {
+                    *slot = element;
+                    return Ok(());
+                }
+                Self::aggregate_insert(slot, element_ty, rest, element)
+            }
+            Value::Structural(vs) => {
+                let idx = *first as usize;
+                if idx >= vs.fields.len() {
+                    return Err(VmError::Runtime(format!(
+                        "InsertValue index {} out of bounds for structural ({} fields)",
+                        first, vs.fields.len()
+                    )));
+                }
+                let slot = &mut vs.fields[idx].value;
+                if rest.is_empty() {
+                    *slot = element;
+                    return Ok(());
+                }
+                Self::aggregate_insert(slot, element_ty, rest, element)
+            }
             other => Err(VmError::Runtime(format!(
-                "InsertValue expects aggregate, found {other:?}"
+                "InsertValue expects aggregate (List, Tuple, Struct, Structural), found {other:?}"
             ))),
         }
     }
@@ -848,9 +895,27 @@ impl LirInterpreter {
                 Value::Tuple(tuple) => tuple.values.get(*index as usize).ok_or_else(|| {
                     VmError::Runtime(format!("aggregate index {} out of range", index))
                 })?,
+                Value::Struct(vs) => {
+                    let idx = *index as usize;
+                    vs.structural.fields.get(idx).map(|f| &f.value).ok_or_else(|| {
+                        VmError::Runtime(format!(
+                            "ExtractValue index {} out of bounds for struct {} ({} fields)",
+                            index, vs.ty.name, vs.structural.fields.len()
+                        ))
+                    })?
+                }
+                Value::Structural(vs) => {
+                    let idx = *index as usize;
+                    vs.fields.get(idx).map(|f| &f.value).ok_or_else(|| {
+                        VmError::Runtime(format!(
+                            "ExtractValue index {} out of bounds for structural ({} fields)",
+                            index, vs.fields.len()
+                        ))
+                    })?
+                }
                 other => {
                     return Err(VmError::Runtime(format!(
-                        "ExtractValue expects aggregate, found {other:?}"
+                        "ExtractValue expects aggregate (List, Tuple, Struct, Structural), found {other:?}"
                     )));
                 }
             };

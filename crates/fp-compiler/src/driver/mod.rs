@@ -556,12 +556,17 @@ let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
         let mut count = 0usize;
         let mut last = Value::unit();
         for entry in &lir.comptime_entries {
-            let value = match self.evaluate_lir_function(&lir, entry.function.as_str()) {
+            let mut value = match self.evaluate_lir_function(&lir, entry.function.as_str()) {
                 Ok(v) => v,
                 Err(_) => {
                     continue;
                 }
             };
+            // If the returned value is a raw handle (u64 from comptime
+            // struct construction), resolve it from the interpreter's objects.
+            if let Some(resolved) = Self::resolve_comptime_value(&mut self.interpreter, &value) {
+                value = resolved;
+            }
             // Store struct types from ALL entries, not just the last one.
             // Each const-block type alias produces its own struct.
             let entry_struct = Self::extract_struct_type(&value);
@@ -604,6 +609,18 @@ fn extract_struct_type(value: &Value) -> Option<TypeStruct> {
         }
         _ => None,
     }
+}
+
+/// Resolve a raw handle (u64) from the interpreter's objects table.
+/// During comptime evaluation, struct construction produces handles that
+/// need to be looked up to get the actual struct type.
+fn resolve_comptime_value(interp: &mut LirInterpreter, value: &Value) -> Option<Value> {
+    let handle = match value {
+        Value::Int(v) => v.value as u64,
+        Value::UInt(v) => v.value,
+        _ => return None,
+    };
+    interp.resolve_object(handle)
 }
 
 fn lower_to_hir(
