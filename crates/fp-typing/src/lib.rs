@@ -331,6 +331,13 @@ pub struct AstTypeInferencer<'ctx> {
     typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>,
     /// Generic invocations with resolved concrete types ready for monomorphization.
     pending_generics: Vec<GenericMonorph>,
+    /// Structs (and their `impl` blocks) resolved from a workspace crate
+    /// rather than the local one — e.g. `std::meta::TypeBuilder` via
+    /// `TypeBuilder::new(...)`. Reported out so the driver can predeclare
+    /// the owning crate's impl items alongside the file's own when lowering
+    /// to HIR, since MIR lowering's call-target resolution only ever sees
+    /// impls declared in the same HIR program.
+    cross_crate_struct_refs: HashSet<QualifiedPath>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -512,6 +519,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             generic_type_vars: HashMap::new(),
             comptime_exprs: Vec::new(),
             pending_generics: Vec::new(),
+            cross_crate_struct_refs: HashSet::new(),
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -623,17 +631,49 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
     }
 
     pub fn infer_file(&mut self, file: &mut File) -> Result<TypingOutcome> {
+        self.infer_module_inner(
+            &QualifiedPath::new(Vec::new()),
+            &mut file.items,
+            &file.attrs,
+            &file.collected_items,
+        )
+    }
+
+    /// Type-check a module's items directly, without an `ast::File` wrapper —
+    /// used for on-demand compilation of workspace-crate modules (e.g.
+    /// `std::meta`), where the driver already has `(QualifiedPath, Vec<Item>)`
+    /// in hand and shouldn't need to synthesize a fake `File` just to satisfy
+    /// this entrypoint.
+    pub fn infer_module(
+        &mut self,
+        module_path: &QualifiedPath,
+        items: &mut Vec<Item>,
+    ) -> Result<TypingOutcome> {
+        self.infer_module_inner(module_path, items, &[], &[])
+    }
+
+    fn infer_module_inner(
+        &mut self,
+        module_path: &QualifiedPath,
+        items: &mut Vec<Item>,
+        attrs: &[Attribute],
+        collected_items: &[Item],
+    ) -> Result<TypingOutcome> {
         let previous_exception = self.exception_mode;
-        self.exception_mode = attrs_has_feature(&file.attrs, "exception");
-        self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new()));
-        self.predeclare_scope_items(&file.collected_items);
-        for item in &mut file.items {
+        self.exception_mode = attrs_has_feature(attrs, "exception");
+        let saved_module_path = self.module_path.clone();
+        self.module_path = module_path.clone();
+        self.register_qualified_items(items, module_path);
+        self.predeclare_scope_items(collected_items);
+        for item in items.iter_mut() {
             if let Err(err) = self.infer_item_inner(item) {
                 self.exception_mode = previous_exception;
+                self.module_path = saved_module_path;
                 return Err(self.error_with_span(err, self.span_option(item.span())));
             }
         }
         self.exception_mode = previous_exception;
+        self.module_path = saved_module_path;
         Ok(self.finish())
     }
 
@@ -731,6 +771,9 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             resolved_names: std::mem::take(&mut self.resolved_names),
             pending_requests,
             pending_generics: std::mem::take(&mut self.pending_generics),
+            cross_crate_struct_refs: std::mem::take(&mut self.cross_crate_struct_refs)
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -1362,7 +1405,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
     }
 
     fn lookup_function_signature_with_path(
-        &self,
+        &mut self,
         locator: &Name,
     ) -> Option<(QualifiedPath, FunctionSignature)> {
         let candidate = self
@@ -1375,7 +1418,15 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             return Some((candidate, sig.clone()));
         }
         if let Some(sig) = self.typing_ctx.env_ctx.find_function_sig(&candidate) {
-            
+            // Resolved via a workspace crate, not the local one — if this is
+            // a `Struct::method`-shaped path, the struct's owning crate's
+            // `impl` block needs to be visible to HIR/MIR lowering too (see
+            // `cross_crate_struct_refs`'s doc comment).
+            if candidate.segments.len() >= 2 {
+                if let Some(struct_path) = candidate.parent_n(1) {
+                    self.cross_crate_struct_refs.insert(struct_path);
+                }
+            }
             return Some((candidate, sig.clone()));
         }
         if let Some(stripped) = Self::strip_std_prefix(&candidate) {
@@ -3339,7 +3390,14 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                             if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
                                 return Ok(Some(var));
                             }
-                            if let Some(s) = self.struct_defs.get(&candidate) {
+                            let local_struct = self.struct_defs.get(&candidate).cloned();
+                            let is_cross_crate = local_struct.is_none();
+                            if let Some(s) = local_struct
+                                .or_else(|| self.typing_ctx.env_ctx.find_struct(&candidate).cloned())
+                            {
+                                if is_cross_crate {
+                                    self.cross_crate_struct_refs.insert(candidate.clone());
+                                }
                                 if let Some((_, sig)) = s.method_sigs.iter().find(|(n, _)| n == method_name) {
                                     let sig = sig.clone();
                                     if !sig.generics_params.is_empty() {
@@ -4030,7 +4088,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 }
 
 
-fn impl_self_ty_name(expr: &Expr) -> Option<String> {
+pub fn impl_self_ty_name(expr: &Expr) -> Option<String> {
     match expr.kind() {
         ExprKind::Name(name) => Some(name.to_string()),
         _ => None,

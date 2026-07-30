@@ -60,7 +60,6 @@ struct CompileUnitCoreResult {
     mir_id: MirId,
     lir_id: LirId,
     pending_generics: Vec<GenericMonorph>,
-    pending_comptime: bool,
 }
 
 impl CompilerDriver {
@@ -135,28 +134,66 @@ impl CompilerDriver {
         }
     }
 
+    /// Runs the typer → HIR → MIR → LIR pipeline for a compile unit. If the
+    /// typer's resolution hook (`ComptimeHook`) couldn't resolve some
+    /// comptime need synchronously, this submits scheduler work to retry the
+    /// whole unit later (via `CompileUnitAnswerComptime`) and returns `None`
+    /// — callers should treat `None` as "not ready yet, an answer has
+    /// already been arranged" and return their own provisional answer
+    /// without touching the (lossy) lowering results.
+    /// The real single-source-file entry point: fetches the stored `File`
+    /// and delegates to `compile_module_core` with its items — the shared
+    /// core itself never touches `ast::File`.
     fn compile_unit_core(
         &mut self,
         ast_id: &AstId,
         path: &FullyQualifiedPath,
-    ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
-        let mut ast = self.state.ast(ast_id)?.clone();
+    ) -> Result<Option<CompileUnitCoreResult>, CompilerDriverError> {
+        let ast = self.state.ast(ast_id)?.clone();
+        self.compile_module_core(path.path().clone(), ast.items, ast_id, path)
+    }
 
+    /// Runs the typer → HIR → MIR → LIR pipeline for a module's items
+    /// directly — no `ast::File` involved. Used by `compile_unit_core` (the
+    /// one real user-source-file case, which extracts `.items` from its
+    /// stored `File` before calling in) and, more importantly, by
+    /// `compile_items_to_lir_units`/generic monomorphization, which already
+    /// have `(QualifiedPath, Vec<Item>)` in hand and no real file at all.
+    fn compile_module_core(
+        &mut self,
+        module_path: QualifiedPath,
+        mut items: Vec<Item>,
+        ast_id: &AstId,
+        path: &FullyQualifiedPath,
+    ) -> Result<Option<CompileUnitCoreResult>, CompilerDriverError> {
         let outcome = {
             let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                 .with_extern_prelude(default_extern_prelude());
             inferencer.seed_workspace_graph();
             inferencer.set_resolution_hook(Box::new(ComptimeHook { driver: &mut *self }));
-            inferencer.infer_file(&mut ast)?
+            inferencer.infer_module(&module_path, &mut items)?
         };
 
         let pending_comptime = outcome.pending_requests.iter()
             .any(|r| matches!(r.kind, PendingTypingRequestKind::Comptime));
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
-        self.state.insert_typed_ast(typed_ast_id.clone(), ast);
+        // `File` is used here purely as the existing storage-map value type
+        // (also read back by `enqueue_generic` to find a generic function's
+        // definition) — it's never passed to a generator; `path`/`attrs`/
+        // `collected_items` are irrelevant placeholders for on-demand
+        // module compiles that have no real source file.
+        self.state.insert_typed_ast(
+            typed_ast_id.clone(),
+            File {
+                path: std::path::PathBuf::from(module_path.to_key()),
+                items,
+                attrs: Vec::new(),
+                collected_items: Vec::new(),
+            },
+        );
 
-        let hir_id = self.lower_to_hir(&typed_ast_id, path)?;
+        let hir_id = self.lower_to_hir(&module_path, &typed_ast_id, path, &outcome.cross_crate_struct_refs)?;
         // Use lossy MIR when comptime needs exist — unresolved calls are expected
         // before comptime eval resolves the referenced types.
         let mir_id = if pending_comptime {
@@ -166,13 +203,42 @@ impl CompilerDriver {
         };
         let lir_id = self.lower_to_lir(&mir_id, path)?;
 
-        Ok(CompileUnitCoreResult {
+        if pending_comptime {
+            // Don't resolve comptime inline here. Submit it as scheduler work
+            // instead: `submit` (called while this request is being
+            // processed) registers a dependency on the current request, so
+            // `answer_and_schedule` will block the caller's answer until the
+            // comptime request completes, then automatically retry the
+            // caller's own work item (scheduler/stack.rs). This lets chained
+            // comptime dependencies (a const depending on another unresolved
+            // const) resolve over as many scheduler round-trips as needed,
+            // instead of a hardcoded single retry.
+            //
+            // A genuinely non-convergent dependency (one `resolve_comptime_now`
+            // can never resolve) would otherwise retry this forever, so cap
+            // it and fail with a clear error rather than hang.
+            let retries = self
+                .state
+                .comptime_retry_counts
+                .entry(path.to_key())
+                .or_insert(0);
+            *retries += 1;
+            if *retries > Self::MAX_COMPTIME_RETRIES {
+                return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
+            }
+            self.scheduler.submit(CompilerWork::CompileUnitAnswerComptime {
+                ast: ast_id.clone(),
+                path: path.clone(),
+            });
+            return Ok(None);
+        }
+
+        Ok(Some(CompileUnitCoreResult {
             typed_ast_id,
             mir_id,
             lir_id,
             pending_generics: outcome.pending_generics,
-            pending_comptime,
-        })
+        }))
     }
 
     /// Try to resolve `expr` as a compile-time value right now, scoped to
@@ -464,36 +530,9 @@ impl CompilerDriver {
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
-        let core = self.compile_unit_core(ast_id, path)?;
-        if core.pending_comptime {
-            // Don't resolve comptime inline here. Submit it as scheduler work
-            // instead: `submit` (called while this request is being
-            // processed) registers a dependency on the current request, so
-            // `answer_and_schedule` will block this answer until the comptime
-            // request completes, then automatically retry this same
-            // `CompileUnitCompileNative` work item (scheduler/stack.rs).
-            // This lets chained comptime dependencies (a const depending on
-            // another unresolved const) resolve over as many scheduler
-            // round-trips as needed, instead of a hardcoded single retry.
-            //
-            // A genuinely non-convergent dependency (one `resolve_comptime_now`
-            // can never resolve) would otherwise retry this forever, so cap
-            // it and fail with a clear error rather than hang.
-            let retries = self
-                .state
-                .comptime_retry_counts
-                .entry(path.to_key())
-                .or_insert(0);
-            *retries += 1;
-            if *retries > Self::MAX_COMPTIME_RETRIES {
-                return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
-            }
-            self.scheduler.submit(CompilerWork::CompileUnitAnswerComptime {
-                ast: ast_id.clone(),
-                path: path.clone(),
-            });
+        let Some(core) = self.compile_unit_core(ast_id, path)? else {
             return Ok(CompilerAnswer::CompileUnitCompileNative);
-        }
+        };
 
         self.evaluate_comptime_lir(&core.lir_id, path)?;
         self.enqueue_pending_generics(&core, path);
@@ -525,7 +564,9 @@ impl CompilerDriver {
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
-        let core = self.compile_unit_core(ast_id, path)?;
+        let Some(core) = self.compile_unit_core(ast_id, path)? else {
+            return Ok(CompilerAnswer::CompileUnitCompileBytecode);
+        };
         self.generate_bytecode(&core.mir_id, path)?;
         Ok(CompilerAnswer::CompileUnitCompileBytecode)
     }
@@ -535,9 +576,11 @@ impl CompilerDriver {
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
-        let core = self.compile_unit_core(ast_id, path)?;
-        self.evaluate_comptime_lir(&core.lir_id, path)?;
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
+        let Some(core) = self.compile_unit_core(ast_id, path)? else {
+            return Ok(CompilerAnswer::CompileUnitAnswerComptime { value: value_id });
+        };
+        self.evaluate_comptime_lir(&core.lir_id, path)?;
         Ok(CompilerAnswer::CompileUnitAnswerComptime { value: value_id })
     }
 
@@ -811,21 +854,30 @@ impl CompilerDriver {
         let mut units = Vec::new();
         for (path, items) in items_map {
             if items.is_empty() { continue; }
-            let file = fp_core::ast::File {
-                path: std::path::PathBuf::from(path.to_key()),
-                items: items.clone(),
-                collected_items: Vec::new(),
-                attrs: Vec::new(),
-            };
 
             let ast_id = AstId::new(format!("on_demand:{}", path.to_key()));
-            self.state.insert_ast(ast_id.clone(), file);
+            // Stored so a scheduler-driven retry (if this module's own
+            // comptime needs another round-trip) can find it via
+            // `compile_unit_core`'s thin `File`-based wrapper — scheduler
+            // retry plumbing, not something any generator sees directly;
+            // the call below goes straight to the module-oriented core with
+            // the items already in hand, no File synthesis-then-unpack.
+            self.state.insert_ast(
+                ast_id.clone(),
+                File {
+                    path: std::path::PathBuf::from(path.to_key()),
+                    items: items.clone(),
+                    collected_items: Vec::new(),
+                    attrs: Vec::new(),
+                },
+            );
 
             let fqp = FullyQualifiedPath::new(path.clone());
-            let core = match self.compile_unit_core(&ast_id, &fqp) {
-                Ok(c) => c,
+            let core = match self.compile_module_core(path.clone(), items.clone(), &ast_id, &fqp) {
+                Ok(Some(c)) => c,
+                Ok(None) => continue,
                 Err(e) => {
-                    eprintln!("WARNING: compile_unit_core failed for {}: {e}", path.to_key());
+                    eprintln!("WARNING: compile_module_core failed for {}: {e}", path.to_key());
                     continue;
                 }
             };
@@ -951,17 +1003,68 @@ fn resolve_comptime_value(interp: &mut LirInterpreter, value: &Value) -> Option<
 
 fn lower_to_hir(
         &mut self,
+        module_path: &QualifiedPath,
         typed_ast_id: &TypedAstId,
         path: &FullyQualifiedPath,
+        cross_crate_struct_refs: &[QualifiedPath],
     ) -> Result<HirId, CompilerDriverError> {
         let ast = self.state.typed_ast(typed_ast_id)?;
         let expr_res = self.state.typing_ctx.expr_resolutions.borrow().clone();
-        let hir_program = HirGenerator::with_file(&ast.path)
+        // Predeclare just the specific cross-crate struct(s)/impl(s) the
+        // typer actually resolved outside the local crate (e.g. `TypeBuilder`
+        // from `std::meta`), so MIR lowering's `lower_impl` pass — which only
+        // ever sees the current HIR program's own impls — also picks up the
+        // referenced cross-crate associated-function calls. Deliberately
+        // targeted (not "every workspace item") — an earlier attempt at the
+        // latter regressed `run_all_example_files` from 16/40 to 0/40 (std's
+        // own enums colliding with existing special-cased handling).
+        let extra_modules = self.collect_cross_crate_items(cross_crate_struct_refs);
+        let hir_program = HirGenerator::new()
             .with_expr_resolution(expr_res)
-            .transform_file(&ast)?;
+            .transform_module_with_items(module_path, &ast.items, &extra_modules)?;
         let hir = HirId::new(format!("hir:{}", path.to_key()));
         self.state.insert_hir(hir.clone(), hir_program);
         Ok(hir)
+    }
+
+    /// For each cross-crate struct path the typer resolved (e.g.
+    /// `std::meta::TypeBuilder`), find its owning `PackageCrate`'s parsed
+    /// items for that module and collect the matching `DefStruct`/`DefEnum`
+    /// plus every `Impl` block whose `self_ty` names that struct. Grouped by
+    /// origin module path — `transform_module_with_items` processes each
+    /// group under its own module context, since e.g. `TypeBuilder`'s impl
+    /// block must resolve as `std::meta::TypeBuilder`, not get requalified
+    /// under the caller's own module.
+    fn collect_cross_crate_items(&self, struct_refs: &[QualifiedPath]) -> Vec<(QualifiedPath, Vec<Item>)> {
+        let mut by_module: HashMap<QualifiedPath, Vec<Item>> = HashMap::new();
+        for struct_path in struct_refs {
+            let Some(module_path) = struct_path.parent_n(1) else {
+                continue;
+            };
+            let Some(tail) = struct_path.tail() else {
+                continue;
+            };
+            for krate in &self.state.typing_ctx.env_ctx.crates {
+                let Some(module_items) = krate.items.get(&module_path) else {
+                    continue;
+                };
+                for item in module_items {
+                    let matches = match item.kind() {
+                        ItemKind::DefStruct(def) => def.name.as_str() == tail,
+                        ItemKind::DefEnum(def) => def.name.as_str() == tail,
+                        ItemKind::Impl(impl_block) => {
+                            fp_typing::impl_self_ty_name(&impl_block.self_ty).as_deref()
+                                == Some(tail)
+                        }
+                        _ => false,
+                    };
+                    if matches {
+                        by_module.entry(module_path.clone()).or_default().push(item.clone());
+                    }
+                }
+            }
+        }
+        by_module.into_iter().collect()
     }
 
     fn lower_to_mir(
@@ -1547,7 +1650,10 @@ fn calculate() {
         TypedLooping { followups: usize },
     }
 
-    fn compile_example_file(name: &str) -> Result<ExampleResult, String> {
+    fn compile_example_file(
+        name: &str,
+        workspace: std::rc::Rc<fp_core::workspace::WorkspaceContext>,
+    ) -> Result<ExampleResult, String> {
         let abs = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../examples")
             .join(name);
@@ -1560,6 +1666,7 @@ fn calculate() {
         let ast_node = result.ast;
 
         let mut driver = CompilerDriver::new();
+        driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(workspace));
         let label = name.trim_end_matches(".fp");
         let ast_id = AstId::new(format!("ast:example::{label}"));
         driver.state.insert_ast(ast_id.clone(), ast_node);
@@ -1626,13 +1733,18 @@ fn calculate() {
             .collect();
         entries.sort();
 
+        let workspace = std::rc::Rc::new(
+            crate::std_workspace::build_workspace_with_std(&fp_lang::provider::EmbeddedStdPackageProvider)
+                .expect("failed to load embedded std"),
+        );
+
         let mut completed = 0;
         let mut typed = 0;
         let mut errors = 0;
 
         for name in &entries {
             print!("  {name:.<50} ");
-            match compile_example_file(name) {
+            match compile_example_file(name, workspace.clone()) {
                 Ok(ExampleResult::Completed { lowered, executed }) => {
                     completed += 1;
                     println!("OK  (lowered={lowered}, executed={executed})");

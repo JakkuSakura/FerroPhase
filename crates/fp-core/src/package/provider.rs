@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::module::{ModuleDescriptor, ModuleId};
-use crate::package::{PackageDescriptor, PackageId};
+use crate::package::{PackageCrate, PackageDescriptor, PackageId};
 
 pub type ProviderResult<T> = Result<T, ProviderError>;
 
@@ -31,6 +31,17 @@ pub trait PackageProvider: Send + Sync {
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>>;
     fn load_package(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>>;
     fn refresh(&self) -> ProviderResult<()>;
+
+    /// Load a package's modules — discovery, parsing, and graph construction
+    /// are the implementor's job. The returned `PackageCrate`'s `items`,
+    /// `module_paths`, and `graph` are populated; typing tables (`struct_defs`
+    /// etc.) are left empty for the typer to fill in afterward. Defaulted to
+    /// unsupported so existing implementors don't need to change.
+    fn load_package_items(&self, id: &PackageId) -> ProviderResult<PackageCrate> {
+        Err(ProviderError::other(format!(
+            "load_package_items not supported for {id}"
+        )))
+    }
 }
 
 pub trait ModuleSource: Send + Sync {

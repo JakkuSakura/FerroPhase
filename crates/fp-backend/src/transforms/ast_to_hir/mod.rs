@@ -876,6 +876,19 @@ impl HirGenerator {
 
     /// Transform a parsed AST file into HIR
     pub fn transform_file(&mut self, file: &ast::File) -> Result<hir::Program> {
+        self.transform_file_with_items(file, &[])
+    }
+
+    /// Transform a parsed AST file into HIR, predeclaring `extra_items`
+    /// alongside the file's own items. Used to make cross-crate impl blocks
+    /// that the file actually calls into (e.g. `TypeBuilder::new` from
+    /// `std::meta`) visible to `MirLowering`'s per-program `lower_impl`
+    /// pass, which otherwise only ever sees the current file's own impls.
+    pub fn transform_file_with_items(
+        &mut self,
+        file: &ast::File,
+        extra_items: &[ast::Item],
+    ) -> Result<hir::Program> {
         let mut lowered = file.clone();
         let closure_diagnostics = lower_closures_in_file(&mut lowered)?;
         diagnostic_manager().add_diagnostics(closure_diagnostics);
@@ -883,7 +896,42 @@ impl HirGenerator {
         if let Some(query) = lower_fp_file_to_query(&lowered, Some(&lowered.path)) {
             return self.transform_query_document(&query);
         }
-        self.transform_file_inner(&lowered)
+        let path = lowered.path.clone();
+        let root = fp_core::module::path::QualifiedPath::new(Vec::new());
+        let extra_modules: Vec<(fp_core::module::path::QualifiedPath, Vec<ast::Item>)> =
+            if extra_items.is_empty() {
+                Vec::new()
+            } else {
+                vec![(root.clone(), extra_items.to_vec())]
+            };
+        self.transform_module_inner(&root, path, &lowered.items, &extra_modules)
+    }
+
+    /// Transform a module's items into HIR directly, without an `ast::File`
+    /// wrapper — used for on-demand compilation of workspace-crate modules
+    /// (e.g. `std::meta`), where the driver already has
+    /// `(QualifiedPath, Vec<Item>)` in hand. Unlike `transform_file`, this
+    /// sets `module_path` to the real module identity rather than always
+    /// leaving it empty.
+    pub fn transform_module(
+        &mut self,
+        module_path: &fp_core::module::path::QualifiedPath,
+        items: &[ast::Item],
+    ) -> Result<hir::Program> {
+        self.transform_module_with_items(module_path, items, &[])
+    }
+
+    /// Like `transform_module`, but also predeclares `extra_modules` — each
+    /// `(QualifiedPath, Vec<Item>)` group is processed under its *own*
+    /// module path (e.g. a cross-crate struct/impl the module's own calls
+    /// reference), not the caller's — see `transform_module_inner`.
+    pub fn transform_module_with_items(
+        &mut self,
+        module_path: &fp_core::module::path::QualifiedPath,
+        items: &[ast::Item],
+        extra_modules: &[(fp_core::module::path::QualifiedPath, Vec<ast::Item>)],
+    ) -> Result<hir::Program> {
+        self.transform_module_inner(module_path, module_path.to_key(), items, extra_modules)
     }
 
     /// Transform a query document node into HIR.
@@ -915,10 +963,32 @@ impl HirGenerator {
         Ok(program)
     }
 
-    fn transform_file_inner(&mut self, file: &ast::File) -> Result<hir::Program> {
-        self.reset_file_context(&file.path);
+    fn transform_module_inner<P: AsRef<Path>>(
+        &mut self,
+        module_path: &fp_core::module::path::QualifiedPath,
+        file_label: P,
+        items: &[ast::Item],
+        extra_modules: &[(fp_core::module::path::QualifiedPath, Vec<ast::Item>)],
+    ) -> Result<hir::Program> {
+        self.reset_file_context(file_label);
         self.prepare_lowering_state();
-        self.predeclare_items(&file.items)?;
+
+        // Predeclare extra-module groups (each under its *own* origin module
+        // path, not the caller's — an injected cross-crate `impl` block's
+        // `self_ty`, e.g. `TypeBuilder`, resolves relative to whatever
+        // `module_path` is current, so processing it under the caller's
+        // module would qualify it as e.g. `example::foo::TypeBuilder`
+        // instead of `std::meta::TypeBuilder`, producing a symbol name that
+        // will never match what that module's own — separately compiled —
+        // LIR actually exports at runtime) *before* the caller's own items,
+        // so any call the caller's body makes into them resolves to a
+        // `Res::Def` right away instead of falling through unresolved.
+        for (extra_module_path, extra_items) in extra_modules {
+            self.module_path = extra_module_path.clone();
+            self.predeclare_items(extra_items)?;
+        }
+        self.module_path = module_path.clone();
+        self.predeclare_items(items)?;
         self.insert_default_prelude_aliases();
         let mut program = hir::Program::new();
         self.program_def_map = HashMap::new();
@@ -926,7 +996,20 @@ impl HirGenerator {
             self.program_def_map.insert(item.def_id, item.clone());
         }
 
-        for item in &file.items {
+        // Append in the same order: extra-module items (impls in particular)
+        // must land in `program.items` *before* the caller's own functions —
+        // MIR lowering processes `program.items` in a single linear pass, so
+        // an `impl` block appearing after the function that calls into it
+        // would still be unregistered (`struct_methods` empty) when that
+        // call is lowered.
+        for (extra_module_path, extra_items) in extra_modules {
+            self.module_path = extra_module_path.clone();
+            for item in extra_items {
+                self.append_item(&mut program, item)?;
+            }
+        }
+        self.module_path = module_path.clone();
+        for item in items {
             self.append_item(&mut program, item)?;
         }
 

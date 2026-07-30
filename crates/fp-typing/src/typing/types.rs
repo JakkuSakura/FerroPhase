@@ -55,6 +55,9 @@ pub struct TypingOutcome {
     pub pending_requests: Vec<PendingTypingRequest>,
     /// Generic instantiations with resolved concrete types ready for monomorphization.
     pub pending_generics: Vec<GenericMonorph>,
+    /// Structs resolved from a workspace crate rather than the local one
+    /// (e.g. `std::meta::TypeBuilder`, via `TypeBuilder::new(...)`).
+    pub cross_crate_struct_refs: Vec<QualifiedPath>,
 }
 
 /// A generic function invocation whose concrete type arguments have been resolved
