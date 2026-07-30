@@ -333,6 +333,61 @@ mod tests {
     }
 
     #[test]
+    fn load_package_dependency_auto_blocks_and_retries() {
+        let mut scheduler = CompilerScheduler::new();
+
+        let native_id = scheduler.submit(CompilerWork::CompileUnitCompileNative {
+            ast: AstId::new("ast:crate::main"),
+            path: path(&["crate", "main"]),
+        });
+        let _active = scheduler.next_request().expect("active compile native");
+
+        // Simulate the handler: the typer requested a not-yet-loaded package
+        // and yielded — submit LoadPackage as a scheduler-dependency work item
+        // exactly like the comptime case above.
+        scheduler.begin_processing(native_id);
+        let load_id = scheduler.submit(CompilerWork::LoadPackage {
+            name: "std".to_string(),
+        });
+        scheduler.end_processing();
+
+        // Answer the native unit — it should auto-block because LoadPackage is pending
+        let scheduled = scheduler
+            .answer_and_schedule(native_id, CompilerAnswer::CompileUnitCompileNative)
+            .expect("auto-blocked on package dependency");
+        assert!(scheduled.followups.is_empty(), "should have no followups when auto-blocked");
+
+        assert_eq!(
+            scheduler.blocked.get(&load_id).map(|v| v.len()),
+            Some(1),
+            "compile native should be blocked on package load"
+        );
+
+        // Now complete the package load
+        let _active = scheduler.next_request().expect("load package work");
+        let scheduled = scheduler
+            .answer_and_schedule(
+                load_id,
+                CompilerAnswer::PackageLoaded {
+                    name: "std".to_string(),
+                },
+            )
+            .expect("package answered");
+
+        // Should retry the blocked CompileUnitCompileNative
+        assert_eq!(
+            scheduled.followups.len(),
+            1,
+            "completing package load should retry blocked work"
+        );
+        let retried = scheduler.next_request().expect("retried compile native");
+        assert!(matches!(
+            retried.work,
+            CompilerWork::CompileUnitCompileNative { .. }
+        ));
+    }
+
+    #[test]
     fn no_auto_block_when_no_pending_dependencies() {
         let mut scheduler = CompilerScheduler::new();
 

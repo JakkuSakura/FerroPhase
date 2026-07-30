@@ -48,4 +48,6 @@ pub enum CompilerDriverError {
     UnsupportedWork(String),
     #[error("unresolvable comptime cycle for {0}")]
     UnresolvableComptime(AstId),
+    #[error("package {0} could not be loaded (no provider registered, or the provider failed repeatedly)")]
+    UnresolvablePackage(String),
 }

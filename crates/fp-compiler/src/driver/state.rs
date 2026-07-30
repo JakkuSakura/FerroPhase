@@ -44,6 +44,10 @@ pub struct CompilerState {
     /// cross-crate struct — mirrors `generic_instantiations`' existing dedup
     /// role for generic monomorphization.
     pub(crate) cross_crate_items_cache: HashMap<QualifiedPath, (QualifiedPath, Vec<Item>)>,
+    /// Number of times a `LoadPackage` work item has been retried for a
+    /// given package name — guards against a registered provider that keeps
+    /// failing; see `CompilerDriver::MAX_PACKAGE_RETRIES`.
+    pub(crate) package_retry_counts: BTreeMap<String, usize>,
 }
 
 impl CompilerState {
@@ -225,6 +229,7 @@ impl Default for CompilerState {
             bytecode: BTreeMap::new(),
             comptime_retry_counts: BTreeMap::new(),
             cross_crate_items_cache: HashMap::new(),
+            package_retry_counts: BTreeMap::new(),
         }
     }
 }

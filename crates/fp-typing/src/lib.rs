@@ -18,7 +18,10 @@ use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::{Error, Result};
 use fp_core::module::path::{parse_path, resolve_item_path, ParsedPath, PathPrefix, QualifiedPath};
+use fp_core::package::PackageCrate;
 use fp_core::span::Span;
+use std::cell::{Ref, RefCell, RefMut};
+use std::rc::Rc;
 // intrinsic and op kinds handled in submodules
 fn typing_error(msg: impl Into<String>) -> Error {
     Error::from(msg.into())
@@ -293,13 +296,18 @@ pub struct AstTypeInferencer<'ctx> {
     type_vars: Vec<TypeVar>,
     env: Vec<HashMap<String, EnvEntry>>,
     generic_scopes: Vec<HashSet<String>>,
-    struct_defs: HashMap<QualifiedPath, TypeStruct>,
-    enum_defs: HashMap<QualifiedPath, TypeEnum>,
+    /// This crate's own registry of definitions — struct_defs, enum_defs,
+    /// function_sigs, trait_defs — shared (via `Rc<RefCell<_>>`) with the
+    /// root `WorkspaceContext`, which already holds every other crate the
+    /// same way. Reads/writes go through `own_struct_defs[_mut]` etc. below;
+    /// there is deliberately no separate local copy of this data — the
+    /// "current crate" is just one more entry in the same root registry
+    /// that cross-crate lookups (`env_ctx.find_struct`/`find_function_sig`)
+    /// already search.
+    own_crate: Rc<RefCell<PackageCrate>>,
     enum_variants: HashMap<QualifiedPath, Vec<QualifiedPath>>,
     trait_method_sigs: HashMap<String, HashMap<String, FunctionSignature>>,
-    function_signatures: HashMap<QualifiedPath, FunctionSignature>,
     extern_function_signatures: HashMap<QualifiedPath, FunctionSignature>,
-    trait_defs: HashSet<QualifiedPath>,
     impl_traits: HashMap<QualifiedPath, HashSet<String>>,
     generic_trait_bounds: HashMap<TypeVarId, Vec<String>>,
     impl_stack: Vec<Option<ImplContext>>,
@@ -338,6 +346,12 @@ pub struct AstTypeInferencer<'ctx> {
     /// to HIR, since MIR lowering's call-target resolution only ever sees
     /// impls declared in the same HIR program.
     cross_crate_struct_refs: HashSet<QualifiedPath>,
+    /// Packages referenced by this compile unit that are *registered* (a
+    /// `PackageProvider` exists) but not yet loaded — reported out as
+    /// `PendingTypingRequestKind::Package` so the driver can load them via
+    /// the scheduler (request, yield, retry), the same way comptime needs
+    /// are deferred.
+    pending_packages: HashSet<String>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -364,7 +378,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ItemKind::DefFunction(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
-                    self.function_signatures
+                    self.own_function_sigs_mut()
                         .insert(name.clone(), def.sig.clone());
                     let var = self.register_qualified_symbol(&name);
                     let saved = self.module_path.clone();
@@ -374,7 +388,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ItemKind::DeclFunction(decl) => {
                     let name = prefix.with_segment(decl.name.as_str().to_string());
-                    self.function_signatures
+                    self.own_function_sigs_mut()
                         .insert(name.clone(), decl.sig.clone());
                     if decl.sig.abi.is_c() {
                         self.extern_function_signatures
@@ -396,7 +410,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ItemKind::DefStruct(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
-                    self.struct_defs.insert(name.clone(), def.value.clone());
+                    self.own_struct_defs_mut().insert(name.clone(), def.value.clone());
                     self.register_qualified_symbol(&name);
                 }
                 ItemKind::DefStructural(def) => {
@@ -405,7 +419,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ItemKind::DefEnum(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
-                    self.enum_defs.insert(name.clone(), def.value.clone());
+                    self.own_enum_defs_mut().insert(name.clone(), def.value.clone());
                     self.register_qualified_symbol(&name);
                 }
                 ItemKind::DefType(def) => {
@@ -418,7 +432,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 ItemKind::DefTrait(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
-                    self.trait_defs.insert(name.clone());
+                    self.own_trait_defs_mut().insert(name.clone());
                     self.register_qualified_symbol(&name);
                 }
                 ItemKind::Impl(impl_block) => {
@@ -427,12 +441,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         for child in &impl_block.items {
                             if let ItemKind::DefFunction(func) = child.kind() {
                                 // Store on the struct for method lookup
-                                if let Some(s) = self.struct_defs.get_mut(&struct_path) {
+                                if let Some(s) = self.own_struct_defs_mut().get_mut(&struct_path) {
                                     s.method_sigs.push((func.name.as_str().to_string(), func.sig.clone()));
                                 }
                                 // Also store as a function sig for ::call syntax
                                 let fn_path = struct_path.with_segment(func.name.as_str().to_string());
-                                self.function_signatures.insert(fn_path.clone(), func.sig.clone());
+                                self.own_function_sigs_mut().insert(fn_path.clone(), func.sig.clone());
                                 self.register_qualified_symbol(&fn_path);
                             }
                         }
@@ -445,15 +459,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     /// Populate `module_defs` and `root_modules` from all known
     /// crates in the workspace so that import resolution can see
-    /// module paths like `std::meta`.
+    /// module paths like `std::meta`. Also seeds `root_modules` from
+    /// *registered* (not-yet-loaded) packages, so `use std::...`-style
+    /// paths resolve to the right qualified path even before `std` is
+    /// actually loaded — loading itself happens on demand (see
+    /// `lookup_struct`/`lookup_function_signature_with_path`).
     pub fn seed_workspace_graph(&mut self) {
-        for krate in &self.typing_ctx.env_ctx.crates {
-            for path in &krate.module_paths {
+        for krate in self.typing_ctx.env_ctx.crates().values() {
+            for path in &krate.borrow().module_paths {
                 self.module_defs.insert(path.clone());
                 if let Some(head) = path.segments.first() {
                     self.root_modules.insert(head.clone());
                 }
             }
+        }
+        for name in self.typing_ctx.env_ctx.registered_names() {
+            self.root_modules.insert(name.to_string());
         }
     }
 
@@ -468,14 +489,45 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.register_qualified_items(items, path);
     }
 
-    /// Collect compiled tables into a PackageCrate after all modules
-    /// have been injected.
-    pub fn into_package_crate(self, name: impl Into<String>, graph: fp_core::package::graph::PackageGraph) -> fp_core::package::PackageCrate {
-        let mut krate = fp_core::package::PackageCrate::new(name, graph);
-        krate.struct_defs = self.struct_defs;
-        krate.function_sigs = self.function_signatures;
-        krate.trait_defs = self.trait_defs;
-        krate
+    /// Borrowed access to this crate's own registry — the "current crate"
+    /// is just one more entry in the same root every other crate lives in;
+    /// there's no separate local-vs-workspace branch anywhere. Each
+    /// accessor's `Ref`/`RefMut` guard is a short-lived temporary (dropped
+    /// at the end of the statement that uses it), matching how the plain
+    /// `HashMap` fields these replace were always used.
+    fn own_struct_defs(&self) -> Ref<'_, HashMap<QualifiedPath, TypeStruct>> {
+        Ref::map(self.own_crate.borrow(), |k| &k.struct_defs)
+    }
+    fn own_struct_defs_mut(&self) -> RefMut<'_, HashMap<QualifiedPath, TypeStruct>> {
+        RefMut::map(self.own_crate.borrow_mut(), |k| &mut k.struct_defs)
+    }
+    fn own_enum_defs(&self) -> Ref<'_, HashMap<QualifiedPath, TypeEnum>> {
+        Ref::map(self.own_crate.borrow(), |k| &k.enum_defs)
+    }
+    fn own_enum_defs_mut(&self) -> RefMut<'_, HashMap<QualifiedPath, TypeEnum>> {
+        RefMut::map(self.own_crate.borrow_mut(), |k| &mut k.enum_defs)
+    }
+    fn own_function_sigs(&self) -> Ref<'_, HashMap<QualifiedPath, FunctionSignature>> {
+        Ref::map(self.own_crate.borrow(), |k| &k.function_sigs)
+    }
+    fn own_function_sigs_mut(&self) -> RefMut<'_, HashMap<QualifiedPath, FunctionSignature>> {
+        RefMut::map(self.own_crate.borrow_mut(), |k| &mut k.function_sigs)
+    }
+    fn own_trait_defs(&self) -> Ref<'_, HashSet<QualifiedPath>> {
+        Ref::map(self.own_crate.borrow(), |k| &k.trait_defs)
+    }
+    fn own_trait_defs_mut(&self) -> RefMut<'_, HashSet<QualifiedPath>> {
+        RefMut::map(self.own_crate.borrow_mut(), |k| &mut k.trait_defs)
+    }
+
+    /// Use a specific shared crate entry (already registered in the root
+    /// `WorkspaceContext`, e.g. via `env_ctx.begin_crate`) instead of the
+    /// default standalone one `new()` creates — used when typing a
+    /// freshly-loaded package (`CompilerDriver::load_package`), so its
+    /// registry ends up in the same place every lookup already searches.
+    pub fn with_own_crate(mut self, krate: Rc<RefCell<PackageCrate>>) -> Self {
+        self.own_crate = krate;
+        self
     }
 
 pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Self {
@@ -485,13 +537,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             type_vars: Vec::new(),
             env: vec![HashMap::new()],
             generic_scopes: vec![HashSet::new()],
-            struct_defs: HashMap::new(),
-            enum_defs: HashMap::new(),
+            own_crate: Rc::new(RefCell::new(PackageCrate::default())),
             enum_variants: HashMap::new(),
             trait_method_sigs: HashMap::new(),
-            function_signatures: HashMap::new(),
             extern_function_signatures: HashMap::new(),
-            trait_defs: HashSet::new(),
             impl_traits: HashMap::new(),
             generic_trait_bounds: HashMap::new(),
             impl_stack: Vec::new(),
@@ -520,6 +569,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             comptime_exprs: Vec::new(),
             pending_generics: Vec::new(),
             cross_crate_struct_refs: HashSet::new(),
+            pending_packages: HashSet::new(),
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -803,6 +853,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             }
         }
 
+        for name in std::mem::take(&mut self.pending_packages) {
+            requests.push(PendingTypingRequest::package(name, Expr::unit()));
+        }
+
         requests
     }
 
@@ -961,13 +1015,13 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     return Some((path.join("."), vec![target.to_string()]));
                 }
                 let direct = QualifiedPath::new(vec![name.clone()]);
-                let def = if let Some(def) = self.struct_defs.get(&direct) {
+                let def = if let Some(def) = self.own_struct_defs().get(&direct) {
                     def.clone()
                 } else if let Some(def) = self.typing_ctx.env_ctx.find_struct(&direct) {
-                    def.clone()
+                    def
                 } else {
                     let mut match_def = None;
-                    for (key, def) in &self.struct_defs {
+                    for (key, def) in self.own_struct_defs().iter() {
                         if key.tail() == Some(name.as_str()) {
                             if match_def.is_some() {
                                 return None;
@@ -977,8 +1031,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     }
                     // Also check workspace
                     if match_def.is_none() {
-                        for krate in &self.typing_ctx.env_ctx.crates {
-                            for (key, def) in &krate.struct_defs {
+                        for krate in self.typing_ctx.env_ctx.crates().values() {
+                            for (key, def) in &krate.borrow().struct_defs {
                                 if key.tail() == Some(name.as_str()) {
                                     if match_def.is_some() {
                                         return None;
@@ -1114,7 +1168,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
     fn lookup_struct_def_by_name(&mut self, name: &str) -> Option<(QualifiedPath, TypeStruct)> {
         if name == "TypeBuilder" && std::env::var("FP_DEBUG_TYPEBUILDER").is_ok() {
             let keys = self
-                .struct_defs
+                .own_struct_defs()
                 .keys()
                 .filter(|key| key.tail() == Some("TypeBuilder"))
                 .cloned()
@@ -1130,20 +1184,20 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             .unwrap_or_else(|| vec![name.to_string()]);
         let name_path = QualifiedPath::new(segments.clone());
 
-        if let Some(def) = self.struct_defs.get(&name_path).cloned() {
+        if let Some(def) = self.own_struct_defs().get(&name_path).cloned() {
             return Some((name_path, def));
         }
         if let Some(def) = self.typing_ctx.env_ctx.find_struct(&name_path) {
-            return Some((name_path, def.clone()));
+            return Some((name_path, def));
         }
         if let Some(stripped) = Self::strip_std_prefix(&name_path) {
-            if let Some(def) = self.struct_defs.get(&stripped).cloned() {
+            if let Some(def) = self.own_struct_defs().get(&stripped).cloned() {
                 return Some((stripped, def));
             }
         }
         if !self.module_path.is_empty() && segments.len() == 1 {
             let qualified = self.module_path.with_segment(segments[0].clone());
-            if let Some(def) = self.struct_defs.get(&qualified).cloned() {
+            if let Some(def) = self.own_struct_defs().get(&qualified).cloned() {
                 return Some((qualified, def));
             }
         }
@@ -1151,7 +1205,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             return None;
         }
         let mut match_key = None;
-        for key in self.struct_defs.keys() {
+        for key in self.own_struct_defs().keys() {
             if key.tail() == Some(name) {
                 if match_key.is_some() {
                     return None;
@@ -1160,10 +1214,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             }
         }
         if let Some(key) = match_key {
-            return self.struct_defs.get(&key).cloned().map(|def| (key, def));
+            return self.own_struct_defs().get(&key).cloned().map(|def| (key, def));
         }
         let mut match_key = None;
-        for (key, def) in &self.struct_defs {
+        for (key, def) in self.own_struct_defs().iter() {
             if def.name.as_str() == name {
                 if match_key.is_some() {
                     return None;
@@ -1172,7 +1226,25 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             }
         }
         if let Some(key) = match_key {
-            return self.struct_defs.get(&key).cloned().map(|def| (key, def));
+            return self.own_struct_defs().get(&key).cloned().map(|def| (key, def));
+        }
+        // Also check the workspace — a bare/ambiguous-locally name may still
+        // resolve unambiguously to a single cross-crate struct.
+        let mut match_key = None;
+        for krate in self.typing_ctx.env_ctx.crates().values() {
+            for key in krate.borrow().struct_defs.keys() {
+                if key.tail() == Some(name) {
+                    if match_key.is_some() {
+                        return None;
+                    }
+                    match_key = Some(key.clone());
+                }
+            }
+        }
+        if let Some(key) = match_key {
+            if let Some(def) = self.typing_ctx.env_ctx.find_struct(&key) {
+                return Some((key, def));
+            }
         }
         for candidate in self.struct_name_variants(name) {
             if let Some(var) = self.lookup_env_var(&candidate.to_key()) {
@@ -1193,12 +1265,12 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             .unwrap_or_else(|| vec![name.to_string()]);
         let name_path = QualifiedPath::new(segments.clone());
 
-        if let Some(def) = self.enum_defs.get(&name_path).cloned() {
+        if let Some(def) = self.own_enum_defs().get(&name_path).cloned() {
             return Some((name_path, def));
         }
         if !self.module_path.is_empty() && segments.len() == 1 {
             let qualified = self.module_path.with_segment(segments[0].clone());
-            if let Some(def) = self.enum_defs.get(&qualified).cloned() {
+            if let Some(def) = self.own_enum_defs().get(&qualified).cloned() {
                 return Some((qualified, def));
             }
         }
@@ -1206,7 +1278,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             return None;
         }
         let mut match_key = None;
-        for key in self.enum_defs.keys() {
+        for key in self.own_enum_defs().keys() {
             if key.tail() == Some(name) {
                 if match_key.is_some() {
                     return None;
@@ -1215,10 +1287,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             }
         }
         if let Some(key) = match_key {
-            return self.enum_defs.get(&key).cloned().map(|def| (key, def));
+            return self.own_enum_defs().get(&key).cloned().map(|def| (key, def));
         }
         let mut match_key = None;
-        for (key, def) in &self.enum_defs {
+        for (key, def) in self.own_enum_defs().iter() {
             if def.name.as_str() == name {
                 if match_key.is_some() {
                     return None;
@@ -1226,7 +1298,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 match_key = Some(key.clone());
             }
         }
-        match_key.and_then(|key| self.enum_defs.get(&key).cloned().map(|def| (key, def)))
+        match_key.and_then(|key| self.own_enum_defs().get(&key).cloned().map(|def| (key, def)))
     }
 
     fn record_function_signature(&mut self, name: &Ident, sig: &FunctionSignature) {
@@ -1236,7 +1308,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             vec![self.module_path.with_segment(name.as_str().to_string())]
         };
         for candidate in candidates {
-            self.function_signatures.insert(candidate, sig.clone());
+            self.own_function_sigs_mut().insert(candidate, sig.clone());
         }
     }
 
@@ -1285,11 +1357,11 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
     fn item_exists_path(&self, path: &QualifiedPath) -> bool {
         let key = path.to_key();
-        self.struct_defs.contains_key(path)
-            || self.enum_defs.contains_key(path)
-            || self.function_signatures.contains_key(path)
+        self.own_struct_defs().contains_key(path)
+            || self.own_enum_defs().contains_key(path)
+            || self.own_function_sigs().contains_key(path)
             || self.extern_function_signatures.contains_key(path)
-            || self.trait_defs.contains(path)
+            || self.own_trait_defs().contains(path)
             || self.unimplemented_symbols.contains(path)
             || self.env_contains(&key)
             || self.typing_ctx.env_ctx.find_struct(path).is_some()
@@ -1393,7 +1465,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         if let Some(sig) = self.extern_function_signatures.get(&candidate) {
             return Some(sig.clone());
         }
-        if let Some(sig) = self.function_signatures.get(&candidate) {
+        if let Some(sig) = self.own_function_sigs().get(&candidate) {
             return Some(sig.clone());
         }
         self.lookup_stripped_function_signature(&candidate)
@@ -1414,7 +1486,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         if let Some(sig) = self.extern_function_signatures.get(&candidate) {
             return Some((candidate, sig.clone()));
         }
-        if let Some(sig) = self.function_signatures.get(&candidate) {
+        if let Some(sig) = self.own_function_sigs().get(&candidate) {
             return Some((candidate, sig.clone()));
         }
         if let Some(sig) = self.typing_ctx.env_ctx.find_function_sig(&candidate) {
@@ -1430,15 +1502,21 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             return Some((candidate, sig.clone()));
         }
         if let Some(stripped) = Self::strip_std_prefix(&candidate) {
-            if let Some(sig) = self.function_signatures.get(&stripped) {
+            if let Some(sig) = self.own_function_sigs().get(&stripped) {
                 return Some((stripped, sig.clone()));
             }
         }
         if let Some((path, sig)) = self.lookup_prefixed_signature_with_path(&candidate, false) {
             return Some((path, sig));
         }
-        self.locator_tail_name(locator)
+        if let Some(found) = self
+            .locator_tail_name(locator)
             .and_then(|name| self.lookup_function_signature_by_name_with_path(&name))
+        {
+            return Some(found);
+        }
+        self.note_pending_package_if_registered(&candidate);
+        None
     }
 
     fn lookup_extern_function_signature_with_path(
@@ -1464,7 +1542,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         candidate: &QualifiedPath,
     ) -> Option<FunctionSignature> {
         let stripped = Self::strip_std_prefix(candidate)?;
-        self.function_signatures.get(&stripped).cloned()
+        self.own_function_sigs().get(&stripped).cloned()
     }
 
     fn strip_std_prefix(candidate: &QualifiedPath) -> Option<QualifiedPath> {
@@ -1516,7 +1594,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
     fn lookup_function_signature_by_name(&self, name: &str) -> Option<FunctionSignature> {
         let mut found: Option<FunctionSignature> = None;
-        for (key, sig) in &self.function_signatures {
+        for (key, sig) in self.own_function_sigs().iter() {
             if key.tail() == Some(name) {
                 if found.is_some() {
                     return None;
@@ -1532,7 +1610,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         name: &str,
     ) -> Option<(QualifiedPath, FunctionSignature)> {
         let mut found: Option<(QualifiedPath, FunctionSignature)> = None;
-        for (key, sig) in &self.function_signatures {
+        for (key, sig) in self.own_function_sigs().iter() {
             if key.tail() == Some(name) {
                 if found.is_some() {
                     return None;
@@ -1562,7 +1640,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 return Some(sig.clone());
             }
             if !extern_only {
-                if let Some(sig) = self.function_signatures.get(&qualified) {
+                if let Some(sig) = self.own_function_sigs().get(&qualified) {
                     return Some(sig.clone());
                 }
             }
@@ -1589,7 +1667,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 return Some((qualified, sig.clone()));
             }
             if !extern_only {
-                if let Some(sig) = self.function_signatures.get(&qualified) {
+                if let Some(sig) = self.own_function_sigs().get(&qualified) {
                     return Some((qualified, sig.clone()));
                 }
             }
@@ -1620,13 +1698,13 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             return None;
         }
 
-        if let Some(def) = self.struct_defs.get(&name).cloned() {
+        if let Some(def) = self.own_struct_defs().get(&name).cloned() {
             return Some(ImplContext {
                 struct_name: name,
                 self_ty: Ty::Struct(def),
             });
         }
-        if let Some(def) = self.enum_defs.get(&name).cloned() {
+        if let Some(def) = self.own_enum_defs().get(&name).cloned() {
             return Some(ImplContext {
                 struct_name: name,
                 self_ty: Ty::Enum(def),
@@ -1650,7 +1728,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         }
 
         for candidate in self.struct_name_variants_for_path(&name, name.segments.len() == 1) {
-            if let Some(def) = self.struct_defs.get(&candidate).cloned() {
+            if let Some(def) = self.own_struct_defs().get(&candidate).cloned() {
                 return Some(ImplContext {
                     struct_name: candidate,
                     self_ty: Ty::Struct(def),
@@ -1658,7 +1736,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             }
         }
         for candidate in self.struct_name_variants_for_path(&name, name.segments.len() == 1) {
-            if let Some(def) = self.enum_defs.get(&candidate).cloned() {
+            if let Some(def) = self.own_enum_defs().get(&candidate).cloned() {
                 return Some(ImplContext {
                     struct_name: candidate,
                     self_ty: Ty::Enum(def),
@@ -1745,7 +1823,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         for candidate in self
             .struct_name_variants_for_path(&ctx.struct_name, ctx.struct_name.segments.len() == 1)
         {
-            if let Some(s) = self.struct_defs.get_mut(&candidate) {
+            if let Some(s) = self.own_struct_defs_mut().get_mut(&candidate) {
                 s.method_sigs.push((func.name.as_str().to_string(), func.sig.clone()));
             }
         }
@@ -1827,10 +1905,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 } else {
                     self.module_path.with_segment(def.name.as_str().to_string())
                 };
-                let struct_def = self.struct_defs.get(&path).cloned().or_else(|| {
+                let struct_def = self.own_struct_defs().get(&path).cloned().or_else(|| {
                     self.typing_ctx.resolved_types.borrow().get(def.name.as_str()).cloned()
                         .map(|s| {
-                            self.struct_defs.insert(path.clone(), s.clone());
+                            self.own_struct_defs_mut().insert(path.clone(), s.clone());
                             s
                         })
                 });
@@ -1844,7 +1922,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 let enum_name = self
                     .qualified_name(def.name.as_str())
                     .unwrap_or_else(|| QualifiedPath::new(vec![def.name.as_str().to_string()]));
-                self.enum_defs.insert(enum_name.clone(), def.value.clone());
+                self.own_enum_defs_mut().insert(enum_name.clone(), def.value.clone());
                 self.register_symbol(&def.name);
 
                 let mut variant_keys = Vec::new();
@@ -1863,7 +1941,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 let trait_name = self
                     .qualified_name(def.name.as_str())
                     .unwrap_or_else(|| QualifiedPath::new(vec![def.name.as_str().to_string()]));
-                self.trait_defs.insert(trait_name);
+                self.own_trait_defs_mut().insert(trait_name);
                 self.record_unimplemented_symbol(&def.name, &def.attrs);
                 self.register_symbol(&def.name);
                 let entry = self
@@ -2085,7 +2163,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         let key = self
             .qualified_name(name)
             .unwrap_or_else(|| QualifiedPath::new(vec![name.to_string()]));
-        if self.struct_defs.contains_key(&key) {
+        if self.own_struct_defs().contains_key(&key) {
             return;
         }
         let ty = TypeStruct {
@@ -2095,7 +2173,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             method_sigs: Vec::new(),
             fields: Vec::new(),
         };
-        self.struct_defs.insert(key, ty);
+        self.own_struct_defs_mut().insert(key, ty);
         self.register_symbol(&Ident::new(name));
     }
 
@@ -2103,7 +2181,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         let key = self
             .qualified_name(name)
             .unwrap_or_else(|| QualifiedPath::new(vec![name.to_string()]));
-        if self.enum_defs.contains_key(&key) {
+        if self.own_enum_defs().contains_key(&key) {
             return;
         }
         let ty = TypeEnum {
@@ -2112,7 +2190,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             repr: ReprOptions::default(),
             variants: Vec::new(),
         };
-        self.enum_defs.insert(key, ty);
+        self.own_enum_defs_mut().insert(key, ty);
         self.register_symbol(&Ident::new(name));
     }
 
@@ -2484,7 +2562,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                                 let source_name = QualifiedPath::new(
                                     vec![merged_ty.name.as_str().to_string()],
                                 );
-                                if let Some(source_def) = self.struct_defs.get(&source_name) {
+                                if let Some(source_def) = self.own_struct_defs().get(&source_name) {
                                     let mut merged = source_def.fields.clone();
                                     for f in &merged_ty.fields {
                                         if !merged.iter().any(|m| m.name == f.name) {
@@ -2752,7 +2830,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                                     &ctx.struct_name,
                                     ctx.struct_name.segments.len() == 1,
                                 ) {
-                                    if let Some(s) = self.struct_defs.get_mut(&candidate) {
+                                    if let Some(s) = self.own_struct_defs_mut().get_mut(&candidate) {
                                         if s.method_sigs.iter().any(|(n, _)| n == &method_name) {
                                             continue;
                                         }
@@ -3039,7 +3117,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 &ctx.struct_name,
                 ctx.struct_name.segments.len() == 1,
             ) {
-                if let Some(s) = self.struct_defs.get_mut(&candidate) {
+                if let Some(s) = self.own_struct_defs_mut().get_mut(&candidate) {
                     if !s.method_sigs.iter().any(|(n, _)| n == func.name.as_str()) {
                         s.method_sigs.push((func.name.as_str().to_string(), func.sig.clone()));
                     }
@@ -3317,7 +3395,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         } else {
             self.module_path.with_segment(name.as_str().to_string())
         };
-        self.struct_defs.insert(key, def);
+        self.own_struct_defs_mut().insert(key, def);
     }
 
     fn insert_enum_def(&mut self, name: &Ident, def: TypeEnum) {
@@ -3326,7 +3404,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         } else {
             self.module_path.with_segment(name.as_str().to_string())
         };
-        self.enum_defs.insert(key, def);
+        self.own_enum_defs_mut().insert(key, def);
     }
 
     fn parent_module_path(&self) -> QualifiedPath {
@@ -3381,26 +3459,39 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                             if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
                                 return Ok(Some(var));
                             }
-                            // Only borrow the struct def long enough to find the one
-                            // matching method signature — no need to clone the whole
-                            // `TypeStruct` (every field, every other method) just to
-                            // extract a single `FunctionSignature`.
-                            let struct_lookup = self
-                                .struct_defs
-                                .get(&candidate)
-                                .map(|s| (false, s))
-                                .or_else(|| {
-                                    self.typing_ctx
-                                        .env_ctx
-                                        .find_struct(&candidate)
-                                        .map(|s| (true, s))
-                                });
-                            if let Some((is_cross_crate, s)) = struct_lookup {
-                                let found_sig = s
-                                    .method_sigs
-                                    .iter()
-                                    .find(|(n, _)| n == method_name)
-                                    .map(|(_, sig)| sig.clone());
+                            // Only borrow/clone the struct def long enough to
+                            // find the one matching method signature — the
+                            // local case doesn't need to clone the whole
+                            // `TypeStruct` at all (cross-crate lookups
+                            // already clone internally via `find_struct`,
+                            // since crates now live behind a `RefCell` for
+                            // on-demand loading).
+                            let local = self.own_struct_defs().get(&candidate).map(|s| {
+                                (
+                                    false,
+                                    s.method_sigs
+                                        .iter()
+                                        .find(|(n, _)| n == method_name)
+                                        .map(|(_, sig)| sig.clone()),
+                                )
+                            });
+                            let (is_cross_crate, found_sig) = if let Some(result) = local {
+                                result
+                            } else if let Some(s) =
+                                self.typing_ctx.env_ctx.find_struct(&candidate)
+                            {
+                                (
+                                    true,
+                                    s.method_sigs
+                                        .into_iter()
+                                        .find(|(n, _)| n == method_name)
+                                        .map(|(_, sig)| sig),
+                                )
+                            } else {
+                                self.note_pending_package_if_registered(&candidate);
+                                (false, None)
+                            };
+                            if is_cross_crate || self.own_struct_defs().contains_key(&candidate) {
                                 if is_cross_crate {
                                     self.cross_crate_struct_refs.insert(candidate.clone());
                                 }
@@ -3422,7 +3513,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         }
 
                         // Enum tuple variant constructors: `Enum::Variant(...)`.
-                        if let Some(enum_def) = self.enum_defs.get(&struct_name).cloned() {
+                        let enum_def = self.own_enum_defs().get(&struct_name).cloned();
+                        if let Some(enum_def) = enum_def {
                             if let Some(variant) = enum_def
                                 .variants
                                 .iter()
@@ -3487,7 +3579,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     variant_name,
                     self.resolve_segments_key(path.prefix, &enum_segments),
                 ) {
-                    if let Some(enum_def) = self.enum_defs.get(&enum_key).cloned() {
+                    let enum_def = self.own_enum_defs().get(&enum_key).cloned();
+                    if let Some(enum_def) = enum_def {
                         if enum_def
                             .variants
                             .iter()
@@ -3557,7 +3650,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 return Ok((self.error_type_var(), None));
             }
         };
-        if self.struct_defs.contains_key(&key) || self.enum_defs.contains_key(&key) {
+        if self.own_struct_defs().contains_key(&key) || self.own_enum_defs().contains_key(&key) {
             let var = self.fresh_type_var();
             self.bind(var, Ty::Type(TypeType::new(Span::null())));
             return Ok((
@@ -3578,7 +3671,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             ));
         }
         // Fallback: workspace crates may have this function registered
-        let workspace_sig = self.typing_ctx.env_ctx.find_function_sig(&key).cloned();
+        let workspace_sig = self.typing_ctx.env_ctx.find_function_sig(&key);
         if let Some(sig) = workspace_sig {
             let fn_ty = self.ty_from_function_signature(&sig)?;
             let var = self.type_from_ast_ty(&fn_ty)?;

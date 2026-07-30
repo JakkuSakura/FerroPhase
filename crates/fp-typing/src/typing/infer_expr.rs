@@ -694,7 +694,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             self.unify(pat_info.var, elem_var)?;
                         }
                     }
-                    eprintln!("[typing] for loop: pat_var={:?} resolved={:?}", pat_info.var, self.resolve_to_ty(pat_info.var));
                     // For now, treat `for` as producing unit.
                     let unit_var = self.fresh_type_var();
                     self.bind(unit_var, Ty::Unit(TypeUnit));
@@ -2025,7 +2024,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             .map(|seg| seg.as_str().to_string())
             .collect::<Vec<_>>();
         let enum_key = self.resolve_segments_key(path.prefix, &enum_segments)?;
-        let enum_def = self.enum_defs.get(&enum_key).cloned()?;
+        let enum_def = self.own_enum_defs().get(&enum_key).cloned()?;
         let variant = enum_def
             .variants
             .iter()
@@ -2491,7 +2490,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub(crate) fn make_hashmap_struct(&self) -> TypeStruct {
         let key = QualifiedPath::new(vec!["HashMap".to_string()]);
-        if let Some(existing) = self.struct_defs.get(&key) {
+        if let Some(existing) = self.own_struct_defs().get(&key) {
             return existing.clone();
         }
         TypeStruct {
@@ -2839,7 +2838,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         QualifiedPath::new(vec![struct_pat.name.as_str().to_string()])
                     });
                 let struct_var = self.fresh_type_var();
-                if let Some(struct_def) = self.struct_defs.get(&struct_name).cloned() {
+                let struct_def = self.own_struct_defs().get(&struct_name).cloned();
+                if let Some(struct_def) = struct_def {
                     self.bind(struct_var, Ty::Struct(struct_def.clone()));
                     let mut bindings = Vec::new();
                     for field in &mut struct_pat.fields {
@@ -2905,7 +2905,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         if let Some(enum_key) =
                             self.resolve_segments_key(path.prefix, &enum_segments)
                         {
-                            enum_def = self.enum_defs.get(&enum_key).cloned();
+                            enum_def = self.own_enum_defs().get(&enum_key).cloned();
                         }
                         if enum_def.is_none() {
                             let enum_name = enum_segments.join("::");
@@ -2990,7 +2990,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 if let Some(enum_key) =
                                     self.resolve_segments_key(path.prefix, &enum_segments)
                                 {
-                                    enum_def = self.enum_defs.get(&enum_key).cloned();
+                                    enum_def = self.own_enum_defs().get(&enum_key).cloned();
                                 }
                                 if enum_def.is_none() {
                                     let enum_name = enum_segments.join("::");
@@ -3107,7 +3107,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             _ => None,
                         });
                         if let Some(struct_name) = struct_name {
-                            if let Some(struct_def) = self.struct_defs.get(&struct_name).cloned() {
+                            let struct_def = self.own_struct_defs().get(&struct_name).cloned();
+                            if let Some(struct_def) = struct_def {
                                 let struct_var = self.fresh_type_var();
                                 self.bind(struct_var, Ty::Struct(struct_def.clone()));
                                 if let Some(inner) = variant.pattern.as_mut() {
@@ -3807,7 +3808,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
         if let Some(def) = candidates
             .iter()
-            .find_map(|name| self.struct_defs.get(name).cloned())
+            .find_map(|name| self.own_struct_defs().get(name).cloned())
             .or_else(|| {
                 self.lookup_struct_def_by_name(&struct_name.to_key())
                     .map(|(_, def)| def)
@@ -3843,7 +3844,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         .map(|seg| seg.as_str().to_string())
                         .collect::<Vec<_>>();
                     if let Some(enum_key) = self.resolve_segments_key(path.prefix, &enum_segments) {
-                        if let Some(enum_def) = self.enum_defs.get(&enum_key).cloned() {
+                        let enum_def = self.own_enum_defs().get(&enum_key).cloned();
+                        if let Some(enum_def) = enum_def {
                             if let Some(variant) = enum_def
                                 .variants
                                 .iter()
@@ -3947,10 +3949,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ExprKind::Name(locator) => self
                     .resolve_locator_key(locator)
                     .as_ref()
-                    .and_then(|key| self.struct_defs.get(key).cloned())
+                    .and_then(|key| self.own_struct_defs().get(key).cloned())
                     .or_else(|| {
                         locator.as_ident().and_then(|ident| {
-                            self.struct_defs
+                            self.own_struct_defs()
                                 .get(&QualifiedPath::new(vec![ident.as_str().to_string()]))
                                 .cloned()
                         })

@@ -106,13 +106,24 @@ impl PendingTypingRequest {
             expr,
         }
     }
+
+    pub fn package(name: impl Into<String>, expr: Expr) -> Self {
+        Self {
+            kind: PendingTypingRequestKind::Package(name.into()),
+            expr,
+        }
+    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PendingTypingRequestKind {
     Unresolved,
     Generic,
     Comptime,
+    /// A registered-but-not-yet-loaded package was referenced; the driver
+    /// loads it via the scheduler (see `CompilerWork::LoadPackage`) and
+    /// retries this compile unit once it's available.
+    Package(String),
 }
 
 pub type ExprId = fp_core::ast::ExprId;

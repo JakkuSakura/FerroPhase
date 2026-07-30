@@ -28,6 +28,14 @@ pub enum CompilerWork {
     Revalidate {
         invalidated: Vec<InvalidatedObjectId>,
     },
+    /// Load a registered package (e.g. `std`, or any other package a
+    /// `PackageProvider` is registered for) on demand — submitted when a
+    /// compile unit's typing pass reports a `Package` pending request; the
+    /// scheduler's usual dependency/retry mechanism blocks that compile
+    /// unit until this completes, then retries it.
+    LoadPackage {
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -72,4 +80,7 @@ pub enum CompilerAnswer {
         ast: AstId,
     },
     Revalidated,
+    PackageLoaded {
+        name: String,
+    },
 }

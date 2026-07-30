@@ -164,9 +164,28 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    pub(crate) fn lookup_struct(&self, path: &QualifiedPath) -> Option<TypeStruct> {
-        self.struct_defs.get(path).cloned()
-            .or_else(|| self.typing_ctx.env_ctx.find_struct(path).cloned())
+    pub(crate) fn lookup_struct(&mut self, path: &QualifiedPath) -> Option<TypeStruct> {
+        if let Some(def) = self.own_struct_defs().get(path).cloned() {
+            return Some(def);
+        }
+        if let Some(def) = self.typing_ctx.env_ctx.find_struct(path) {
+            return Some(def);
+        }
+        self.note_pending_package_if_registered(path);
+        None
+    }
+
+    /// If `path`'s head segment names a *registered* package that isn't
+    /// loaded yet, record a pending package request instead of letting the
+    /// caller treat this as a genuine "unresolved" error — the driver loads
+    /// it via the scheduler and retries this compile unit (see
+    /// `PendingTypingRequestKind::Package`).
+    pub(crate) fn note_pending_package_if_registered(&mut self, path: &QualifiedPath) {
+        if let Some(head) = path.head() {
+            if self.typing_ctx.env_ctx.is_registered(head) && !self.typing_ctx.env_ctx.is_loaded(head) {
+                self.pending_packages.insert(head.to_string());
+            }
+        }
     }
 
     fn lower_infer_vars_in_ty(
@@ -1539,10 +1558,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 }
                                 let mut handled = false;
                                 if let Some(key) = self.resolve_locator_key(loc) {
-                                    if let Some(enum_ty) = self.enum_defs.get(&key) {
+                                    let enum_ty = self.own_enum_defs().get(&key).cloned();
+                                    if let Some(enum_ty) = enum_ty {
                                         if enum_ty.generics_params.len() == concrete_args.len() {
                                             let concrete = self.apply_generic_args_to_enum(
-                                                enum_ty,
+                                                &enum_ty,
                                                 &concrete_args,
                                             );
                                             self.bind(var, Ty::Enum(concrete));
@@ -1581,9 +1601,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         "option".to_string(),
                                         "Option".to_string(),
                                     ]);
-                                    if let Some(enum_ty) = self.enum_defs.get(&std_option) {
+                                    let enum_ty = self.own_enum_defs().get(&std_option).cloned();
+                                    if let Some(enum_ty) = enum_ty {
                                         let concrete = self
-                                            .apply_generic_args_to_enum(enum_ty, &concrete_args);
+                                            .apply_generic_args_to_enum(&enum_ty, &concrete_args);
                                         self.bind(var, Ty::Enum(concrete));
                                         return Ok(var);
                                     }
@@ -1594,9 +1615,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         "result".to_string(),
                                         "Result".to_string(),
                                     ]);
-                                    if let Some(enum_ty) = self.enum_defs.get(&std_result) {
+                                    let enum_ty = self.own_enum_defs().get(&std_result).cloned();
+                                    if let Some(enum_ty) = enum_ty {
                                         let concrete = self
-                                            .apply_generic_args_to_enum(enum_ty, &concrete_args);
+                                            .apply_generic_args_to_enum(&enum_ty, &concrete_args);
                                         self.bind(var, Ty::Enum(concrete));
                                         return Ok(var);
                                     }
@@ -1719,8 +1741,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             self.bind(var, Ty::Struct(struct_ty));
                             return Ok(var);
                         }
-                        if let Some(enum_ty) = self.enum_defs.get(&key) {
-                            self.bind(var, Ty::Enum(enum_ty.clone()));
+                        let enum_ty = self.own_enum_defs().get(&key).cloned();
+                        if let Some(enum_ty) = enum_ty {
+                            self.bind(var, Ty::Enum(enum_ty));
                             return Ok(var);
                         }
                         if let Some(stripped) = Self::strip_std_prefix(&key) {
@@ -1728,8 +1751,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 self.bind(var, Ty::Struct(struct_ty));
                                 return Ok(var);
                             }
-                            if let Some(enum_ty) = self.enum_defs.get(&stripped) {
-                                self.bind(var, Ty::Enum(enum_ty.clone()));
+                            let enum_ty = self.own_enum_defs().get(&stripped).cloned();
+                            if let Some(enum_ty) = enum_ty {
+                                self.bind(var, Ty::Enum(enum_ty));
                                 return Ok(var);
                             }
                         }
@@ -1752,8 +1776,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             }
                         }
                         for candidate in &candidates {
-                            if let Some(enum_ty) = self.enum_defs.get(candidate) {
-                                self.bind(var, Ty::Enum(enum_ty.clone()));
+                            let enum_ty = self.own_enum_defs().get(candidate).cloned();
+                            if let Some(enum_ty) = enum_ty {
+                                self.bind(var, Ty::Enum(enum_ty));
                                 return Ok(var);
                             }
                         }

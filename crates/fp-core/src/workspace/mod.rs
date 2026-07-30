@@ -190,14 +190,29 @@ impl WorkspaceDependency {
 
 use crate::ast::{FunctionSignature, TypeStruct};
 use crate::module::path::QualifiedPath;
+use crate::package::graph::PackageGraph;
+use crate::package::provider::PackageProvider;
 use crate::package::PackageCrate;
+use std::cell::{Ref, RefCell};
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::Arc;
 
-/// Compiled form of a workspace — all crates in topological order.
-/// The typer queries this for fully-qualified symbol lookups after
-/// checking local and module scopes.
-#[derive(Clone, Debug, Default)]
+/// The single root registry every crate/scope lives in — including the one
+/// currently being typed (see `CompilerDriver::load_package` and
+/// `AstTypeInferencer::own_crate`), plus a registry of providers that can
+/// load more crates on demand. The typer queries this for fully-qualified
+/// symbol lookups after checking local scopes; when a lookup misses because
+/// a *registered* package hasn't been loaded yet, the caller records a
+/// pending request instead of erroring, and the compiler driver loads it via
+/// the registered provider — uniformly for `std` or any other registered
+/// package, not eagerly up front. Each crate keeps and mutates its own
+/// storage (`Rc<RefCell<PackageCrate>>`); lookups across crates borrow that
+/// storage rather than cloning it wholesale.
+#[derive(Default)]
 pub struct WorkspaceContext {
-    pub crates: Vec<PackageCrate>,
+    crates: RefCell<HashMap<String, Rc<RefCell<PackageCrate>>>>,
+    providers: HashMap<String, Arc<dyn PackageProvider>>,
 }
 
 impl WorkspaceContext {
@@ -205,23 +220,60 @@ impl WorkspaceContext {
         Self::default()
     }
 
-    pub fn push_crate(&mut self, krate: PackageCrate) {
-        self.crates.push(krate);
+    /// Register a package's loader. Registration itself isn't on-demand —
+    /// it just declares "this package exists and can be loaded" — only the
+    /// actual load (parsing + typing) is deferred until first reference.
+    pub fn register_provider(&mut self, name: impl Into<String>, provider: Arc<dyn PackageProvider>) {
+        self.providers.insert(name.into(), provider);
     }
 
-    pub fn find_struct(&self, path: &QualifiedPath) -> Option<&TypeStruct> {
-        for krate in self.crates.iter().rev() {
-            if let Some(s) = krate.struct_defs.get(path) {
-                return Some(s);
+    /// Start a new crate/scope: creates an empty `PackageCrate`, inserts it
+    /// into the root under `name`, and returns the same `Rc` so the caller
+    /// (e.g. `AstTypeInferencer`, or `CompilerDriver::load_package`) can hold
+    /// it directly and mutate it going forward — no re-lookup by name needed
+    /// for every write.
+    pub fn begin_crate(&self, name: impl Into<String>, graph: PackageGraph) -> Rc<RefCell<PackageCrate>> {
+        let name = name.into();
+        let krate = Rc::new(RefCell::new(PackageCrate::new(name.clone(), graph)));
+        self.crates.borrow_mut().insert(name, krate.clone());
+        krate
+    }
+
+    pub fn is_loaded(&self, name: &str) -> bool {
+        self.crates.borrow().contains_key(name)
+    }
+
+    pub fn is_registered(&self, name: &str) -> bool {
+        self.providers.contains_key(name)
+    }
+
+    pub fn provider(&self, name: &str) -> Option<Arc<dyn PackageProvider>> {
+        self.providers.get(name).cloned()
+    }
+
+    /// Names of every registered package, whether or not it's been loaded
+    /// yet — used to seed root-module recognition so `use std::...`-style
+    /// paths resolve correctly even before `std` is actually loaded.
+    pub fn registered_names(&self) -> impl Iterator<Item = &str> {
+        self.providers.keys().map(|s| s.as_str())
+    }
+
+    /// Search every crate for a struct at `path`, borrowing each crate just
+    /// long enough to check — the one clone that remains is the matched
+    /// item itself, needed regardless to build an owned `Ty::Struct(..)`.
+    pub fn find_struct(&self, path: &QualifiedPath) -> Option<TypeStruct> {
+        for krate in self.crates.borrow().values() {
+            if let Some(s) = krate.borrow().struct_defs.get(path) {
+                return Some(s.clone());
             }
         }
         None
     }
 
-    pub fn find_function_sig(&self, path: &QualifiedPath) -> Option<&FunctionSignature> {
-        for krate in self.crates.iter().rev() {
-            if let Some(sig) = krate.function_sigs.get(path) {
-                return Some(sig);
+    pub fn find_function_sig(&self, path: &QualifiedPath) -> Option<FunctionSignature> {
+        for krate in self.crates.borrow().values() {
+            if let Some(sig) = krate.borrow().function_sigs.get(path) {
+                return Some(sig.clone());
             }
         }
         None
@@ -229,7 +281,15 @@ impl WorkspaceContext {
 
     pub fn has_module(&self, path: &QualifiedPath) -> bool {
         self.crates
-            .iter()
-            .any(|krate| krate.module_paths.contains(path))
+            .borrow()
+            .values()
+            .any(|krate| krate.borrow().module_paths.contains(path))
+    }
+
+    /// Borrow the root map directly. Used by callers that need to iterate
+    /// every crate themselves (e.g. an early-return tail-name search, or
+    /// gathering LIR units) rather than looking up one qualified path.
+    pub fn crates(&self) -> Ref<'_, HashMap<String, Rc<RefCell<PackageCrate>>>> {
+        self.crates.borrow()
     }
 }

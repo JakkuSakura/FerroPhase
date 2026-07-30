@@ -68,6 +68,9 @@ impl CompilerDriver {
     /// as many rounds as their depth requires; this only guards against a
     /// dependency that can never resolve.
     const MAX_COMPTIME_RETRIES: usize = 64;
+    /// Cap on scheduler-driven package-load retries for a single package
+    /// name — guards against a registered provider that keeps failing.
+    const MAX_PACKAGE_RETRIES: usize = 8;
 
     pub fn new() -> Self {
         Self {
@@ -130,6 +133,7 @@ impl CompilerDriver {
             CompilerWork::CompileUnitCompileBytecode { ast, path } => {
                 self.compile_unit_compile_bytecode(ast, path)
             }
+            CompilerWork::LoadPackage { name } => self.load_package(name),
             _ => Err(CompilerDriverError::UnsupportedWork(format!("{request:?}"))),
         }
     }
@@ -176,6 +180,14 @@ impl CompilerDriver {
 
         let pending_comptime = outcome.pending_requests.iter()
             .any(|r| matches!(r.kind, PendingTypingRequestKind::Comptime));
+        let pending_package_names: HashSet<String> = outcome
+            .pending_requests
+            .iter()
+            .filter_map(|r| match &r.kind {
+                PendingTypingRequestKind::Package(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
         // `File` is used here purely as the existing storage-map value type
@@ -202,6 +214,27 @@ impl CompilerDriver {
             self.lower_to_mir(&hir_id, path)?
         };
         let lir_id = self.lower_to_lir(&mir_id, path)?;
+
+        if !pending_package_names.is_empty() {
+            // Same shape as the comptime case below: submit each missing
+            // package as its own scheduler-dependency work item (the typer
+            // *requested* the package and yielded — it never loads anything
+            // itself), so `answer_and_schedule` blocks this compile unit
+            // until every one of them is loaded, then retries it.
+            for name in &pending_package_names {
+                let retries = self
+                    .state
+                    .package_retry_counts
+                    .entry(name.clone())
+                    .or_insert(0);
+                *retries += 1;
+                if *retries > Self::MAX_PACKAGE_RETRIES {
+                    return Err(CompilerDriverError::UnresolvablePackage(name.clone()));
+                }
+                self.scheduler.submit(CompilerWork::LoadPackage { name: name.clone() });
+            }
+            return Ok(None);
+        }
 
         if pending_comptime {
             // Don't resolve comptime inline here. Submit it as scheduler work
@@ -239,6 +272,48 @@ impl CompilerDriver {
             lir_id,
             pending_generics: outcome.pending_generics,
         }))
+    }
+
+    /// Load a registered package on demand (generalizes what used to be a
+    /// hardcoded, eager `build_workspace_with_std` step run once in `fp-cli`
+    /// before the driver even started). Uniform for `std` or any other
+    /// package a `PackageProvider` is registered for: discovery/parsing is
+    /// the provider's job (`load_package_items`); typing it runs through the
+    /// same `AstTypeInferencer` machinery as any other module, just pointed
+    /// at the crate slot `env_ctx.begin_crate` just reserved in the shared
+    /// root registry — so this package's own cross-crate references (if
+    /// any) recursively go through the identical pending/retry path.
+    fn load_package(&mut self, name: &str) -> Result<CompilerAnswer, CompilerDriverError> {
+        let answer = CompilerAnswer::PackageLoaded {
+            name: name.to_string(),
+        };
+        if self.state.typing_ctx.env_ctx.is_loaded(name) {
+            // Already satisfied by an earlier `LoadPackage` request for the
+            // same name (the scheduler doesn't dedupe submissions) — no-op.
+            return Ok(answer);
+        }
+        let Some(provider) = self.state.typing_ctx.env_ctx.provider(name) else {
+            return Err(CompilerDriverError::UnresolvablePackage(name.to_string()));
+        };
+        let raw = provider
+            .load_package_items(&fp_core::package::PackageId::new(name))
+            .map_err(|e| CompilerDriverError::UnresolvablePackage(format!("{name}: {e}")))?;
+
+        let own_crate = self.state.typing_ctx.env_ctx.begin_crate(name, raw.graph.clone());
+        {
+            let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
+                .with_extern_prelude(default_extern_prelude())
+                .with_own_crate(own_crate.clone());
+            for (path, items) in &raw.items {
+                inferencer.inject_module(path, items);
+            }
+        }
+        // Parsed items, kept for on-demand LIR compilation later
+        // (`compile_items_to_lir_units`) — typing tables are already
+        // populated in-place on `own_crate` via the inferencer above.
+        own_crate.borrow_mut().items = raw.items;
+
+        Ok(answer)
     }
 
     /// Try to resolve `expr` as a compile-time value right now, scoped to
@@ -287,8 +362,8 @@ impl CompilerDriver {
             // support) may depend on workspace crates' compiled LIR, exactly
             // as `evaluate_comptime_lir` includes for the whole-file path —
             // a bare single-expression unit alone doesn't carry that support.
-            for krate in &self.state.typing_ctx.env_ctx.crates {
-                units.extend(krate.lir_units.iter().cloned());
+            for krate in self.state.typing_ctx.env_ctx.crates().values() {
+                units.extend(krate.borrow().lir_units.iter().cloned());
             }
             let mut interpreter = LirInterpreter::new();
             interpreter.inject_globals(&self.collect_resolved_const_values());
@@ -911,15 +986,16 @@ impl CompilerDriver {
             program: lir,
         });
         // Workspace crates with pre-compiled LIR
-        for krate in &self.state.typing_ctx.env_ctx.crates {
-            for unit in &krate.lir_units {
+        for krate in self.state.typing_ctx.env_ctx.crates().values() {
+            for unit in &krate.borrow().lir_units {
                 all_units.push(unit.clone());
             }
         }
 
         // On-demand: compile workspace crate items that have no LIR
-        let crates_to_compile: Vec<_> = self.state.typing_ctx.env_ctx.crates
-            .iter()
+        let crates_to_compile: Vec<_> = self.state.typing_ctx.env_ctx.crates()
+            .values()
+            .map(|c| c.borrow())
             .filter(|c| c.lir_units.is_empty() && !c.items.is_empty())
             .map(|c| c.items.clone())
             .collect();
@@ -1063,7 +1139,8 @@ fn lower_to_hir(
                 continue;
             };
             let mut matched_items = Vec::new();
-            for krate in &self.state.typing_ctx.env_ctx.crates {
+            for krate in self.state.typing_ctx.env_ctx.crates().values() {
+                let krate = krate.borrow();
                 let Some(module_items) = krate.items.get(&module_path) else {
                     continue;
                 };
@@ -1756,10 +1833,12 @@ fn calculate() {
             .collect();
         entries.sort();
 
-        let workspace = std::rc::Rc::new(
-            crate::std_workspace::build_workspace_with_std(&fp_lang::provider::EmbeddedStdPackageProvider)
-                .expect("failed to load embedded std"),
+        let mut workspace = fp_core::workspace::WorkspaceContext::new();
+        workspace.register_provider(
+            "std",
+            std::sync::Arc::new(fp_lang::provider::EmbeddedStdPackageProvider),
         );
+        let workspace = std::rc::Rc::new(workspace);
 
         let mut completed = 0;
         let mut typed = 0;
@@ -1786,6 +1865,86 @@ fn calculate() {
         println!(
             "\n  Examples: {completed} completed, {typed} typed-but-looping, {errors} errors ({} total)",
             entries.len()
+        );
+    }
+
+    #[test]
+    fn duplicate_package_requests_load_std_exactly_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        struct CountingStdProvider {
+            calls: Arc<AtomicUsize>,
+        }
+
+        impl fp_core::package::provider::PackageProvider for CountingStdProvider {
+            fn list_packages(
+                &self,
+            ) -> fp_core::package::provider::ProviderResult<Vec<fp_core::package::PackageId>>
+            {
+                Ok(vec![fp_core::package::PackageId::new("std")])
+            }
+
+            fn load_package(
+                &self,
+                _id: &fp_core::package::PackageId,
+            ) -> fp_core::package::provider::ProviderResult<
+                Arc<fp_core::package::PackageDescriptor>,
+            > {
+                Err(fp_core::package::provider::ProviderError::other(
+                    "unused in test",
+                ))
+            }
+
+            fn refresh(&self) -> fp_core::package::provider::ProviderResult<()> {
+                Ok(())
+            }
+
+            fn load_package_items(
+                &self,
+                id: &fp_core::package::PackageId,
+            ) -> fp_core::package::provider::ProviderResult<fp_core::package::PackageCrate>
+            {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(fp_core::package::PackageCrate::new(
+                    id.0.clone(),
+                    fp_core::package::graph::PackageGraph::new(vec![]),
+                ))
+            }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut workspace = fp_core::workspace::WorkspaceContext::new();
+        workspace.register_provider(
+            "std",
+            Arc::new(CountingStdProvider {
+                calls: calls.clone(),
+            }),
+        );
+        let mut driver = CompilerDriver::new();
+        driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
+            std::rc::Rc::new(workspace),
+        ));
+
+        // Simulates two different compile units each independently requesting
+        // `std`: the scheduler would dispatch a `LoadPackage` work item per
+        // request, so `load_package` runs once per request — the second call
+        // must see `is_loaded` and no-op instead of reloading via the
+        // provider (see `CompilerDriver::load_package`'s dedup guard).
+        let first = driver.load_package("std").expect("first load");
+        let second = driver.load_package("std").expect("second load (already loaded)");
+
+        assert!(matches!(first, CompilerAnswer::PackageLoaded { .. }));
+        assert!(matches!(second, CompilerAnswer::PackageLoaded { .. }));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "provider should only be invoked once across both requests"
+        );
+        assert_eq!(
+            driver.state.typing_ctx.env_ctx.crates().len(),
+            1,
+            "workspace should hold exactly one std crate, not one per request"
         );
     }
 

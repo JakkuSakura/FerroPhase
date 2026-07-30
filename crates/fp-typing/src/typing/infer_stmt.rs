@@ -488,7 +488,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             _ => None,
         }?;
         let mut candidate: Option<TypeEnum> = None;
-        for enum_def in self.enum_defs.values() {
+        for enum_def in self.own_enum_defs().values() {
             if enum_def
                 .variants
                 .iter()

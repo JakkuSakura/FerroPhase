@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use fp_compiler::{
     AstId, BytecodeId, CompilerDriver, CompilerModuleResolver, CompilerWork, ConstValueId,
-    FullyQualifiedPath, LirId, MirId, build_workspace_with_std,
+    FullyQualifiedPath, LirId, MirId,
 };
 use fp_core::{
     ast::register_threadlocal_serializer,
@@ -798,9 +798,11 @@ fn lower_ast(
     let mut driver = CompilerDriver::new();
     driver.state.set_lossy(lossy.enabled);
 
-    // Compile embedded std into the workspace context
-    let workspace = build_workspace_with_std(&fp_lang::provider::EmbeddedStdPackageProvider)
-        .expect("failed to load embedded std");
+    // Register std's provider — its content loads on demand, the first
+    // time anything in the compiled program actually references it (see
+    // `CompilerDriver::load_package`), not eagerly here.
+    let mut workspace = fp_core::workspace::WorkspaceContext::new();
+    workspace.register_provider("std", Arc::new(fp_lang::provider::EmbeddedStdPackageProvider));
     driver.state.typing_ctx = std::rc::Rc::new(
         fp_typing::TypingContext::new(std::rc::Rc::new(workspace))
     );
