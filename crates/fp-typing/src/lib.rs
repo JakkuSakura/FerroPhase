@@ -2046,15 +2046,6 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 self.exit_scope();
                 self.impl_stack.pop();
             }
-            ItemKind::Expr(expr) => {
-                if let ExprKind::Struct(struct_expr) = expr.kind() {
-                    if let Some(name) = self.struct_name_from_expr(&struct_expr.name) {
-                        if let Some(def) = self.struct_defs.get(&name).cloned() {
-                            self.struct_defs.insert(name, def);
-                        }
-                    }
-                }
-            }
             _ => {}
         }
     }
@@ -3390,16 +3381,30 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                             if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
                                 return Ok(Some(var));
                             }
-                            let local_struct = self.struct_defs.get(&candidate).cloned();
-                            let is_cross_crate = local_struct.is_none();
-                            if let Some(s) = local_struct
-                                .or_else(|| self.typing_ctx.env_ctx.find_struct(&candidate).cloned())
-                            {
+                            // Only borrow the struct def long enough to find the one
+                            // matching method signature — no need to clone the whole
+                            // `TypeStruct` (every field, every other method) just to
+                            // extract a single `FunctionSignature`.
+                            let struct_lookup = self
+                                .struct_defs
+                                .get(&candidate)
+                                .map(|s| (false, s))
+                                .or_else(|| {
+                                    self.typing_ctx
+                                        .env_ctx
+                                        .find_struct(&candidate)
+                                        .map(|s| (true, s))
+                                });
+                            if let Some((is_cross_crate, s)) = struct_lookup {
+                                let found_sig = s
+                                    .method_sigs
+                                    .iter()
+                                    .find(|(n, _)| n == method_name)
+                                    .map(|(_, sig)| sig.clone());
                                 if is_cross_crate {
                                     self.cross_crate_struct_refs.insert(candidate.clone());
                                 }
-                                if let Some((_, sig)) = s.method_sigs.iter().find(|(n, _)| n == method_name) {
-                                    let sig = sig.clone();
+                                if let Some(sig) = found_sig {
                                     if !sig.generics_params.is_empty() {
                                         let scheme = self.scheme_from_method_signature(&sig).ok();
                                         if let Some(scheme) = scheme {

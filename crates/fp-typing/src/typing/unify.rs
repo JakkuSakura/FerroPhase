@@ -1466,7 +1466,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         let map_var = self.fresh_type_var();
                     if let Some(key) = self.resolve_locator_key(loc) {
                             if let Some(struct_ty) = self.lookup_struct(&key) {
-                                self.bind(map_var, Ty::Struct(struct_ty.clone()));
+                                self.bind(map_var, Ty::Struct(struct_ty));
                             } else if let Some(s) = self.typing_ctx.env_ctx.find_struct(&key) {
                                 self.bind(map_var, Ty::Struct(s.clone()));
                             } else {
@@ -1716,7 +1716,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     if let Some(key) = resolved.clone() {
                         if let Some(struct_ty) = self.lookup_struct(&key) {
-                            self.bind(var, Ty::Struct(struct_ty.clone()));
+                            self.bind(var, Ty::Struct(struct_ty));
                             return Ok(var);
                         }
                         if let Some(enum_ty) = self.enum_defs.get(&key) {
@@ -1725,7 +1725,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                         if let Some(stripped) = Self::strip_std_prefix(&key) {
                             if let Some(struct_ty) = self.lookup_struct(&stripped) {
-                                self.bind(var, Ty::Struct(struct_ty.clone()));
+                                self.bind(var, Ty::Struct(struct_ty));
                                 return Ok(var);
                             }
                             if let Some(enum_ty) = self.enum_defs.get(&stripped) {
@@ -1747,7 +1747,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                         for candidate in &candidates {
                             if let Some(struct_ty) = self.lookup_struct(candidate) {
-                                self.bind(var, Ty::Struct(struct_ty.clone()));
+                                self.bind(var, Ty::Struct(struct_ty));
                                 return Ok(var);
                             }
                         }

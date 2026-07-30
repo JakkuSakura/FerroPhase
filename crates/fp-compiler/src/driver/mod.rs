@@ -859,9 +859,12 @@ impl CompilerDriver {
             // Stored so a scheduler-driven retry (if this module's own
             // comptime needs another round-trip) can find it via
             // `compile_unit_core`'s thin `File`-based wrapper — scheduler
-            // retry plumbing, not something any generator sees directly;
-            // the call below goes straight to the module-oriented core with
-            // the items already in hand, no File synthesis-then-unpack.
+            // retry plumbing, not something any generator sees directly.
+            // This clone is independent from the one passed to
+            // `compile_module_core` below on purpose: that call mutates its
+            // `items` in place (typing stamps types onto each node), so the
+            // raw copy kept here for a potential retry can't share storage
+            // with it.
             self.state.insert_ast(
                 ast_id.clone(),
                 File {
@@ -895,13 +898,17 @@ impl CompilerDriver {
         lir_id: &LirId,
         path: &FullyQualifiedPath,
     ) -> Result<usize, CompilerDriverError> {
-        let mut lir = self.state.lir(lir_id)?.clone();
+        let lir = self.state.lir(lir_id)?.clone();
+        // Only `comptime_entries` is needed after `lir` itself is moved into
+        // `all_units` below — clone just that (much smaller than the whole
+        // program) rather than cloning the entire `LirProgram` a second time.
+        let comptime_entries = lir.comptime_entries.clone();
 
         // Collect all LirCompileUnits: user's module + workspace crates
         let mut all_units: Vec<fp_core::lir::LirCompileUnit> = Vec::new();
         all_units.push(fp_core::lir::LirCompileUnit {
             module_path: path.path().clone(),
-            program: lir.clone(),
+            program: lir,
         });
         // Workspace crates with pre-compiled LIR
         for krate in &self.state.typing_ctx.env_ctx.crates {
@@ -925,7 +932,7 @@ impl CompilerDriver {
 
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
 
-        if lir.comptime_entries.is_empty() {
+        if comptime_entries.is_empty() {
             self.state.insert_const_value(value_id.clone(), Value::unit());
             return Ok(0);
         }
@@ -935,7 +942,7 @@ impl CompilerDriver {
         self.interpreter = LirInterpreter::new();
         let resolved = self.collect_resolved_const_values();
         self.interpreter.inject_globals(&resolved);
-        for entry in &lir.comptime_entries {
+        for entry in &comptime_entries {
             let mut value = match self.interpreter.run_function_named(&all_units, entry.function.as_str()) {
                 Ok(v) => v,
                 Err(_) => continue,
@@ -1008,8 +1015,6 @@ fn lower_to_hir(
         path: &FullyQualifiedPath,
         cross_crate_struct_refs: &[QualifiedPath],
     ) -> Result<HirId, CompilerDriverError> {
-        let ast = self.state.typed_ast(typed_ast_id)?;
-        let expr_res = self.state.typing_ctx.expr_resolutions.borrow().clone();
         // Predeclare just the specific cross-crate struct(s)/impl(s) the
         // typer actually resolved outside the local crate (e.g. `TypeBuilder`
         // from `std::meta`), so MIR lowering's `lower_impl` pass — which only
@@ -1019,6 +1024,8 @@ fn lower_to_hir(
         // latter regressed `run_all_example_files` from 16/40 to 0/40 (std's
         // own enums colliding with existing special-cased handling).
         let extra_modules = self.collect_cross_crate_items(cross_crate_struct_refs);
+        let ast = self.state.typed_ast(typed_ast_id)?;
+        let expr_res = self.state.typing_ctx.expr_resolutions.borrow().clone();
         let hir_program = HirGenerator::new()
             .with_expr_resolution(expr_res)
             .transform_module_with_items(module_path, &ast.items, &extra_modules)?;
@@ -1035,15 +1042,27 @@ fn lower_to_hir(
     /// group under its own module context, since e.g. `TypeBuilder`'s impl
     /// block must resolve as `std::meta::TypeBuilder`, not get requalified
     /// under the caller's own module.
-    fn collect_cross_crate_items(&self, struct_refs: &[QualifiedPath]) -> Vec<(QualifiedPath, Vec<Item>)> {
+    fn collect_cross_crate_items(&mut self, struct_refs: &[QualifiedPath]) -> Vec<(QualifiedPath, Vec<Item>)> {
         let mut by_module: HashMap<QualifiedPath, Vec<Item>> = HashMap::new();
         for struct_path in struct_refs {
+            // Two different compile units referencing the same cross-crate
+            // struct (e.g. two files both calling `TypeBuilder::new`) would
+            // otherwise each independently re-scan the owning crate's items
+            // for the same match — cache the resolved group per struct path,
+            // mirroring `generic_instantiations`' existing dedup role for
+            // generic monomorphization.
+            if let Some((module_path, items)) = self.state.cross_crate_items_cache.get(struct_path) {
+                by_module.entry(module_path.clone()).or_default().extend(items.iter().cloned());
+                continue;
+            }
+
             let Some(module_path) = struct_path.parent_n(1) else {
                 continue;
             };
             let Some(tail) = struct_path.tail() else {
                 continue;
             };
+            let mut matched_items = Vec::new();
             for krate in &self.state.typing_ctx.env_ctx.crates {
                 let Some(module_items) = krate.items.get(&module_path) else {
                     continue;
@@ -1059,10 +1078,14 @@ fn lower_to_hir(
                         _ => false,
                     };
                     if matches {
-                        by_module.entry(module_path.clone()).or_default().push(item.clone());
+                        matched_items.push(item.clone());
                     }
                 }
             }
+            self.state
+                .cross_crate_items_cache
+                .insert(struct_path.clone(), (module_path.clone(), matched_items.clone()));
+            by_module.entry(module_path).or_default().extend(matched_items);
         }
         by_module.into_iter().collect()
     }

@@ -1022,7 +1022,6 @@ impl HirGenerator {
             program.items.extend(synthetic.drain(..));
         }
 
-        self.program_def_map.extend(program.def_map.clone());
         Ok(program)
     }
 

@@ -2105,27 +2105,6 @@ impl HirGenerator {
             .collect())
     }
 
-    #[allow(dead_code)]
-    pub(super) fn program_def_params(&self, def_id: hir::DefId) -> Option<Vec<hir::Symbol>> {
-        let Some(item) = self.program_def_map.get(&def_id) else {
-            return None;
-        };
-        match &item.kind {
-            hir::ItemKind::Function(function) => Some(
-                function
-                    .sig
-                    .inputs
-                    .iter()
-                    .filter_map(|param| match &param.pat.kind {
-                        hir::PatKind::Binding { name, .. } => Some(name.clone()),
-                        _ => None,
-                    })
-                    .collect(),
-            ),
-            _ => None,
-        }
-    }
-
     pub(super) fn program_def_param_info(
         &self,
         def_id: hir::DefId,

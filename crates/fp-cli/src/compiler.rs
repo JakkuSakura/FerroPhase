@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use fp_compiler::{
     AstId, BytecodeId, CompilerDriver, CompilerModuleResolver, CompilerWork, ConstValueId,
-`    FullyQualifiedPath, LirId, MirId, build_workspace_with_std,
+    FullyQualifiedPath, LirId, MirId, build_workspace_with_std,
 };
 use fp_core::{
     ast::register_threadlocal_serializer,

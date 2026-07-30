@@ -1,10 +1,11 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::{
-    ast::{Expr, ExprId, File, Value},
+    ast::{Expr, ExprId, File, Item, Value},
     hir, lir, mir,
+    module::path::QualifiedPath,
     module::resolution::ModuleResolutionContext,
 };
 use fp_typing::TypingContext;
@@ -35,6 +36,14 @@ pub struct CompilerState {
     /// non-convergent comptime dependency would otherwise retry forever;
     /// see `CompilerDriver::compile_unit_compile_native`.
     pub(crate) comptime_retry_counts: BTreeMap<String, usize>,
+    /// Memoized `(origin module path, matched items)` per cross-crate struct
+    /// path (e.g. `std::meta::TypeBuilder`), populated by
+    /// `CompilerDriver::collect_cross_crate_items`. Avoids re-scanning a
+    /// workspace crate's `PackageCrate::items` and re-deriving the same
+    /// group every time a different compile unit references the same
+    /// cross-crate struct — mirrors `generic_instantiations`' existing dedup
+    /// role for generic monomorphization.
+    pub(crate) cross_crate_items_cache: HashMap<QualifiedPath, (QualifiedPath, Vec<Item>)>,
 }
 
 impl CompilerState {
@@ -215,6 +224,7 @@ impl Default for CompilerState {
             generic_instantiations: HashSet::new(),
             bytecode: BTreeMap::new(),
             comptime_retry_counts: BTreeMap::new(),
+            cross_crate_items_cache: HashMap::new(),
         }
     }
 }
