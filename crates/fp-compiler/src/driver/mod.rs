@@ -6,8 +6,8 @@ pub use state::CompilerState;
 
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::ast::{
-    BlockStmt, Expr, ExprKind, File, Item, ItemDefEnum, ItemDefStruct, ItemKind, Name, Ty,
-    TypeStruct, TypeType, Value, Visibility,
+    BlockStmt, Expr, ExprInvokeTarget, ExprKind, File, Item, ItemDefEnum, ItemDefStruct, ItemKind,
+    Name, Ty, TypeStruct, TypeType, Value, Visibility,
 };
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::mir;
@@ -347,6 +347,7 @@ impl CompilerDriver {
         let mut extra_items = Vec::new();
         let mut seen_types = HashSet::new();
         Self::collect_referenced_struct_enum_items(&probe_expr, &mut extra_items, &mut seen_types);
+        self.collect_impl_items_for_types(&seen_types, &mut extra_items);
 
         let resolved = (|| -> Result<Value, CompilerDriverError> {
             let hir_program =
@@ -529,6 +530,22 @@ impl CompilerDriver {
             ExprKind::UnOp(u) => Self::collect_referenced_struct_enum_items(&u.val, out, seen),
             ExprKind::Cast(c) => Self::collect_referenced_struct_enum_items(&c.expr, out, seen),
             ExprKind::Invoke(invoke) => {
+                // The receiver of a chained method call (`.with_field(...)`)
+                // lives in `target`, not `args` — without walking into it,
+                // a receiver type several calls deep (e.g. the `TypeBuilder`
+                // in `TypeBuilder::new(...).with_field(...).build()`) is
+                // never discovered, so its impl block never makes it into
+                // `extra_items` and method-call lowering falls back to an
+                // opaque stub that doesn't thread values between calls.
+                match &invoke.target {
+                    ExprInvokeTarget::Method(select) => {
+                        Self::collect_referenced_struct_enum_items(&select.obj, out, seen);
+                    }
+                    ExprInvokeTarget::Expr(target_expr) => {
+                        Self::collect_referenced_struct_enum_items(target_expr, out, seen);
+                    }
+                    _ => {}
+                }
                 for arg in &invoke.args {
                     Self::collect_referenced_struct_enum_items(arg, out, seen);
                 }
@@ -597,6 +614,36 @@ impl CompilerDriver {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Find each referenced struct/enum's inherent `impl` block across every
+    /// loaded workspace crate and append it to `out`. Without this, HIR
+    /// generation for the probe only ever sees the bare struct/enum shape
+    /// (from `collect_referenced_struct_enum_items`), never its methods —
+    /// so a chained method call like `TypeBuilder::new(...).with_field(...)`
+    /// can't resolve `with_field` to the real function and falls back to a
+    /// synthetic "opaque" stub that doesn't thread values between calls.
+    fn collect_impl_items_for_types(&self, names: &HashSet<String>, out: &mut Vec<Item>) {
+        if names.is_empty() {
+            return;
+        }
+        for krate in self.state.typing_ctx.env_ctx.crates().values() {
+            for items in krate.borrow().items.values() {
+                for item in items {
+                    let ItemKind::Impl(impl_block) = item.kind() else {
+                        continue;
+                    };
+                    if impl_block.trait_ty.is_some() {
+                        continue;
+                    }
+                    if let Some(name) = fp_typing::impl_self_ty_name(&impl_block.self_ty) {
+                        if names.contains(&name) {
+                            out.push(item.clone());
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1866,6 +1913,95 @@ fn calculate() {
             "\n  Examples: {completed} completed, {typed} typed-but-looping, {errors} errors ({} total)",
             entries.len()
         );
+    }
+
+    /// `TypeBuilder::new(...).with_field(...)` — a chained instance method
+    /// call whose receiver's struct is only discoverable via `.ty()`
+    /// annotations several calls deep. Before this fix,
+    /// `collect_referenced_struct_enum_items` only walked `invoke.args`, so
+    /// a receiver buried in `invoke.target` (an `ExprInvokeTarget::Method`)
+    /// was never found — the referenced struct's impl block never made it
+    /// into the comptime probe, and method-call lowering fell back to a
+    /// synthetic stub with no real body.
+    #[test]
+    fn collect_referenced_struct_enum_items_walks_method_call_receiver() {
+        use fp_core::ast::{
+            ExprSelect, ExprSelectType, Ident, ReprOptions, TypeStruct,
+        };
+
+        let mut receiver = Expr::ident(Ident::new("builder"));
+        receiver.set_ty(Ty::Struct(TypeStruct {
+            name: Ident::new("Foo"),
+            generics_params: Vec::new(),
+            repr: ReprOptions::default(),
+            method_sigs: Vec::new(),
+            fields: Vec::new(),
+        }));
+
+        let call = Expr::from(fp_core::ast::ExprKind::Invoke(fp_core::ast::ExprInvoke {
+            span: Span::default(),
+            target: ExprInvokeTarget::Method(ExprSelect {
+                span: Span::default(),
+                obj: Box::new(receiver),
+                field: Ident::new("with_field"),
+                select: ExprSelectType::Method,
+            }),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+        }));
+
+        let mut extra_items = Vec::new();
+        let mut seen = HashSet::new();
+        CompilerDriver::collect_referenced_struct_enum_items(&call, &mut extra_items, &mut seen);
+
+        assert!(
+            seen.contains("Foo"),
+            "expected the method call's receiver type to be discovered, got {seen:?}"
+        );
+        assert!(
+            extra_items
+                .iter()
+                .any(|item| matches!(item.kind(), ItemKind::DefStruct(d) if d.name.as_str() == "Foo")),
+            "expected a DefStruct item for the discovered receiver type"
+        );
+    }
+
+    /// Once the receiver type is discovered, `collect_impl_items_for_types`
+    /// must pull in its *inherent* impl block from wherever it's actually
+    /// defined (a loaded workspace crate) — that's what lets the real
+    /// `with_field` method resolve instead of falling back to an opaque
+    /// stub with no body.
+    #[test]
+    fn collect_impl_items_for_types_finds_inherent_impl_in_loaded_crate() {
+        use fp_core::ast::{Ident, ItemImpl};
+
+        let driver = CompilerDriver::new();
+        let krate = driver
+            .state
+            .typing_ctx
+            .env_ctx
+            .begin_crate("somepkg", fp_core::package::graph::PackageGraph::new(vec![]));
+        let impl_item = Item::new(ItemKind::Impl(ItemImpl {
+            attrs: Vec::new(),
+            is_negative: false,
+            trait_ty: None,
+            self_ty: Expr::ident(Ident::new("Foo")),
+            generics_params: Vec::new(),
+            collected_items: Vec::new(),
+            items: Vec::new(),
+        }));
+        krate
+            .borrow_mut()
+            .items
+            .insert(QualifiedPath::new(vec!["somepkg".to_string()]), vec![impl_item]);
+
+        let mut names = HashSet::new();
+        names.insert("Foo".to_string());
+        let mut extra_items = Vec::new();
+        driver.collect_impl_items_for_types(&names, &mut extra_items);
+
+        assert_eq!(extra_items.len(), 1, "expected exactly the one matching impl block");
+        assert!(matches!(extra_items[0].kind(), ItemKind::Impl(_)));
     }
 
     #[test]
