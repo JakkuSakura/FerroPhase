@@ -4,7 +4,7 @@ use fp_core::error::Result;
 use fp_core::module::path::PathPrefix;
 use std::collections::{HashMap, HashSet};
 
-impl<'ctx> AstTypeInferencer<'ctx> {
+impl AstTypeInferencer {
     pub(crate) fn is_stmt_or_item_quote(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Quote(quote) => matches!(
@@ -28,17 +28,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    pub(crate) async fn infer_block(&mut self, block: &mut ExprBlock) -> Result<TypeVarId> {
+    pub(crate) async fn infer_block(&self, block: &mut ExprBlock) -> Result<TypeVarId> {
         self.enter_scope();
         self.predeclare_scope_items(&block.collected_items).await;
 
         // Phase 1: infer items (type aliases, consts, nested fn sigs)
-        let mut needs_retry = false;
         for stmt in &mut block.stmts {
             if let BlockStmt::Item(item) = stmt {
-                if self.infer_block_item(item).await? {
-                    needs_retry = true;
-                }
+                self.infer_block_item(item).await?;
             }
         }
 
@@ -133,7 +130,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(last)
     }
 
-    pub(crate) async fn infer_if(&mut self, if_expr: &mut ExprIf) -> Result<TypeVarId> {
+    pub(crate) async fn infer_if(&self, if_expr: &mut ExprIf) -> Result<TypeVarId> {
         let cond = self.infer_expr_inner(if_expr.cond.as_mut()).await?;
         self.ensure_bool(cond, "if condition")?;
         let then_ty = self.infer_expr_inner(if_expr.then.as_mut()).await?;
@@ -164,25 +161,25 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(then_ty)
     }
 
-    pub(crate) async fn infer_loop(&mut self, expr_loop: &mut ExprLoop) -> Result<TypeVarId> {
+    pub(crate) async fn infer_loop(&self, expr_loop: &mut ExprLoop) -> Result<TypeVarId> {
         let loop_result_var = self.fresh_type_var();
-        self.loop_stack.push(LoopContext::new(loop_result_var));
+        self.inner.borrow_mut().loop_stack.push(LoopContext::new(loop_result_var));
 
         let body_var = match self.infer_expr_inner(expr_loop.body.as_mut()).await {
             Ok(var) => var,
             Err(err) => {
-                self.loop_stack.pop();
+                self.inner.borrow_mut().loop_stack.pop();
                 return Err(err);
             }
         };
 
         let unit_var = self.unit_type_var();
         if let Err(err) = self.unify(body_var, unit_var).await {
-            self.loop_stack.pop();
+            self.inner.borrow_mut().loop_stack.pop();
             return Err(err);
         }
 
-        let Some(context) = self.loop_stack.pop() else {
+        let Some(context) = self.inner.borrow_mut().loop_stack.pop() else {
             let message = "loop stack underflow when finishing loop inference".to_string();
             self.emit_error(message.clone());
             return Err(typing_error(message));
@@ -195,26 +192,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(loop_result_var)
     }
 
-    pub(crate) async fn infer_while(&mut self, expr_while: &mut ExprWhile) -> Result<TypeVarId> {
+    pub(crate) async fn infer_while(&self, expr_while: &mut ExprWhile) -> Result<TypeVarId> {
         let cond_var = self.infer_expr_inner(expr_while.cond.as_mut()).await?;
         self.ensure_bool(cond_var, "while condition")?;
         let loop_unit_var = self.unit_type_var();
-        self.loop_stack.push(LoopContext::new(loop_unit_var));
+        self.inner.borrow_mut().loop_stack.push(LoopContext::new(loop_unit_var));
 
         let body_var = match self.infer_expr_inner(expr_while.body.as_mut()).await {
             Ok(var) => var,
             Err(err) => {
-                self.loop_stack.pop();
+                self.inner.borrow_mut().loop_stack.pop();
                 return Err(err);
             }
         };
 
         if let Err(err) = self.unify(body_var, loop_unit_var).await {
-            self.loop_stack.pop();
+            self.inner.borrow_mut().loop_stack.pop();
             return Err(err);
         }
 
-        let Some(_context) = self.loop_stack.pop() else {
+        let Some(_context) = self.inner.borrow_mut().loop_stack.pop() else {
             let message = "loop stack underflow when finishing while inference".to_string();
             self.emit_error(message.clone());
             return Err(typing_error(message));
@@ -223,7 +220,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(loop_unit_var)
     }
 
-    pub(crate) async fn infer_match(&mut self, match_expr: &mut ExprMatch) -> Result<TypeVarId> {
+    pub(crate) async fn infer_match(&self, match_expr: &mut ExprMatch) -> Result<TypeVarId> {
         let mut result_var: Option<TypeVarId> = None;
 
         if let Some(scrutinee) = match_expr.scrutinee.as_mut() {
@@ -305,7 +302,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     async fn scrutinee_enum_from_explicit_generic_invoke(
-        &mut self,
+        &self,
         scrutinee: &Expr,
     ) -> Option<TypeEnum> {
         let ExprKind::Invoke(invoke) = scrutinee.kind() else {
@@ -360,7 +357,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Some(segment.args.as_slice())
     }
 
-    async fn bind_enum_variant_pattern(&mut self, pat: &Pattern, enum_ty: &TypeEnum) -> Result<()> {
+    async fn bind_enum_variant_pattern(&self, pat: &Pattern, enum_ty: &TypeEnum) -> Result<()> {
         let needs_generics = !enum_ty.generics_params.is_empty();
         if needs_generics {
             self.enter_scope();
@@ -368,7 +365,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let var = self.register_generic_param(param.name.as_str());
                 let bounds = Self::extract_trait_bounds(&param.bounds);
                 if !bounds.is_empty() {
-                    self.generic_trait_bounds.insert(var, bounds);
+                    self.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
                 }
             }
         }
@@ -383,7 +380,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     async fn bind_enum_variant_pattern_body(
-        &mut self,
+        &self,
         pat: &Pattern,
         enum_ty: &TypeEnum,
     ) -> Result<()> {
@@ -515,7 +512,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn resolve_enum_variant_expected_value(
-        &mut self,
+        &self,
         enum_ty: &TypeEnum,
         variant_name: &str,
     ) -> Result<Option<Ty>> {
@@ -707,39 +704,40 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn bind_pattern_expected_type<'a>(
-        &'a mut self,
+        &self,
         pat: &'a Pattern,
         expected: &'a Ty,
     ) -> BoxFuture<'a, Result<()>> {
+        let this = self.clone();
         Box::pin(async move {
         match pat.kind() {
             PatternKind::Ident(ident) => {
-                if let Some(var) = self.lookup_env_var(ident.ident.as_str()).await {
-                    let expected_var = self.type_from_ast_ty(expected).await?;
-                    self.unify(var, expected_var).await?;
+                if let Some(var) = this.lookup_env_var(ident.ident.as_str()).await {
+                    let expected_var = this.type_from_ast_ty(expected).await?;
+                    this.unify(var, expected_var).await?;
                 }
             }
             PatternKind::Bind(bind) => {
-                if let Some(var) = self.lookup_env_var(bind.ident.ident.as_str()).await {
-                    let expected_var = self.type_from_ast_ty(expected).await?;
-                    self.unify(var, expected_var).await?;
+                if let Some(var) = this.lookup_env_var(bind.ident.ident.as_str()).await {
+                    let expected_var = this.type_from_ast_ty(expected).await?;
+                    this.unify(var, expected_var).await?;
                 }
-                self.bind_pattern_expected_type(bind.pattern.as_ref(), expected).await?;
+                this.bind_pattern_expected_type(bind.pattern.as_ref(), expected).await?;
             }
             PatternKind::Type(pattern_type) => {
-                self.bind_pattern_expected_type(pattern_type.pat.as_ref(), &pattern_type.ty).await?;
+                this.bind_pattern_expected_type(pattern_type.pat.as_ref(), &pattern_type.ty).await?;
             }
             PatternKind::Tuple(tuple) => {
                 if let Ty::Tuple(tuple_ty) = expected {
                     for (pat, expected_ty) in tuple.patterns.iter().zip(tuple_ty.types.iter()) {
-                        self.bind_pattern_expected_type(pat, expected_ty).await?;
+                        this.bind_pattern_expected_type(pat, expected_ty).await?;
                     }
                 }
             }
             PatternKind::TupleStruct(tuple_struct) => {
                 if let Ty::Enum(enum_ty) = expected {
                     let nested = Pattern::new(PatternKind::TupleStruct(tuple_struct.clone()));
-                    self.bind_enum_variant_pattern(&nested, enum_ty).await?;
+                    this.bind_enum_variant_pattern(&nested, enum_ty).await?;
                 }
             }
             PatternKind::Struct(struct_pat) => {
@@ -751,10 +749,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             continue;
                         };
                         if let Some(rename) = field.rename.as_ref() {
-                            self.bind_pattern_expected_type(rename, &def_field.value).await?;
-                        } else if let Some(var) = self.lookup_env_var(field.name.as_str()).await {
-                            let expected_var = self.type_from_ast_ty(&def_field.value).await?;
-                            self.unify(var, expected_var).await?;
+                            this.bind_pattern_expected_type(rename, &def_field.value).await?;
+                        } else if let Some(var) = this.lookup_env_var(field.name.as_str()).await {
+                            let expected_var = this.type_from_ast_ty(&def_field.value).await?;
+                            this.unify(var, expected_var).await?;
                         }
                     }
                 } else if let Ty::Structural(structural) = expected {
@@ -765,10 +763,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             continue;
                         };
                         if let Some(rename) = field.rename.as_ref() {
-                            self.bind_pattern_expected_type(rename, &def_field.value).await?;
-                        } else if let Some(var) = self.lookup_env_var(field.name.as_str()).await {
-                            let expected_var = self.type_from_ast_ty(&def_field.value).await?;
-                            self.unify(var, expected_var).await?;
+                            this.bind_pattern_expected_type(rename, &def_field.value).await?;
+                        } else if let Some(var) = this.lookup_env_var(field.name.as_str()).await {
+                            let expected_var = this.type_from_ast_ty(&def_field.value).await?;
+                            this.unify(var, expected_var).await?;
                         }
                     }
                 }
@@ -782,10 +780,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             continue;
                         };
                         if let Some(rename) = field.rename.as_ref() {
-                            self.bind_pattern_expected_type(rename, &def_field.value).await?;
-                        } else if let Some(var) = self.lookup_env_var(field.name.as_str()).await {
-                            let expected_var = self.type_from_ast_ty(&def_field.value).await?;
-                            self.unify(var, expected_var).await?;
+                            this.bind_pattern_expected_type(rename, &def_field.value).await?;
+                        } else if let Some(var) = this.lookup_env_var(field.name.as_str()).await {
+                            let expected_var = this.type_from_ast_ty(&def_field.value).await?;
+                            this.unify(var, expected_var).await?;
                         }
                     }
                 }
@@ -793,7 +791,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             PatternKind::Variant(variant) => {
                 if let Ty::Enum(enum_ty) = expected {
                     let nested = Pattern::new(PatternKind::Variant(variant.clone()));
-                    self.bind_enum_variant_pattern(&nested, enum_ty).await?;
+                    this.bind_enum_variant_pattern(&nested, enum_ty).await?;
                 }
             }
             PatternKind::Box(box_pat) => {
@@ -815,14 +813,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     _ => expected,
                 };
-                self.bind_pattern_expected_type(box_pat.pattern.as_ref(), inner_expected).await?;
+                this.bind_pattern_expected_type(box_pat.pattern.as_ref(), inner_expected).await?;
             }
             PatternKind::Ref(ref_pat) => {
                 let inner_expected = match expected {
                     Ty::Reference(reference) => reference.ty.as_ref(),
                     _ => expected,
                 };
-                self.bind_pattern_expected_type(ref_pat.pattern.as_ref(), inner_expected).await?;
+                this.bind_pattern_expected_type(ref_pat.pattern.as_ref(), inner_expected).await?;
             }
             PatternKind::Quote(_) | PatternKind::QuotePlural(_) | PatternKind::Wildcard(_) => {}
         }
@@ -833,7 +831,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     /// Process a single item inside a block. Returns `true` if a comptime
     /// dependency was discovered and the block should be retried after
     /// comptime eval.
-    async fn infer_block_item(&mut self, item: &mut Item) -> Result<bool> {
+    async fn infer_block_item(&self, item: &mut Item) -> Result<bool> {
         let is_const_block_type = matches!(
             item.kind(),
             ItemKind::DefType(def) if matches!(&def.value, Ty::ConstBlock(_))

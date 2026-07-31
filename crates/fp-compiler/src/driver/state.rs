@@ -76,7 +76,9 @@ impl CompilerState {
     /// Write a typed comptime value into the shared typing context so the
     /// typer can see it on the next pass.
     pub fn insert_typing_const(&mut self, key: impl Into<String>, value: Value) {
-        self.typing_ctx.resolved_consts.borrow_mut().insert(key.into(), value);
+        let key = key.into();
+        self.typing_ctx.resolved_consts.borrow_mut().insert(key.clone(), value);
+        self.typing_ctx.wake_comptime(&key);
     }
 
     pub fn insert_expr_resolution_source(&mut self, expr_id: ExprId, expr: Expr) {

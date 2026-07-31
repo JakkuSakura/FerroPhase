@@ -9,7 +9,7 @@ fn file_has_errors(mut file: File) -> bool {
     let typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(std::rc::Rc::new(
         fp_core::workspace::WorkspaceContext::new(),
     )));
-    let mut typer = AstTypeInferencer::new(typing_ctx.clone());
+    let typer = AstTypeInferencer::new(typing_ctx.clone());
     let result = fp_typing::block_on(typer.infer_file(&mut file));
     result.is_err()
         || typing_ctx

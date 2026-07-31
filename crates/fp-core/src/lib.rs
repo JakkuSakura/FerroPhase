@@ -11,6 +11,7 @@ pub mod context;
 pub mod ctx;
 pub mod diagnostics;
 pub mod error;
+pub mod executor;
 pub mod frontend;
 pub mod hir;
 pub mod hir_place;

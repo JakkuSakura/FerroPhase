@@ -1,10 +1,9 @@
 pub mod driver;
-pub mod executor;
 pub mod module_resolution;
 pub mod scheduler;
 
 pub use driver::{CompilerDriver, CompilerDriverError, CompilerState};
-pub use executor::block_on;
+pub use fp_core::executor::block_on;
 pub use module_resolution::{CompilerModuleResolver, ModuleResolutionError};
 pub use scheduler::{
     AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler,

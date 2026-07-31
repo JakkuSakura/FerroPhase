@@ -68,8 +68,8 @@ fn primitive_ty(ty: &Ty) -> Option<TypePrimitive> {
     }
 }
 
-impl<'ctx> AstTypeInferencer<'ctx> {
-    pub(crate) fn bind_reference_term(&mut self, var: TypeVarId, inner: TypeVarId) {
+impl AstTypeInferencer {
+    pub(crate) fn bind_reference_term(&self, var: TypeVarId, inner: TypeVarId) {
         self.bind(
             var,
             Ty::Reference(TypeReference {
@@ -81,7 +81,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn bind_function_term(
-        &mut self,
+        &self,
         var: TypeVarId,
         params: Vec<TypeVarId>,
         ret: TypeVarId,
@@ -96,7 +96,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         );
     }
 
-    pub(crate) fn bind_tuple_term(&mut self, var: TypeVarId, elements: Vec<TypeVarId>) {
+    pub(crate) fn bind_tuple_term(&self, var: TypeVarId, elements: Vec<TypeVarId>) {
         self.bind(
             var,
             Ty::Tuple(TypeTuple {
@@ -105,7 +105,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         );
     }
 
-    pub(crate) fn bind_slice_term(&mut self, var: TypeVarId, elem: TypeVarId) {
+    pub(crate) fn bind_slice_term(&self, var: TypeVarId, elem: TypeVarId) {
         self.bind(
             var,
             Ty::Slice(TypeSlice {
@@ -114,7 +114,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         );
     }
 
-    pub(crate) fn bind_vec_term(&mut self, var: TypeVarId, elem: TypeVarId) {
+    pub(crate) fn bind_vec_term(&self, var: TypeVarId, elem: TypeVarId) {
         self.bind(
             var,
             Ty::Vec(TypeVec {
@@ -123,7 +123,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         );
     }
 
-    pub(crate) fn bind_array_term(&mut self, var: TypeVarId, elem: TypeVarId, len: Option<BExpr>) {
+    pub(crate) fn bind_array_term(&self, var: TypeVarId, elem: TypeVarId, len: Option<BExpr>) {
         self.bind(
             var,
             Ty::Array(TypeArray {
@@ -133,7 +133,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         );
     }
 
-    pub(crate) async fn reference_inner_from_ty(&mut self, ty: &Ty) -> Option<TypeVarId> {
+    pub(crate) async fn reference_inner_from_ty(&self, ty: &Ty) -> Option<TypeVarId> {
         let Ty::Reference(reference) = ty else {
             return None;
         };
@@ -143,7 +143,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    pub(crate) async fn function_term_from_ty(&mut self, ty: &Ty) -> Option<FunctionTerm> {
+    pub(crate) async fn function_term_from_ty(&self, ty: &Ty) -> Option<FunctionTerm> {
         match ty {
             Ty::Function(func) => {
                 let mut params = Vec::with_capacity(func.params.len());
@@ -170,7 +170,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     /// caller retype the whole compile unit later. A path whose head isn't a
     /// registered package at all is genuinely unresolved -- no point
     /// waiting, so this returns `None` immediately.
-    pub(crate) async fn lookup_struct(&mut self, path: &QualifiedPath) -> Option<TypeStruct> {
+    pub(crate) async fn lookup_struct(&self, path: &QualifiedPath) -> Option<TypeStruct> {
         if let Some(def) = self.own_struct_defs().get(path).cloned() {
             return Some(def);
         }
@@ -189,7 +189,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     /// loaded (the common case: most references hit an already-loaded
     /// package). Whoever finishes loading `name` (the driver's
     /// `load_package`) drains and wakes `TypingContext::package_wakers[name]`.
-    pub(crate) async fn await_package(&mut self, name: &str) {
+    pub(crate) async fn await_package(&self, name: &str) {
         let typing_ctx = self.typing_ctx.clone();
         let name = name.to_string();
         std::future::poll_fn(move |cx| {
@@ -208,29 +208,30 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn lower_infer_vars_in_ty<'a>(
-        &'a mut self,
+        &self,
         ty: Ty,
         mapping: &'a mut std::collections::HashMap<TypeVarId, u32>,
         next: &'a mut u32,
     ) -> BoxFuture<'a, Result<Ty>> {
+        let this = self.clone();
         Box::pin(async move {
             Ok(match ty {
-                Ty::InferVar(infer) => self.build_generalized_ty(infer.id, mapping, next).await?,
+                Ty::InferVar(infer) => this.build_generalized_ty(infer.id, mapping, next).await?,
                 Ty::Tuple(tuple) => {
                     let mut types = Vec::with_capacity(tuple.types.len());
                     for elem in tuple.types {
-                        types.push(self.lower_infer_vars_in_ty(elem, mapping, next).await?);
+                        types.push(this.lower_infer_vars_in_ty(elem, mapping, next).await?);
                     }
                     Ty::Tuple(TypeTuple { types })
                 }
                 Ty::Function(function) => {
                     let mut params = Vec::with_capacity(function.params.len());
                     for param in function.params {
-                        params.push(self.lower_infer_vars_in_ty(param, mapping, next).await?);
+                        params.push(this.lower_infer_vars_in_ty(param, mapping, next).await?);
                     }
                     let ret_ty = match function.ret_ty {
                         Some(ret) => Some(Box::new(
-                            self.lower_infer_vars_in_ty(*ret, mapping, next).await?,
+                            this.lower_infer_vars_in_ty(*ret, mapping, next).await?,
                         )),
                         None => None,
                     };
@@ -242,28 +243,28 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 Ty::TypeBinaryOp(op) => Ty::TypeBinaryOp(Box::new(TypeBinaryOp {
                     kind: op.kind,
-                    lhs: Box::new(self.lower_infer_vars_in_ty(*op.lhs, mapping, next).await?),
-                    rhs: Box::new(self.lower_infer_vars_in_ty(*op.rhs, mapping, next).await?),
+                    lhs: Box::new(this.lower_infer_vars_in_ty(*op.lhs, mapping, next).await?),
+                    rhs: Box::new(this.lower_infer_vars_in_ty(*op.rhs, mapping, next).await?),
                 })),
                 Ty::Slice(slice) => Ty::Slice(TypeSlice {
-                    elem: Box::new(self.lower_infer_vars_in_ty(*slice.elem, mapping, next).await?),
+                    elem: Box::new(this.lower_infer_vars_in_ty(*slice.elem, mapping, next).await?),
                 }),
                 Ty::Vec(vec) => Ty::Vec(TypeVec {
-                    ty: Box::new(self.lower_infer_vars_in_ty(*vec.ty, mapping, next).await?),
+                    ty: Box::new(this.lower_infer_vars_in_ty(*vec.ty, mapping, next).await?),
                 }),
                 Ty::Array(array) => Ty::Array(TypeArray {
-                    elem: Box::new(self.lower_infer_vars_in_ty(*array.elem, mapping, next).await?),
+                    elem: Box::new(this.lower_infer_vars_in_ty(*array.elem, mapping, next).await?),
                     len: array.len,
                 }),
                 Ty::Reference(reference) => Ty::Reference(TypeReference {
                     ty: Box::new(
-                        self.lower_infer_vars_in_ty(*reference.ty, mapping, next).await?,
+                        this.lower_infer_vars_in_ty(*reference.ty, mapping, next).await?,
                     ),
                     mutability: reference.mutability,
                     lifetime: reference.lifetime,
                 }),
                 Ty::RawPtr(raw_ptr) => Ty::RawPtr(TypeRawPtr {
-                    ty: Box::new(self.lower_infer_vars_in_ty(*raw_ptr.ty, mapping, next).await?),
+                    ty: Box::new(this.lower_infer_vars_in_ty(*raw_ptr.ty, mapping, next).await?),
                     mutability: raw_ptr.mutability,
                 }),
                 other => other,
@@ -271,27 +272,28 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         })
     }
 
-    fn resolve_infer_vars_in_ty<'a>(
-        &'a mut self,
+    fn resolve_infer_vars_in_ty(
+        &self,
         ty: Ty,
-    ) -> BoxFuture<'a, Result<Ty>> {
+    ) -> BoxFuture<'static, Result<Ty>> {
+        let this = self.clone();
         Box::pin(async move {
             Ok(match ty {
-                Ty::InferVar(infer) => self.resolve_to_ty(infer.id).await?,
+                Ty::InferVar(infer) => this.resolve_to_ty(infer.id).await?,
                 Ty::Tuple(tuple) => {
                     let mut types = Vec::with_capacity(tuple.types.len());
                     for elem in tuple.types {
-                        types.push(self.resolve_infer_vars_in_ty(elem).await?);
+                        types.push(this.resolve_infer_vars_in_ty(elem).await?);
                     }
                     Ty::Tuple(TypeTuple { types })
                 }
                 Ty::Function(function) => {
                     let mut params = Vec::with_capacity(function.params.len());
                     for param in function.params {
-                        params.push(self.resolve_infer_vars_in_ty(param).await?);
+                        params.push(this.resolve_infer_vars_in_ty(param).await?);
                     }
                     let ret_ty = match function.ret_ty {
-                        Some(ret) => Some(Box::new(self.resolve_infer_vars_in_ty(*ret).await?)),
+                        Some(ret) => Some(Box::new(this.resolve_infer_vars_in_ty(*ret).await?)),
                         None => None,
                     };
                     Ty::Function(TypeFunction {
@@ -302,26 +304,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 Ty::TypeBinaryOp(op) => Ty::TypeBinaryOp(Box::new(TypeBinaryOp {
                     kind: op.kind,
-                    lhs: Box::new(self.resolve_infer_vars_in_ty(*op.lhs).await?),
-                    rhs: Box::new(self.resolve_infer_vars_in_ty(*op.rhs).await?),
+                    lhs: Box::new(this.resolve_infer_vars_in_ty(*op.lhs).await?),
+                    rhs: Box::new(this.resolve_infer_vars_in_ty(*op.rhs).await?),
                 })),
                 Ty::Slice(slice) => Ty::Slice(TypeSlice {
-                    elem: Box::new(self.resolve_infer_vars_in_ty(*slice.elem).await?),
+                    elem: Box::new(this.resolve_infer_vars_in_ty(*slice.elem).await?),
                 }),
                 Ty::Vec(vec) => Ty::Vec(TypeVec {
-                    ty: Box::new(self.resolve_infer_vars_in_ty(*vec.ty).await?),
+                    ty: Box::new(this.resolve_infer_vars_in_ty(*vec.ty).await?),
                 }),
                 Ty::Array(array) => Ty::Array(TypeArray {
-                    elem: Box::new(self.resolve_infer_vars_in_ty(*array.elem).await?),
+                    elem: Box::new(this.resolve_infer_vars_in_ty(*array.elem).await?),
                     len: array.len,
                 }),
                 Ty::Reference(reference) => Ty::Reference(TypeReference {
-                    ty: Box::new(self.resolve_infer_vars_in_ty(*reference.ty).await?),
+                    ty: Box::new(this.resolve_infer_vars_in_ty(*reference.ty).await?),
                     mutability: reference.mutability,
                     lifetime: reference.lifetime,
                 }),
                 Ty::RawPtr(raw_ptr) => Ty::RawPtr(TypeRawPtr {
-                    ty: Box::new(self.resolve_infer_vars_in_ty(*raw_ptr.ty).await?),
+                    ty: Box::new(this.resolve_infer_vars_in_ty(*raw_ptr.ty).await?),
                     mutability: raw_ptr.mutability,
                 }),
                 other => other,
@@ -329,7 +331,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         })
     }
 
-    fn occurs_in_ty(&mut self, needle: TypeVarId, ty: &Ty) -> bool {
+    fn occurs_in_ty(&self, needle: TypeVarId, ty: &Ty) -> bool {
         match ty {
             Ty::InferVar(infer) => self.occurs_in(needle, infer.id),
             Ty::Tuple(tuple) => tuple
@@ -358,7 +360,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    fn bind_concrete_ty(&mut self, ty: Ty) -> TypeVarId {
+    fn bind_concrete_ty(&self, ty: Ty) -> TypeVarId {
         if let Ty::InferVar(infer) = ty {
             return infer.id;
         }
@@ -385,6 +387,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ExprKind::Name(name) => {
                     if let Some(key) = self.generic_name_from_locator(name) {
                         return self
+                            .inner
+                            .borrow()
                             .generic_scopes
                             .iter()
                             .rev()
@@ -556,23 +560,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    pub(crate) async fn generalize(&mut self, var: TypeVarId) -> Result<Ty> {
+    pub(crate) async fn generalize(&self, var: TypeVarId) -> Result<Ty> {
         let mut mapping = std::collections::HashMap::new();
         let mut next = 0u32;
         self.build_generalized_ty(var, &mut mapping, &mut next).await
     }
 
     fn build_generalized_ty<'a>(
-        &'a mut self,
+        &self,
         var: TypeVarId,
         mapping: &'a mut std::collections::HashMap<TypeVarId, u32>,
         next: &'a mut u32,
     ) -> BoxFuture<'a, Result<Ty>> {
+        let this = self.clone();
         Box::pin(async move {
-            let root = self.find(var);
-            match self.type_vars[root].kind.clone() {
+            let root = this.find(var);
+            let kind = this.inner.borrow().type_vars[root].kind.clone();
+            match kind {
                 TypeVarKind::Unbound { level } => {
-                    if level > self.current_level {
+                    let current_level = this.inner.borrow().current_level;
+                    if level > current_level {
                         if let Some(idx) = mapping.get(&root) {
                             Ok(Ty::generic_var(*idx))
                         } else {
@@ -582,83 +589,84 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             Ok(Ty::generic_var(idx))
                         }
                     } else {
-                        Err(self.error_with_current_span(
+                        Err(this.error_with_current_span(
                             "unresolved type variable during generalization",
                         ))
                     }
                 }
                 TypeVarKind::Bound(Ty::ErrorType(_)) => {
-                    Err(self.error_with_current_span("error type variable during generalization"))
+                    Err(this.error_with_current_span("error type variable during generalization"))
                 }
-                TypeVarKind::Bound(ty) => self.lower_infer_vars_in_ty(ty, mapping, next).await,
+                TypeVarKind::Bound(ty) => this.lower_infer_vars_in_ty(ty, mapping, next).await,
                 TypeVarKind::Link(next_var) => {
-                    self.build_generalized_ty(next_var, mapping, next).await
+                    this.build_generalized_ty(next_var, mapping, next).await
                 }
             }
         })
     }
 
-    pub(crate) async fn instantiate_scheme(&mut self, scheme: &Ty) -> TypeVarId {
+    pub(crate) async fn instantiate_scheme(&self, scheme: &Ty) -> TypeVarId {
         let mut mapping = std::collections::HashMap::new();
         self.instantiate_poly_ty(scheme, &mut mapping).await
     }
 
     fn instantiate_poly_ty<'a>(
-        &'a mut self,
+        &self,
         scheme: &'a Ty,
         mapping: &'a mut std::collections::HashMap<u32, TypeVarId>,
     ) -> BoxFuture<'a, TypeVarId> {
+        let this = self.clone();
         Box::pin(async move {
         match scheme {
             Ty::GenericVar(generic) => {
                 if let Some(var) = mapping.get(&generic.index) {
                     *var
                 } else {
-                    let var = self.fresh_type_var();
+                    let var = this.fresh_type_var();
                     mapping.insert(generic.index, var);
                     var
                 }
             }
             Ty::Primitive(prim) => {
-                let var = self.fresh_type_var();
-                self.bind(var, Ty::Primitive(*prim));
+                let var = this.fresh_type_var();
+                this.bind(var, Ty::Primitive(*prim));
                 var
             }
             Ty::Unit(_) => {
-                let var = self.fresh_type_var();
-                self.bind(var, Ty::Unit(TypeUnit));
+                let var = this.fresh_type_var();
+                this.bind(var, Ty::Unit(TypeUnit));
                 var
             }
             Ty::Nothing(_) => {
-                let var = self.fresh_type_var();
-                self.bind(var, Ty::Nothing(TypeNothing));
+                let var = this.fresh_type_var();
+                this.bind(var, Ty::Nothing(TypeNothing));
                 var
             }
             Ty::Any(_) => {
-                let var = self.fresh_type_var();
-                self.bind(var, Ty::Any(TypeAny));
+                let var = this.fresh_type_var();
+                this.bind(var, Ty::Any(TypeAny));
                 var
             }
             Ty::Struct(struct_ty) => {
-                let var = self.fresh_type_var();
-                self.bind(var, Ty::Struct(struct_ty.clone()));
+                let var = this.fresh_type_var();
+                this.bind(var, Ty::Struct(struct_ty.clone()));
                 var
             }
             Ty::Structural(structural) => {
-                let var = self.fresh_type_var();
-                self.bind(var, Ty::Structural(structural.clone()));
+                let var = this.fresh_type_var();
+                this.bind(var, Ty::Structural(structural.clone()));
                 var
             }
             Ty::Enum(enum_ty) => {
-                let var = self.fresh_type_var();
-                self.bind(var, Ty::Enum(enum_ty.clone()));
+                let var = this.fresh_type_var();
+                this.bind(var, Ty::Enum(enum_ty.clone()));
                 var
             }
             Ty::TypeBinaryOp(op) if op.kind == TypeBinaryOpKind::Union => {
-                let lhs_var = self.instantiate_poly_ty(&op.lhs, mapping).await;
-                let rhs_var = self.instantiate_poly_ty(&op.rhs, mapping).await;
-                let var = self.fresh_type_var();
-                self.bind(
+                let lhs_var = this.instantiate_poly_ty(&op.lhs, mapping).await;
+                let rhs_var = this.instantiate_poly_ty(&op.rhs, mapping).await;
+                let var = this.fresh_type_var();
+                this.bind(
                     var,
                     Ty::TypeBinaryOp(Box::new(TypeBinaryOp {
                         kind: TypeBinaryOpKind::Union,
@@ -669,17 +677,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 var
             }
             Ty::Unknown(_) => {
-                let var = self.fresh_type_var();
-                self.bind(var, Ty::Unknown(TypeUnknown));
+                let var = this.fresh_type_var();
+                this.bind(var, Ty::Unknown(TypeUnknown));
                 var
             }
             Ty::Tuple(elements) => {
                 let mut vars = Vec::new();
                 for elem in &elements.types {
-                    vars.push(self.instantiate_poly_ty(elem, mapping).await);
+                    vars.push(this.instantiate_poly_ty(elem, mapping).await);
                 }
-                let var = self.fresh_type_var();
-                self.bind(
+                let var = this.fresh_type_var();
+                this.bind(
                     var,
                     Ty::Tuple(TypeTuple {
                         types: vars.into_iter().map(Ty::infer_var).collect(),
@@ -690,20 +698,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Function(function) => {
                 let mut param_vars = Vec::with_capacity(function.params.len());
                 for param in &function.params {
-                    param_vars.push(self.instantiate_poly_ty(param, mapping).await);
+                    param_vars.push(this.instantiate_poly_ty(param, mapping).await);
                 }
                 let ret_var = match function.ret_ty.as_ref() {
-                    Some(ret) => self.instantiate_poly_ty(ret, mapping).await,
-                    None => self.unit_type_var(),
+                    Some(ret) => this.instantiate_poly_ty(ret, mapping).await,
+                    None => this.unit_type_var(),
                 };
-                let var = self.fresh_type_var();
-                self.bind_function_term(var, param_vars, ret_var);
+                let var = this.fresh_type_var();
+                this.bind_function_term(var, param_vars, ret_var);
                 var
             }
             Ty::Slice(elem) => {
-                let elem_var = self.instantiate_poly_ty(&elem.elem, mapping).await;
-                let var = self.fresh_type_var();
-                self.bind(
+                let elem_var = this.instantiate_poly_ty(&elem.elem, mapping).await;
+                let var = this.fresh_type_var();
+                this.bind(
                     var,
                     Ty::Slice(TypeSlice {
                         elem: Box::new(Ty::infer_var(elem_var)),
@@ -712,9 +720,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 var
             }
             Ty::Vec(elem) => {
-                let elem_var = self.instantiate_poly_ty(&elem.ty, mapping).await;
-                let var = self.fresh_type_var();
-                self.bind(
+                let elem_var = this.instantiate_poly_ty(&elem.ty, mapping).await;
+                let var = this.fresh_type_var();
+                this.bind(
                     var,
                     Ty::Vec(TypeVec {
                         ty: Box::new(Ty::infer_var(elem_var)),
@@ -723,9 +731,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 var
             }
             Ty::Array(array) => {
-                let elem_var = self.instantiate_poly_ty(&array.elem, mapping).await;
-                let var = self.fresh_type_var();
-                self.bind(
+                let elem_var = this.instantiate_poly_ty(&array.elem, mapping).await;
+                let var = this.fresh_type_var();
+                this.bind(
                     var,
                     Ty::Array(TypeArray {
                         elem: Box::new(Ty::infer_var(elem_var)),
@@ -735,9 +743,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 var
             }
             Ty::Reference(elem) => {
-                let elem_var = self.instantiate_poly_ty(&elem.ty, mapping).await;
-                let var = self.fresh_type_var();
-                self.bind(
+                let elem_var = this.instantiate_poly_ty(&elem.ty, mapping).await;
+                let var = this.fresh_type_var();
+                this.bind(
                     var,
                     Ty::Reference(TypeReference {
                         ty: Box::new(Ty::infer_var(elem_var)),
@@ -748,9 +756,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 var
             }
             Ty::RawPtr(elem) => {
-                let elem_var = self.instantiate_poly_ty(&elem.ty, mapping).await;
-                let var = self.fresh_type_var();
-                self.bind(
+                let elem_var = this.instantiate_poly_ty(&elem.ty, mapping).await;
+                let var = this.fresh_type_var();
+                this.bind(
                     var,
                     Ty::RawPtr(TypeRawPtr {
                         ty: Box::new(Ty::infer_var(elem_var)),
@@ -759,72 +767,74 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 );
                 var
             }
-            _ => match self.type_from_ast_ty(scheme).await {
+            _ => match this.type_from_ast_ty(scheme).await {
                 Ok(var) => var,
-                Err(_) => self.error_type_var(),
+                Err(_) => this.error_type_var(),
             },
         }
         })
     }
 
-    pub(crate) fn fresh_type_var(&mut self) -> TypeVarId {
-        let id = self.type_vars.len();
-        self.type_vars.push(TypeVar {
-            kind: TypeVarKind::Unbound {
-                level: self.current_level,
-            },
+    pub(crate) fn fresh_type_var(&self) -> TypeVarId {
+        let mut inner = self.inner.borrow_mut();
+        let id = inner.type_vars.len();
+        let level = inner.current_level;
+        inner.type_vars.push(TypeVar {
+            kind: TypeVarKind::Unbound { level },
         });
         id
     }
 
-    pub(crate) fn unit_type_var(&mut self) -> TypeVarId {
+    pub(crate) fn unit_type_var(&self) -> TypeVarId {
         let var = self.fresh_type_var();
         self.bind(var, Ty::Unit(TypeUnit));
         var
     }
 
-    pub(crate) fn nothing_type_var(&mut self) -> TypeVarId {
+    pub(crate) fn nothing_type_var(&self) -> TypeVarId {
         let var = self.fresh_type_var();
         self.bind(var, Ty::Nothing(TypeNothing));
         var
     }
 
-    pub(crate) fn bind(&mut self, var: TypeVarId, ty: Ty) {
+    pub(crate) fn bind(&self, var: TypeVarId, ty: Ty) {
         let root = self.find(var);
-        self.type_vars[root].kind = TypeVarKind::Bound(ty);
+        self.inner.borrow_mut().type_vars[root].kind = TypeVarKind::Bound(ty);
     }
 
-    pub(crate) fn bind_error(&mut self, var: TypeVarId) {
+    pub(crate) fn bind_error(&self, var: TypeVarId) {
         self.bind(var, Ty::ErrorType(TypeError));
     }
 
-    pub(crate) fn find(&mut self, var: TypeVarId) -> TypeVarId {
-        match self.type_vars[var].kind.clone() {
+    pub(crate) fn find(&self, var: TypeVarId) -> TypeVarId {
+        let kind = self.inner.borrow().type_vars[var].kind.clone();
+        match kind {
             TypeVarKind::Link(next) => {
                 let root = self.find(next);
-                self.type_vars[var].kind = TypeVarKind::Link(root);
+                self.inner.borrow_mut().type_vars[var].kind = TypeVarKind::Link(root);
                 root
             }
             _ => var,
         }
     }
 
-    pub(crate) fn unify<'a>(
-        &'a mut self,
+    pub(crate) fn unify(
+        &self,
         a: TypeVarId,
         b: TypeVarId,
-    ) -> BoxFuture<'a, Result<()>> {
+    ) -> BoxFuture<'static, Result<()>> {
+        let this = self.clone();
         Box::pin(async move {
-            let a_root = self.find(a);
-            let b_root = self.find(b);
+            let a_root = this.find(a);
+            let b_root = this.find(b);
             if a_root == b_root {
                 return Ok(());
             }
-            let a_prim = match &self.type_vars[a_root].kind {
+            let a_prim = match &this.inner.borrow().type_vars[a_root].kind {
                 TypeVarKind::Bound(ty) => primitive_ty(ty),
                 _ => None,
             };
-            let b_prim = match &self.type_vars[b_root].kind {
+            let b_prim = match &this.inner.borrow().type_vars[b_root].kind {
                 TypeVarKind::Bound(ty) => primitive_ty(ty),
                 _ => None,
             };
@@ -833,54 +843,53 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             {
                 return if int_a == int_b {
                     Ok(())
-                } else if self.literal_ints.remove(&a_root) {
-                    self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
+                } else if this.inner.borrow_mut().literal_ints.remove(&a_root) {
+                    this.inner.borrow_mut().type_vars[a_root].kind = TypeVarKind::Link(b_root);
                     Ok(())
-                } else if self.literal_ints.remove(&b_root) {
-                    self.type_vars[b_root].kind = TypeVarKind::Link(a_root);
+                } else if this.inner.borrow_mut().literal_ints.remove(&b_root) {
+                    this.inner.borrow_mut().type_vars[b_root].kind = TypeVarKind::Link(a_root);
                     Ok(())
                 } else if Self::same_width(&int_a, &int_b) {
-                    self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
+                    this.inner.borrow_mut().type_vars[a_root].kind = TypeVarKind::Link(b_root);
                     Ok(())
                 } else {
-                    Err(self.error_with_current_span(format!(
+                    Err(this.error_with_current_span(format!(
                         "primitive type mismatch: {} vs {}",
                         int_a, int_b
                     )))
                 };
             }
-            match (
-                self.type_vars[a_root].kind.clone(),
-                self.type_vars[b_root].kind.clone(),
-            ) {
+            let a_kind = this.inner.borrow().type_vars[a_root].kind.clone();
+            let b_kind = this.inner.borrow().type_vars[b_root].kind.clone();
+            match (a_kind, b_kind) {
                 (TypeVarKind::Unbound { .. }, TypeVarKind::Unbound { .. }) => {
-                    self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
-                    self.merge_trait_bounds_into(b_root, a_root, true);
+                    this.inner.borrow_mut().type_vars[a_root].kind = TypeVarKind::Link(b_root);
+                    this.merge_trait_bounds_into(b_root, a_root, true);
                     Ok(())
                 }
                 (TypeVarKind::Unbound { .. }, TypeVarKind::Bound(ty)) => {
-                    if self.occurs_in_ty(a_root, &ty) {
-                        return Err(self.error_with_current_span("occurs check failed"));
+                    if this.occurs_in_ty(a_root, &ty) {
+                        return Err(this.error_with_current_span("occurs check failed"));
                     }
-                    self.type_vars[a_root].kind = TypeVarKind::Bound(ty);
-                    self.merge_trait_bounds_into(a_root, b_root, false);
+                    this.inner.borrow_mut().type_vars[a_root].kind = TypeVarKind::Bound(ty);
+                    this.merge_trait_bounds_into(a_root, b_root, false);
                     Ok(())
                 }
                 (TypeVarKind::Bound(ty), TypeVarKind::Unbound { .. }) => {
-                    if self.occurs_in_ty(b_root, &ty) {
-                        return Err(self.error_with_current_span("occurs check failed"));
+                    if this.occurs_in_ty(b_root, &ty) {
+                        return Err(this.error_with_current_span("occurs check failed"));
                     }
-                    self.type_vars[b_root].kind = TypeVarKind::Bound(ty);
-                    self.merge_trait_bounds_into(b_root, a_root, false);
+                    this.inner.borrow_mut().type_vars[b_root].kind = TypeVarKind::Bound(ty);
+                    this.merge_trait_bounds_into(b_root, a_root, false);
                     Ok(())
                 }
                 (TypeVarKind::Bound(Ty::ErrorType(_)), _)
                 | (_, TypeVarKind::Bound(Ty::ErrorType(_))) => Ok(()),
                 (TypeVarKind::Bound(ty_a), TypeVarKind::Bound(ty_b)) => {
-                    self.unify_concrete_tys(ty_a, ty_b).await
+                    this.unify_concrete_tys(ty_a, ty_b).await
                 }
-                (TypeVarKind::Link(next), _) => self.unify(next, b_root).await,
-                (_, TypeVarKind::Link(next)) => self.unify(a_root, next).await,
+                (TypeVarKind::Link(next), _) => this.unify(next, b_root).await,
+                (_, TypeVarKind::Link(next)) => this.unify(a_root, next).await,
             }
         })
     }
@@ -903,129 +912,132 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn merge_trait_bounds_into(
-        &mut self,
+        &self,
         target: TypeVarId,
         source: TypeVarId,
         remove_source: bool,
     ) {
+        let mut inner = self.inner.borrow_mut();
         let bounds = if remove_source {
-            self.generic_trait_bounds.remove(&source)
+            inner.generic_trait_bounds.remove(&source)
         } else {
-            self.generic_trait_bounds.get(&source).cloned()
+            inner.generic_trait_bounds.get(&source).cloned()
         };
         let Some(bounds) = bounds else {
             return;
         };
-        if let Some(existing) = self.generic_trait_bounds.get_mut(&target) {
+        if let Some(existing) = inner.generic_trait_bounds.get_mut(&target) {
             for bound in bounds {
                 if !existing.contains(&bound) {
                     existing.push(bound);
                 }
             }
         } else {
-            self.generic_trait_bounds.insert(target, bounds);
+            inner.generic_trait_bounds.insert(target, bounds);
         }
     }
 
-    fn occurs_in(&mut self, needle: TypeVarId, haystack: TypeVarId) -> bool {
+    fn occurs_in(&self, needle: TypeVarId, haystack: TypeVarId) -> bool {
         let root = self.find(haystack);
         if root == needle {
             return true;
         }
-        match self.type_vars[root].kind.clone() {
+        let kind = self.inner.borrow().type_vars[root].kind.clone();
+        match kind {
             TypeVarKind::Bound(ty) => self.occurs_in_ty(needle, &ty),
             TypeVarKind::Link(next) => self.occurs_in(needle, next),
             _ => false,
         }
     }
 
-    fn unify_concrete_tys<'a>(
-        &'a mut self,
+    fn unify_concrete_tys(
+        &self,
         a: Ty,
         b: Ty,
-    ) -> BoxFuture<'a, Result<()>> {
+    ) -> BoxFuture<'static, Result<()>> {
+        let this = self.clone();
         Box::pin(async move {
         match (a, b) {
-            (Ty::InferVar(a), Ty::InferVar(b)) => self.unify(a.id, b.id).await,
+            (Ty::InferVar(a), Ty::InferVar(b)) => this.unify(a.id, b.id).await,
             (Ty::InferVar(infer), other) | (other, Ty::InferVar(infer)) => {
-                let other_var = self.bind_concrete_ty(other);
-                self.unify(infer.id, other_var).await
+                let other_var = this.bind_concrete_ty(other);
+                this.unify(infer.id, other_var).await
             }
             (Ty::Tuple(a_tuple), Ty::Tuple(b_tuple)) => {
                 if a_tuple.types.len() != b_tuple.types.len() {
-                    return Err(self.error_with_current_span("tuple length mismatch"));
+                    return Err(this.error_with_current_span("tuple length mismatch"));
                 }
                 for (a_elem, b_elem) in a_tuple.types.into_iter().zip(b_tuple.types.into_iter()) {
-                    let a_var = self.bind_concrete_ty(a_elem);
-                    let b_var = self.bind_concrete_ty(b_elem);
-                    self.unify(a_var, b_var).await?;
+                    let a_var = this.bind_concrete_ty(a_elem);
+                    let b_var = this.bind_concrete_ty(b_elem);
+                    this.unify(a_var, b_var).await?;
                 }
                 Ok(())
             }
             (Ty::Function(a_func), Ty::Function(b_func)) => {
                 if a_func.params.len() != b_func.params.len() {
-                    return Err(self.error_with_current_span("function arity mismatch"));
+                    return Err(this.error_with_current_span("function arity mismatch"));
                 }
                 for (a_param, b_param) in a_func.params.into_iter().zip(b_func.params.into_iter()) {
-                    let a_var = self.bind_concrete_ty(a_param);
-                    let b_var = self.bind_concrete_ty(b_param);
-                    self.unify(a_var, b_var).await?;
+                    let a_var = this.bind_concrete_ty(a_param);
+                    let b_var = this.bind_concrete_ty(b_param);
+                    this.unify(a_var, b_var).await?;
                 }
                 match (a_func.ret_ty, b_func.ret_ty) {
                     (Some(a_ret), Some(b_ret)) => {
-                        let a_var = self.bind_concrete_ty(*a_ret);
-                        let b_var = self.bind_concrete_ty(*b_ret);
-                        self.unify(a_var, b_var).await
+                        let a_var = this.bind_concrete_ty(*a_ret);
+                        let b_var = this.bind_concrete_ty(*b_ret);
+                        this.unify(a_var, b_var).await
                     }
                     (None, None) => Ok(()),
-                    _ => Err(self.error_with_current_span("function return mismatch")),
+                    _ => Err(this.error_with_current_span("function return mismatch")),
                 }
             }
             (Ty::TypeBinaryOp(a_op), Ty::TypeBinaryOp(b_op))
                 if a_op.kind == TypeBinaryOpKind::Union && b_op.kind == TypeBinaryOpKind::Union =>
             {
-                let a_lhs = self.bind_concrete_ty(*a_op.lhs);
-                let b_lhs = self.bind_concrete_ty(*b_op.lhs);
-                self.unify(a_lhs, b_lhs).await?;
-                let a_rhs = self.bind_concrete_ty(*a_op.rhs);
-                let b_rhs = self.bind_concrete_ty(*b_op.rhs);
-                self.unify(a_rhs, b_rhs).await
+                let a_lhs = this.bind_concrete_ty(*a_op.lhs);
+                let b_lhs = this.bind_concrete_ty(*b_op.lhs);
+                this.unify(a_lhs, b_lhs).await?;
+                let a_rhs = this.bind_concrete_ty(*a_op.rhs);
+                let b_rhs = this.bind_concrete_ty(*b_op.rhs);
+                this.unify(a_rhs, b_rhs).await
             }
             (Ty::Slice(a_slice), Ty::Slice(b_slice)) => {
-                let a_var = self.bind_concrete_ty(*a_slice.elem);
-                let b_var = self.bind_concrete_ty(*b_slice.elem);
-                self.unify(a_var, b_var).await
+                let a_var = this.bind_concrete_ty(*a_slice.elem);
+                let b_var = this.bind_concrete_ty(*b_slice.elem);
+                this.unify(a_var, b_var).await
             }
             (Ty::Vec(a_vec), Ty::Vec(b_vec)) => {
-                let a_var = self.bind_concrete_ty(*a_vec.ty);
-                let b_var = self.bind_concrete_ty(*b_vec.ty);
-                self.unify(a_var, b_var).await
+                let a_var = this.bind_concrete_ty(*a_vec.ty);
+                let b_var = this.bind_concrete_ty(*b_vec.ty);
+                this.unify(a_var, b_var).await
             }
             (Ty::Array(a_arr), Ty::Array(b_arr)) => {
-                let a_var = self.bind_concrete_ty(*a_arr.elem);
-                let b_var = self.bind_concrete_ty(*b_arr.elem);
-                self.unify(a_var, b_var).await
+                let a_var = this.bind_concrete_ty(*a_arr.elem);
+                let b_var = this.bind_concrete_ty(*b_arr.elem);
+                this.unify(a_var, b_var).await
             }
             (Ty::Reference(a_ref), Ty::Reference(b_ref)) => {
-                let a_var = self.bind_concrete_ty(*a_ref.ty);
-                let b_var = self.bind_concrete_ty(*b_ref.ty);
-                self.unify(a_var, b_var).await
+                let a_var = this.bind_concrete_ty(*a_ref.ty);
+                let b_var = this.bind_concrete_ty(*b_ref.ty);
+                this.unify(a_var, b_var).await
             }
             (Ty::RawPtr(a_ptr), Ty::RawPtr(b_ptr)) => {
                 if matches!((a_ptr.mutability, b_ptr.mutability), (Some(a), Some(b)) if a != b) {
-                    return Err(self.error_with_current_span("raw pointer mutability mismatch"));
+                    return Err(this.error_with_current_span("raw pointer mutability mismatch"));
                 }
-                let a_var = self.bind_concrete_ty(*a_ptr.ty);
-                let b_var = self.bind_concrete_ty(*b_ptr.ty);
-                self.unify(a_var, b_var).await
+                let a_var = this.bind_concrete_ty(*a_ptr.ty);
+                let b_var = this.bind_concrete_ty(*b_ptr.ty);
+                this.unify(a_var, b_var).await
             }
             (Ty::Struct(sa), Ty::Struct(sb)) => {
                 if sa == sb {
                     Ok(())
                 } else if sa.name == sb.name {
-                    self.unify_struct_fields(&sa, &sb).await
+                    this.unify_struct_fields(&sa, &sb).await
                 } else {
-                    Err(self.error_with_current_span(format!(
+                    Err(this.error_with_current_span(format!(
                         "struct type mismatch: {} vs {}",
                         sa.name, sb.name
                     )))
@@ -1035,7 +1047,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 if sa == sb {
                     Ok(())
                 } else {
-                    Err(self.error_with_current_span("structural type mismatch"))
+                    Err(this.error_with_current_span("structural type mismatch"))
                 }
             }
             (Ty::Enum(ae), Ty::Enum(be)) => {
@@ -1046,16 +1058,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 if ae == be {
                     Ok(())
                 } else if ae_tail == be_tail {
-                    match self.unify_enum_variants(&ae, &be).await {
+                    match this.unify_enum_variants(&ae, &be).await {
                         Ok(()) => Ok(()),
                         Err(err) => {
                             let mut resolved = false;
                             let mut resolved_a = ae.clone();
                             let mut resolved_b = be.clone();
                             if (resolved_a.variants.is_empty() || resolved_b.variants.is_empty())
-                                && self.lookup_enum_def_by_name(ae_tail).is_some()
+                                && this.lookup_enum_def_by_name(ae_tail).is_some()
                             {
-                                if let Some((_, def)) = self.lookup_enum_def_by_name(ae_tail) {
+                                if let Some((_, def)) = this.lookup_enum_def_by_name(ae_tail) {
                                     if resolved_a.variants.is_empty() {
                                         resolved_a = def.clone();
                                         resolved = true;
@@ -1067,7 +1079,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 }
                             }
                             if resolved {
-                                self.unify_enum_variants(&resolved_a, &resolved_b).await
+                                this.unify_enum_variants(&resolved_a, &resolved_b).await
                             } else if !ae.generics_params.is_empty()
                                 || !be.generics_params.is_empty()
                             {
@@ -1078,7 +1090,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                     }
                 } else {
-                    Err(self.error_with_current_span("enum type mismatch"))
+                    Err(this.error_with_current_span("enum type mismatch"))
                 }
             }
             (left, right) if is_std_task_future_ty(&left) && is_std_task_future_ty(&right) => {
@@ -1089,9 +1101,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     {
                         Ok(())
                     } else {
-                        let left_var = self.type_from_ast_ty(&left_inner).await?;
-                        let right_var = self.type_from_ast_ty(&right_inner).await?;
-                        self.unify(left_var, right_var).await
+                        let left_var = this.type_from_ast_ty(&left_inner).await?;
+                        let right_var = this.type_from_ast_ty(&right_inner).await?;
+                        this.unify(left_var, right_var).await
                     }
                 } else {
                     Ok(())
@@ -1113,18 +1125,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     (None, None) => Ok(()),
                     (None, Some(_)) | (Some(_), None) => Ok(()),
                     (Some(a_inner), Some(b_inner)) => {
-                        let a_var = self.bind_concrete_ty((**a_inner).clone());
-                        let b_var = self.bind_concrete_ty((**b_inner).clone());
-                        self.unify(a_var, b_var).await
+                        let a_var = this.bind_concrete_ty((**a_inner).clone());
+                        let b_var = this.bind_concrete_ty((**b_inner).clone());
+                        this.unify(a_var, b_var).await
                     }
                 }
             }
             (left, right) if left == right || quote_item_compatible(&left, &right) => Ok(()),
-            (left, right) => Err(self.error_with_current_span(format!(
+            (left, right) => Err(this.error_with_current_span(format!(
                 "concrete type mismatch: {} vs {}{}",
                 left,
                 right,
-                self.easy_fix_hint_for_mismatch(&left, &right)
+                this.easy_fix_hint_for_mismatch(&left, &right)
             ))),
         }
         })
@@ -1156,123 +1168,130 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn unify_struct_fields<'a>(
-        &'a mut self,
+        &self,
         sa: &'a TypeStruct,
         sb: &'a TypeStruct,
     ) -> BoxFuture<'a, Result<()>> {
+        let this = self.clone();
         Box::pin(async move {
             if sa.fields.len() != sb.fields.len() {
-                return Err(self.error_with_current_span(format!(
+                return Err(this.error_with_current_span(format!(
                     "struct type mismatch: {} vs {}",
                     sa.name, sb.name
                 )));
             }
             for field in &sa.fields {
                 let Some(other) = sb.fields.iter().find(|f| f.name == field.name) else {
-                    return Err(self.error_with_current_span(format!(
+                    return Err(this.error_with_current_span(format!(
                         "struct type mismatch: {} vs {}",
                         sa.name, sb.name
                     )));
                 };
-                let a_var = self.type_from_ast_ty(&field.value).await?;
-                let b_var = self.type_from_ast_ty(&other.value).await?;
-                self.unify(a_var, b_var).await?;
+                let a_var = this.type_from_ast_ty(&field.value).await?;
+                let b_var = this.type_from_ast_ty(&other.value).await?;
+                this.unify(a_var, b_var).await?;
             }
             Ok(())
         })
     }
 
     fn unify_enum_variants<'a>(
-        &'a mut self,
+        &self,
         ae: &'a TypeEnum,
         be: &'a TypeEnum,
     ) -> BoxFuture<'a, Result<()>> {
+        let this = self.clone();
         Box::pin(async move {
             if ae.variants.len() != be.variants.len() {
-                return Err(self.error_with_current_span("enum type mismatch"));
+                return Err(this.error_with_current_span("enum type mismatch"));
             }
-            self.enter_scope();
+            this.enter_scope();
             let mut registered: Vec<(String, TypeVarId)> = Vec::new();
             for param in ae.generics_params.iter().chain(be.generics_params.iter()) {
                 let name = param.name.as_str();
                 let var = if let Some((_, var)) = registered.iter().find(|(n, _)| n == name) {
                     *var
                 } else {
-                    let var = self.register_generic_param(name);
+                    let var = this.register_generic_param(name);
                     registered.push((name.to_string(), var));
                     var
                 };
                 let bounds = Self::extract_trait_bounds(&param.bounds);
                 if !bounds.is_empty() {
-                    if let Some(existing) = self.generic_trait_bounds.get_mut(&var) {
+                    let mut inner = this.inner.borrow_mut();
+                    if let Some(existing) = inner.generic_trait_bounds.get_mut(&var) {
                         existing.extend(bounds);
                     } else {
-                        self.generic_trait_bounds.insert(var, bounds);
+                        inner.generic_trait_bounds.insert(var, bounds);
                     }
                 }
             }
             // Split into a helper so the early `?`-returns inside the loop
             // don't skip `exit_scope()` -- a plain (sync) closure can't
             // contain `.await`, so this replaces the old IIFE-closure trick.
-            let result = self.unify_enum_variants_body(ae, be).await;
-            self.exit_scope();
+            let result = this.unify_enum_variants_body(ae, be).await;
+            this.exit_scope();
             result
         })
     }
 
     fn unify_enum_variants_body<'a>(
-        &'a mut self,
+        &self,
         ae: &'a TypeEnum,
         be: &'a TypeEnum,
     ) -> BoxFuture<'a, Result<()>> {
+        let this = self.clone();
         Box::pin(async move {
             for variant in &ae.variants {
                 let Some(other) = be.variants.iter().find(|v| v.name == variant.name) else {
-                    return Err(self.error_with_current_span("enum type mismatch"));
+                    return Err(this.error_with_current_span("enum type mismatch"));
                 };
-                let a_var = self.type_from_ast_ty(&variant.value).await?;
-                let b_var = self.type_from_ast_ty(&other.value).await?;
-                self.unify(a_var, b_var).await?;
+                let a_var = this.type_from_ast_ty(&variant.value).await?;
+                let b_var = this.type_from_ast_ty(&other.value).await?;
+                this.unify(a_var, b_var).await?;
             }
             Ok(())
         })
     }
 
-    pub(crate) fn resolve_to_ty<'a>(
-        &'a mut self,
+    pub(crate) fn resolve_to_ty(
+        &self,
         var: TypeVarId,
-    ) -> BoxFuture<'a, Result<Ty>> {
+    ) -> BoxFuture<'static, Result<Ty>> {
+        let this = self.clone();
         Box::pin(async move {
-            let root = self.find(var);
-            match self.type_vars[root].kind.clone() {
+            let root = this.find(var);
+            let kind = this.inner.borrow().type_vars[root].kind.clone();
+            match kind {
                 TypeVarKind::Unbound { .. } => {
-                    Err(self.error_with_current_span("unresolved type variable"))
+                    Err(this.error_with_current_span("unresolved type variable"))
                 }
                 TypeVarKind::Bound(Ty::ErrorType(_)) => {
-                    Err(self.error_with_current_span("error type variable"))
+                    Err(this.error_with_current_span("error type variable"))
                 }
-                TypeVarKind::Bound(ty) => self.resolve_infer_vars_in_ty(ty).await,
-                TypeVarKind::Link(next) => self.resolve_to_ty(next).await,
+                TypeVarKind::Bound(ty) => this.resolve_infer_vars_in_ty(ty).await,
+                TypeVarKind::Link(next) => this.resolve_to_ty(next).await,
             }
         })
     }
 
     pub(crate) fn type_from_ast_ty<'a>(
-        &'a mut self,
+        &self,
         ty: &'a Ty,
     ) -> BoxFuture<'a, Result<TypeVarId>> {
+        let this = self.clone();
         Box::pin(async move {
-        let var = self.fresh_type_var();
+        let var = this.fresh_type_var();
         match ty {
-            Ty::Primitive(prim) => self.bind(var, Ty::Primitive(*prim)),
-            Ty::Unit(_) => self.bind(var, Ty::Unit(TypeUnit)),
+            Ty::Primitive(prim) => this.bind(var, Ty::Primitive(*prim)),
+            Ty::Unit(_) => this.bind(var, Ty::Unit(TypeUnit)),
             Ty::GenericVar(_) => return Ok(var),
-            Ty::Nothing(_) => self.bind(var, Ty::Nothing(TypeNothing)),
-            Ty::Any(_) => self.bind(var, Ty::Any(TypeAny)),
-            Ty::ErrorType(_) => self.bind_error(var),
+            Ty::Nothing(_) => this.bind(var, Ty::Nothing(TypeNothing)),
+            Ty::Any(_) => this.bind(var, Ty::Any(TypeAny)),
+            Ty::ErrorType(_) => this.bind_error(var),
             Ty::InferVar(infer) => return Ok(infer.id),
             Ty::Wildcard(_) => {
-                let var = self.fresh_type_var();
+                let var = this.fresh_type_var();
                 return Ok(var);
             }
             Ty::TypeBinaryOp(op) => {
@@ -1281,10 +1300,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     TypeBinaryOpKind::Add => {
                         // Resolve both operand types first so that aliases
                         // and other indirections are taken into account.
-                        let lhs_var = self.type_from_ast_ty(&op.lhs).await?;
-                        let rhs_var = self.type_from_ast_ty(&op.rhs).await?;
-                        let lhs_ty = self.resolve_to_ty(lhs_var).await?;
-                        let rhs_ty = self.resolve_to_ty(rhs_var).await?;
+                        let lhs_var = this.type_from_ast_ty(&op.lhs).await?;
+                        let rhs_var = this.type_from_ast_ty(&op.rhs).await?;
+                        let lhs_ty = this.resolve_to_ty(lhs_var).await?;
+                        let rhs_ty = this.resolve_to_ty(rhs_var).await?;
 
                         let lhs_fields = match lhs_ty {
                             Ty::Struct(ref s) => s.fields.clone(),
@@ -1292,7 +1311,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             _ => {
                                 // Unsupported operand kinds fall back to a
                                 // symbolic custom type for now.
-                                self.bind(var, ty.clone());
+                                this.bind(var, ty.clone());
                                 return Ok(var);
                             }
                         };
@@ -1300,7 +1319,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             Ty::Struct(ref s) => s.fields.clone(),
                             Ty::Structural(ref st) => st.fields.clone(),
                             _ => {
-                                self.bind(var, ty.clone());
+                                this.bind(var, ty.clone());
                                 return Ok(var);
                             }
                         };
@@ -1314,9 +1333,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 .iter()
                                 .find(|f| f.name.as_str() == rhs_field.name.as_str())
                             {
-                                let existing_var = self.type_from_ast_ty(&existing.value).await?;
-                                let rhs_var = self.type_from_ast_ty(&rhs_field.value).await?;
-                                if self.unify(existing_var, rhs_var).await.is_err() {
+                                let existing_var = this.type_from_ast_ty(&existing.value).await?;
+                                let rhs_var = this.type_from_ast_ty(&rhs_field.value).await?;
+                                if this.unify(existing_var, rhs_var).await.is_err() {
                                     return Err(Error::from(format!(
                                         "cannot merge struct fields: field '{}' has incompatible types",
                                         rhs_field.name
@@ -1326,19 +1345,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 merged.push(rhs_field);
                             }
                         }
-                        self.bind(var, Ty::Structural(TypeStructural { fields: merged }));
+                        this.bind(var, Ty::Structural(TypeStructural { fields: merged }));
                     }
                     TypeBinaryOpKind::Intersect => {
-                        let lhs_var = self.type_from_ast_ty(&op.lhs).await?;
-                        let rhs_var = self.type_from_ast_ty(&op.rhs).await?;
-                        let lhs_ty = self.resolve_to_ty(lhs_var).await?;
-                        let rhs_ty = self.resolve_to_ty(rhs_var).await?;
+                        let lhs_var = this.type_from_ast_ty(&op.lhs).await?;
+                        let rhs_var = this.type_from_ast_ty(&op.rhs).await?;
+                        let lhs_ty = this.resolve_to_ty(lhs_var).await?;
+                        let rhs_ty = this.resolve_to_ty(rhs_var).await?;
 
                         let lhs_fields = match lhs_ty {
                             Ty::Struct(ref s) => s.fields.clone(),
                             Ty::Structural(ref st) => st.fields.clone(),
                             _ => {
-                                self.bind(var, ty.clone());
+                                this.bind(var, ty.clone());
                                 return Ok(var);
                             }
                         };
@@ -1346,7 +1365,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             Ty::Struct(ref s) => s.fields.clone(),
                             Ty::Structural(ref st) => st.fields.clone(),
                             _ => {
-                                self.bind(var, ty.clone());
+                                this.bind(var, ty.clone());
                                 return Ok(var);
                             }
                         };
@@ -1357,9 +1376,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 .iter()
                                 .find(|f| f.name.as_str() == lhs_field.name.as_str())
                             {
-                                let lhs_var = self.type_from_ast_ty(&lhs_field.value).await?;
-                                let rhs_var = self.type_from_ast_ty(&rhs_field.value).await?;
-                                if self.unify(lhs_var, rhs_var).await.is_err() {
+                                let lhs_var = this.type_from_ast_ty(&lhs_field.value).await?;
+                                let rhs_var = this.type_from_ast_ty(&rhs_field.value).await?;
+                                if this.unify(lhs_var, rhs_var).await.is_err() {
                                     return Err(Error::from(format!(
                                         "cannot intersect struct fields: field '{}' has incompatible types",
                                         lhs_field.name
@@ -1369,12 +1388,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             }
                         }
 
-                        self.bind(var, Ty::Structural(TypeStructural { fields: merged }));
+                        this.bind(var, Ty::Structural(TypeStructural { fields: merged }));
                     }
                     TypeBinaryOpKind::Union => {
-                        let lhs_var = self.type_from_ast_ty(&op.lhs).await?;
-                        let rhs_var = self.type_from_ast_ty(&op.rhs).await?;
-                        self.bind(
+                        let lhs_var = this.type_from_ast_ty(&op.lhs).await?;
+                        let rhs_var = this.type_from_ast_ty(&op.rhs).await?;
+                        this.bind(
                             var,
                             Ty::TypeBinaryOp(Box::new(TypeBinaryOp {
                                 kind: TypeBinaryOpKind::Union,
@@ -1384,16 +1403,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         );
                     }
                     TypeBinaryOpKind::Subtract => {
-                        let lhs_var = self.type_from_ast_ty(&op.lhs).await?;
-                        let rhs_var = self.type_from_ast_ty(&op.rhs).await?;
-                        let lhs_ty = self.resolve_to_ty(lhs_var).await?;
-                        let rhs_ty = self.resolve_to_ty(rhs_var).await?;
+                        let lhs_var = this.type_from_ast_ty(&op.lhs).await?;
+                        let rhs_var = this.type_from_ast_ty(&op.rhs).await?;
+                        let lhs_ty = this.resolve_to_ty(lhs_var).await?;
+                        let rhs_ty = this.resolve_to_ty(rhs_var).await?;
 
                         let lhs_fields = match lhs_ty {
                             Ty::Struct(ref s) => s.fields.clone(),
                             Ty::Structural(ref st) => st.fields.clone(),
                             _ => {
-                                self.bind(var, ty.clone());
+                                this.bind(var, ty.clone());
                                 return Ok(var);
                             }
                         };
@@ -1401,7 +1420,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             Ty::Struct(ref s) => s.fields.clone(),
                             Ty::Structural(ref st) => st.fields.clone(),
                             _ => {
-                                self.bind(var, ty.clone());
+                                this.bind(var, ty.clone());
                                 return Ok(var);
                             }
                         };
@@ -1416,22 +1435,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .filter(|f| !to_remove.contains(f.name.as_str()))
                             .collect();
 
-                        self.bind(var, Ty::Structural(TypeStructural { fields: merged }));
+                        this.bind(var, Ty::Structural(TypeStructural { fields: merged }));
                     }
                 }
             }
             Ty::AnyBox(_) => {
-                self.bind_error(var);
+                this.bind_error(var);
             }
             Ty::TokenStream(_) => {
-                self.bind(var, ty.clone());
+                this.bind(var, ty.clone());
             }
             Ty::Struct(struct_ty) => {
-                self.insert_struct_def(&struct_ty.name, struct_ty.clone());
-                self.bind(var, Ty::Struct(struct_ty.clone()));
+                this.insert_struct_def(&struct_ty.name, struct_ty.clone());
+                this.bind(var, Ty::Struct(struct_ty.clone()));
             }
-            Ty::Structural(structural) => self.bind(var, Ty::Structural(structural.clone())),
-            Ty::Enum(enum_ty) => self.bind(var, Ty::Enum(enum_ty.clone())),
+            Ty::Structural(structural) => this.bind(var, Ty::Structural(structural.clone())),
+            Ty::Enum(enum_ty) => this.bind(var, Ty::Enum(enum_ty.clone())),
             Ty::Value(value_ty) => {
                 let resolved = match value_ty.value.as_ref() {
                     Value::Int(_) => Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
@@ -1447,24 +1466,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     Value::Null(_) | Value::None(_) => Ty::Nothing(TypeNothing),
                     _ => ty.clone(),
                 };
-                self.bind(var, resolved);
+                this.bind(var, resolved);
             }
             Ty::Type(tt) => {
                 match &tt.inner {
                     None => {
-                        self.bind(var, Ty::Type(TypeType { span: tt.span, inner: None }));
+                        this.bind(var, Ty::Type(TypeType { span: tt.span, inner: None }));
                     }
                     Some(inner) if matches!(inner.as_ref(), Ty::Wildcard(_)) => {
-                        let inner_var = self.fresh_type_var();
-                        self.bind(var, Ty::Type(TypeType {
+                        let inner_var = this.fresh_type_var();
+                        this.bind(var, Ty::Type(TypeType {
                             span: tt.span,
                             inner: Some(Box::new(Ty::InferVar(TypeInferVar { id: inner_var }))),
                         }));
                     }
                     Some(inner_ty) => {
-                        let inner_var = self.type_from_ast_ty(inner_ty).await?;
-                        let resolved = self.resolve_to_ty(inner_var).await?;
-                        self.bind(var, Ty::Type(TypeType {
+                        let inner_var = this.type_from_ast_ty(inner_ty).await?;
+                        let resolved = this.resolve_to_ty(inner_var).await?;
+                        this.bind(var, Ty::Type(TypeType {
                             span: tt.span,
                             inner: Some(Box::new(resolved)),
                         }));
@@ -1472,20 +1491,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             Ty::RequestedType(_) => {
-                self.bind(var, ty.clone());
+                this.bind(var, ty.clone());
             }
             Ty::TypeBounds(_) => {
                 // Higher-ranked or bounded types are treated as opaque for now.
-                self.bind_error(var);
+                this.bind_error(var);
             }
             // No Ty::Custom in current AST types; treat all remaining cases via fallback below
-            Ty::Unknown(_) => self.bind(var, Ty::Unknown(TypeUnknown)),
+            Ty::Unknown(_) => this.bind(var, Ty::Unknown(TypeUnknown)),
             Ty::Tuple(tuple) => {
                 let mut vars = Vec::new();
                 for elem in &tuple.types {
-                    vars.push(self.type_from_ast_ty(elem).await?);
+                    vars.push(this.type_from_ast_ty(elem).await?);
                 }
-                self.bind(
+                this.bind(
                     var,
                     Ty::Tuple(TypeTuple {
                         types: vars.into_iter().map(Ty::infer_var).collect(),
@@ -1493,8 +1512,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 );
             }
             Ty::Reference(r) => {
-                let inner = self.type_from_ast_ty(&r.ty).await?;
-                self.bind(
+                let inner = this.type_from_ast_ty(&r.ty).await?;
+                this.bind(
                     var,
                     Ty::Reference(TypeReference {
                         ty: Box::new(Ty::infer_var(inner)),
@@ -1504,8 +1523,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 );
             }
             Ty::RawPtr(r) => {
-                let inner = self.type_from_ast_ty(&r.ty).await?;
-                self.bind(
+                let inner = this.type_from_ast_ty(&r.ty).await?;
+                this.bind(
                     var,
                     Ty::RawPtr(TypeRawPtr {
                         ty: Box::new(Ty::infer_var(inner)),
@@ -1514,8 +1533,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 );
             }
             Ty::Slice(s) => {
-                let inner = self.type_from_ast_ty(&s.elem).await?;
-                self.bind(
+                let inner = this.type_from_ast_ty(&s.elem).await?;
+                this.bind(
                     var,
                     Ty::Slice(TypeSlice {
                         elem: Box::new(Ty::infer_var(inner)),
@@ -1523,8 +1542,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 );
             }
             Ty::Vec(v) => {
-                let inner = self.type_from_ast_ty(&v.ty).await?;
-                self.bind(
+                let inner = this.type_from_ast_ty(&v.ty).await?;
+                this.bind(
                     var,
                     Ty::Vec(TypeVec {
                         ty: Box::new(Ty::infer_var(inner)),
@@ -1532,8 +1551,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 );
             }
             Ty::Array(array_ty) => {
-                let elem_var = self.type_from_ast_ty(&array_ty.elem).await?;
-                self.bind(
+                let elem_var = this.type_from_ast_ty(&array_ty.elem).await?;
+                this.bind(
                     var,
                     Ty::Array(TypeArray {
                         elem: Box::new(Ty::infer_var(elem_var)),
@@ -1543,18 +1562,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             Ty::Quote(_) => {
                 // Quote tokens are currently opaque to the typer.
-                self.bind(var, ty.clone());
+                this.bind(var, ty.clone());
             }
             Ty::ConstBlock(block) => {
                 let mut inner = (*block.expr).clone();
                 
-                let var = self.infer_expr_inner(&mut inner).await?;
+                let var = this.infer_expr_inner(&mut inner).await?;
                 return Ok(var);
             }
             Ty::Expr(expr) => {
                 if let ExprKind::Value(value) = expr.kind() {
                     if let Value::Type(ty) = value.as_ref() {
-                        return self.type_from_ast_ty(ty).await;
+                        return this.type_from_ast_ty(ty).await;
                     }
                     if matches!(value.as_ref(), Value::Unit(_)) {
                         return Ok(var);
@@ -1562,32 +1581,32 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 // Handle path-like type expressions (e.g., i64, bool, usize, str).
                 if let ExprKind::Name(loc) = expr.kind() {
-                    if self.check_unimplemented_locator(loc) {
-                        return Ok(self.error_type_var());
+                    if this.check_unimplemented_locator(loc) {
+                        return Ok(this.error_type_var());
                     }
-                    if let Some((key_var, value_var)) = self.hashmap_args_from_locator(loc).await? {
-                        let map_var = self.fresh_type_var();
-                    if let Some(key) = self.resolve_locator_key(loc) {
-                            if let Some(struct_ty) = self.lookup_struct(&key).await {
-                                self.bind(map_var, Ty::Struct(struct_ty));
-                            } else if let Some(s) = self.typing_ctx.env_ctx.find_struct(&key) {
-                                self.bind(map_var, Ty::Struct(s.clone()));
+                    if let Some((key_var, value_var)) = this.hashmap_args_from_locator(loc).await? {
+                        let map_var = this.fresh_type_var();
+                    if let Some(key) = this.resolve_locator_key(loc) {
+                            if let Some(struct_ty) = this.lookup_struct(&key).await {
+                                this.bind(map_var, Ty::Struct(struct_ty));
+                            } else if let Some(s) = this.typing_ctx.env_ctx.find_struct(&key) {
+                                this.bind(map_var, Ty::Struct(s.clone()));
                             } else {
-                                let map_ty = self.make_hashmap_struct();
-                                self.bind(map_var, Ty::Struct(map_ty));
+                                let map_ty = this.make_hashmap_struct();
+                                this.bind(map_var, Ty::Struct(map_ty));
                             }
                         } else {
-                            let map_ty = self.make_hashmap_struct();
-                            self.bind(map_var, Ty::Struct(map_ty));
+                            let map_ty = this.make_hashmap_struct();
+                            this.bind(map_var, Ty::Struct(map_ty));
                         }
-                        self.record_hashmap_args(map_var, key_var, value_var);
+                        this.record_hashmap_args(map_var, key_var, value_var);
                         return Ok(map_var);
                     }
                     if let Name::ParameterPath(path) = loc {
                         if let Some(segment) = path.segments.last() {
                             if segment.ident.as_str() == "Vec" && segment.args.len() == 1 {
-                                let elem_var = self.type_from_ast_ty(&segment.args[0]).await?;
-                                self.bind(
+                                let elem_var = this.type_from_ast_ty(&segment.args[0]).await?;
+                                this.bind(
                                     var,
                                     Ty::Vec(TypeVec {
                                         ty: Box::new(Ty::infer_var(elem_var)),
@@ -1596,13 +1615,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 return Ok(var);
                             }
                             if segment.ident.as_str() == "Box" && segment.args.len() == 1 {
-                                let elem_var = self.type_from_ast_ty(&segment.args[0]).await?;
+                                let elem_var = this.type_from_ast_ty(&segment.args[0]).await?;
                                 let segment = ParameterPathSegment::new(
                                     Ident::new("Box"),
                                     vec![Ty::infer_var(elem_var)],
                                 );
                                 let path = ParameterPath::new(PathPrefix::Plain, vec![segment]);
-                                self.bind(var, Ty::locator(Name::ParameterPath(path)));
+                                this.bind(var, Ty::locator(Name::ParameterPath(path)));
                                 return Ok(var);
                             }
                             if segment.ident.as_str() == "Future"
@@ -1611,15 +1630,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 && path.segments[path.segments.len() - 3].ident.as_str() == "std"
                                 && path.segments[path.segments.len() - 2].ident.as_str() == "task"
                             {
-                                self.bind(var, ty.clone());
+                                this.bind(var, ty.clone());
                                 return Ok(var);
                             }
                             if !segment.args.is_empty() {
                                 let name = segment.ident.as_str();
                                 let mut concrete_args = Vec::with_capacity(segment.args.len());
                                 for arg in &segment.args {
-                                    let arg_var = self.type_from_ast_ty(arg).await?;
-                                    let concrete = match self.resolve_to_ty(arg_var).await {
+                                    let arg_var = this.type_from_ast_ty(arg).await?;
+                                    let concrete = match this.resolve_to_ty(arg_var).await {
                                         Ok(resolved)
                                             if matches!(arg, Ty::ImplTraits(_))
                                                 && matches!(
@@ -1631,7 +1650,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         }
                                         Ok(resolved)
                                             if matches!(resolved, Ty::Any(_) | Ty::Unknown(_))
-                                                && self.ty_contains_generic_param(arg) =>
+                                                && this.ty_contains_generic_param(arg) =>
                                         {
                                             arg.clone()
                                         }
@@ -1641,28 +1660,28 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     concrete_args.push(concrete);
                                 }
                                 let mut handled = false;
-                                if let Some(key) = self.resolve_locator_key(loc) {
-                                    let enum_ty = self.own_enum_defs().get(&key).cloned();
+                                if let Some(key) = this.resolve_locator_key(loc) {
+                                    let enum_ty = this.own_enum_defs().get(&key).cloned();
                                     if let Some(enum_ty) = enum_ty {
                                         if enum_ty.generics_params.len() == concrete_args.len() {
-                                            let concrete = self.apply_generic_args_to_enum(
+                                            let concrete = this.apply_generic_args_to_enum(
                                                 &enum_ty,
                                                 &concrete_args,
                                             );
-                                            self.bind(var, Ty::Enum(concrete));
+                                            this.bind(var, Ty::Enum(concrete));
                                             handled = true;
                                         }
                                     }
                                     if !handled {
-                                        if let Some(struct_ty) = self.lookup_struct(&key).await {
+                                        if let Some(struct_ty) = this.lookup_struct(&key).await {
                                             if struct_ty.generics_params.len()
                                                 == concrete_args.len()
                                             {
-                                                let concrete = self.apply_generic_args_to_struct(
+                                                let concrete = this.apply_generic_args_to_struct(
                                                     &struct_ty,
                                                     &concrete_args,
                                                 );
-                                                self.bind(var, Ty::Struct(concrete));
+                                                this.bind(var, Ty::Struct(concrete));
                                                 handled = true;
                                             }
                                         }
@@ -1671,11 +1690,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 if handled {
                                     return Ok(var);
                                 }
-                                if let Some((_, enum_ty)) = self.lookup_enum_def_by_name(name) {
+                                if let Some((_, enum_ty)) = this.lookup_enum_def_by_name(name) {
                                     if enum_ty.generics_params.len() == concrete_args.len() {
-                                        let concrete = self
+                                        let concrete = this
                                             .apply_generic_args_to_enum(&enum_ty, &concrete_args);
-                                        self.bind(var, Ty::Enum(concrete));
+                                        this.bind(var, Ty::Enum(concrete));
                                         return Ok(var);
                                     }
                                 }
@@ -1685,11 +1704,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         "option".to_string(),
                                         "Option".to_string(),
                                     ]);
-                                    let enum_ty = self.own_enum_defs().get(&std_option).cloned();
+                                    let enum_ty = this.own_enum_defs().get(&std_option).cloned();
                                     if let Some(enum_ty) = enum_ty {
-                                        let concrete = self
+                                        let concrete = this
                                             .apply_generic_args_to_enum(&enum_ty, &concrete_args);
-                                        self.bind(var, Ty::Enum(concrete));
+                                        this.bind(var, Ty::Enum(concrete));
                                         return Ok(var);
                                     }
                                 }
@@ -1699,21 +1718,21 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         "result".to_string(),
                                         "Result".to_string(),
                                     ]);
-                                    let enum_ty = self.own_enum_defs().get(&std_result).cloned();
+                                    let enum_ty = this.own_enum_defs().get(&std_result).cloned();
                                     if let Some(enum_ty) = enum_ty {
-                                        let concrete = self
+                                        let concrete = this
                                             .apply_generic_args_to_enum(&enum_ty, &concrete_args);
-                                        self.bind(var, Ty::Enum(concrete));
+                                        this.bind(var, Ty::Enum(concrete));
                                         return Ok(var);
                                     }
                                 }
-                                if let Some((_, struct_ty)) = self.lookup_struct_def_by_name(name).await {
+                                if let Some((_, struct_ty)) = this.lookup_struct_def_by_name(name).await {
                                     if struct_ty.generics_params.len() == concrete_args.len() {
-                                        let concrete = self.apply_generic_args_to_struct(
+                                        let concrete = this.apply_generic_args_to_struct(
                                             &struct_ty,
                                             &concrete_args,
                                         );
-                                        self.bind(var, Ty::Struct(concrete));
+                                        this.bind(var, Ty::Struct(concrete));
                                         return Ok(var);
                                     }
                                 }
@@ -1735,7 +1754,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                             },
                                         ],
                                     };
-                                    self.bind(var, Ty::Enum(enum_ty));
+                                    this.bind(var, Ty::Enum(enum_ty));
                                     return Ok(var);
                                 }
                                 if name == "Result" && concrete_args.len() == 2 {
@@ -1756,7 +1775,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                             },
                                         ],
                                     };
-                                    self.bind(var, Ty::Enum(enum_ty));
+                                    this.bind(var, Ty::Enum(enum_ty));
                                     return Ok(var);
                                 }
                             }
@@ -1775,20 +1794,27 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .unwrap_or_default(),
                         Name::Ident(ident) => ident.as_str().to_string(),
                     };
-                    let resolved = self.resolve_locator_key(loc);
+                    let resolved = this.resolve_locator_key(loc);
                     if is_token_stream_name(&name) {
-                        self.bind(var, Ty::TokenStream(TypeTokenStream));
+                        this.bind(var, Ty::TokenStream(TypeTokenStream));
                         return Ok(var);
                     }
                     if name == "Self" {
-                        if let Some(ctx) = self.impl_stack.last().and_then(|ctx| ctx.as_ref()) {
-                            match &ctx.self_ty {
+                        let self_ty = this
+                            .inner
+                            .borrow()
+                            .impl_stack
+                            .last()
+                            .and_then(|ctx| ctx.as_ref())
+                            .map(|ctx| ctx.self_ty.clone());
+                        if let Some(self_ty) = self_ty {
+                            match self_ty {
                                 Ty::Struct(struct_ty) => {
-                                    self.bind(var, Ty::Struct(struct_ty.clone()));
+                                    this.bind(var, Ty::Struct(struct_ty));
                                     return Ok(var);
                                 }
                                 Ty::Enum(enum_ty) => {
-                                    self.bind(var, Ty::Enum(enum_ty.clone()));
+                                    this.bind(var, Ty::Enum(enum_ty));
                                     return Ok(var);
                                 }
                                 _ => {}
@@ -1796,87 +1822,89 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                     }
 
-                    if self
+                    let in_generic_scope = this
+                        .inner
+                        .borrow()
                         .generic_scopes
                         .iter()
                         .rev()
-                        .any(|scope| scope.contains(&name))
-                    {
-                        if let Some(existing) = self.lookup_env_var(&name).await {
+                        .any(|scope| scope.contains(&name));
+                    if in_generic_scope {
+                        if let Some(existing) = this.lookup_env_var(&name).await {
                             return Ok(existing);
                         }
                     }
                     if name == "&str" {
-                        let inner = self.fresh_type_var();
-                        self.bind(inner, Ty::Primitive(TypePrimitive::String));
-                        self.bind_reference_term(var, inner);
+                        let inner = this.fresh_type_var();
+                        this.bind(inner, Ty::Primitive(TypePrimitive::String));
+                        this.bind_reference_term(var, inner);
                         return Ok(var);
                     }
                     if name == "type" {
-                        self.bind(var, Ty::Type(TypeType { span: fp_core::span::Span::null(), inner: None }));
+                        this.bind(var, Ty::Type(TypeType { span: fp_core::span::Span::null(), inner: None }));
                         return Ok(var);
                     }
                     if let Some(prim) = primitive_from_name(&name) {
-                        self.bind(var, Ty::Primitive(prim));
+                        this.bind(var, Ty::Primitive(prim));
                         return Ok(var);
                     }
                     if let Some(key) = resolved.clone() {
-                        if let Some(struct_ty) = self.lookup_struct(&key).await {
-                            self.bind(var, Ty::Struct(struct_ty));
+                        if let Some(struct_ty) = this.lookup_struct(&key).await {
+                            this.bind(var, Ty::Struct(struct_ty));
                             return Ok(var);
                         }
-                        let enum_ty = self.own_enum_defs().get(&key).cloned();
+                        let enum_ty = this.own_enum_defs().get(&key).cloned();
                         if let Some(enum_ty) = enum_ty {
-                            self.bind(var, Ty::Enum(enum_ty));
+                            this.bind(var, Ty::Enum(enum_ty));
                             return Ok(var);
                         }
                         if let Some(stripped) = Self::strip_std_prefix(&key) {
-                            if let Some(struct_ty) = self.lookup_struct(&stripped).await {
-                                self.bind(var, Ty::Struct(struct_ty));
+                            if let Some(struct_ty) = this.lookup_struct(&stripped).await {
+                                this.bind(var, Ty::Struct(struct_ty));
                                 return Ok(var);
                             }
-                            let enum_ty = self.own_enum_defs().get(&stripped).cloned();
+                            let enum_ty = this.own_enum_defs().get(&stripped).cloned();
                             if let Some(enum_ty) = enum_ty {
-                                self.bind(var, Ty::Enum(enum_ty));
+                                this.bind(var, Ty::Enum(enum_ty));
                                 return Ok(var);
                             }
                         }
                     }
-                    if let Some(parsed) = self.resolution_parsed_path(loc) {
+                    if let Some(parsed) = this.resolution_parsed_path(loc) {
                         let name_path = QualifiedPath::new(parsed.segments);
                         let is_unqualified =
                             parsed.prefix == PathPrefix::Plain && name_path.segments.len() == 1;
                         let mut candidates =
-                            self.struct_name_variants_for_path(&name_path, is_unqualified);
+                            this.struct_name_variants_for_path(&name_path, is_unqualified);
                         if let Some(stripped) = Self::strip_std_prefix(&name_path) {
                             if !candidates.contains(&stripped) {
                                 candidates.push(stripped);
                             }
                         }
                         for candidate in &candidates {
-                            if let Some(struct_ty) = self.lookup_struct(candidate).await {
-                                self.bind(var, Ty::Struct(struct_ty));
+                            if let Some(struct_ty) = this.lookup_struct(candidate).await {
+                                this.bind(var, Ty::Struct(struct_ty));
                                 return Ok(var);
                             }
                         }
                         for candidate in &candidates {
-                            let enum_ty = self.own_enum_defs().get(candidate).cloned();
+                            let enum_ty = this.own_enum_defs().get(candidate).cloned();
                             if let Some(enum_ty) = enum_ty {
-                                self.bind(var, Ty::Enum(enum_ty));
+                                this.bind(var, Ty::Enum(enum_ty));
                                 return Ok(var);
                             }
                         }
                     }
-                    if let Some((_, struct_ty)) = self.lookup_struct_def_by_name(&name).await {
-                        self.bind(var, Ty::Struct(struct_ty));
+                    if let Some((_, struct_ty)) = this.lookup_struct_def_by_name(&name).await {
+                        this.bind(var, Ty::Struct(struct_ty));
                         return Ok(var);
                     }
-                    if let Some((_, enum_ty)) = self.lookup_enum_def_by_name(&name) {
-                        self.bind(var, Ty::Enum(enum_ty));
+                    if let Some((_, enum_ty)) = this.lookup_enum_def_by_name(&name) {
+                        this.bind(var, Ty::Enum(enum_ty));
                         return Ok(var);
                     }
                     if name == "HashMap" {
-                        self.bind(var, Ty::Struct(self.make_hashmap_struct()));
+                        this.bind(var, Ty::Struct(this.make_hashmap_struct()));
                         return Ok(var);
                     }
                 }
@@ -1890,7 +1918,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 method_sigs: Vec::new(),
                                 fields: Vec::new(),
                             };
-                            self.bind(var, Ty::Struct(struct_ty));
+                            this.bind(var, Ty::Struct(struct_ty));
                             return Ok(var);
                         }
                     }
@@ -1901,14 +1929,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Function(f) => {
                 let mut params = Vec::with_capacity(f.params.len());
                 for p in &f.params {
-                    params.push(self.type_from_ast_ty(p).await?);
+                    params.push(this.type_from_ast_ty(p).await?);
                 }
                 let ret = if let Some(ret_ty) = f.ret_ty.as_ref() {
-                    self.type_from_ast_ty(ret_ty).await
+                    this.type_from_ast_ty(ret_ty).await
                 } else {
-                    self.type_from_ast_ty(&Ty::Unit(TypeUnit)).await
+                    this.type_from_ast_ty(&Ty::Unit(TypeUnit)).await
                 }?;
-                self.bind(
+                this.bind(
                     var,
                     Ty::Function(TypeFunction {
                         params: params.into_iter().map(Ty::infer_var).collect(),
@@ -1922,9 +1950,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 // record trait bounds so method lookup on dyn traits can succeed.
                 let bounds = Self::extract_trait_bounds(&traits.bounds);
                 if !bounds.is_empty() {
-                    self.generic_trait_bounds.insert(var, bounds);
+                    this.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
                 }
-                self.bind_error(var);
+                this.bind_error(var);
             }
         }
         Ok(var)
@@ -1932,19 +1960,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) async fn type_from_ast_ty_in_module(
-        &mut self,
+        &self,
         ty: &Ty,
         module_path: &QualifiedPath,
     ) -> Result<TypeVarId> {
-        let saved = self.module_path.clone();
-        self.module_path = module_path.clone();
+        let saved = self.inner.borrow().module_path.clone();
+        self.inner.borrow_mut().module_path = module_path.clone();
         let result = self.type_from_ast_ty(ty).await;
-        self.module_path = saved;
+        self.inner.borrow_mut().module_path = saved;
         result
     }
 
     async fn hashmap_args_from_locator(
-        &mut self,
+        &self,
         locator: &Name,
     ) -> Result<Option<(TypeVarId, TypeVarId)>> {
         let Name::ParameterPath(path) = locator else {
@@ -2065,7 +2093,7 @@ mod tests {
 
     #[test]
     fn merges_structural_types_with_plus() {
-        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
+        let typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
             std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
         )));
 
@@ -2102,7 +2130,7 @@ mod tests {
 
     #[test]
     fn rejects_conflicting_field_types_on_merge() {
-        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
+        let typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
             std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
         )));
 
@@ -2133,7 +2161,7 @@ mod tests {
 
     #[test]
     fn intersects_structural_types_with_ampersand() {
-        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
+        let typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
             std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
         )));
 
@@ -2181,11 +2209,11 @@ mod tests {
 
     #[test]
     fn unify_errors_carry_active_span() {
-        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
+        let typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
             std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
         )));
         let span = Span::new(1, 10, 12);
-        typer.current_span = Some(span);
+        typer.inner.borrow_mut().current_span = Some(span);
 
         let struct_var = typer.fresh_type_var();
         let func_var = typer.fresh_type_var();
@@ -2215,7 +2243,7 @@ mod tests {
 
     #[test]
     fn subtracts_fields_with_minus() {
-        let mut typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
+        let typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(
             std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
         )));
 

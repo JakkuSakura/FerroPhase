@@ -25,7 +25,7 @@ pub fn block_on<F: Future>(fut: F) -> F::Output {
     match fut.as_mut().poll(&mut cx) {
         Poll::Ready(value) => value,
         Poll::Pending => panic!(
-            "fp_compiler::executor::block_on: future returned Poll::Pending -- this helper only \
+            "fp_core::executor::block_on: future returned Poll::Pending -- this helper only \
              supports futures that resolve on the very first poll (tests / synchronous callers \
              with no real package or comptime suspension); drive genuinely suspending futures \
              through Executor instead"
@@ -38,22 +38,22 @@ pub fn block_on<F: Future>(fut: F) -> F::Output {
 /// work that either makes progress immediately or genuinely suspends on
 /// another in-flight task (a package finishing its on-demand load, a
 /// comptime value being resolved) waking it later. Tasks are keyed by a
-/// caller-chosen `String` (e.g. a compile unit's `FullyQualifiedPath::to_key()`)
-/// so a caller can spawn a fresh attempt under the same key without having to
-/// track a separately allocated id.
+/// caller-chosen `String` (e.g. a compile unit's `FullyQualifiedPath::to_key()`,
+/// or a const/type-alias item's name) so a caller can spawn a fresh attempt
+/// under the same key without having to track a separately allocated id.
 ///
 /// Safety note: the `Waker`s this hands out wrap an `Rc`, not an `Arc` — they
 /// must never be sent to another thread or otherwise woken from outside the
 /// thread that owns this `Executor`.
 pub struct Executor<O> {
-    tasks: HashMap<String, Pin<Box<dyn Future<Output = O>>>>,
+    tasks: RefCell<HashMap<String, Pin<Box<dyn Future<Output = O>>>>>,
     ready: Rc<RefCell<VecDeque<String>>>,
 }
 
 impl<O> Executor<O> {
     pub fn new() -> Self {
         Self {
-            tasks: HashMap::new(),
+            tasks: RefCell::new(HashMap::new()),
             ready: Rc::new(RefCell::new(VecDeque::new())),
         }
     }
@@ -66,18 +66,32 @@ impl<O> Executor<O> {
     /// suspended each time rather than restarting. Replacing an in-flight
     /// task under the same key drops the old future (and whatever it had
     /// suspended on) -- only do that deliberately (e.g. a genuine restart).
-    pub fn spawn(&mut self, key: impl Into<String>, future: impl Future<Output = O> + 'static) {
+    ///
+    /// Takes `&self` (not `&mut self`): tasks routinely spawn *other* tasks
+    /// into this same `Executor` while they themselves are being polled
+    /// (e.g. one const/type-alias item's resolution task discovering it
+    /// needs another) -- see `poll_one`'s doc comment for why that's sound.
+    pub fn spawn(&self, key: impl Into<String>, future: impl Future<Output = O> + 'static) {
         let key = key.into();
-        self.tasks.insert(key.clone(), Box::pin(future));
+        self.tasks.borrow_mut().insert(key.clone(), Box::pin(future));
         self.ready.borrow_mut().push_back(key);
     }
 
     pub fn contains(&self, key: &str) -> bool {
-        self.tasks.contains_key(key)
+        self.tasks.borrow().contains_key(key)
     }
 
-    fn poll_one(&mut self, key: &str) -> Option<Poll<O>> {
-        let task = self.tasks.get_mut(key)?;
+    /// Poll the task registered under `key`. Takes the task *out* of the
+    /// shared map before polling it, and puts it back afterward only if
+    /// still `Pending` — so `self.tasks`'s `RefCell` is never borrowed while
+    /// the inner future is actually running. This is what makes it sound
+    /// for a task's own body to reentrantly call back into this same
+    /// `Executor` (`contains`/`spawn`) from within its own poll — holding
+    /// the borrow across the inner `.poll()` call (the natural-looking
+    /// `get_mut`-based implementation) would double-borrow and panic the
+    /// moment a task did that.
+    fn poll_one(&self, key: &str) -> Option<Poll<O>> {
+        let mut task = self.tasks.borrow_mut().remove(key)?;
         let waker = {
             let wake_key = key.to_string();
             let ready = self.ready.clone();
@@ -85,11 +99,11 @@ impl<O> Executor<O> {
         };
         let mut cx = Context::from_waker(&waker);
         match task.as_mut().poll(&mut cx) {
-            Poll::Ready(output) => {
-                self.tasks.remove(key);
-                Some(Poll::Ready(output))
+            Poll::Ready(output) => Some(Poll::Ready(output)),
+            Poll::Pending => {
+                self.tasks.borrow_mut().insert(key.to_string(), task);
+                Some(Poll::Pending)
             }
-            Poll::Pending => Some(Poll::Pending),
         }
     }
 
@@ -100,7 +114,7 @@ impl<O> Executor<O> {
     /// indirection `tick()` uses for "poll whatever's next". Returns `None`
     /// if `key` isn't tracked at all (caller should `spawn` first) or the
     /// task is still pending.
-    pub fn poll_task(&mut self, key: &str) -> Option<O> {
+    pub fn poll_task(&self, key: &str) -> Option<O> {
         match self.poll_one(key)? {
             Poll::Ready(output) => Some(output),
             Poll::Pending => None,
@@ -111,10 +125,10 @@ impl<O> Executor<O> {
     /// `None` if nothing made progress this round — callers should then
     /// check `has_parked_tasks()` to distinguish "truly idle" from
     /// "everything left is waiting on something that hasn't happened yet".
-    pub fn tick(&mut self) -> Option<(String, O)> {
+    pub fn tick(&self) -> Option<(String, O)> {
         loop {
             let key = self.ready.borrow_mut().pop_front()?;
-            if !self.tasks.contains_key(&key) {
+            if !self.tasks.borrow().contains_key(&key) {
                 // Woken after the task already resolved or was replaced by a
                 // fresh `spawn()` under the same key — stale, skip it.
                 continue;
@@ -128,7 +142,7 @@ impl<O> Executor<O> {
     }
 
     pub fn is_idle(&self) -> bool {
-        self.tasks.is_empty()
+        self.tasks.borrow().is_empty()
     }
 
     /// True when at least one task is suspended and the ready queue is empty
@@ -138,7 +152,7 @@ impl<O> Executor<O> {
     /// will unless driver-level code (e.g. finishing a package load) does so
     /// explicitly — callers use this to detect that condition.
     pub fn has_parked_tasks(&self) -> bool {
-        !self.tasks.is_empty() && self.ready.borrow().is_empty()
+        !self.tasks.borrow().is_empty() && self.ready.borrow().is_empty()
     }
 }
 

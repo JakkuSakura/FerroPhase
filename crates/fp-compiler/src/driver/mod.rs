@@ -17,7 +17,7 @@ use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
 use fp_typing::{
-    AstTypeInferencer, GenericMonorph, PendingTypingRequestKind, TypeResolutionHook, TypingContext,
+    AstTypeInferencer, GenericMonorph, TypeResolutionHook, TypingContext,
     TypingOutcome, default_extern_prelude,
 };
 use std::collections::{HashMap, HashSet};
@@ -92,7 +92,7 @@ fn typing_future(
 ) -> impl Future<Output = TypingTaskOutput> {
     async move {
         let outcome = {
-            let mut inferencer = AstTypeInferencer::new(typing_ctx.clone())
+            let inferencer = AstTypeInferencer::new(typing_ctx.clone())
                 .with_extern_prelude(default_extern_prelude());
             inferencer.seed_workspace_graph();
             inferencer.set_resolution_hook(Box::new(ComptimeHook {
@@ -105,15 +105,6 @@ fn typing_future(
 }
 
 impl CompilerDriver {
-    /// Cap on whole-pass restarts for a single compile unit's typing future
-    /// (see `drive_typing_to_completion`). A forward-referencing chain of
-    /// comptime items (an earlier item's `const` block depending on a later
-    /// item's value) converges over as many restarts as its depth requires —
-    /// each restart still benefits from every value already written into the
-    /// shared `TypingContext` by the previous attempt. This only guards
-    /// against a dependency that can never resolve.
-    const MAX_COMPTIME_RETRIES: usize = 64;
-
     pub fn new() -> Self {
         Self {
             scheduler: CompilerScheduler::new(),
@@ -243,30 +234,29 @@ impl CompilerDriver {
 
     /// Spawn `infer_module`'s future for one compile unit and poll it to
     /// completion in place — typing suspends and resumes exactly where it
-    /// needs an unloaded package (see
-    /// `fp_typing::AstTypeInferencer::await_package`) rather than retyping
-    /// already-resolved items from scratch to pick that up.
+    /// needs an unloaded package (`fp_typing::AstTypeInferencer::await_package`)
+    /// or an unresolved comptime value from a sibling const/type-alias item
+    /// (`await_comptime`/`await_struct_alias`/`force`, backed by tasks
+    /// spawned into the shared `TypingContext::tasks` executor during
+    /// `predeclare_item`) — rather than retyping already-resolved items from
+    /// scratch to pick either up.
     ///
-    /// Between polls, eagerly loads whatever package name(s) are currently
-    /// blocking the typing future (`TypingContext::package_wakers`) — the
-    /// typer only *requests* a package and suspends; it never loads one
-    /// itself. There's no reactor/ready-queue here: this single future is
-    /// the only thing being driven, so a plain re-poll after servicing
-    /// packages is enough to make progress.
+    /// This is the *one* manual poll loop in the whole system. Each round
+    /// that the top-level task comes back `Pending`, it:
+    /// 1. Drains every currently-ready item-resolution task in
+    ///    `TypingContext::tasks` to a fixed point — each one that completes
+    ///    writes its value/struct-shape into `TypingContext` and precisely
+    ///    wakes whoever was waiting on it (see `TypingContext::wake_comptime`),
+    ///    which may be this compile unit's own top-level task.
+    /// 2. Eagerly loads whatever package name(s) are currently blocking the
+    ///    typing future (`TypingContext::package_wakers`) — the typer only
+    ///    *requests* a package and suspends; it never loads one itself.
     ///
-    /// A comptime value that can't be resolved synchronously (e.g. an
-    /// earlier item's `const` block forward-referencing a later item's
-    /// value) does *not* suspend the future — `await_comptime` returns
-    /// `false` immediately and the pass finishes with a
-    /// `PendingTypingRequestKind::Comptime` entry in its outcome (see that
-    /// fn's doc comment for why: nothing outside this same sequential pass
-    /// would ever wake such a suspension). When that happens, the whole
-    /// compile unit is retyped from the top under a fresh
-    /// `AstTypeInferencer` — but every comptime value the previous attempt
-    /// *did* resolve was written straight into the shared `TypingContext`,
-    /// so the retry's earlier items short-circuit immediately and only the
-    /// previously-blocked tail needs re-deriving. Bounded by
-    /// `MAX_COMPTIME_RETRIES` for a dependency that can never converge.
+    /// If neither step makes any progress in a round, nothing will ever wake
+    /// the top-level task — a genuine deadlock (e.g. a same-pass comptime
+    /// cycle, already reported with a specific error by `force`'s own cycle
+    /// handling if it's *that* kind of cycle, or some other stuck state),
+    /// reported immediately rather than retried on a heuristic bound.
     fn drive_typing_to_completion(
         &mut self,
         module_path: QualifiedPath,
@@ -276,42 +266,30 @@ impl CompilerDriver {
         let typing_ctx = self.state.typing_ctx.clone();
         let waker = std::task::Waker::noop();
         let mut cx = std::task::Context::from_waker(waker);
-        let mut attempts = 0usize;
+        let mut task = Box::pin(typing_future(typing_ctx.clone(), module_path, items));
         loop {
-            let mut task = Box::pin(typing_future(typing_ctx.clone(), module_path.clone(), items.clone()));
-            let output = loop {
-                match task.as_mut().poll(&mut cx) {
-                    std::task::Poll::Ready(output) => break output,
-                    std::task::Poll::Pending => {
-                        let names: Vec<String> =
-                            typing_ctx.package_wakers.borrow().keys().cloned().collect();
-                        for name in &names {
-                            self.load_package(name)?;
-                            // Drop the entry once serviced -- otherwise it
-                            // lingers in `package_wakers` forever (nothing
-                            // else clears it) and could be misread as "still
-                            // something to load" on some future attempt.
-                            typing_ctx.package_wakers.borrow_mut().remove(name);
-                        }
-                        if names.is_empty() {
-                            // `await_package` never leaves the future parked
-                            // without registering the name it's blocked on,
-                            // so an empty `package_wakers` here would be a
-                            // bug, not a real deadlock -- guard rather than
-                            // spin.
-                            return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
-                        }
+            match task.as_mut().poll(&mut cx) {
+                std::task::Poll::Ready(output) => return Ok(output),
+                std::task::Poll::Pending => {
+                    let mut made_progress = false;
+                    while typing_ctx.tasks.tick().is_some() {
+                        made_progress = true;
+                    }
+                    let names: Vec<String> =
+                        typing_ctx.package_wakers.borrow().keys().cloned().collect();
+                    for name in &names {
+                        self.load_package(name)?;
+                        // Drop the entry once serviced -- otherwise it
+                        // lingers in `package_wakers` forever (nothing else
+                        // clears it) and could be misread as "still
+                        // something to load" on some future round.
+                        typing_ctx.package_wakers.borrow_mut().remove(name);
+                        made_progress = true;
+                    }
+                    if !made_progress {
+                        return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
                     }
                 }
-            };
-            let has_pending_comptime = matches!(&output.outcome, Ok(outcome)
-                if outcome.pending_requests.iter().any(|r| matches!(r.kind, PendingTypingRequestKind::Comptime)));
-            if !has_pending_comptime {
-                return Ok(output);
-            }
-            attempts += 1;
-            if attempts > Self::MAX_COMPTIME_RETRIES {
-                return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
             }
         }
     }
@@ -325,7 +303,7 @@ impl CompilerDriver {
     /// at the crate slot `env_ctx.begin_crate` just reserved in the shared
     /// root registry.
     ///
-    /// `inject_module` is driven with `crate::executor::block_on` (a single
+    /// `inject_module` is driven with `fp_core::executor::block_on` (a single
     /// poll, panicking on real `Poll::Pending`) rather than through
     /// `drive_typing_to_completion`'s loop — a package whose own items
     /// reference *another* not-yet-loaded package would need that, but no
@@ -350,11 +328,11 @@ impl CompilerDriver {
 
         let own_crate = self.state.typing_ctx.env_ctx.begin_crate(name, raw.graph.clone());
         {
-            let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
+            let inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                 .with_extern_prelude(default_extern_prelude())
                 .with_own_crate(own_crate.clone());
             for (path, items) in &raw.items {
-                crate::executor::block_on(inferencer.inject_module(path, items));
+                fp_core::executor::block_on(inferencer.inject_module(path, items));
             }
         }
         // Parsed items, kept for on-demand LIR compilation later
@@ -438,15 +416,17 @@ impl CompilerDriver {
             Ok(value)
         })();
 
-        let Ok(mut value) = resolved else {
+        let Ok(value) = resolved else {
             return false;
         };
 
         if let Some(struct_ty) = Self::extract_struct_type(&value) {
+            let name = struct_ty.name.as_str().to_string();
             typing_ctx
                 .resolved_types
                 .borrow_mut()
-                .insert(struct_ty.name.as_str().to_string(), struct_ty);
+                .insert(name.clone(), struct_ty);
+            typing_ctx.wake_comptime(&name);
         }
 
         // Store under `typing_ctx.resolved_consts` (checked by name for
@@ -454,6 +434,7 @@ impl CompilerDriver {
         // `expr_resolutions` (checked by expr id) — the two lookups the
         // fp-typing call sites use to recognize an already-resolved value.
         typing_ctx.resolved_consts.borrow_mut().insert(key.to_string(), value.clone());
+        typing_ctx.wake_comptime(key);
         if let Some(expr_id) = Self::expr_id_from_const_key(key) {
             typing_ctx.expr_resolutions.borrow_mut().insert_value(expr_id, value);
         }
@@ -1129,8 +1110,10 @@ impl CompilerDriver {
             // Each const-block type alias produces its own struct.
             let entry_struct = Self::extract_struct_type(&value);
             if let Some(ref struct_ty) = entry_struct {
+                let name = struct_ty.name.as_str().to_string();
                 self.state.typing_ctx.resolved_types.borrow_mut()
-                    .insert(struct_ty.name.as_str().to_string(), struct_ty.clone());
+                    .insert(name.clone(), struct_ty.clone());
+                self.state.typing_ctx.wake_comptime(&name);
             }
             let constant = self.value_to_mir_constant(&value, &entry.ty).ok_or_else(|| {
                 CompilerDriverError::UnsupportedWork(format!(

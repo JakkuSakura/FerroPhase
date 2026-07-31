@@ -38,6 +38,23 @@ pub struct TypingContext {
     /// package name) not yet loaded — see `AstTypeInferencer::await_package`.
     /// Drained by the driver once it finishes loading that package.
     pub package_wakers: RefCell<HashMap<String, Vec<Waker>>>,
+
+    /// Wakers of typing tasks currently suspended on a comptime value (keyed
+    /// by const/type-alias name) not yet resolved — see
+    /// `AstTypeInferencer::await_comptime`/`await_struct_alias`. Precisely
+    /// (not broadcast) woken by whichever write site
+    /// (`resolved_consts`/`resolved_types`) actually resolves that name.
+    pub comptime_wakers: RefCell<HashMap<String, Vec<Waker>>>,
+
+    /// The one shared task executor concurrent item-resolution (one task
+    /// per const/type-alias item, spawned during `predeclare_item`) and the
+    /// per-compile-unit driver loop both spawn into/poll. `Executor` is
+    /// already internally interior-mutable (its own methods take `&self`,
+    /// specifically so a task can reentrantly `spawn`/`contains`-check this
+    /// same executor from within its own poll) — wrapping it in another
+    /// outer `RefCell` here would reintroduce exactly the double-borrow
+    /// hazard that design avoids, so it's a plain field.
+    pub tasks: fp_core::executor::Executor<fp_core::error::Result<()>>,
 }
 
 impl TypingContext {
@@ -49,6 +66,21 @@ impl TypingContext {
             expr_resolutions: RefCell::new(ExprResolutionTable::default()),
             diagnostics: RefCell::new(Vec::new()),
             package_wakers: RefCell::new(HashMap::new()),
+            comptime_wakers: RefCell::new(HashMap::new()),
+            tasks: fp_core::executor::Executor::new(),
+        }
+    }
+
+    /// Wake every task parked on `name`'s comptime value — call this right
+    /// after writing `name`'s resolution into `resolved_consts`/
+    /// `resolved_types` (the three write sites are all in `fp-compiler`'s
+    /// driver). Precise, not broadcast: only tasks registered under this
+    /// exact name are woken.
+    pub fn wake_comptime(&self, name: &str) {
+        if let Some(wakers) = self.comptime_wakers.borrow_mut().remove(name) {
+            for waker in wakers {
+                waker.wake();
+            }
         }
     }
 }

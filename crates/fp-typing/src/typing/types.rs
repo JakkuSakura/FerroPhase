@@ -1,4 +1,4 @@
-use fp_core::ast::{Expr, Ty};
+use fp_core::ast::Ty;
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use std::collections::HashMap;
@@ -51,8 +51,6 @@ impl TypingDiagnostic {
 
 pub struct TypingOutcome {
     pub resolved_names: ResolvedNameTable,
-    /// Pending work discovered only after the full typing pass finishes.
-    pub pending_requests: Vec<PendingTypingRequest>,
     /// Generic instantiations with resolved concrete types ready for monomorphization.
     pub pending_generics: Vec<GenericMonorph>,
     /// Structs resolved from a workspace crate rather than the local one
@@ -76,54 +74,6 @@ impl GenericMonorph {
     pub fn new(function_path: QualifiedPath, generic_params: Vec<String>, concrete_types: Vec<Ty>) -> Self {
         Self { function_path, generic_params, concrete_types }
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-/// Work discovered by a completed typing pass.
-pub struct PendingTypingRequest {
-    pub kind: PendingTypingRequestKind,
-    pub expr: Expr,
-}
-
-impl PendingTypingRequest {
-    pub fn unknown_type(expr: Expr) -> Self {
-        Self {
-            kind: PendingTypingRequestKind::Unresolved,
-            expr,
-        }
-    }
-
-    pub fn generic(expr: Expr) -> Self {
-        Self {
-            kind: PendingTypingRequestKind::Generic,
-            expr,
-        }
-    }
-
-    pub fn comptime(expr: Expr) -> Self {
-        Self {
-            kind: PendingTypingRequestKind::Comptime,
-            expr,
-        }
-    }
-
-    pub fn package(name: impl Into<String>, expr: Expr) -> Self {
-        Self {
-            kind: PendingTypingRequestKind::Package(name.into()),
-            expr,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PendingTypingRequestKind {
-    Unresolved,
-    Generic,
-    Comptime,
-    /// A registered-but-not-yet-loaded package was referenced; the driver
-    /// loads it via the scheduler (see `CompilerWork::LoadPackage`) and
-    /// retries this compile unit once it's available.
-    Package(String),
 }
 
 pub type ExprId = fp_core::ast::ExprId;

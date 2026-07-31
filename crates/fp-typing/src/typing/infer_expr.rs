@@ -235,27 +235,28 @@ fn expr_contains_return(expr: &Expr) -> bool {
     }
 }
 
-impl<'ctx> AstTypeInferencer<'ctx> {
+impl AstTypeInferencer {
     fn normalize_signature_module_path(&self, module: QualifiedPath) -> QualifiedPath {
         if module.is_empty() {
             return module;
         }
-        if self.module_defs.contains(&module) {
+        if self.inner.borrow().module_defs.contains(&module) {
             return module;
         }
         let has_root = module
             .head()
-            .map(|head| self.root_modules.contains(head))
+            .map(|head| self.inner.borrow().root_modules.contains(head))
             .unwrap_or(false);
         if has_root {
             return module;
         }
-        for root in &self.root_modules {
+        let root_modules = self.inner.borrow().root_modules.clone();
+        for root in &root_modules {
             let mut segments = Vec::with_capacity(module.segments.len() + 1);
             segments.push(root.to_string());
             segments.extend(module.segments.iter().cloned());
             let candidate = QualifiedPath::new(segments);
-            if self.module_defs.contains(&candidate) {
+            if self.inner.borrow().module_defs.contains(&candidate) {
                 return candidate;
             }
         }
@@ -283,11 +284,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         let sig_head = sig_path
             .head()
-            .map(|head| self.root_modules.contains(head))
+            .map(|head| self.inner.borrow().root_modules.contains(head))
             .unwrap_or(false);
         let locator_head = locator_module
             .head()
-            .map(|head| self.root_modules.contains(head))
+            .map(|head| self.inner.borrow().root_modules.contains(head))
             .unwrap_or(false);
 
         if !sig_head && locator_head {
@@ -298,17 +299,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_expr_inner<'a>(
-        &'a mut self,
+        &self,
         expr: &'a mut Expr,
     ) -> BoxFuture<'a, Result<TypeVarId>> {
+        let this = self.clone();
         Box::pin(async move {
             let span = expr.span();
-            let previous = self.current_span;
-            let active = self.span_or_previous(span, previous);
-            self.current_span = active;
-            let result = self.infer_expr_inner_body(expr).await;
-            self.current_span = previous;
-            result.map_err(|err| self.error_with_span(err, active))
+            let previous = this.inner.borrow().current_span;
+            let active = this.span_or_previous(span, previous);
+            this.inner.borrow_mut().current_span = active;
+            let result = this.infer_expr_inner_body(expr).await;
+            this.inner.borrow_mut().current_span = previous;
+            result.map_err(|err| this.error_with_span(err, active))
         })
     }
 
@@ -317,11 +319,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     /// plain (sync) closure -- a sync closure can't contain `.await`, so this
     /// replaces the old IIFE-closure trick.
     fn infer_expr_inner_body<'a>(
-        &'a mut self,
+        &self,
         expr: &'a mut Expr,
     ) -> BoxFuture<'a, Result<TypeVarId>> {
+        let this = self.clone();
         Box::pin(async move {
-            let expr_id = self.expr_id(expr);
+            let expr_id = this.expr_id(expr);
             let existing_ty = expr.ty().cloned();
             let var = match expr.kind_mut() {
                 ExprKind::Quote(quote) => {
@@ -330,8 +333,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         None => infer_quote_kind(&quote.block),
                     };
                     let inner = if matches!(kind, QuoteFragmentKind::Expr) {
-                        let block_var = self.infer_block(&mut quote.block).await?;
-                        Some(self.resolve_to_ty(block_var).await?)
+                        let block_var = this.infer_block(&mut quote.block).await?;
+                        Some(this.resolve_to_ty(block_var).await?)
                     } else {
                         None
                     };
@@ -363,7 +366,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 .unwrap_or_else(|| quote_ty_from_fragment(kind, inner.clone()))
                         } else if quote.block.stmts.len() > 1 || expect_slice {
                             if has_non_items {
-                                self.emit_error("quote<item> expects only item statements");
+                                this.emit_error("quote<item> expects only item statements");
                             }
                             let elem_ty = quote_item_type_from_items(&items).unwrap_or_else(|| {
                                 if items.is_empty() {
@@ -374,7 +377,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         inner: None,
                                     })
                                 } else {
-                                    self.emit_error(
+                                    this.emit_error(
                                         "quote<item> contains multiple item kinds; using item type",
                                     );
                                     Ty::Quote(TypeQuote {
@@ -395,187 +398,187 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             })
                         } else {
                             if has_non_items {
-                                self.emit_error("quote<item> expects only item statements");
+                                this.emit_error("quote<item> expects only item statements");
                             }
                             quote_ty_from_fragment(kind, inner)
                         }
                     } else {
                         quote_ty_from_fragment(kind, inner)
                     };
-                    let var = self.type_from_ast_ty(&ty).await?;
+                    let var = this.type_from_ast_ty(&ty).await?;
                     expr.set_ty(ty);
                     var
                 }
                 ExprKind::Splice(splice) => {
                     // Expression-position splice must carry an expr token
-                    let token_var = self.infer_expr_inner(splice.token.as_mut()).await?;
-                    let token_ty = self.resolve_to_ty(token_var).await?;
+                    let token_var = this.infer_expr_inner(splice.token.as_mut()).await?;
+                    let token_ty = this.resolve_to_ty(token_var).await?;
                     match token_ty {
                         Ty::Quote(quote) if quote.kind == QuoteFragmentKind::Expr => {
                             if let Some(inner) = quote.inner.clone() {
-                                let var = self.fresh_type_var();
-                                self.bind(var, (*inner).clone());
+                                let var = this.fresh_type_var();
+                                this.bind(var, (*inner).clone());
                                 expr.set_ty(*inner);
                                 var
                             } else {
-                                self.emit_warning(
+                                this.emit_warning(
                                     "splice expr token lacks inner type; leaving result unresolved",
                                 );
-                                self.fresh_type_var()
+                                this.fresh_type_var()
                             }
                         }
                         Ty::Quote(quote) => {
-                            self.emit_error(format!(
+                            this.emit_error(format!(
                                 "splice in expression position requires expr token, found {:?}",
                                 quote.kind
                             ));
-                            self.error_type_var()
+                            this.error_type_var()
                         }
                         _ => {
-                            self.emit_error("splice expects a quote token expression");
-                            self.error_type_var()
+                            this.emit_error("splice expects a quote token expression");
+                            this.error_type_var()
                         }
                     }
                 }
                 ExprKind::SplicePending(pending) => {
-                    let token_var = self.infer_expr_inner(pending.token.as_mut()).await?;
-                    let token_ty = self.resolve_to_ty(token_var).await?;
+                    let token_var = this.infer_expr_inner(pending.token.as_mut()).await?;
+                    let token_ty = this.resolve_to_ty(token_var).await?;
                     match token_ty {
                         Ty::Quote(quote) if quote.kind == QuoteFragmentKind::Expr => {
                             if let Some(inner) = quote.inner.clone() {
-                                let var = self.fresh_type_var();
-                                self.bind(var, (*inner).clone());
+                                let var = this.fresh_type_var();
+                                this.bind(var, (*inner).clone());
                                 expr.set_ty(*inner);
                                 var
                             } else {
-                                self.emit_warning(
+                                this.emit_warning(
                                     "splice expr token lacks inner type; leaving result unresolved",
                                 );
-                                self.fresh_type_var()
+                                this.fresh_type_var()
                             }
                         }
                         Ty::Quote(quote) => {
-                            self.emit_error(format!(
+                            this.emit_error(format!(
                                 "splice in expression position requires expr token, found {:?}",
                                 quote.kind
                             ));
-                            self.error_type_var()
+                            this.error_type_var()
                         }
                         _ => {
-                            self.emit_error("splice expects a quote token expression");
-                            self.error_type_var()
+                            this.emit_error("splice expects a quote token expression");
+                            this.error_type_var()
                         }
                     }
                 }
                 ExprKind::IntrinsicContainer(collection) => {
-                    self.infer_intrinsic_container(collection).await?
+                    this.infer_intrinsic_container(collection).await?
                 }
                 ExprKind::Value(value) => {
                     if let Value::List(list) = value.as_ref() {
                         let hint_ty = if let Some(ty) = existing_ty.as_ref() {
-                            match self.type_from_ast_ty(ty).await {
-                                Ok(var) => self.resolve_to_ty(var).await.ok(),
+                            match this.type_from_ast_ty(ty).await {
+                                Ok(var) => this.resolve_to_ty(var).await.ok(),
                                 Err(_) => None,
                             }
                         } else {
                             None
                         };
                         if matches!(hint_ty.as_ref(), Some(Ty::Array(_))) {
-                            self.infer_value(value.as_ref()).await?
+                            this.infer_value(value.as_ref()).await?
                         } else if let Some(Ty::Vec(vec_ty)) = hint_ty.as_ref() {
-                            let elem_var = self.type_from_ast_ty(&vec_ty.ty).await?;
+                            let elem_var = this.type_from_ast_ty(&vec_ty.ty).await?;
                             for value in &list.values {
-                                let value_var = self.infer_value(value).await?;
-                                self.unify(value_var, elem_var).await?;
+                                let value_var = this.infer_value(value).await?;
+                                this.unify(value_var, elem_var).await?;
                             }
-                            let vec_var = self.fresh_type_var();
-                            self.bind_vec_term(vec_var, elem_var);
+                            let vec_var = this.fresh_type_var();
+                            this.bind_vec_term(vec_var, elem_var);
                             vec_var
                         } else if let Some(Ty::Slice(slice_ty)) = hint_ty.as_ref() {
-                            let elem_var = self.type_from_ast_ty(&slice_ty.elem).await?;
+                            let elem_var = this.type_from_ast_ty(&slice_ty.elem).await?;
                             for value in &list.values {
-                                let value_var = self.infer_value(value).await?;
-                                self.unify(value_var, elem_var).await?;
+                                let value_var = this.infer_value(value).await?;
+                                this.unify(value_var, elem_var).await?;
                             }
-                            let slice_var = self.fresh_type_var();
-                            self.bind_slice_term(slice_var, elem_var);
+                            let slice_var = this.fresh_type_var();
+                            this.bind_slice_term(slice_var, elem_var);
                             slice_var
                         } else {
-                            self.infer_list_value_as_vec(list).await?
+                            this.infer_list_value_as_vec(list).await?
                         }
                     } else {
-                        self.infer_value(value.as_ref()).await?
+                        this.infer_value(value.as_ref()).await?
                     }
                 }
                 ExprKind::Name(locator) => {
-                    let (var, resolved_name) = self.lookup_locator_with_resolution(locator).await?;
+                    let (var, resolved_name) = this.lookup_locator_with_resolution(locator).await?;
                     if let Some(resolved_name) = resolved_name {
-                        self.record_resolved_name(expr_id, resolved_name);
+                        this.record_resolved_name(expr_id, resolved_name);
                     }
                     if let Some(ty) = existing_ty.as_ref() {
-                        let annot = self.type_from_ast_ty(ty).await?;
-                        self.unify(var, annot).await?;
+                        let annot = this.type_from_ast_ty(ty).await?;
+                        this.unify(var, annot).await?;
                     }
                     var
                 }
-                ExprKind::Block(block) => self.infer_block(block).await?,
-                ExprKind::If(if_expr) => self.infer_if(if_expr).await?,
-                ExprKind::With(expr_with) => self.infer_with(expr_with).await?,
-                ExprKind::BinOp(binop) => self.infer_binop(binop).await?,
-                ExprKind::UnOp(unop) => self.infer_unop(unop).await?,
+                ExprKind::Block(block) => this.infer_block(block).await?,
+                ExprKind::If(if_expr) => this.infer_if(if_expr).await?,
+                ExprKind::With(expr_with) => this.infer_with(expr_with).await?,
+                ExprKind::BinOp(binop) => this.infer_binop(binop).await?,
+                ExprKind::UnOp(unop) => this.infer_unop(unop).await?,
                 ExprKind::Assign(assign) => {
-                    let target = self.infer_expr_inner(assign.target.as_mut()).await?;
-                    let value = self.infer_expr_inner(assign.value.as_mut()).await?;
-                    self.unify(target, value).await?;
-                    self.unit_type_var()
+                    let target = this.infer_expr_inner(assign.target.as_mut()).await?;
+                    let value = this.infer_expr_inner(assign.value.as_mut()).await?;
+                    this.unify(target, value).await?;
+                    this.unit_type_var()
                 }
                 ExprKind::Cast(cast) => {
-                    let _ = self.infer_expr_inner(cast.expr.as_mut()).await?;
-                    self.type_from_ast_ty(&cast.ty).await?
+                    let _ = this.infer_expr_inner(cast.expr.as_mut()).await?;
+                    this.type_from_ast_ty(&cast.ty).await?
                 }
                 ExprKind::Let(expr_let) => {
-                    let value = self.infer_expr_inner(expr_let.expr.as_mut()).await?;
-                    let pattern_info = self.infer_pattern(expr_let.pat.as_mut()).await?;
-                    self.unify(pattern_info.var, value).await?;
-                    self.apply_pattern_generalization(&pattern_info).await?;
+                    let value = this.infer_expr_inner(expr_let.expr.as_mut()).await?;
+                    let pattern_info = this.infer_pattern(expr_let.pat.as_mut()).await?;
+                    this.unify(pattern_info.var, value).await?;
+                    this.apply_pattern_generalization(&pattern_info).await?;
                     value
                 }
-                ExprKind::Invoke(invoke) => self.infer_invoke(invoke).await?,
+                ExprKind::Invoke(invoke) => this.infer_invoke(invoke).await?,
                 ExprKind::Select(select) => {
-                    let obj_var = self.infer_expr_inner(select.obj.as_mut()).await?;
-                    self.lookup_struct_field(obj_var, &select.field).await?
+                    let obj_var = this.infer_expr_inner(select.obj.as_mut()).await?;
+                    this.lookup_struct_field(obj_var, &select.field).await?
                 }
                 ExprKind::Struct(struct_expr) => {
                     if let Some(ty) = existing_ty.as_ref() {
                         if matches!(ty, Ty::Function(_)) {
-                            self.type_from_ast_ty(ty).await?
+                            this.type_from_ast_ty(ty).await?
                         } else {
                             let resolved = match ty {
                                 Ty::Enum(_) => Some(ty.clone()),
-                                _ => match self.type_from_ast_ty(ty).await {
-                                    Ok(var) => self.resolve_to_ty(var).await.ok(),
+                                _ => match this.type_from_ast_ty(ty).await {
+                                    Ok(var) => this.resolve_to_ty(var).await.ok(),
                                     Err(_) => None,
                                 },
                             };
                             if let Some(Ty::Enum(enum_ty)) = resolved.as_ref() {
-                                if let Some(var) = self
+                                if let Some(var) = this
                                     .resolve_struct_literal_as_enum_variant(struct_expr, enum_ty).await?
                                 {
                                     var
                                 } else {
-                                    self.resolve_struct_literal(struct_expr).await?
+                                    this.resolve_struct_literal(struct_expr).await?
                                 }
                             } else {
-                                self.resolve_struct_literal(struct_expr).await?
+                                this.resolve_struct_literal(struct_expr).await?
                             }
                         }
                     } else if let ExprKind::Name(locator) = struct_expr.name.kind() {
                         // Try resolving through the environment first for
                         // locally-defined type aliases (DefType).
-                        if let Some(var) = self.lookup_env_name(locator).await? {
-                            if let Ok(ty) = self.resolve_to_ty(var).await {
+                        if let Some(var) = this.lookup_env_name(locator).await? {
+                            if let Ok(ty) = this.resolve_to_ty(var).await {
                                 if let Ty::Struct(ref struct_def) = ty {
-                                    if let Some(struct_var) = self
+                                    if let Some(struct_var) = this
                                         .resolve_struct_literal_from_def(struct_expr, &struct_def).await?
                                     {
                                         return Ok(struct_var);
@@ -585,238 +588,235 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 // will be resolved by comptime eval on retry.
                                 // Defer to a placeholder for now.
                                 if matches!(ty, Ty::Type(_)) {
-                                    let placeholder = self.fresh_type_var();
-                                    self.bind(placeholder, Ty::Type(TypeType::new(fp_core::span::Span::null())));
+                                    let placeholder = this.fresh_type_var();
+                                    this.bind(placeholder, Ty::Type(TypeType::new(fp_core::span::Span::null())));
                                     return Ok(placeholder);
                                 }
                             }
                         }
-                        self.resolve_struct_literal(struct_expr).await?
+                        this.resolve_struct_literal(struct_expr).await?
                     } else {
-                        self.resolve_struct_literal(struct_expr).await?
+                        this.resolve_struct_literal(struct_expr).await?
                     }
                 }
                 ExprKind::Tuple(tuple) => {
                     let mut element_vars = Vec::new();
                     for expr in &mut tuple.values {
-                        element_vars.push(self.infer_expr_inner(expr).await?);
+                        element_vars.push(this.infer_expr_inner(expr).await?);
                     }
-                    let tuple_var = self.fresh_type_var();
-                    self.bind_tuple_term(tuple_var, element_vars);
+                    let tuple_var = this.fresh_type_var();
+                    this.bind_tuple_term(tuple_var, element_vars);
                     tuple_var
                 }
                 ExprKind::Array(array) => {
                     let mut iter = array.values.iter_mut();
                     let elem_var = if let Some(first) = iter.next() {
-                        let first_var = self.infer_expr_inner(first).await?;
+                        let first_var = this.infer_expr_inner(first).await?;
                         for value in iter {
-                            let next = self.infer_expr_inner(value).await?;
-                            self.unify(first_var, next).await?;
+                            let next = this.infer_expr_inner(value).await?;
+                            this.unify(first_var, next).await?;
                         }
                         first_var
                     } else {
-                        self.fresh_type_var()
+                        this.fresh_type_var()
                     };
-                    let array_var = self.fresh_type_var();
+                    let array_var = this.fresh_type_var();
                     let len = Expr::value(Value::int(array.values.len() as i64)).into();
-                    self.bind_array_term(array_var, elem_var, Some(len));
-                    let array_ty = self.resolve_to_ty(array_var).await?;
+                    this.bind_array_term(array_var, elem_var, Some(len));
+                    let array_ty = this.resolve_to_ty(array_var).await?;
                     expr.set_ty(array_ty);
                     array_var
                 }
                 ExprKind::ArrayRepeat(array_repeat) => {
-                    let elem_var = self.infer_expr_inner(array_repeat.elem.as_mut()).await?;
-                    let array_var = self.fresh_type_var();
-                    self.bind_array_term(array_var, elem_var, Some(array_repeat.len.clone()));
-                    let array_ty = self.resolve_to_ty(array_var).await?;
+                    let elem_var = this.infer_expr_inner(array_repeat.elem.as_mut()).await?;
+                    let array_var = this.fresh_type_var();
+                    this.bind_array_term(array_var, elem_var, Some(array_repeat.len.clone()));
+                    let array_ty = this.resolve_to_ty(array_var).await?;
                     expr.set_ty(array_ty);
                     array_var
                 }
-                ExprKind::Paren(paren) => self.infer_expr_inner(paren.expr.as_mut()).await?,
+                ExprKind::Paren(paren) => this.infer_expr_inner(paren.expr.as_mut()).await?,
                 ExprKind::FormatString(_) => {
-                    let var = self.fresh_type_var();
-                    self.bind(var, Ty::Primitive(TypePrimitive::String));
+                    let var = this.fresh_type_var();
+                    this.bind(var, Ty::Primitive(TypePrimitive::String));
                     var
                 }
-                ExprKind::Match(match_expr) => self.infer_match(match_expr).await?,
-                ExprKind::Loop(loop_expr) => self.infer_loop(loop_expr).await?,
+                ExprKind::Match(match_expr) => this.infer_match(match_expr).await?,
+                ExprKind::Loop(loop_expr) => this.infer_loop(loop_expr).await?,
                 ExprKind::Return(ret) => {
                     if let Some(value) = ret.value.as_mut() {
-                        self.infer_expr_inner(value).await?;
+                        this.infer_expr_inner(value).await?;
                     }
                     // Diverging expression.
-                    self.nothing_type_var()
+                    this.nothing_type_var()
                 }
                 ExprKind::Break(brk) => {
                     let value_var = if let Some(value) = brk.value.as_mut() {
-                        self.infer_expr_inner(value).await?
+                        this.infer_expr_inner(value).await?
                     } else {
-                        self.unit_type_var()
+                        this.unit_type_var()
                     };
-                    let loop_var = if let Some(context) = self.loop_stack.last_mut() {
-                        context.saw_break = true;
-                        Some(context.result_var)
-                    } else {
-                        None
+                    let loop_var = {
+                        let mut inner = this.inner.borrow_mut();
+                        if let Some(context) = inner.loop_stack.last_mut() {
+                            context.saw_break = true;
+                            Some(context.result_var)
+                        } else {
+                            None
+                        }
                     };
                     if let Some(result_var) = loop_var {
-                        self.unify(result_var, value_var).await?;
+                        this.unify(result_var, value_var).await?;
                         result_var
                     } else {
-                        self.emit_error("`break` used outside of a loop");
-                        self.error_type_var()
+                        this.emit_error("`break` used outside of a loop");
+                        this.error_type_var()
                     }
                 }
                 ExprKind::Continue(_) => {
-                    if self.loop_stack.is_empty() {
-                        self.emit_error("`continue` used outside of a loop");
-                        self.error_type_var()
+                    if this.inner.borrow().loop_stack.is_empty() {
+                        this.emit_error("`continue` used outside of a loop");
+                        this.error_type_var()
                     } else {
-                        self.nothing_type_var()
+                        this.nothing_type_var()
                     }
                 }
                 ExprKind::ConstBlock(const_block) => {
-                    let ctx = self.typing_ctx.clone();
-                    {
-                        let table = ctx.expr_resolutions.borrow();
-                        if let Some(value) = table.resolved_value(expr_id).cloned() {
-                            return self.infer_value(&value).await;
-                        }
+                    let ctx = this.typing_ctx.clone();
+                    let already_resolved =
+                        ctx.expr_resolutions.borrow().resolved_value(expr_id).cloned();
+                    if let Some(value) = already_resolved {
+                        return this.infer_value(&value).await;
                     }
                     // Type the inner expression first (structural inference
                     // alone — it doesn't need the comptime result), *then*
                     // try to resolve its compile-time value: the hook needs
                     // a concretely-typed expression to lower.
-                    let inner_var = self.infer_expr_inner(const_block.expr.as_mut()).await?;
+                    let _ = this.infer_expr_inner(const_block.expr.as_mut()).await?;
                     let key = format!("__fp_expr_{expr_id}");
-                    let resolved = self.await_comptime(&key, &const_block.expr).await;
-                    if resolved {
-                        let table = ctx.expr_resolutions.borrow();
-                        if let Some(value) = table.resolved_value(expr_id).cloned() {
-                            drop(table);
-                            return self.infer_value(&value).await;
-                        }
-                    } else {
-                        self.comptime_exprs.push((*const_block.expr).clone());
-                    }
-                    inner_var
+                    let value = this.await_comptime(&key, &const_block.expr).await?;
+                    return this.infer_value(&value).await;
                 }
                 ExprKind::For(for_expr) => {
-                    let pat_info = self.infer_pattern(for_expr.pat.as_mut()).await?;
-                    let iter_var = self.infer_expr_inner(for_expr.iter.as_mut()).await?;
-                    if let Ok(iter_ty) = self.resolve_to_ty(iter_var).await {
-                        if let Some(elem_var) = self.iter_element_var_from_ty(&iter_ty).await {
-                            self.unify(pat_info.var, elem_var).await?;
+                    let pat_info = this.infer_pattern(for_expr.pat.as_mut()).await?;
+                    let iter_var = this.infer_expr_inner(for_expr.iter.as_mut()).await?;
+                    if let Ok(iter_ty) = this.resolve_to_ty(iter_var).await {
+                        if let Some(elem_var) = this.iter_element_var_from_ty(&iter_ty).await {
+                            this.unify(pat_info.var, elem_var).await?;
                         }
                     }
                     // For now, treat `for` as producing unit.
-                    let unit_var = self.fresh_type_var();
-                    self.bind(unit_var, Ty::Unit(TypeUnit));
-                    self.infer_expr_inner(for_expr.body.as_mut()).await?;
+                    let unit_var = this.fresh_type_var();
+                    this.bind(unit_var, Ty::Unit(TypeUnit));
+                    this.infer_expr_inner(for_expr.body.as_mut()).await?;
                     unit_var
                 }
-                ExprKind::While(while_expr) => self.infer_while(while_expr).await?,
+                ExprKind::While(while_expr) => this.infer_while(while_expr).await?,
                 ExprKind::Try(try_expr) => {
                     if try_expr.catches.is_empty()
                         && try_expr.elze.is_none()
                         && try_expr.finally.is_none()
                     {
-                        return self.infer_try_operator(try_expr).await;
+                        return this.infer_try_operator(try_expr).await;
                     }
-                    let result_var = self.infer_expr_inner(try_expr.expr.as_mut()).await?;
+                    let result_var = this.infer_expr_inner(try_expr.expr.as_mut()).await?;
                     for catch in &mut try_expr.catches {
-                        self.enter_scope();
+                        this.enter_scope();
                         if let Some(pat) = catch.pat.as_mut() {
-                            let panic_var = self.fresh_type_var();
-                            self.bind(panic_var, Ty::Primitive(TypePrimitive::String));
-                            let pattern_info = self.infer_pattern(pat.as_mut()).await?;
-                            self.unify(pattern_info.var, panic_var).await?;
-                            self.apply_pattern_generalization(&pattern_info).await?;
+                            let panic_var = this.fresh_type_var();
+                            this.bind(panic_var, Ty::Primitive(TypePrimitive::String));
+                            let pattern_info = this.infer_pattern(pat.as_mut()).await?;
+                            this.unify(pattern_info.var, panic_var).await?;
+                            this.apply_pattern_generalization(&pattern_info).await?;
                         }
-                        let catch_var = self.infer_expr_inner(catch.body.as_mut()).await?;
-                        self.unify(result_var, catch_var).await?;
-                        self.exit_scope();
+                        let catch_var = this.infer_expr_inner(catch.body.as_mut()).await?;
+                        this.unify(result_var, catch_var).await?;
+                        this.exit_scope();
                     }
                     if let Some(elze) = try_expr.elze.as_mut() {
-                        let else_var = self.infer_expr_inner(elze.as_mut()).await?;
-                        self.unify(result_var, else_var).await?;
+                        let else_var = this.infer_expr_inner(elze.as_mut()).await?;
+                        this.unify(result_var, else_var).await?;
                     }
                     if let Some(finally) = try_expr.finally.as_mut() {
-                        let _ = self.infer_expr_inner(finally.as_mut()).await?;
+                        let _ = this.infer_expr_inner(finally.as_mut()).await?;
                     }
                     result_var
                 }
-                ExprKind::Reference(reference) => self.infer_reference(reference).await?,
-                ExprKind::Dereference(dereference) => self.infer_dereference(dereference).await?,
-                ExprKind::Index(index) => self.infer_index(index).await?,
-                ExprKind::Closure(closure) => self.infer_closure(closure).await?,
-                ExprKind::IntrinsicCall(call) => self.infer_intrinsic(call).await?,
-                ExprKind::Range(range) => self.infer_range(range).await?,
+                ExprKind::Reference(reference) => this.infer_reference(reference).await?,
+                ExprKind::Dereference(dereference) => this.infer_dereference(dereference).await?,
+                ExprKind::Index(index) => this.infer_index(index).await?,
+                ExprKind::Closure(closure) => this.infer_closure(closure).await?,
+                ExprKind::IntrinsicCall(call) => this.infer_intrinsic(call).await?,
+                ExprKind::Range(range) => this.infer_range(range).await?,
                 ExprKind::Await(await_expr) => {
-                    let base_var = self.infer_expr_inner(await_expr.base.as_mut()).await?;
-                    let base_ty = self.resolve_to_ty(base_var).await?;
+                    let base_var = this.infer_expr_inner(await_expr.base.as_mut()).await?;
+                    let base_ty = this.resolve_to_ty(base_var).await?;
 
                     if let Some(inner_ty) = extract_std_task_inner_ty(&base_ty, "Future") {
-                        self.type_from_ast_ty(&inner_ty).await?
+                        this.type_from_ast_ty(&inner_ty).await?
                     } else {
                         base_var
                     }
                 }
                 ExprKind::Async(async_expr) => {
-                    let inner_var = self.infer_expr_inner(async_expr.expr.as_mut()).await?;
-                    let inner_ty = self.resolve_to_ty(inner_var).await?;
+                    let inner_var = this.infer_expr_inner(async_expr.expr.as_mut()).await?;
+                    let inner_ty = this.resolve_to_ty(inner_var).await?;
                     let future_ty = make_std_task_param_ty("Future", inner_ty);
-                    self.type_from_ast_ty(&future_ty).await?
+                    this.type_from_ast_ty(&future_ty).await?
                 }
-                ExprKind::Splat(splat) => self.infer_splat(splat).await?,
-                ExprKind::SplatDict(splat) => self.infer_splat_dict(splat).await?,
+                ExprKind::Splat(splat) => this.infer_splat(splat).await?,
+                ExprKind::SplatDict(splat) => this.infer_splat_dict(splat).await?,
                 ExprKind::Macro(macro_expr) => {
-                    self.emit_error(format!(
+                    this.emit_error(format!(
                         "macro `{}` was not lowered before type checking",
                         macro_expr.invocation.path
                     ));
-                    self.error_type_var()
+                    this.error_type_var()
                 }
                 ExprKind::Any(_any) => {
-                    let any_var = self.fresh_type_var();
-                    self.bind(any_var, Ty::Any(TypeAny));
+                    let any_var = this.fresh_type_var();
+                    this.bind(any_var, Ty::Any(TypeAny));
                     any_var
                 }
                 ExprKind::Item(_) | ExprKind::Closured(_) | ExprKind::Structural(_) => {
-                    self.error_type_var()
+                    this.error_type_var()
                 }
                 ExprKind::Id(expr_id) => {
-                    let ctx = self.typing_ctx.clone();
-                    {
+                    let ctx = this.typing_ctx.clone();
+                    let (resolved_value, source_expr) = {
                         let table = ctx.expr_resolutions.borrow();
-                        if let Some(value) = table.resolved_value(*expr_id).cloned() {
-                            return self.infer_value(&value).await;
-                        }
-                        if let Some(source_expr) = table.source_expr(*expr_id).cloned() {
-                            return self.infer_expr_inner(&mut source_expr.clone()).await;
-                        }
+                        (
+                            table.resolved_value(*expr_id).cloned(),
+                            table.source_expr(*expr_id).cloned(),
+                        )
+                    };
+                    if let Some(value) = resolved_value {
+                        return this.infer_value(&value).await;
                     }
-                    self.emit_error(format!(
+                    if let Some(source_expr) = source_expr {
+                        return this.infer_expr_inner(&mut source_expr.clone()).await;
+                    }
+                    this.emit_error(format!(
                         "missing source expression for expression id {expr_id}"
                     ));
-                    self.error_type_var()
+                    this.error_type_var()
                 }
             };
 
             if let Some(existing_ty) = existing_ty {
                 if !matches!(existing_ty, Ty::Unknown(_) | Ty::ErrorType(_)) {
-                    let existing_var = self.type_from_ast_ty(&existing_ty).await?;
-                    self.unify(var, existing_var).await?;
+                    let existing_var = this.type_from_ast_ty(&existing_ty).await?;
+                    this.unify(var, existing_var).await?;
                 }
             }
 
-            let ty = self.resolve_to_ty(var).await?;
+            let ty = this.resolve_to_ty(var).await?;
             expr.set_ty(ty);
             Ok(var)
         })
     }
 
-    pub(crate) async fn infer_binop(&mut self, binop: &mut ExprBinOp) -> Result<TypeVarId> {
+    pub(crate) async fn infer_binop(&self, binop: &mut ExprBinOp) -> Result<TypeVarId> {
         let lhs = self.infer_expr_inner(binop.lhs.as_mut()).await?;
         let rhs = self.infer_expr_inner(binop.rhs.as_mut()).await?;
         match binop.kind {
@@ -868,7 +868,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    pub(crate) async fn infer_unop(&mut self, unop: &mut ExprUnOp) -> Result<TypeVarId> {
+    pub(crate) async fn infer_unop(&self, unop: &mut ExprUnOp) -> Result<TypeVarId> {
         let value_var = self.infer_expr_inner(unop.val.as_mut()).await?;
         match unop.op {
             UnOpKind::Not => {
@@ -884,7 +884,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    pub(crate) async fn infer_reference(&mut self, reference: &mut ExprReference) -> Result<TypeVarId> {
+    pub(crate) async fn infer_reference(&self, reference: &mut ExprReference) -> Result<TypeVarId> {
         let inner_var = self.infer_expr_inner(reference.referee.as_mut()).await?;
         let reference_var = self.fresh_type_var();
         self.bind_reference_term(reference_var, inner_var);
@@ -892,14 +892,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) async fn infer_dereference(
-        &mut self,
+        &self,
         dereference: &mut ExprDereference,
     ) -> Result<TypeVarId> {
         let target_var = self.infer_expr_inner(dereference.referee.as_mut()).await?;
         self.expect_reference(target_var, "dereference expression").await
     }
 
-    pub(crate) async fn infer_index(&mut self, index: &mut ExprIndex) -> Result<TypeVarId> {
+    pub(crate) async fn infer_index(&self, index: &mut ExprIndex) -> Result<TypeVarId> {
         let object_var = self.infer_expr_inner(index.obj.as_mut()).await?;
         if matches!(index.index.kind(), ExprKind::Range(_)) {
             if let ExprKind::Range(range) = index.index.kind_mut() {
@@ -930,11 +930,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         let idx_ty = self.resolve_to_ty(idx_var).await?;
         let idx_root = self.find(idx_var);
-        let idx_bound_reference = match self.type_vars[idx_root].kind.clone() {
+        let idx_bound_reference = match self.inner.borrow().type_vars[idx_root].kind.clone() {
             TypeVarKind::Bound(ty) => self.reference_inner_from_ty(&ty).await.is_some(),
             TypeVarKind::Link(next) => {
                 let root = self.find(next);
-                match self.type_vars[root].kind.clone() {
+                match self.inner.borrow().type_vars[root].kind.clone() {
                     TypeVarKind::Bound(ty) => self.reference_inner_from_ty(&ty).await.is_some(),
                     _ => false,
                 }
@@ -1013,7 +1013,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(elem_slice_var)
     }
 
-    async fn infer_slice_index(&mut self, object_var: TypeVarId) -> Result<TypeVarId> {
+    async fn infer_slice_index(&self, object_var: TypeVarId) -> Result<TypeVarId> {
         let is_string_like = |ty: &Ty| {
             matches!(ty, Ty::Primitive(TypePrimitive::String))
                 || matches!(
@@ -1164,7 +1164,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(self.error_type_var())
     }
 
-    pub(crate) async fn infer_range(&mut self, range: &mut ExprRange) -> Result<TypeVarId> {
+    pub(crate) async fn infer_range(&self, range: &mut ExprRange) -> Result<TypeVarId> {
         let element_var = self.fresh_type_var();
 
         if let Some(start) = range.start.as_mut() {
@@ -1189,15 +1189,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(range_var)
     }
 
-    pub(crate) async fn infer_splat(&mut self, splat: &mut ExprSplat) -> Result<TypeVarId> {
+    pub(crate) async fn infer_splat(&self, splat: &mut ExprSplat) -> Result<TypeVarId> {
         self.infer_expr_inner(splat.iter.as_mut()).await
     }
 
-    pub(crate) async fn infer_splat_dict(&mut self, splat: &mut ExprSplatDict) -> Result<TypeVarId> {
+    pub(crate) async fn infer_splat_dict(&self, splat: &mut ExprSplatDict) -> Result<TypeVarId> {
         self.infer_expr_inner(splat.dict.as_mut()).await
     }
 
-    pub(crate) async fn infer_intrinsic(&mut self, call: &mut ExprIntrinsicCall) -> Result<TypeVarId> {
+    pub(crate) async fn infer_intrinsic(&self, call: &mut ExprIntrinsicCall) -> Result<TypeVarId> {
         let mut arg_vars = Vec::new();
 
         for arg in &mut call.args {
@@ -1417,7 +1417,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(result_var)
     }
 
-    pub(crate) async fn infer_closure(&mut self, closure: &mut ExprClosure) -> Result<TypeVarId> {
+    pub(crate) async fn infer_closure(&self, closure: &mut ExprClosure) -> Result<TypeVarId> {
         self.enter_scope();
         let exception_policy =
             self.exception_policy_for_ret(closure.ret_ty.as_ref().map(|ty| ty.as_ref()));
@@ -1451,7 +1451,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(closure_var)
     }
 
-    async fn infer_try_operator(&mut self, try_expr: &mut ExprTry) -> Result<TypeVarId> {
+    async fn infer_try_operator(&self, try_expr: &mut ExprTry) -> Result<TypeVarId> {
         let policy = self.current_exception_policy();
         if !matches!(
             policy,
@@ -1471,7 +1471,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.type_from_ast_ty(&ok_ty).await
     }
 
-    pub(crate) async fn infer_with(&mut self, expr_with: &mut ExprWith) -> Result<TypeVarId> {
+    pub(crate) async fn infer_with(&self, expr_with: &mut ExprWith) -> Result<TypeVarId> {
         let context_var = self.infer_expr_inner(expr_with.context.as_mut()).await?;
         let context_ty = self.resolve_to_ty(context_var).await?;
         self.enter_scope();
@@ -1481,7 +1481,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         result
     }
 
-    pub(crate) async fn infer_invoke(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+    pub(crate) async fn infer_invoke(&self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
                         if let Some(result) = self.try_infer_query_pipeline_call(invoke) {
             return result;
         }
@@ -2024,7 +2024,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(func_info.ret)
     }
 
-    async fn enum_variant_from_locator(&mut self, locator: &Name) -> Option<(TypeEnum, EnumTypeVariant)> {
+    async fn enum_variant_from_locator(&self, locator: &Name) -> Option<(TypeEnum, EnumTypeVariant)> {
         let Name::Path(path) = locator else {
             return None;
         };
@@ -2057,7 +2057,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     async fn bind_enum_constructor_return(
-        &mut self,
+        &self,
         enum_def: &TypeEnum,
         variant: &EnumTypeVariant,
         arg_vars: &[TypeVarId],
@@ -2074,7 +2074,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             generic_vars.push((param.name.as_str().to_string(), var));
             let bounds = Self::extract_trait_bounds(&param.bounds);
             if !bounds.is_empty() {
-                self.generic_trait_bounds.insert(var, bounds);
+                self.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
             }
         }
 
@@ -2136,7 +2136,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(())
     }
 
-    fn apply_kwargs_to_invoke(&mut self, invoke: &mut ExprInvoke, sig: &FunctionSignature) -> bool {
+    fn apply_kwargs_to_invoke(&self, invoke: &mut ExprInvoke, sig: &FunctionSignature) -> bool {
         let mut slots: Vec<Option<Expr>> = vec![None; sig.params.len()];
         for (idx, arg) in invoke.args.drain(..).enumerate() {
             if idx >= sig.params.len() {
@@ -2191,7 +2191,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     async fn infer_generic_function_call(
-        &mut self,
+        &self,
         invoke: &mut ExprInvoke,
         sig: &FunctionSignature,
         sig_module: &QualifiedPath,
@@ -2215,7 +2215,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     async fn infer_generic_function_call_body(
-        &mut self,
+        &self,
         invoke: &mut ExprInvoke,
         sig: &FunctionSignature,
         sig_module: &QualifiedPath,
@@ -2229,7 +2229,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 generic_vars.push(var);
                 let bounds = Self::extract_trait_bounds(&param.bounds);
                 if !bounds.is_empty() {
-                    self.generic_trait_bounds.insert(var, bounds);
+                    self.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
                 }
             }
 
@@ -2274,7 +2274,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             if all_resolved && !param_names.is_empty() {
-                self.pending_generics.push(GenericMonorph::new(
+                self.inner.borrow_mut().pending_generics.push(GenericMonorph::new(
                     sig_path.clone(),
                     param_names,
                     concrete_types,
@@ -2291,7 +2291,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     async fn try_infer_field_function_call(
-        &mut self,
+        &self,
         obj_var: TypeVarId,
         field: &Ident,
     ) -> Result<Option<TypeVarId>> {
@@ -2332,7 +2332,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(Some(field_var))
     }
 
-    async fn try_infer_collection_call(&mut self, invoke: &mut ExprInvoke) -> Result<Option<TypeVarId>> {
+    async fn try_infer_collection_call(&self, invoke: &mut ExprInvoke) -> Result<Option<TypeVarId>> {
         let locator = match &invoke.target {
             ExprInvokeTarget::Function(locator) => locator,
             _ => return Ok(None),
@@ -2358,7 +2358,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(None)
     }
 
-    async fn infer_vec_new(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+    async fn infer_vec_new(&self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if !invoke.args.is_empty() {
             for arg in &mut invoke.args {
                 let _ = self.infer_expr_inner(arg).await;
@@ -2371,7 +2371,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(vec_var)
     }
 
-    async fn infer_vec_with_capacity(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+    async fn infer_vec_with_capacity(&self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if invoke.args.len() != 1 {
             for arg in &mut invoke.args {
                 let _ = self.infer_expr_inner(arg).await;
@@ -2389,7 +2389,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(vec_var)
     }
 
-    async fn infer_vec_from(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+    async fn infer_vec_from(&self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if invoke.args.len() != 1 {
             for arg in &mut invoke.args {
                 let _ = self.infer_expr_inner(arg).await;
@@ -2404,7 +2404,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(vec_var)
     }
 
-    async fn infer_hashmap_new(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+    async fn infer_hashmap_new(&self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if !invoke.args.is_empty() {
             for arg in &mut invoke.args {
                 let _ = self.infer_expr_inner(arg).await;
@@ -2420,7 +2420,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(map_var)
     }
 
-    async fn infer_hashmap_with_capacity(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+    async fn infer_hashmap_with_capacity(&self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if invoke.args.len() != 1 {
             for arg in &mut invoke.args {
                 let _ = self.infer_expr_inner(arg).await;
@@ -2441,7 +2441,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(map_var)
     }
 
-    async fn infer_hashmap_from(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+    async fn infer_hashmap_from(&self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         let mut key_var = self.fresh_type_var();
         let mut value_var = self.fresh_type_var();
         if invoke.args.len() != 1 {
@@ -2581,7 +2581,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    fn try_infer_query_pipeline_call(&mut self, invoke: &ExprInvoke) -> Option<Result<TypeVarId>> {
+    fn try_infer_query_pipeline_call(&self, invoke: &ExprInvoke) -> Option<Result<TypeVarId>> {
         let expr = Expr::new(ExprKind::Invoke(invoke.clone()));
         if lower_fp_expr_to_query(&expr, None).is_none() {
             return None;
@@ -2590,7 +2590,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Some(Ok(self.fresh_type_var()))
     }
 
-    async fn infer_builtin_printf(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+    async fn infer_builtin_printf(&self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if invoke.args.is_empty() {
             self.emit_error("printf requires a format string argument");
             return Ok(self.error_type_var());
@@ -2607,7 +2607,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(result_var)
     }
 
-    pub(crate) async fn infer_list_value_as_vec(&mut self, list: &ValueList) -> Result<TypeVarId> {
+    pub(crate) async fn infer_list_value_as_vec(&self, list: &ValueList) -> Result<TypeVarId> {
         let elem_var = if let Some(first) = list.values.first() {
             let first_var = self.infer_value(first).await?;
             for value in list.values.iter().skip(1) {
@@ -2624,7 +2624,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     async fn infer_intrinsic_container(
-        &mut self,
+        &self,
         collection: &mut ExprIntrinsicContainer,
     ) -> Result<TypeVarId> {
         match collection {
@@ -2667,92 +2667,93 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_value<'a>(
-        &'a mut self,
+        &self,
         value: &'a Value,
     ) -> BoxFuture<'a, Result<TypeVarId>> {
+        let this = self.clone();
         Box::pin(async move {
-        let var = self.fresh_type_var();
+        let var = this.fresh_type_var();
         match value {
             Value::Int(_) => {
-                self.literal_ints.insert(var);
-                self.bind(var, Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
+                this.inner.borrow_mut().literal_ints.insert(var);
+                this.bind(var, Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
             }
             Value::UInt(_) => {
-                self.literal_ints.insert(var);
-                self.bind(var, Ty::Primitive(TypePrimitive::Int(TypeInt::U64)));
+                this.inner.borrow_mut().literal_ints.insert(var);
+                this.bind(var, Ty::Primitive(TypePrimitive::Int(TypeInt::U64)));
             }
-            Value::Bool(_) => self.bind(var, Ty::Primitive(TypePrimitive::Bool)),
+            Value::Bool(_) => this.bind(var, Ty::Primitive(TypePrimitive::Bool)),
             Value::Decimal(_) => {
-                self.bind(var, Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64)))
+                this.bind(var, Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64)))
             }
             Value::String(_) => {
-                let inner = self.fresh_type_var();
-                self.bind(inner, Ty::Primitive(TypePrimitive::String));
-                self.bind_reference_term(var, inner);
+                let inner = this.fresh_type_var();
+                this.bind(inner, Ty::Primitive(TypePrimitive::String));
+                this.bind_reference_term(var, inner);
             }
             Value::Bytes(bytes) if bytes_value_is_borrowed_string(bytes) => {
-                let string_var = self.borrowed_string_var();
-                self.unify(var, string_var).await?;
+                let string_var = this.borrowed_string_var();
+                this.unify(var, string_var).await?;
             }
             Value::List(list) => {
                 let elem_var = if let Some(first) = list.values.first() {
-                    self.infer_value(first).await?
+                    this.infer_value(first).await?
                 } else {
-                    self.fresh_type_var()
+                    this.fresh_type_var()
                 };
                 for value in list.values.iter().skip(1) {
-                    let next_var = self.infer_value(value).await?;
-                    self.unify(elem_var, next_var).await?;
+                    let next_var = this.infer_value(value).await?;
+                    this.unify(elem_var, next_var).await?;
                 }
                 let len = list.values.len() as i64;
                 let len_expr = Expr::value(Value::int(len)).into();
-                self.bind_array_term(var, elem_var, Some(len_expr));
+                this.bind_array_term(var, elem_var, Some(len_expr));
             }
-            Value::Char(_) => self.bind(var, Ty::Primitive(TypePrimitive::Char)),
-            Value::Unit(_) => self.bind(var, Ty::Unit(TypeUnit)),
-            Value::Null(_) | Value::None(_) => self.bind(var, Ty::Nothing(TypeNothing)),
+            Value::Char(_) => this.bind(var, Ty::Primitive(TypePrimitive::Char)),
+            Value::Unit(_) => this.bind(var, Ty::Unit(TypeUnit)),
+            Value::Null(_) | Value::None(_) => this.bind(var, Ty::Nothing(TypeNothing)),
             Value::Struct(struct_val) => {
-                self.bind(var, Ty::Struct(struct_val.ty.clone()));
+                this.bind(var, Ty::Struct(struct_val.ty.clone()));
             }
             Value::Structural(structural) => {
                 let mut fields = Vec::with_capacity(structural.fields.len());
                 for field in &structural.fields {
-                    let field_var = self.infer_value(&field.value).await?;
-                    let field_ty = self.resolve_to_ty(field_var).await?;
+                    let field_var = this.infer_value(&field.value).await?;
+                    let field_ty = this.resolve_to_ty(field_var).await?;
                     fields.push(StructuralField::new(field.name.clone(), field_ty));
                 }
-                self.bind(var, Ty::Structural(TypeStructural { fields }));
+                this.bind(var, Ty::Structural(TypeStructural { fields }));
             }
             Value::Tuple(tuple) => {
                 let mut vars = Vec::new();
                 for elem in &tuple.values {
-                    vars.push(self.infer_value(elem).await?);
+                    vars.push(this.infer_value(elem).await?);
                 }
-                self.bind_tuple_term(var, vars);
+                this.bind_tuple_term(var, vars);
             }
             Value::Map(map) => {
                 for entry in &map.entries {
-                    let _ = self.infer_value(&entry.key).await?;
-                    let _ = self.infer_value(&entry.value).await?;
+                    let _ = this.infer_value(&entry.key).await?;
+                    let _ = this.infer_value(&entry.value).await?;
                 }
-                let map_ty = self.make_hashmap_struct();
-                self.bind(var, Ty::Struct(map_ty));
+                let map_ty = this.make_hashmap_struct();
+                this.bind(var, Ty::Struct(map_ty));
             }
             Value::Function(func) => {
-                let fn_ty = self.ty_from_function_signature(&func.sig)?;
-                let fn_var = self.type_from_ast_ty(&fn_ty).await?;
-                self.unify(var, fn_var).await?;
+                let fn_ty = this.ty_from_function_signature(&func.sig)?;
+                let fn_var = this.type_from_ast_ty(&fn_ty).await?;
+                this.unify(var, fn_var).await?;
             }
             Value::Type(inner) => {
                 if let Ty::Struct(_) = inner {
                     // Wrap the concrete type inside Ty::Type with inner set
-                    let type_var = self.type_from_ast_ty(
+                    let type_var = this.type_from_ast_ty(
                         &Ty::Type(TypeType::new(Span::null()).with_inner(inner.clone()))
                     ).await?;
-                    self.unify(var, type_var).await?;
+                    this.unify(var, type_var).await?;
                 } else {
-                    let type_var = self.type_from_ast_ty(&Ty::Type(TypeType::new(Span::null()))).await?;
-                    self.unify(var, type_var).await?;
+                    let type_var = this.type_from_ast_ty(&Ty::Type(TypeType::new(Span::null()))).await?;
+                    this.unify(var, type_var).await?;
                 }
             }
             Value::QuoteToken(token) => {
@@ -2766,7 +2767,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             let item_refs: Vec<&Item> = items.iter().collect();
                             let elem_ty =
                                 quote_item_type_from_items(&item_refs).unwrap_or_else(|| {
-                                    self.emit_error(
+                                    this.emit_error(
                                         "quote<item> contains multiple item kinds; using item type",
                                     );
                                     Ty::Quote(TypeQuote {
@@ -2784,22 +2785,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     },
                     _ => quote_ty_from_fragment(token.kind, None),
                 };
-                let quote_var = self.type_from_ast_ty(&quote_ty).await?;
-                self.unify(var, quote_var).await?;
+                let quote_var = this.type_from_ast_ty(&quote_ty).await?;
+                this.unify(var, quote_var).await?;
             }
             Value::TokenStream(_) => {
-                let ts_var = self.type_from_ast_ty(&Ty::TokenStream(TypeTokenStream)).await?;
-                self.unify(var, ts_var).await?;
+                let ts_var = this.type_from_ast_ty(&Ty::TokenStream(TypeTokenStream)).await?;
+                this.unify(var, ts_var).await?;
             }
             Value::Expr(_) => {
                 let message = "embedded expression values are not yet supported".to_string();
-                self.emit_error(message.clone());
-                return Ok(self.error_type_var());
+                this.emit_error(message.clone());
+                return Ok(this.error_type_var());
             }
             _ => {
                 let message = format!("value {:?} is not supported by type inference", value);
-                self.emit_error(message.clone());
-                return Ok(self.error_type_var());
+                this.emit_error(message.clone());
+                return Ok(this.error_type_var());
             }
         }
         Ok(var)
@@ -2807,21 +2808,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn infer_pattern<'a>(
-        &'a mut self,
+        &self,
         pattern: &'a mut Pattern,
     ) -> BoxFuture<'a, Result<PatternInfo>> {
+        let this = self.clone();
         Box::pin(async move {
         let existing_ty = pattern.ty().cloned();
         let info = match pattern.kind_mut() {
             PatternKind::Ident(ident) => {
-                let var = self.fresh_type_var();
-                self.insert_env(ident.ident.as_str().to_string(), EnvEntry::Mono(var));
+                let var = this.fresh_type_var();
+                this.insert_env(ident.ident.as_str().to_string(), EnvEntry::Mono(var));
                 PatternInfo::new(var).with_binding(ident.ident.as_str().to_string(), var)
             }
             PatternKind::Bind(bind) => {
-                let inner_info = self.infer_pattern(bind.pattern.as_mut()).await?;
+                let inner_info = this.infer_pattern(bind.pattern.as_mut()).await?;
                 let var = inner_info.var;
-                self.insert_env(bind.ident.ident.as_str().to_string(), EnvEntry::Mono(var));
+                this.insert_env(bind.ident.ident.as_str().to_string(), EnvEntry::Mono(var));
                 let mut info = inner_info;
                 info.bindings.push(PatternBinding {
                     name: bind.ident.ident.as_str().to_string(),
@@ -2830,9 +2832,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 info
             }
             PatternKind::Type(inner) => {
-                let inner_info = self.infer_pattern(inner.pat.as_mut()).await?;
-                let annot_var = self.type_from_ast_ty(&inner.ty).await?;
-                self.unify(inner_info.var, annot_var).await?;
+                let inner_info = this.infer_pattern(inner.pat.as_mut()).await?;
+                let annot_var = this.type_from_ast_ty(&inner.ty).await?;
+                this.unify(inner_info.var, annot_var).await?;
                 inner_info
             }
             PatternKind::Quote(quote) => {
@@ -2845,60 +2847,60 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }),
                     _ => quote_ty_from_fragment(quote.fragment, None),
                 };
-                let var = self.type_from_ast_ty(&quote_ty).await?;
+                let var = this.type_from_ast_ty(&quote_ty).await?;
                 PatternInfo::new(var)
             }
             PatternKind::QuotePlural(quote) => {
                 let quote_ty = quote_ty_from_fragment(quote.fragment, None);
-                let elem_var = self.type_from_ast_ty(&quote_ty).await?;
-                let list_var = self.fresh_type_var();
-                self.bind_vec_term(list_var, elem_var);
+                let elem_var = this.type_from_ast_ty(&quote_ty).await?;
+                let list_var = this.fresh_type_var();
+                this.bind_vec_term(list_var, elem_var);
                 PatternInfo::new(list_var)
             }
-            PatternKind::Wildcard(_) => PatternInfo::new(self.fresh_type_var()),
+            PatternKind::Wildcard(_) => PatternInfo::new(this.fresh_type_var()),
             PatternKind::Tuple(tuple) => {
                 let mut vars = Vec::new();
                 let mut bindings = Vec::new();
                 for pat in &mut tuple.patterns {
-                    let child = self.infer_pattern(pat).await?;
+                    let child = this.infer_pattern(pat).await?;
                     vars.push(child.var);
                     bindings.extend(child.bindings);
                 }
-                let tuple_var = self.fresh_type_var();
-                self.bind_tuple_term(tuple_var, vars);
+                let tuple_var = this.fresh_type_var();
+                this.bind_tuple_term(tuple_var, vars);
                 PatternInfo {
                     var: tuple_var,
                     bindings,
                 }
             }
             PatternKind::Struct(struct_pat) => {
-                let struct_name = self
+                let struct_name = this
                     .qualified_name(struct_pat.name.as_str())
                     .unwrap_or_else(|| {
                         QualifiedPath::new(vec![struct_pat.name.as_str().to_string()])
                     });
-                let struct_var = self.fresh_type_var();
-                let struct_def = self.own_struct_defs().get(&struct_name).cloned();
+                let struct_var = this.fresh_type_var();
+                let struct_def = this.own_struct_defs().get(&struct_name).cloned();
                 if let Some(struct_def) = struct_def {
-                    self.bind(struct_var, Ty::Struct(struct_def.clone()));
+                    this.bind(struct_var, Ty::Struct(struct_def.clone()));
                     let mut bindings = Vec::new();
                     for field in &mut struct_pat.fields {
                         if let Some(rename) = field.rename.as_mut() {
-                            let child = self.infer_pattern(rename).await?;
+                            let child = this.infer_pattern(rename).await?;
                             bindings.extend(child.bindings);
                             if let Some(def_field) =
                                 struct_def.fields.iter().find(|f| f.name == field.name)
                             {
-                                let expected = self.type_from_ast_ty(&def_field.value).await?;
-                                self.unify(child.var, expected).await?;
+                                let expected = this.type_from_ast_ty(&def_field.value).await?;
+                                this.unify(child.var, expected).await?;
                             }
                         } else if let Some(def_field) =
                             struct_def.fields.iter().find(|f| f.name == field.name)
                         {
-                            let var = self.fresh_type_var();
-                            self.insert_env(field.name.as_str().to_string(), EnvEntry::Mono(var));
-                            let expected = self.type_from_ast_ty(&def_field.value).await?;
-                            self.unify(var, expected).await?;
+                            let var = this.fresh_type_var();
+                            this.insert_env(field.name.as_str().to_string(), EnvEntry::Mono(var));
+                            let expected = this.type_from_ast_ty(&def_field.value).await?;
+                            this.unify(var, expected).await?;
                             bindings.push(PatternBinding {
                                 name: field.name.as_str().to_string(),
                                 var,
@@ -2910,11 +2912,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         bindings,
                     }
                 } else {
-                    self.emit_error(format!(
+                    this.emit_error(format!(
                         "unknown struct {} in pattern",
                         struct_name.to_key()
                     ));
-                    PatternInfo::new(self.error_type_var())
+                    PatternInfo::new(this.error_type_var())
                 }
             }
             PatternKind::TupleStruct(tuple_struct) => {
@@ -2922,13 +2924,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let mut bindings = Vec::new();
                 let mut element_vars = Vec::new();
                 for pat in &mut tuple_struct.patterns {
-                    let child = self.infer_pattern(pat).await?;
+                    let child = this.infer_pattern(pat).await?;
                     element_vars.push(child.var);
                     bindings.extend(child.bindings);
                 }
 
-                let tuple_var = self.fresh_type_var();
-                self.bind_tuple_term(tuple_var, element_vars.clone());
+                let tuple_var = this.fresh_type_var();
+                this.bind_tuple_term(tuple_var, element_vars.clone());
 
                 // Try to resolve as an enum variant: `Enum::Variant(...)`.
                 let locator = &tuple_struct.name;
@@ -2943,13 +2945,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .collect::<Vec<_>>();
                         let mut enum_def = None;
                         if let Some(enum_key) =
-                            self.resolve_segments_key(path.prefix, &enum_segments)
+                            this.resolve_segments_key(path.prefix, &enum_segments)
                         {
-                            enum_def = self.own_enum_defs().get(&enum_key).cloned();
+                            enum_def = this.own_enum_defs().get(&enum_key).cloned();
                         }
                         if enum_def.is_none() {
                             let enum_name = enum_segments.join("::");
-                            enum_def = self.lookup_enum_def_by_name(&enum_name).map(|(_, def)| def);
+                            enum_def = this.lookup_enum_def_by_name(&enum_name).map(|(_, def)| def);
                         }
                         if let Some(enum_def) = enum_def {
                             if let Some(variant) = enum_def
@@ -2957,14 +2959,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 .iter()
                                 .find(|v| v.name.as_str() == variant_name)
                             {
-                                self.enter_scope();
+                                this.enter_scope();
                                 let mut generic_vars: Vec<(String, TypeVarId)> = Vec::new();
                                 for param in &enum_def.generics_params {
-                                    let var = self.register_generic_param(param.name.as_str());
+                                    let var = this.register_generic_param(param.name.as_str());
                                     generic_vars.push((param.name.as_str().to_string(), var));
                                     let bounds = Self::extract_trait_bounds(&param.bounds);
                                     if !bounds.is_empty() {
-                                        self.generic_trait_bounds.insert(var, bounds);
+                                        this.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
                                     }
                                 }
                                 match &variant.value {
@@ -2976,28 +2978,28 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                             .take(element_vars.len())
                                         {
                                             let expected_var =
-                                                self.type_from_ast_ty(expected_ty).await?;
-                                            self.unify(element_vars[idx], expected_var).await?;
+                                                this.type_from_ast_ty(expected_ty).await?;
+                                            this.unify(element_vars[idx], expected_var).await?;
                                         }
                                     }
                                     _ if element_vars.len() == 1 => {
-                                        let expected_var = self.type_from_ast_ty(&variant.value).await?;
-                                        self.unify(element_vars[0], expected_var).await?;
+                                        let expected_var = this.type_from_ast_ty(&variant.value).await?;
+                                        this.unify(element_vars[0], expected_var).await?;
                                     }
                                     _ => {}
                                 }
 
                                 let mut args = Vec::with_capacity(generic_vars.len());
                                 for (_, var) in &generic_vars {
-                                    let ty = self
+                                    let ty = this
                                         .resolve_to_ty(*var).await
                                         .unwrap_or(Ty::Unknown(TypeUnknown));
                                     args.push(ty);
                                 }
-                                let concrete = self.apply_generic_args_to_enum(&enum_def, &args);
-                                self.exit_scope();
-                                let enum_var = self.fresh_type_var();
-                                self.bind(enum_var, Ty::Enum(concrete));
+                                let concrete = this.apply_generic_args_to_enum(&enum_def, &args);
+                                this.exit_scope();
+                                let enum_var = this.fresh_type_var();
+                                this.bind(enum_var, Ty::Enum(concrete));
                                 return Ok(PatternInfo {
                                     var: enum_var,
                                     bindings,
@@ -3028,18 +3030,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     .collect::<Vec<_>>();
                                 let mut enum_def = None;
                                 if let Some(enum_key) =
-                                    self.resolve_segments_key(path.prefix, &enum_segments)
+                                    this.resolve_segments_key(path.prefix, &enum_segments)
                                 {
-                                    enum_def = self.own_enum_defs().get(&enum_key).cloned();
+                                    enum_def = this.own_enum_defs().get(&enum_key).cloned();
                                 }
                                 if enum_def.is_none() {
                                     let enum_name = enum_segments.join("::");
-                                    enum_def = self
+                                    enum_def = this
                                         .lookup_enum_def_by_name(&enum_name)
                                         .map(|(_, def)| def);
                                 }
                                 if let Some(enum_def) = enum_def {
-                                    let enum_var = self.fresh_type_var();
+                                    let enum_var = this.fresh_type_var();
 
                                     if let Some(inner) = variant.pattern.as_mut() {
                                         if let Some(def_variant) = enum_def
@@ -3054,11 +3056,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                             ) = (&def_variant.value, inner.kind_mut())
                                             {
                                                 let mut bindings = Vec::new();
-                                                self.enter_scope();
+                                                this.enter_scope();
                                                 let mut generic_vars: Vec<(String, TypeVarId)> =
                                                     Vec::new();
                                                 for param in &enum_def.generics_params {
-                                                    let var = self.register_generic_param(
+                                                    let var = this.register_generic_param(
                                                         param.name.as_str(),
                                                     );
                                                     generic_vars.push((
@@ -3068,7 +3070,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                     let bounds =
                                                         Self::extract_trait_bounds(&param.bounds);
                                                     if !bounds.is_empty() {
-                                                        self.generic_trait_bounds
+                                                        this.inner
+                                                            .borrow_mut()
+                                                            .generic_trait_bounds
                                                             .insert(var, bounds);
                                                     }
                                                 }
@@ -3078,22 +3082,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                         .iter()
                                                         .find(|f| f.name == field.name)
                                                     {
-                                                        let expected_var = self.type_from_ast_ty(
+                                                        let expected_var = this.type_from_ast_ty(
                                                             &expected_field.value,
                                                         ).await?;
                                                         if let Some(rename) = field.rename.as_mut()
                                                         {
                                                             let child =
-                                                                self.infer_pattern(rename).await?;
+                                                                this.infer_pattern(rename).await?;
                                                             bindings.extend(child.bindings);
-                                                            self.unify(child.var, expected_var).await?;
+                                                            this.unify(child.var, expected_var).await?;
                                                         } else {
-                                                            let var = self.fresh_type_var();
-                                                            self.insert_env(
+                                                            let var = this.fresh_type_var();
+                                                            this.insert_env(
                                                                 field.name.as_str().to_string(),
                                                                 EnvEntry::Mono(var),
                                                             );
-                                                            self.unify(var, expected_var).await?;
+                                                            this.unify(var, expected_var).await?;
                                                             bindings.push(PatternBinding {
                                                                 name: field
                                                                     .name
@@ -3107,15 +3111,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                 let mut args =
                                                     Vec::with_capacity(generic_vars.len());
                                                 for (_, var) in &generic_vars {
-                                                    let ty = self
+                                                    let ty = this
                                                         .resolve_to_ty(*var).await
                                                         .unwrap_or(Ty::Unknown(TypeUnknown));
                                                     args.push(ty);
                                                 }
-                                                let concrete = self
+                                                let concrete = this
                                                     .apply_generic_args_to_enum(&enum_def, &args);
-                                                self.exit_scope();
-                                                self.bind(enum_var, Ty::Enum(concrete));
+                                                this.exit_scope();
+                                                this.bind(enum_var, Ty::Enum(concrete));
                                                 return Ok(PatternInfo {
                                                     var: enum_var,
                                                     bindings,
@@ -3124,7 +3128,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         }
                                     }
 
-                                    self.bind(enum_var, Ty::Enum(enum_def.clone()));
+                                    this.bind(enum_var, Ty::Enum(enum_def.clone()));
                                     return Ok(PatternInfo::new(enum_var));
                                 }
                             }
@@ -3132,7 +3136,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         // Struct patterns are lowered as `PatternKind::Variant` with a
                         // single-segment path and structural payload. Bind fields against
                         // known struct definitions so identifiers enter the environment.
-                        let resolved = self.resolve_locator_key(locator);
+                        let resolved = this.resolve_locator_key(locator);
                         let struct_name = resolved.or_else(|| match locator {
                             Name::Path(path)
                                 if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
@@ -3147,10 +3151,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             _ => None,
                         });
                         if let Some(struct_name) = struct_name {
-                            let struct_def = self.own_struct_defs().get(&struct_name).cloned();
+                            let struct_def = this.own_struct_defs().get(&struct_name).cloned();
                             if let Some(struct_def) = struct_def {
-                                let struct_var = self.fresh_type_var();
-                                self.bind(struct_var, Ty::Struct(struct_def.clone()));
+                                let struct_var = this.fresh_type_var();
+                                this.bind(struct_var, Ty::Struct(struct_def.clone()));
                                 if let Some(inner) = variant.pattern.as_mut() {
                                     if let PatternKind::Structural(pat) = inner.kind_mut() {
                                         let mut bindings = Vec::new();
@@ -3161,18 +3165,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                 .find(|f| f.name == field.name)
                                             {
                                                 let expected =
-                                                    self.type_from_ast_ty(&def_field.value).await?;
+                                                    this.type_from_ast_ty(&def_field.value).await?;
                                                 if let Some(rename) = field.rename.as_mut() {
-                                                    let child = self.infer_pattern(rename).await?;
+                                                    let child = this.infer_pattern(rename).await?;
                                                     bindings.extend(child.bindings);
-                                                    self.unify(child.var, expected).await?;
+                                                    this.unify(child.var, expected).await?;
                                                 } else {
-                                                    let var = self.fresh_type_var();
-                                                    self.insert_env(
+                                                    let var = this.fresh_type_var();
+                                                    this.insert_env(
                                                         field.name.as_str().to_string(),
                                                         EnvEntry::Mono(var),
                                                     );
-                                                    self.unify(var, expected).await?;
+                                                    this.unify(var, expected).await?;
                                                     bindings.push(PatternBinding {
                                                         name: field.name.as_str().to_string(),
                                                         var,
@@ -3190,30 +3194,30 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             }
                         }
                         // Otherwise treat as a binding-like identifier.
-                        let var = self.fresh_type_var();
+                        let var = this.fresh_type_var();
                         PatternInfo::new(var)
                     }
                     _ => {
                         // Literal pattern.
-                        let lit_var = self.infer_expr_inner(&mut variant.name).await?;
+                        let lit_var = this.infer_expr_inner(&mut variant.name).await?;
                         PatternInfo::new(lit_var)
                     }
                 }
             }
             _ => {
-                self.emit_error("pattern is not supported by type inference");
-                PatternInfo::new(self.error_type_var())
+                this.emit_error("pattern is not supported by type inference");
+                PatternInfo::new(this.error_type_var())
             }
         };
         if let Some(ty) = existing_ty.as_ref() {
-            let var = self.type_from_ast_ty(ty).await?;
-            self.unify(info.var, var).await?;
+            let var = this.type_from_ast_ty(ty).await?;
+            this.unify(info.var, var).await?;
         }
         Ok(info)
         })
     }
 
-    async fn lookup_struct_method(&mut self, obj_var: TypeVarId, field: &Ident, args: &mut [Expr]) -> Result<TypeVarId> {
+    async fn lookup_struct_method(&self, obj_var: TypeVarId, field: &Ident, args: &mut [Expr]) -> Result<TypeVarId> {
         let ty = self.resolve_to_ty(obj_var).await?;
         let resolved_ty = Self::peel_reference(ty.clone());
         let (type_name, struct_path) = match &resolved_ty {
@@ -3233,7 +3237,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     if let Some(var) = self.lookup_unique_trait_method(field).await? {
                         return Ok(var);
                     }
-                    if self.lossy_mode {
+                    if self.inner.borrow().lossy_mode {
                         return Ok(self.fresh_type_var());
                     }
                 }
@@ -3347,7 +3351,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     let var = self.register_generic_param(param.name.as_str());
                                     let bounds = Self::extract_trait_bounds(&param.bounds);
                                     if !bounds.is_empty() {
-                                        self.generic_trait_bounds.insert(var, bounds);
+                                        self.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
                                     }
                                 }
                                 let ret = self.type_from_ast_ty(&expected).await;
@@ -3426,9 +3430,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(self.error_type_var())
     }
 
-    async fn lookup_unique_trait_method(&mut self, field: &Ident) -> Result<Option<TypeVarId>> {
+    async fn lookup_unique_trait_method(&self, field: &Ident) -> Result<Option<TypeVarId>> {
         let mut found: Option<(String, FunctionSignature)> = None;
-        for (trait_name, methods) in &self.trait_method_sigs {
+        let trait_method_sigs = self.inner.borrow().trait_method_sigs.clone();
+        for (trait_name, methods) in &trait_method_sigs {
             if let Some(sig) = methods.get(field.as_str()) {
                 if found.is_some() {
                     return Ok(None);
@@ -3455,14 +3460,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     async fn lookup_trait_method_for_receiver(
-        &mut self,
+        &self,
         obj_var: TypeVarId,
         field: &Ident,
     ) -> Result<Option<TypeVarId>> {
         let mut receiver = obj_var;
         loop {
             let root = self.find(receiver);
-            match self.type_vars[root].kind.clone() {
+            match self.inner.borrow().type_vars[root].kind.clone() {
                 crate::typing::unify::TypeVarKind::Bound(ty) => {
                     if let Some(inner) = self.reference_inner_from_ty(&ty).await {
                         receiver = inner;
@@ -3481,16 +3486,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         }
 
-        let Some(traits) = self.generic_trait_bounds.get(&receiver).cloned() else {
+        let Some(traits) = self.inner.borrow().generic_trait_bounds.get(&receiver).cloned() else {
             return Ok(None);
         };
 
         for trait_name in traits {
             for candidate in self.trait_name_candidates(&trait_name) {
-                let Some(methods) = self.trait_method_sigs.get(&candidate) else {
-                    continue;
-                };
-                let Some(sig) = methods.get(field.as_str()).cloned() else {
+                let Some(sig) = self
+                    .inner
+                    .borrow()
+                    .trait_method_sigs
+                    .get(&candidate)
+                    .and_then(|methods| methods.get(field.as_str()))
+                    .cloned()
+                else {
                     continue;
                 };
                 let scheme = self.scheme_from_method_signature(&sig).await?;
@@ -3501,7 +3510,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     async fn try_infer_primitive_method(
-        &mut self,
+        &self,
         obj_var: TypeVarId,
         field: &Ident,
         arg_len: usize,
@@ -3666,7 +3675,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    async fn iter_element_var_from_ty(&mut self, ty: &Ty) -> Option<TypeVarId> {
+    async fn iter_element_var_from_ty(&self, ty: &Ty) -> Option<TypeVarId> {
         match ty {
             Ty::Vec(vec) => self.type_from_ast_ty(&vec.ty).await.ok(),
             Ty::Array(array) => self.type_from_ast_ty(&array.elem).await.ok(),
@@ -3676,7 +3685,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) async fn lookup_struct_field(
-        &mut self,
+        &self,
         obj_var: TypeVarId,
         field: &Ident,
     ) -> Result<TypeVarId> {
@@ -3753,16 +3762,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     })
                 };
                 if let Some(name) = struct_name {
-                    let cached = self.typing_ctx.resolved_types.borrow().get(&name).cloned();
-                    if let Some(struct_ty) = cached {
-                        if let Some(def_field) = struct_ty.fields.iter().find(|f| f.name == *field) {
-                            let var = self.type_from_ast_ty(&def_field.value).await?;
-                            return Ok(var);
-                        }
+                    // Genuinely awaits this alias's struct shape if it isn't
+                    // resolved yet (its own independently-spawned task --
+                    // see `predeclare_item`/`await_struct_alias`), instead of
+                    // returning a placeholder and hoping a whole-module
+                    // retry fixes it later.
+                    let struct_ty = self.await_struct_alias(&name).await?;
+                    if let Some(def_field) = struct_ty.fields.iter().find(|f| f.name == *field) {
+                        let var = self.type_from_ast_ty(&def_field.value).await?;
+                        return Ok(var);
                     }
                 }
-                // Defer: const-block type alias not yet resolved by comptime.
-                // Return placeholder bound to opaque type; retry pass resolves it.
                 if tt.inner.is_none() {
                     let placeholder = self.fresh_type_var();
                     self.bind(placeholder, Ty::Type(TypeType::new(fp_core::span::Span::null())));
@@ -3796,7 +3806,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             other => {
-                if self.lossy_mode && matches!(other, Ty::Any(_) | Ty::Unknown(_)) {
+                if self.inner.borrow().lossy_mode && matches!(other, Ty::Any(_) | Ty::Unknown(_)) {
                     Ok(self.fresh_type_var())
                 } else {
                     self.emit_error(format!(
@@ -3810,7 +3820,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) async fn resolve_struct_literal(
-        &mut self,
+        &self,
         struct_expr: &mut ExprStruct,
     ) -> Result<TypeVarId> {
         let resolved_name = match struct_expr.name.kind() {
@@ -3936,7 +3946,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    fn type_fields_list_var(&mut self) -> Result<TypeVarId> {
+    fn type_fields_list_var(&self) -> Result<TypeVarId> {
         let result_var = self.fresh_type_var();
         let fields = vec![
             StructuralField::new(Ident::new("name".to_string()), Self::borrowed_string_ty()),
@@ -3960,7 +3970,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         })
     }
 
-    pub(crate) fn borrowed_string_var(&mut self) -> TypeVarId {
+    pub(crate) fn borrowed_string_var(&self) -> TypeVarId {
         let string_var = self.fresh_type_var();
         self.bind(string_var, Ty::Primitive(TypePrimitive::String));
         let ref_var = self.fresh_type_var();
@@ -3969,7 +3979,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     async fn resolve_struct_literal_as_enum_variant(
-        &mut self,
+        &self,
         struct_expr: &mut ExprStruct,
         enum_ty: &TypeEnum,
     ) -> Result<Option<TypeVarId>> {
@@ -4032,10 +4042,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(Some(var))
     }
 
-    async fn lookup_env_name(&mut self, locator: &Name) -> Result<Option<TypeVarId>> {
+    async fn lookup_env_name(&self, locator: &Name) -> Result<Option<TypeVarId>> {
         let key = locator.to_string();
         let mut poly_ty: Option<Ty> = None;
-        for scope in self.env.iter().rev() {
+        let env = self.inner.borrow().env.clone();
+        for scope in env.iter().rev() {
             if let Some(entry) = scope.get(&key) {
                 match entry {
                     EnvEntry::Mono(var) => return Ok(Some(*var)),
@@ -4056,7 +4067,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     async fn resolve_struct_literal_from_def(
-        &mut self,
+        &self,
         struct_expr: &mut ExprStruct,
         struct_def: &TypeStruct,
     ) -> Result<Option<TypeVarId>> {
