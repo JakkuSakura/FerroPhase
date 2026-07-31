@@ -823,6 +823,10 @@ fn lower_ast(
 }
 
 fn drain_driver(driver: &mut CompilerDriver, lossy: LossyCompileOptions) -> Result<()> {
+    // Typing (`fp-typing`) can genuinely suspend on a not-yet-loaded package,
+    // but `CompilerDriver::drive_typing_to_completion` resolves that in place
+    // before `run_next` ever returns, so this stays a plain synchronous
+    // drain loop -- no executor/async needed at this level.
     while driver
         .run_next()
         .map_err(|err| CliError::Compilation(err.to_string()))?

@@ -49,8 +49,7 @@ fn const_block_deftype_defers_instead_of_erroring_when_blocked() {
     )));
     let mut typer = AstTypeInferencer::new(typing_ctx.clone());
     let mut file = file;
-    let outcome = typer
-        .infer_file(&mut file)
+    let outcome = fp_typing::block_on(typer.infer_file(&mut file))
         .expect("a genuinely-blocked const block must defer, not hard-fail");
 
     assert!(
@@ -93,7 +92,7 @@ fn actionable_pending_defers_a_later_unrelated_error_in_the_same_module() {
     )));
     let mut typer = AstTypeInferencer::new(typing_ctx.clone());
     let mut file = file;
-    let outcome = typer.infer_file(&mut file).expect(
+    let outcome = fp_typing::block_on(typer.infer_file(&mut file)).expect(
         "an actionable pending request earlier in the module must defer a later item's error",
     );
 
@@ -120,7 +119,7 @@ fn genuine_error_still_surfaces_when_nothing_is_pending() {
     )));
     let mut typer = AstTypeInferencer::new(typing_ctx);
     let mut file = file;
-    let result = typer.infer_file(&mut file);
+    let result = fp_typing::block_on(typer.infer_file(&mut file));
 
     assert!(
         result.is_err(),

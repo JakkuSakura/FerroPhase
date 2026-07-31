@@ -28,7 +28,7 @@ fn type_inference_records_resolved_name_on_tast_expr() {
         fp_core::workspace::WorkspaceContext::new(),
     )));
     let mut typer = AstTypeInferencer::new(typing_ctx.clone());
-    let outcome = typer.infer_file(&mut file).expect("infer");
+    let outcome = fp_typing::block_on(typer.infer_file(&mut file)).expect("infer");
     let has_errors = typing_ctx
         .diagnostics
         .borrow()

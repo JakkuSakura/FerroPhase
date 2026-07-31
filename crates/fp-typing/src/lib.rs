@@ -27,6 +27,47 @@ fn typing_error(msg: impl Into<String>) -> Error {
     Error::from(msg.into())
 }
 
+/// A boxed, pinned future borrowing for lifetime `'a` -- the standard shape
+/// for a recursive/mutually-recursive async fn's return type, since Rust
+/// can't give a directly- or mutually-recursive `async fn` a statically
+/// sized state machine (the recursive call's future would need to contain
+/// itself). Used throughout the typing SCC (`typing::unify`,
+/// `typing::infer_expr`, `typing::infer_stmt`, and this crate root) at
+/// exactly the functions that call themselves -- everything else in that
+/// call graph is a plain `async fn` with no heap allocation of its own.
+pub(crate) type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
+
+/// Minimal single-poll driver for tests and other standalone callers that
+/// just want a typing/comptime result synchronously and know up front that
+/// nothing in this call will genuinely suspend (no unloaded package, no
+/// pending comptime value) -- real suspend/resume across an actual
+/// `Poll::Pending` is the driver's job (`fp-compiler`'s `Executor`, which
+/// owns the waker registries in `TypingContext` that make resuming
+/// meaningful). This just polls once with a waker that panics if used,
+/// since a `Waker` registered here would never be woken by anything.
+pub fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+    fn no_wake(_: *const ()) {}
+    fn clone_noop_waker(_: *const ()) -> RawWaker {
+        RawWaker::new(std::ptr::null(), &VTABLE)
+    }
+    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone_noop_waker, no_wake, no_wake, |_| {});
+
+    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = std::pin::pin!(fut);
+    match fut.as_mut().poll(&mut cx) {
+        Poll::Ready(value) => value,
+        Poll::Pending => panic!(
+            "fp_typing::block_on: future returned Poll::Pending -- this helper only supports \
+             futures that resolve on the very first poll (tests / synchronous callers with no \
+             real package or comptime suspension); drive genuinely suspending futures through \
+             fp-compiler's Executor instead"
+        ),
+    }
+}
+
 pub(crate) type TypeVarId = usize;
 
 fn attrs_has_name(attrs: &[Attribute], name: &str) -> bool {
@@ -333,12 +374,18 @@ pub struct AstTypeInferencer<'ctx> {
     resolution_hook: Option<Box<dyn TypeResolutionHook + 'ctx>>,
     resolved_names: ResolvedNameTable,
     generic_type_vars: HashMap<TypeVarId, String>,
-    comptime_exprs: Vec<Expr>,
     /// Shared mutable state with the driver: resolved consts, types,
-    /// module resolution, expression resolution, diagnostics.
+    /// module resolution, expression resolution, diagnostics, and the
+    /// package/comptime waker registries that make `await_package`/
+    /// `await_comptime` genuinely suspend instead of degrading to "pending".
     typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>,
     /// Generic invocations with resolved concrete types ready for monomorphization.
     pending_generics: Vec<GenericMonorph>,
+    /// Expressions whose compile-time value `await_comptime` couldn't
+    /// resolve this pass — surfaced as `PendingTypingRequestKind::Comptime`
+    /// entries in `finish()`'s outcome so the driver knows to retry the
+    /// whole compile unit (see `await_comptime`'s doc comment).
+    comptime_exprs: Vec<Expr>,
     /// Structs (and their `impl` blocks) resolved from a workspace crate
     /// rather than the local one — e.g. `std::meta::TypeBuilder` via
     /// `TypeBuilder::new(...)`. Reported out so the driver can predeclare
@@ -346,18 +393,12 @@ pub struct AstTypeInferencer<'ctx> {
     /// to HIR, since MIR lowering's call-target resolution only ever sees
     /// impls declared in the same HIR program.
     cross_crate_struct_refs: HashSet<QualifiedPath>,
-    /// Packages referenced by this compile unit that are *registered* (a
-    /// `PackageProvider` exists) but not yet loaded — reported out as
-    /// `PendingTypingRequestKind::Package` so the driver can load them via
-    /// the scheduler (request, yield, retry), the same way comptime needs
-    /// are deferred.
-    pending_packages: HashSet<String>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
-    fn register_qualified_symbol(&mut self, path: &QualifiedPath) -> TypeVarId {
+    async fn register_qualified_symbol(&mut self, path: &QualifiedPath) -> TypeVarId {
         let key = path.to_key();
-        if let Some(var) = self.lookup_env_var(&key) {
+        if let Some(var) = self.lookup_env_var(&key).await {
             return var;
         }
         let var = self.fresh_type_var();
@@ -365,7 +406,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         var
     }
 
-    fn register_qualified_items(&mut self, items: &[Item], prefix: &QualifiedPath) {
+    /// Boxed: recurses into itself for nested modules (see `BoxFuture`'s doc
+    /// comment).
+    fn register_qualified_items<'a>(
+        &'a mut self,
+        items: &'a [Item],
+        prefix: &'a QualifiedPath,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
         for item in items {
             match item.kind() {
                 ItemKind::Module(module) => {
@@ -374,16 +422,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     if prefix.is_empty() {
                         self.root_modules.insert(module.name.as_str().to_string());
                     }
-                    self.register_qualified_items(&module.items, &next);
+                    self.register_qualified_items(&module.items, &next).await;
                 }
                 ItemKind::DefFunction(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
                     self.own_function_sigs_mut()
                         .insert(name.clone(), def.sig.clone());
-                    let var = self.register_qualified_symbol(&name);
+                    let var = self.register_qualified_symbol(&name).await;
                     let saved = self.module_path.clone();
                     self.module_path = prefix.clone();
-                    self.prebind_function_signature(def, var);
+                    self.prebind_function_signature(def, var).await;
                     self.module_path = saved;
                 }
                 ItemKind::DeclFunction(decl) => {
@@ -394,46 +442,46 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.extern_function_signatures
                             .insert(name.clone(), decl.sig.clone());
                     }
-                    let var = self.register_qualified_symbol(&name);
+                    let var = self.register_qualified_symbol(&name).await;
                     let saved = self.module_path.clone();
                     self.module_path = prefix.clone();
-                    self.prebind_decl_function_signature(decl, var);
+                    self.prebind_decl_function_signature(decl, var).await;
                     self.module_path = saved;
                 }
                 ItemKind::DefConst(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
-                    self.register_qualified_symbol(&name);
+                    self.register_qualified_symbol(&name).await;
                 }
                 ItemKind::DefStatic(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
-                    self.register_qualified_symbol(&name);
+                    self.register_qualified_symbol(&name).await;
                 }
                 ItemKind::DefStruct(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
                     self.own_struct_defs_mut().insert(name.clone(), def.value.clone());
-                    self.register_qualified_symbol(&name);
+                    self.register_qualified_symbol(&name).await;
                 }
                 ItemKind::DefStructural(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
-                    self.register_qualified_symbol(&name);
+                    self.register_qualified_symbol(&name).await;
                 }
                 ItemKind::DefEnum(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
                     self.own_enum_defs_mut().insert(name.clone(), def.value.clone());
-                    self.register_qualified_symbol(&name);
+                    self.register_qualified_symbol(&name).await;
                 }
                 ItemKind::DefType(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
-                    self.register_qualified_symbol(&name);
+                    self.register_qualified_symbol(&name).await;
                 }
                 ItemKind::OpaqueType(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
-                    self.register_qualified_symbol(&name);
+                    self.register_qualified_symbol(&name).await;
                 }
                 ItemKind::DefTrait(def) => {
                     let name = prefix.with_segment(def.name.as_str().to_string());
                     self.own_trait_defs_mut().insert(name.clone());
-                    self.register_qualified_symbol(&name);
+                    self.register_qualified_symbol(&name).await;
                 }
                 ItemKind::Impl(impl_block) => {
                     if let Some(self_name) = impl_self_ty_name(&impl_block.self_ty) {
@@ -447,7 +495,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 // Also store as a function sig for ::call syntax
                                 let fn_path = struct_path.with_segment(func.name.as_str().to_string());
                                 self.own_function_sigs_mut().insert(fn_path.clone(), func.sig.clone());
-                                self.register_qualified_symbol(&fn_path);
+                                self.register_qualified_symbol(&fn_path).await;
                             }
                         }
                     }
@@ -455,6 +503,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 _ => {}
             }
         }
+        })
     }
 
     /// Populate `module_defs` and `root_modules` from all known
@@ -481,12 +530,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     /// Register pre-parsed items from an external module into the
     /// typer's lookup tables. Used when compiling dependency crates
     /// (e.g. std) whose items need to be available for name resolution.
-    pub fn inject_module(&mut self, path: &QualifiedPath, items: &[Item]) {
+    pub async fn inject_module(&mut self, path: &QualifiedPath, items: &[Item]) {
         self.module_defs.insert(path.clone());
         if path.segments.len() == 1 {
             self.root_modules.insert(path.segments[0].clone());
         }
-        self.register_qualified_items(items, path);
+        self.register_qualified_items(items, path).await;
     }
 
     /// Borrowed access to this crate's own registry — the "current crate"
@@ -566,10 +615,9 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             unimplemented_symbols: HashSet::new(),
             resolved_names: HashMap::new(),
             generic_type_vars: HashMap::new(),
-            comptime_exprs: Vec::new(),
             pending_generics: Vec::new(),
+            comptime_exprs: Vec::new(),
             cross_crate_struct_refs: HashSet::new(),
-            pending_packages: HashSet::new(),
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -660,7 +708,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         self.hashmap_args.insert(map_var, (key_var, value_var));
     }
 
-    fn lookup_hashmap_args(&mut self, map_var: TypeVarId) -> Option<(TypeVarId, TypeVarId)> {
+    async fn lookup_hashmap_args(&mut self, map_var: TypeVarId) -> Option<(TypeVarId, TypeVarId)> {
         let mut current = map_var;
         loop {
             if let Some(args) = self.hashmap_args.get(&current).copied() {
@@ -669,7 +717,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             match self.type_vars.get(current).map(|var| var.kind.clone()) {
                 Some(TypeVarKind::Link(next)) => current = next,
                 Some(TypeVarKind::Bound(ty)) => {
-                    if let Some(inner) = self.reference_inner_from_ty(&ty) {
+                    if let Some(inner) = self.reference_inner_from_ty(&ty).await {
                         current = inner;
                     } else {
                         return None;
@@ -680,13 +728,14 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         }
     }
 
-    pub fn infer_file(&mut self, file: &mut File) -> Result<TypingOutcome> {
+    pub async fn infer_file(&mut self, file: &mut File) -> Result<TypingOutcome> {
         self.infer_module_inner(
             &QualifiedPath::new(Vec::new()),
             &mut file.items,
             &file.attrs,
             &file.collected_items,
         )
+        .await
     }
 
     /// Type-check a module's items directly, without an `ast::File` wrapper —
@@ -694,15 +743,15 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
     /// `std::meta`), where the driver already has `(QualifiedPath, Vec<Item>)`
     /// in hand and shouldn't need to synthesize a fake `File` just to satisfy
     /// this entrypoint.
-    pub fn infer_module(
+    pub async fn infer_module(
         &mut self,
         module_path: &QualifiedPath,
         items: &mut Vec<Item>,
     ) -> Result<TypingOutcome> {
-        self.infer_module_inner(module_path, items, &[], &[])
+        self.infer_module_inner(module_path, items, &[], &[]).await
     }
 
-    fn infer_module_inner(
+    async fn infer_module_inner(
         &mut self,
         module_path: &QualifiedPath,
         items: &mut Vec<Item>,
@@ -713,18 +762,18 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         self.exception_mode = attrs_has_feature(attrs, "exception");
         let saved_module_path = self.module_path.clone();
         self.module_path = module_path.clone();
-        self.register_qualified_items(items, module_path);
-        self.predeclare_scope_items(collected_items);
+        self.register_qualified_items(items, module_path).await;
+        self.predeclare_scope_items(collected_items).await;
         let mut pending_error = None;
         for item in items.iter_mut() {
-            if let Err(err) = self.infer_item_inner(item) {
+            if let Err(err) = self.infer_item_inner(item).await {
                 pending_error = Some(self.error_with_span(err, self.span_option(item.span())));
                 break;
             }
         }
         self.exception_mode = previous_exception;
         self.module_path = saved_module_path;
-        let outcome = self.finish();
+        let outcome = self.finish().await;
         if let Some(err) = pending_error {
             if !Self::has_actionable_pending(&outcome) {
                 return Err(err);
@@ -733,9 +782,9 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         Ok(outcome)
     }
 
-    pub fn infer_item(&mut self, item: &mut Item) -> Result<TypingOutcome> {
-        self.predeclare_item(item);
-        let pending_error = match self.infer_item_inner(item) {
+    pub async fn infer_item(&mut self, item: &mut Item) -> Result<TypingOutcome> {
+        self.predeclare_item(item).await;
+        let pending_error = match self.infer_item_inner(item).await {
             Ok(()) => {
                 let ty = item.ty().cloned().unwrap_or_else(|| Ty::Unit(TypeUnit));
                 item.set_ty(ty);
@@ -743,7 +792,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             }
             Err(err) => Some(self.error_with_span(err, self.span_option(item.span()))),
         };
-        let outcome = self.finish();
+        let outcome = self.finish().await;
         if let Some(err) = pending_error {
             if !Self::has_actionable_pending(&outcome) {
                 return Err(err);
@@ -752,16 +801,20 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         Ok(outcome)
     }
 
-    pub fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypingOutcome> {
-        self.predeclare_expr_scope(expr);
-        let pending_error = match self.infer_expr_inner(expr).and_then(|var| self.resolve_to_ty(var)) {
+    pub async fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypingOutcome> {
+        self.predeclare_expr_scope(expr).await;
+        let resolved = match self.infer_expr_inner(expr).await {
+            Ok(var) => self.resolve_to_ty(var).await,
+            Err(err) => Err(err),
+        };
+        let pending_error = match resolved {
             Ok(ty) => {
                 expr.set_ty(ty);
                 None
             }
             Err(err) => Some(self.error_with_span(err, self.span_option(expr.span()))),
         };
-        let outcome = self.finish();
+        let outcome = self.finish().await;
         if let Some(err) = pending_error {
             if !Self::has_actionable_pending(&outcome) {
                 return Err(err);
@@ -785,69 +838,103 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
     }
 
     /// Initialize the typer with declarations from a file without doing full inference.
-    pub fn initialize_from_file(&mut self, file: &File) {
-        self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new()));
-        self.predeclare_scope_items(&file.collected_items);
+    pub async fn initialize_from_file(&mut self, file: &File) {
+        self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new())).await;
+        self.predeclare_scope_items(&file.collected_items).await;
     }
 
     /// Initialize the typer with an expression scope without doing full inference.
-    pub fn initialize_from_expr(&mut self, expr: &Expr) {
-        self.predeclare_expr_scope(expr);
+    pub async fn initialize_from_expr(&mut self, expr: &Expr) {
+        self.predeclare_expr_scope(expr).await;
     }
 
     /// Initialize import aliases without running full inference.
-    pub fn initialize_imports_from_file(&mut self, file: &File) {
-        self.register_import_aliases_for_items(&file.items);
+    pub async fn initialize_imports_from_file(&mut self, file: &File) {
+        self.register_import_aliases_for_items(&file.items).await;
     }
 
     /// Initialize import aliases from a single item.
-    pub fn initialize_imports_from_item(&mut self, item: &Item) {
-        self.register_import_aliases_for_item(item);
+    pub async fn initialize_imports_from_item(&mut self, item: &Item) {
+        self.register_import_aliases_for_item(item).await;
     }
 
-    fn register_import_aliases_for_items(&mut self, items: &[Item]) {
-        for item in items {
-            self.register_import_aliases_for_item(item);
-        }
+    /// Boxed: mutually recursive with `register_import_aliases_for_item` for
+    /// nested modules/impls/traits (see `BoxFuture`'s doc comment).
+    fn register_import_aliases_for_items<'a>(&'a mut self, items: &'a [Item]) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            for item in items {
+                self.register_import_aliases_for_item(item).await;
+            }
+        })
     }
 
-    fn register_import_aliases_for_item(&mut self, item: &Item) {
+    async fn register_import_aliases_for_item(&mut self, item: &Item) {
         match item.kind() {
-            ItemKind::Import(import) => self.register_import_aliases(import),
-            ItemKind::Module(module) => self.register_import_aliases_for_items(&module.items),
+            ItemKind::Import(import) => self.register_import_aliases(import).await,
+            ItemKind::Module(module) => {
+                self.register_import_aliases_for_items(&module.items).await
+            }
             ItemKind::Impl(impl_block) => {
-                self.register_import_aliases_for_items(&impl_block.items);
+                self.register_import_aliases_for_items(&impl_block.items).await;
             }
             ItemKind::DefTrait(def) => {
-                self.register_import_aliases_for_items(&def.items);
+                self.register_import_aliases_for_items(&def.items).await;
             }
             _ => {}
         }
     }
 
     /// Initialize the typer with a single item for incremental typing.
-    pub fn initialize_from_item(&mut self, item: &Item) {
-        self.predeclare_item(item);
+    pub async fn initialize_from_item(&mut self, item: &Item) {
+        self.predeclare_item(item).await;
     }
 
-    fn predeclare_scope_items(&mut self, items: &[Item]) {
-        for item in items {
-            self.predeclare_item(item);
-        }
+    /// Boxed: `predeclare_item` predeclares a nested module/impl's own scope
+    /// by calling back into `predeclare_scope_items`, so the two are
+    /// mutually recursive -- this is the half of the cycle that needs the
+    /// heap indirection (see `BoxFuture`'s doc comment).
+    fn predeclare_scope_items<'a>(&'a mut self, items: &'a [Item]) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            for item in items {
+                self.predeclare_item(item).await;
+            }
+        })
     }
 
-    fn predeclare_expr_scope(&mut self, expr: &Expr) {
+    async fn predeclare_expr_scope(&mut self, expr: &Expr) {
         match expr.kind() {
-            ExprKind::Block(block) => self.predeclare_scope_items(&block.collected_items),
-            ExprKind::Quote(quote) => self.predeclare_scope_items(&quote.collected_items),
-            ExprKind::ConstBlock(block) => self.predeclare_scope_items(&block.collected_items),
-            ExprKind::Item(item) => self.predeclare_item(item.as_ref()),
+            ExprKind::Block(block) => self.predeclare_scope_items(&block.collected_items).await,
+            ExprKind::Quote(quote) => self.predeclare_scope_items(&quote.collected_items).await,
+            ExprKind::ConstBlock(block) => {
+                self.predeclare_scope_items(&block.collected_items).await
+            }
+            ExprKind::Item(item) => self.predeclare_item(item.as_ref()).await,
             _ => {}
         }
     }
 
-    fn finish(&mut self) -> TypingOutcome {
-        let pending_requests = self.collect_pending_requests();
+    /// Try to resolve `key`'s compile-time value right now via the
+    /// synchronous resolution-hook fast path. Unlike `await_package`, this
+    /// deliberately never suspends: a comptime need that isn't satisfiable
+    /// yet is most often a same-module forward reference (an earlier item's
+    /// `const` block depending on a later item's value, which this
+    /// sequential pass simply hasn't reached), and nothing outside this pass
+    /// resolves at a moment this call could usefully wait for. Callers
+    /// record `false` as pending (see `comptime_exprs`) and continue with a
+    /// placeholder — the driver retries the whole compile unit from the top
+    /// (`CompilerDriver::drive_typing_to_completion`), and every value
+    /// already resolved this pass persists in the shared `TypingContext`, so
+    /// each retry's earlier items short-circuit and only the previously
+    /// blocked tail needs re-deriving.
+    async fn await_comptime(&mut self, key: &str, expr: &Expr) -> bool {
+        self.resolution_hook
+            .as_mut()
+            .map(|hook| hook.request_comptime(key, expr))
+            .unwrap_or(false)
+    }
+
+    async fn finish(&mut self) -> TypingOutcome {
+        let pending_requests = self.collect_pending_requests().await;
         let outcome = TypingOutcome {
             resolved_names: std::mem::take(&mut self.resolved_names),
             pending_requests,
@@ -869,8 +956,12 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         outcome
     }
 
-    fn collect_pending_requests(&mut self) -> Vec<PendingTypingRequest> {
+    async fn collect_pending_requests(&mut self) -> Vec<PendingTypingRequest> {
         let mut requests = Vec::new();
+
+        for expr in std::mem::take(&mut self.comptime_exprs) {
+            requests.push(PendingTypingRequest::comptime(expr));
+        }
 
         for diagnostic in &self.diagnostics {
             if Self::diagnostic_is_unknown_type(diagnostic) {
@@ -881,22 +972,12 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         let generic_vars: Vec<TypeVarId> = self.generic_type_vars.keys().copied().collect();
         for var in generic_vars {
             let unresolved = self
-                .resolve_to_ty(var)
+                .resolve_to_ty(var).await
                 .map(|ty| matches!(ty, Ty::Unknown(_)))
                 .unwrap_or(true);
             if unresolved {
                 requests.push(PendingTypingRequest::generic(Expr::unit()));
             }
-        }
-
-        if !self.comptime_exprs.is_empty() {
-            for expr in std::mem::take(&mut self.comptime_exprs) {
-                requests.push(PendingTypingRequest::comptime(expr));
-            }
-        }
-
-        for name in std::mem::take(&mut self.pending_packages) {
-            requests.push(PendingTypingRequest::package(name, Expr::unit()));
         }
 
         requests
@@ -1207,7 +1288,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         names
     }
 
-    fn lookup_struct_def_by_name(&mut self, name: &str) -> Option<(QualifiedPath, TypeStruct)> {
+    async fn lookup_struct_def_by_name(&mut self, name: &str) -> Option<(QualifiedPath, TypeStruct)> {
         if name == "TypeBuilder" && std::env::var("FP_DEBUG_TYPEBUILDER").is_ok() {
             let keys = self
                 .own_struct_defs()
@@ -1289,8 +1370,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             }
         }
         for candidate in self.struct_name_variants(name) {
-            if let Some(var) = self.lookup_env_var(&candidate.to_key()) {
-                if let Ok(ty) = self.resolve_to_ty(var) {
+            if let Some(var) = self.lookup_env_var(&candidate.to_key()).await {
+                if let Ok(ty) = self.resolve_to_ty(var).await {
                     if let Ty::Struct(def) = ty {
                         return Some((candidate, def));
                     }
@@ -1518,7 +1599,29 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             })
     }
 
-    fn lookup_function_signature_with_path(
+    /// Suspends once (via `await_package`) if the first attempt fails and
+    /// the locator's head names a registered-but-unloaded package, then
+    /// retries the whole lookup -- mirrors `lookup_struct`'s suspend/retry
+    /// shape for the function-signature case.
+    async fn lookup_function_signature_with_path(
+        &mut self,
+        locator: &Name,
+    ) -> Option<(QualifiedPath, FunctionSignature)> {
+        if let Some(found) = self.lookup_function_signature_with_path_once(locator) {
+            return Some(found);
+        }
+        let candidate = self
+            .resolve_locator_key(locator)
+            .or_else(|| self.fallback_locator_key(locator))?;
+        let head = candidate.head()?;
+        if !self.typing_ctx.env_ctx.is_registered(head) {
+            return None;
+        }
+        self.await_package(head).await;
+        self.lookup_function_signature_with_path_once(locator)
+    }
+
+    fn lookup_function_signature_with_path_once(
         &mut self,
         locator: &Name,
     ) -> Option<(QualifiedPath, FunctionSignature)> {
@@ -1557,7 +1660,6 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         {
             return Some(found);
         }
-        self.note_pending_package_if_registered(&candidate);
         None
     }
 
@@ -1717,7 +1819,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         None
     }
 
-    fn resolve_impl_context(&mut self, self_ty: &Expr) -> Option<ImplContext> {
+    async fn resolve_impl_context(&mut self, self_ty: &Expr) -> Option<ImplContext> {
         if let ExprKind::Value(value) = self_ty.kind() {
             if let Value::Type(ty) = value.as_ref() {
                 let name = format!("<impl:{}>", ty);
@@ -1753,7 +1855,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             });
         }
 
-        if let Some((resolved, def)) = self.lookup_struct_def_by_name(&name.to_key()) {
+        if let Some((resolved, def)) = self.lookup_struct_def_by_name(&name.to_key()).await {
             return Some(ImplContext {
                 struct_name: resolved,
                 self_ty: Ty::Struct(def),
@@ -1765,7 +1867,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 self_ty: Ty::Enum(def),
             });
         }
-        if let Some(ty) = self.resolve_impl_self_from_env(&name) {
+        if let Some(ty) = self.resolve_impl_self_from_env(&name).await {
             return Some(ty);
         }
 
@@ -1806,7 +1908,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         }
     }
 
-    fn resolve_impl_self_from_env(&mut self, name: &QualifiedPath) -> Option<ImplContext> {
+    async fn resolve_impl_self_from_env(&mut self, name: &QualifiedPath) -> Option<ImplContext> {
         let mut candidates = Vec::new();
         candidates.push(name.clone());
         if !self.module_path.is_empty() && name.segments.len() == 1 {
@@ -1814,8 +1916,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         }
         for candidate in candidates {
             let key = candidate.to_key();
-            if let Some(var) = self.lookup_env_var(&key) {
-                if let Ok(ty) = self.resolve_to_ty(var) {
+            if let Some(var) = self.lookup_env_var(&key).await {
+                if let Ok(ty) = self.resolve_to_ty(var).await {
                     match ty {
                         Ty::Struct(def) => {
                             return Some(ImplContext {
@@ -1882,7 +1984,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         }
     }
 
-    fn predeclare_item(&mut self, item: &Item) {
+    async fn predeclare_item(&mut self, item: &Item) {
         if std::env::var("FP_DEBUG_TYPEBUILDER").is_ok() {
             match item.kind() {
                 ItemKind::DefStruct(def) if def.name.as_str().contains("TypeBuilder") => {
@@ -1910,10 +2012,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             }
             ItemKind::DefStruct(def) => {
                 self.insert_struct_def(&def.name, def.value.clone());
-                let var = self.symbol_var(&def.name);
+                let var = self.symbol_var(&def.name).await;
                 let ty = Ty::Struct(def.value.clone());
-                if let Ok(struct_var) = self.type_from_ast_ty(&ty) {
-                    let _ = self.unify(var, struct_var);
+                if let Ok(struct_var) = self.type_from_ast_ty(&ty).await {
+                    let _ = self.unify(var, struct_var).await;
                 }
             }
             ItemKind::DefStructural(def) => {
@@ -1931,7 +2033,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 self.register_symbol(&def.name);
                 // Type the value (const block or direct expression). Struct types
                 // are resolved via comptime eval and seeded into struct_defs on retry.
-                let _ = self.type_from_ast_ty(&def.value);
+                let _ = self.type_from_ast_ty(&def.value).await;
                 let is_const_block = matches!(&def.value, Ty::ConstBlock(_));
 
                 if !is_const_block {
@@ -1965,7 +2067,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         })
                 });
                 if let Some(struct_def) = struct_def {
-                    let var = self.symbol_var(&def.name);
+                    let var = self.symbol_var(&def.name).await;
                     self.bind(var, Ty::Struct(struct_def));
                 }
             }
@@ -1982,7 +2084,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     let qualified = enum_name.with_segment(variant.name.as_str().to_string());
                     variant_keys.push(qualified.clone());
                     let key = qualified.to_key();
-                    if self.lookup_env_var(&key).is_none() {
+                    if self.lookup_env_var(&key).await.is_none() {
                         let var = self.fresh_type_var();
                         self.insert_env(key, EnvEntry::Mono(var));
                     }
@@ -2032,7 +2134,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 let fn_var = if let Some(ctx) = self.impl_stack.last().cloned().flatten() {
                     let key = ctx.struct_name.with_segment(def.name.as_str().to_string());
                     let key_str = key.to_key();
-                    if let Some(var) = self.lookup_env_var(&key_str) {
+                    if let Some(var) = self.lookup_env_var(&key_str).await {
                         var
                     } else {
                         let var = self.fresh_type_var();
@@ -2045,10 +2147,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     if !in_impl {
                         self.register_symbol(&def.name);
                     }
-                    self.symbol_var(&def.name)
+                    self.symbol_var(&def.name).await
                 };
                 if def.sig.generics_params.is_empty() {
-                    self.prebind_function_signature(def, fn_var);
+                    self.prebind_function_signature(def, fn_var).await;
                 } else {
                     let fn_key = self.impl_stack.last().cloned().flatten().map(|ctx| {
                         ctx.struct_name
@@ -2066,7 +2168,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     let mut ok = true;
                     let mut param_vars = Vec::new();
                     for param in &def.sig.params {
-                        match self.type_from_ast_ty(&param.ty) {
+                        match self.type_from_ast_ty(&param.ty).await {
                             Ok(var) => param_vars.push(var),
                             Err(_) => {
                                 ok = false;
@@ -2076,7 +2178,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     }
                     let ret_var = if ok {
                         if let Some(ret_ty) = def.sig.ret_ty.as_ref() {
-                            self.type_from_ast_ty(ret_ty).ok()
+                            self.type_from_ast_ty(ret_ty).await.ok()
                         } else {
                             Some(self.unit_type_var())
                         }
@@ -2092,7 +2194,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     }
                     self.exit_scope();
                     if ok {
-                        if let Ok(scheme) = self.generalize(fn_var) {
+                        if let Ok(scheme) = self.generalize(fn_var).await {
                             if let Some(key) = fn_key.as_ref() {
                                 self.replace_env_entry(key.as_str(), EnvEntry::Poly(scheme));
                             } else {
@@ -2114,7 +2216,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 let fn_var = if let Some(ctx) = self.impl_stack.last().cloned().flatten() {
                     let key = ctx.struct_name.with_segment(decl.name.as_str().to_string());
                     let key_str = key.to_key();
-                    if let Some(var) = self.lookup_env_var(&key_str) {
+                    if let Some(var) = self.lookup_env_var(&key_str).await {
                         var
                     } else {
                         let var = self.fresh_type_var();
@@ -2124,10 +2226,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 } else if in_impl {
                     self.fresh_type_var()
                 } else {
-                    self.symbol_var(&decl.name)
+                    self.symbol_var(&decl.name).await
                 };
                 if decl.sig.generics_params.is_empty() && decl.sig.receiver.is_none() {
-                    self.prebind_decl_function_signature(decl, fn_var);
+                    self.prebind_decl_function_signature(decl, fn_var).await;
                 }
             }
             ItemKind::Module(module) => {
@@ -2136,7 +2238,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 self.enter_scope();
                 self.module_scope_depths
                     .push(self.env.len().saturating_sub(1));
-                self.predeclare_scope_items(&module.collected_items);
+                self.predeclare_scope_items(&module.collected_items).await;
                 self.exit_scope();
                 self.module_scope_depths.pop();
                 self.pop_module_path();
@@ -2146,10 +2248,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     self.module_path
                         .with_segment(module.name.as_str().to_string())
                 };
-                self.register_qualified_items(&module.items, &prefix);
+                self.register_qualified_items(&module.items, &prefix).await;
             }
             ItemKind::Impl(impl_block) => {
-                let ctx = self.resolve_impl_context(&impl_block.self_ty);
+                let ctx = self.resolve_impl_context(&impl_block.self_ty).await;
                 self.impl_stack.push(ctx.clone());
                 if let Some(ref ctx) = ctx {
                     for child in &impl_block.items {
@@ -2161,10 +2263,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                             ) {
                                 let key = candidate.with_segment(func.name.as_str().to_string());
                                 let key_str = key.to_key();
-                                if self.lookup_env_var(&key_str).is_none() {
+                                if self.lookup_env_var(&key_str).await.is_none() {
                                     let var = self.fresh_type_var();
                                     self.insert_env(key_str, EnvEntry::Mono(var));
-                                    self.prebind_function_signature(func, var);
+                                    self.prebind_function_signature(func, var).await;
                                 }
                             }
                         }
@@ -2172,7 +2274,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 }
 
                 self.enter_scope();
-                self.predeclare_scope_items(&impl_block.collected_items);
+                self.predeclare_scope_items(&impl_block.collected_items).await;
                 self.exit_scope();
                 self.impl_stack.pop();
             }
@@ -2246,7 +2348,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         self.register_symbol(&Ident::new(name));
     }
 
-    fn register_import_aliases(&mut self, import: &ItemImport) {
+    async fn register_import_aliases(&mut self, import: &ItemImport) {
         let entries = match self.expand_import_tree(&import.tree, Vec::new()) {
             Ok(entries) => entries,
             Err(err) => {
@@ -2276,7 +2378,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 qualified = resolved;
             }
             let mut key = qualified.to_key();
-            if self.lookup_env_var(&key).is_none() && !self.module_defs.contains(&qualified) {
+            if self.lookup_env_var(&key).await.is_none() && !self.module_defs.contains(&qualified) {
                 if let Some(first) = qualified.segments.first() {
                     if (first == "std" || first == "core" || first == "alloc")
                         && qualified.segments.len() > 1
@@ -2285,7 +2387,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                             qualified.segments.iter().skip(1).cloned().collect(),
                         );
                         let stripped_key = stripped.to_key();
-                        if self.lookup_env_var(&stripped_key).is_some()
+                        if self.lookup_env_var(&stripped_key).await.is_some()
                             || self.module_defs.contains(&stripped)
                             || self.item_exists_path(&stripped)
                         {
@@ -2295,7 +2397,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     }
                 }
             }
-            if self.lookup_env_var(&key).is_some() {
+            if self.lookup_env_var(&key).await.is_some() {
                 self.insert_symbol_alias(&alias, qualified);
                 continue;
             }
@@ -2447,7 +2549,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         }
     }
 
-    fn prebind_function_signature(&mut self, func: &ItemDefFunction, fn_var: TypeVarId) {
+    async fn prebind_function_signature(&mut self, func: &ItemDefFunction, fn_var: TypeVarId) {
         if matches!(func.body.kind(), ExprKind::Async(_))
             || func
                 .sig
@@ -2466,7 +2568,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         let root = self.find(fn_var);
         if matches!(
             self.type_vars[root].kind.clone(),
-            TypeVarKind::Bound(ty) if self.function_term_from_ty(&ty).is_some()
+            TypeVarKind::Bound(ty) if self.function_term_from_ty(&ty).await.is_some()
         ) {
             return;
         }
@@ -2474,7 +2576,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         let module_path = self.module_path.clone();
         let mut param_vars = Vec::new();
         for param in &func.sig.params {
-            match self.type_from_ast_ty_in_module(&param.ty, &module_path) {
+            match self.type_from_ast_ty_in_module(&param.ty, &module_path).await {
                 Ok(var) => param_vars.push(var),
                 Err(err) => {
                     self.emit_error(format!(
@@ -2487,7 +2589,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         }
 
         let ret_var = if let Some(ret_ty) = &func.sig.ret_ty {
-            match self.type_from_ast_ty_in_module(ret_ty, &module_path) {
+            match self.type_from_ast_ty_in_module(ret_ty, &module_path).await {
                 Ok(var) => var,
                 Err(err) => {
                     self.emit_error(format!(
@@ -2506,7 +2608,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         self.bind_function_term(fn_var, param_vars, ret_var);
     }
 
-    fn prebind_decl_function_signature(&mut self, decl: &ItemDeclFunction, fn_var: TypeVarId) {
+    async fn prebind_decl_function_signature(&mut self, decl: &ItemDeclFunction, fn_var: TypeVarId) {
         if !decl.sig.generics_params.is_empty() || decl.sig.receiver.is_some() {
             return;
         }
@@ -2514,7 +2616,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         let root = self.find(fn_var);
         if matches!(
             self.type_vars[root].kind.clone(),
-            TypeVarKind::Bound(ty) if self.function_term_from_ty(&ty).is_some()
+            TypeVarKind::Bound(ty) if self.function_term_from_ty(&ty).await.is_some()
         ) {
             return;
         }
@@ -2522,7 +2624,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         let module_path = self.module_path.clone();
         let mut param_vars = Vec::new();
         for param in &decl.sig.params {
-            match self.type_from_ast_ty_in_module(&param.ty, &module_path) {
+            match self.type_from_ast_ty_in_module(&param.ty, &module_path).await {
                 Ok(var) => param_vars.push(var),
                 Err(err) => {
                     self.emit_error(format!(
@@ -2535,7 +2637,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         }
 
         let ret_var = if let Some(ret_ty) = &decl.sig.ret_ty {
-            match self.type_from_ast_ty_in_module(ret_ty, &module_path) {
+            match self.type_from_ast_ty_in_module(ret_ty, &module_path).await {
                 Ok(var) => var,
                 Err(err) => {
                     self.emit_error(format!(
@@ -2554,21 +2656,33 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         self.bind_function_term(fn_var, param_vars, ret_var);
     }
 
-    fn infer_item_inner(&mut self, item: &mut Item) -> Result<()> {
-        let span = item.span();
-        let previous = self.current_span;
-        let active = self.span_or_previous(span, previous);
-        self.current_span = active;
-        let result = (|| {
+    fn infer_item_inner<'a>(&'a mut self, item: &'a mut Item) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let span = item.span();
+            let previous = self.current_span;
+            let active = self.span_or_previous(span, previous);
+            self.current_span = active;
+            let result = self.infer_item_inner_body(item).await;
+            self.current_span = previous;
+            result.map_err(|err| self.error_with_span(err, active))
+        })
+    }
+
+    /// Split out of `infer_item_inner` so the span save/restore around it
+    /// (which must run even on error) doesn't itself need to live inside a
+    /// plain (sync) closure -- a sync closure can't contain `.await`, so
+    /// this replaces the old IIFE-closure trick.
+    fn infer_item_inner_body<'a>(&'a mut self, item: &'a mut Item) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
             let ty = match item.kind_mut() {
                 ItemKind::DefStruct(def) => {
                     self.validate_struct_recursion(def.name.as_str(), &def.value.fields);
                     self.insert_struct_def(&def.name, def.value.clone());
                     let ty = Ty::Struct(def.value.clone());
-                    let placeholder = self.symbol_var(&def.name);
-                    let var = self.type_from_ast_ty(&ty)?;
-                    self.unify(placeholder, var)?;
-                    self.generalize_symbol(def.name.as_str(), placeholder)?;
+                    let placeholder = self.symbol_var(&def.name).await;
+                    let var = self.type_from_ast_ty(&ty).await?;
+                    self.unify(placeholder, var).await?;
+                    self.generalize_symbol(def.name.as_str(), placeholder).await?;
                     ty
                 }
                 ItemKind::DefStructural(def) => {
@@ -2582,16 +2696,16 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     };
                     self.insert_struct_def(&def.name, struct_ty.clone());
                     let ty = Ty::Struct(struct_ty);
-                    let placeholder = self.symbol_var(&def.name);
-                    let var = self.type_from_ast_ty(&ty)?;
-                    self.unify(placeholder, var)?;
-                    self.generalize_symbol(def.name.as_str(), placeholder)?;
+                    let placeholder = self.symbol_var(&def.name).await;
+                    let var = self.type_from_ast_ty(&ty).await?;
+                    self.unify(placeholder, var).await?;
+                    self.generalize_symbol(def.name.as_str(), placeholder).await?;
                     ty
                 }
                 ItemKind::DefType(def) => {
                     // Resolve the RHS to a concrete type; if it is structural, materialize it as a
                     // named struct so that later term-level syntax like `Foo { ... }` can type-check.
-                    let placeholder = self.symbol_var(&def.name);
+                    let placeholder = self.symbol_var(&def.name).await;
 
                     // Fast path: a const-block type alias already resolved to
                     // a concrete struct by comptime evaluation in a prior
@@ -2621,17 +2735,13 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         // Structural inference tolerates unresolved names by
                         // binding them to an error type rather than
                         // hard-failing, so its result is discarded here.
-                        let _ = self.infer_expr_inner(block.expr.as_mut());
+                        let _ = self.infer_expr_inner(block.expr.as_mut()).await;
 
                         let expr_id = self.expr_id(&block.expr);
                         let key = format!("__fp_expr_{expr_id}");
-                        let made_progress = self
-                            .resolution_hook
-                            .as_mut()
-                            .map(|hook| hook.request_comptime(&key, &block.expr))
-                            .unwrap_or(false);
+                        let resolved = self.await_comptime(&key, &block.expr).await;
 
-                        if made_progress {
+                        if resolved {
                             let resolved_struct = self
                                 .typing_ctx
                                 .resolved_types
@@ -2655,21 +2765,24 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                                 }
                             }
                         } else {
-                            // Genuinely blocked (e.g. a package it depends on
-                            // hasn't loaded) — defer to the next pass instead
-                            // of hard-failing.
+                            // Not resolvable yet this pass -- record it as
+                            // pending rather than erroring (see
+                            // `await_comptime`'s doc comment) so the driver
+                            // retries the whole compile unit instead of
+                            // permanently failing on what may just be a
+                            // forward reference.
                             self.comptime_exprs.push((*block.expr).clone());
                             Ty::Unknown(TypeUnknown)
                         }
                     } else {
-                        let value_var = self.type_from_ast_ty(&def.value)?;
-                        let resolved = self.resolve_to_ty(value_var)?;
-                        self.normalize_deftype_value(&def.name, resolved)
+                        let value_var = self.type_from_ast_ty(&def.value).await?;
+                        let resolved = self.resolve_to_ty(value_var).await?;
+                        self.normalize_deftype_value(&def.name, resolved).await
                     };
 
-                    let var = self.type_from_ast_ty(&normalized)?;
-                    self.unify(placeholder, var)?;
-                    self.generalize_symbol(def.name.as_str(), placeholder)?;
+                    let var = self.type_from_ast_ty(&normalized).await?;
+                    self.unify(placeholder, var).await?;
+                    self.generalize_symbol(def.name.as_str(), placeholder).await?;
                     normalized
                 }
                 ItemKind::DefEnum(def) => {
@@ -2686,10 +2799,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
                     self.insert_enum_def(&def.name, def.value.clone());
                     let ty = Ty::Enum(def.value.clone());
-                    let placeholder = self.symbol_var(&def.name);
-                    let var = self.type_from_ast_ty(&ty)?;
-                    self.unify(placeholder, var)?;
-                    self.generalize_symbol(def.name.as_str(), placeholder)?;
+                    let placeholder = self.symbol_var(&def.name).await;
+                    let var = self.type_from_ast_ty(&ty).await?;
+                    self.unify(placeholder, var).await?;
+                    self.generalize_symbol(def.name.as_str(), placeholder).await?;
 
                     let enum_name = self
                         .qualified_name(def.name.as_str())
@@ -2699,25 +2812,25 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         for (variant, qualified) in
                             def.value.variants.iter().zip(variant_keys.into_iter())
                         {
-                            if let Some(variant_var) = self.lookup_env_var(&qualified.to_key()) {
+                            if let Some(variant_var) = self.lookup_env_var(&qualified.to_key()).await {
                                 let variant_type_var = if matches!(variant.value, Ty::Unit(_)) {
                                     enum_var
                                 } else if let Ty::Tuple(tuple) = &variant.value {
                                     let mut param_vars = Vec::new();
                                     for elem in &tuple.types {
-                                        param_vars.push(self.type_from_ast_ty(elem)?);
+                                        param_vars.push(self.type_from_ast_ty(elem).await?);
                                     }
                                     let fn_var = self.fresh_type_var();
                                     self.bind_function_term(fn_var, param_vars, enum_var);
                                     fn_var
                                 } else {
-                                    let payload_var = self.type_from_ast_ty(&variant.value)?;
+                                    let payload_var = self.type_from_ast_ty(&variant.value).await?;
                                     let fn_var = self.fresh_type_var();
                                     self.bind_function_term(fn_var, vec![payload_var], enum_var);
                                     fn_var
                                 };
-                                let _ = self.unify(variant_var, variant_type_var);
-                                let _ = self.generalize_symbol(&qualified.to_key(), variant_var);
+                                let _ = self.unify(variant_var, variant_type_var).await;
+                                let _ = self.generalize_symbol(&qualified.to_key(), variant_var).await;
                             }
                         }
                     }
@@ -2734,20 +2847,20 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         // symbol directly and skip comptime re-request. Keep
                         // its declared type: `Value::List` cannot retain an
                         // array's length on its own.
-                        let placeholder = self.symbol_var(&def.name);
+                        let placeholder = self.symbol_var(&def.name).await;
                         let ty = def
                             .ty
                             .clone()
                             .or_else(|| def.ty_annotation.clone())
                             .unwrap_or_else(|| crate::runtime_types::type_from_value(&resolved));
-                        let ty_var = self.type_from_ast_ty(&ty)?;
-                        self.unify(placeholder, ty_var)?;
+                        let ty_var = self.type_from_ast_ty(&ty).await?;
+                        self.unify(placeholder, ty_var).await?;
                         def.ty_annotation = Some(ty.clone());
                         def.ty.get_or_insert(ty.clone());
-                        self.generalize_symbol(def.name.as_str(), placeholder)?;
+                        self.generalize_symbol(def.name.as_str(), placeholder).await?;
                         ty
                     } else {
-                        let placeholder = self.symbol_var(&def.name);
+                        let placeholder = self.symbol_var(&def.name).await;
                         if let Some(annot) = def.ty.as_ref() {
                             def.value.set_ty(annot.clone());
                         }
@@ -2757,19 +2870,19 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         // concretely-typed expression to lower.
                         let expr_var = {
                             let mut value = def.value.as_mut();
-                            self.infer_expr_inner(&mut value)?
+                            self.infer_expr_inner(&mut value).await?
                         };
 
                         if let Some(annot) = &def.ty {
-                            let annot_var = self.type_from_ast_ty(annot)?;
-                            self.unify(expr_var, annot_var)?;
+                            let annot_var = self.type_from_ast_ty(annot).await?;
+                            self.unify(expr_var, annot_var).await?;
                         }
 
-                        self.unify(placeholder, expr_var)?;
-                        let ty = self.resolve_to_ty(expr_var)?;
+                        self.unify(placeholder, expr_var).await?;
+                        let ty = self.resolve_to_ty(expr_var).await?;
                         def.ty_annotation = Some(ty.clone());
                         def.ty.get_or_insert(ty.clone());
-                        self.generalize_symbol(def.name.as_str(), placeholder)?;
+                        self.generalize_symbol(def.name.as_str(), placeholder).await?;
 
                         // If the value is itself a `const { ... }` block, it
                         // may already have resolved via its own hook call
@@ -2783,41 +2896,35 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                             .borrow()
                             .resolved_value(self.expr_id(&def.value))
                             .cloned();
-                        let made_progress = if let Some(value) = already_resolved_inner {
+                        if let Some(value) = already_resolved_inner {
                             self.typing_ctx
                                 .resolved_consts
                                 .borrow_mut()
                                 .insert(name.clone(), value);
-                            true
-                        } else {
-                            self.resolution_hook
-                                .as_mut()
-                                .map(|hook| hook.request_comptime(&name, &def.value))
-                                .unwrap_or(false)
-                        };
-                        if !made_progress {
+                        } else if !self.await_comptime(&name, &def.value).await {
                             self.comptime_exprs.push((*def.value).clone());
                         }
                         ty
                     }
                 }
                 ItemKind::DefStatic(def) => {
-                    let placeholder = self.symbol_var(&def.name);
+                    let placeholder = self.symbol_var(&def.name).await;
                     let expr_var = {
                         let mut value = def.value.as_mut();
-                        self.infer_expr_inner(&mut value)?
+                        self.infer_expr_inner(&mut value).await?
                     };
-                    let ty_var = self.type_from_ast_ty(&def.ty)?;
-                    self.unify(expr_var, ty_var)?;
-                    self.unify(placeholder, expr_var)?;
-                    let ty = self.resolve_to_ty(expr_var)?;
+                    let ty_var = self.type_from_ast_ty(&def.ty).await?;
+                    self.unify(expr_var, ty_var).await?;
+                    self.unify(placeholder, expr_var).await?;
+                    let ty = self.resolve_to_ty(expr_var).await?;
                     def.ty_annotation = Some(ty.clone());
-                    self.generalize_symbol(def.name.as_str(), placeholder)?;
+                    self.generalize_symbol(def.name.as_str(), placeholder).await?;
                     ty
                 }
-                ItemKind::DefFunction(func) => self.infer_function(func)?,
+                ItemKind::DefFunction(func) => self.infer_function(func).await?,
                 ItemKind::DeclConst(decl) => {
-                    self.comptime_exprs.push(Expr::unit());
+                    // An external const declaration has no body to evaluate
+                    // here at all -- nothing to await.
                     let ty = decl.ty.clone();
                     decl.ty_annotation = Some(ty.clone());
                     ty
@@ -2843,9 +2950,9 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     self.enter_scope();
                     self.module_scope_depths
                         .push(self.env.len().saturating_sub(1));
-                    self.predeclare_scope_items(&module.collected_items);
+                    self.predeclare_scope_items(&module.collected_items).await;
                     for child in &mut module.items {
-                        self.infer_item_inner(child)?;
+                        self.infer_item_inner(child).await?;
                     }
                     self.exit_scope();
                     self.module_scope_depths.pop();
@@ -2853,7 +2960,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     Ty::Unit(TypeUnit)
                 }
                 ItemKind::Import(import) => {
-                    self.register_import_aliases(import);
+                    self.register_import_aliases(import).await;
                     Ty::Unit(TypeUnit)
                 }
                 ItemKind::Macro(_) => {
@@ -2867,7 +2974,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 ItemKind::DefTrait(trait_def) => {
                     let trait_name = trait_def.name.as_str().to_string();
                     self.enter_scope();
-                    self.predeclare_scope_items(&trait_def.collected_items);
+                    self.predeclare_scope_items(&trait_def.collected_items).await;
 
                     // Provide `Self` inside trait methods as a generic parameter
                     // bounded by the trait itself.
@@ -2882,7 +2989,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                                 decl.ty_annotation = Some(ty);
                             }
                             ItemKind::DefFunction(func) => {
-                                self.infer_trait_method(func)?;
+                                self.infer_trait_method(func).await?;
                             }
                             _ => {}
                         }
@@ -2892,7 +2999,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     Ty::Unit(TypeUnit)
                 }
                 ItemKind::Impl(impl_block) => {
-                    let ctx = self.resolve_impl_context(&impl_block.self_ty);
+                    let ctx = self.resolve_impl_context(&impl_block.self_ty).await;
 
                     if let (Some(ctx), Some(trait_ty)) =
                         (ctx.as_ref(), impl_block.trait_ty.as_ref())
@@ -2927,9 +3034,9 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
                     self.impl_stack.push(ctx.clone());
                     self.enter_scope();
-                    self.predeclare_scope_items(&impl_block.collected_items);
+                    self.predeclare_scope_items(&impl_block.collected_items).await;
                     for child in &mut impl_block.items {
-                        self.infer_item_inner(child)?;
+                        self.infer_item_inner(child).await?;
                     }
                     self.exit_scope();
                     self.impl_stack.pop();
@@ -2937,8 +3044,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 }
                 ItemKind::Expr(expr) => {
                     if let ExprKind::Splice(splice) = expr.kind_mut() {
-                        let token_var = self.infer_expr_inner(splice.token.as_mut())?;
-                        let token_ty = self.resolve_to_ty(token_var)?;
+                        let token_var = self.infer_expr_inner(splice.token.as_mut()).await?;
+                        let token_ty = self.resolve_to_ty(token_var).await?;
                         if !self.is_item_quote(&token_ty) {
                             match token_ty {
                                 Ty::Quote(quote) => {
@@ -2952,8 +3059,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         }
                         Ty::Unit(TypeUnit)
                     } else if let ExprKind::SplicePending(pending) = expr.kind_mut() {
-                        let token_var = self.infer_expr_inner(pending.token.as_mut())?;
-                        let token_ty = self.resolve_to_ty(token_var)?;
+                        let token_var = self.infer_expr_inner(pending.token.as_mut()).await?;
+                        let token_ty = self.resolve_to_ty(token_var).await?;
                         if !self.is_item_quote(&token_ty) {
                             match token_ty {
                                 Ty::Quote(quote) => {
@@ -2967,8 +3074,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                         }
                         Ty::Unit(TypeUnit)
                     } else {
-                        let var = self.infer_expr_inner(expr)?;
-                        self.resolve_to_ty(var)?
+                        let var = self.infer_expr_inner(expr).await?;
+                        self.resolve_to_ty(var).await?
                     }
                 }
                 _ => {
@@ -2979,12 +3086,10 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
             item.set_ty(ty);
             Ok(())
-        })();
-        self.current_span = previous;
-        result.map_err(|err| self.error_with_span(err, active))
+        })
     }
 
-    fn infer_function(&mut self, func: &mut ItemDefFunction) -> Result<Ty> {
+    async fn infer_function(&mut self, func: &mut ItemDefFunction) -> Result<Ty> {
         self.validate_extern_c_signature(&func.sig);
         let is_lang_item = func.attrs.find_by_name("lang").is_some();
         let impl_ctx = self.impl_stack.last().cloned().flatten();
@@ -2993,7 +3098,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             .map(|ctx| ctx.struct_name.with_segment(func.name.as_str().to_string()));
         let fn_var = if let Some(key) = fn_key.as_ref() {
             let key_str = key.to_key();
-            if let Some(var) = self.lookup_env_var(&key_str) {
+            if let Some(var) = self.lookup_env_var(&key_str).await {
                 var
             } else {
                 let var = self.fresh_type_var();
@@ -3001,7 +3106,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 var
             }
         } else {
-            self.symbol_var(&func.name)
+            self.symbol_var(&func.name).await
         };
         let param_count = func.sig.params.len();
         let body_is_async_expr = matches!(func.body.kind(), ExprKind::Async(_));
@@ -3018,7 +3123,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             let root = self.find(fn_var);
             match self.type_vars[root].kind.clone() {
                 TypeVarKind::Bound(ty) => {
-                    if let Some(func_term) = self.function_term_from_ty(&ty) {
+                    if let Some(func_term) = self.function_term_from_ty(&ty).await {
                         if func_term.params.len() == param_count {
                             Some(func_term)
                         } else {
@@ -3042,8 +3147,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             if let Some(ctx) = impl_ctx.as_ref() {
                 let receiver_type = self.ty_for_receiver(ctx, receiver);
                 let self_var = self.fresh_type_var();
-                let expected = self.type_from_ast_ty(&receiver_type)?;
-                self.unify(self_var, expected)?;
+                let expected = self.type_from_ast_ty(&receiver_type).await?;
+                self.unify(self_var, expected).await?;
                 self.insert_env("self".to_string(), EnvEntry::Mono(self_var));
             } else {
                 self.emit_error(format!(
@@ -3069,17 +3174,17 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 .as_ref()
                 .and_then(|sig| sig.params.get(idx).cloned())
                 .unwrap_or_else(|| self.fresh_type_var());
-            let annot_var = self.type_from_ast_ty(&param.ty)?;
-            self.unify(var, annot_var)?;
+            let annot_var = self.type_from_ast_ty(&param.ty).await?;
+            self.unify(var, annot_var).await?;
             self.insert_env(param.name.as_str().to_string(), EnvEntry::Mono(var));
-            let resolved = self.resolve_to_ty(var)?;
+            let resolved = self.resolve_to_ty(var).await?;
             param.ty_annotation = Some(resolved);
             param_vars.push(var);
         }
 
         let body_var = if is_lang_item {
             if let Some(ret) = &func.sig.ret_ty {
-                self.type_from_ast_ty(ret)?
+                self.type_from_ast_ty(ret).await?
             } else {
                 self.fresh_type_var()
             }
@@ -3091,14 +3196,14 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 block: body_block,
                 kind: Some(kind),
             }));
-            self.infer_expr_inner(&mut quote_expr)?
+            self.infer_expr_inner(&mut quote_expr).await?
         } else {
             let mut body = func.body.as_mut();
-            self.infer_expr_inner(&mut body)?
+            self.infer_expr_inner(&mut body).await?
         };
 
         let ret_var = if matches!(exception_policy, ExceptionReturnPolicy::AutoResult) {
-            let body_ty = self.resolve_to_ty(body_var)?;
+            let body_ty = self.resolve_to_ty(body_var).await?;
             let inner_ty = if is_async_fn {
                 std_task_future_inner_ty(&body_ty).unwrap_or(body_ty)
             } else {
@@ -3110,16 +3215,16 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             } else {
                 result_ty
             };
-            let result_var = self.type_from_ast_ty(&final_ret_ty)?;
+            let result_var = self.type_from_ast_ty(&final_ret_ty).await?;
             if let Some(existing) = existing_signature.as_ref().map(|sig| sig.ret) {
-                self.unify(existing, result_var)?;
+                self.unify(existing, result_var).await?;
                 existing
             } else {
                 result_var
             }
         } else if let Some(existing) = existing_signature.as_ref().map(|sig| sig.ret) {
             if !is_async_fn || body_is_async_expr {
-                self.unify(existing, body_var)?;
+                self.unify(existing, body_var).await?;
             }
             if let Some(ret) = &func.sig.ret_ty {
                 if is_async_fn {
@@ -3128,21 +3233,21 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     } else {
                         make_std_task_future_ty(ret.clone())
                     };
-                    let future_var = self.type_from_ast_ty(&future_ty)?;
-                    self.unify(existing, future_var)?;
+                    let future_var = self.type_from_ast_ty(&future_ty).await?;
+                    self.unify(existing, future_var).await?;
 
                     if !body_is_async_expr {
-                        let body_ty = self.resolve_to_ty(body_var)?;
+                        let body_ty = self.resolve_to_ty(body_var).await?;
                         if is_future_like_ty(&body_ty) {
-                            self.unify(body_var, future_var)?;
+                            self.unify(body_var, future_var).await?;
                         } else if let Some(inner_ty) = std_task_future_inner_ty(&future_ty) {
-                            let inner_var = self.type_from_ast_ty(&inner_ty)?;
-                            self.unify(body_var, inner_var)?;
+                            let inner_var = self.type_from_ast_ty(&inner_ty).await?;
+                            self.unify(body_var, inner_var).await?;
                         }
                     }
                 } else {
-                    let annot_var = self.type_from_ast_ty(ret)?;
-                    self.unify(existing, annot_var)?;
+                    let annot_var = self.type_from_ast_ty(ret).await?;
+                    self.unify(existing, annot_var).await?;
                 }
             }
             existing
@@ -3153,41 +3258,41 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 } else {
                     make_std_task_future_ty(ret.clone())
                 };
-                let future_var = self.type_from_ast_ty(&future_ty)?;
+                let future_var = self.type_from_ast_ty(&future_ty).await?;
                 if body_is_async_expr {
-                    self.unify(body_var, future_var)?;
+                    self.unify(body_var, future_var).await?;
                 } else {
-                    let body_ty = self.resolve_to_ty(body_var)?;
+                    let body_ty = self.resolve_to_ty(body_var).await?;
                     if is_future_like_ty(&body_ty) {
-                        self.unify(body_var, future_var)?;
+                        self.unify(body_var, future_var).await?;
                     } else if let Some(inner_ty) = std_task_future_inner_ty(&future_ty) {
-                        let inner_var = self.type_from_ast_ty(&inner_ty)?;
-                        self.unify(body_var, inner_var)?;
+                        let inner_var = self.type_from_ast_ty(&inner_ty).await?;
+                        self.unify(body_var, inner_var).await?;
                     }
                 }
                 future_var
             } else {
-                let annot_var = self.type_from_ast_ty(ret)?;
-                self.unify(body_var, annot_var)?;
+                let annot_var = self.type_from_ast_ty(ret).await?;
+                self.unify(body_var, annot_var).await?;
                 annot_var
             }
         } else {
             body_var
         };
 
-        let ret_ty = self.resolve_to_ty(ret_var.clone())?;
+        let ret_ty = self.resolve_to_ty(ret_var.clone()).await?;
         func.sig.ret_ty.get_or_insert(ret_ty.clone());
 
         self.exit_scope();
 
         let mut param_tys = Vec::new();
         for var in &param_vars {
-            param_tys.push(self.resolve_to_ty(*var)?);
+            param_tys.push(self.resolve_to_ty(*var).await?);
         }
 
         self.bind_function_term(fn_var, param_vars.clone(), ret_var);
 
-        let scheme = self.generalize(fn_var)?;
+        let scheme = self.generalize(fn_var).await?;
         let scheme_env = scheme.clone();
         if let Some(key) = fn_key.as_ref() {
             let key_str = key.to_key();
@@ -3221,8 +3326,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         Ok(ty)
     }
 
-    fn infer_trait_method(&mut self, func: &mut ItemDefFunction) -> Result<Ty> {
-        let fn_var = self.symbol_var(&func.name);
+    async fn infer_trait_method(&mut self, func: &mut ItemDefFunction) -> Result<Ty> {
+        let fn_var = self.symbol_var(&func.name).await;
 
         let exception_policy = self.exception_policy_for_ret(func.sig.ret_ty.as_ref());
         let _exception_guard = self.push_exception_context(exception_policy);
@@ -3256,8 +3361,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             };
 
             let self_var = self.fresh_type_var();
-            let expected = self.type_from_ast_ty(&receiver_type)?;
-            self.unify(self_var, expected)?;
+            let expected = self.type_from_ast_ty(&receiver_type).await?;
+            self.unify(self_var, expected).await?;
             self.insert_env("self".to_string(), EnvEntry::Mono(self_var));
         }
 
@@ -3274,26 +3379,26 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         let mut param_vars = Vec::new();
         for param in func.sig.params.iter_mut() {
             let var = self.fresh_type_var();
-            let annot_var = self.type_from_ast_ty(&param.ty)?;
-            self.unify(var, annot_var)?;
+            let annot_var = self.type_from_ast_ty(&param.ty).await?;
+            self.unify(var, annot_var).await?;
             self.insert_env(param.name.as_str().to_string(), EnvEntry::Mono(var));
-            let resolved = self.resolve_to_ty(var)?;
+            let resolved = self.resolve_to_ty(var).await?;
             param.ty_annotation = Some(resolved);
             param_vars.push(var);
         }
 
         let body_var = {
             let mut body = func.body.as_mut();
-            self.infer_expr_inner(&mut body)?
+            self.infer_expr_inner(&mut body).await?
         };
 
         let ret_var = if matches!(exception_policy, ExceptionReturnPolicy::AutoResult) {
-            let body_ty = self.resolve_to_ty(body_var)?;
+            let body_ty = self.resolve_to_ty(body_var).await?;
             let result_ty = make_std_result_ty(body_ty, std_error_ty());
-            self.type_from_ast_ty(&result_ty)?
+            self.type_from_ast_ty(&result_ty).await?
         } else if let Some(ret) = &func.sig.ret_ty {
-            let annot_var = self.type_from_ast_ty(ret)?;
-            self.unify(body_var, annot_var)?;
+            let annot_var = self.type_from_ast_ty(ret).await?;
+            self.unify(body_var, annot_var).await?;
             annot_var
         } else {
             body_var
@@ -3303,14 +3408,14 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
         self.bind_function_term(fn_var, param_vars.clone(), ret_var);
 
-        let scheme = self.generalize(fn_var)?;
+        let scheme = self.generalize(fn_var).await?;
         self.replace_env_entry(func.name.as_str(), EnvEntry::Poly(scheme));
 
         let mut param_tys = Vec::new();
         for var in &param_vars {
-            param_tys.push(self.resolve_to_ty(*var)?);
+            param_tys.push(self.resolve_to_ty(*var).await?);
         }
-        let ret_ty = self.resolve_to_ty(ret_var)?;
+        let ret_ty = self.resolve_to_ty(ret_var).await?;
         func.sig.ret_ty.get_or_insert(ret_ty.clone());
 
         let func_ty = TypeFunction {
@@ -3348,9 +3453,9 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
     // moved: infer_invoke
 
-    fn apply_pattern_generalization(&mut self, info: &PatternInfo) -> Result<()> {
+    async fn apply_pattern_generalization(&mut self, info: &PatternInfo) -> Result<()> {
         for binding in &info.bindings {
-            let scheme = self.generalize(binding.var)?;
+            let scheme = self.generalize(binding.var).await?;
             self.replace_env_entry(&binding.name, EnvEntry::Poly(scheme));
         }
         Ok(())
@@ -3366,19 +3471,19 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
     // instantiate_scheme_type moved to typing/unify.rs
 
-    fn scheme_from_method_signature(&mut self, sig: &FunctionSignature) -> Result<Ty> {
+    async fn scheme_from_method_signature(&mut self, sig: &FunctionSignature) -> Result<Ty> {
         let fn_var = self.fresh_type_var();
         let mut param_vars = Vec::new();
         for param in &sig.params {
-            param_vars.push(self.type_from_ast_ty(&param.ty)?);
+            param_vars.push(self.type_from_ast_ty(&param.ty).await?);
         }
         let ret_var = if let Some(ret) = sig.ret_ty.as_ref() {
-            self.type_from_ast_ty(ret)?
+            self.type_from_ast_ty(ret).await?
         } else {
             self.unit_type_var()
         };
         self.bind_function_term(fn_var, param_vars, ret_var);
-        self.generalize(fn_var)
+        self.generalize(fn_var).await
     }
 
     pub(crate) fn extract_trait_bounds(bounds: &TypeBounds) -> Vec<String> {
@@ -3496,7 +3601,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
     /// struct from `TypeBuilder::from(SourceType)` has `SourceType`'s fields
     /// merged in. Shared between the const-block and plain-alias paths in
     /// the `ItemKind::DefType` arm of `infer_item_inner`.
-    fn normalize_deftype_value(&mut self, name: &Ident, resolved: Ty) -> Ty {
+    async fn normalize_deftype_value(&mut self, name: &Ident, resolved: Ty) -> Ty {
         match resolved {
             Ty::Structural(structural) => {
                 let struct_ty = TypeStruct {
@@ -3532,20 +3637,33 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                             // fields — that would materialize an incomplete
                             // struct for callers to build against. Tell
                             // apart "source's package hasn't loaded yet"
-                            // (defer, via the pending-package machinery) from
-                            // "source genuinely doesn't exist" (real error).
-                            self.note_pending_package_if_registered(&source_name);
-                            let is_pending = source_name
+                            // (suspend, then retry the lookup once loaded)
+                            // from "source genuinely doesn't exist" (real
+                            // error).
+                            let registered = source_name
                                 .head()
-                                .map(|head| self.pending_packages.contains(head))
-                                .unwrap_or(false);
-                            if !is_pending {
-                                self.emit_error(format!(
-                                    "unknown source type `{}` for type alias `{}`",
-                                    merged_ty.name.as_str(),
-                                    name.as_str()
-                                ));
+                                .is_some_and(|head| self.typing_ctx.env_ctx.is_registered(head));
+                            if registered {
+                                self.await_package(source_name.head().unwrap()).await;
+                                let found = self.own_struct_defs().get(&source_name).cloned();
+                                if let Some(source_def) = found {
+                                    let mut merged = source_def.fields.clone();
+                                    for f in &merged_ty.fields {
+                                        if !merged.iter().any(|m| m.name == f.name) {
+                                            merged.push(f.clone());
+                                        }
+                                    }
+                                    merged_ty.fields = merged;
+                                    merged_ty.name = name.clone();
+                                    self.insert_struct_def(name, merged_ty.clone());
+                                    return Ty::Struct(merged_ty);
+                                }
                             }
+                            self.emit_error(format!(
+                                "unknown source type `{}` for type alias `{}`",
+                                merged_ty.name.as_str(),
+                                name.as_str()
+                            ));
                             return Ty::Unknown(TypeUnknown);
                         }
                     }
@@ -3591,7 +3709,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
     // type_from_ast_ty moved to typing/unify.rs
 
-    fn lookup_associated_function(&mut self, locator: &Name) -> Result<Option<TypeVarId>> {
+    async fn lookup_associated_function(&mut self, locator: &Name) -> Result<Option<TypeVarId>> {
         if let Name::Path(path) = locator {
             if path.segments.len() >= 2 {
                 if let Some(method_segment) = path.segments.last() {
@@ -3610,7 +3728,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                             struct_name.segments.len() == 1,
                         ) {
                             let qualified = candidate.with_segment(method_name.to_string());
-                            if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
+                            if let Some(var) = self.lookup_env_var(&qualified.to_key()).await {
                                 return Ok(Some(var));
                             }
                             // Only borrow/clone the struct def long enough to
@@ -3642,8 +3760,24 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                                         .map(|(_, sig)| sig),
                                 )
                             } else {
-                                self.note_pending_package_if_registered(&candidate);
-                                (false, None)
+                                let registered = candidate
+                                    .head()
+                                    .is_some_and(|head| self.typing_ctx.env_ctx.is_registered(head));
+                                if registered {
+                                    self.await_package(candidate.head().unwrap()).await;
+                                    match self.typing_ctx.env_ctx.find_struct(&candidate) {
+                                        Some(s) => (
+                                            true,
+                                            s.method_sigs
+                                                .into_iter()
+                                                .find(|(n, _)| n == method_name)
+                                                .map(|(_, sig)| sig),
+                                        ),
+                                        None => (false, None),
+                                    }
+                                } else {
+                                    (false, None)
+                                }
                             };
                             if is_cross_crate || self.own_struct_defs().contains_key(&candidate) {
                                 if is_cross_crate {
@@ -3651,16 +3785,16 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                                 }
                                 if let Some(sig) = found_sig {
                                     if !sig.generics_params.is_empty() {
-                                        let scheme = self.scheme_from_method_signature(&sig).ok();
+                                        let scheme = self.scheme_from_method_signature(&sig).await.ok();
                                         if let Some(scheme) = scheme {
-                                            return Ok(Some(self.instantiate_scheme(&scheme)));
+                                            return Ok(Some(self.instantiate_scheme(&scheme).await));
                                         }
                                     }
-                                    if let Some(var) = self.lookup_env_var(method_name) {
+                                    if let Some(var) = self.lookup_env_var(method_name).await {
                                         return Ok(Some(var));
                                     }
                                     let fn_ty = self.ty_from_function_signature(&sig)?;
-                                    let fn_var = self.type_from_ast_ty(&fn_ty)?;
+                                    let fn_var = self.type_from_ast_ty(&fn_ty).await?;
                                     return Ok(Some(fn_var));
                                 }
                             }
@@ -3696,7 +3830,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                                     generics_params: Vec::new(),
                                     ret_ty: Some(Box::new(Ty::Enum(enum_def.clone()))),
                                 });
-                                let func_var = self.type_from_ast_ty(&func_ty)?;
+                                let func_var = self.type_from_ast_ty(&func_ty).await?;
                                 self.exit_scope();
                                 return Ok(Some(func_var));
                             }
@@ -3708,12 +3842,12 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         Ok(None)
     }
 
-    fn lookup_locator(&mut self, locator: &Name) -> Result<TypeVarId> {
-        self.lookup_locator_with_resolution(locator)
+    async fn lookup_locator(&mut self, locator: &Name) -> Result<TypeVarId> {
+        self.lookup_locator_with_resolution(locator).await
             .map(|(var, _)| var)
     }
 
-    fn lookup_locator_with_resolution(
+    async fn lookup_locator_with_resolution(
         &mut self,
         locator: &Name,
     ) -> Result<(TypeVarId, Option<ResolvedName>)> {
@@ -3757,12 +3891,12 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         }
         if let Some(ident) = locator.as_ident() {
             let name = ident.as_str();
-            if let Some(var) = self.lookup_env_var(name) {
+            if let Some(var) = self.lookup_env_var(name).await {
                 return Ok((var, None));
             }
             if !self.module_path.is_empty() {
                 let qualified = self.module_path.with_segment(name.to_string());
-                if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
+                if let Some(var) = self.lookup_env_var(&qualified.to_key()).await {
                     return Ok((
                         var,
                         Some(ResolvedName {
@@ -3815,7 +3949,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 }),
             ));
         }
-        if let Some(var) = self.lookup_env_var(&key.to_key()) {
+        if let Some(var) = self.lookup_env_var(&key.to_key()).await {
             return Ok((
                 var,
                 Some(ResolvedName {
@@ -3828,7 +3962,7 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         let workspace_sig = self.typing_ctx.env_ctx.find_function_sig(&key);
         if let Some(sig) = workspace_sig {
             let fn_ty = self.ty_from_function_signature(&sig)?;
-            let var = self.type_from_ast_ty(&fn_ty)?;
+            let var = self.type_from_ast_ty(&fn_ty).await?;
             return Ok((var, Some(ResolvedName {
                 namespace: ResolvedNameNamespace::Value,
                 path: key,
@@ -3908,8 +4042,8 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         None
     }
 
-    fn lookup_env_var(&mut self, name: &str) -> Option<TypeVarId> {
-        if let Some(var) = self.lookup_env_var_direct(name) {
+    async fn lookup_env_var(&mut self, name: &str) -> Option<TypeVarId> {
+        if let Some(var) = self.lookup_env_var_direct(name).await {
             return Some(var);
         }
         let should_retry = self
@@ -3918,19 +4052,19 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
             .map(|hook| hook.resolve_symbol(name))
             .unwrap_or(false);
         if should_retry {
-            return self.lookup_env_var_direct(name);
+            return self.lookup_env_var_direct(name).await;
         }
         None
     }
 
-    fn lookup_env_var_direct(&mut self, name: &str) -> Option<TypeVarId> {
+    async fn lookup_env_var_direct(&mut self, name: &str) -> Option<TypeVarId> {
         for scope in self.env.iter().rev() {
             if let Some(entry) = scope.get(name) {
                 return Some(match entry {
                     EnvEntry::Mono(var) => *var,
                     EnvEntry::Poly(scheme) => {
                         let scheme_clone = scheme.clone();
-                        self.instantiate_scheme(&scheme_clone)
+                        self.instantiate_scheme(&scheme_clone).await
                     }
                 });
             }
@@ -3938,9 +4072,9 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         None
     }
 
-    fn symbol_var(&mut self, name: &Ident) -> TypeVarId {
+    async fn symbol_var(&mut self, name: &Ident) -> TypeVarId {
         let key = name.as_str().to_string();
-        if let Some(var) = self.lookup_env_var(&key) {
+        if let Some(var) = self.lookup_env_var(&key).await {
             return var;
         }
         let var = self.fresh_type_var();
@@ -4031,41 +4165,47 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
     // unused: primitive_from_name (removed)
 
-    fn expect_reference(&mut self, var: TypeVarId, context: &str) -> Result<TypeVarId> {
-        let root = self.find(var);
-        match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. } => {
-                let inner = self.fresh_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(Ty::Reference(TypeReference {
-                    ty: Box::new(Ty::infer_var(inner)),
-                    mutability: None,
-                    lifetime: None,
-                }));
-                Ok(inner)
+    fn expect_reference<'a>(
+        &'a mut self,
+        var: TypeVarId,
+        context: &'a str,
+    ) -> BoxFuture<'a, Result<TypeVarId>> {
+        Box::pin(async move {
+            let root = self.find(var);
+            match self.type_vars[root].kind.clone() {
+                TypeVarKind::Unbound { .. } => {
+                    let inner = self.fresh_type_var();
+                    self.type_vars[root].kind = TypeVarKind::Bound(Ty::Reference(TypeReference {
+                        ty: Box::new(Ty::infer_var(inner)),
+                        mutability: None,
+                        lifetime: None,
+                    }));
+                    Ok(inner)
+                }
+                TypeVarKind::Bound(Ty::Reference(reference)) => match reference.ty.as_ref() {
+                    Ty::InferVar(infer) => Ok(infer.id),
+                    other => self.type_from_ast_ty(other).await,
+                },
+                TypeVarKind::Link(next) => self.expect_reference(next, context).await,
+                _other => {
+                    self.emit_error(format!(
+                        "expected reference value for {} (hint: add `&`/`&mut` or change the annotation to a non-reference type)",
+                        context
+                    ));
+                    let placeholder = self.error_type_var();
+                    self.type_vars[root].kind = TypeVarKind::Bound(Ty::Reference(TypeReference {
+                        ty: Box::new(Ty::infer_var(placeholder)),
+                        mutability: None,
+                        lifetime: None,
+                    }));
+                    Ok(placeholder)
+                }
             }
-            TypeVarKind::Bound(Ty::Reference(reference)) => match reference.ty.as_ref() {
-                Ty::InferVar(infer) => Ok(infer.id),
-                other => self.type_from_ast_ty(other),
-            },
-            TypeVarKind::Link(next) => self.expect_reference(next, context),
-            _other => {
-                self.emit_error(format!(
-                    "expected reference value for {} (hint: add `&`/`&mut` or change the annotation to a non-reference type)",
-                    context
-                ));
-                let placeholder = self.error_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(Ty::Reference(TypeReference {
-                    ty: Box::new(Ty::infer_var(placeholder)),
-                    mutability: None,
-                    lifetime: None,
-                }));
-                Ok(placeholder)
-            }
-        }
+        })
     }
 
-    fn generalize_symbol(&mut self, name: &str, var: TypeVarId) -> Result<()> {
-        let scheme = self.generalize(var)?;
+    async fn generalize_symbol(&mut self, name: &str, var: TypeVarId) -> Result<()> {
+        let scheme = self.generalize(var).await?;
         self.replace_env_entry(name, EnvEntry::Poly(scheme));
         Ok(())
     }
@@ -4241,9 +4381,9 @@ fn find_first_type_ident(tokens: &[&str]) -> Option<String> {
 // moved to typing::infer_expr::infer_quote_kind
 
 impl<'ctx> AstTypeInferencer<'ctx> {
-    pub fn infer_expression(&mut self, expr: &mut Expr) -> Result<()> {
-        let var = self.infer_expr_inner(expr)?;
-        let ty = self.resolve_to_ty(var)?;
+    pub async fn infer_expression(&mut self, expr: &mut Expr) -> Result<()> {
+        let var = self.infer_expr_inner(expr).await?;
+        let ty = self.resolve_to_ty(var).await?;
         expr.set_ty(ty);
         Ok(())
     }
@@ -4264,8 +4404,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    pub fn bind_variable(&mut self, name: &str, ty: Ty) {
-        let type_var = match self.type_from_ast_ty(&ty) {
+    pub async fn bind_variable(&mut self, name: &str, ty: Ty) {
+        let type_var = match self.type_from_ast_ty(&ty).await {
             Ok(var) => var,
             Err(_) => self.fresh_type_var(),
         };
@@ -4353,6 +4493,7 @@ mod deftype_normalize_tests {
     use fp_core::package::provider::{PackageProvider, ProviderResult};
     use fp_core::package::{PackageDescriptor, PackageId};
     use fp_core::workspace::WorkspaceContext;
+    use std::future::Future;
     use std::rc::Rc;
     use std::sync::Arc;
 
@@ -4393,34 +4534,35 @@ mod deftype_normalize_tests {
         })
     }
 
+    /// A registered-but-unloaded package's source type must genuinely
+    /// suspend (`Poll::Pending`) rather than degrade to `Ty::Unknown` and
+    /// let the caller retry the whole module later -- that degrade-and-retry
+    /// behavior is exactly what real suspension (Phase 3b) replaces. Nothing
+    /// in this test ever loads "SourcePkg", so polling more than once would
+    /// hang forever; a single manual poll is enough to prove it suspends
+    /// instead of silently returning a placeholder.
     #[test]
-    fn defers_when_source_type_belongs_to_an_unloaded_package() {
+    fn suspends_when_source_type_belongs_to_an_unloaded_package() {
         let mut typer = new_inferencer(Some("SourcePkg"));
-        let resolved = typer.normalize_deftype_value(
-            &Ident::new("Alias"),
-            source_struct_ty("SourcePkg"),
-        );
-
-        assert!(
-            matches!(resolved, Ty::Unknown(_)),
-            "expected Ty::Unknown while the source package is unloaded, got {resolved:?}"
-        );
-        assert!(
-            !typer
-                .diagnostics
-                .iter()
-                .any(|d| matches!(d.level, TypingDiagnosticLevel::Error)),
-            "a pending-package miss must not emit a real error"
-        );
+        let alias = Ident::new("Alias");
+        let mut fut = std::pin::pin!(typer.normalize_deftype_value(&alias, source_struct_ty("SourcePkg")));
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(waker);
+        match fut.as_mut().poll(&mut cx) {
+            std::task::Poll::Pending => {}
+            std::task::Poll::Ready(_) => {
+                panic!("expected suspension while the source package is unloaded, got Ready")
+            }
+        }
     }
 
     #[test]
     fn errors_when_source_type_is_genuinely_unknown() {
         let mut typer = new_inferencer(None);
-        let resolved = typer.normalize_deftype_value(
+        let resolved = crate::block_on(typer.normalize_deftype_value(
             &Ident::new("Alias"),
             source_struct_ty("NoSuchSource"),
-        );
+        ));
 
         assert!(matches!(resolved, Ty::Unknown(_)));
         assert!(

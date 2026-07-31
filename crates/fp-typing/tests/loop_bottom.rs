@@ -26,7 +26,7 @@ fn loop_bottom_allows_i64_return() {
         fp_core::workspace::WorkspaceContext::new(),
     )));
     let mut typer = AstTypeInferencer::new(typing_ctx.clone());
-    typer.infer_file(&mut file).expect("infer");
+    fp_typing::block_on(typer.infer_file(&mut file)).expect("infer");
     let has_errors = typing_ctx
         .diagnostics
         .borrow()

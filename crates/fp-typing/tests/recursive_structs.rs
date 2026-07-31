@@ -10,7 +10,7 @@ fn file_has_errors(mut file: File) -> bool {
         fp_core::workspace::WorkspaceContext::new(),
     )));
     let mut typer = AstTypeInferencer::new(typing_ctx.clone());
-    let result = typer.infer_file(&mut file);
+    let result = fp_typing::block_on(typer.infer_file(&mut file));
     result.is_err()
         || typing_ctx
             .diagnostics

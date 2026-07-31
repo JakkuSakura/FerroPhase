@@ -122,8 +122,24 @@ enum Commands {
     Completions(CompletionsArgs),
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Compiler-driving code (`fp-typing`'s recursive-descent type checker,
+/// driven synchronously via `fp_compiler::block_on`) recurses once per AST
+/// node through boxed `Future`s, whose generated state machines are
+/// considerably larger per frame than a plain function call -- so a modestly
+/// deep source expression can need more stack than a thread's default. Give
+/// the runtime's worker threads the same generous stack `run_all_example_files`
+/// already uses in tests, rather than let a real user's program abort with a
+/// stack overflow.
+fn main() -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(16 * 1024 * 1024)
+        .build()
+        .expect("failed to build tokio runtime");
+    runtime.block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
     let cli = Cli::parse();
 
     // Set up error reporting

@@ -30,12 +30,6 @@ pub struct CompilerState {
     module_resolutions: BTreeMap<AstId, ModuleResolutionContext>,
     pub(crate) generic_instantiations: HashSet<String>,
     bytecode: BTreeMap<BytecodeId, fp_bytecode::BytecodeProgram>,
-    /// Number of times a `CompileUnitCompileNative` work item has been
-    /// retried (via the scheduler's block/retry mechanism) because comptime
-    /// was still pending, keyed by compile-unit path. A genuinely
-    /// non-convergent comptime dependency would otherwise retry forever;
-    /// see `CompilerDriver::compile_unit_compile_native`.
-    pub(crate) comptime_retry_counts: BTreeMap<String, usize>,
     /// Memoized `(origin module path, matched items)` per cross-crate struct
     /// path (e.g. `std::meta::TypeBuilder`), populated by
     /// `CompilerDriver::collect_cross_crate_items`. Avoids re-scanning a
@@ -44,10 +38,6 @@ pub struct CompilerState {
     /// cross-crate struct — mirrors `generic_instantiations`' existing dedup
     /// role for generic monomorphization.
     pub(crate) cross_crate_items_cache: HashMap<QualifiedPath, (QualifiedPath, Vec<Item>)>,
-    /// Number of times a `LoadPackage` work item has been retried for a
-    /// given package name — guards against a registered provider that keeps
-    /// failing; see `CompilerDriver::MAX_PACKAGE_RETRIES`.
-    pub(crate) package_retry_counts: BTreeMap<String, usize>,
 }
 
 impl CompilerState {
@@ -227,9 +217,7 @@ impl Default for CompilerState {
             module_resolutions: BTreeMap::new(),
             generic_instantiations: HashSet::new(),
             bytecode: BTreeMap::new(),
-            comptime_retry_counts: BTreeMap::new(),
             cross_crate_items_cache: HashMap::new(),
-            package_retry_counts: BTreeMap::new(),
         }
     }
 }

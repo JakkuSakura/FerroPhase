@@ -1,5 +1,5 @@
 use crate::typing::unify::TypeVarKind;
-use crate::{typing_error, AstTypeInferencer, TypeVarId};
+use crate::{typing_error, AstTypeInferencer, BoxFuture, TypeVarId};
 use fp_core::ast::{Ty, TypeFunction, TypeInt, TypePrimitive};
 use fp_core::error::Result;
 
@@ -89,36 +89,68 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    pub(crate) fn ensure_function(
-        &mut self,
+    /// Async because the `Bound(Ty::Function(func))` arm resolves each
+    /// non-`InferVar` param/return annotation via `type_from_ast_ty`, which
+    /// is part of the mutually-recursive typing SCC (it can itself suspend on
+    /// an unloaded package via `lookup_struct`).
+    pub(crate) fn ensure_function<'a>(
+        &'a mut self,
         var: TypeVarId,
         arity: usize,
-    ) -> Result<super::super::FunctionTypeInfo> {
-        let root = self.find(var);
-        match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. } => {
-                let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
-                let ret = self.fresh_type_var();
-                self.bind_function_term(root, params.clone(), ret);
-                Ok(super::super::FunctionTypeInfo { params, ret })
-            }
-            TypeVarKind::Bound(ty) if is_any_ty(&ty) => {
-                let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
-                let ret = self.fresh_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(Ty::Function(TypeFunction {
-                    params: params.iter().copied().map(Ty::infer_var).collect(),
-                    generics_params: Vec::new(),
-                    ret_ty: Some(Box::new(Ty::infer_var(ret))),
-                }));
-                Ok(super::super::FunctionTypeInfo { params, ret })
-            }
-            TypeVarKind::Bound(Ty::Function(func)) => {
-                if func.params.len() != arity {
-                    self.emit_error(format!(
-                        "function arity mismatch: expected {}, found {}",
-                        arity,
-                        func.params.len()
-                    ));
+    ) -> BoxFuture<'a, Result<super::super::FunctionTypeInfo>> {
+        Box::pin(async move {
+            let root = self.find(var);
+            match self.type_vars[root].kind.clone() {
+                TypeVarKind::Unbound { .. } => {
+                    let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
+                    let ret = self.fresh_type_var();
+                    self.bind_function_term(root, params.clone(), ret);
+                    Ok(super::super::FunctionTypeInfo { params, ret })
+                }
+                TypeVarKind::Bound(ty) if is_any_ty(&ty) => {
+                    let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
+                    let ret = self.fresh_type_var();
+                    self.type_vars[root].kind = TypeVarKind::Bound(Ty::Function(TypeFunction {
+                        params: params.iter().copied().map(Ty::infer_var).collect(),
+                        generics_params: Vec::new(),
+                        ret_ty: Some(Box::new(Ty::infer_var(ret))),
+                    }));
+                    Ok(super::super::FunctionTypeInfo { params, ret })
+                }
+                TypeVarKind::Bound(Ty::Function(func)) => {
+                    if func.params.len() != arity {
+                        self.emit_error(format!(
+                            "function arity mismatch: expected {}, found {}",
+                            arity,
+                            func.params.len()
+                        ));
+                        let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
+                        let ret = self.error_type_var();
+                        self.type_vars[root].kind = TypeVarKind::Bound(Ty::Function(TypeFunction {
+                            params: params.iter().copied().map(Ty::infer_var).collect(),
+                            generics_params: Vec::new(),
+                            ret_ty: Some(Box::new(Ty::infer_var(ret))),
+                        }));
+                        return Ok(super::super::FunctionTypeInfo { params, ret });
+                    }
+                    let mut params = Vec::with_capacity(func.params.len());
+                    for param in &func.params {
+                        let Ty::InferVar(infer) = param else {
+                            let inferred = self.type_from_ast_ty(param).await?;
+                            params.push(inferred);
+                            continue;
+                        };
+                        params.push(infer.id);
+                    }
+                    let ret = match func.ret_ty.as_deref() {
+                        Some(Ty::InferVar(infer)) => infer.id,
+                        Some(other) => self.type_from_ast_ty(other).await?,
+                        None => self.unit_type_var(),
+                    };
+                    Ok(super::super::FunctionTypeInfo { params, ret })
+                }
+                TypeVarKind::Link(next) => self.ensure_function(next, arity).await,
+                TypeVarKind::Bound(Ty::ErrorType(_)) => {
                     let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
                     let ret = self.error_type_var();
                     self.type_vars[root].kind = TypeVarKind::Bound(Ty::Function(TypeFunction {
@@ -126,46 +158,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         generics_params: Vec::new(),
                         ret_ty: Some(Box::new(Ty::infer_var(ret))),
                     }));
-                    return Ok(super::super::FunctionTypeInfo { params, ret });
+                    Ok(super::super::FunctionTypeInfo { params, ret })
                 }
-                let mut params = Vec::with_capacity(func.params.len());
-                for param in &func.params {
-                    let Ty::InferVar(infer) = param else {
-                        let inferred = self.type_from_ast_ty(param)?;
-                        params.push(inferred);
-                        continue;
-                    };
-                    params.push(infer.id);
+                other => {
+                    self.emit_error(format!("expected function, found {:?}", other));
+                    let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
+                    let ret = self.error_type_var();
+                    self.type_vars[root].kind = TypeVarKind::Bound(Ty::Function(TypeFunction {
+                        params: params.iter().copied().map(Ty::infer_var).collect(),
+                        generics_params: Vec::new(),
+                        ret_ty: Some(Box::new(Ty::infer_var(ret))),
+                    }));
+                    Ok(super::super::FunctionTypeInfo { params, ret })
                 }
-                let ret = match func.ret_ty.as_deref() {
-                    Some(Ty::InferVar(infer)) => infer.id,
-                    Some(other) => self.type_from_ast_ty(other)?,
-                    None => self.unit_type_var(),
-                };
-                Ok(super::super::FunctionTypeInfo { params, ret })
             }
-            TypeVarKind::Link(next) => self.ensure_function(next, arity),
-            TypeVarKind::Bound(Ty::ErrorType(_)) => {
-                let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
-                let ret = self.error_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(Ty::Function(TypeFunction {
-                    params: params.iter().copied().map(Ty::infer_var).collect(),
-                    generics_params: Vec::new(),
-                    ret_ty: Some(Box::new(Ty::infer_var(ret))),
-                }));
-                Ok(super::super::FunctionTypeInfo { params, ret })
-            }
-            other => {
-                self.emit_error(format!("expected function, found {:?}", other));
-                let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
-                let ret = self.error_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(Ty::Function(TypeFunction {
-                    params: params.iter().copied().map(Ty::infer_var).collect(),
-                    generics_params: Vec::new(),
-                    ret_ty: Some(Box::new(Ty::infer_var(ret))),
-                }));
-                Ok(super::super::FunctionTypeInfo { params, ret })
-            }
-        }
+        })
     }
 }

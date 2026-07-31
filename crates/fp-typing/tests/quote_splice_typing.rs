@@ -35,7 +35,7 @@ fn quote_without_kind_infers_expr_when_trailing_expr_present() {
     let mut quote_expr = make_quote_block(vec![], Some(Expr::value(Value::int(42))));
     let typing_ctx = new_typing_ctx();
     let mut typer = AstTypeInferencer::new(typing_ctx.clone());
-    typer.infer_expr(&mut quote_expr).expect("infer");
+    fp_typing::block_on(typer.infer_expr(&mut quote_expr)).expect("infer");
     assert!(!has_errors(&typing_ctx));
     match quote_expr.ty().expect("ty") {
         Ty::Quote(quote) => {
@@ -54,7 +54,7 @@ fn quote_without_kind_infers_stmt_when_no_trailing_expr() {
     let mut quote_expr = make_quote_block(vec![BlockStmt::Noop], None);
     let typing_ctx = new_typing_ctx();
     let mut typer = AstTypeInferencer::new(typing_ctx.clone());
-    typer.infer_expr(&mut quote_expr).expect("infer");
+    fp_typing::block_on(typer.infer_expr(&mut quote_expr)).expect("infer");
     assert!(!has_errors(&typing_ctx));
     match quote_expr.ty().expect("ty") {
         Ty::Quote(quote) => {
@@ -80,7 +80,7 @@ fn splice_in_expr_requires_expr_quote_token() {
     }));
     let typing_ctx_ok = new_typing_ctx();
     let mut typer = AstTypeInferencer::new(typing_ctx_ok.clone());
-    typer.infer_expr(&mut splice_ok).expect("infer ok");
+    fp_typing::block_on(typer.infer_expr(&mut splice_ok)).expect("infer ok");
     assert!(
         !has_errors(&typing_ctx_ok),
         "splice with expr token should type-check"
@@ -94,7 +94,7 @@ fn splice_in_expr_requires_expr_quote_token() {
     }));
     let typing_ctx_bad = new_typing_ctx();
     let mut typer2 = AstTypeInferencer::new(typing_ctx_bad.clone());
-    let result = typer2.infer_expr(&mut splice_bad);
+    let result = fp_typing::block_on(typer2.infer_expr(&mut splice_bad));
     assert!(
         result.is_err() || has_errors(&typing_ctx_bad),
         "splice with non-expr token should error"
@@ -128,7 +128,7 @@ fn splice_stmt_accepts_item_quote_list() {
     let mut splice_stmt_expr = Expr::block(ExprBlock::new_stmts(vec![splice_stmt]));
     let typing_ctx = new_typing_ctx();
     let mut typer = AstTypeInferencer::new(typing_ctx.clone());
-    typer.infer_expr(&mut splice_stmt_expr).expect("infer");
+    fp_typing::block_on(typer.infer_expr(&mut splice_stmt_expr)).expect("infer");
     assert!(
         !has_errors(&typing_ctx),
         "splice with item quote list should type-check"

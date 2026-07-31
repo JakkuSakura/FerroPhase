@@ -1,0 +1,9 @@
+[env]
+# Recursive-descent typing (fp-typing) now drives its call graph through
+# boxed `Future`s (see BoxFuture in crates/fp-typing/src/lib.rs), whose
+# generated state machines are considerably larger per stack frame than a
+# plain function call. `cargo test`/`cargo run` spawn work on threads with a
+# smaller default stack than the 16MiB the `fp` binary itself requests for
+# its tokio runtime (see crates/fp-cli/src/bin/fp.rs) -- this keeps
+# dev-time runs consistent with that.
+RUST_MIN_STACK = "16777216"

@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::task::Waker;
 
 use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
 use fp_core::workspace::WorkspaceContext;
@@ -32,6 +33,11 @@ pub struct TypingContext {
     /// Accumulated typing diagnostics (warnings + errors).
     /// Typer appends during inference; driver reads after each pass.
     pub diagnostics: RefCell<Vec<TypingDiagnostic>>,
+
+    /// Wakers of typing tasks currently suspended on a package (keyed by
+    /// package name) not yet loaded — see `AstTypeInferencer::await_package`.
+    /// Drained by the driver once it finishes loading that package.
+    pub package_wakers: RefCell<HashMap<String, Vec<Waker>>>,
 }
 
 impl TypingContext {
@@ -42,6 +48,7 @@ impl TypingContext {
             env_ctx,
             expr_resolutions: RefCell::new(ExprResolutionTable::default()),
             diagnostics: RefCell::new(Vec::new()),
+            package_wakers: RefCell::new(HashMap::new()),
         }
     }
 }

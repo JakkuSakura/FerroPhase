@@ -10,16 +10,19 @@ use fp_core::ast::{
     Name, Ty, TypeStruct, TypeType, Value, Visibility,
 };
 use fp_core::diagnostics::DiagnosticLevel;
+use fp_core::error::Error as FpError;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
 use fp_typing::{
-    AstTypeInferencer, GenericMonorph, PendingTypingRequestKind, TypeResolutionHook,
-    default_extern_prelude,
+    AstTypeInferencer, GenericMonorph, PendingTypingRequestKind, TypeResolutionHook, TypingContext,
+    TypingOutcome, default_extern_prelude,
 };
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::rc::Rc;
 
 use crate::scheduler::{
     AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
@@ -39,11 +42,17 @@ pub struct CompilerDriver {
 /// progress — instead of the typer only reporting "something is pending"
 /// after the fact and the driver relowering the whole compile unit lossily
 /// to try to catch up. See `CompilerDriver::resolve_comptime_now`.
-struct ComptimeHook<'a> {
-    driver: &'a mut CompilerDriver,
+///
+/// Holds only `Rc<TypingContext>` — everything `resolve_comptime_now` touches
+/// is reachable through it — rather than `&mut CompilerDriver`, because once
+/// typing can suspend across `.await` a live `&mut CompilerDriver` borrow
+/// can't be captured inside a future the executor also needs `&mut` access to
+/// drive.
+struct ComptimeHook {
+    typing_ctx: Rc<TypingContext>,
 }
 
-impl<'a> TypeResolutionHook for ComptimeHook<'a> {
+impl TypeResolutionHook for ComptimeHook {
     fn resolve_symbol(&mut self, _name: &str) -> bool {
         // Unknown item/module resolution isn't wired through this hook yet;
         // callers fall back to their existing deferred handling.
@@ -51,7 +60,7 @@ impl<'a> TypeResolutionHook for ComptimeHook<'a> {
     }
 
     fn request_comptime(&mut self, key: &str, expr: &Expr) -> bool {
-        self.driver.resolve_comptime_now(key, expr)
+        CompilerDriver::resolve_comptime_now(&self.typing_ctx, key, expr)
     }
 }
 
@@ -62,15 +71,48 @@ struct CompileUnitCoreResult {
     pending_generics: Vec<GenericMonorph>,
 }
 
+/// Result of driving one compile unit's typing future to completion (see
+/// `CompilerDriver::drive_typing_to_completion`). `items` is handed back to
+/// the caller because the future owns it for its lifetime (mutated in place
+/// — typing stamps a concrete `Ty` on every node — so the caller needs it
+/// back to store as the typed AST).
+struct TypingTaskOutput {
+    items: Vec<Item>,
+    outcome: Result<TypingOutcome, FpError>,
+}
+
+/// Build (but don't drive) the future for typing one compile unit's items.
+/// Not a method on `CompilerDriver` because the future must not borrow
+/// `&mut CompilerDriver` — see `ComptimeHook`'s doc comment for why; it only
+/// closes over `Rc<TypingContext>` plus its owned inputs.
+fn typing_future(
+    typing_ctx: Rc<TypingContext>,
+    module_path: QualifiedPath,
+    mut items: Vec<Item>,
+) -> impl Future<Output = TypingTaskOutput> {
+    async move {
+        let outcome = {
+            let mut inferencer = AstTypeInferencer::new(typing_ctx.clone())
+                .with_extern_prelude(default_extern_prelude());
+            inferencer.seed_workspace_graph();
+            inferencer.set_resolution_hook(Box::new(ComptimeHook {
+                typing_ctx: typing_ctx.clone(),
+            }));
+            inferencer.infer_module(&module_path, &mut items).await
+        };
+        TypingTaskOutput { items, outcome }
+    }
+}
+
 impl CompilerDriver {
-    /// Cap on scheduler-driven comptime retries for a single compile unit
-    /// (see `compile_unit_compile_native`). Chained dependencies converge in
-    /// as many rounds as their depth requires; this only guards against a
-    /// dependency that can never resolve.
+    /// Cap on whole-pass restarts for a single compile unit's typing future
+    /// (see `drive_typing_to_completion`). A forward-referencing chain of
+    /// comptime items (an earlier item's `const` block depending on a later
+    /// item's value) converges over as many restarts as its depth requires —
+    /// each restart still benefits from every value already written into the
+    /// shared `TypingContext` by the previous attempt. This only guards
+    /// against a dependency that can never resolve.
     const MAX_COMPTIME_RETRIES: usize = 64;
-    /// Cap on scheduler-driven package-load retries for a single package
-    /// name — guards against a registered provider that keeps failing.
-    const MAX_PACKAGE_RETRIES: usize = 8;
 
     pub fn new() -> Self {
         Self {
@@ -138,13 +180,6 @@ impl CompilerDriver {
         }
     }
 
-    /// Runs the typer → HIR → MIR → LIR pipeline for a compile unit. If the
-    /// typer's resolution hook (`ComptimeHook`) couldn't resolve some
-    /// comptime need synchronously, this submits scheduler work to retry the
-    /// whole unit later (via `CompileUnitAnswerComptime`) and returns `None`
-    /// — callers should treat `None` as "not ready yet, an answer has
-    /// already been arranged" and return their own provisional answer
-    /// without touching the (lossy) lowering results.
     /// The real single-source-file entry point: fetches the stored `File`
     /// and delegates to `compile_module_core` with its items — the shared
     /// core itself never touches `ast::File`.
@@ -152,7 +187,7 @@ impl CompilerDriver {
         &mut self,
         ast_id: &AstId,
         path: &FullyQualifiedPath,
-    ) -> Result<Option<CompileUnitCoreResult>, CompilerDriverError> {
+    ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
         let ast = self.state.ast(ast_id)?.clone();
         self.compile_module_core(path.path().clone(), ast.items, ast_id, path)
     }
@@ -166,28 +201,14 @@ impl CompilerDriver {
     fn compile_module_core(
         &mut self,
         module_path: QualifiedPath,
-        mut items: Vec<Item>,
+        items: Vec<Item>,
         ast_id: &AstId,
         path: &FullyQualifiedPath,
-    ) -> Result<Option<CompileUnitCoreResult>, CompilerDriverError> {
-        let outcome = {
-            let mut inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
-                .with_extern_prelude(default_extern_prelude());
-            inferencer.seed_workspace_graph();
-            inferencer.set_resolution_hook(Box::new(ComptimeHook { driver: &mut *self }));
-            inferencer.infer_module(&module_path, &mut items)?
-        };
-
-        let pending_comptime = outcome.pending_requests.iter()
-            .any(|r| matches!(r.kind, PendingTypingRequestKind::Comptime));
-        let pending_package_names: HashSet<String> = outcome
-            .pending_requests
-            .iter()
-            .filter_map(|r| match &r.kind {
-                PendingTypingRequestKind::Package(name) => Some(name.clone()),
-                _ => None,
-            })
-            .collect();
+    ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
+        let TypingTaskOutput {
+            items, outcome, ..
+        } = self.drive_typing_to_completion(module_path.clone(), items, ast_id)?;
+        let outcome = outcome?;
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
         // `File` is used here purely as the existing storage-map value type
@@ -205,73 +226,94 @@ impl CompilerDriver {
             },
         );
 
-        // Check for pending needs *before* lowering — a compile unit that
-        // still has an unresolved package/comptime dependency has calls HIR/
-        // MIR lowering can't make sense of yet, so there's nothing worth
-        // lowering this pass. No lossy fallback: skip lowering entirely and
-        // retry the whole unit once the dependency resolves.
-        if !pending_package_names.is_empty() {
-            // Submit each missing package as its own scheduler-dependency
-            // work item (the typer *requested* the package and yielded — it
-            // never loads anything itself), so `answer_and_schedule` blocks
-            // this compile unit until every one of them is loaded, then
-            // retries it.
-            for name in &pending_package_names {
-                let retries = self
-                    .state
-                    .package_retry_counts
-                    .entry(name.clone())
-                    .or_insert(0);
-                *retries += 1;
-                if *retries > Self::MAX_PACKAGE_RETRIES {
-                    return Err(CompilerDriverError::UnresolvablePackage(name.clone()));
-                }
-                self.scheduler.submit(CompilerWork::LoadPackage { name: name.clone() });
-            }
-            return Ok(None);
-        }
-
-        if pending_comptime {
-            // Don't resolve comptime inline here. Submit it as scheduler work
-            // instead: `submit` (called while this request is being
-            // processed) registers a dependency on the current request, so
-            // `answer_and_schedule` will block the caller's answer until the
-            // comptime request completes, then automatically retry the
-            // caller's own work item (scheduler/stack.rs). This lets chained
-            // comptime dependencies (a const depending on another unresolved
-            // const) resolve over as many scheduler round-trips as needed,
-            // instead of a hardcoded single retry.
-            //
-            // A genuinely non-convergent dependency (one `resolve_comptime_now`
-            // can never resolve) would otherwise retry this forever, so cap
-            // it and fail with a clear error rather than hang.
-            let retries = self
-                .state
-                .comptime_retry_counts
-                .entry(path.to_key())
-                .or_insert(0);
-            *retries += 1;
-            if *retries > Self::MAX_COMPTIME_RETRIES {
-                return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
-            }
-            self.scheduler.submit(CompilerWork::CompileUnitAnswerComptime {
-                ast: ast_id.clone(),
-                path: path.clone(),
-            });
-            return Ok(None);
-        }
-
-        // Nothing pending — every reference resolved, so lower for real.
+        // `drive_typing_to_completion` only returns once every package/
+        // comptime need the typer touched has actually been satisfied in
+        // place — nothing pending to check for here, just lower for real.
         let hir_id = self.lower_to_hir(&module_path, &typed_ast_id, path, &outcome.cross_crate_struct_refs)?;
         let mir_id = self.lower_to_mir(&hir_id, path)?;
         let lir_id = self.lower_to_lir(&mir_id, path)?;
 
-        Ok(Some(CompileUnitCoreResult {
+        Ok(CompileUnitCoreResult {
             typed_ast_id,
             mir_id,
             lir_id,
             pending_generics: outcome.pending_generics,
-        }))
+        })
+    }
+
+    /// Spawn `infer_module`'s future for one compile unit and poll it to
+    /// completion in place — typing suspends and resumes exactly where it
+    /// needs an unloaded package (see
+    /// `fp_typing::AstTypeInferencer::await_package`) rather than retyping
+    /// already-resolved items from scratch to pick that up.
+    ///
+    /// Between polls, eagerly loads whatever package name(s) are currently
+    /// blocking the typing future (`TypingContext::package_wakers`) — the
+    /// typer only *requests* a package and suspends; it never loads one
+    /// itself. There's no reactor/ready-queue here: this single future is
+    /// the only thing being driven, so a plain re-poll after servicing
+    /// packages is enough to make progress.
+    ///
+    /// A comptime value that can't be resolved synchronously (e.g. an
+    /// earlier item's `const` block forward-referencing a later item's
+    /// value) does *not* suspend the future — `await_comptime` returns
+    /// `false` immediately and the pass finishes with a
+    /// `PendingTypingRequestKind::Comptime` entry in its outcome (see that
+    /// fn's doc comment for why: nothing outside this same sequential pass
+    /// would ever wake such a suspension). When that happens, the whole
+    /// compile unit is retyped from the top under a fresh
+    /// `AstTypeInferencer` — but every comptime value the previous attempt
+    /// *did* resolve was written straight into the shared `TypingContext`,
+    /// so the retry's earlier items short-circuit immediately and only the
+    /// previously-blocked tail needs re-deriving. Bounded by
+    /// `MAX_COMPTIME_RETRIES` for a dependency that can never converge.
+    fn drive_typing_to_completion(
+        &mut self,
+        module_path: QualifiedPath,
+        items: Vec<Item>,
+        ast_id: &AstId,
+    ) -> Result<TypingTaskOutput, CompilerDriverError> {
+        let typing_ctx = self.state.typing_ctx.clone();
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(waker);
+        let mut attempts = 0usize;
+        loop {
+            let mut task = Box::pin(typing_future(typing_ctx.clone(), module_path.clone(), items.clone()));
+            let output = loop {
+                match task.as_mut().poll(&mut cx) {
+                    std::task::Poll::Ready(output) => break output,
+                    std::task::Poll::Pending => {
+                        let names: Vec<String> =
+                            typing_ctx.package_wakers.borrow().keys().cloned().collect();
+                        for name in &names {
+                            self.load_package(name)?;
+                            // Drop the entry once serviced -- otherwise it
+                            // lingers in `package_wakers` forever (nothing
+                            // else clears it) and could be misread as "still
+                            // something to load" on some future attempt.
+                            typing_ctx.package_wakers.borrow_mut().remove(name);
+                        }
+                        if names.is_empty() {
+                            // `await_package` never leaves the future parked
+                            // without registering the name it's blocked on,
+                            // so an empty `package_wakers` here would be a
+                            // bug, not a real deadlock -- guard rather than
+                            // spin.
+                            return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
+                        }
+                    }
+                }
+            };
+            let has_pending_comptime = matches!(&output.outcome, Ok(outcome)
+                if outcome.pending_requests.iter().any(|r| matches!(r.kind, PendingTypingRequestKind::Comptime)));
+            if !has_pending_comptime {
+                return Ok(output);
+            }
+            attempts += 1;
+            if attempts > Self::MAX_COMPTIME_RETRIES {
+                return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
+            }
+        }
     }
 
     /// Load a registered package on demand (generalizes what used to be a
@@ -281,8 +323,15 @@ impl CompilerDriver {
     /// the provider's job (`load_package_items`); typing it runs through the
     /// same `AstTypeInferencer` machinery as any other module, just pointed
     /// at the crate slot `env_ctx.begin_crate` just reserved in the shared
-    /// root registry — so this package's own cross-crate references (if
-    /// any) recursively go through the identical pending/retry path.
+    /// root registry.
+    ///
+    /// `inject_module` is driven with `crate::executor::block_on` (a single
+    /// poll, panicking on real `Poll::Pending`) rather than through
+    /// `drive_typing_to_completion`'s loop — a package whose own items
+    /// reference *another* not-yet-loaded package would need that, but no
+    /// registered provider in this codebase has that shape today. If one
+    /// ever does, this is the spot to switch to the same drive-loop
+    /// `compile_module_core` uses.
     fn load_package(&mut self, name: &str) -> Result<CompilerAnswer, CompilerDriverError> {
         let answer = CompilerAnswer::PackageLoaded {
             name: name.to_string(),
@@ -305,7 +354,7 @@ impl CompilerDriver {
                 .with_extern_prelude(default_extern_prelude())
                 .with_own_crate(own_crate.clone());
             for (path, items) in &raw.items {
-                inferencer.inject_module(path, items);
+                crate::executor::block_on(inferencer.inject_module(path, items));
             }
         }
         // Parsed items, kept for on-demand LIR compilation later
@@ -339,15 +388,21 @@ impl CompilerDriver {
     /// see (a sibling function, an as-yet-unresolved const) — leaving the
     /// caller to fall back to deferred scheduler work (see
     /// `compile_unit_compile_native`'s pending_comptime branch).
-    fn resolve_comptime_now(&mut self, key: &str, expr: &Expr) -> bool {
+    ///
+    /// Takes `&TypingContext` rather than `&mut self`/`&self` — everything
+    /// this needs (resolved consts/types, the workspace's compiled crates)
+    /// is reachable through it, and `ComptimeHook` only holds an
+    /// `Rc<TypingContext>`, not a `&CompilerDriver` (see `ComptimeHook`'s
+    /// doc comment for why).
+    fn resolve_comptime_now(typing_ctx: &TypingContext, key: &str, expr: &Expr) -> bool {
         let mut probe_expr = expr.clone();
-        let resolved_names = self.collect_resolved_const_values();
+        let resolved_names = Self::resolved_const_values_snapshot(typing_ctx);
         Self::inline_resolved_names(&mut probe_expr, &resolved_names);
 
         let mut extra_items = Vec::new();
         let mut seen_types = HashSet::new();
         Self::collect_referenced_struct_enum_items(&probe_expr, &mut extra_items, &mut seen_types);
-        self.collect_impl_items_for_types(&seen_types, &mut extra_items);
+        Self::impl_items_for_types(typing_ctx, &seen_types, &mut extra_items);
 
         let resolved = (|| -> Result<Value, CompilerDriverError> {
             let hir_program =
@@ -363,11 +418,11 @@ impl CompilerDriver {
             // support) may depend on workspace crates' compiled LIR, exactly
             // as `evaluate_comptime_lir` includes for the whole-file path —
             // a bare single-expression unit alone doesn't carry that support.
-            for krate in self.state.typing_ctx.env_ctx.crates().values() {
+            for krate in typing_ctx.env_ctx.crates().values() {
                 units.extend(krate.borrow().lir_units.iter().cloned());
             }
             let mut interpreter = LirInterpreter::new();
-            interpreter.inject_globals(&self.collect_resolved_const_values());
+            interpreter.inject_globals(&Self::resolved_const_values_snapshot(typing_ctx));
             let mut value = interpreter.run_function_named(&units, "main")?;
             // Only int/uint results that are *actually* comptime struct
             // construction (per the expression's own type) are raw object
@@ -388,8 +443,7 @@ impl CompilerDriver {
         };
 
         if let Some(struct_ty) = Self::extract_struct_type(&value) {
-            self.state
-                .typing_ctx
+            typing_ctx
                 .resolved_types
                 .borrow_mut()
                 .insert(struct_ty.name.as_str().to_string(), struct_ty);
@@ -399,9 +453,9 @@ impl CompilerDriver {
         // `DefConst`) and, if this is a `ConstBlock`'s key, also into
         // `expr_resolutions` (checked by expr id) — the two lookups the
         // fp-typing call sites use to recognize an already-resolved value.
-        self.state.insert_typing_const(key.to_string(), value.clone());
+        typing_ctx.resolved_consts.borrow_mut().insert(key.to_string(), value.clone());
         if let Some(expr_id) = Self::expr_id_from_const_key(key) {
-            self.state.insert_expr_resolution_value(expr_id, value);
+            typing_ctx.expr_resolutions.borrow_mut().insert_value(expr_id, value);
         }
         true
     }
@@ -624,11 +678,15 @@ impl CompilerDriver {
     /// so a chained method call like `TypeBuilder::new(...).with_field(...)`
     /// can't resolve `with_field` to the real function and falls back to a
     /// synthetic "opaque" stub that doesn't thread values between calls.
-    fn collect_impl_items_for_types(&self, names: &HashSet<String>, out: &mut Vec<Item>) {
+    ///
+    /// Takes a bare `&TypingContext` rather than `&self` — usable from
+    /// `resolve_comptime_now`, which only holds `Rc<TypingContext>`, not a
+    /// `&CompilerDriver` (see `ComptimeHook`'s doc comment for why).
+    fn impl_items_for_types(typing_ctx: &TypingContext, names: &HashSet<String>, out: &mut Vec<Item>) {
         if names.is_empty() {
             return;
         }
-        for krate in self.state.typing_ctx.env_ctx.crates().values() {
+        for krate in typing_ctx.env_ctx.crates().values() {
             for items in krate.borrow().items.values() {
                 for item in items {
                     let ItemKind::Impl(impl_block) = item.kind() else {
@@ -652,10 +710,7 @@ impl CompilerDriver {
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
-        let Some(core) = self.compile_unit_core(ast_id, path)? else {
-            return Ok(CompilerAnswer::CompileUnitCompileNative);
-        };
-
+        let core = self.compile_unit_core(ast_id, path)?;
         self.evaluate_comptime_lir(&core.lir_id, path)?;
         self.enqueue_pending_generics(&core, path);
         Ok(CompilerAnswer::CompileUnitCompileNative)
@@ -686,22 +741,24 @@ impl CompilerDriver {
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
-        let Some(core) = self.compile_unit_core(ast_id, path)? else {
-            return Ok(CompilerAnswer::CompileUnitCompileBytecode);
-        };
+        let core = self.compile_unit_core(ast_id, path)?;
         self.generate_bytecode(&core.mir_id, path)?;
         Ok(CompilerAnswer::CompileUnitCompileBytecode)
     }
 
+    /// Nothing submits this work item anymore (see `drive_typing_to_completion`
+    /// — comptime needs are resolved in place, not by retrying the whole
+    /// unit as a separate scheduler request), but the variant stays a valid
+    /// `CompilerWork`/`CompilerAnswer` case — `scheduler/stack.rs`'s own
+    /// tests use it as a generic example payload to exercise dependency
+    /// blocking, independent of the driver.
     fn compile_unit_answer_comptime(
         &mut self,
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
-        let Some(core) = self.compile_unit_core(ast_id, path)? else {
-            return Ok(CompilerAnswer::CompileUnitAnswerComptime { value: value_id });
-        };
+        let core = self.compile_unit_core(ast_id, path)?;
         self.evaluate_comptime_lir(&core.lir_id, path)?;
         Ok(CompilerAnswer::CompileUnitAnswerComptime { value: value_id })
     }
@@ -978,15 +1035,9 @@ impl CompilerDriver {
             if items.is_empty() { continue; }
 
             let ast_id = AstId::new(format!("on_demand:{}", path.to_key()));
-            // Stored so a scheduler-driven retry (if this module's own
-            // comptime needs another round-trip) can find it via
-            // `compile_unit_core`'s thin `File`-based wrapper — scheduler
-            // retry plumbing, not something any generator sees directly.
-            // This clone is independent from the one passed to
-            // `compile_module_core` below on purpose: that call mutates its
-            // `items` in place (typing stamps types onto each node), so the
-            // raw copy kept here for a potential retry can't share storage
-            // with it.
+            // Stored purely so `compile_unit_core`'s thin `File`-based
+            // wrapper can find it if anything else looks this AST id up
+            // later — not something any generator sees directly.
             self.state.insert_ast(
                 ast_id.clone(),
                 File {
@@ -999,8 +1050,7 @@ impl CompilerDriver {
 
             let fqp = FullyQualifiedPath::new(path.clone());
             let core = match self.compile_module_core(path.clone(), items.clone(), &ast_id, &fqp) {
-                Ok(Some(c)) => c,
-                Ok(None) => continue,
+                Ok(c) => c,
                 Err(e) => {
                     eprintln!("WARNING: compile_module_core failed for {}: {e}", path.to_key());
                     continue;
@@ -1279,7 +1329,14 @@ fn lower_to_hir(
     }
 
     fn collect_resolved_const_values(&self) -> HashMap<String, Value> {
-        self.state.typing_ctx.resolved_consts.borrow().clone()
+        Self::resolved_const_values_snapshot(&self.state.typing_ctx)
+    }
+
+    /// Same as `collect_resolved_const_values`, but against a bare
+    /// `Rc<TypingContext>` — usable from `resolve_comptime_now`, which no
+    /// longer holds a `&CompilerDriver`.
+    fn resolved_const_values_snapshot(typing_ctx: &TypingContext) -> HashMap<String, Value> {
+        typing_ctx.resolved_consts.borrow().clone()
     }
 
     fn value_to_mir_constant(&self, value: &Value, ty: &mir::Ty) -> Option<mir::Constant> {
@@ -1528,8 +1585,7 @@ mod tests {
             path,
         });
 
-        let scheduled = driver
-            .run_next()
+        let scheduled = driver.run_next()
             .expect("compile unit")
             .expect("compiled answer");
         assert!(matches!(
@@ -1966,11 +2022,11 @@ fn calculate() {
         );
     }
 
-    /// Once the receiver type is discovered, `collect_impl_items_for_types`
-    /// must pull in its *inherent* impl block from wherever it's actually
-    /// defined (a loaded workspace crate) — that's what lets the real
-    /// `with_field` method resolve instead of falling back to an opaque
-    /// stub with no body.
+    /// Once the receiver type is discovered, `impl_items_for_types` must
+    /// pull in its *inherent* impl block from wherever it's actually defined
+    /// (a loaded workspace crate) — that's what lets the real `with_field`
+    /// method resolve instead of falling back to an opaque stub with no
+    /// body.
     #[test]
     fn collect_impl_items_for_types_finds_inherent_impl_in_loaded_crate() {
         use fp_core::ast::{Ident, ItemImpl};
@@ -1998,7 +2054,7 @@ fn calculate() {
         let mut names = HashSet::new();
         names.insert("Foo".to_string());
         let mut extra_items = Vec::new();
-        driver.collect_impl_items_for_types(&names, &mut extra_items);
+        CompilerDriver::impl_items_for_types(&driver.state.typing_ctx, &names, &mut extra_items);
 
         assert_eq!(extra_items.len(), 1, "expected exactly the one matching impl block");
         assert!(matches!(extra_items[0].kind(), ItemKind::Impl(_)));
@@ -2068,7 +2124,8 @@ fn calculate() {
         // must see `is_loaded` and no-op instead of reloading via the
         // provider (see `CompilerDriver::load_package`'s dedup guard).
         let first = driver.load_package("std").expect("first load");
-        let second = driver.load_package("std").expect("second load (already loaded)");
+        let second =
+            driver.load_package("std").expect("second load (already loaded)");
 
         assert!(matches!(first, CompilerAnswer::PackageLoaded { .. }));
         assert!(matches!(second, CompilerAnswer::PackageLoaded { .. }));
