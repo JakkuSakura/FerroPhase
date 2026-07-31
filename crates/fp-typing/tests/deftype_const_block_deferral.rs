@@ -39,13 +39,17 @@ fn poll_once<F: std::future::Future>(fut: &mut Pin<Box<F>>) -> Poll<F::Output> {
 }
 
 /// A const-block `DefType` whose body references an unresolvable symbol, with
-/// no `resolution_hook` set: `await_comptime` genuinely suspends on a real
-/// `Waker` (see `AstTypeInferencer::await_comptime`) rather than hard-failing
-/// on the first poll. Nothing in this test ever resolves `UndefinedThing`, so
-/// the future must stay `Pending` -- that's the whole point being verified,
-/// not a stand-in for eventually succeeding.
+/// no `resolution_hook` set and no sibling task that could ever resolve it
+/// (see `AstTypeInferencer::await_comptime`'s doc comment): resolution is
+/// genuinely hopeless, so the item's own inline attempt
+/// (`best_effort_resolve_comptime`) tolerates the failure instead of
+/// suspending forever waiting on something that will never happen — real
+/// `.fp` examples rely on exactly this (a `const` whose value a same-pass
+/// hook attempt can't fold is expected to degrade gracefully, not deadlock
+/// the whole compile unit). The type falls back to `Unknown` with a
+/// recorded error diagnostic, and typing of the rest of the module proceeds.
 #[test]
-fn const_block_deftype_suspends_instead_of_erroring_when_blocked() {
+fn const_block_deftype_completes_with_diagnostic_when_genuinely_unresolvable() {
     let item = const_block_deftype("Foo", Expr::ident(Ident::new("UndefinedThing")));
     let mut file = File {
         path: "const_block.fp".into(),
@@ -61,29 +65,27 @@ fn const_block_deftype_suspends_instead_of_erroring_when_blocked() {
     let mut fut = Box::pin(typer.infer_file(&mut file));
 
     match poll_once(&mut fut) {
-        Poll::Pending => {}
-        Poll::Ready(Ok(_)) => panic!("expected genuine suspension, resolved instead"),
-        Poll::Ready(Err(err)) => panic!("expected genuine suspension, got error: {err}"),
+        Poll::Ready(Ok(_)) => {}
+        Poll::Pending => panic!("expected graceful completion, got genuine suspension instead"),
+        Poll::Ready(Err(err)) => panic!("expected graceful completion, got error: {err}"),
     }
 
     assert!(
-        !typing_ctx
+        typing_ctx
             .diagnostics
             .borrow()
             .iter()
             .any(|d| matches!(d.level, TypingDiagnosticLevel::Error)),
-        "a task suspended waiting on a comptime value must not record an error diagnostic"
+        "a const-block type alias that never resolved to a struct should record an error diagnostic"
     );
 }
 
-/// When an earlier item in the same module is genuinely blocked (a const
-/// block awaiting a value nothing will ever provide), the module's sequential
-/// item loop awaits it in place -- a later, unrelated item's genuine error
-/// must never get the chance to surface: the whole module future just stays
-/// `Pending` at the blocked item, exactly like plain `async`/`await` code
-/// blocking on the first of two sequentially-awaited futures.
+/// An earlier item's const-block value being unresolvable (see the test
+/// above) tolerates gracefully and does not block the rest of the module —
+/// so a later, unrelated item's own genuine type error still surfaces
+/// normally, exactly as if the earlier item weren't there at all.
 #[test]
-fn blocked_earlier_item_suspends_the_whole_module_before_a_later_error_can_surface() {
+fn unresolvable_earlier_item_does_not_mask_a_later_items_genuine_error() {
     let blocked = const_block_deftype("Blocked", Expr::ident(Ident::new("UndefinedThing")));
     let broken = plain_deftype("Broken", "TotallyUnknownTypeName");
     let mut file = File {
@@ -100,11 +102,9 @@ fn blocked_earlier_item_suspends_the_whole_module_before_a_later_error_can_surfa
     let mut fut = Box::pin(typer.infer_file(&mut file));
 
     match poll_once(&mut fut) {
-        Poll::Pending => {}
-        Poll::Ready(Ok(_)) => panic!("expected genuine suspension, resolved instead"),
-        Poll::Ready(Err(err)) => panic!(
-            "the later item's error must not surface while the earlier item is still blocked: {err}"
-        ),
+        Poll::Ready(Err(_)) => {}
+        Poll::Ready(Ok(_)) => panic!("expected the later item's genuine type error to surface"),
+        Poll::Pending => panic!("expected graceful completion of the first item, not suspension"),
     }
 }
 

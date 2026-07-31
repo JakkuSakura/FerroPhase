@@ -1022,21 +1022,21 @@ impl AstTypeInferencer {
         }
     }
 
-    /// Ensures `key`'s compile-time value is resolved, forcing whatever
-    /// other const/type-alias items `expr` depends on first (each of which
-    /// is its own independently-spawned task -- see
-    /// `TypingContext::tasks`/`predeclare_item`), and returns the resolved
-    /// `Value` directly -- callers do `let value = self.await_comptime(&key,
-    /// expr).await?;`, not a separate map lookup after the fact. Genuinely
-    /// suspends via a real `Waker` (not a retry loop) when the value isn't
-    /// ready yet; resumes precisely when the resolving task writes it and
-    /// calls `TypingContext::wake_comptime`.
-    async fn await_comptime(&self, key: &str, expr: &Expr) -> Result<Value> {
+    /// Tries to resolve `key`'s compile-time value right now: forces
+    /// whatever other const/type-alias items `expr` depends on first (each
+    /// of which is its own independently-spawned task -- see
+    /// `TypingContext::tasks`/`predeclare_item`), then checks the cache and
+    /// tries the resolution hook once. Never suspends and never fails on a
+    /// mere "couldn't resolve it this way" outcome -- returns `Ok(None)` so
+    /// the caller decides what a non-resolution means for it. Shared by
+    /// `await_comptime` (which turns `None` into a genuine wait-or-error)
+    /// and `best_effort_resolve_comptime` (which tolerates `None` outright).
+    async fn try_resolve_comptime_now(&self, key: &str, expr: &Expr) -> Result<Option<Value>> {
         for name in self.comptime_dependency_names(expr) {
             self.force(&name).await?;
         }
         if let Some(value) = self.typing_ctx.resolved_consts.borrow().get(key).cloned() {
-            return Ok(value);
+            return Ok(Some(value));
         }
         let resolved = self
             .inner
@@ -1047,15 +1047,44 @@ impl AstTypeInferencer {
             .unwrap_or(false);
         if resolved {
             if let Some(value) = self.typing_ctx.resolved_consts.borrow().get(key).cloned() {
-                return Ok(value);
+                return Ok(Some(value));
             }
         }
-        // Genuinely not resolvable synchronously (no hook, or the hook
-        // itself failed for a reason other than a missing dependency we
-        // could force) -- suspend for real. Some other task's write to
-        // `resolved_consts` (via `TypingContext::wake_comptime`) is what
-        // would ever make this ready; if nothing ever does, this compile
-        // unit's driver-level drive loop reports it as a genuine deadlock.
+        Ok(None)
+    }
+
+    /// Ensures `key`'s compile-time value is resolved, returning the
+    /// resolved `Value` directly -- callers do `let value =
+    /// self.await_comptime(&key, expr).await?;`, not a separate map lookup
+    /// after the fact. Use this only when the caller genuinely cannot
+    /// proceed without the concrete value (e.g. `ExprKind::ConstBlock`,
+    /// whose own type depends on it, or a concurrently-spawned sibling
+    /// task's own resolution attempt). A `DefConst`/`DefType` item's own
+    /// best-effort attempt to opportunistically populate `resolved_consts`
+    /// for *other* code's later benefit -- where the item's own type is
+    /// already fully known regardless of whether this resolves -- should
+    /// use `best_effort_resolve_comptime` instead; treating every hook
+    /// failure as "genuinely blocked, wait" is wrong when nothing else in
+    /// this compile unit will ever produce the value (e.g. no concurrent
+    /// task was ever spawned for `key`, because nothing actually depends on
+    /// having it typed).
+    ///
+    /// Only genuinely suspends (via a real `Waker`, resumed precisely when
+    /// the resolving task writes the value and calls
+    /// `TypingContext::wake_comptime`) when a concurrently-spawned sibling
+    /// task for this exact `key` is still in flight and might resolve it --
+    /// mirrors `force`'s own dependency-side gating. Otherwise there is
+    /// nothing left that could ever produce this value, so it fails fast
+    /// instead of hanging forever.
+    async fn await_comptime(&self, key: &str, expr: &Expr) -> Result<Value> {
+        if let Some(value) = self.try_resolve_comptime_now(key, expr).await? {
+            return Ok(value);
+        }
+        if !self.typing_ctx.tasks.contains(key) {
+            return Err(typing_error(format!(
+                "could not resolve comptime value for `{key}`"
+            )));
+        }
         let typing_ctx = self.typing_ctx.clone();
         let key_owned = key.to_string();
         std::future::poll_fn(move |cx| {
@@ -1077,6 +1106,18 @@ impl AstTypeInferencer {
             .get(key)
             .cloned()
             .ok_or_else(|| typing_error(format!("could not resolve comptime value for `{key}`")))
+    }
+
+    /// Best-effort counterpart to `await_comptime` for a `DefConst`/
+    /// `DefType` item's own inline attempt to fold its own value: tries
+    /// once (cache, then hook), and silently tolerates not resolving --
+    /// mirrors the pre-async design's "note it as still-unresolved and keep
+    /// going" behavior for values that later compiler stages (LIR-level
+    /// constant folding, or plain runtime evaluation) can pick up on their
+    /// own. The item's own type was already determined before this call, so
+    /// there is nothing to block on here.
+    async fn best_effort_resolve_comptime(&self, key: &str, expr: &Expr) {
+        let _ = self.try_resolve_comptime_now(key, expr).await;
     }
 
     /// Same shape as `await_comptime`, but for a `type Foo = const { ... }`
@@ -3011,7 +3052,7 @@ impl AstTypeInferencer {
 
                         let expr_id = this.expr_id(&block.expr);
                         let key = format!("__fp_expr_{expr_id}");
-                        let _value = this.await_comptime(&key, &block.expr).await?;
+                        this.best_effort_resolve_comptime(&key, &block.expr).await;
 
                         let resolved_struct = this
                             .typing_ctx
@@ -3169,7 +3210,7 @@ impl AstTypeInferencer {
                                 .insert(name.clone(), value);
                             this.typing_ctx.wake_comptime(&name);
                         } else {
-                            let _value = this.await_comptime(&name, &def.value).await?;
+                            this.best_effort_resolve_comptime(&name, &def.value).await;
                         }
                         ty
                     }
