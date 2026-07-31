@@ -927,7 +927,7 @@ fn parse_file_with_context(
     frontend.set_parse_mode(parse_mode);
     let source = std::fs::read_to_string(path).map_err(CliError::Io)?;
     let FrontendResult {
-        ast,
+        mut ast,
         snapshot,
         serializer,
         intrinsic_normalizer,
@@ -937,6 +937,12 @@ fn parse_file_with_context(
         .parse_file(&source, path)
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     emit_frontend_diagnostics(&diagnostics.get_diagnostics(), lossy)?;
+    // Frontends leave `collected_items` empty on every nested block/function/
+    // const-block; the typer's predeclare pass relies on it being populated
+    // (e.g. to know a nested `type X = const { ... }` needs comptime
+    // evaluation before the item is fully typed) so compute it here, once,
+    // for every language frontend.
+    fp_core::ast::annotate_collected_items(&mut ast);
     Ok(ParsedAst {
         ast,
         source_language: frontend.language().to_string(),

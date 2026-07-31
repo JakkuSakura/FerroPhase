@@ -715,39 +715,73 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         self.module_path = module_path.clone();
         self.register_qualified_items(items, module_path);
         self.predeclare_scope_items(collected_items);
+        let mut pending_error = None;
         for item in items.iter_mut() {
             if let Err(err) = self.infer_item_inner(item) {
-                self.exception_mode = previous_exception;
-                self.module_path = saved_module_path;
-                return Err(self.error_with_span(err, self.span_option(item.span())));
+                pending_error = Some(self.error_with_span(err, self.span_option(item.span())));
+                break;
             }
         }
         self.exception_mode = previous_exception;
         self.module_path = saved_module_path;
-        Ok(self.finish())
+        let outcome = self.finish();
+        if let Some(err) = pending_error {
+            if !Self::has_actionable_pending(&outcome) {
+                return Err(err);
+            }
+        }
+        Ok(outcome)
     }
 
     pub fn infer_item(&mut self, item: &mut Item) -> Result<TypingOutcome> {
         self.predeclare_item(item);
-        if let Err(err) = self.infer_item_inner(item) {
-            return Err(self.error_with_span(err, self.span_option(item.span())));
+        let pending_error = match self.infer_item_inner(item) {
+            Ok(()) => {
+                let ty = item.ty().cloned().unwrap_or_else(|| Ty::Unit(TypeUnit));
+                item.set_ty(ty);
+                None
+            }
+            Err(err) => Some(self.error_with_span(err, self.span_option(item.span()))),
+        };
+        let outcome = self.finish();
+        if let Some(err) = pending_error {
+            if !Self::has_actionable_pending(&outcome) {
+                return Err(err);
+            }
         }
-        let ty = item.ty().cloned().unwrap_or_else(|| Ty::Unit(TypeUnit));
-        item.set_ty(ty);
-        Ok(self.finish())
+        Ok(outcome)
     }
 
     pub fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypingOutcome> {
         self.predeclare_expr_scope(expr);
-        let var = match self.infer_expr_inner(expr) {
-            Ok(var) => var,
-            Err(err) => {
-                return Err(self.error_with_span(err, self.span_option(expr.span())))
+        let pending_error = match self.infer_expr_inner(expr).and_then(|var| self.resolve_to_ty(var)) {
+            Ok(ty) => {
+                expr.set_ty(ty);
+                None
             }
+            Err(err) => Some(self.error_with_span(err, self.span_option(expr.span()))),
         };
-        let ty = self.resolve_to_ty(var)?;
-        expr.set_ty(ty);
-        Ok(self.finish())
+        let outcome = self.finish();
+        if let Some(err) = pending_error {
+            if !Self::has_actionable_pending(&outcome) {
+                return Err(err);
+            }
+        }
+        Ok(outcome)
+    }
+
+    /// Whether `outcome` carries a pending request the driver actually acts
+    /// on (`Comptime`/`Package`, see `compile_module_core`) — as opposed to
+    /// the `Unresolved`/`Generic` kinds, which nothing retries. Only an
+    /// actionable pending request justifies swallowing an error from this
+    /// pass in favor of a retry; otherwise the error would just be lost.
+    fn has_actionable_pending(outcome: &TypingOutcome) -> bool {
+        outcome.pending_requests.iter().any(|r| {
+            matches!(
+                r.kind,
+                PendingTypingRequestKind::Comptime | PendingTypingRequestKind::Package(_)
+            )
+        })
     }
 
     /// Initialize the typer with declarations from a file without doing full inference.
@@ -814,17 +848,25 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
 
     fn finish(&mut self) -> TypingOutcome {
         let pending_requests = self.collect_pending_requests();
-        // Flush diagnostics to shared context
-        let diags = std::mem::take(&mut self.diagnostics);
-        self.typing_ctx.diagnostics.borrow_mut().extend(diags);
-        TypingOutcome {
+        let outcome = TypingOutcome {
             resolved_names: std::mem::take(&mut self.resolved_names),
             pending_requests,
             pending_generics: std::mem::take(&mut self.pending_generics),
             cross_crate_struct_refs: std::mem::take(&mut self.cross_crate_struct_refs)
                 .into_iter()
                 .collect(),
+        };
+        if Self::has_actionable_pending(&outcome) {
+            // This pass will be retried once the pending package/comptime
+            // need resolves — diagnostics recorded during a doomed attempt
+            // (e.g. "unresolved symbol" for a package that simply hasn't
+            // loaded yet) must not be permanently committed to shared state.
+            self.diagnostics.clear();
+        } else {
+            let diags = std::mem::take(&mut self.diagnostics);
+            self.typing_ctx.diagnostics.borrow_mut().extend(diags);
         }
+        outcome
     }
 
     fn collect_pending_requests(&mut self) -> Vec<PendingTypingRequest> {
@@ -1890,16 +1932,26 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                 // Type the value (const block or direct expression). Struct types
                 // are resolved via comptime eval and seeded into struct_defs on retry.
                 let _ = self.type_from_ast_ty(&def.value);
-                // For const-block type aliases, defer the unimplemented marker
-                // — the struct is computed at comptime and resolved on retry.
                 let is_const_block = matches!(&def.value, Ty::ConstBlock(_));
+
                 if !is_const_block {
                     self.record_unimplemented_symbol(&def.name, &def.attrs);
-                } else if let Ty::ConstBlock(ref block) = def.value {
-                    // Register as comptime need so the driver evaluates it before retry
-                    self.comptime_exprs.push((*block.expr).clone());
                 }
-                // Look up the struct by its qualified name
+                // For const-block type aliases, whether a comptime need still
+                // exists is decided by the full-inference `DefType` arm
+                // (which tries `request_comptime` synchronously and only
+                // defers if that's genuinely blocked) — not here. Pushing to
+                // `comptime_exprs` unconditionally in this pre-pass, before
+                // the full-inference arm gets a chance to resolve it in the
+                // very same pass, would leave a stale pending entry even
+                // after success, since nothing removes it afterward — that
+                // keeps the compile unit "pending" forever, looping until
+                // the retry cap.
+
+                // Look up the struct by its qualified name, in case a prior
+                // pass already resolved it — lets sibling items in this same
+                // scope reference it before this item's own full-inference
+                // turn comes up.
                 let path = if self.module_path.is_empty() {
                     QualifiedPath::new(vec![def.name.as_str().to_string()])
                 } else {
@@ -2540,47 +2592,79 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
                     // Resolve the RHS to a concrete type; if it is structural, materialize it as a
                     // named struct so that later term-level syntax like `Foo { ... }` can type-check.
                     let placeholder = self.symbol_var(&def.name);
-                    let value_var = self.type_from_ast_ty(&def.value)?;
-                    let resolved = self.resolve_to_ty(value_var)?;
 
-                    let normalized = match resolved {
-                            Ty::Structural(structural) => {
-                            let struct_ty = TypeStruct {
-                                name: def.name.clone(),
-                                generics_params: Vec::new(),
-                                repr: ReprOptions::default(),
-                                method_sigs: Vec::new(),
-                                fields: structural.fields.clone(),
-                            };
-                            self.insert_struct_def(&def.name, struct_ty.clone());
-                            Ty::Struct(struct_ty)
-                        }
-                        Ty::Struct(struct_ty) => {
-                            let mut merged_ty = struct_ty;
-                            // Merge fields from source struct for TypeBuilder::from(Type)
-                            if merged_ty.name != def.name {
-                                let source_name = QualifiedPath::new(
-                                    vec![merged_ty.name.as_str().to_string()],
-                                );
-                                if let Some(source_def) = self.own_struct_defs().get(&source_name) {
-                                    let mut merged = source_def.fields.clone();
-                                    for f in &merged_ty.fields {
-                                        if !merged.iter().any(|m| m.name == f.name) {
-                                            merged.push(f.clone());
-                                        }
-                                    }
-                                    merged_ty.fields = merged;
+                    // Fast path: a const-block type alias already resolved to
+                    // a concrete struct by comptime evaluation in a prior
+                    // pass — use it directly instead of re-deriving it via
+                    // structural inference alone, which can't determine the
+                    // shape of a conditionally-built type (e.g. a builder
+                    // chain inside `if`). Mirrors `DefConst`'s
+                    // `resolved_consts` fast path (see below in this match).
+                    let cached = if matches!(&def.value, Ty::ConstBlock(_)) {
+                        self.typing_ctx
+                            .resolved_types
+                            .borrow()
+                            .get(def.name.as_str())
+                            .cloned()
+                    } else {
+                        None
+                    };
+
+                    let normalized = if let Some(struct_def) = cached {
+                        self.insert_struct_def(&def.name, struct_def.clone());
+                        Ty::Struct(struct_def)
+                    } else if let Ty::ConstBlock(ref mut block) = def.value {
+                        // Type the block body first (structural inference
+                        // alone — it doesn't need the comptime result), then
+                        // try to resolve its compile-time value now: the hook
+                        // needs a concretely-typed expression to lower.
+                        // Structural inference tolerates unresolved names by
+                        // binding them to an error type rather than
+                        // hard-failing, so its result is discarded here.
+                        let _ = self.infer_expr_inner(block.expr.as_mut());
+
+                        let expr_id = self.expr_id(&block.expr);
+                        let key = format!("__fp_expr_{expr_id}");
+                        let made_progress = self
+                            .resolution_hook
+                            .as_mut()
+                            .map(|hook| hook.request_comptime(&key, &block.expr))
+                            .unwrap_or(false);
+
+                        if made_progress {
+                            let resolved_struct = self
+                                .typing_ctx
+                                .resolved_types
+                                .borrow()
+                                .get(def.name.as_str())
+                                .cloned();
+                            match resolved_struct {
+                                Some(struct_def) => {
+                                    self.insert_struct_def(&def.name, struct_def.clone());
+                                    Ty::Struct(struct_def)
                                 }
-                                merged_ty.name = def.name.clone();
+                                None => {
+                                    // The hook resolved *something* but it
+                                    // wasn't a struct under this name — a
+                                    // real error, not a silent placeholder.
+                                    self.emit_error(format!(
+                                        "`type {} = const {{ ... }}` did not resolve to a struct type",
+                                        def.name
+                                    ));
+                                    Ty::Unknown(TypeUnknown)
+                                }
                             }
-                            self.insert_struct_def(&def.name, merged_ty.clone());
-                            Ty::Struct(merged_ty)
+                        } else {
+                            // Genuinely blocked (e.g. a package it depends on
+                            // hasn't loaded) — defer to the next pass instead
+                            // of hard-failing.
+                            self.comptime_exprs.push((*block.expr).clone());
+                            Ty::Unknown(TypeUnknown)
                         }
-                        Ty::Enum(enum_ty) => {
-                            self.insert_enum_def(&def.name, enum_ty.clone());
-                            Ty::Enum(enum_ty)
-                        }
-                        other => other,
+                    } else {
+                        let value_var = self.type_from_ast_ty(&def.value)?;
+                        let resolved = self.resolve_to_ty(value_var)?;
+                        self.normalize_deftype_value(&def.name, resolved)
                     };
 
                     let var = self.type_from_ast_ty(&normalized)?;
@@ -3407,6 +3491,76 @@ pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Sel
         self.own_enum_defs_mut().insert(key, def);
     }
 
+    /// Normalize a `DefType` RHS's resolved type into what gets bound under
+    /// `name`: a structural type is materialized as a named struct, and a
+    /// struct from `TypeBuilder::from(SourceType)` has `SourceType`'s fields
+    /// merged in. Shared between the const-block and plain-alias paths in
+    /// the `ItemKind::DefType` arm of `infer_item_inner`.
+    fn normalize_deftype_value(&mut self, name: &Ident, resolved: Ty) -> Ty {
+        match resolved {
+            Ty::Structural(structural) => {
+                let struct_ty = TypeStruct {
+                    name: name.clone(),
+                    generics_params: Vec::new(),
+                    repr: ReprOptions::default(),
+                    method_sigs: Vec::new(),
+                    fields: structural.fields.clone(),
+                };
+                self.insert_struct_def(name, struct_ty.clone());
+                Ty::Struct(struct_ty)
+            }
+            Ty::Struct(struct_ty) => {
+                let mut merged_ty = struct_ty;
+                // Merge fields from source struct for TypeBuilder::from(Type)
+                if merged_ty.name != *name {
+                    let source_name =
+                        QualifiedPath::new(vec![merged_ty.name.as_str().to_string()]);
+                    let source_def = self.own_struct_defs().get(&source_name).cloned();
+                    match source_def {
+                        Some(source_def) => {
+                            let mut merged = source_def.fields.clone();
+                            for f in &merged_ty.fields {
+                                if !merged.iter().any(|m| m.name == f.name) {
+                                    merged.push(f.clone());
+                                }
+                            }
+                            merged_ty.fields = merged;
+                            merged_ty.name = name.clone();
+                        }
+                        None => {
+                            // Don't silently continue with only the new
+                            // fields — that would materialize an incomplete
+                            // struct for callers to build against. Tell
+                            // apart "source's package hasn't loaded yet"
+                            // (defer, via the pending-package machinery) from
+                            // "source genuinely doesn't exist" (real error).
+                            self.note_pending_package_if_registered(&source_name);
+                            let is_pending = source_name
+                                .head()
+                                .map(|head| self.pending_packages.contains(head))
+                                .unwrap_or(false);
+                            if !is_pending {
+                                self.emit_error(format!(
+                                    "unknown source type `{}` for type alias `{}`",
+                                    merged_ty.name.as_str(),
+                                    name.as_str()
+                                ));
+                            }
+                            return Ty::Unknown(TypeUnknown);
+                        }
+                    }
+                }
+                self.insert_struct_def(name, merged_ty.clone());
+                Ty::Struct(merged_ty)
+            }
+            Ty::Enum(enum_ty) => {
+                self.insert_enum_def(name, enum_ty.clone());
+                Ty::Enum(enum_ty)
+            }
+            other => other,
+        }
+    }
+
     fn parent_module_path(&self) -> QualifiedPath {
         self.module_path
             .parent_n(1)
@@ -4190,5 +4344,91 @@ pub fn impl_self_ty_name(expr: &Expr) -> Option<String> {
     match expr.kind() {
         ExprKind::Name(name) => Some(name.to_string()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod deftype_normalize_tests {
+    use super::*;
+    use fp_core::package::provider::{PackageProvider, ProviderResult};
+    use fp_core::package::{PackageDescriptor, PackageId};
+    use fp_core::workspace::WorkspaceContext;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    struct NoopProvider;
+    impl PackageProvider for NoopProvider {
+        fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
+            Ok(Vec::new())
+        }
+        fn load_package(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
+            Err(fp_core::package::provider::ProviderError::other(format!(
+                "not needed for this test: {id}"
+            )))
+        }
+        fn refresh(&self) -> ProviderResult<()> {
+            Ok(())
+        }
+    }
+
+    fn new_inferencer(register_pending_package: Option<&str>) -> AstTypeInferencer<'static> {
+        let mut workspace = WorkspaceContext::new();
+        if let Some(name) = register_pending_package {
+            workspace.register_provider(name, Arc::new(NoopProvider));
+        }
+        let typing_ctx = Rc::new(TypingContext::new(Rc::new(workspace)));
+        AstTypeInferencer::new(typing_ctx)
+    }
+
+    fn source_struct_ty(source_name: &str) -> Ty {
+        Ty::Struct(TypeStruct {
+            name: Ident::new(source_name),
+            generics_params: Vec::new(),
+            repr: ReprOptions::default(),
+            method_sigs: Vec::new(),
+            fields: vec![StructuralField::new(
+                Ident::new("extra"),
+                Ty::Primitive(TypePrimitive::Bool),
+            )],
+        })
+    }
+
+    #[test]
+    fn defers_when_source_type_belongs_to_an_unloaded_package() {
+        let mut typer = new_inferencer(Some("SourcePkg"));
+        let resolved = typer.normalize_deftype_value(
+            &Ident::new("Alias"),
+            source_struct_ty("SourcePkg"),
+        );
+
+        assert!(
+            matches!(resolved, Ty::Unknown(_)),
+            "expected Ty::Unknown while the source package is unloaded, got {resolved:?}"
+        );
+        assert!(
+            !typer
+                .diagnostics
+                .iter()
+                .any(|d| matches!(d.level, TypingDiagnosticLevel::Error)),
+            "a pending-package miss must not emit a real error"
+        );
+    }
+
+    #[test]
+    fn errors_when_source_type_is_genuinely_unknown() {
+        let mut typer = new_inferencer(None);
+        let resolved = typer.normalize_deftype_value(
+            &Ident::new("Alias"),
+            source_struct_ty("NoSuchSource"),
+        );
+
+        assert!(matches!(resolved, Ty::Unknown(_)));
+        assert!(
+            typer
+                .diagnostics
+                .iter()
+                .any(|d| matches!(d.level, TypingDiagnosticLevel::Error)),
+            "a genuinely unknown source type must emit a real error, not silently continue"
+        );
     }
 }

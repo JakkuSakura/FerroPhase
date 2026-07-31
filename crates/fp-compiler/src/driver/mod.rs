@@ -205,22 +205,17 @@ impl CompilerDriver {
             },
         );
 
-        let hir_id = self.lower_to_hir(&module_path, &typed_ast_id, path, &outcome.cross_crate_struct_refs)?;
-        // Use lossy MIR when comptime needs exist — unresolved calls are expected
-        // before comptime eval resolves the referenced types.
-        let mir_id = if pending_comptime {
-            self.lower_to_mir_lossy(&hir_id, path, true)?
-        } else {
-            self.lower_to_mir(&hir_id, path)?
-        };
-        let lir_id = self.lower_to_lir(&mir_id, path)?;
-
+        // Check for pending needs *before* lowering — a compile unit that
+        // still has an unresolved package/comptime dependency has calls HIR/
+        // MIR lowering can't make sense of yet, so there's nothing worth
+        // lowering this pass. No lossy fallback: skip lowering entirely and
+        // retry the whole unit once the dependency resolves.
         if !pending_package_names.is_empty() {
-            // Same shape as the comptime case below: submit each missing
-            // package as its own scheduler-dependency work item (the typer
-            // *requested* the package and yielded — it never loads anything
-            // itself), so `answer_and_schedule` blocks this compile unit
-            // until every one of them is loaded, then retries it.
+            // Submit each missing package as its own scheduler-dependency
+            // work item (the typer *requested* the package and yielded — it
+            // never loads anything itself), so `answer_and_schedule` blocks
+            // this compile unit until every one of them is loaded, then
+            // retries it.
             for name in &pending_package_names {
                 let retries = self
                     .state
@@ -265,6 +260,11 @@ impl CompilerDriver {
             });
             return Ok(None);
         }
+
+        // Nothing pending — every reference resolved, so lower for real.
+        let hir_id = self.lower_to_hir(&module_path, &typed_ast_id, path, &outcome.cross_crate_struct_refs)?;
+        let mir_id = self.lower_to_mir(&hir_id, path)?;
+        let lir_id = self.lower_to_lir(&mir_id, path)?;
 
         Ok(Some(CompileUnitCoreResult {
             typed_ast_id,
@@ -382,7 +382,7 @@ impl CompilerDriver {
             Ok(value)
         })();
 
-        let Ok(value) = resolved else {
+        let Ok(mut value) = resolved else {
             return false;
         };
 
