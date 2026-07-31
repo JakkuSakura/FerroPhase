@@ -1487,6 +1487,31 @@ fn parse_expr_ast_handles_tuple_field_access() {
 }
 
 #[test]
+fn parse_expr_ast_bare_self_is_a_plain_identifier() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("self").unwrap();
+    let ExprKind::Name(Name::Ident(ident)) = expr.kind() else {
+        panic!("expected bare `self` to parse as Name::Ident, got {:?}", expr.kind());
+    };
+    assert_eq!(ident.as_str(), "self");
+}
+
+#[test]
+fn parse_expr_ast_self_field_access_targets_self_ident() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("self.x").unwrap();
+    let ExprKind::Select(select) = expr.kind() else {
+        panic!("expected field access, got {:?}", expr.kind());
+    };
+    let ExprKind::Name(Name::Ident(ident)) = select.obj.kind() else {
+        panic!("expected receiver to be Name::Ident(\"self\"), got {:?}", select.obj.kind());
+    };
+    assert_eq!(ident.as_str(), "self");
+}
+
+#[test]
 fn parse_expr_ast_handles_raw_ref_identifier_binding() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

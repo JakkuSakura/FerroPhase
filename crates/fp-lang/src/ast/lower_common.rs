@@ -11,6 +11,12 @@ pub(crate) fn split_path_prefix(
     if saw_root {
         return (PathPrefix::Root, segments);
     }
+    // A bare single-segment `self`/`crate`/`super` (no trailing `::segment`) is a
+    // value-position identifier (e.g. the method receiver `self`), not a module-path
+    // prefix — only treat these as prefixes when they actually lead into a longer path.
+    if segments.len() < 2 {
+        return (PathPrefix::Plain, segments);
+    }
     let Some(first) = segments.first().map(|ident| ident.as_str()) else {
         return (PathPrefix::Plain, segments);
     };
@@ -44,6 +50,11 @@ pub(crate) fn split_parameter_path_prefix(
 ) -> (PathPrefix, Vec<ParameterPathSegment>) {
     if saw_root {
         return (PathPrefix::Root, segments);
+    }
+    // See split_path_prefix: a bare single-segment `self`/`crate`/`super` is a
+    // value-position identifier, not a module-path prefix.
+    if segments.len() < 2 {
+        return (PathPrefix::Plain, segments);
     }
     let Some(first) = segments.first().map(|seg| seg.ident.as_str()) else {
         return (PathPrefix::Plain, segments);
