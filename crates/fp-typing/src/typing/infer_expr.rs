@@ -930,11 +930,13 @@ impl AstTypeInferencer {
 
         let idx_ty = self.resolve_to_ty(idx_var).await?;
         let idx_root = self.find(idx_var);
-        let idx_bound_reference = match self.inner.borrow().type_vars[idx_root].kind.clone() {
+        let idx_root_kind = self.inner.borrow().type_vars[idx_root].kind.clone();
+        let idx_bound_reference = match idx_root_kind {
             TypeVarKind::Bound(ty) => self.reference_inner_from_ty(&ty).await.is_some(),
             TypeVarKind::Link(next) => {
                 let root = self.find(next);
-                match self.inner.borrow().type_vars[root].kind.clone() {
+                let root_kind = self.inner.borrow().type_vars[root].kind.clone();
+                match root_kind {
                     TypeVarKind::Bound(ty) => self.reference_inner_from_ty(&ty).await.is_some(),
                     _ => false,
                 }
@@ -3467,7 +3469,8 @@ impl AstTypeInferencer {
         let mut receiver = obj_var;
         loop {
             let root = self.find(receiver);
-            match self.inner.borrow().type_vars[root].kind.clone() {
+            let root_kind = self.inner.borrow().type_vars[root].kind.clone();
+            match root_kind {
                 crate::typing::unify::TypeVarKind::Bound(ty) => {
                     if let Some(inner) = self.reference_inner_from_ty(&ty).await {
                         receiver = inner;

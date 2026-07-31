@@ -77,7 +77,13 @@ impl TypingContext {
     /// driver). Precise, not broadcast: only tasks registered under this
     /// exact name are woken.
     pub fn wake_comptime(&self, name: &str) {
-        if let Some(wakers) = self.comptime_wakers.borrow_mut().remove(name) {
+        // `.remove(name)` is extracted into its own statement (rather than
+        // used directly as an `if let` scrutinee) so the `borrow_mut()`
+        // guard drops before `waker.wake()` runs -- an `if let` scrutinee's
+        // temporaries are otherwise kept alive for the whole `if let`, which
+        // would hold this guard across every woken task's `wake()` call.
+        let wakers = self.comptime_wakers.borrow_mut().remove(name);
+        if let Some(wakers) = wakers {
             for waker in wakers {
                 waker.wake();
             }
