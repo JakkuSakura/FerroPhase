@@ -47,26 +47,18 @@ pub struct TypingContext {
     /// (`resolved_consts`/`resolved_types`) actually resolves that name.
     pub comptime_wakers: RefCell<HashMap<String, Vec<Waker>>>,
 
-    /// The one shared task executor concurrent item-resolution (one task
-    /// per const/type-alias item, spawned during `predeclare_item`) and the
-    /// per-compile-unit driver loop both spawn into/poll. `Executor` is
-    /// already internally interior-mutable (its own methods take `&self`,
-    /// specifically so a task can reentrantly `spawn`/`contains`-check this
-    /// same executor from within its own poll) — wrapping it in another
-    /// outer `RefCell` here would reintroduce exactly the double-borrow
-    /// hazard that design avoids, so it's a plain field.
-    pub tasks: fp_core::executor::Executor<fp_core::error::Result<()>>,
-
     /// Generic function calls whose concrete type arguments have been
     /// resolved and are ready for monomorphization, written the moment
-    /// typing discovers each one (see `infer_generic_function_call_body`)
-    /// -- shared driver-visible state, like `resolved_consts`/
-    /// `package_wakers`, not a per-typer-pass `Vec` threaded back only once
-    /// typing finishes. The driver drains this continuously from within
-    /// `drive_typing_to_completion`'s poll loop, the same way it already
-    /// services `package_wakers` there, rather than waiting for the whole
-    /// compile unit to finish and processing it as a separate batch.
-    pub pending_generics: RefCell<Vec<GenericMonorph>>,
+    /// typing discovers each one (see `infer_generic_function_call_body`),
+    /// keyed by the same string the trivial "ready to specialize" task is
+    /// spawned under (see `AstTypeInferencer::tasks`/`CompilerDriver::
+    /// run_pool_to_idle`). The task's only job is to make "this generic
+    /// call is ready" show up through the shared task pool's normal
+    /// resolve-and-dispatch loop; the actual payload the pool's `Result<()>`
+    /// output can't carry lives here instead, read back out (and removed)
+    /// by `CompilerDriver::handle_resolved_task` the moment that key
+    /// resolves.
+    pub ready_generics: RefCell<HashMap<String, GenericMonorph>>,
 }
 
 impl TypingContext {
@@ -79,8 +71,23 @@ impl TypingContext {
             diagnostics: RefCell::new(Vec::new()),
             package_wakers: RefCell::new(HashMap::new()),
             comptime_wakers: RefCell::new(HashMap::new()),
-            tasks: fp_core::executor::Executor::new(),
-            pending_generics: RefCell::new(Vec::new()),
+            ready_generics: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// Wake every task parked on `name`'s package load — call this right
+    /// after `name` finishes loading (`CompilerDriver::load_package`).
+    /// Mirrors `wake_comptime` exactly. Without this, any task whose
+    /// suspension (`AstTypeInferencer::await_package`) registered a *real*
+    /// pool waker under this name — not just the top-level module task, any
+    /// nested one too — would never be re-enqueued onto the pool's ready
+    /// queue and would park forever.
+    pub fn wake_package(&self, name: &str) {
+        let wakers = self.package_wakers.borrow_mut().remove(name);
+        if let Some(wakers) = wakers {
+            for waker in wakers {
+                waker.wake();
+            }
         }
     }
 

@@ -543,7 +543,7 @@ impl AstTypeInferencer {
                     this.apply_pattern_generalization(&pattern_info).await?;
                     value
                 }
-                ExprKind::Invoke(invoke) => this.infer_invoke(invoke).await?,
+                ExprKind::Invoke(invoke) => this.infer_invoke(invoke, expr_id).await?,
                 ExprKind::Select(select) => {
                     let obj_var = this.infer_expr_inner(select.obj.as_mut()).await?;
                     this.lookup_struct_field(obj_var, &select.field).await?
@@ -1483,7 +1483,7 @@ impl AstTypeInferencer {
         result
     }
 
-    pub(crate) async fn infer_invoke(&self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+    pub(crate) async fn infer_invoke(&self, invoke: &mut ExprInvoke, expr_id: ExprId) -> Result<TypeVarId> {
                         if let Some(result) = self.try_infer_query_pipeline_call(invoke) {
             return result;
         }
@@ -1636,6 +1636,7 @@ impl AstTypeInferencer {
                         &sig_module,
                         generic_args.as_deref(),
                         &sig_path,
+                        expr_id,
                     ).await;
                 }
                 if sig.abi.is_c() && sig.generics_params.is_empty() && sig.receiver.is_none() {
@@ -2199,6 +2200,7 @@ impl AstTypeInferencer {
         sig_module: &QualifiedPath,
         explicit_generic_args: Option<&[Ty]>,
         sig_path: &QualifiedPath,
+        expr_id: ExprId,
     ) -> Result<TypeVarId> {
         if invoke.args.len() != sig.params.len() {
             self.emit_error("call arity mismatch");
@@ -2210,7 +2212,7 @@ impl AstTypeInferencer {
         // `exit_scope()` -- a plain (sync) closure can't contain `.await`,
         // so this replaces the old IIFE-closure trick.
         let result = self
-            .infer_generic_function_call_body(invoke, sig, sig_module, explicit_generic_args, sig_path)
+            .infer_generic_function_call_body(invoke, sig, sig_module, explicit_generic_args, sig_path, expr_id)
             .await;
         self.exit_scope();
         result
@@ -2223,6 +2225,7 @@ impl AstTypeInferencer {
         sig_module: &QualifiedPath,
         explicit_generic_args: Option<&[Ty]>,
         sig_path: &QualifiedPath,
+        expr_id: ExprId,
     ) -> Result<TypeVarId> {
         {
             let mut generic_vars = Vec::with_capacity(sig.generics_params.len());
@@ -2285,12 +2288,33 @@ impl AstTypeInferencer {
                 // entry, and monomorphizing it isn't something this
                 // mechanism supports.
                 if let Some(item_id) = self.own_function_item_ids().get(sig_path).copied() {
-                    self.typing_ctx.pending_generics.borrow_mut().push(GenericMonorph::new(
-                        item_id,
-                        sig_path.clone(),
-                        param_names,
-                        concrete_types,
-                    ));
+                    // The key just needs to be unique per call site so a
+                    // fresh `spawn` here can never silently replace (and
+                    // thus drop, per `Executor::spawn`'s own doc comment) an
+                    // earlier not-yet-observed one -- the call expression's
+                    // own `ExprId` already is that, and is already in scope.
+                    // The task itself does nothing (there's nothing left to
+                    // await -- `concrete_types` is already fully resolved);
+                    // its only job is to make "this generic call is ready to
+                    // specialize" surface through the shared pool's normal
+                    // resolve-and-dispatch loop
+                    // (`CompilerDriver::run_pool_to_idle`/`handle_resolved_task`)
+                    // instead of via a separately-invoked drain method. The
+                    // payload itself can't ride along on the pool's `Result<
+                    // ()>` output, so it's stashed in `ready_generics` under
+                    // the same key.
+                    let key = format!("generic:{expr_id}");
+                    self.typing_ctx.ready_generics.borrow_mut().insert(
+                        key.clone(),
+                        GenericMonorph::new(
+                            item_id,
+                            self.ast_key.clone(),
+                            sig_path.clone(),
+                            param_names,
+                            concrete_types,
+                        ),
+                    );
+                    self.tasks.spawn(key, async move { Ok(()) });
                 }
             }
 

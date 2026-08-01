@@ -46,8 +46,8 @@ pub enum CompilerDriverError {
     ModuleResolution(#[from] ModuleResolutionError),
     #[error("unsupported compiler work: {0}")]
     UnsupportedWork(String),
-    #[error("unresolvable comptime cycle for {0}")]
-    UnresolvableComptime(AstId),
+    #[error("unresolvable comptime cycle: {0}")]
+    UnresolvableComptime(String),
     #[error("package {0} could not be loaded (no provider registered, or the provider failed repeatedly)")]
     UnresolvablePackage(String),
 }

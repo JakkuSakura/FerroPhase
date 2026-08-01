@@ -38,6 +38,19 @@ pub struct CompilerState {
     /// cross-crate struct — mirrors `generic_instantiations`' existing dedup
     /// role for generic monomorphization.
     pub(crate) cross_crate_items_cache: HashMap<QualifiedPath, (QualifiedPath, Vec<Item>)>,
+    /// The one shared task pool every suspendable unit of driver work runs
+    /// through: per-const/per-type-alias comptime resolution (spawned by
+    /// `fp-typing`'s `predeclare_item` via `AstTypeInferencer::tasks`, a
+    /// clone of this same handle), the per-compile-unit module-typing task,
+    /// and generic-monomorphization-ready signals (see
+    /// `CompilerDriver::run_pool_to_idle`). Lives here, not on
+    /// `TypingContext`, because scheduling ("what task runs next") is the
+    /// driver's concern, not typing's — `TypingContext` only holds typing
+    /// data. `Rc`, not `Rc<RefCell<_>>`: `Executor` is already internally
+    /// interior-mutable (its own methods take `&self`, specifically so a
+    /// task can reentrantly `spawn`/`contains`-check it from within its own
+    /// poll).
+    pub tasks: std::rc::Rc<fp_core::executor::Executor<fp_core::error::Result<()>>>,
 }
 
 impl CompilerState {
@@ -220,6 +233,7 @@ impl Default for CompilerState {
             generic_instantiations: HashSet::new(),
             bytecode: BTreeMap::new(),
             cross_crate_items_cache: HashMap::new(),
+            tasks: std::rc::Rc::new(fp_core::executor::Executor::new()),
         }
     }
 }

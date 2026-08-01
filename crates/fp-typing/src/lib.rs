@@ -338,7 +338,7 @@ impl Drop for ExceptionContextGuard {
 /// scoped to short synchronous stretches that never span an `.await` (the
 /// same discipline already used for `TypingContext`'s `RefCell` fields
 /// elsewhere in this crate). This split exists so that multiple concurrent
-/// item-resolution tasks (see `typing_context::TypingContext::tasks`) can
+/// item-resolution tasks (see `AstTypeInferencer::tasks`) can
 /// each hold their own cheap `Rc::clone` of the same underlying state,
 /// instead of requiring one exclusive `&mut AstTypeInferencer` per task.
 ///
@@ -347,7 +347,7 @@ impl Drop for ExceptionContextGuard {
 /// was dead -- nothing in the crate ever read it, it was a holdover from
 /// before `TypingContext` existed -- and removing it, along with the now
 ///-unnecessary `+ 'ctx` bound on `resolution_hook`, lets `AstTypeInferencer`
-/// be plain `Clone` + effectively `'static`, which `TypingContext::tasks`'
+/// be plain `Clone` + effectively `'static`, which `AstTypeInferencer::tasks`'
 /// `Executor::spawn` (bound `+ 'static`) requires of anything it spawns.
 struct Inner {
     type_vars: Vec<TypeVar>,
@@ -413,10 +413,31 @@ struct Inner {
 #[derive(Clone)]
 pub struct AstTypeInferencer {
     /// Shared mutable state with the driver: resolved consts, types,
-    /// module resolution, expression resolution, diagnostics, the
-    /// package-waker registry that makes `await_package` genuinely suspend,
-    /// and the shared task executor concurrent item-resolution runs on.
+    /// module resolution, expression resolution, diagnostics, and the
+    /// package-waker registry that makes `await_package` genuinely suspend.
     typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>,
+    /// The driver's shared task pool (see `CompilerState::tasks`) --
+    /// concurrent item-resolution (one task per const/type-alias item,
+    /// spawned during `predeclare_item`) and generic-monomorphization-ready
+    /// signals (`infer_generic_function_call_body`) both spawn into this.
+    /// Deliberately not a field of `typing_ctx`/`TypingContext`: scheduling
+    /// is the driver's concern, not typing data -- this is just a cheap
+    /// `Rc` handle to the same pool the driver itself owns and drives
+    /// (`CompilerDriver::run_pool_to_idle`). Defaults to a fresh, empty,
+    /// never-driven pool (see `new`) so standalone/test callers that never
+    /// touch generics or nested comptime tasks don't need to know this
+    /// field exists; real driver call sites plug in the shared one via
+    /// `with_tasks`.
+    tasks: std::rc::Rc<fp_core::executor::Executor<fp_core::error::Result<()>>>,
+    /// The discovering compile unit's own `AstId`, as a plain string (this
+    /// crate can't name `fp-compiler`'s `AstId` type) -- stamped onto every
+    /// `GenericMonorph` this typer pushes (see that struct's doc comment)
+    /// so `CompilerDriver::handle_resolved_task`, which runs with no
+    /// compile-unit-specific context of its own, still knows which stored
+    /// `File` to search for the specialized function's `ItemId`. Defaults
+    /// to empty for standalone/test callers that never push a
+    /// `GenericMonorph`; real driver call sites set it via `with_ast_key`.
+    ast_key: String,
     /// This crate's own registry of definitions — struct_defs, enum_defs,
     /// function_sigs, trait_defs — shared (via `Rc<RefCell<_>>`) with the
     /// root `WorkspaceContext`, which already holds every other crate the
@@ -660,6 +681,23 @@ impl AstTypeInferencer {
         }
     }
 
+    /// Use the driver's real, shared task pool instead of the fresh, empty
+    /// one `new()` creates — so tasks this typer spawns (const/type-alias
+    /// resolution, generic-monomorphization-ready signals) and tasks it
+    /// awaits (`await_comptime`/`force`'s `.contains` checks) are visible to
+    /// `CompilerDriver::run_pool_to_idle`, not stranded in a pool nothing
+    /// ever drives.
+    pub fn with_tasks(self, tasks: Rc<fp_core::executor::Executor<fp_core::error::Result<()>>>) -> Self {
+        Self { tasks, ..self }
+    }
+
+    /// Stamp this compile unit's own `AstId` (as a plain string) onto every
+    /// `GenericMonorph` this typer pushes -- see `AstTypeInferencer::ast_key`'s
+    /// doc comment for why the driver needs it back.
+    pub fn with_ast_key(self, ast_key: impl Into<String>) -> Self {
+        Self { ast_key: ast_key.into(), ..self }
+    }
+
     pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Self {
         let inner = Inner {
             type_vars: Vec::new(),
@@ -699,6 +737,8 @@ impl AstTypeInferencer {
             typing_ctx,
             own_crate: Rc::new(RefCell::new(PackageCrate::default())),
             inner: Rc::new(RefCell::new(inner)),
+            tasks: Rc::new(fp_core::executor::Executor::new()),
+            ast_key: String::new(),
         };
         inferencer.insert_default_prelude_aliases();
         inferencer
@@ -1045,7 +1085,7 @@ impl AstTypeInferencer {
     /// Tries to resolve `key`'s compile-time value right now: forces
     /// whatever other const/type-alias items `expr` depends on first (each
     /// of which is its own independently-spawned task -- see
-    /// `TypingContext::tasks`/`predeclare_item`), then checks the cache and
+    /// `AstTypeInferencer::tasks`/`predeclare_item`), then checks the cache and
     /// tries the resolution hook once. Never suspends and never fails on a
     /// mere "couldn't resolve it this way" outcome -- returns `Ok(None)` so
     /// the caller decides what a non-resolution means for it. Shared by
@@ -1100,7 +1140,7 @@ impl AstTypeInferencer {
         if let Some(value) = self.try_resolve_comptime_now(key, expr).await? {
             return Ok(value);
         }
-        if !self.typing_ctx.tasks.contains(key) {
+        if !self.tasks.contains(key) {
             return Err(typing_error(format!(
                 "could not resolve comptime value for `{key}`"
             )));
@@ -1192,7 +1232,7 @@ impl AstTypeInferencer {
         {
             return Ok(());
         }
-        if !self.typing_ctx.tasks.contains(name) {
+        if !self.tasks.contains(name) {
             return Ok(());
         }
         let typing_ctx = self.typing_ctx.clone();
@@ -2295,7 +2335,7 @@ impl AstTypeInferencer {
                     self.record_unimplemented_symbol(&def.name, &def.attrs);
                 } else if let Ty::ConstBlock(block) = &def.value {
                     // Spawn this alias's struct-shape resolution as its own
-                    // independent task (see `TypingContext::tasks`), keyed
+                    // independent task (see `AstTypeInferencer::tasks`), keyed
                     // by the alias's own name so `force`/`await_struct_alias`
                     // can find and await it -- mirrors the `DefConst` arm
                     // above. Only computes/caches the resolved struct shape
@@ -2305,13 +2345,13 @@ impl AstTypeInferencer {
                     // path (the full-inference `DefType` arm below).
                     let name = def.name.as_str().to_string();
                     if !self.typing_ctx.resolved_types.borrow().contains_key(&name)
-                        && !self.typing_ctx.tasks.contains(&name)
+                        && !self.tasks.contains(&name)
                     {
                         let this = self.clone();
                         let mut expr_clone = (*block.expr).clone();
                         let expr_id = self.expr_id(&block.expr);
                         let key = format!("__fp_expr_{expr_id}");
-                        self.typing_ctx.tasks.spawn(name, async move {
+                        self.tasks.spawn(name, async move {
                             let _ = this.infer_expr_inner(&mut expr_clone).await;
                             this.await_comptime(&key, &expr_clone).await.map(|_| ())
                         });
@@ -2396,7 +2436,7 @@ impl AstTypeInferencer {
             ItemKind::DefConst(def) => {
                 self.register_symbol(&def.name);
                 // Spawn this const's comptime-value resolution as its own
-                // independent task (see `TypingContext::tasks`) -- so
+                // independent task (see `AstTypeInferencer::tasks`) -- so
                 // `force`/`await_comptime` can await it directly regardless
                 // of where in the item list it sits, instead of the
                 // sequential item loop's own order determining whether a
@@ -2410,12 +2450,12 @@ impl AstTypeInferencer {
                 // bind from cache" fast path.
                 let name = def.name.as_str().to_string();
                 if !self.typing_ctx.resolved_consts.borrow().contains_key(&name)
-                    && !self.typing_ctx.tasks.contains(&name)
+                    && !self.tasks.contains(&name)
                 {
                     let this = self.clone();
                     let mut expr_clone = (*def.value).clone();
                     let key = name.clone();
-                    self.typing_ctx.tasks.spawn(name, async move {
+                    self.tasks.spawn(name, async move {
                         let _ = this.infer_expr_inner(&mut expr_clone).await;
                         this.await_comptime(&key, &expr_clone).await.map(|_| ())
                     });

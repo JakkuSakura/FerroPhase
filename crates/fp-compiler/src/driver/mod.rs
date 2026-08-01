@@ -20,6 +20,7 @@ use fp_typing::{
     AstTypeInferencer, TypeResolutionHook, TypingContext,
     TypingOutcome, default_extern_prelude,
 };
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::rc::Rc;
@@ -69,36 +70,51 @@ struct CompileUnitCoreResult {
     lir_id: LirId,
 }
 
-/// Result of driving one compile unit's typing future to completion (see
-/// `CompilerDriver::drive_to_completion`). `items` is handed back to
-/// the caller because the future owns it for its lifetime (mutated in place
-/// — typing stamps a concrete `Ty` on every node — so the caller needs it
-/// back to store as the typed AST).
+/// Real output of driving one compile unit's typing task to completion (see
+/// `CompilerDriver::run_pool_to_idle`). `items` is handed back to the
+/// caller because the task owns it for its lifetime (mutated in place —
+/// typing stamps a concrete `Ty` on every node — so the caller needs it back
+/// to store as the typed AST).
+///
+/// The task pool's own output type is a bare `fp_core::error::Result<()>`
+/// (shared by every kind of task, const/type-alias resolution included) —
+/// this richer struct can't ride along on that, so it's written into a
+/// call-local `Rc<RefCell<Option<TypingTaskOutput>>>` (see `typing_future`)
+/// right before the task returns, and read back out by `compile_module_core`
+/// once the pool reports the task's key resolved.
 struct TypingTaskOutput {
     items: Vec<Item>,
     outcome: Result<TypingOutcome, FpError>,
 }
 
-/// Build (but don't drive) the future for typing one compile unit's items.
-/// Not a method on `CompilerDriver` because the future must not borrow
-/// `&mut CompilerDriver` — see `ComptimeHook`'s doc comment for why; it only
-/// closes over `Rc<TypingContext>` plus its owned inputs.
+/// Build (but don't spawn or drive) the task body for typing one compile
+/// unit's items. Not a method on `CompilerDriver` because the future must
+/// not borrow `&mut CompilerDriver` — see `ComptimeHook`'s doc comment for
+/// why; it only closes over `Rc`-shared handles plus its owned inputs, and
+/// writes its real result into `output` (see `TypingTaskOutput`'s doc
+/// comment) rather than returning it directly.
 fn typing_future(
     typing_ctx: Rc<TypingContext>,
+    tasks: Rc<fp_core::executor::Executor<fp_core::error::Result<()>>>,
+    ast_key: String,
     module_path: QualifiedPath,
     mut items: Vec<Item>,
-) -> impl Future<Output = TypingTaskOutput> {
+    output: Rc<RefCell<Option<TypingTaskOutput>>>,
+) -> impl Future<Output = fp_core::error::Result<()>> {
     async move {
         let outcome = {
             let inferencer = AstTypeInferencer::new(typing_ctx.clone())
-                .with_extern_prelude(default_extern_prelude());
+                .with_extern_prelude(default_extern_prelude())
+                .with_tasks(tasks)
+                .with_ast_key(ast_key);
             inferencer.seed_workspace_graph();
             inferencer.set_resolution_hook(Box::new(ComptimeHook {
                 typing_ctx: typing_ctx.clone(),
             }));
             inferencer.infer_module(&module_path, &mut items).await
         };
-        TypingTaskOutput { items, outcome }
+        *output.borrow_mut() = Some(TypingTaskOutput { items, outcome });
+        Ok(())
     }
 }
 
@@ -189,11 +205,27 @@ impl CompilerDriver {
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
-        let typing_ctx = self.state.typing_ctx.clone();
-        let task = Box::pin(typing_future(typing_ctx, module_path.clone(), items));
-        let TypingTaskOutput {
-            items, outcome, ..
-        } = self.drive_to_completion(task, ast_id)?;
+        let key = format!("module:{}", ast_id.as_str());
+        let output: Rc<RefCell<Option<TypingTaskOutput>>> = Rc::new(RefCell::new(None));
+        if !self.state.tasks.contains(&key) {
+            let typing_ctx = self.state.typing_ctx.clone();
+            let tasks = self.state.tasks.clone();
+            self.state.tasks.spawn(
+                key.clone(),
+                typing_future(
+                    typing_ctx,
+                    tasks,
+                    ast_id.as_str().to_string(),
+                    module_path.clone(),
+                    items,
+                    output.clone(),
+                ),
+            );
+        }
+        self.run_pool_to_idle()?;
+        let TypingTaskOutput { items, outcome } = output.borrow_mut().take().expect(
+            "module task's key was included in a just-fully-drained pool, so it must have run",
+        );
         let outcome = outcome?;
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
@@ -203,7 +235,7 @@ impl CompilerDriver {
         // module compiles that have no real source file. (Generic
         // specialization looks up its function by `ItemId` in the
         // *original*, pre-typing `self.state.ast(ast_id)` instead, from
-        // `drain_pending_generics` -- see its doc comment.)
+        // `handle_resolved_task` -- see its doc comment.)
         self.state.insert_typed_ast(
             typed_ast_id.clone(),
             File {
@@ -214,9 +246,9 @@ impl CompilerDriver {
             },
         );
 
-        // `drive_to_completion` only returns once every package/
-        // comptime need the typer touched has actually been satisfied in
-        // place — nothing pending to check for here, just lower for real.
+        // `run_pool_to_idle` only returns once every package/comptime need
+        // the typer touched has actually been satisfied in place — nothing
+        // pending to check for here, just lower for real.
         let hir_id = self.lower_to_hir(&module_path, &typed_ast_id, path, &outcome.cross_crate_struct_refs)?;
         let mir_id = self.lower_to_mir(&hir_id, path)?;
         let lir_id = self.lower_to_lir(&mir_id, path)?;
@@ -227,163 +259,147 @@ impl CompilerDriver {
         })
     }
 
-    /// Poll an arbitrary future to completion in place, servicing whatever
-    /// side-channel work shows up in the shared `TypingContext` between polls
-    /// — this is the *one* manual poll loop in the whole system, and it is
-    /// deliberately agnostic of what `task` actually computes. Today its only
-    /// caller drives `typing_future` (one compile unit's `infer_module`
-    /// pass), but nothing below is specific to typing, a module, or `Item`s;
-    /// `ast_id` is needed only to attribute deadlock errors and to look up
-    /// the calling compile unit's own stored items for
-    /// `drain_pending_generics`.
+    /// Ticks the shared task pool (`CompilerState::tasks`) until nothing is
+    /// left ready or parked, loading whatever package is blocking progress
+    /// on demand when nothing is ready to poll. Has no idea what any task
+    /// computes -- not "which module," not "which compile unit," not
+    /// "typing" at all. Every suspendable unit of driver work is just a task
+    /// spawned into this one pool: per-const/per-type-alias comptime
+    /// resolution (spawned in `predeclare_item`), the per-compile-unit
+    /// module-typing task (`compile_module_core`), and
+    /// generic-monomorphization-ready signals (`infer_generic_function_call_body`).
     ///
-    /// The future being driven suspends and resumes exactly where it needs
-    /// an unloaded package (`fp_typing::AstTypeInferencer::await_package`) or
-    /// an unresolved comptime value from a sibling const/type-alias item
-    /// (`await_comptime`/`await_struct_alias`/`force`, backed by tasks
-    /// spawned into the shared `TypingContext::tasks` executor during
-    /// `predeclare_item`) — rather than the caller retyping already-resolved
-    /// items from scratch to pick either up.
+    /// A task suspends and resumes exactly where it needs an unloaded
+    /// package (`fp_typing::AstTypeInferencer::await_package`) or an
+    /// unresolved comptime value from a sibling task
+    /// (`await_comptime`/`await_struct_alias`/`force`) — rather than the
+    /// caller retyping already-resolved items from scratch to pick either
+    /// up.
     ///
-    /// After *every* poll (both `Pending` and `Ready` -- a compile unit with
-    /// no comptime/package need at all can resolve on the very first poll,
-    /// so this can't be confined to the `Pending` arm), it drains any generic
-    /// function calls typing discovered are ready to specialize
-    /// (`TypingContext::pending_generics`, see `drain_pending_generics`) and
-    /// submits their compiles as independent follow-up work -- `task`'s own
-    /// answer never depends on that finishing (see `drain_pending_generics`'s
-    /// doc comment for why this must not be an ordinary, dependency-implying
-    /// `submit`).
+    /// Safe to run all the way to full idle (not just until one specific
+    /// task resolves): nothing in this pool ever suspends waiting on a task
+    /// that hasn't already been spawned (`await_comptime`/`force` fail fast
+    /// instead of registering a wait for a name nothing has registered yet),
+    /// so this always terminates -- either every task resolves, or a
+    /// genuine deadlock is reported.
     ///
-    /// Each round that `task` comes back `Pending`, it also:
-    /// 1. Drains every currently-ready item-resolution task in
-    ///    `TypingContext::tasks` to a fixed point — each one that completes
-    ///    writes its value/struct-shape into `TypingContext` and precisely
-    ///    wakes whoever was waiting on it (see `TypingContext::wake_comptime`),
-    ///    which may be `task` itself.
-    /// 2. Eagerly loads whatever package name(s) are currently blocking
-    ///    `task` (`TypingContext::package_wakers`) — the typer only
-    ///    *requests* a package and suspends; it never loads one itself.
-    ///
-    /// If neither of those two steps makes any progress in a round, nothing
-    /// will ever wake `task` — a genuine deadlock (e.g. a same-pass comptime
-    /// cycle, already reported with a specific error by `force`'s own cycle
+    /// Every key that resolves (not just the caller's own, if it has one in
+    /// mind) is handed to `handle_resolved_task`, which is a no-op unless
+    /// that key is a pending generic-specialization signal. When `tick()`
+    /// reports nothing ready, whatever package name(s) are blocking the
+    /// still-parked tasks (`TypingContext::package_wakers`) are loaded —
+    /// the typer only *requests* a package and suspends; it never loads one
+    /// itself. If no package is outstanding either, nothing will ever wake
+    /// what's parked — a genuine deadlock (e.g. a same-pass comptime cycle,
+    /// already reported with a specific error by `force`'s own cycle
     /// handling if it's *that* kind of cycle, or some other stuck state),
     /// reported immediately rather than retried on a heuristic bound.
-    /// (Generic monomorphization is never part of this progress check -- per
-    /// its own doc comment, it's never something `task` is actually waiting
-    /// on.)
-    fn drive_to_completion<F: Future>(
-        &mut self,
-        mut task: std::pin::Pin<Box<F>>,
-        ast_id: &AstId,
-    ) -> Result<F::Output, CompilerDriverError> {
-        let typing_ctx = self.state.typing_ctx.clone();
-        let waker = std::task::Waker::noop();
-        let mut cx = std::task::Context::from_waker(waker);
+    fn run_pool_to_idle(&mut self) -> Result<(), CompilerDriverError> {
         loop {
-            let poll = task.as_mut().poll(&mut cx);
-            self.drain_pending_generics(&typing_ctx, ast_id)?;
-            match poll {
-                std::task::Poll::Ready(output) => return Ok(output),
-                std::task::Poll::Pending => {
-                    let mut made_progress = false;
-                    while typing_ctx.tasks.tick().is_some() {
-                        made_progress = true;
-                    }
-                    let names: Vec<String> =
-                        typing_ctx.package_wakers.borrow().keys().cloned().collect();
-                    for name in &names {
-                        self.load_package(name)?;
-                        // Drop the entry once serviced -- otherwise it
-                        // lingers in `package_wakers` forever (nothing else
-                        // clears it) and could be misread as "still
-                        // something to load" on some future round.
-                        typing_ctx.package_wakers.borrow_mut().remove(name);
-                        made_progress = true;
-                    }
-                    if !made_progress {
-                        return Err(CompilerDriverError::UnresolvableComptime(ast_id.clone()));
-                    }
-                }
+            if let Some((key, _result)) = self.state.tasks.tick() {
+                self.handle_resolved_task(&key)?;
+                continue;
+            }
+            if self.state.tasks.is_idle() {
+                return Ok(());
+            }
+            let names: Vec<String> = self
+                .state
+                .typing_ctx
+                .package_wakers
+                .borrow()
+                .keys()
+                .cloned()
+                .collect();
+            if names.is_empty() {
+                return Err(CompilerDriverError::UnresolvableComptime(
+                    "no ready task and no package left to load".to_string(),
+                ));
+            }
+            for name in &names {
+                self.load_package(name)?;
             }
         }
     }
 
-    /// Drains every generic function call typing has discovered is ready to
-    /// specialize since the last drain (`TypingContext::pending_generics`,
+    /// Called by `run_pool_to_idle` for *every* key that resolves in the
+    /// shared task pool. A no-op unless `key` is a pending
+    /// generic-specialization signal (`TypingContext::ready_generics`,
     /// written by `infer_generic_function_call_body` the moment a call's
-    /// concrete type arguments resolve — not something the discovering
-    /// compile unit's own typing ever waits on; it already has everything
-    /// it needs to type the call site itself via ordinary unification
-    /// against the generic signature's own declared return type). For each
-    /// one not already queued (`generic_cannon_key`/`generic_instantiations`
-    /// dedup, unchanged), finds the original definition by its stable
-    /// `ItemId` in *this compile unit's own pre-typing stored AST*
-    /// (`self.state.ast(ast_id)` — not `self.state.typed_ast`, which isn't
-    /// populated until `drive_to_completion` returns and so isn't
-    /// usable from inside its own poll loop; safe because `Item` derives
-    /// `Clone` including its `id`, so the pre-typing clone typing is
-    /// currently working from carries the identical `ItemId`), substitutes
-    /// the concrete types into a clone of it, and submits its compile via
+    /// concrete type arguments resolve, alongside the trivial always-ready
+    /// task spawned under the same key -- see that field's doc comment for
+    /// why: there's no dependency reason a compile unit's own typing ever
+    /// waits on this, it already has everything it needs to type the call
+    /// site itself via ordinary unification against the generic signature's
+    /// own declared return type; the task exists purely to surface "this is
+    /// ready" through the same resolve-and-dispatch loop everything else
+    /// flows through).
+    ///
+    /// When it is one: dedups via `generic_cannon_key`/`generic_instantiations`
+    /// (unchanged), finds the original definition by its stable `ItemId` in
+    /// *the discovering compile unit's own pre-typing stored AST*
+    /// (`self.state.ast(&AstId::new(monomorph.ast_key))` — not
+    /// `self.state.typed_ast`, which isn't populated until that compile
+    /// unit's own `compile_module_core` call returns, long before or after
+    /// this generic key happens to resolve; safe because `Item` derives
+    /// `Clone` including its `id`, so the pre-typing clone typing was
+    /// working from carries the identical `ItemId`), substitutes the
+    /// concrete types into a clone of it, and submits its compile via
     /// `CompilerScheduler::submit_independent` rather than `submit` — using
     /// `submit` here would record the specialization as a dependency of
-    /// *this* compile unit's still-`current_processing` request, and once
-    /// that dependency's answer comes back (immediately — this method
-    /// returns as soon as it submits the specialized compile, without
-    /// waiting for it to finish), the scheduler would resubmit this whole
-    /// compile unit as fresh follow-up work, fully retyping and re-lowering
-    /// it a second time for no reason.
-    fn drain_pending_generics(
-        &mut self,
-        typing_ctx: &TypingContext,
-        ast_id: &AstId,
-    ) -> Result<(), CompilerDriverError> {
-        let monomorphs = std::mem::take(&mut *typing_ctx.pending_generics.borrow_mut());
-        for monomorph in monomorphs {
-            let cannon_key = Self::generic_cannon_key(
-                &FullyQualifiedPath::new(monomorph.function_path.clone()),
-                &monomorph.concrete_types,
-            );
-            if self.state.generic_instantiations.contains(&cannon_key) {
-                continue;
-            }
-            self.state.generic_instantiations.insert(cannon_key.clone());
-
-            let original = self.state.ast(ast_id)?;
-            let mut func_item = Self::find_item_by_id(&original.items, monomorph.item_id)
-                .ok_or_else(|| CompilerDriverError::UnsupportedWork(format!(
-                    "generic function not found: {}", monomorph.function_path.to_key()
-                )))?;
-
-            if let ItemKind::DefFunction(def) = func_item.kind_mut() {
-                for param in &mut def.sig.params {
-                    Self::substitute_in_ty(&mut param.ty, &monomorph.generic_params, &monomorph.concrete_types);
-                }
-                if let Some(ret_ty) = &mut def.sig.ret_ty {
-                    Self::substitute_in_ty(ret_ty, &monomorph.generic_params, &monomorph.concrete_types);
-                }
-                def.sig.generics_params.clear();
-                Self::substitute_in_body(&mut def.body, &monomorph.generic_params, &monomorph.concrete_types);
-            }
-
-            let specialized_path = FullyQualifiedPath::new(
-                monomorph.function_path.with_segment(cannon_key.clone())
-            );
-            let specialized_ast_id = AstId::new(format!("ast:{}", specialized_path.to_key()));
-            let file = File {
-                path: std::path::PathBuf::new(),
-                attrs: Vec::new(),
-                collected_items: Vec::new(),
-                items: vec![func_item],
-            };
-            self.state.insert_ast(specialized_ast_id.clone(), file);
-
-            self.scheduler.submit_independent(CompilerWork::CompileUnitCompileNative {
-                ast: specialized_ast_id,
-                path: specialized_path,
-            });
+    /// whatever compile unit request happens to be `current_processing`
+    /// right now (which may not even be the one that discovered this
+    /// generic call), and once that dependency's answer comes back
+    /// (immediately — nothing here waits for the specialized compile to
+    /// actually finish), the scheduler would resubmit that unrelated
+    /// request as fresh follow-up work for no reason.
+    fn handle_resolved_task(&mut self, key: &str) -> Result<(), CompilerDriverError> {
+        let Some(monomorph) = self.state.typing_ctx.ready_generics.borrow_mut().remove(key) else {
+            return Ok(());
+        };
+        let cannon_key = Self::generic_cannon_key(
+            &FullyQualifiedPath::new(monomorph.function_path.clone()),
+            &monomorph.concrete_types,
+        );
+        if self.state.generic_instantiations.contains(&cannon_key) {
+            return Ok(());
         }
+        self.state.generic_instantiations.insert(cannon_key.clone());
+
+        let ast_id = AstId::new(monomorph.ast_key.clone());
+        let original = self.state.ast(&ast_id)?;
+        let mut func_item = Self::find_item_by_id(&original.items, monomorph.item_id)
+            .ok_or_else(|| CompilerDriverError::UnsupportedWork(format!(
+                "generic function not found: {}", monomorph.function_path.to_key()
+            )))?;
+
+        if let ItemKind::DefFunction(def) = func_item.kind_mut() {
+            for param in &mut def.sig.params {
+                Self::substitute_in_ty(&mut param.ty, &monomorph.generic_params, &monomorph.concrete_types);
+            }
+            if let Some(ret_ty) = &mut def.sig.ret_ty {
+                Self::substitute_in_ty(ret_ty, &monomorph.generic_params, &monomorph.concrete_types);
+            }
+            def.sig.generics_params.clear();
+            Self::substitute_in_body(&mut def.body, &monomorph.generic_params, &monomorph.concrete_types);
+        }
+
+        let specialized_path = FullyQualifiedPath::new(
+            monomorph.function_path.with_segment(cannon_key.clone())
+        );
+        let specialized_ast_id = AstId::new(format!("ast:{}", specialized_path.to_key()));
+        let file = File {
+            path: std::path::PathBuf::new(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![func_item],
+        };
+        self.state.insert_ast(specialized_ast_id.clone(), file);
+
+        self.scheduler.submit_independent(CompilerWork::CompileUnitCompileNative {
+            ast: specialized_ast_id,
+            path: specialized_path,
+        });
         Ok(())
     }
 
@@ -398,11 +414,15 @@ impl CompilerDriver {
     ///
     /// `inject_module` is driven with `fp_core::executor::block_on` (a single
     /// poll, panicking on real `Poll::Pending`) rather than through
-    /// `drive_to_completion`'s loop — a package whose own items
-    /// reference *another* not-yet-loaded package would need that, but no
-    /// registered provider in this codebase has that shape today. If one
-    /// ever does, this is the spot to switch to the same drive-loop
-    /// `compile_module_core` uses.
+    /// `run_pool_to_idle` — a package whose own items reference *another*
+    /// not-yet-loaded package would need that, but no registered provider in
+    /// this codebase has that shape today. If one ever does, this is the
+    /// spot to switch to the same pool-driving loop `compile_module_core`
+    /// uses. The inferencer still gets `.with_tasks(self.state.tasks.clone())`
+    /// (not just `.with_own_crate`): if any of `raw.items` spawns a
+    /// const/type-alias resolution task of its own (`predeclare_item`), it
+    /// needs to land in the same shared pool `run_pool_to_idle` actually
+    /// drives, not a throwaway one nothing will ever tick.
     fn load_package(&mut self, name: &str) -> Result<CompilerAnswer, CompilerDriverError> {
         let answer = CompilerAnswer::PackageLoaded {
             name: name.to_string(),
@@ -423,7 +443,8 @@ impl CompilerDriver {
         {
             let inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
                 .with_extern_prelude(default_extern_prelude())
-                .with_own_crate(own_crate.clone());
+                .with_own_crate(own_crate.clone())
+                .with_tasks(self.state.tasks.clone());
             for (path, items) in &raw.items {
                 fp_core::executor::block_on(inferencer.inject_module(path, items));
             }
@@ -432,6 +453,12 @@ impl CompilerDriver {
         // (`compile_items_to_lir_units`) — typing tables are already
         // populated in-place on `own_crate` via the inferencer above.
         own_crate.borrow_mut().items = raw.items;
+
+        // Wake every task (the module-typing task that requested `name`, or
+        // any nested one) parked on this package -- see `wake_package`'s doc
+        // comment for why this must be a real `.wake()`, not just clearing
+        // the map entry, now that suspensions register real pool wakers.
+        self.state.typing_ctx.wake_package(name);
 
         Ok(answer)
     }

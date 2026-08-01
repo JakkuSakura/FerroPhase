@@ -59,17 +59,17 @@ pub struct TypingOutcome {
 pub type ItemId = fp_core::ast::ItemId;
 
 /// A generic function invocation whose concrete type arguments have been
-/// resolved and are ready for monomorphization (specialization). Pushed
-/// directly onto the shared `TypingContext::pending_generics` the moment
+/// resolved and are ready for monomorphization (specialization). Written
+/// directly into the shared `TypingContext::ready_generics` the moment
 /// `infer_generic_function_call_body` resolves one -- not accumulated on
 /// the typer's own per-pass state and returned via `TypingOutcome` once
 /// the whole compile unit finishes, so the driver can act on it
-/// immediately (see `CompilerDriver::drain_pending_generics`).
+/// immediately (see `CompilerDriver::handle_resolved_task`).
 #[derive(Debug, Clone)]
 pub struct GenericMonorph {
     /// Stable identity of the `ItemDefFunction` node being specialized (see
     /// `fp_core::ast::ItemId`'s doc comment) -- this, not `function_path`, is
-    /// what `drain_pending_generics` uses to find the function again in the
+    /// what `handle_resolved_task` uses to find the function again in the
     /// compile unit's own pre-typing stored AST. `function_path` is a
     /// qualification convention (prefixed by whatever module/compile-unit
     /// context was active when the signature was registered) and doesn't
@@ -77,6 +77,14 @@ pub struct GenericMonorph {
     /// it's kept only for the specialized function's display name and the
     /// dedup key, not for re-locating the original definition.
     pub item_id: ItemId,
+    /// The discovering compile unit's own `AstId` (as a plain string --
+    /// fp-typing can't name `fp-compiler`'s `AstId` type), carried verbatim
+    /// from `AstTypeInferencer::ast_key` rather than re-derived later from
+    /// `function_path`/a naming convention: `handle_resolved_task` runs
+    /// once the pool is fully drained, with no compile-unit-specific
+    /// context of its own, so this is the only way it knows which stored
+    /// `File` to search for `item_id`.
+    pub ast_key: String,
     /// Qualified path of the generic function being called
     pub function_path: QualifiedPath,
     /// Names of the generic parameters (in definition order)
@@ -88,11 +96,12 @@ pub struct GenericMonorph {
 impl GenericMonorph {
     pub fn new(
         item_id: ItemId,
+        ast_key: String,
         function_path: QualifiedPath,
         generic_params: Vec<String>,
         concrete_types: Vec<Ty>,
     ) -> Self {
-        Self { item_id, function_path, generic_params, concrete_types }
+        Self { item_id, ast_key, function_path, generic_params, concrete_types }
     }
 }
 
