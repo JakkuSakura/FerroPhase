@@ -137,9 +137,10 @@ impl AstTypeInferencer {
         if let Some(elze) = if_expr.elze.as_mut() {
             let else_ty = self.infer_expr_inner(elze).await?;
             self.unify(then_ty, else_ty).await?;
-            if let (Ok(then_resolved), Ok(else_resolved)) =
-                (self.resolve_to_ty(then_ty).await, self.resolve_to_ty(else_ty).await)
-            {
+            if let (Ok(then_resolved), Ok(else_resolved)) = (
+                self.resolve_to_ty(then_ty).await,
+                self.resolve_to_ty(else_ty).await,
+            ) {
                 let then_is_string = self.is_string_like_type(&then_resolved)
                     || matches!(
                         &then_resolved,
@@ -163,7 +164,10 @@ impl AstTypeInferencer {
 
     pub(crate) async fn infer_loop(&self, expr_loop: &mut ExprLoop) -> Result<TypeVarId> {
         let loop_result_var = self.fresh_type_var();
-        self.inner.borrow_mut().loop_stack.push(LoopContext::new(loop_result_var));
+        self.inner
+            .borrow_mut()
+            .loop_stack
+            .push(LoopContext::new(loop_result_var));
 
         let body_var = match self.infer_expr_inner(expr_loop.body.as_mut()).await {
             Ok(var) => var,
@@ -196,7 +200,10 @@ impl AstTypeInferencer {
         let cond_var = self.infer_expr_inner(expr_while.cond.as_mut()).await?;
         self.ensure_bool(cond_var, "while condition")?;
         let loop_unit_var = self.unit_type_var();
-        self.inner.borrow_mut().loop_stack.push(LoopContext::new(loop_unit_var));
+        self.inner
+            .borrow_mut()
+            .loop_stack
+            .push(LoopContext::new(loop_unit_var));
 
         let body_var = match self.infer_expr_inner(expr_while.body.as_mut()).await {
             Ok(var) => var,
@@ -234,9 +241,7 @@ impl AstTypeInferencer {
                 self.enter_scope();
 
                 if let Some(pat) = case.pat.as_mut() {
-                    let pat_info = self
-                        .infer_match_pattern(pat, scrutinee_pattern_var)
-                        .await?;
+                    let pat_info = self.infer_match_pattern(pat, scrutinee_pattern_var).await?;
                     self.apply_pattern_generalization(&pat_info).await?;
                 }
 
@@ -346,7 +351,8 @@ impl AstTypeInferencer {
                             }
                             _ if tuple_struct.patterns.len() == 1 => {
                                 let pat = &tuple_struct.patterns[0];
-                                self.bind_pattern_expected_type(pat, &expected_value).await?;
+                                self.bind_pattern_expected_type(pat, &expected_value)
+                                    .await?;
                             }
                             _ => {}
                         }
@@ -388,7 +394,8 @@ impl AstTypeInferencer {
                                         self.bind_pattern_expected_type(
                                             rename,
                                             &expected_field.value,
-                                        ).await?;
+                                        )
+                                        .await?;
                                     } else if let Some(var) =
                                         self.lookup_env_var(field.name.as_str()).await
                                     {
@@ -606,121 +613,131 @@ impl AstTypeInferencer {
     ) -> BoxFuture<'a, Result<()>> {
         let this = self.clone();
         Box::pin(async move {
-        match pat.kind() {
-            PatternKind::Ident(ident) => {
-                if let Some(var) = this.lookup_env_var(ident.ident.as_str()).await {
-                    let expected_var = this.type_from_ast_ty(expected).await?;
-                    this.unify(var, expected_var).await?;
-                }
-            }
-            PatternKind::Bind(bind) => {
-                if let Some(var) = this.lookup_env_var(bind.ident.ident.as_str()).await {
-                    let expected_var = this.type_from_ast_ty(expected).await?;
-                    this.unify(var, expected_var).await?;
-                }
-                this.bind_pattern_expected_type(bind.pattern.as_ref(), expected).await?;
-            }
-            PatternKind::Type(pattern_type) => {
-                this.bind_pattern_expected_type(pattern_type.pat.as_ref(), &pattern_type.ty).await?;
-            }
-            PatternKind::Tuple(tuple) => {
-                if let Ty::Tuple(tuple_ty) = expected {
-                    for (pat, expected_ty) in tuple.patterns.iter().zip(tuple_ty.types.iter()) {
-                        this.bind_pattern_expected_type(pat, expected_ty).await?;
+            match pat.kind() {
+                PatternKind::Ident(ident) => {
+                    if let Some(var) = this.lookup_env_var(ident.ident.as_str()).await {
+                        let expected_var = this.type_from_ast_ty(expected).await?;
+                        this.unify(var, expected_var).await?;
                     }
                 }
-            }
-            PatternKind::TupleStruct(tuple_struct) => {
-                if let Ty::Enum(enum_ty) = expected {
-                    let nested = Pattern::new(PatternKind::TupleStruct(tuple_struct.clone()));
-                    this.bind_enum_variant_pattern(&nested, enum_ty).await?;
-                }
-            }
-            PatternKind::Struct(struct_pat) => {
-                if let Ty::Struct(struct_ty) = expected {
-                    for field in &struct_pat.fields {
-                        let Some(def_field) =
-                            struct_ty.fields.iter().find(|f| f.name == field.name)
-                        else {
-                            continue;
-                        };
-                        if let Some(rename) = field.rename.as_ref() {
-                            this.bind_pattern_expected_type(rename, &def_field.value).await?;
-                        } else if let Some(var) = this.lookup_env_var(field.name.as_str()).await {
-                            let expected_var = this.type_from_ast_ty(&def_field.value).await?;
-                            this.unify(var, expected_var).await?;
-                        }
+                PatternKind::Bind(bind) => {
+                    if let Some(var) = this.lookup_env_var(bind.ident.ident.as_str()).await {
+                        let expected_var = this.type_from_ast_ty(expected).await?;
+                        this.unify(var, expected_var).await?;
                     }
-                } else if let Ty::Structural(structural) = expected {
-                    for field in &struct_pat.fields {
-                        let Some(def_field) =
-                            structural.fields.iter().find(|f| f.name == field.name)
-                        else {
-                            continue;
-                        };
-                        if let Some(rename) = field.rename.as_ref() {
-                            this.bind_pattern_expected_type(rename, &def_field.value).await?;
-                        } else if let Some(var) = this.lookup_env_var(field.name.as_str()).await {
-                            let expected_var = this.type_from_ast_ty(&def_field.value).await?;
-                            this.unify(var, expected_var).await?;
+                    this.bind_pattern_expected_type(bind.pattern.as_ref(), expected)
+                        .await?;
+                }
+                PatternKind::Type(pattern_type) => {
+                    this.bind_pattern_expected_type(pattern_type.pat.as_ref(), &pattern_type.ty)
+                        .await?;
+                }
+                PatternKind::Tuple(tuple) => {
+                    if let Ty::Tuple(tuple_ty) = expected {
+                        for (pat, expected_ty) in tuple.patterns.iter().zip(tuple_ty.types.iter()) {
+                            this.bind_pattern_expected_type(pat, expected_ty).await?;
                         }
                     }
                 }
-            }
-            PatternKind::Structural(structural) => {
-                if let Ty::Structural(struct_ty) = expected {
-                    for field in &structural.fields {
-                        let Some(def_field) =
-                            struct_ty.fields.iter().find(|f| f.name == field.name)
-                        else {
-                            continue;
-                        };
-                        if let Some(rename) = field.rename.as_ref() {
-                            this.bind_pattern_expected_type(rename, &def_field.value).await?;
-                        } else if let Some(var) = this.lookup_env_var(field.name.as_str()).await {
-                            let expected_var = this.type_from_ast_ty(&def_field.value).await?;
-                            this.unify(var, expected_var).await?;
+                PatternKind::TupleStruct(tuple_struct) => {
+                    if let Ty::Enum(enum_ty) = expected {
+                        let nested = Pattern::new(PatternKind::TupleStruct(tuple_struct.clone()));
+                        this.bind_enum_variant_pattern(&nested, enum_ty).await?;
+                    }
+                }
+                PatternKind::Struct(struct_pat) => {
+                    if let Ty::Struct(struct_ty) = expected {
+                        for field in &struct_pat.fields {
+                            let Some(def_field) =
+                                struct_ty.fields.iter().find(|f| f.name == field.name)
+                            else {
+                                continue;
+                            };
+                            if let Some(rename) = field.rename.as_ref() {
+                                this.bind_pattern_expected_type(rename, &def_field.value)
+                                    .await?;
+                            } else if let Some(var) = this.lookup_env_var(field.name.as_str()).await
+                            {
+                                let expected_var = this.type_from_ast_ty(&def_field.value).await?;
+                                this.unify(var, expected_var).await?;
+                            }
+                        }
+                    } else if let Ty::Structural(structural) = expected {
+                        for field in &struct_pat.fields {
+                            let Some(def_field) =
+                                structural.fields.iter().find(|f| f.name == field.name)
+                            else {
+                                continue;
+                            };
+                            if let Some(rename) = field.rename.as_ref() {
+                                this.bind_pattern_expected_type(rename, &def_field.value)
+                                    .await?;
+                            } else if let Some(var) = this.lookup_env_var(field.name.as_str()).await
+                            {
+                                let expected_var = this.type_from_ast_ty(&def_field.value).await?;
+                                this.unify(var, expected_var).await?;
+                            }
                         }
                     }
                 }
-            }
-            PatternKind::Variant(variant) => {
-                if let Ty::Enum(enum_ty) = expected {
-                    let nested = Pattern::new(PatternKind::Variant(variant.clone()));
-                    this.bind_enum_variant_pattern(&nested, enum_ty).await?;
+                PatternKind::Structural(structural) => {
+                    if let Ty::Structural(struct_ty) = expected {
+                        for field in &structural.fields {
+                            let Some(def_field) =
+                                struct_ty.fields.iter().find(|f| f.name == field.name)
+                            else {
+                                continue;
+                            };
+                            if let Some(rename) = field.rename.as_ref() {
+                                this.bind_pattern_expected_type(rename, &def_field.value)
+                                    .await?;
+                            } else if let Some(var) = this.lookup_env_var(field.name.as_str()).await
+                            {
+                                let expected_var = this.type_from_ast_ty(&def_field.value).await?;
+                                this.unify(var, expected_var).await?;
+                            }
+                        }
+                    }
                 }
-            }
-            PatternKind::Box(box_pat) => {
-                let inner_expected = match expected {
-                    Ty::Expr(expr) => {
-                        if let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() {
-                            if let Some(segment) = path.segments.last() {
-                                if segment.ident.as_str() == "Box" && segment.args.len() == 1 {
-                                    &segment.args[0]
+                PatternKind::Variant(variant) => {
+                    if let Ty::Enum(enum_ty) = expected {
+                        let nested = Pattern::new(PatternKind::Variant(variant.clone()));
+                        this.bind_enum_variant_pattern(&nested, enum_ty).await?;
+                    }
+                }
+                PatternKind::Box(box_pat) => {
+                    let inner_expected = match expected {
+                        Ty::Expr(expr) => {
+                            if let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() {
+                                if let Some(segment) = path.segments.last() {
+                                    if segment.ident.as_str() == "Box" && segment.args.len() == 1 {
+                                        &segment.args[0]
+                                    } else {
+                                        expected
+                                    }
                                 } else {
                                     expected
                                 }
                             } else {
                                 expected
                             }
-                        } else {
-                            expected
                         }
-                    }
-                    _ => expected,
-                };
-                this.bind_pattern_expected_type(box_pat.pattern.as_ref(), inner_expected).await?;
+                        _ => expected,
+                    };
+                    this.bind_pattern_expected_type(box_pat.pattern.as_ref(), inner_expected)
+                        .await?;
+                }
+                PatternKind::Ref(ref_pat) => {
+                    let inner_expected = match expected {
+                        Ty::Reference(reference) => reference.ty.as_ref(),
+                        _ => expected,
+                    };
+                    this.bind_pattern_expected_type(ref_pat.pattern.as_ref(), inner_expected)
+                        .await?;
+                }
+                PatternKind::Quote(_) | PatternKind::QuotePlural(_) | PatternKind::Wildcard(_) => {}
             }
-            PatternKind::Ref(ref_pat) => {
-                let inner_expected = match expected {
-                    Ty::Reference(reference) => reference.ty.as_ref(),
-                    _ => expected,
-                };
-                this.bind_pattern_expected_type(ref_pat.pattern.as_ref(), inner_expected).await?;
-            }
-            PatternKind::Quote(_) | PatternKind::QuotePlural(_) | PatternKind::Wildcard(_) => {}
-        }
-        Ok(())
+            Ok(())
         })
     }
 

@@ -101,7 +101,13 @@ impl GenericMonorph {
         generic_params: Vec<String>,
         concrete_types: Vec<Ty>,
     ) -> Self {
-        Self { item_id, ast_key, function_path, generic_params, concrete_types }
+        Self {
+            item_id,
+            ast_key,
+            function_path,
+            generic_params,
+            concrete_types,
+        }
     }
 }
 

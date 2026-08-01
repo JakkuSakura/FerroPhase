@@ -5,7 +5,7 @@ use std::task::Waker;
 use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
 use fp_core::workspace::WorkspaceContext;
 
-use crate::typing::types::GenericMonorph;
+use crate::types::GenericMonorph;
 use crate::TypingDiagnostic;
 
 /// Shared mutable state between the compiler driver and the type inferencer.

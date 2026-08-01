@@ -1,17 +1,28 @@
-use fp_core::config;
 use std::collections::{HashMap, HashSet};
 
-pub mod runtime_types;
-pub mod typing;
-pub mod typing_context;
-pub use typing_context::TypingContext;
-pub use runtime_types::{materialize_type_with_hooks, type_from_value, TypeMaterializeHooks};
-pub use typing::types::{
-    ExprId, GenericMonorph, ResolvedName,
-    ResolvedNameNamespace, ResolvedNameTable, TypingDiagnostic, TypingDiagnosticLevel,
-    TypingOutcome,
+pub mod context;
+pub mod infer_expr;
+pub mod infer_stmt;
+pub mod runtime;
+pub mod solver;
+pub(crate) mod support;
+pub mod types;
+pub mod unify;
+pub use context::TypingContext;
+pub use runtime::{materialize_type_with_hooks, type_from_value, TypeMaterializeHooks};
+pub(crate) use support::std_result_inner_types;
+pub use support::{block_on, default_extern_prelude, impl_self_ty_name};
+pub use types::{
+    ExprId, GenericMonorph, ResolvedName, ResolvedNameNamespace, ResolvedNameTable,
+    TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome,
 };
 
+use crate::support::{
+    attrs_has_feature, attrs_has_name, detect_lossy_mode, find_first_type_ident,
+    find_ident_after_keyword, is_future_like_ty, is_std_result_ty, is_std_task_future_ty,
+    make_std_result_ty, make_std_task_future_ty, std_error_ty, std_task_future_inner_ty,
+    tokenize_macro_tokens,
+};
 use fp_core::ast::*;
 use fp_core::ast::{AttributesExt, Ident, Name};
 use fp_core::diagnostics::Diagnostic;
@@ -22,7 +33,7 @@ use fp_core::span::Span;
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 // intrinsic and op kinds handled in submodules
-fn typing_error(msg: impl Into<String>) -> Error {
+pub(crate) fn typing_error(msg: impl Into<String>) -> Error {
     Error::from(msg.into())
 }
 
@@ -30,200 +41,13 @@ fn typing_error(msg: impl Into<String>) -> Error {
 /// for a recursive/mutually-recursive async fn's return type, since Rust
 /// can't give a directly- or mutually-recursive `async fn` a statically
 /// sized state machine (the recursive call's future would need to contain
-/// itself). Used throughout the typing SCC (`typing::unify`,
-/// `typing::infer_expr`, `typing::infer_stmt`, and this crate root) at
+/// itself). Used throughout the typing SCC (`unify`, `infer_expr`,
+/// `infer_stmt`, and this crate root) at
 /// exactly the functions that call themselves -- everything else in that
 /// call graph is a plain `async fn` with no heap allocation of its own.
 pub(crate) type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
 
-/// Minimal single-poll driver for tests and other standalone callers that
-/// just want a typing/comptime result synchronously and know up front that
-/// nothing in this call will genuinely suspend (no unloaded package, no
-/// pending comptime value) -- real suspend/resume across an actual
-/// `Poll::Pending` is the driver's job (`fp-compiler`'s `Executor`, which
-/// owns the waker registries in `TypingContext` that make resuming
-/// meaningful). This just polls once with a waker that panics if used,
-/// since a `Waker` registered here would never be woken by anything.
-pub fn block_on<F: std::future::Future>(fut: F) -> F::Output {
-    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-
-    fn no_wake(_: *const ()) {}
-    fn clone_noop_waker(_: *const ()) -> RawWaker {
-        RawWaker::new(std::ptr::null(), &VTABLE)
-    }
-    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone_noop_waker, no_wake, no_wake, |_| {});
-
-    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
-    let mut cx = Context::from_waker(&waker);
-    let mut fut = std::pin::pin!(fut);
-    match fut.as_mut().poll(&mut cx) {
-        Poll::Ready(value) => value,
-        Poll::Pending => panic!(
-            "fp_typing::block_on: future returned Poll::Pending -- this helper only supports \
-             futures that resolve on the very first poll (tests / synchronous callers with no \
-             real package or comptime suspension); drive genuinely suspending futures through \
-             fp-compiler's Executor instead"
-        ),
-    }
-}
-
 pub(crate) type TypeVarId = usize;
-
-fn attrs_has_name(attrs: &[Attribute], name: &str) -> bool {
-    attrs.iter().any(|attr| match &attr.meta {
-        AttrMeta::Path(path) => path.last().as_str() == name,
-        AttrMeta::NameValue(nv) => nv.name.last().as_str() == name,
-        AttrMeta::List(list) => list.name.last().as_str() == name,
-    })
-}
-
-fn attrs_has_feature(attrs: &[Attribute], feature: &str) -> bool {
-    for attr in attrs {
-        let AttrMeta::List(AttrMetaList { name, items }) = &attr.meta else {
-            continue;
-        };
-        if name.last().as_str() != "feature" {
-            continue;
-        }
-        for item in items {
-            if let AttrMeta::Path(path) = item {
-                if path.last().as_str() == feature {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-fn detect_lossy_mode() -> bool {
-    config::lossy_mode()
-}
-
-pub fn default_extern_prelude() -> HashSet<String> {
-    ["std", "core", "alloc"]
-        .into_iter()
-        .map(|name| name.to_string())
-        .collect()
-}
-
-fn make_std_task_future_ty(inner: Ty) -> Ty {
-    let future_seg = ParameterPathSegment::new(Ident::new("Future"), vec![inner]);
-    let path = ParameterPath::new(
-        PathPrefix::Plain,
-        vec![
-            ParameterPathSegment::new(Ident::new("std"), vec![]),
-            ParameterPathSegment::new(Ident::new("task"), vec![]),
-            future_seg,
-        ],
-    );
-    Ty::name(Name::ParameterPath(path))
-}
-
-fn make_std_result_ty(ok: Ty, err: Ty) -> Ty {
-    let result_seg = ParameterPathSegment::new(Ident::new("Result"), vec![ok, err]);
-    let path = ParameterPath::new(
-        PathPrefix::Plain,
-        vec![
-            ParameterPathSegment::new(Ident::new("std"), vec![]),
-            ParameterPathSegment::new(Ident::new("result"), vec![]),
-            result_seg,
-        ],
-    );
-    Ty::name(Name::ParameterPath(path))
-}
-
-fn std_error_ty() -> Ty {
-    let path = Path::plain(vec![
-        Ident::new("std"),
-        Ident::new("error"),
-        Ident::new("Error"),
-    ]);
-    Ty::name(Name::Path(path))
-}
-
-fn std_result_inner_types(ty: &Ty) -> Option<(Ty, Ty)> {
-    let Ty::Expr(expr) = ty else {
-        return None;
-    };
-    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
-        return None;
-    };
-    if path.segments.len() == 1 {
-        let result_seg = &path.segments[0];
-        if result_seg.ident.as_str() != "Result" || result_seg.args.len() != 2 {
-            return None;
-        }
-        return Some((result_seg.args[0].clone(), result_seg.args[1].clone()));
-    }
-    if path.segments.len() < 3 {
-        return None;
-    }
-    let n = path.segments.len();
-    let (prefix_a, prefix_b, result_seg) = (
-        path.segments[n - 3].ident.as_str(),
-        path.segments[n - 2].ident.as_str(),
-        &path.segments[n - 1],
-    );
-    let is_std_result =
-        prefix_a == "std" && prefix_b == "result" && result_seg.ident.as_str() == "Result";
-    let is_fs_result =
-        prefix_a == "std" && prefix_b == "fs" && result_seg.ident.as_str() == "Result";
-    if !is_std_result && !is_fs_result {
-        return None;
-    }
-    if result_seg.args.len() != 2 {
-        return None;
-    }
-    Some((result_seg.args[0].clone(), result_seg.args[1].clone()))
-}
-
-fn is_std_result_ty(ty: &Ty) -> bool {
-    std_result_inner_types(ty).is_some()
-}
-
-fn is_std_task_future_ty(ty: &Ty) -> bool {
-    let Ty::Expr(expr) = ty else {
-        return false;
-    };
-    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
-        return false;
-    };
-    if path.segments.len() < 3 {
-        return false;
-    }
-    let n = path.segments.len();
-    path.segments[n - 3].ident.as_str() == "std"
-        && path.segments[n - 2].ident.as_str() == "task"
-        && path.segments[n - 1].ident.as_str() == "Future"
-        && path.segments[n - 1].args.len() == 1
-}
-
-fn std_task_future_inner_ty(ty: &Ty) -> Option<Ty> {
-    let Ty::Expr(expr) = ty else {
-        return None;
-    };
-    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
-        return None;
-    };
-    if path.segments.len() < 3 {
-        return None;
-    }
-    let n = path.segments.len();
-    if path.segments[n - 3].ident.as_str() != "std"
-        || path.segments[n - 2].ident.as_str() != "task"
-        || path.segments[n - 1].ident.as_str() != "Future"
-        || path.segments[n - 1].args.len() != 1
-    {
-        return None;
-    }
-    Some(path.segments[n - 1].args[0].clone())
-}
-
-fn is_future_like_ty(ty: &Ty) -> bool {
-    is_std_task_future_ty(ty)
-        || matches!(ty, Ty::Struct(struct_ty) if struct_ty.name.as_str() == "Future")
-}
 
 pub trait TypeResolutionHook {
     fn resolve_symbol(&mut self, name: &str) -> bool;
@@ -238,31 +62,26 @@ pub trait TypeResolutionHook {
     fn request_comptime(&mut self, key: &str, expr: &Expr) -> bool;
 }
 
-use crate::typing::unify::{TypeVar, TypeVarKind};
-
+use crate::unify::{TypeVar, TypeVarKind};
 #[derive(Clone, Debug)]
 struct ImplContext {
     struct_name: QualifiedPath,
     self_ty: Ty,
     impl_generics_params: Vec<GenericParam>,
 }
-
 #[derive(Clone)]
-enum EnvEntry {
+pub(crate) enum EnvEntry {
     Mono(TypeVarId),
     Poly(Ty),
 }
-
-struct PatternBinding {
+pub(crate) struct PatternBinding {
     name: String,
     var: TypeVarId,
 }
-
-struct PatternInfo {
-    var: TypeVarId,
-    bindings: Vec<PatternBinding>,
+pub(crate) struct PatternInfo {
+    pub(crate) var: TypeVarId,
+    pub(crate) bindings: Vec<PatternBinding>,
 }
-
 impl PatternInfo {
     fn new(var: TypeVarId) -> Self {
         Self {
@@ -270,30 +89,19 @@ impl PatternInfo {
             bindings: Vec::new(),
         }
     }
-
     fn with_binding(mut self, name: String, var: TypeVarId) -> Self {
         self.bindings.push(PatternBinding { name, var });
         self
     }
-
-    #[allow(dead_code)]
-    fn extend_bindings(&mut self, other: PatternInfo) {
-        self.bindings.extend(other.bindings);
-    }
 }
-
-// Typing diagnostics/outcome are defined in typing/types.rs and re-exported above.
-
-struct FunctionTypeInfo {
-    params: Vec<TypeVarId>,
-    ret: TypeVarId,
+pub(crate) struct FunctionTypeInfo {
+    pub(crate) params: Vec<TypeVarId>,
+    pub(crate) ret: TypeVarId,
 }
-
-struct LoopContext {
-    result_var: TypeVarId,
-    saw_break: bool,
+pub(crate) struct LoopContext {
+    pub(crate) result_var: TypeVarId,
+    pub(crate) saw_break: bool,
 }
-
 impl LoopContext {
     fn new(result_var: TypeVarId) -> Self {
         Self {
@@ -302,32 +110,23 @@ impl LoopContext {
         }
     }
 }
-
 #[derive(Clone)]
 struct ContextBinding {
     ty: Ty,
     expr: Expr,
 }
-
 #[derive(Clone, Copy)]
-enum ExceptionReturnPolicy {
+pub(crate) enum ExceptionReturnPolicy {
     Disabled,
     ExplicitResult,
     AutoResult,
 }
-
 struct ExceptionContext {
     policy: ExceptionReturnPolicy,
 }
-
-/// Holds an `Rc<RefCell<Inner>>` clone; its `Drop` pops `exception_stack`
-/// when the guarded scope ends. No `unsafe`/raw pointer needed (unlike the
-/// pre-concurrency version this replaces) since `AstTypeInferencer` is now a
-/// cheap `Clone`-able handle over shared interior-mutable state.
 struct ExceptionContextGuard {
     inner: Rc<RefCell<Inner>>,
 }
-
 impl Drop for ExceptionContextGuard {
     fn drop(&mut self) {
         self.inner.borrow_mut().exception_stack.pop();
@@ -416,7 +215,7 @@ pub struct AstTypeInferencer {
     /// Shared mutable state with the driver: resolved consts, types,
     /// module resolution, expression resolution, diagnostics, and the
     /// package-waker registry that makes `await_package` genuinely suspend.
-    typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>,
+    typing_ctx: std::rc::Rc<crate::context::TypingContext>,
     /// The driver's shared task pool (see `CompilerState::tasks`) --
     /// concurrent item-resolution (one task per const/type-alias item,
     /// spawned during `predeclare_item`) and generic-monomorphization-ready
@@ -501,108 +300,127 @@ impl AstTypeInferencer {
     ) -> BoxFuture<'a, ()> {
         let this = self.clone();
         Box::pin(async move {
-        for item in items {
-            match item.kind() {
-                ItemKind::Module(module) => {
-                    let next = prefix.with_segment(module.name.as_str().to_string());
-                    let is_root = {
-                        let mut inner = this.inner.borrow_mut();
-                        inner.module_defs.insert(next.clone());
-                        prefix.is_empty()
-                    };
-                    if is_root {
-                        this.inner.borrow_mut().root_modules.insert(module.name.as_str().to_string());
+            for item in items {
+                match item.kind() {
+                    ItemKind::Module(module) => {
+                        let next = prefix.with_segment(module.name.as_str().to_string());
+                        let is_root = {
+                            let mut inner = this.inner.borrow_mut();
+                            inner.module_defs.insert(next.clone());
+                            prefix.is_empty()
+                        };
+                        if is_root {
+                            this.inner
+                                .borrow_mut()
+                                .root_modules
+                                .insert(module.name.as_str().to_string());
+                        }
+                        this.register_qualified_items(&module.items, &next).await;
                     }
-                    this.register_qualified_items(&module.items, &next).await;
-                }
-                ItemKind::DefFunction(def) => {
-                    let name = prefix.with_segment(def.name.as_str().to_string());
-                    this.own_function_sigs_mut()
-                        .insert(name.clone(), def.sig.clone());
-                    this.own_function_item_ids_mut().insert(name.clone(), item.id());
-                    let var = this.register_qualified_symbol(&name).await;
-                    let saved = std::mem::replace(&mut this.inner.borrow_mut().module_path, prefix.clone());
-                    this.prebind_function_signature(def, var).await;
-                    this.inner.borrow_mut().module_path = saved;
-                }
-                ItemKind::DeclFunction(decl) => {
-                    let name = prefix.with_segment(decl.name.as_str().to_string());
-                    this.own_function_sigs_mut()
-                        .insert(name.clone(), decl.sig.clone());
-                    if decl.sig.abi.is_c() {
-                        this.inner.borrow_mut().extern_function_signatures
+                    ItemKind::DefFunction(def) => {
+                        let name = prefix.with_segment(def.name.as_str().to_string());
+                        this.own_function_sigs_mut()
+                            .insert(name.clone(), def.sig.clone());
+                        this.own_function_item_ids_mut()
+                            .insert(name.clone(), item.id());
+                        let var = this.register_qualified_symbol(&name).await;
+                        let saved = std::mem::replace(
+                            &mut this.inner.borrow_mut().module_path,
+                            prefix.clone(),
+                        );
+                        this.prebind_function_signature(def, var).await;
+                        this.inner.borrow_mut().module_path = saved;
+                    }
+                    ItemKind::DeclFunction(decl) => {
+                        let name = prefix.with_segment(decl.name.as_str().to_string());
+                        this.own_function_sigs_mut()
                             .insert(name.clone(), decl.sig.clone());
+                        if decl.sig.abi.is_c() {
+                            this.inner
+                                .borrow_mut()
+                                .extern_function_signatures
+                                .insert(name.clone(), decl.sig.clone());
+                        }
+                        let var = this.register_qualified_symbol(&name).await;
+                        let saved = std::mem::replace(
+                            &mut this.inner.borrow_mut().module_path,
+                            prefix.clone(),
+                        );
+                        this.prebind_decl_function_signature(decl, var).await;
+                        this.inner.borrow_mut().module_path = saved;
                     }
-                    let var = this.register_qualified_symbol(&name).await;
-                    let saved = std::mem::replace(&mut this.inner.borrow_mut().module_path, prefix.clone());
-                    this.prebind_decl_function_signature(decl, var).await;
-                    this.inner.borrow_mut().module_path = saved;
-                }
-                ItemKind::DefConst(def) => {
-                    let name = prefix.with_segment(def.name.as_str().to_string());
-                    this.register_qualified_symbol(&name).await;
-                }
-                ItemKind::DefStatic(def) => {
-                    let name = prefix.with_segment(def.name.as_str().to_string());
-                    this.register_qualified_symbol(&name).await;
-                }
-                ItemKind::DefStruct(def) => {
-                    let name = prefix.with_segment(def.name.as_str().to_string());
-                    this.own_struct_defs_mut().insert(name.clone(), def.value.clone());
-                    this.register_qualified_symbol(&name).await;
-                }
-                ItemKind::DefStructural(def) => {
-                    let name = prefix.with_segment(def.name.as_str().to_string());
-                    this.register_qualified_symbol(&name).await;
-                }
-                ItemKind::DefEnum(def) => {
-                    let name = prefix.with_segment(def.name.as_str().to_string());
-                    this.own_enum_defs_mut().insert(name.clone(), def.value.clone());
-                    this.register_qualified_symbol(&name).await;
-                }
-                ItemKind::DefType(def) => {
-                    let name = prefix.with_segment(def.name.as_str().to_string());
-                    this.register_qualified_symbol(&name).await;
-                }
-                ItemKind::OpaqueType(def) => {
-                    let name = prefix.with_segment(def.name.as_str().to_string());
-                    this.register_qualified_symbol(&name).await;
-                }
-                ItemKind::DefTrait(def) => {
-                    let name = prefix.with_segment(def.name.as_str().to_string());
-                    this.own_trait_defs_mut().insert(name.clone());
-                    this.register_qualified_symbol(&name).await;
-                }
-                ItemKind::Impl(impl_block) => {
-                    if let Some(self_name) = impl_self_ty_name(&impl_block.self_ty) {
-                        let struct_path = prefix.with_segment(self_name);
-                        for child in &impl_block.items {
-                            if let ItemKind::DefFunction(func) = child.kind() {
-                                // Store for method lookup -- keyed purely by
-                                // path, so no struct-vs-enum branch needed.
-                                this.own_method_sigs_mut()
-                                    .entry(struct_path.clone())
-                                    .or_default()
-                                    .push((
-                                        func.name.as_str().to_string(),
-                                        MethodSignature {
-                                            sig: func.sig.clone(),
-                                            impl_generics_params: impl_block.generics_params.clone(),
-                                            self_ty: Ty::expr(impl_block.self_ty.clone()),
-                                        },
-                                    ));
-                                // Also store as a function sig for ::call syntax
-                                let fn_path = struct_path.with_segment(func.name.as_str().to_string());
-                                this.own_function_sigs_mut().insert(fn_path.clone(), func.sig.clone());
-                                this.own_function_item_ids_mut().insert(fn_path.clone(), child.id());
-                                this.register_qualified_symbol(&fn_path).await;
+                    ItemKind::DefConst(def) => {
+                        let name = prefix.with_segment(def.name.as_str().to_string());
+                        this.register_qualified_symbol(&name).await;
+                    }
+                    ItemKind::DefStatic(def) => {
+                        let name = prefix.with_segment(def.name.as_str().to_string());
+                        this.register_qualified_symbol(&name).await;
+                    }
+                    ItemKind::DefStruct(def) => {
+                        let name = prefix.with_segment(def.name.as_str().to_string());
+                        this.own_struct_defs_mut()
+                            .insert(name.clone(), def.value.clone());
+                        this.register_qualified_symbol(&name).await;
+                    }
+                    ItemKind::DefStructural(def) => {
+                        let name = prefix.with_segment(def.name.as_str().to_string());
+                        this.register_qualified_symbol(&name).await;
+                    }
+                    ItemKind::DefEnum(def) => {
+                        let name = prefix.with_segment(def.name.as_str().to_string());
+                        this.own_enum_defs_mut()
+                            .insert(name.clone(), def.value.clone());
+                        this.register_qualified_symbol(&name).await;
+                    }
+                    ItemKind::DefType(def) => {
+                        let name = prefix.with_segment(def.name.as_str().to_string());
+                        this.register_qualified_symbol(&name).await;
+                    }
+                    ItemKind::OpaqueType(def) => {
+                        let name = prefix.with_segment(def.name.as_str().to_string());
+                        this.register_qualified_symbol(&name).await;
+                    }
+                    ItemKind::DefTrait(def) => {
+                        let name = prefix.with_segment(def.name.as_str().to_string());
+                        this.own_trait_defs_mut().insert(name.clone());
+                        this.register_qualified_symbol(&name).await;
+                    }
+                    ItemKind::Impl(impl_block) => {
+                        if let Some(self_name) = impl_self_ty_name(&impl_block.self_ty) {
+                            let struct_path = prefix.with_segment(self_name);
+                            for child in &impl_block.items {
+                                if let ItemKind::DefFunction(func) = child.kind() {
+                                    // Store for method lookup -- keyed purely by
+                                    // path, so no struct-vs-enum branch needed.
+                                    this.own_method_sigs_mut()
+                                        .entry(struct_path.clone())
+                                        .or_default()
+                                        .push((
+                                            func.name.as_str().to_string(),
+                                            MethodSignature {
+                                                sig: func.sig.clone(),
+                                                impl_generics_params: impl_block
+                                                    .generics_params
+                                                    .clone(),
+                                                self_ty: Ty::expr(impl_block.self_ty.clone()),
+                                            },
+                                        ));
+                                    // Also store as a function sig for ::call syntax
+                                    let fn_path =
+                                        struct_path.with_segment(func.name.as_str().to_string());
+                                    this.own_function_sigs_mut()
+                                        .insert(fn_path.clone(), func.sig.clone());
+                                    this.own_function_item_ids_mut()
+                                        .insert(fn_path.clone(), child.id());
+                                    this.register_qualified_symbol(&fn_path).await;
+                                }
                             }
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
         })
     }
 
@@ -669,7 +487,9 @@ impl AstTypeInferencer {
     fn own_function_item_ids(&self) -> Ref<'_, HashMap<QualifiedPath, fp_core::ast::ItemId>> {
         Ref::map(self.own_crate.borrow(), |k| &k.function_item_ids)
     }
-    fn own_function_item_ids_mut(&self) -> RefMut<'_, HashMap<QualifiedPath, fp_core::ast::ItemId>> {
+    fn own_function_item_ids_mut(
+        &self,
+    ) -> RefMut<'_, HashMap<QualifiedPath, fp_core::ast::ItemId>> {
         RefMut::map(self.own_crate.borrow_mut(), |k| &mut k.function_item_ids)
     }
     /// Inherent methods declared in an `impl SelfType { .. }` block, keyed
@@ -680,7 +500,9 @@ impl AstTypeInferencer {
     fn own_method_sigs(&self) -> Ref<'_, HashMap<QualifiedPath, Vec<(String, MethodSignature)>>> {
         Ref::map(self.own_crate.borrow(), |k| &k.method_sigs)
     }
-    fn own_method_sigs_mut(&self) -> RefMut<'_, HashMap<QualifiedPath, Vec<(String, MethodSignature)>>> {
+    fn own_method_sigs_mut(
+        &self,
+    ) -> RefMut<'_, HashMap<QualifiedPath, Vec<(String, MethodSignature)>>> {
         RefMut::map(self.own_crate.borrow_mut(), |k| &mut k.method_sigs)
     }
     fn own_trait_defs(&self) -> Ref<'_, HashSet<QualifiedPath>> {
@@ -708,7 +530,10 @@ impl AstTypeInferencer {
     /// awaits (`await_comptime`/`force`'s `.contains` checks) are visible to
     /// `CompilerDriver::run_pool_to_idle`, not stranded in a pool nothing
     /// ever drives.
-    pub fn with_tasks(self, tasks: Rc<fp_core::executor::Executor<fp_core::error::Result<()>>>) -> Self {
+    pub fn with_tasks(
+        self,
+        tasks: Rc<fp_core::executor::Executor<fp_core::error::Result<()>>>,
+    ) -> Self {
         Self { tasks, ..self }
     }
 
@@ -716,10 +541,13 @@ impl AstTypeInferencer {
     /// `GenericMonorph` this typer pushes -- see `AstTypeInferencer::ast_key`'s
     /// doc comment for why the driver needs it back.
     pub fn with_ast_key(self, ast_key: impl Into<String>) -> Self {
-        Self { ast_key: ast_key.into(), ..self }
+        Self {
+            ast_key: ast_key.into(),
+            ..self
+        }
     }
 
-    pub fn new(typing_ctx: std::rc::Rc<crate::typing_context::TypingContext>) -> Self {
+    pub fn new(typing_ctx: std::rc::Rc<crate::context::TypingContext>) -> Self {
         let inner = Inner {
             type_vars: Vec::new(),
             env: vec![HashMap::new()],
@@ -821,29 +649,29 @@ impl AstTypeInferencer {
     }
 
     fn current_exception_policy(&self) -> ExceptionReturnPolicy {
-        self.inner.borrow().exception_stack
+        self.inner
+            .borrow()
+            .exception_stack
             .last()
             .map(|ctx| ctx.policy)
             .unwrap_or(ExceptionReturnPolicy::Disabled)
     }
 
-    fn push_exception_context(
-        &self,
-        policy: ExceptionReturnPolicy,
-    ) -> ExceptionContextGuard {
-        self.inner.borrow_mut().exception_stack.push(ExceptionContext { policy });
+    fn push_exception_context(&self, policy: ExceptionReturnPolicy) -> ExceptionContextGuard {
+        self.inner
+            .borrow_mut()
+            .exception_stack
+            .push(ExceptionContext { policy });
         ExceptionContextGuard {
             inner: self.inner.clone(),
         }
     }
 
-    fn record_hashmap_args(
-        &self,
-        map_var: TypeVarId,
-        key_var: TypeVarId,
-        value_var: TypeVarId,
-    ) {
-        self.inner.borrow_mut().hashmap_args.insert(map_var, (key_var, value_var));
+    fn record_hashmap_args(&self, map_var: TypeVarId, key_var: TypeVarId, value_var: TypeVarId) {
+        self.inner
+            .borrow_mut()
+            .hashmap_args
+            .insert(map_var, (key_var, value_var));
     }
 
     async fn lookup_hashmap_args(&self, map_var: TypeVarId) -> Option<(TypeVarId, TypeVarId)> {
@@ -857,7 +685,12 @@ impl AstTypeInferencer {
             // as the match scrutinee would otherwise have its guard's scope
             // extended across that `.await` (Rust extends a match
             // scrutinee's temporaries over the whole match).
-            let kind = self.inner.borrow().type_vars.get(current).map(|var| var.kind.clone());
+            let kind = self
+                .inner
+                .borrow()
+                .type_vars
+                .get(current)
+                .map(|var| var.kind.clone());
             match kind {
                 Some(TypeVarKind::Link(next)) => current = next,
                 Some(TypeVarKind::Bound(ty)) => {
@@ -944,7 +777,8 @@ impl AstTypeInferencer {
 
     /// Initialize the typer with declarations from a file without doing full inference.
     pub async fn initialize_from_file(&self, file: &File) {
-        self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new())).await;
+        self.register_qualified_items(&file.items, &QualifiedPath::new(Vec::new()))
+            .await;
         self.predeclare_scope_items(&file.collected_items).await;
     }
 
@@ -980,11 +814,10 @@ impl AstTypeInferencer {
     async fn register_import_aliases_for_item(&self, item: &Item) {
         match item.kind() {
             ItemKind::Import(import) => self.register_import_aliases(import).await,
-            ItemKind::Module(module) => {
-                self.register_import_aliases_for_items(&module.items).await
-            }
+            ItemKind::Module(module) => self.register_import_aliases_for_items(&module.items).await,
             ItemKind::Impl(impl_block) => {
-                self.register_import_aliases_for_items(&impl_block.items).await;
+                self.register_import_aliases_for_items(&impl_block.items)
+                    .await;
             }
             ItemKind::DefTrait(def) => {
                 self.register_import_aliases_for_items(&def.items).await;
@@ -1259,7 +1092,10 @@ impl AstTypeInferencer {
         let typing_ctx = self.typing_ctx.clone();
         let name_owned = name.to_string();
         std::future::poll_fn(move |cx| {
-            if typing_ctx.resolved_consts.borrow().contains_key(&name_owned)
+            if typing_ctx
+                .resolved_consts
+                .borrow()
+                .contains_key(&name_owned)
                 || typing_ctx.resolved_types.borrow().contains_key(&name_owned)
             {
                 return std::task::Poll::Ready(());
@@ -1297,7 +1133,10 @@ impl AstTypeInferencer {
     }
 
     fn record_resolved_name(&self, expr_id: ExprId, resolved_name: ResolvedName) {
-        self.inner.borrow_mut().resolved_names.insert(expr_id, resolved_name);
+        self.inner
+            .borrow_mut()
+            .resolved_names
+            .insert(expr_id, resolved_name);
     }
 
     fn validate_struct_recursion(&self, name: &str, fields: &[StructuralField]) {
@@ -1604,7 +1443,8 @@ impl AstTypeInferencer {
                 .collect::<Vec<_>>();
             eprintln!(
                 "debug TypeBuilder: module_path={:?} keys={:?}",
-                self.inner.borrow().module_path, keys
+                self.inner.borrow().module_path,
+                keys
             );
         }
         let parsed = parse_path(name).ok();
@@ -1625,7 +1465,11 @@ impl AstTypeInferencer {
             }
         }
         if !self.inner.borrow().module_path.is_empty() && segments.len() == 1 {
-            let qualified = self.inner.borrow().module_path.with_segment(segments[0].clone());
+            let qualified = self
+                .inner
+                .borrow()
+                .module_path
+                .with_segment(segments[0].clone());
             if let Some(def) = self.own_struct_defs().get(&qualified).cloned() {
                 return Some((qualified, def));
             }
@@ -1643,7 +1487,11 @@ impl AstTypeInferencer {
             }
         }
         if let Some(key) = match_key {
-            return self.own_struct_defs().get(&key).cloned().map(|def| (key, def));
+            return self
+                .own_struct_defs()
+                .get(&key)
+                .cloned()
+                .map(|def| (key, def));
         }
         let mut match_key = None;
         for (key, def) in self.own_struct_defs().iter() {
@@ -1655,7 +1503,11 @@ impl AstTypeInferencer {
             }
         }
         if let Some(key) = match_key {
-            return self.own_struct_defs().get(&key).cloned().map(|def| (key, def));
+            return self
+                .own_struct_defs()
+                .get(&key)
+                .cloned()
+                .map(|def| (key, def));
         }
         // Also check the workspace — a bare/ambiguous-locally name may still
         // resolve unambiguously to a single cross-crate struct.
@@ -1706,7 +1558,11 @@ impl AstTypeInferencer {
             return Some((name_path, def));
         }
         if !self.inner.borrow().module_path.is_empty() && segments.len() == 1 {
-            let qualified = self.inner.borrow().module_path.with_segment(segments[0].clone());
+            let qualified = self
+                .inner
+                .borrow()
+                .module_path
+                .with_segment(segments[0].clone());
             if let Some(def) = self.own_enum_defs().get(&qualified).cloned() {
                 return Some((qualified, def));
             }
@@ -1724,7 +1580,11 @@ impl AstTypeInferencer {
             }
         }
         if let Some(key) = match_key {
-            return self.own_enum_defs().get(&key).cloned().map(|def| (key, def));
+            return self
+                .own_enum_defs()
+                .get(&key)
+                .cloned()
+                .map(|def| (key, def));
         }
         let mut match_key = None;
         for (key, def) in self.own_enum_defs().iter() {
@@ -1735,17 +1595,32 @@ impl AstTypeInferencer {
                 match_key = Some(key.clone());
             }
         }
-        match_key.and_then(|key| self.own_enum_defs().get(&key).cloned().map(|def| (key, def)))
+        match_key.and_then(|key| {
+            self.own_enum_defs()
+                .get(&key)
+                .cloned()
+                .map(|def| (key, def))
+        })
     }
 
-    fn record_function_signature(&self, name: &Ident, sig: &FunctionSignature, item_id: fp_core::ast::ItemId) {
+    fn record_function_signature(
+        &self,
+        name: &Ident,
+        sig: &FunctionSignature,
+        item_id: fp_core::ast::ItemId,
+    ) {
         let candidates = if self.inner.borrow().module_path.is_empty() {
             vec![QualifiedPath::new(vec![name.as_str().to_string()])]
         } else {
-            vec![self.inner.borrow().module_path.with_segment(name.as_str().to_string())]
+            vec![self
+                .inner
+                .borrow()
+                .module_path
+                .with_segment(name.as_str().to_string())]
         };
         for candidate in candidates {
-            self.own_function_sigs_mut().insert(candidate.clone(), sig.clone());
+            self.own_function_sigs_mut()
+                .insert(candidate.clone(), sig.clone());
             self.own_function_item_ids_mut().insert(candidate, item_id);
         }
     }
@@ -1754,10 +1629,16 @@ impl AstTypeInferencer {
         let candidates = if self.inner.borrow().module_path.is_empty() {
             vec![QualifiedPath::new(vec![name.as_str().to_string()])]
         } else {
-            vec![self.inner.borrow().module_path.with_segment(name.as_str().to_string())]
+            vec![self
+                .inner
+                .borrow()
+                .module_path
+                .with_segment(name.as_str().to_string())]
         };
         for candidate in candidates {
-            self.inner.borrow_mut().extern_function_signatures
+            self.inner
+                .borrow_mut()
+                .extern_function_signatures
                 .insert(candidate, sig.clone());
         }
     }
@@ -1769,10 +1650,17 @@ impl AstTypeInferencer {
         let candidates = if self.inner.borrow().module_path.is_empty() {
             vec![QualifiedPath::new(vec![name.as_str().to_string()])]
         } else {
-            vec![self.inner.borrow().module_path.with_segment(name.as_str().to_string())]
+            vec![self
+                .inner
+                .borrow()
+                .module_path
+                .with_segment(name.as_str().to_string())]
         };
         for candidate in candidates {
-            self.inner.borrow_mut().unimplemented_symbols.insert(candidate);
+            self.inner
+                .borrow_mut()
+                .unimplemented_symbols
+                .insert(candidate);
         }
     }
 
@@ -1781,7 +1669,12 @@ impl AstTypeInferencer {
     }
 
     fn env_contains(&self, key: &str) -> bool {
-        self.inner.borrow().env.iter().rev().any(|scope| scope.contains_key(key))
+        self.inner
+            .borrow()
+            .env
+            .iter()
+            .rev()
+            .any(|scope| scope.contains_key(key))
     }
 
     fn scope_contains_non_module(&self, name: &str) -> bool {
@@ -1800,7 +1693,11 @@ impl AstTypeInferencer {
         self.own_struct_defs().contains_key(path)
             || self.own_enum_defs().contains_key(path)
             || self.own_function_sigs().contains_key(path)
-            || self.inner.borrow().extern_function_signatures.contains_key(path)
+            || self
+                .inner
+                .borrow()
+                .extern_function_signatures
+                .contains_key(path)
             || self.own_trait_defs().contains(path)
             || self.inner.borrow().unimplemented_symbols.contains(path)
             || self.env_contains(&key)
@@ -1875,7 +1772,11 @@ impl AstTypeInferencer {
     fn check_unimplemented_name(&self, name: &Name) -> bool {
         if let Some(ident) = name.as_ident() {
             if !self.inner.borrow().module_path.is_empty() {
-                let candidate = self.inner.borrow().module_path.with_segment(ident.as_str().to_string());
+                let candidate = self
+                    .inner
+                    .borrow()
+                    .module_path
+                    .with_segment(ident.as_str().to_string());
                 if self.is_unimplemented_name(&candidate) {
                     if !self.is_same_crate_path(&candidate) {
                         self.emit_warning(format!(
@@ -1900,7 +1801,13 @@ impl AstTypeInferencer {
     }
 
     fn is_same_crate_path(&self, candidate: &QualifiedPath) -> bool {
-        let Some(current_root) = self.inner.borrow().module_path.head().map(|s| s.to_string()) else {
+        let Some(current_root) = self
+            .inner
+            .borrow()
+            .module_path
+            .head()
+            .map(|s| s.to_string())
+        else {
             return false;
         };
         candidate.head() == Some(current_root.as_str())
@@ -1910,7 +1817,12 @@ impl AstTypeInferencer {
         let candidate = self
             .resolve_name_key(name)
             .or_else(|| self.fallback_name_key(name))?;
-        if let Some(sig) = self.inner.borrow().extern_function_signatures.get(&candidate) {
+        if let Some(sig) = self
+            .inner
+            .borrow()
+            .extern_function_signatures
+            .get(&candidate)
+        {
             return Some(sig.clone());
         }
         if let Some(sig) = self.own_function_sigs().get(&candidate) {
@@ -1953,7 +1865,12 @@ impl AstTypeInferencer {
         let candidate = self
             .resolve_name_key(name)
             .or_else(|| self.fallback_name_key(name))?;
-        if let Some(sig) = self.inner.borrow().extern_function_signatures.get(&candidate) {
+        if let Some(sig) = self
+            .inner
+            .borrow()
+            .extern_function_signatures
+            .get(&candidate)
+        {
             return Some((candidate, sig.clone()));
         }
         if let Some(sig) = self.own_function_sigs().get(&candidate) {
@@ -1966,7 +1883,10 @@ impl AstTypeInferencer {
             // `cross_crate_struct_refs`'s doc comment).
             if candidate.segments.len() >= 2 {
                 if let Some(struct_path) = candidate.parent_n(1) {
-                    self.inner.borrow_mut().cross_crate_struct_refs.insert(struct_path);
+                    self.inner
+                        .borrow_mut()
+                        .cross_crate_struct_refs
+                        .insert(struct_path);
                 }
             }
             return Some((candidate, sig.clone()));
@@ -1995,11 +1915,21 @@ impl AstTypeInferencer {
         let candidate = self
             .resolve_name_key(name)
             .or_else(|| self.fallback_name_key(name))?;
-        if let Some(sig) = self.inner.borrow().extern_function_signatures.get(&candidate) {
+        if let Some(sig) = self
+            .inner
+            .borrow()
+            .extern_function_signatures
+            .get(&candidate)
+        {
             return Some((candidate, sig.clone()));
         }
         if let Some(stripped) = Self::strip_std_prefix(&candidate) {
-            if let Some(sig) = self.inner.borrow().extern_function_signatures.get(&stripped) {
+            if let Some(sig) = self
+                .inner
+                .borrow()
+                .extern_function_signatures
+                .get(&stripped)
+            {
                 return Some((stripped, sig.clone()));
             }
         }
@@ -2105,7 +2035,12 @@ impl AstTypeInferencer {
             }
             let base = QualifiedPath::new(vec![prefix.to_string()]);
             let qualified = base.join(&candidate.segments);
-            if let Some(sig) = self.inner.borrow().extern_function_signatures.get(&qualified) {
+            if let Some(sig) = self
+                .inner
+                .borrow()
+                .extern_function_signatures
+                .get(&qualified)
+            {
                 return Some(sig.clone());
             }
             if !extern_only {
@@ -2132,7 +2067,12 @@ impl AstTypeInferencer {
             }
             let base = QualifiedPath::new(vec![prefix.to_string()]);
             let qualified = base.join(&candidate.segments);
-            if let Some(sig) = self.inner.borrow().extern_function_signatures.get(&qualified) {
+            if let Some(sig) = self
+                .inner
+                .borrow()
+                .extern_function_signatures
+                .get(&qualified)
+            {
                 return Some((qualified, sig.clone()));
             }
             if !extern_only {
@@ -2252,7 +2192,12 @@ impl AstTypeInferencer {
         let mut candidates = Vec::new();
         candidates.push(name.clone());
         if !self.inner.borrow().module_path.is_empty() && name.segments.len() == 1 {
-            candidates.push(self.inner.borrow().module_path.with_segment(name.segments[0].clone()));
+            candidates.push(
+                self.inner
+                    .borrow()
+                    .module_path
+                    .with_segment(name.segments[0].clone()),
+            );
         }
         for candidate in candidates {
             let key = candidate.to_key();
@@ -2347,10 +2292,8 @@ impl AstTypeInferencer {
                         self.inner.borrow().module_path
                     );
                 }
-                ItemKind::DefType(def) if def.name.as_str().contains("TypeBuilder") => {
-                }
-                ItemKind::DefStructural(def) if def.name.as_str().contains("TypeBuilder") => {
-                }
+                ItemKind::DefType(def) if def.name.as_str().contains("TypeBuilder") => {}
+                ItemKind::DefStructural(def) if def.name.as_str().contains("TypeBuilder") => {}
                 _ => {}
             }
         }
@@ -2417,10 +2360,17 @@ impl AstTypeInferencer {
                 let path = if self.inner.borrow().module_path.is_empty() {
                     QualifiedPath::new(vec![def.name.as_str().to_string()])
                 } else {
-                    self.inner.borrow().module_path.with_segment(def.name.as_str().to_string())
+                    self.inner
+                        .borrow()
+                        .module_path
+                        .with_segment(def.name.as_str().to_string())
                 };
                 let struct_def = self.own_struct_defs().get(&path).cloned().or_else(|| {
-                    self.typing_ctx.resolved_types.borrow().get(def.name.as_str()).cloned()
+                    self.typing_ctx
+                        .resolved_types
+                        .borrow()
+                        .get(def.name.as_str())
+                        .cloned()
                         .map(|s| {
                             self.own_struct_defs_mut().insert(path.clone(), s.clone());
                             s
@@ -2436,7 +2386,8 @@ impl AstTypeInferencer {
                 let enum_name = self
                     .qualified_name(def.name.as_str())
                     .unwrap_or_else(|| QualifiedPath::new(vec![def.name.as_str().to_string()]));
-                self.own_enum_defs_mut().insert(enum_name.clone(), def.value.clone());
+                self.own_enum_defs_mut()
+                    .insert(enum_name.clone(), def.value.clone());
                 self.register_symbol(&def.name);
 
                 let mut variant_keys = Vec::new();
@@ -2449,7 +2400,10 @@ impl AstTypeInferencer {
                         self.insert_env(key, EnvEntry::Mono(var));
                     }
                 }
-                self.inner.borrow_mut().enum_variants.insert(enum_name, variant_keys);
+                self.inner
+                    .borrow_mut()
+                    .enum_variants
+                    .insert(enum_name, variant_keys);
             }
             ItemKind::DefTrait(def) => {
                 let trait_name = self
@@ -2554,17 +2508,27 @@ impl AstTypeInferencer {
                 if def.sig.generics_params.is_empty() {
                     self.prebind_function_signature(def, fn_var).await;
                 } else {
-                    let fn_key = self.inner.borrow().impl_stack.last().cloned().flatten().map(|ctx| {
-                        ctx.struct_name
-                            .with_segment(def.name.as_str().to_string())
-                            .to_key()
-                    });
+                    let fn_key = self
+                        .inner
+                        .borrow()
+                        .impl_stack
+                        .last()
+                        .cloned()
+                        .flatten()
+                        .map(|ctx| {
+                            ctx.struct_name
+                                .with_segment(def.name.as_str().to_string())
+                                .to_key()
+                        });
                     self.enter_scope();
                     for param in &def.sig.generics_params {
                         let var = self.register_generic_param(param.name.as_str());
                         let bounds = Self::extract_trait_bounds(&param.bounds);
                         if !bounds.is_empty() {
-                            self.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
+                            self.inner
+                                .borrow_mut()
+                                .generic_trait_bounds
+                                .insert(var, bounds);
                         }
                     }
                     let mut ok = true;
@@ -2647,7 +2611,10 @@ impl AstTypeInferencer {
                 // for its argument would panic at runtime (`RefCell`
                 // borrows aren't partitioned per-field).
                 let env_len = self.inner.borrow().env.len();
-                self.inner.borrow_mut().module_scope_depths.push(env_len.saturating_sub(1));
+                self.inner
+                    .borrow_mut()
+                    .module_scope_depths
+                    .push(env_len.saturating_sub(1));
                 self.predeclare_scope_items(&module.collected_items).await;
                 self.exit_scope();
                 self.inner.borrow_mut().module_scope_depths.pop();
@@ -2655,7 +2622,9 @@ impl AstTypeInferencer {
                 let prefix = if self.inner.borrow().module_path.is_empty() {
                     QualifiedPath::new(vec![module.name.as_str().to_string()])
                 } else {
-                    self.inner.borrow().module_path
+                    self.inner
+                        .borrow()
+                        .module_path
                         .with_segment(module.name.as_str().to_string())
                 };
                 self.register_qualified_items(&module.items, &prefix).await;
@@ -2686,7 +2655,8 @@ impl AstTypeInferencer {
                 }
 
                 self.enter_scope();
-                self.predeclare_scope_items(&impl_block.collected_items).await;
+                self.predeclare_scope_items(&impl_block.collected_items)
+                    .await;
                 self.exit_scope();
                 self.inner.borrow_mut().impl_stack.pop();
             }
@@ -2997,7 +2967,10 @@ impl AstTypeInferencer {
         let module_path = self.inner.borrow().module_path.clone();
         let mut param_vars = Vec::new();
         for param in &func.sig.params {
-            match self.type_from_ast_ty_in_module(&param.ty, &module_path).await {
+            match self
+                .type_from_ast_ty_in_module(&param.ty, &module_path)
+                .await
+            {
                 Ok(var) => param_vars.push(var),
                 Err(err) => {
                     self.emit_error(format!(
@@ -3048,7 +3021,10 @@ impl AstTypeInferencer {
         let module_path = self.inner.borrow().module_path.clone();
         let mut param_vars = Vec::new();
         for param in &decl.sig.params {
-            match self.type_from_ast_ty_in_module(&param.ty, &module_path).await {
+            match self
+                .type_from_ast_ty_in_module(&param.ty, &module_path)
+                .await
+            {
                 Ok(var) => param_vars.push(var),
                 Err(err) => {
                     self.emit_error(format!(
@@ -3108,7 +3084,8 @@ impl AstTypeInferencer {
                     let placeholder = this.symbol_var(&def.name).await;
                     let var = this.type_from_ast_ty(&ty).await?;
                     this.unify(placeholder, var).await?;
-                    this.generalize_symbol(def.name.as_str(), placeholder).await?;
+                    this.generalize_symbol(def.name.as_str(), placeholder)
+                        .await?;
                     ty
                 }
                 ItemKind::DefStructural(def) => {
@@ -3124,7 +3101,8 @@ impl AstTypeInferencer {
                     let placeholder = this.symbol_var(&def.name).await;
                     let var = this.type_from_ast_ty(&ty).await?;
                     this.unify(placeholder, var).await?;
-                    this.generalize_symbol(def.name.as_str(), placeholder).await?;
+                    this.generalize_symbol(def.name.as_str(), placeholder)
+                        .await?;
                     ty
                 }
                 ItemKind::DefType(def) => {
@@ -3196,7 +3174,8 @@ impl AstTypeInferencer {
 
                     let var = this.type_from_ast_ty(&normalized).await?;
                     this.unify(placeholder, var).await?;
-                    this.generalize_symbol(def.name.as_str(), placeholder).await?;
+                    this.generalize_symbol(def.name.as_str(), placeholder)
+                        .await?;
                     normalized
                 }
                 ItemKind::DefEnum(def) => {
@@ -3206,7 +3185,10 @@ impl AstTypeInferencer {
                             let var = this.register_generic_param(param.name.as_str());
                             let bounds = Self::extract_trait_bounds(&param.bounds);
                             if !bounds.is_empty() {
-                                this.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
+                                this.inner
+                                    .borrow_mut()
+                                    .generic_trait_bounds
+                                    .insert(var, bounds);
                             }
                         }
                     }
@@ -3216,7 +3198,8 @@ impl AstTypeInferencer {
                     let placeholder = this.symbol_var(&def.name).await;
                     let var = this.type_from_ast_ty(&ty).await?;
                     this.unify(placeholder, var).await?;
-                    this.generalize_symbol(def.name.as_str(), placeholder).await?;
+                    this.generalize_symbol(def.name.as_str(), placeholder)
+                        .await?;
 
                     let enum_name = this
                         .qualified_name(def.name.as_str())
@@ -3225,13 +3208,16 @@ impl AstTypeInferencer {
                     // body awaits repeatedly, and matching directly on
                     // `this.inner.borrow()...` would extend the guard's
                     // scope across those `.await`s.
-                    let variant_keys_opt = this.inner.borrow().enum_variants.get(&enum_name).cloned();
+                    let variant_keys_opt =
+                        this.inner.borrow().enum_variants.get(&enum_name).cloned();
                     if let Some(variant_keys) = variant_keys_opt {
                         let enum_var = placeholder;
                         for (variant, qualified) in
                             def.value.variants.iter().zip(variant_keys.into_iter())
                         {
-                            if let Some(variant_var) = this.lookup_env_var(&qualified.to_key()).await {
+                            if let Some(variant_var) =
+                                this.lookup_env_var(&qualified.to_key()).await
+                            {
                                 let variant_type_var = if matches!(variant.value, Ty::Unit(_)) {
                                     enum_var
                                 } else if let Ty::Tuple(tuple) = &variant.value {
@@ -3249,7 +3235,9 @@ impl AstTypeInferencer {
                                     fn_var
                                 };
                                 let _ = this.unify(variant_var, variant_type_var).await;
-                                let _ = this.generalize_symbol(&qualified.to_key(), variant_var).await;
+                                let _ = this
+                                    .generalize_symbol(&qualified.to_key(), variant_var)
+                                    .await;
                             }
                         }
                     }
@@ -3271,12 +3259,13 @@ impl AstTypeInferencer {
                             .ty
                             .clone()
                             .or_else(|| def.ty_annotation.clone())
-                            .unwrap_or_else(|| crate::runtime_types::type_from_value(&resolved));
+                            .unwrap_or_else(|| crate::runtime::type_from_value(&resolved));
                         let ty_var = this.type_from_ast_ty(&ty).await?;
                         this.unify(placeholder, ty_var).await?;
                         def.ty_annotation = Some(ty.clone());
                         def.ty.get_or_insert(ty.clone());
-                        this.generalize_symbol(def.name.as_str(), placeholder).await?;
+                        this.generalize_symbol(def.name.as_str(), placeholder)
+                            .await?;
                         ty
                     } else {
                         let placeholder = this.symbol_var(&def.name).await;
@@ -3301,7 +3290,8 @@ impl AstTypeInferencer {
                         let ty = this.resolve_to_ty(expr_var).await?;
                         def.ty_annotation = Some(ty.clone());
                         def.ty.get_or_insert(ty.clone());
-                        this.generalize_symbol(def.name.as_str(), placeholder).await?;
+                        this.generalize_symbol(def.name.as_str(), placeholder)
+                            .await?;
 
                         // If the value is itself a `const { ... }` block, it
                         // may already have resolved via its own hook call
@@ -3338,7 +3328,8 @@ impl AstTypeInferencer {
                     this.unify(placeholder, expr_var).await?;
                     let ty = this.resolve_to_ty(expr_var).await?;
                     def.ty_annotation = Some(ty.clone());
-                    this.generalize_symbol(def.name.as_str(), placeholder).await?;
+                    this.generalize_symbol(def.name.as_str(), placeholder)
+                        .await?;
                     ty
                 }
                 ItemKind::DefFunction(func) => this.infer_function(func).await?,
@@ -3372,7 +3363,10 @@ impl AstTypeInferencer {
                     // `module_scope_depths` write borrow -- see the same
                     // pattern in `predeclare_item`'s `Module` arm.
                     let env_len = this.inner.borrow().env.len();
-                    this.inner.borrow_mut().module_scope_depths.push(env_len.saturating_sub(1));
+                    this.inner
+                        .borrow_mut()
+                        .module_scope_depths
+                        .push(env_len.saturating_sub(1));
                     this.predeclare_scope_items(&module.collected_items).await;
                     for child in &mut module.items {
                         this.infer_item_inner(child).await?;
@@ -3397,12 +3391,15 @@ impl AstTypeInferencer {
                 ItemKind::DefTrait(trait_def) => {
                     let trait_name = trait_def.name.as_str().to_string();
                     this.enter_scope();
-                    this.predeclare_scope_items(&trait_def.collected_items).await;
+                    this.predeclare_scope_items(&trait_def.collected_items)
+                        .await;
 
                     // Provide `Self` inside trait methods as a generic parameter
                     // bounded by the trait itself.
                     let self_var = this.register_generic_param("Self");
-                    this.inner.borrow_mut().generic_trait_bounds
+                    this.inner
+                        .borrow_mut()
+                        .generic_trait_bounds
                         .insert(self_var, vec![trait_name.clone()]);
 
                     for member in &mut trait_def.items {
@@ -3430,7 +3427,9 @@ impl AstTypeInferencer {
                         (ctx.as_ref(), impl_block.trait_ty.as_ref())
                     {
                         let trait_name = trait_ty.to_string();
-                        this.inner.borrow_mut().impl_traits
+                        this.inner
+                            .borrow_mut()
+                            .impl_traits
                             .entry(ctx.struct_name.clone())
                             .or_default()
                             .insert(trait_name.clone());
@@ -3438,7 +3437,13 @@ impl AstTypeInferencer {
                         // No `.await` anywhere in this `if let`'s body, so a
                         // borrow taken directly as its scrutinee (and
                         // extended by Rust across the whole body) is fine.
-                        if let Some(methods) = this.inner.borrow().trait_method_sigs.get(&trait_name).cloned() {
+                        if let Some(methods) = this
+                            .inner
+                            .borrow()
+                            .trait_method_sigs
+                            .get(&trait_name)
+                            .cloned()
+                        {
                             for (method_name, sig) in methods {
                                 if sig.receiver.is_none() {
                                     continue;
@@ -3473,10 +3478,14 @@ impl AstTypeInferencer {
                         let var = this.register_generic_param(param.name.as_str());
                         let bounds = Self::extract_trait_bounds(&param.bounds);
                         if !bounds.is_empty() {
-                            this.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
+                            this.inner
+                                .borrow_mut()
+                                .generic_trait_bounds
+                                .insert(var, bounds);
                         }
                     }
-                    this.predeclare_scope_items(&impl_block.collected_items).await;
+                    this.predeclare_scope_items(&impl_block.collected_items)
+                        .await;
                     for child in &mut impl_block.items {
                         this.infer_item_inner(child).await?;
                     }
@@ -3609,7 +3618,10 @@ impl AstTypeInferencer {
                 let var = self.register_generic_param(param.name.as_str());
                 let bounds = Self::extract_trait_bounds(&param.bounds);
                 if !bounds.is_empty() {
-                    self.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
+                    self.inner
+                        .borrow_mut()
+                        .generic_trait_bounds
+                        .insert(var, bounds);
                 }
             }
         }
@@ -3824,7 +3836,10 @@ impl AstTypeInferencer {
                 let var = self.register_generic_param(param.name.as_str());
                 let bounds = Self::extract_trait_bounds(&param.bounds);
                 if !bounds.is_empty() {
-                    self.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
+                    self.inner
+                        .borrow_mut()
+                        .generic_trait_bounds
+                        .insert(var, bounds);
                 }
             }
         }
@@ -3882,30 +3897,6 @@ impl AstTypeInferencer {
         Ok(ty)
     }
 
-    // infer_expr moved to typing::infer_expr
-
-    // infer_block moved to typing::infer_stmt
-
-    // infer_if moved to typing::infer_stmt
-
-    // infer_binop moved to typing::infer_expr
-
-    // infer_unop moved to typing::infer_expr
-
-    // infer_loop moved to typing::infer_stmt
-
-    // infer_while moved to typing::infer_stmt
-
-    // moved: infer_reference, infer_dereference, infer_index, infer_range, infer_splat, infer_splat_dict
-
-    // moved: infer_intrinsic
-
-    // moved: infer_closure
-
-    // infer_match moved to typing::infer_stmt
-
-    // moved: infer_invoke
-
     async fn apply_pattern_generalization(&self, info: &PatternInfo) -> Result<()> {
         for binding in &info.bindings {
             let scheme = self.generalize(binding.var).await?;
@@ -3913,16 +3904,6 @@ impl AstTypeInferencer {
         }
         Ok(())
     }
-
-    // generalize moved to typing/unify.rs
-
-    // build_scheme_type moved to typing/unify.rs
-
-    // scheme_from_term moved to typing/unify.rs
-
-    // instantiate_scheme moved to typing/unify.rs
-
-    // instantiate_scheme_type moved to typing/unify.rs
 
     async fn scheme_from_method_signature(&self, sig: &FunctionSignature) -> Result<Ty> {
         let fn_var = self.fresh_type_var();
@@ -3950,7 +3931,10 @@ impl AstTypeInferencer {
             let var = self.register_generic_param(param.name.as_str());
             let bounds = Self::extract_trait_bounds(&param.bounds);
             if !bounds.is_empty() {
-                self.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
+                self.inner
+                    .borrow_mut()
+                    .generic_trait_bounds
+                    .insert(var, bounds);
             }
         }
 
@@ -4024,7 +4008,10 @@ impl AstTypeInferencer {
     fn register_generic_param(&self, name: &str) -> TypeVarId {
         let var = self.fresh_type_var();
         self.insert_env(name.to_string(), EnvEntry::Mono(var));
-        self.inner.borrow_mut().generic_type_vars.insert(var, name.to_string());
+        self.inner
+            .borrow_mut()
+            .generic_type_vars
+            .insert(var, name.to_string());
         if let Some(scope) = self.inner.borrow_mut().generic_scopes.last_mut() {
             scope.insert(name.to_string());
         }
@@ -4094,7 +4081,12 @@ impl AstTypeInferencer {
         if self.inner.borrow().module_path.is_empty() {
             None
         } else {
-            Some(self.inner.borrow().module_path.with_segment(name.to_string()))
+            Some(
+                self.inner
+                    .borrow()
+                    .module_path
+                    .with_segment(name.to_string()),
+            )
         }
     }
 
@@ -4102,7 +4094,10 @@ impl AstTypeInferencer {
         let key = if self.inner.borrow().module_path.is_empty() {
             QualifiedPath::new(vec![name.as_str().to_string()])
         } else {
-            self.inner.borrow().module_path.with_segment(name.as_str().to_string())
+            self.inner
+                .borrow()
+                .module_path
+                .with_segment(name.as_str().to_string())
         };
         self.own_struct_defs_mut().insert(key, def);
     }
@@ -4111,7 +4106,10 @@ impl AstTypeInferencer {
         let key = if self.inner.borrow().module_path.is_empty() {
             QualifiedPath::new(vec![name.as_str().to_string()])
         } else {
-            self.inner.borrow().module_path.with_segment(name.as_str().to_string())
+            self.inner
+                .borrow()
+                .module_path
+                .with_segment(name.as_str().to_string())
         };
         self.own_enum_defs_mut().insert(key, def);
     }
@@ -4137,8 +4135,7 @@ impl AstTypeInferencer {
                 let mut merged_ty = struct_ty;
                 // Merge fields from source struct for TypeBuilder::from(Type)
                 if merged_ty.name != *name {
-                    let source_name =
-                        QualifiedPath::new(vec![merged_ty.name.as_str().to_string()]);
+                    let source_name = QualifiedPath::new(vec![merged_ty.name.as_str().to_string()]);
                     let source_def = self.own_struct_defs().get(&source_name).cloned();
                     match source_def {
                         Some(source_def) => {
@@ -4199,34 +4196,12 @@ impl AstTypeInferencer {
     }
 
     fn parent_module_path(&self) -> QualifiedPath {
-        self.inner.borrow().module_path
+        self.inner
+            .borrow()
+            .module_path
             .parent_n(1)
             .unwrap_or_else(|| QualifiedPath::new(Vec::new()))
     }
-
-    // fresh_type_var moved to typing/unify.rs
-
-    // unit_type_var moved to typing/unify.rs
-
-    // nothing_type_var moved to typing/unify.rs
-
-    // bind moved to typing/unify.rs
-
-    // find moved to typing/unify.rs
-
-    // unify moved to typing/unify.rs
-
-    // occurs_in_term moved to typing/unify.rs
-
-    // occurs_in moved to typing/unify.rs
-
-    // unify_terms moved to typing/unify.rs
-
-    // resolve_to_ty moved to typing/unify.rs
-
-    // term_to_ty moved to typing/unify.rs
-
-    // type_from_ast_ty moved to typing/unify.rs
 
     async fn lookup_associated_function(&self, name: &Name) -> Result<Option<TypeVarId>> {
         if let Name::Path(path) = name {
@@ -4239,10 +4214,10 @@ impl AstTypeInferencer {
                         .take(path.segments.len() - 1)
                         .map(|seg| seg.as_str().to_string())
                         .collect::<Vec<_>>();
-                        if let Some(struct_name) =
-                            self.resolve_segments_key(path.prefix, &struct_segments)
-                        {
-                            for candidate in self.struct_name_variants_for_path(
+                    if let Some(struct_name) =
+                        self.resolve_segments_key(path.prefix, &struct_segments)
+                    {
+                        for candidate in self.struct_name_variants_for_path(
                             &struct_name,
                             struct_name.segments.len() == 1,
                         ) {
@@ -4276,9 +4251,9 @@ impl AstTypeInferencer {
                                         .map(|(_, sig)| sig),
                                 )
                             } else {
-                                let registered = candidate
-                                    .head()
-                                    .is_some_and(|head| self.typing_ctx.env_ctx.is_registered(head));
+                                let registered = candidate.head().is_some_and(|head| {
+                                    self.typing_ctx.env_ctx.is_registered(head)
+                                });
                                 if registered {
                                     self.await_package(candidate.head().unwrap()).await;
                                     match self.typing_ctx.env_ctx.find_method_sigs(&candidate) {
@@ -4296,7 +4271,10 @@ impl AstTypeInferencer {
                             };
                             if is_cross_crate || self.own_method_sigs().contains_key(&candidate) {
                                 if is_cross_crate {
-                                    self.inner.borrow_mut().cross_crate_struct_refs.insert(candidate.clone());
+                                    self.inner
+                                        .borrow_mut()
+                                        .cross_crate_struct_refs
+                                        .insert(candidate.clone());
                                 }
                                 if let Some(sig) = found_sig {
                                     if !sig.impl_generics_params.is_empty()
@@ -4346,7 +4324,10 @@ impl AstTypeInferencer {
                                         generic_vars.push((param.name.as_str().to_string(), var));
                                         let bounds = Self::extract_trait_bounds(&param.bounds);
                                         if !bounds.is_empty() {
-                                            self.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
+                                            self.inner
+                                                .borrow_mut()
+                                                .generic_trait_bounds
+                                                .insert(var, bounds);
                                         }
                                     }
                                 }
@@ -4357,15 +4338,13 @@ impl AstTypeInferencer {
                                 let mut params = Vec::new();
                                 match &variant.value {
                                     Ty::Unit(_) => {}
-                                    Ty::Tuple(tuple_ty) => params.extend(
-                                        tuple_ty
-                                            .types
-                                            .iter()
-                                            .map(|ty| self.substitute_generic_ty(ty, &generic_mapping)),
-                                    ),
-                                    other => params.push(
-                                        self.substitute_generic_ty(other, &generic_mapping),
-                                    ),
+                                    Ty::Tuple(tuple_ty) => {
+                                        params.extend(tuple_ty.types.iter().map(|ty| {
+                                            self.substitute_generic_ty(ty, &generic_mapping)
+                                        }))
+                                    }
+                                    other => params
+                                        .push(self.substitute_generic_ty(other, &generic_mapping)),
                                 }
 
                                 let func_ty = Ty::Function(TypeFunction {
@@ -4389,7 +4368,8 @@ impl AstTypeInferencer {
     }
 
     async fn lookup_name(&self, name: &Name) -> Result<TypeVarId> {
-        self.lookup_name_with_resolution(name).await
+        self.lookup_name_with_resolution(name)
+            .await
             .map(|(var, _)| var)
     }
 
@@ -4441,7 +4421,11 @@ impl AstTypeInferencer {
                 return Ok((var, None));
             }
             if !self.inner.borrow().module_path.is_empty() {
-                let qualified = self.inner.borrow().module_path.with_segment(name.to_string());
+                let qualified = self
+                    .inner
+                    .borrow()
+                    .module_path
+                    .with_segment(name.to_string());
                 if let Some(var) = self.lookup_env_var(&qualified.to_key()).await {
                     return Ok((
                         var,
@@ -4463,21 +4447,30 @@ impl AstTypeInferencer {
                     if name == "type" {
                         let var = self.fresh_type_var();
                         self.bind(var, Ty::Type(TypeType::new(Span::null())));
-                        return Ok((var, Some(ResolvedName {
-                            namespace: ResolvedNameNamespace::Type,
-                            path: QualifiedPath::new(vec![name.to_string()]),
-                        })));
+                        return Ok((
+                            var,
+                            Some(ResolvedName {
+                                namespace: ResolvedNameNamespace::Type,
+                                path: QualifiedPath::new(vec![name.to_string()]),
+                            }),
+                        ));
                     }
-                    if let Some(prim) = crate::typing::unify::primitive_from_name(name) {
+                    if let Some(prim) = crate::unify::primitive_from_name(name) {
                         let var = self.fresh_type_var();
-                        self.bind(var, Ty::Type(TypeType {
-                            span: Span::null(),
-                            inner: Some(Box::new(Ty::Primitive(prim))),
-                        }));
-                        return Ok((var, Some(ResolvedName {
-                            namespace: ResolvedNameNamespace::Type,
-                            path: QualifiedPath::new(vec![name.to_string()]),
-                        })));
+                        self.bind(
+                            var,
+                            Ty::Type(TypeType {
+                                span: Span::null(),
+                                inner: Some(Box::new(Ty::Primitive(prim))),
+                            }),
+                        );
+                        return Ok((
+                            var,
+                            Some(ResolvedName {
+                                namespace: ResolvedNameNamespace::Type,
+                                path: QualifiedPath::new(vec![name.to_string()]),
+                            }),
+                        ));
                     }
                 }
                 self.emit_error(format!("unresolved symbol: {}", name));
@@ -4509,10 +4502,13 @@ impl AstTypeInferencer {
         if let Some(sig) = workspace_sig {
             let fn_ty = self.ty_from_function_signature(&sig)?;
             let var = self.type_from_ast_ty(&fn_ty).await?;
-            return Ok((var, Some(ResolvedName {
-                namespace: ResolvedNameNamespace::Value,
-                path: key,
-            })));
+            return Ok((
+                var,
+                Some(ResolvedName {
+                    namespace: ResolvedNameNamespace::Value,
+                    path: key,
+                }),
+            ));
         }
         self.emit_error(format!("unresolved symbol: {}", key.to_key()));
         Ok((self.error_type_var(), None))
@@ -4613,7 +4609,11 @@ impl AstTypeInferencer {
         // entire loop), including across the `Poly` branch's `.await` below.
         let found = {
             let inner = self.inner.borrow();
-            inner.env.iter().rev().find_map(|scope| scope.get(name).cloned())
+            inner
+                .env
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(name).cloned())
         };
         match found {
             Some(EnvEntry::Mono(var)) => Some(var),
@@ -4650,7 +4650,8 @@ impl AstTypeInferencer {
         let mut inner = self.inner.borrow_mut();
         if inner.lossy_mode {
             if let Some(span) = span {
-                inner.diagnostics
+                inner
+                    .diagnostics
                     .push(TypingDiagnostic::warning_with_span(message, span));
             } else {
                 inner.diagnostics.push(TypingDiagnostic::warning(message));
@@ -4658,7 +4659,8 @@ impl AstTypeInferencer {
         } else {
             inner.has_errors = true;
             if let Some(span) = span {
-                inner.diagnostics
+                inner
+                    .diagnostics
                     .push(TypingDiagnostic::error_with_span(message, span));
             } else {
                 inner.diagnostics.push(TypingDiagnostic::error(message));
@@ -4703,18 +4705,18 @@ impl AstTypeInferencer {
         }
     }
 
-    #[allow(dead_code)]
     fn emit_warning(&self, message: impl Into<String>) {
-        self.inner.borrow_mut().diagnostics.push(TypingDiagnostic::warning(message));
+        self.inner
+            .borrow_mut()
+            .diagnostics
+            .push(TypingDiagnostic::warning(message));
     }
 
-     fn error_type_var(&self) -> TypeVarId {
+    fn error_type_var(&self) -> TypeVarId {
         let var = self.fresh_type_var();
         self.bind_error(var);
         var
     }
-
-    // unused: primitive_from_name (removed)
 
     fn expect_reference<'a>(
         &self,
@@ -4732,11 +4734,12 @@ impl AstTypeInferencer {
             match root_kind {
                 TypeVarKind::Unbound { .. } => {
                     let inner = this.fresh_type_var();
-                    this.inner.borrow_mut().type_vars[root].kind = TypeVarKind::Bound(Ty::Reference(TypeReference {
-                        ty: Box::new(Ty::infer_var(inner)),
-                        mutability: None,
-                        lifetime: None,
-                    }));
+                    this.inner.borrow_mut().type_vars[root].kind =
+                        TypeVarKind::Bound(Ty::Reference(TypeReference {
+                            ty: Box::new(Ty::infer_var(inner)),
+                            mutability: None,
+                            lifetime: None,
+                        }));
                     Ok(inner)
                 }
                 TypeVarKind::Bound(Ty::Reference(reference)) => match reference.ty.as_ref() {
@@ -4750,11 +4753,12 @@ impl AstTypeInferencer {
                         context
                     ));
                     let placeholder = this.error_type_var();
-                    this.inner.borrow_mut().type_vars[root].kind = TypeVarKind::Bound(Ty::Reference(TypeReference {
-                        ty: Box::new(Ty::infer_var(placeholder)),
-                        mutability: None,
-                        lifetime: None,
-                    }));
+                    this.inner.borrow_mut().type_vars[root].kind =
+                        TypeVarKind::Bound(Ty::Reference(TypeReference {
+                            ty: Box::new(Ty::infer_var(placeholder)),
+                            mutability: None,
+                            lifetime: None,
+                        }));
                     Ok(placeholder)
                 }
             }
@@ -4766,14 +4770,6 @@ impl AstTypeInferencer {
         self.replace_env_entry(name, EnvEntry::Poly(scheme));
         Ok(())
     }
-
-    // ensure_numeric moved to typing::solver
-
-    // ensure_bool moved to typing::solver
-
-    // ensure_integer moved to typing::solver
-
-    // ensure_function moved to typing::solver
 
     fn ty_from_function_signature(&self, sig: &FunctionSignature) -> Result<Ty> {
         self.validate_extern_c_signature(sig);
@@ -4867,7 +4863,8 @@ impl AstTypeInferencer {
                     Name::Ident(ident) => ident.as_str().to_string(),
                 };
                 if name == "Self" {
-                    self.inner.borrow()
+                    self.inner
+                        .borrow()
                         .impl_stack
                         .last()
                         .and_then(|ctx| ctx.as_ref())
@@ -4890,53 +4887,6 @@ impl AstTypeInferencer {
         }
     }
 }
-
-fn tokenize_macro_tokens(tokens: &str) -> Vec<&str> {
-    tokens.split_whitespace().collect()
-}
-
-fn is_ident_token(token: &str) -> bool {
-    let mut chars = token.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first.is_ascii_alphabetic() || first == '_') {
-        return false;
-    }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-fn find_ident_after_keyword(tokens: &[&str], keyword: &str) -> Option<String> {
-    let mut iter = tokens.iter().peekable();
-    while let Some(token) = iter.next() {
-        if *token == keyword {
-            for next in iter.by_ref() {
-                if is_ident_token(next) {
-                    return Some(next.to_string());
-                }
-            }
-            break;
-        }
-    }
-    None
-}
-
-fn find_first_type_ident(tokens: &[&str]) -> Option<String> {
-    for token in tokens {
-        if is_ident_token(token) {
-            if token.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
-                return Some((*token).to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Infer the fragment kind for an unkinded quote based on its block shape.
-/// - Single trailing expression and no statements => Expr
-/// - All items at top level => Item
-/// - Otherwise => Stmt
-// moved to typing::infer_expr::infer_quote_kind
 
 impl AstTypeInferencer {
     pub async fn infer_expression(&self, expr: &mut Expr) -> Result<()> {
@@ -4985,7 +4935,8 @@ impl AstTypeInferencer {
             return None;
         }
 
-        self.inner.borrow()
+        self.inner
+            .borrow()
             .context_env
             .iter()
             .rev()
@@ -4998,7 +4949,6 @@ impl AstTypeInferencer {
 /// Pre-walk: collect quote-valued DefConst items and replace splice(NAME)
 /// expressions with extracted items. Recurses into modules and impl blocks.
 /// Called by the scheduler before typing.
-
 
 impl AstTypeInferencer {
     fn name_tail(&self, name: &Name) -> Option<String> {
@@ -5034,22 +4984,6 @@ impl AstTypeInferencer {
             return None;
         }
         Some(ParsedPath { prefix, segments })
-    }
-}
-
-impl AstTypeInferencer {
-}
-
-
-pub fn impl_self_ty_name(expr: &Expr) -> Option<String> {
-    match expr.kind() {
-        // `Name`'s own `Display` includes generic args for a
-        // `ParameterPath` (e.g. `impl<T> Option<T>`'s self type would
-        // stringify as `"Option<T>"`), which is never what a registration
-        // key should look like -- go through `to_path()` (idents only, no
-        // args) and take its last segment instead.
-        ExprKind::Name(name) => name.to_path().segments.last().map(|ident| ident.as_str().to_string()),
-        _ => None,
     }
 }
 
@@ -5110,7 +5044,8 @@ mod deftype_normalize_tests {
     fn suspends_when_source_type_belongs_to_an_unloaded_package() {
         let typer = new_inferencer(Some("SourcePkg"));
         let alias = Ident::new("Alias");
-        let mut fut = std::pin::pin!(typer.normalize_deftype_value(&alias, source_struct_ty("SourcePkg")));
+        let mut fut =
+            std::pin::pin!(typer.normalize_deftype_value(&alias, source_struct_ty("SourcePkg")));
         let waker = std::task::Waker::noop();
         let mut cx = std::task::Context::from_waker(waker);
         match fut.as_mut().poll(&mut cx) {
@@ -5124,10 +5059,9 @@ mod deftype_normalize_tests {
     #[test]
     fn errors_when_source_type_is_genuinely_unknown() {
         let typer = new_inferencer(None);
-        let resolved = crate::block_on(typer.normalize_deftype_value(
-            &Ident::new("Alias"),
-            source_struct_ty("NoSuchSource"),
-        ));
+        let resolved = crate::block_on(
+            typer.normalize_deftype_value(&Ident::new("Alias"), source_struct_ty("NoSuchSource")),
+        );
 
         assert!(matches!(resolved, Ty::Unknown(_)));
         assert!(
