@@ -5,6 +5,7 @@ use std::task::Waker;
 use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
 use fp_core::workspace::WorkspaceContext;
 
+use crate::typing::types::GenericMonorph;
 use crate::TypingDiagnostic;
 
 /// Shared mutable state between the compiler driver and the type inferencer.
@@ -55,6 +56,17 @@ pub struct TypingContext {
     /// outer `RefCell` here would reintroduce exactly the double-borrow
     /// hazard that design avoids, so it's a plain field.
     pub tasks: fp_core::executor::Executor<fp_core::error::Result<()>>,
+
+    /// Generic function calls whose concrete type arguments have been
+    /// resolved and are ready for monomorphization, written the moment
+    /// typing discovers each one (see `infer_generic_function_call_body`)
+    /// -- shared driver-visible state, like `resolved_consts`/
+    /// `package_wakers`, not a per-typer-pass `Vec` threaded back only once
+    /// typing finishes. The driver drains this continuously from within
+    /// `drive_typing_to_completion`'s poll loop, the same way it already
+    /// services `package_wakers` there, rather than waiting for the whole
+    /// compile unit to finish and processing it as a separate batch.
+    pub pending_generics: RefCell<Vec<GenericMonorph>>,
 }
 
 impl TypingContext {
@@ -68,6 +80,7 @@ impl TypingContext {
             package_wakers: RefCell::new(HashMap::new()),
             comptime_wakers: RefCell::new(HashMap::new()),
             tasks: fp_core::executor::Executor::new(),
+            pending_generics: RefCell::new(Vec::new()),
         }
     }
 

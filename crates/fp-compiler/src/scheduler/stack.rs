@@ -41,6 +41,21 @@ impl CompilerScheduler {
         id
     }
 
+    /// Like `submit`, but never records the new request as a dependency of
+    /// whatever's currently processing, even if `begin_processing` is
+    /// active. Use this for follow-up work the current request doesn't
+    /// actually need an answer from before it can be answered itself --
+    /// `submit`'s blanket "anything submitted while processing is a
+    /// dependency" rule would otherwise cause the current request to be
+    /// auto-blocked and later re-dispatched as fresh work once the
+    /// unrelated follow-up is answered, redoing work that never needed to
+    /// wait in the first place.
+    pub fn submit_independent(&mut self, work: CompilerWork) -> RequestId {
+        let id = self.allocate_id();
+        self.stack.push(CompilerRequest { id, work });
+        id
+    }
+
     pub fn next_request(&mut self) -> Option<CompilerRequest> {
         let request = self.stack.pop()?;
         self.active.insert(request.id, request.clone());

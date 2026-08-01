@@ -8,7 +8,7 @@ pub use module_resolution::{CompilerModuleResolver, ModuleResolutionError};
 pub use scheduler::{
     AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler,
     CompilerWork, CompletedRequest, ConstValueId, FullyQualifiedPath,
-    GenericWorkRequest, HirId, InvalidatedObjectId, JitObjectId, LirId, MirId,
+    HirId, InvalidatedObjectId, JitObjectId, LirId, MirId,
     NativeObjectId, RequestId, RuntimeValueId,
     SavedOutputId, ScheduledAnswer, SchedulerError, TypedAstId,
 };

@@ -16,11 +16,6 @@ pub enum CompilerWork {
         ast: AstId,
         path: FullyQualifiedPath,
     },
-    EnqueueGeneric {
-        typed_ast: TypedAstId,
-        path: FullyQualifiedPath,
-        generic: GenericWorkRequest,
-    },
     CompileUnitCompileBytecode {
         ast: AstId,
         path: FullyQualifiedPath,
@@ -36,28 +31,6 @@ pub enum CompilerWork {
     LoadPackage {
         name: String,
     },
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct GenericWorkRequest {
-    /// Stable identity of the `ItemDefFunction` node to specialize (see
-    /// `fp_core::ast::ItemId`'s doc comment) -- `enqueue_generic` uses this,
-    /// not `path`, to find the function again in the stored typed AST.
-    pub item_id: fp_core::ast::ItemId,
-    pub path: FullyQualifiedPath,
-    pub generic_params: Vec<String>,
-    pub concrete_types: Vec<fp_core::ast::Ty>,
-}
-
-impl GenericWorkRequest {
-    pub fn new(
-        item_id: fp_core::ast::ItemId,
-        path: FullyQualifiedPath,
-        generic_params: Vec<String>,
-        concrete_types: Vec<fp_core::ast::Ty>,
-    ) -> Self {
-        Self { item_id, path, generic_params, concrete_types }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,9 +55,6 @@ pub enum CompilerAnswer {
         value: ConstValueId,
     },
     CompileUnitCompileBytecode,
-    GenericQueued {
-        generic: GenericWorkRequest,
-    },
     AstUpdated {
         ast: AstId,
     },

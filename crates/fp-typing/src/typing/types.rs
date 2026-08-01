@@ -51,8 +51,6 @@ impl TypingDiagnostic {
 
 pub struct TypingOutcome {
     pub resolved_names: ResolvedNameTable,
-    /// Generic instantiations with resolved concrete types ready for monomorphization.
-    pub pending_generics: Vec<GenericMonorph>,
     /// Structs resolved from a workspace crate rather than the local one
     /// (e.g. `std::meta::TypeBuilder`, via `TypeBuilder::new(...)`).
     pub cross_crate_struct_refs: Vec<QualifiedPath>,
@@ -60,14 +58,19 @@ pub struct TypingOutcome {
 
 pub type ItemId = fp_core::ast::ItemId;
 
-/// A generic function invocation whose concrete type arguments have been resolved
-/// and are ready for monomorphization (specialization).
+/// A generic function invocation whose concrete type arguments have been
+/// resolved and are ready for monomorphization (specialization). Pushed
+/// directly onto the shared `TypingContext::pending_generics` the moment
+/// `infer_generic_function_call_body` resolves one -- not accumulated on
+/// the typer's own per-pass state and returned via `TypingOutcome` once
+/// the whole compile unit finishes, so the driver can act on it
+/// immediately (see `CompilerDriver::drain_pending_generics`).
 #[derive(Debug, Clone)]
 pub struct GenericMonorph {
     /// Stable identity of the `ItemDefFunction` node being specialized (see
     /// `fp_core::ast::ItemId`'s doc comment) -- this, not `function_path`, is
-    /// what a later pass (`CompilerDriver::enqueue_generic`) uses to find the
-    /// function again in the stored typed AST. `function_path` is a
+    /// what `drain_pending_generics` uses to find the function again in the
+    /// compile unit's own pre-typing stored AST. `function_path` is a
     /// qualification convention (prefixed by whatever module/compile-unit
     /// context was active when the signature was registered) and doesn't
     /// generally correspond to real nested-module structure in that AST, so

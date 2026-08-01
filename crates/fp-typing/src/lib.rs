@@ -396,8 +396,6 @@ struct Inner {
     /// two `Unbound` vars merge (see `unify`'s `merge_generic_identity_into`
     /// call) so the identity isn't lost regardless of which side survives.
     generic_type_vars: HashMap<TypeVarId, String>,
-    /// Generic invocations with resolved concrete types ready for monomorphization.
-    pending_generics: Vec<GenericMonorph>,
     /// Structs (and their `impl` blocks) resolved from a workspace crate
     /// rather than the local one — e.g. `std::meta::TypeBuilder` via
     /// `TypeBuilder::new(...)`. Reported out so the driver can predeclare
@@ -695,7 +693,6 @@ impl AstTypeInferencer {
             unimplemented_symbols: HashSet::new(),
             resolved_names: HashMap::new(),
             generic_type_vars: HashMap::new(),
-            pending_generics: Vec::new(),
             cross_crate_struct_refs: HashSet::new(),
         };
         let inferencer = Self {
@@ -1223,7 +1220,6 @@ impl AstTypeInferencer {
             let mut inner = self.inner.borrow_mut();
             let outcome = TypingOutcome {
                 resolved_names: std::mem::take(&mut inner.resolved_names),
-                pending_generics: std::mem::take(&mut inner.pending_generics),
                 cross_crate_struct_refs: std::mem::take(&mut inner.cross_crate_struct_refs)
                     .into_iter()
                     .collect(),

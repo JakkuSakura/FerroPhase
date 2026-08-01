@@ -2285,7 +2285,7 @@ impl AstTypeInferencer {
                 // entry, and monomorphizing it isn't something this
                 // mechanism supports.
                 if let Some(item_id) = self.own_function_item_ids().get(sig_path).copied() {
-                    self.inner.borrow_mut().pending_generics.push(GenericMonorph::new(
+                    self.typing_ctx.pending_generics.borrow_mut().push(GenericMonorph::new(
                         item_id,
                         sig_path.clone(),
                         param_names,

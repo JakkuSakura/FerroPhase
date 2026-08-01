@@ -17,7 +17,7 @@ use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
 use fp_typing::{
-    AstTypeInferencer, GenericMonorph, TypeResolutionHook, TypingContext,
+    AstTypeInferencer, TypeResolutionHook, TypingContext,
     TypingOutcome, default_extern_prelude,
 };
 use std::collections::{HashMap, HashSet};
@@ -26,7 +26,7 @@ use std::rc::Rc;
 
 use crate::scheduler::{
     AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
-    ConstValueId, FullyQualifiedPath, GenericWorkRequest, HirId,
+    ConstValueId, FullyQualifiedPath, HirId,
     LirId, MirId, RuntimeValueId, ScheduledAnswer,
     TypedAstId,
 };
@@ -65,10 +65,8 @@ impl TypeResolutionHook for ComptimeHook {
 }
 
 struct CompileUnitCoreResult {
-    typed_ast_id: TypedAstId,
     mir_id: MirId,
     lir_id: LirId,
-    pending_generics: Vec<GenericMonorph>,
 }
 
 /// Result of driving one compile unit's typing future to completion (see
@@ -158,11 +156,6 @@ impl CompilerDriver {
             CompilerWork::CompileUnitAnswerComptime { ast, path } => {
                 self.compile_unit_answer_comptime(ast, path)
             }
-            CompilerWork::EnqueueGeneric {
-                typed_ast,
-                path,
-                generic,
-            } => self.enqueue_generic(typed_ast, path, generic),
             CompilerWork::CompileUnitCompileBytecode { ast, path } => {
                 self.compile_unit_compile_bytecode(ast, path)
             }
@@ -203,10 +196,12 @@ impl CompilerDriver {
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
         // `File` is used here purely as the existing storage-map value type
-        // (also read back by `enqueue_generic` to find a generic function's
-        // definition) — it's never passed to a generator; `path`/`attrs`/
+        // — it's never passed to a generator; `path`/`attrs`/
         // `collected_items` are irrelevant placeholders for on-demand
-        // module compiles that have no real source file.
+        // module compiles that have no real source file. (Generic
+        // specialization looks up its function by `ItemId` in the
+        // *original*, pre-typing `self.state.ast(ast_id)` instead, from
+        // `drain_pending_generics` -- see its doc comment.)
         self.state.insert_typed_ast(
             typed_ast_id.clone(),
             File {
@@ -225,10 +220,8 @@ impl CompilerDriver {
         let lir_id = self.lower_to_lir(&mir_id, path)?;
 
         Ok(CompileUnitCoreResult {
-            typed_ast_id,
             mir_id,
             lir_id,
-            pending_generics: outcome.pending_generics,
         })
     }
 
@@ -241,8 +234,18 @@ impl CompilerDriver {
     /// `predeclare_item`) — rather than retyping already-resolved items from
     /// scratch to pick either up.
     ///
-    /// This is the *one* manual poll loop in the whole system. Each round
-    /// that the top-level task comes back `Pending`, it:
+    /// This is the *one* manual poll loop in the whole system. After *every*
+    /// poll (both `Pending` and `Ready` -- a compile unit with no comptime/
+    /// package need at all can resolve on the very first poll, so this can't
+    /// be confined to the `Pending` arm), it drains any generic function
+    /// calls typing discovered are ready to specialize (`TypingContext::
+    /// pending_generics`, see `drain_pending_generics`) and submits their
+    /// compiles as independent follow-up work -- the discovering compile
+    /// unit's own answer never depends on that finishing (see
+    /// `drain_pending_generics`'s doc comment for why this must not be an
+    /// ordinary, dependency-implying `submit`).
+    ///
+    /// Each round that the top-level task comes back `Pending`, it also:
     /// 1. Drains every currently-ready item-resolution task in
     ///    `TypingContext::tasks` to a fixed point — each one that completes
     ///    writes its value/struct-shape into `TypingContext` and precisely
@@ -252,11 +255,14 @@ impl CompilerDriver {
     ///    typing future (`TypingContext::package_wakers`) — the typer only
     ///    *requests* a package and suspends; it never loads one itself.
     ///
-    /// If neither step makes any progress in a round, nothing will ever wake
-    /// the top-level task — a genuine deadlock (e.g. a same-pass comptime
-    /// cycle, already reported with a specific error by `force`'s own cycle
-    /// handling if it's *that* kind of cycle, or some other stuck state),
-    /// reported immediately rather than retried on a heuristic bound.
+    /// If neither of those two steps makes any progress in a round, nothing
+    /// will ever wake the top-level task — a genuine deadlock (e.g. a
+    /// same-pass comptime cycle, already reported with a specific error by
+    /// `force`'s own cycle handling if it's *that* kind of cycle, or some
+    /// other stuck state), reported immediately rather than retried on a
+    /// heuristic bound. (Generic monomorphization is never part of this
+    /// progress check -- per its own doc comment, it's never something the
+    /// top-level task is actually waiting on.)
     fn drive_typing_to_completion(
         &mut self,
         module_path: QualifiedPath,
@@ -268,7 +274,9 @@ impl CompilerDriver {
         let mut cx = std::task::Context::from_waker(waker);
         let mut task = Box::pin(typing_future(typing_ctx.clone(), module_path, items));
         loop {
-            match task.as_mut().poll(&mut cx) {
+            let poll = task.as_mut().poll(&mut cx);
+            self.drain_pending_generics(&typing_ctx, ast_id)?;
+            match poll {
                 std::task::Poll::Ready(output) => return Ok(output),
                 std::task::Poll::Pending => {
                     let mut made_progress = false;
@@ -292,6 +300,83 @@ impl CompilerDriver {
                 }
             }
         }
+    }
+
+    /// Drains every generic function call typing has discovered is ready to
+    /// specialize since the last drain (`TypingContext::pending_generics`,
+    /// written by `infer_generic_function_call_body` the moment a call's
+    /// concrete type arguments resolve — not something the discovering
+    /// compile unit's own typing ever waits on; it already has everything
+    /// it needs to type the call site itself via ordinary unification
+    /// against the generic signature's own declared return type). For each
+    /// one not already queued (`generic_cannon_key`/`generic_instantiations`
+    /// dedup, unchanged), finds the original definition by its stable
+    /// `ItemId` in *this compile unit's own pre-typing stored AST*
+    /// (`self.state.ast(ast_id)` — not `self.state.typed_ast`, which isn't
+    /// populated until `drive_typing_to_completion` returns and so isn't
+    /// usable from inside its own poll loop; safe because `Item` derives
+    /// `Clone` including its `id`, so the pre-typing clone typing is
+    /// currently working from carries the identical `ItemId`), substitutes
+    /// the concrete types into a clone of it, and submits its compile via
+    /// `CompilerScheduler::submit_independent` rather than `submit` — using
+    /// `submit` here would record the specialization as a dependency of
+    /// *this* compile unit's still-`current_processing` request, and once
+    /// that dependency's answer comes back (immediately — this method
+    /// returns as soon as it submits the specialized compile, without
+    /// waiting for it to finish), the scheduler would resubmit this whole
+    /// compile unit as fresh follow-up work, fully retyping and re-lowering
+    /// it a second time for no reason.
+    fn drain_pending_generics(
+        &mut self,
+        typing_ctx: &TypingContext,
+        ast_id: &AstId,
+    ) -> Result<(), CompilerDriverError> {
+        let monomorphs = std::mem::take(&mut *typing_ctx.pending_generics.borrow_mut());
+        for monomorph in monomorphs {
+            let cannon_key = Self::generic_cannon_key(
+                &FullyQualifiedPath::new(monomorph.function_path.clone()),
+                &monomorph.concrete_types,
+            );
+            if self.state.generic_instantiations.contains(&cannon_key) {
+                continue;
+            }
+            self.state.generic_instantiations.insert(cannon_key.clone());
+
+            let original = self.state.ast(ast_id)?;
+            let mut func_item = Self::find_item_by_id(&original.items, monomorph.item_id)
+                .ok_or_else(|| CompilerDriverError::UnsupportedWork(format!(
+                    "generic function not found: {}", monomorph.function_path.to_key()
+                )))?;
+
+            if let ItemKind::DefFunction(def) = func_item.kind_mut() {
+                for param in &mut def.sig.params {
+                    Self::substitute_in_ty(&mut param.ty, &monomorph.generic_params, &monomorph.concrete_types);
+                }
+                if let Some(ret_ty) = &mut def.sig.ret_ty {
+                    Self::substitute_in_ty(ret_ty, &monomorph.generic_params, &monomorph.concrete_types);
+                }
+                def.sig.generics_params.clear();
+                Self::substitute_in_body(&mut def.body, &monomorph.generic_params, &monomorph.concrete_types);
+            }
+
+            let specialized_path = FullyQualifiedPath::new(
+                monomorph.function_path.with_segment(cannon_key.clone())
+            );
+            let specialized_ast_id = AstId::new(format!("ast:{}", specialized_path.to_key()));
+            let file = File {
+                path: std::path::PathBuf::new(),
+                attrs: Vec::new(),
+                collected_items: Vec::new(),
+                items: vec![func_item],
+            };
+            self.state.insert_ast(specialized_ast_id.clone(), file);
+
+            self.scheduler.submit_independent(CompilerWork::CompileUnitCompileNative {
+                ast: specialized_ast_id,
+                path: specialized_path,
+            });
+        }
+        Ok(())
     }
 
     /// Load a registered package on demand (generalizes what used to be a
@@ -693,29 +778,7 @@ impl CompilerDriver {
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         let core = self.compile_unit_core(ast_id, path)?;
         self.evaluate_comptime_lir(&core.lir_id, path)?;
-        self.enqueue_pending_generics(&core, path);
         Ok(CompilerAnswer::CompileUnitCompileNative)
-    }
-
-    fn enqueue_pending_generics(&mut self, core: &CompileUnitCoreResult, path: &FullyQualifiedPath) {
-        for monomorph in &core.pending_generics {
-            let fqp = FullyQualifiedPath::new(monomorph.function_path.clone());
-            let cannon_key = Self::generic_cannon_key(&fqp, &monomorph.concrete_types);
-            if self.state.generic_instantiations.contains(&cannon_key) {
-                continue;
-            }
-            let generic = GenericWorkRequest::new(
-                monomorph.item_id,
-                fqp,
-                monomorph.generic_params.clone(),
-                monomorph.concrete_types.clone(),
-            );
-            self.scheduler.submit(CompilerWork::EnqueueGeneric {
-                typed_ast: core.typed_ast_id.clone(),
-                path: path.clone(),
-                generic,
-            });
-        }
     }
 
     fn compile_unit_compile_bytecode(
@@ -743,61 +806,6 @@ impl CompilerDriver {
         let core = self.compile_unit_core(ast_id, path)?;
         self.evaluate_comptime_lir(&core.lir_id, path)?;
         Ok(CompilerAnswer::CompileUnitAnswerComptime { value: value_id })
-    }
-
-    fn enqueue_generic(
-        &mut self,
-        typed_ast_id: &TypedAstId,
-        _path: &FullyQualifiedPath,
-        generic: &GenericWorkRequest,
-    ) -> Result<CompilerAnswer, CompilerDriverError> {
-        let cannon_key = Self::generic_cannon_key(&generic.path, &generic.concrete_types);
-
-        if self.state.generic_instantiations.contains(&cannon_key) {
-            return Ok(CompilerAnswer::GenericQueued {
-                generic: generic.clone(),
-            });
-        }
-        self.state.generic_instantiations.insert(cannon_key.clone());
-
-        let typed_ast = self.state.typed_ast(typed_ast_id)?;
-        let function_path = generic.path.path();
-        let mut func_item = Self::find_item_by_id(&typed_ast.items, generic.item_id)
-            .ok_or_else(|| CompilerDriverError::UnsupportedWork(format!(
-                "generic function not found: {}", function_path.to_key()
-            )))?;
-
-        if let ItemKind::DefFunction(def) = func_item.kind_mut() {
-            for param in &mut def.sig.params {
-                Self::substitute_in_ty(&mut param.ty, &generic.generic_params, &generic.concrete_types);
-            }
-            if let Some(ret_ty) = &mut def.sig.ret_ty {
-                Self::substitute_in_ty(ret_ty, &generic.generic_params, &generic.concrete_types);
-            }
-            def.sig.generics_params.clear();
-            Self::substitute_in_body(&mut def.body, &generic.generic_params, &generic.concrete_types);
-        }
-
-        let specialized_path = FullyQualifiedPath::new(
-            function_path.with_segment(cannon_key.clone())
-        );
-        let specialized_ast_id = AstId::new(format!("ast:{}", specialized_path.to_key()));
-        let file = File {
-            path: std::path::PathBuf::new(),
-            attrs: Vec::new(),
-            collected_items: Vec::new(),
-            items: vec![func_item],
-        };
-        self.state.insert_ast(specialized_ast_id.clone(), file);
-
-        self.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: specialized_ast_id,
-            path: specialized_path,
-        });
-
-        Ok(CompilerAnswer::GenericQueued {
-            generic: generic.clone(),
-        })
     }
 
     /// Canonical identity for a generic instantiation, matching the doc's
