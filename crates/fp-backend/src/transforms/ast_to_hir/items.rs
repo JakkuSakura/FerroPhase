@@ -262,11 +262,11 @@ impl HirGenerator {
             let generics = self.transform_generics(&impl_block.generics_params);
             let self_ty_ast = ast::Ty::expr(impl_block.self_ty.clone());
             let self_ty = self.transform_type_to_hir(&self_ty_ast)?;
-            let trait_ty = if let Some(trait_locator) = &impl_block.trait_ty {
+            let trait_ty = if let Some(trait_name) = &impl_block.trait_ty {
                 Some(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TypeExprKind::Path(self.locator_to_hir_path_with_scope(
-                        trait_locator,
+                    hir::TypeExprKind::Path(self.name_to_hir_path_with_scope(
+                        trait_name,
                         PathResolutionScope::Type,
                     )?),
                     Span::new(self.current_file, 0, 0),
@@ -310,8 +310,8 @@ impl HirGenerator {
                 }
             }
 
-            if let Some(trait_locator) = &impl_block.trait_ty {
-                let trait_name = match trait_locator {
+            if let Some(trait_name) = &impl_block.trait_ty {
+                let trait_name = match trait_name {
                     ast::Name::Ident(ident) => ident.name.clone(),
                     ast::Name::Path(path) => path
                         .segments

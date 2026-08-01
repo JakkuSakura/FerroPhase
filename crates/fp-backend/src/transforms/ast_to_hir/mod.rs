@@ -17,7 +17,7 @@ use std::path::Path;
 mod exprs; // expression lowering
 mod helpers;
 mod items; // item/impl helpers
-mod patterns; // pattern lowering // shared path/locator helpers
+mod patterns; // pattern lowering // shared path/name helpers
 
 #[cfg(test)]
 mod tests;
@@ -1599,7 +1599,7 @@ impl HirGenerator {
                     self.exit_type_alias(&key);
                     return result;
                 }
-                let path = self.locator_to_hir_path_with_scope(
+                let path = self.name_to_hir_path_with_scope(
                     &Name::Ident(struct_ty.name.clone()),
                     PathResolutionScope::Type,
                 )?;
@@ -2218,7 +2218,7 @@ impl HirGenerator {
                 hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Infer, span)
             }
             ast::Value::Struct(struct_val) => {
-                let path = self.locator_to_hir_path_with_scope(
+                let path = self.name_to_hir_path_with_scope(
                     &Name::Ident(struct_val.ty.name.clone()),
                     PathResolutionScope::Type,
                 )?;
@@ -3325,17 +3325,17 @@ impl ClosureLowering {
                     ast::ExprInvokeTarget::Expr(target) => {
                         self.rewrite_in_expr(target.as_mut())?;
                         if let Some(info) = self.closure_info_from_expr(target.as_ref()) {
-                            let call_locator = ast::Name::ident(info.call_fn_ident.clone());
+                            let call_name = ast::Name::ident(info.call_fn_ident.clone());
                             let mut new_args = Vec::with_capacity(invoke.args.len() + 1);
                             new_args.push(*target.clone());
                             new_args.extend(invoke.args.iter().cloned());
-                            invoke.target = ast::ExprInvokeTarget::Function(call_locator);
+                            invoke.target = ast::ExprInvokeTarget::Function(call_name);
                             invoke.args = new_args;
                             expr.set_ty(info.call_ret_ty.clone());
                         }
                     }
-                    ast::ExprInvokeTarget::Function(locator) => {
-                        if let Some(ident) = locator.as_ident() {
+                    ast::ExprInvokeTarget::Function(name) => {
+                        if let Some(ident) = name.as_ident() {
                             let info = self
                                 .variable_infos
                                 .get(ident.as_str())
@@ -3343,13 +3343,13 @@ impl ClosureLowering {
                                 .or_else(|| self.struct_infos.get(ident.as_str()).cloned());
                             if let Some(info) = info {
                                 let mut env_expr =
-                                    ast::Expr::new(ast::ExprKind::Name(locator.clone()));
+                                    ast::Expr::new(ast::ExprKind::Name(name.clone()));
                                 env_expr.set_ty(info.env_struct_ty.clone());
-                                let call_locator = ast::Name::ident(info.call_fn_ident.clone());
+                                let call_name = ast::Name::ident(info.call_fn_ident.clone());
                                 let mut new_args = Vec::with_capacity(invoke.args.len() + 1);
                                 new_args.push(env_expr);
                                 new_args.extend(invoke.args.iter().cloned());
-                                invoke.target = ast::ExprInvokeTarget::Function(call_locator);
+                                invoke.target = ast::ExprInvokeTarget::Function(call_name);
                                 invoke.args = new_args;
                                 expr.set_ty(info.call_ret_ty.clone());
                             }
@@ -3528,15 +3528,15 @@ impl ClosureLowering {
             ast::ExprKind::Struct(struct_expr) => extract_ident(struct_expr.name.as_ref())
                 .and_then(|ident| self.struct_infos.get(ident.as_str()).cloned()),
             ast::ExprKind::Invoke(invoke) => {
-                if let ast::ExprInvokeTarget::Function(locator) = &invoke.target {
-                    locator
+                if let ast::ExprInvokeTarget::Function(name) = &invoke.target {
+                    name
                         .as_ident()
                         .and_then(|ident| self.function_infos.get(ident.as_str()).cloned())
                 } else {
                     None
                 }
             }
-            ast::ExprKind::Name(locator) => locator
+            ast::ExprKind::Name(name) => name
                 .as_ident()
                 .and_then(|ident| self.variable_infos.get(ident.as_str()).cloned()),
             ast::ExprKind::Paren(paren) => self.closure_info_from_expr(paren.expr.as_ref()),
@@ -3754,8 +3754,8 @@ impl CaptureCollector {
                 _ => {}
             },
             ast::ExprKind::Paren(paren) => self.visit(paren.expr.as_ref()),
-            ast::ExprKind::Name(locator) => {
-                if let Some(ident) = locator.as_ident() {
+            ast::ExprKind::Name(name) => {
+                if let Some(ident) = name.as_ident() {
                     let name = ident.as_str();
                     if !self.is_in_scope(name) && !self.seen.contains(name) {
                         let ty = expr
@@ -3885,8 +3885,8 @@ impl CaptureReplacer {
 
     fn visit(&mut self, expr: &mut ast::Expr) {
         match expr.kind_mut() {
-            ast::ExprKind::Name(locator) => {
-                if let Some(ident) = locator.as_ident() {
+            ast::ExprKind::Name(name) => {
+                if let Some(ident) = name.as_ident() {
                     if let Some(capture_ty) = self.captures.get(ident.as_str()) {
                         let mut expr_struct =
                             ast::Expr::new(ast::ExprKind::Select(ast::ExprSelect {
@@ -3959,8 +3959,8 @@ impl CaptureReplacer {
                     ast::ExprInvokeTarget::Expr(target) => {
                         self.visit(target.as_mut());
                     }
-                    ast::ExprInvokeTarget::Function(locator) => {
-                        if let Some(ident) = locator.as_ident() {
+                    ast::ExprInvokeTarget::Function(name) => {
+                        if let Some(ident) = name.as_ident() {
                             if let Some(capture_ty) = self.captures.get(ident.as_str()) {
                                 let mut expr_struct =
                                     ast::Expr::new(ast::ExprKind::Select(ast::ExprSelect {
@@ -4136,8 +4136,8 @@ impl CaptureReplacer {
 }
 
 fn extract_ident(expr: &ast::Expr) -> Option<&ast::Ident> {
-    if let ast::ExprKind::Name(locator) = expr.kind() {
-        locator.as_ident()
+    if let ast::ExprKind::Name(name) = expr.kind() {
+        name.as_ident()
     } else {
         None
     }

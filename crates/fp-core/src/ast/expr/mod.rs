@@ -228,7 +228,7 @@ impl ExprKind {
     pub fn span(&self) -> Span {
         match self {
             ExprKind::Id(_) => Span::null(),
-            ExprKind::Name(locator) => locator.span(),
+            ExprKind::Name(name) => name.span(),
             ExprKind::Value(value) => value.span(),
             ExprKind::Any(_) => Span::null(),
             ExprKind::Block(block) => block.span(),

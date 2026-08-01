@@ -236,8 +236,8 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                     }
                     ExprKind::Invoke(invoke) => {
                         let target_name = match &invoke.target {
-                            ExprInvokeTarget::Function(locator) => {
-                                locator.as_ident().map(Ident::as_str)
+                            ExprInvokeTarget::Function(name) => {
+                                name.as_ident().map(Ident::as_str)
                             }
                             _ => None,
                         };
@@ -381,7 +381,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         }
         return Ok(ty);
     }
-    Ok(Ty::locator(name))
+    Ok(Ty::name(name))
 }
 
 fn looks_like_type_expr_macro(input: &[Token]) -> bool {

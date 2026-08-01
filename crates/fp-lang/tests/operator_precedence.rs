@@ -9,7 +9,7 @@ fn parse_expr(src: &str) -> Expr {
         .unwrap_or_else(|e| panic!("parse failed for `{src}`: {e}"))
 }
 
-fn is_locator(expr: &Expr, name: &str) -> bool {
+fn is_name(expr: &Expr, name: &str) -> bool {
     match expr.kind() {
         ExprKind::Name(loc) => loc
             .as_ident()
@@ -80,11 +80,11 @@ fn assignment_is_right_associative() {
     let ExprKind::Assign(outer) = expr.kind() else {
         panic!("expected assign");
     };
-    assert!(is_locator(&outer.target, "a"));
+    assert!(is_name(&outer.target, "a"));
     match outer.value.kind() {
         ExprKind::Assign(inner) => {
-            assert!(is_locator(&inner.target, "b"));
-            assert!(is_locator(&inner.value, "c"));
+            assert!(is_name(&inner.target, "b"));
+            assert!(is_name(&inner.value, "c"));
         }
         other => panic!("rhs should be nested assign, got {:?}", other),
     }
@@ -96,7 +96,7 @@ fn compound_assign_is_right_associative() {
     let ExprKind::Assign(outer) = expr.kind() else {
         panic!("expected assign");
     };
-    assert!(is_locator(&outer.target, "a"));
+    assert!(is_name(&outer.target, "a"));
     // The current implementation parses `a += b += c` as `a += (a + (b = b + c))`.
     // Only assert that `b += c` is wrapped as a value, to avoid assuming left-associativity.
     match outer.value.kind() {
@@ -104,7 +104,7 @@ fn compound_assign_is_right_associative() {
             assert!(matches!(add.kind, BinOpKind::Add));
             match add.rhs.kind() {
                 ExprKind::Assign(inner) => {
-                    assert!(is_locator(&inner.target, "b"));
+                    assert!(is_name(&inner.target, "b"));
                 }
                 other => panic!("expected inner assign on rhs, got {:?}", other),
             }

@@ -114,8 +114,8 @@ impl ExprIntrinsicContainer {
     }
 
     pub fn from_invoke(invoke: &ExprInvoke) -> Option<Self> {
-        let segments = locator_segments(match &invoke.target {
-            ExprInvokeTarget::Function(locator) => locator,
+        let segments = name_segments(match &invoke.target {
+            ExprInvokeTarget::Function(name) => name,
             _ => return None,
         });
 
@@ -218,20 +218,20 @@ fn hash_map_from_call(iterable: Expr) -> Expr {
 }
 
 fn make_function_call(path: &[&str], args: Vec<Expr>) -> Expr {
-    let locator = Name::path(Path::plain(
+    let name = Name::path(Path::plain(
         path.iter().map(|segment| Ident::new(*segment)).collect(),
     ));
     ExprKind::Invoke(ExprInvoke {
         span: Span::null(),
-        target: ExprInvokeTarget::Function(locator),
+        target: ExprInvokeTarget::Function(name),
         args,
         kwargs: Vec::new(),
     })
     .into()
 }
 
-fn locator_segments(locator: &Name) -> Vec<&str> {
-    match locator {
+fn name_segments(name: &Name) -> Vec<&str> {
+    match name {
         Name::Ident(ident) => vec![ident.as_str()],
         Name::Path(path) => path.segments.iter().map(|seg| seg.as_str()).collect(),
         Name::ParameterPath(path) => path.segments.iter().map(|seg| seg.ident.as_str()).collect(),
@@ -362,7 +362,7 @@ mod tests {
                     match inner.kind() {
                         ExprKind::Invoke(invoke) => match &invoke.target {
                             ExprInvokeTarget::Function(loc) => {
-                                let segs = super::locator_segments(loc);
+                                let segs = super::name_segments(loc);
                                 assert!(super::ends_with(&segs, &["Vec", "from"]))
                             }
                             _ => panic!("not a function call"),
@@ -372,7 +372,7 @@ mod tests {
                 }
                 ExprKind::Invoke(invoke) => match &invoke.target {
                     ExprInvokeTarget::Function(loc) => {
-                        let segs = super::locator_segments(loc);
+                        let segs = super::name_segments(loc);
                         assert!(super::ends_with(&segs, &["Vec", "from"]))
                     }
                     _ => panic!("not a function call"),
@@ -388,7 +388,7 @@ mod tests {
                 match inner.kind() {
                     ExprKind::Invoke(invoke) => match &invoke.target {
                         ExprInvokeTarget::Function(loc) => {
-                            let segs = super::locator_segments(loc);
+                            let segs = super::name_segments(loc);
                             assert!(super::ends_with(&segs, &["Vec", "from"]))
                         }
                         _ => panic!("not a function call"),

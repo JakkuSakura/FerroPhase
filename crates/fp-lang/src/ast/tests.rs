@@ -99,10 +99,10 @@ fn parse_type_alias_strips_prefix_from_parameter_path_segments() {
         panic!("expected type alias");
     };
     let Ty::Expr(expr) = &def.value else {
-        panic!("expected parameterized locator, got {:?}", def.value);
+        panic!("expected parameterized name, got {:?}", def.value);
     };
     let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
-        panic!("expected parameterized locator expr, got {:?}", expr);
+        panic!("expected parameterized name expr, got {:?}", expr);
     };
     assert_eq!(path.prefix, PathPrefix::Crate);
     assert_eq!(
@@ -128,10 +128,10 @@ fn parse_type_args_accept_trailing_comma_before_close_angle() {
         panic!("expected type alias");
     };
     let Ty::Expr(expr) = &def.value else {
-        panic!("expected parameterized locator, got {:?}", def.value);
+        panic!("expected parameterized name, got {:?}", def.value);
     };
     let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
-        panic!("expected parameterized locator expr, got {:?}", expr);
+        panic!("expected parameterized name expr, got {:?}", expr);
     };
     assert_eq!(path.segments.last().unwrap().args.len(), 2);
 }

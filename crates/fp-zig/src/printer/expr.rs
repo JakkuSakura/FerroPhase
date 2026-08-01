@@ -9,7 +9,7 @@ impl ZigEmitter {
     pub(crate) fn render_expr(&self, expr: &Expr) -> Option<String> {
         match expr.kind() {
             ExprKind::Value(value) => self.render_value(value),
-            ExprKind::Name(locator) => Some(self.render_locator(locator)),
+            ExprKind::Name(name) => Some(self.render_name(name)),
             ExprKind::Select(select) => {
                 let target = self.render_expr(select.obj.as_ref())?;
                 Some(format!("{}.{}", target, select.field.name))
@@ -24,16 +24,16 @@ impl ZigEmitter {
         }
     }
 
-    fn render_locator(&self, locator: &Name) -> String {
-        match locator {
+    fn render_name(&self, name: &Name) -> String {
+        match name {
             Name::Ident(ident) => ident.name.clone(),
-            _ => format!("{}", locator).replace("::", "."),
+            _ => format!("{}", name).replace("::", "."),
         }
     }
 
     fn render_invoke(&self, invoke: &ExprInvoke) -> Option<String> {
         let target = match &invoke.target {
-            ExprInvokeTarget::Function(locator) => self.render_locator(locator),
+            ExprInvokeTarget::Function(name) => self.render_name(name),
             ExprInvokeTarget::Expr(expr) => self.render_expr(expr.as_ref())?,
             ExprInvokeTarget::Method(select) => {
                 let receiver = self.render_expr(select.obj.as_ref())?;

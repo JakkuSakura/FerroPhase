@@ -20,8 +20,8 @@ impl PrettyPrintable for ast::Expr {
 
         match &self.kind {
             ast::ExprKind::Id(id) => ctx.writeln(f, format!("id({}){}", id, suffix)),
-            ast::ExprKind::Name(locator) => {
-                ctx.writeln(f, format!("locator {}{}", locator, suffix))
+            ast::ExprKind::Name(name) => {
+                ctx.writeln(f, format!("name {}{}", name, suffix))
             }
             ast::ExprKind::Value(value) => ctx.writeln(
                 f,
@@ -715,7 +715,7 @@ impl PrettyPrintable for ast::Item {
                 let trait_part = item_impl
                     .trait_ty
                     .as_ref()
-                    .map(|locator| locator.to_string())
+                    .map(|name| name.to_string())
                     .unwrap_or_default();
                 let mut header = if generics.is_empty() {
                     String::from("impl ")
@@ -1259,7 +1259,7 @@ fn summarize_value(value: &ast::Value) -> String {
 fn render_expr_inline(expr: &ast::Expr) -> String {
     match &expr.kind {
         ast::ExprKind::Id(id) => format!("id({})", id),
-        ast::ExprKind::Name(locator) => locator.to_string(),
+        ast::ExprKind::Name(name) => name.to_string(),
         ast::ExprKind::Value(value) => summarize_value(value.as_ref()),
         ast::ExprKind::BinOp(binop) => format!(
             "({} {} {})",
@@ -1452,7 +1452,7 @@ fn render_pattern(pattern: &Pattern) -> String {
                 .map(render_pattern)
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("{}({})", render_locator(&tuple_struct.name), inner)
+            format!("{}({})", render_name(&tuple_struct.name), inner)
         }
         PatternKind::Struct(struct_pat) => {
             let fields = struct_pat
@@ -1561,8 +1561,8 @@ fn render_pattern(pattern: &Pattern) -> String {
     base
 }
 
-fn render_locator(locator: &ast::Name) -> String {
-    locator.to_string()
+fn render_name(name: &ast::Name) -> String {
+    name.to_string()
 }
 
 fn render_pattern_field(field: &PatternStructField) -> String {
@@ -1575,7 +1575,7 @@ fn render_pattern_field(field: &PatternStructField) -> String {
 
 fn render_invoke_target(target: &ast::ExprInvokeTarget) -> String {
     match target {
-        ast::ExprInvokeTarget::Function(locator) => locator.to_string(),
+        ast::ExprInvokeTarget::Function(name) => name.to_string(),
         ast::ExprInvokeTarget::Type(ty) => render_ty_brief(ty),
         ast::ExprInvokeTarget::Method(select) => format!(
             "{}.{}",

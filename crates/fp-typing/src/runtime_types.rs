@@ -256,7 +256,7 @@ pub fn type_from_value(value: &Value) -> Ty {
 }
 
 pub trait TypeMaterializeHooks {
-    fn resolve_name(&mut self, locator: &Name) -> Option<Ty>;
+    fn resolve_name(&mut self, name: &Name) -> Option<Ty>;
     fn eval_const_expr(&mut self, expr: &mut Expr) -> Option<Ty>;
 }
 
@@ -266,7 +266,7 @@ pub fn materialize_type_with_hooks(ty: Ty, hooks: &mut impl TypeMaterializeHooks
     };
 
     match expr.kind() {
-        ExprKind::Name(locator) => hooks.resolve_name(locator).unwrap_or(Ty::Expr(expr)),
+        ExprKind::Name(name) => hooks.resolve_name(name).unwrap_or(Ty::Expr(expr)),
         ExprKind::ConstBlock(_) => hooks
             .eval_const_expr(expr.as_mut())
             .unwrap_or(Ty::Expr(expr)),

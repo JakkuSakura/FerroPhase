@@ -113,8 +113,8 @@ fn is_missing_printf_type_info(expr: &Expr) -> bool {
                 return !is_string_like_ty(reference.ty.as_ref());
             }
             Ty::Expr(expr_ty) => {
-                if let ExprKind::Name(locator) = expr_ty.kind() {
-                    if let Name::Ident(ident) = locator {
+                if let ExprKind::Name(name) = expr_ty.kind() {
+                    if let Name::Ident(ident) = name {
                         let known =
                             matches!(ident.as_str(), "Int" | "Bool" | "String" | "Str" | "Char");
                         return !known;
@@ -365,8 +365,8 @@ fn infer_printf_spec_with_replacement(ty: Option<&Ty>) -> Result<(String, Option
             return infer_printf_spec_for_value(value.value.as_ref());
         }
         Ty::Expr(expr) => {
-            if let ExprKind::Name(locator) = expr.kind() {
-                if let Name::Ident(ident) = locator {
+            if let ExprKind::Name(name) = expr.kind() {
+                if let Name::Ident(ident) = name {
                     let spec = match ident.as_str() {
                         "Int" => "%lld",
                         "Bool" => "%d",

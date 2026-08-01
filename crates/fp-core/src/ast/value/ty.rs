@@ -228,8 +228,8 @@ impl Ty {
     pub fn infer_var(id: usize) -> Self {
         Ty::InferVar(TypeInferVar { id })
     }
-    pub fn locator(locator: Name) -> Self {
-        Self::expr(Expr::name(locator))
+    pub fn name(name: Name) -> Self {
+        Self::expr(Expr::name(name))
     }
     pub fn type_bound(expr: Expr) -> Self {
         Self::TypeBounds(TypeBounds::new(expr))

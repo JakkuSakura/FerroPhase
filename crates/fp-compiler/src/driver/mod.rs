@@ -568,8 +568,8 @@ impl CompilerDriver {
     /// cross-references to resolve against. Not exhaustive over every
     /// `ExprKind` — only the shapes const initializers actually use.
     fn inline_resolved_names(expr: &mut Expr, resolved: &HashMap<String, Value>) {
-        if let ExprKind::Name(locator) = expr.kind() {
-            if let Some(name) = Self::simple_name_key(locator) {
+        if let ExprKind::Name(name) = expr.kind() {
+            if let Some(name) = Self::simple_name_key(name) {
                 if let Some(value) = resolved.get(&name) {
                     let ty = expr.ty().cloned();
                     let mut literal = Expr::value(value.clone());
@@ -634,8 +634,8 @@ impl CompilerDriver {
         }
     }
 
-    fn simple_name_key(locator: &Name) -> Option<String> {
-        match locator {
+    fn simple_name_key(name: &Name) -> Option<String> {
+        match name {
             Name::Ident(ident) => Some(ident.as_str().to_string()),
             Name::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string()),
             Name::ParameterPath(_) => None,
@@ -901,8 +901,8 @@ impl CompilerDriver {
                 }
             }
             Ty::Expr(expr) => {
-                if let ExprKind::Name(locator) = expr.kind() {
-                    if let Some(name) = Self::simple_name_key(locator) {
+                if let ExprKind::Name(name) = expr.kind() {
+                    if let Some(name) = Self::simple_name_key(name) {
                         if let Some(idx) = param_names.iter().position(|p| *p == name) {
                             if let Some(concrete) = concrete_types.get(idx) {
                                 *ty = concrete.clone();

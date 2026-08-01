@@ -308,14 +308,14 @@ impl AstTypeInferencer {
         let ExprKind::Invoke(invoke) = scrutinee.kind() else {
             return None;
         };
-        let ExprInvokeTarget::Function(locator) = &invoke.target else {
+        let ExprInvokeTarget::Function(name) = &invoke.target else {
             return None;
         };
-        let generic_args = Self::match_locator_generic_args(locator)?;
+        let generic_args = Self::match_name_generic_args(name)?;
         if generic_args.is_empty() {
             return None;
         }
-        let sig = self.lookup_function_signature(locator)?;
+        let sig = self.lookup_function_signature(name)?;
         if sig.generics_params.len() != generic_args.len() {
             return None;
         }
@@ -345,8 +345,8 @@ impl AstTypeInferencer {
         matches!(arg_ty, Ty::Unknown(_))
     }
 
-    fn match_locator_generic_args(locator: &Name) -> Option<&[Ty]> {
-        let Name::ParameterPath(path) = locator else {
+    fn match_name_generic_args(name: &Name) -> Option<&[Ty]> {
+        let Name::ParameterPath(path) = name else {
             return None;
         };
         let segment = path
@@ -575,8 +575,8 @@ impl AstTypeInferencer {
     ) {
         match def_value {
             Ty::Expr(expr) => {
-                if let ExprKind::Name(locator) = expr.kind() {
-                    if let Some(name) = self.generic_name_from_locator(locator) {
+                if let ExprKind::Name(name) = expr.kind() {
+                    if let Some(name) = self.generic_name_from_path(name) {
                         if generic_names.iter().any(|n| n == name) && !mapping.contains_key(name) {
                             mapping.insert(name.to_string(), concrete_value.clone());
                         }
@@ -863,10 +863,10 @@ fn qualify_enum_variant_pattern(pat: &mut Pattern, enum_ty: &TypeEnum) {
 
     match pat.kind_mut() {
         PatternKind::Variant(variant) => {
-            let ExprKind::Name(locator) = variant.name.kind() else {
+            let ExprKind::Name(name) = variant.name.kind() else {
                 return;
             };
-            let variant_name = match locator {
+            let variant_name = match name {
                 Name::Ident(ident) => ident.clone(),
                 Name::Path(path)
                     if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>

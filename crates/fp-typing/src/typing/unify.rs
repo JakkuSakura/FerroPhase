@@ -406,7 +406,7 @@ impl AstTypeInferencer {
         match ty {
             Ty::Expr(expr) => match expr.kind() {
                 ExprKind::Name(name) => {
-                    if let Some(key) = self.generic_name_from_locator(name) {
+                    if let Some(key) = self.generic_name_from_path(name) {
                         return self
                             .inner
                             .borrow()
@@ -445,7 +445,7 @@ impl AstTypeInferencer {
         }
     }
 
-    pub(crate) fn generic_name_from_locator<'a>(&self, name: &'a Name) -> Option<&'a str> {
+    pub(crate) fn generic_name_from_path<'a>(&self, name: &'a Name) -> Option<&'a str> {
         match name {
             Name::Ident(ident) => Some(ident.as_str()),
             Name::Path(path) if path.segments.len() == 1 => Some(path.segments[0].as_str()),
@@ -466,7 +466,7 @@ impl AstTypeInferencer {
         match ty {
             Ty::Expr(expr) => {
                 if let ExprKind::Name(name) = expr.kind() {
-                    if let Some(key) = self.generic_name_from_locator(name) {
+                    if let Some(key) = self.generic_name_from_path(name) {
                         if let Some(replacement) = mapping.get(key) {
                             return replacement.clone();
                         }
@@ -1633,12 +1633,12 @@ impl AstTypeInferencer {
                 }
                 // Handle path-like type expressions (e.g., i64, bool, usize, str).
                 if let ExprKind::Name(loc) = expr.kind() {
-                    if this.check_unimplemented_locator(loc) {
+                    if this.check_unimplemented_name(loc) {
                         return Ok(this.error_type_var());
                     }
-                    if let Some((key_var, value_var)) = this.hashmap_args_from_locator(loc).await? {
+                    if let Some((key_var, value_var)) = this.hashmap_args_from_name(loc).await? {
                         let map_var = this.fresh_type_var();
-                    if let Some(key) = this.resolve_locator_key(loc) {
+                    if let Some(key) = this.resolve_name_key(loc) {
                             if let Some(struct_ty) = this.lookup_struct(&key).await {
                                 this.bind(map_var, Ty::Struct(struct_ty));
                             } else if let Some(s) = this.typing_ctx.env_ctx.find_struct(&key) {
@@ -1673,7 +1673,7 @@ impl AstTypeInferencer {
                                     vec![Ty::infer_var(elem_var)],
                                 );
                                 let path = ParameterPath::new(PathPrefix::Plain, vec![segment]);
-                                this.bind(var, Ty::locator(Name::ParameterPath(path)));
+                                this.bind(var, Ty::name(Name::ParameterPath(path)));
                                 return Ok(var);
                             }
                             if segment.ident.as_str() == "Future"
@@ -1712,7 +1712,7 @@ impl AstTypeInferencer {
                                     concrete_args.push(concrete);
                                 }
                                 let mut handled = false;
-                                if let Some(key) = this.resolve_locator_key(loc) {
+                                if let Some(key) = this.resolve_name_key(loc) {
                                     let enum_ty = this.lookup_enum(&key).await;
                                     if let Some(enum_ty) = enum_ty {
                                         if enum_ty.generics_params.len() == concrete_args.len() {
@@ -1776,7 +1776,7 @@ impl AstTypeInferencer {
                             .unwrap_or_default(),
                         Name::Ident(ident) => ident.as_str().to_string(),
                     };
-                    let resolved = this.resolve_locator_key(loc);
+                    let resolved = this.resolve_name_key(loc);
                     if is_token_stream_name(&name) {
                         this.bind(var, Ty::TokenStream(TypeTokenStream));
                         return Ok(var);
@@ -1952,11 +1952,11 @@ impl AstTypeInferencer {
         result
     }
 
-    async fn hashmap_args_from_locator(
+    async fn hashmap_args_from_name(
         &self,
-        locator: &Name,
+        name: &Name,
     ) -> Result<Option<(TypeVarId, TypeVarId)>> {
-        let Name::ParameterPath(path) = locator else {
+        let Name::ParameterPath(path) = name else {
             return Ok(None);
         };
         let Some(segment) = path.segments.last() else {
@@ -2030,10 +2030,10 @@ fn is_token_stream_name(name: &str) -> bool {
 
 fn invoke_target_name(invoke: &ExprInvoke) -> Option<String> {
     match &invoke.target {
-        ExprInvokeTarget::Function(locator) => locator_tail_name(locator),
+        ExprInvokeTarget::Function(name) => name_tail(name),
         ExprInvokeTarget::Expr(expr) => {
-            if let ExprKind::Name(locator) = expr.kind() {
-                locator_tail_name(locator)
+            if let ExprKind::Name(name) = expr.kind() {
+                name_tail(name)
             } else {
                 None
             }
@@ -2041,8 +2041,8 @@ fn invoke_target_name(invoke: &ExprInvoke) -> Option<String> {
         ExprInvokeTarget::Type(ty) => match ty {
             Ty::Struct(struct_ty) => Some(struct_ty.name.as_str().to_string()),
             Ty::Expr(expr) => {
-                if let ExprKind::Name(locator) = expr.kind() {
-                    locator_tail_name(locator)
+                if let ExprKind::Name(name) = expr.kind() {
+                    name_tail(name)
                 } else {
                     None
                 }
@@ -2055,8 +2055,8 @@ fn invoke_target_name(invoke: &ExprInvoke) -> Option<String> {
     }
 }
 
-fn locator_tail_name(locator: &Name) -> Option<String> {
-    match locator {
+fn name_tail(name: &Name) -> Option<String> {
+    match name {
         Name::Ident(ident) => Some(ident.as_str().to_string()),
         Name::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string()),
         Name::ParameterPath(path) => path

@@ -420,7 +420,7 @@ impl PythonEmitter {
     fn render_expr(&mut self, expr: &Expr) -> Result<String> {
         match expr.kind() {
             ExprKind::Value(value) => Ok(self.render_value(value.as_ref())),
-            ExprKind::Name(locator) => Ok(self.render_locator(locator)),
+            ExprKind::Name(name) => Ok(self.render_name(name)),
             ExprKind::Invoke(invoke) => self.render_invoke(invoke),
             ExprKind::Select(select) => Ok(format!(
                 "{}.{}",
@@ -515,7 +515,7 @@ impl PythonEmitter {
 
     fn render_invoke(&mut self, invoke: &ExprInvoke) -> Result<String> {
         let target = match &invoke.target {
-            ExprInvokeTarget::Function(locator) => self.render_locator(locator),
+            ExprInvokeTarget::Function(name) => self.render_name(name),
             ExprInvokeTarget::Method(select) => format!(
                 "{}.{}",
                 self.render_expr(select.obj.as_ref())?,
@@ -681,8 +681,8 @@ impl PythonEmitter {
         template
     }
 
-    fn render_locator(&self, locator: &ast::Name) -> String {
-        locator
+    fn render_name(&self, name: &ast::Name) -> String {
+        name
             .to_string()
             .split("::")
             .map(|segment| segment.to_string())
@@ -841,7 +841,7 @@ impl PythonEmitter {
 
     fn extract_struct_name(&self, expr: &Expr) -> Option<String> {
         match expr.kind() {
-            ExprKind::Name(locator) => locator
+            ExprKind::Name(name) => name
                 .to_string()
                 .split("::")
                 .map(|segment| segment.to_string())

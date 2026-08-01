@@ -346,8 +346,8 @@ impl TypeLoweringContext {
         visited: &mut HashSet<String>,
     ) -> Option<Vec<StructuralField>> {
         match expr.kind() {
-            ExprKind::Name(locator) => {
-                if let Some(ident) = locator.as_ident() {
+            ExprKind::Name(name) => {
+                if let Some(ident) = name.as_ident() {
                     self.resolve_struct_fields_inner(ident.as_str(), visited)
                 } else {
                     None
@@ -782,7 +782,7 @@ fn is_option_ty(ty: &Ty) -> bool {
     match ty {
         Ty::Expr(expr) => match expr.kind() {
             ExprKind::Invoke(invoke) => match &invoke.target {
-                ExprInvokeTarget::Function(locator) => locator
+                ExprInvokeTarget::Function(name) => name
                     .as_ident()
                     .map(|ident| ident.as_str() == "option")
                     .unwrap_or(false),

@@ -864,7 +864,7 @@ fn write_decimal_value(
 fn resolve_ffi_ty(ty: &Ty) -> Option<Ty> {
     match ty {
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(locator) => match locator {
+            ExprKind::Name(name) => match name {
                 Name::Ident(ident) => match ident.as_str() {
                     "i128" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I128))),
                     "u128" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U128))),
@@ -895,7 +895,7 @@ fn resolve_ffi_ty(ty: &Ty) -> Option<Ty> {
 fn resolves_to_string(ty: &Ty) -> bool {
     match ty {
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(locator) => match locator {
+            ExprKind::Name(name) => match name {
                 Name::Path(path) => path.segments.last().map(|seg| seg.as_str()) == Some("str"),
                 Name::Ident(ident) => ident.as_str() == "str",
                 _ => false,
@@ -911,7 +911,7 @@ fn is_cstr_reference(ty: &Ty) -> bool {
     match ty {
         Ty::Reference(TypeReference { ty, .. }) => match ty.as_ref() {
             Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Name(locator) => match locator {
+                ExprKind::Name(name) => match name {
                     Name::Path(path) => path
                         .segments
                         .iter()

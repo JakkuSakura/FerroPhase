@@ -24,7 +24,7 @@ impl ExprInvokeTarget {
     pub fn expr(expr: Expr) -> Self {
         let (id, ty, span, kind) = expr.into_parts();
         match kind {
-            ExprKind::Name(locator) => Self::Function(locator),
+            ExprKind::Name(name) => Self::Function(name),
             ExprKind::Select(select) => Self::Method(select),
             ExprKind::Value(value) => Self::value(*value),
             other => Self::Expr(Expr::from_parts(id, ty, span, other).into()),
@@ -308,7 +308,7 @@ fn span_or(span: Span, fallback: Span) -> Span {
 impl ExprInvokeTarget {
     pub fn span(&self) -> Span {
         match self {
-            ExprInvokeTarget::Function(locator) => locator.span(),
+            ExprInvokeTarget::Function(name) => name.span(),
             ExprInvokeTarget::Type(ty) => ty.span(),
             ExprInvokeTarget::Method(select) => select.span(),
             ExprInvokeTarget::Closure(func) => func.span(),
@@ -876,8 +876,8 @@ fn parse_decimal(bytes: &[u8], mut idx: usize) -> Result<(Option<usize>, usize),
 
 /// Attempt to recognise canonical intrinsic calls inside a generic invoke expression.
 pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCall> {
-    let (kind, _locator) = match &invoke.target {
-        ExprInvokeTarget::Function(locator) => (detect_intrinsic_call(locator)?, locator),
+    let (kind, _name) = match &invoke.target {
+        ExprInvokeTarget::Function(name) => (detect_intrinsic_call(name)?, name),
         _ => return None,
     };
 
@@ -1096,12 +1096,12 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
     }
 }
 
-fn detect_intrinsic_call(locator: &Name) -> Option<IntrinsicCallKind> {
-    if let Some(kind) = crate::lang::lookup_lang_item_intrinsic(locator) {
+fn detect_intrinsic_call(name: &Name) -> Option<IntrinsicCallKind> {
+    if let Some(kind) = crate::lang::lookup_lang_item_intrinsic(name) {
         return Some(kind);
     }
 
-    match locator {
+    match name {
         Name::Ident(ident) => match ident.name.as_str() {
             "print" => Some(IntrinsicCallKind::Print),
             "println" => Some(IntrinsicCallKind::Println),

@@ -654,7 +654,7 @@ impl ScriptEmitter {
     fn render_expr(&mut self, expr: &Expr) -> Result<String> {
         match expr.kind() {
             ExprKind::Value(value) => Ok(render_js_value(value.as_ref())),
-            ExprKind::Name(locator) => Ok(self.render_locator(locator)),
+            ExprKind::Name(name) => Ok(self.render_name(name)),
             ExprKind::Invoke(invoke) => self.render_invoke(invoke),
             ExprKind::Select(select) => Ok(format!(
                 "{}.{}",
@@ -727,7 +727,7 @@ impl ScriptEmitter {
 
     fn render_invoke(&mut self, invoke: &ExprInvoke) -> Result<String> {
         let target = match &invoke.target {
-            ExprInvokeTarget::Function(locator) => self.render_locator(locator),
+            ExprInvokeTarget::Function(name) => self.render_name(name),
             ExprInvokeTarget::Method(select) => {
                 let obj = self.render_expr(select.obj.as_ref())?;
                 if select.field.name == "len" && invoke.args.is_empty() {
@@ -935,8 +935,8 @@ impl ScriptEmitter {
         Ok(template)
     }
 
-    fn render_locator(&self, locator: &Name) -> String {
-        locator
+    fn render_name(&self, name: &Name) -> String {
+        name
             .to_string()
             .split("::")
             .map(|segment| segment.to_string())
@@ -954,7 +954,7 @@ impl ScriptEmitter {
 
     fn extract_struct_name(&self, expr: &Expr) -> Option<String> {
         match expr.kind() {
-            ExprKind::Name(locator) => locator
+            ExprKind::Name(name) => name
                 .to_string()
                 .split("::")
                 .map(|segment| segment.to_string())
@@ -1091,11 +1091,11 @@ impl ScriptEmitter {
             Ty::Enum(enum_ty) => enum_ty.name.name.clone(),
             Ty::Reference(reference) => self.ts_type_from_ty(&reference.ty),
             Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Name(locator) => {
-                    if let Some(ident) = locator.as_ident() {
+                ExprKind::Name(name) => {
+                    if let Some(ident) = name.as_ident() {
                         map_ident_to_ts(ident.name.as_str())
                     } else {
-                        map_ident_to_ts(locator.to_string().split("::").last().unwrap_or("any"))
+                        map_ident_to_ts(name.to_string().split("::").last().unwrap_or("any"))
                     }
                 }
                 _ => "any".into(),

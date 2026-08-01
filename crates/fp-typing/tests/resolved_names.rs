@@ -81,3 +81,43 @@ fn type_inference_records_resolved_name_on_tast_expr() {
     assert_eq!(resolved.path, QualifiedPath::new(vec!["VALUE".to_string()]));
     assert!(matches!(resolved.namespace, ResolvedNameNamespace::Value));
 }
+
+#[test]
+fn type_inference_resolves_preloaded_cross_crate_enum_variant() {
+    let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new());
+    let dependency = workspace.begin_crate(
+        "dep",
+        fp_core::package::graph::PackageGraph::new(Vec::new()),
+    );
+    dependency
+        .borrow_mut()
+        .module_paths
+        .insert(QualifiedPath::new(vec!["dep".to_string()]));
+    dependency.borrow_mut().enum_defs.insert(
+        QualifiedPath::new(vec!["dep".to_string(), "Status".to_string()]),
+        TypeEnum {
+            name: Ident::new("Status"),
+            generics_params: Vec::new(),
+            repr: ReprOptions::default(),
+            variants: vec![EnumTypeVariant {
+                name: Ident::new("Ready"),
+                value: Ty::Unit(TypeUnit),
+                discriminant: None,
+            }],
+        },
+    );
+
+    let mut expr = Expr::name(Name::path(Path::new(
+        fp_core::module::path::PathPrefix::Plain,
+        vec![Ident::new("dep"), Ident::new("Status"), Ident::new("Ready")],
+    )));
+    let typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(workspace)));
+    typer.seed_workspace_graph();
+    fp_typing::block_on(typer.infer_expression(&mut expr))
+        .expect("cross-crate enum variant should resolve");
+
+    let Some(Ty::Enum(enum_ty)) = expr.ty() else {
+        panic!("expected a resolved enum variant type, got {:?}", expr.ty());
+    };
+    assert_eq!(enum_ty.name.as_str(), "Status");
+}

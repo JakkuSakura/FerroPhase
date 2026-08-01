@@ -375,7 +375,7 @@ fn is_hashmap_ty(ty: &ast::Ty) -> bool {
     match ty {
         ast::Ty::Struct(struct_ty) => struct_ty.name.as_str() == "HashMap",
         ast::Ty::Expr(expr) => match expr.kind() {
-            ast::ExprKind::Name(locator) => match locator {
+            ast::ExprKind::Name(name) => match name {
                 ast::Name::Ident(ident) => ident.as_str() == "HashMap",
                 ast::Name::Path(path) => path
                     .segments
@@ -433,14 +433,14 @@ fn build_hashmap_from_entries(
         ast::ExprIntrinsicContainer::VecElements { elements },
     ));
 
-    let locator = ast::Name::path(ast::Path::plain(vec![
+    let name = ast::Name::path(ast::Path::plain(vec![
         ast::Ident::new("std"),
         ast::Ident::new("collections"),
         ast::Ident::new("HashMap"),
         ast::Ident::new("from"),
     ]));
     let invoke = ast::ExprInvoke {
-        target: ast::ExprInvokeTarget::Function(locator),
+        target: ast::ExprInvokeTarget::Function(name),
         args: vec![vec_entries],
         kwargs: Vec::new(),
         span: Span::null(),

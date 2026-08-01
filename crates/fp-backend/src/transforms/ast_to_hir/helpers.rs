@@ -6,7 +6,7 @@ impl HirGenerator {
     fn resolved_name_to_hir_path(
         &mut self,
         resolved_name: &fp_typing::ResolvedName,
-        locator: &Name,
+        name: &Name,
         scope: PathResolutionScope,
     ) -> Result<Option<hir::Path>> {
         let resolution_scope = match resolved_name.namespace {
@@ -29,12 +29,12 @@ impl HirGenerator {
             return Ok(None);
         }
 
-        let locator_args = self.locator_segment_args(locator)?;
+        let name_args = self.name_segment_args(name)?;
         let offset = resolved_name
             .path
             .segments
             .len()
-            .saturating_sub(locator_args.len());
+            .saturating_sub(name_args.len());
         let segments = resolved_name
             .path
             .segments
@@ -42,7 +42,7 @@ impl HirGenerator {
             .enumerate()
             .map(|(idx, segment)| {
                 let args = if idx >= offset {
-                    locator_args[idx - offset].clone()
+                    name_args[idx - offset].clone()
                 } else {
                     None
                 };
@@ -56,8 +56,8 @@ impl HirGenerator {
         Ok(Some(hir::Path { segments, res }))
     }
 
-    fn locator_segment_args(&mut self, locator: &Name) -> Result<Vec<Option<hir::GenericArgs>>> {
-        match locator {
+    fn name_segment_args(&mut self, name: &Name) -> Result<Vec<Option<hir::GenericArgs>>> {
+        match name {
             Name::Ident(_) => Ok(vec![None]),
             Name::Path(path) => Ok(path.segments.iter().map(|_| None).collect()),
             Name::ParameterPath(path) => path
@@ -84,13 +84,13 @@ impl HirGenerator {
         Ok(hir::GenericArgs { args: hir_args })
     }
 
-    pub(super) fn locator_to_hir_path_with_scope(
+    pub(super) fn name_to_hir_path_with_scope(
         &mut self,
-        locator: &Name,
+        name: &Name,
         scope: PathResolutionScope,
     ) -> Result<hir::Path> {
-        // Build segments from the locator.
-        let (mut segments, mut path_prefix) = match locator {
+        // Build segments from the name.
+        let (mut segments, mut path_prefix) = match name {
             Name::Ident(ident) => (
                 vec![self.make_path_segment(&ident.name, None)],
                 PathPrefix::Plain,
@@ -442,15 +442,15 @@ impl HirGenerator {
         scope: PathResolutionScope,
     ) -> Result<hir::Path> {
         match expr.kind() {
-            ast::ExprKind::Name(locator) => {
+            ast::ExprKind::Name(name) => {
                 if let Some(resolved_name) = self.resolved_names.get(&expr.id()).cloned() {
                     if let Some(path) =
-                        self.resolved_name_to_hir_path(&resolved_name, locator, scope)?
+                        self.resolved_name_to_hir_path(&resolved_name, name, scope)?
                     {
                         return Ok(path);
                     }
                 }
-                self.locator_to_hir_path_with_scope(locator, scope)
+                self.name_to_hir_path_with_scope(name, scope)
             }
             ast::ExprKind::Select(select) => {
                 let mut base = self.ast_expr_to_hir_path(&select.obj, scope)?;
@@ -460,8 +460,8 @@ impl HirGenerator {
             }
             ast::ExprKind::Invoke(invoke) => {
                 let mut base = match &invoke.target {
-                    ast::ExprInvokeTarget::Function(locator) => {
-                        self.locator_to_hir_path_with_scope(locator, scope)?
+                    ast::ExprInvokeTarget::Function(name) => {
+                        self.name_to_hir_path_with_scope(name, scope)?
                     }
                     ast::ExprInvokeTarget::Expr(expr) => {
                         self.ast_expr_to_hir_path(expr.as_ref(), scope)?

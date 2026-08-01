@@ -263,36 +263,36 @@ impl AstTypeInferencer {
         module
     }
 
-    fn signature_module_path(&self, locator: &Name, sig_path: &QualifiedPath) -> QualifiedPath {
+    fn signature_module_path(&self, name: &Name, sig_path: &QualifiedPath) -> QualifiedPath {
         let sig_module = sig_path
             .parent_n(1)
             .unwrap_or_else(|| QualifiedPath::new(Vec::new()));
         let sig_module = self.normalize_signature_module_path(sig_module);
-        let locator_module = self
-            .resolve_locator_key(locator)
-            .or_else(|| self.fallback_locator_key(locator))
+        let name_module = self
+            .resolve_name_key(name)
+            .or_else(|| self.fallback_name_key(name))
             .and_then(|path| path.parent_n(1))
             .map(|path| self.normalize_signature_module_path(path));
 
-        let Some(locator_module) = locator_module else {
+        let Some(name_module) = name_module else {
             return sig_module;
         };
 
         if sig_module.is_empty() {
-            return locator_module;
+            return name_module;
         }
 
         let sig_head = sig_path
             .head()
             .map(|head| self.inner.borrow().root_modules.contains(head))
             .unwrap_or(false);
-        let locator_head = locator_module
+        let name_head = name_module
             .head()
             .map(|head| self.inner.borrow().root_modules.contains(head))
             .unwrap_or(false);
 
-        if !sig_head && locator_head {
-            return locator_module;
+        if !sig_head && name_head {
+            return name_module;
         }
 
         sig_module
@@ -510,8 +510,8 @@ impl AstTypeInferencer {
                         this.infer_value(value.as_ref()).await?
                     }
                 }
-                ExprKind::Name(locator) => {
-                    let (var, resolved_name) = this.lookup_locator_with_resolution(locator).await?;
+                ExprKind::Name(name) => {
+                    let (var, resolved_name) = this.lookup_name_with_resolution(name).await?;
                     if let Some(resolved_name) = resolved_name {
                         this.record_resolved_name(expr_id, resolved_name);
                     }
@@ -572,10 +572,10 @@ impl AstTypeInferencer {
                                 this.resolve_struct_literal(struct_expr).await?
                             }
                         }
-                    } else if let ExprKind::Name(locator) = struct_expr.name.kind() {
+                    } else if let ExprKind::Name(name) = struct_expr.name.kind() {
                         // Try resolving through the environment first for
                         // locally-defined type aliases (DefType).
-                        if let Some(var) = this.lookup_env_name(locator).await? {
+                        if let Some(var) = this.lookup_env_name(name).await? {
                             if let Ok(ty) = this.resolve_to_ty(var).await {
                                 if let Ty::Struct(ref struct_def) = ty {
                                     if let Some(struct_var) = this
@@ -1497,8 +1497,8 @@ impl AstTypeInferencer {
             return Ok(self.error_type_var());
         }
 
-        if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
-            if let Some(ident) = locator.as_ident() {
+        if let ExprInvokeTarget::Function(name) = &mut invoke.target {
+            if let Some(ident) = name.as_ident() {
                 if ident.as_str() == "printf" {
                     return self.infer_builtin_printf(invoke).await;
                 }
@@ -1517,18 +1517,18 @@ impl AstTypeInferencer {
 
         if matches!(invoke.target, ExprInvokeTarget::Function(_)) {
             if let Some((sig_path, sig)) = {
-                let locator = match &invoke.target {
-                    ExprInvokeTarget::Function(locator) => locator,
+                let name = match &invoke.target {
+                    ExprInvokeTarget::Function(name) => name,
                     _ => unreachable!(),
                 };
-                self.lookup_extern_function_signature_with_path(locator)
+                self.lookup_extern_function_signature_with_path(name)
             } {
                 let sig_module = {
-                    let locator = match &invoke.target {
-                        ExprInvokeTarget::Function(locator) => locator,
+                    let name = match &invoke.target {
+                        ExprInvokeTarget::Function(name) => name,
                         _ => unreachable!(),
                     };
-                    self.signature_module_path(locator, &sig_path)
+                    self.signature_module_path(name, &sig_path)
                 };
                 if !self.apply_kwargs_to_invoke(invoke, &sig) {
                     return Ok(self.error_type_var());
@@ -1583,16 +1583,16 @@ impl AstTypeInferencer {
                 return Ok(ret_var);
             }
             let resolved_sig = {
-                let locator = match &invoke.target {
-                    ExprInvokeTarget::Function(locator) => locator.clone(),
+                let name = match &invoke.target {
+                    ExprInvokeTarget::Function(name) => name.clone(),
                     _ => unreachable!(),
                 };
-                match self.lookup_function_signature_with_path(&locator).await {
+                match self.lookup_function_signature_with_path(&name).await {
                     Some(found) => Some(found),
-                    None => self.lookup_function_signature(&locator).map(|sig| {
+                    None => self.lookup_function_signature(&name).map(|sig| {
                         let sig_path = self
-                            .resolve_locator_key(&locator)
-                            .or_else(|| self.fallback_locator_key(&locator))
+                            .resolve_name_key(&name)
+                            .or_else(|| self.fallback_name_key(&name))
                             .unwrap_or_else(|| QualifiedPath::new(Vec::new()));
                         (sig_path, sig)
                     }),
@@ -1601,21 +1601,21 @@ impl AstTypeInferencer {
             if let Some((sig_path, sig)) = resolved_sig {
                 
                 let sig_module = {
-                    let locator = match &invoke.target {
-                        ExprInvokeTarget::Function(locator) => locator,
+                    let name = match &invoke.target {
+                        ExprInvokeTarget::Function(name) => name,
                         _ => unreachable!(),
                     };
-                    self.signature_module_path(locator, &sig_path)
+                    self.signature_module_path(name, &sig_path)
                 };
                 if !self.apply_kwargs_to_invoke(invoke, &sig) {
                     return Ok(self.error_type_var());
                 }
                 let generic_args = {
-                    let locator = match &invoke.target {
-                        ExprInvokeTarget::Function(locator) => locator,
+                    let name = match &invoke.target {
+                        ExprInvokeTarget::Function(name) => name,
                         _ => unreachable!(),
                     };
-                    Self::locator_generic_args(locator).map(|args| args.to_vec())
+                    Self::name_generic_args(name).map(|args| args.to_vec())
                 };
                 if generic_args.is_some() && sig.receiver.is_some() {
                     self.emit_error(
@@ -1711,15 +1711,15 @@ impl AstTypeInferencer {
             }
         }
 
-        let enum_ctor = if let ExprInvokeTarget::Function(locator) = &invoke.target {
-            self.enum_variant_from_locator(locator).await
+        let enum_ctor = if let ExprInvokeTarget::Function(name) = &invoke.target {
+            self.enum_variant_from_name(name).await
         } else {
             None
         };
 
         let func_var = match &mut invoke.target {
-            ExprInvokeTarget::Function(locator) => {
-                if let Some(ident) = locator.as_ident() {
+            ExprInvokeTarget::Function(name) => {
+                if let Some(ident) = name.as_ident() {
                     if ident.as_str() == "panic" {
                         if invoke.args.len() > 1 {
                             self.emit_error("panic expects at most one argument");
@@ -1730,10 +1730,10 @@ impl AstTypeInferencer {
                         return Ok(self.nothing_type_var());
                     }
                 }
-                if let Some(var) = self.lookup_associated_function(locator).await? {
+                if let Some(var) = self.lookup_associated_function(name).await? {
                     var
                 } else {
-                    let var = self.lookup_locator(locator).await?;
+                    let var = self.lookup_name(name).await?;
                     if let Ok(resolved) = self.resolve_to_ty(var).await {
                         if matches!(
                             resolved,
@@ -1741,7 +1741,7 @@ impl AstTypeInferencer {
                         ) {
                             self.emit_error(format!(
                                 "cannot invoke type {} as a function",
-                                locator
+                                name
                             ));
                             return Ok(self.error_type_var());
                         }
@@ -2004,8 +2004,8 @@ impl AstTypeInferencer {
             }
         };
 
-        if let ExprInvokeTarget::Function(locator) = &invoke.target {
-            if let Some(sig) = self.lookup_function_signature(locator) {
+        if let ExprInvokeTarget::Function(name) = &invoke.target {
+            if let Some(sig) = self.lookup_function_signature(name) {
                 if let Ok(fn_ty) = self.ty_from_function_signature(&sig) {
                     if let Ok(sig_var) = self.type_from_ast_ty(&fn_ty).await {
                         let _ = self.unify(func_var, sig_var).await;
@@ -2027,8 +2027,8 @@ impl AstTypeInferencer {
         Ok(func_info.ret)
     }
 
-    async fn enum_variant_from_locator(&self, locator: &Name) -> Option<(TypeEnum, EnumTypeVariant)> {
-        let Name::Path(path) = locator else {
+    async fn enum_variant_from_name(&self, name: &Name) -> Option<(TypeEnum, EnumTypeVariant)> {
+        let Name::Path(path) = name else {
             return None;
         };
         if path.segments.len() < 2 {
@@ -2370,26 +2370,26 @@ impl AstTypeInferencer {
     }
 
     async fn try_infer_collection_call(&self, invoke: &mut ExprInvoke) -> Result<Option<TypeVarId>> {
-        let locator = match &invoke.target {
-            ExprInvokeTarget::Function(locator) => locator,
+        let name = match &invoke.target {
+            ExprInvokeTarget::Function(name) => name,
             _ => return Ok(None),
         };
-        if Self::locator_matches_suffix(locator, &["Vec", "new"]) {
+        if Self::name_matches_suffix(name, &["Vec", "new"]) {
             return self.infer_vec_new(invoke).await.map(Some);
         }
-        if Self::locator_matches_suffix(locator, &["Vec", "with_capacity"]) {
+        if Self::name_matches_suffix(name, &["Vec", "with_capacity"]) {
             return self.infer_vec_with_capacity(invoke).await.map(Some);
         }
-        if Self::locator_matches_suffix(locator, &["Vec", "from"]) {
+        if Self::name_matches_suffix(name, &["Vec", "from"]) {
             return self.infer_vec_from(invoke).await.map(Some);
         }
-        if Self::locator_matches_suffix(locator, &["HashMap", "new"]) {
+        if Self::name_matches_suffix(name, &["HashMap", "new"]) {
             return self.infer_hashmap_new(invoke).await.map(Some);
         }
-        if Self::locator_matches_suffix(locator, &["HashMap", "with_capacity"]) {
+        if Self::name_matches_suffix(name, &["HashMap", "with_capacity"]) {
             return self.infer_hashmap_with_capacity(invoke).await.map(Some);
         }
-        if Self::locator_matches_suffix(locator, &["HashMap", "from"]) {
+        if Self::name_matches_suffix(name, &["HashMap", "from"]) {
             return self.infer_hashmap_from(invoke).await.map(Some);
         }
         Ok(None)
@@ -2569,8 +2569,8 @@ impl AstTypeInferencer {
         }
     }
 
-    fn locator_matches_suffix(locator: &Name, suffix: &[&str]) -> bool {
-        let segments = Self::locator_segments(locator);
+    fn name_matches_suffix(name: &Name, suffix: &[&str]) -> bool {
+        let segments = Self::name_segments(name);
         if segments.len() < suffix.len() {
             return false;
         }
@@ -2581,8 +2581,8 @@ impl AstTypeInferencer {
             .all(|(segment, expected)| segment == expected)
     }
 
-    fn locator_segments(locator: &Name) -> Vec<String> {
-        match locator {
+    fn name_segments(name: &Name) -> Vec<String> {
+        match name {
             Name::Ident(ident) => vec![ident.as_str().to_string()],
             Name::Path(path) => path
                 .segments
@@ -2597,8 +2597,8 @@ impl AstTypeInferencer {
         }
     }
 
-    fn locator_generic_args(locator: &Name) -> Option<&[Ty]> {
-        let Name::ParameterPath(path) = locator else {
+    fn name_generic_args(name: &Name) -> Option<&[Ty]> {
+        let Name::ParameterPath(path) = name else {
             return None;
         };
         let segment = path
@@ -2969,8 +2969,8 @@ impl AstTypeInferencer {
                 this.bind_tuple_term(tuple_var, element_vars.clone());
 
                 // Try to resolve as an enum variant: `Enum::Variant(...)`.
-                let locator = &tuple_struct.name;
-                if let Name::Path(path) = locator {
+                let name = &tuple_struct.name;
+                if let Name::Path(path) = name {
                     if path.segments.len() >= 2 {
                         let variant_name = path.segments[path.segments.len() - 1].as_str();
                         let enum_segments = path
@@ -3054,8 +3054,8 @@ impl AstTypeInferencer {
             PatternKind::Variant(variant) => {
                 // Enum variant patterns (unit and struct-like) and literal patterns.
                 match variant.name.kind() {
-                    ExprKind::Name(locator) => {
-                        if let Name::Path(path) = locator {
+                    ExprKind::Name(name) => {
+                        if let Name::Path(path) = name {
                             if path.segments.len() >= 2 {
                                 let variant_name = path.segments[path.segments.len() - 1].as_str();
                                 let enum_segments = path
@@ -3172,8 +3172,8 @@ impl AstTypeInferencer {
                         // Struct patterns are lowered as `PatternKind::Variant` with a
                         // single-segment path and structural payload. Bind fields against
                         // known struct definitions so identifiers enter the environment.
-                        let resolved = this.resolve_locator_key(locator);
-                        let struct_name = resolved.or_else(|| match locator {
+                        let resolved = this.resolve_name_key(name);
+                        let struct_name = resolved.or_else(|| match name {
                             Name::Path(path)
                                 if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
                             {
@@ -3762,7 +3762,7 @@ impl AstTypeInferencer {
         struct_expr: &mut ExprStruct,
     ) -> Result<TypeVarId> {
         let resolved_name = match struct_expr.name.kind() {
-            ExprKind::Name(locator) => self.resolve_locator_key(locator),
+            ExprKind::Name(name) => self.resolve_name_key(name),
             _ => None,
         };
         let struct_name = match resolved_name
@@ -3775,12 +3775,12 @@ impl AstTypeInferencer {
                 return Ok(self.error_type_var());
             }
         };
-        if let ExprKind::Name(locator) = struct_expr.name.kind() {
-            if self.check_unimplemented_locator(locator) {
+        if let ExprKind::Name(name) = struct_expr.name.kind() {
+            if self.check_unimplemented_name(name) {
                 return Ok(self.error_type_var());
             }
         } else if let Some(tail) = struct_name.tail() {
-            if self.check_unimplemented_locator(&Name::Ident(Ident::new(tail.to_string()))) {
+            if self.check_unimplemented_name(&Name::Ident(Ident::new(tail.to_string()))) {
                 return Ok(self.error_type_var());
             }
         }
@@ -3938,12 +3938,12 @@ impl AstTypeInferencer {
             Ty::Structural(structural) => Some(structural.fields.clone()),
             Ty::Struct(struct_ty) => Some(struct_ty.fields.clone()),
             Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Name(locator) => self
-                    .resolve_locator_key(locator)
+                ExprKind::Name(name) => self
+                    .resolve_name_key(name)
                     .as_ref()
                     .and_then(|key| self.own_struct_defs().get(key).cloned())
                     .or_else(|| {
-                        locator.as_ident().and_then(|ident| {
+                        name.as_ident().and_then(|ident| {
                             self.own_struct_defs()
                                 .get(&QualifiedPath::new(vec![ident.as_str().to_string()]))
                                 .cloned()
@@ -3980,8 +3980,8 @@ impl AstTypeInferencer {
         Ok(Some(var))
     }
 
-    async fn lookup_env_name(&self, locator: &Name) -> Result<Option<TypeVarId>> {
-        let key = locator.to_string();
+    async fn lookup_env_name(&self, name: &Name) -> Result<Option<TypeVarId>> {
+        let key = name.to_string();
         let mut poly_ty: Option<Ty> = None;
         let env = self.inner.borrow().env.clone();
         for scope in env.iter().rev() {

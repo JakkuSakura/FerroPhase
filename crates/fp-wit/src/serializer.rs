@@ -186,7 +186,7 @@ impl WitEmitter {
                     self.interface_packages
                         .entry(interface_name.clone())
                         .or_insert_with(|| package.clone());
-                    let type_name = locator_to_ident_from_expr(&impl_block.self_ty)
+                    let type_name = name_to_ident_from_expr(&impl_block.self_ty)
                         .map(|ident| sanitize_type_identifier(ident.as_str()))
                         .unwrap_or_else(|| "self".to_string());
                     let receiver = ReceiverContext {
@@ -1177,15 +1177,15 @@ fn collect_type_references(ty: &Ty, out: &mut Vec<(String, String)>) {
 
 fn collect_type_references_expr(expr: &Expr, out: &mut Vec<(String, String)>) {
     match expr.kind() {
-        ExprKind::Name(locator) => {
-            if let Some((namespace, name)) = locator_namespace_and_name(locator) {
+        ExprKind::Name(name) => {
+            if let Some((namespace, name)) = name_namespace_and_name(name) {
                 out.push((namespace, name));
             }
         }
         ExprKind::Invoke(invoke) => {
             match &invoke.target {
-                ExprInvokeTarget::Function(locator) => {
-                    if let Some((namespace, name)) = locator_namespace_and_name(locator) {
+                ExprInvokeTarget::Function(name) => {
+                    if let Some((namespace, name)) = name_namespace_and_name(name) {
                         out.push((namespace, name));
                     }
                 }
@@ -1205,8 +1205,8 @@ fn collect_type_references_expr(expr: &Expr, out: &mut Vec<(String, String)>) {
     }
 }
 
-fn locator_namespace_and_name(locator: &Name) -> Option<(String, String)> {
-    match locator {
+fn name_namespace_and_name(name: &Name) -> Option<(String, String)> {
+    match name {
         Name::Path(path) => {
             if path.segments.is_empty() {
                 return None;
@@ -1405,24 +1405,24 @@ fn impl_interface_name(parent: Option<&str>, impl_block: &ItemImpl) -> Option<St
     }
 
     let target = match impl_block.self_ty.kind() {
-        ExprKind::Name(locator) => locator_to_ident(locator).cloned(),
+        ExprKind::Name(name) => name_to_ident(name).cloned(),
         _ => None,
     }?;
 
     Some(interface_name(parent, &target))
 }
 
-fn locator_to_ident(locator: &Name) -> Option<&Ident> {
-    match locator {
+fn name_to_ident(name: &Name) -> Option<&Ident> {
+    match name {
         Name::Ident(ident) => Some(ident),
         Name::Path(path) => path.segments.last(),
         _ => None,
     }
 }
 
-fn locator_to_ident_from_expr(expr: &Expr) -> Option<&Ident> {
+fn name_to_ident_from_expr(expr: &Expr) -> Option<&Ident> {
     match expr.kind() {
-        ExprKind::Name(locator) => locator_to_ident(locator),
+        ExprKind::Name(name) => name_to_ident(name),
         _ => None,
     }
 }
@@ -1500,14 +1500,14 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
 
 fn expr_to_wit_type(expr: &Expr, self_name: Option<&str>) -> Option<String> {
     match expr.kind() {
-        ExprKind::Name(locator) => locator_to_wit_type(locator, self_name),
+        ExprKind::Name(name) => name_to_wit_type(name, self_name),
         ExprKind::Value(value) => match value.as_ref() {
             Value::Type(ty) => Some(ty_to_wit_with_self(ty, self_name)),
             _ => None,
         },
         ExprKind::Invoke(invoke) => {
             let base = match &invoke.target {
-                ExprInvokeTarget::Function(locator) => locator_to_wit_type(locator, self_name),
+                ExprInvokeTarget::Function(name) => name_to_wit_type(name, self_name),
                 ExprInvokeTarget::Type(ty) => Some(ty_to_wit_with_self(ty, self_name)),
                 ExprInvokeTarget::Expr(inner) => expr_to_wit_type(inner, self_name),
                 _ => None,
@@ -1532,8 +1532,8 @@ fn expr_to_wit_type(expr: &Expr, self_name: Option<&str>) -> Option<String> {
     }
 }
 
-fn locator_to_wit_type(locator: &Name, self_name: Option<&str>) -> Option<String> {
-    match locator {
+fn name_to_wit_type(name: &Name, self_name: Option<&str>) -> Option<String> {
+    match name {
         Name::Ident(ident) if ident.as_str() == "Self" => {
             self_name.map(|name| sanitize_identifier(name))
         }

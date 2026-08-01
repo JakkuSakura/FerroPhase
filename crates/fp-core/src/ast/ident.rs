@@ -277,7 +277,7 @@ impl ParameterPath {
     }
 }
 
-/// A locator can be an identifier, a path, or a parameterized path
+/// A name can be an identifier, a path, or a parameterized path
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub enum Name {
     Ident(Ident),

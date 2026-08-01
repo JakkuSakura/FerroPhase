@@ -306,7 +306,7 @@ fn lower_func_call(call: &FuncCall) -> CoreResult<Expr> {
         ));
     }
 
-    let locator = func_name_to_locator(&call.name);
+    let name = func_name_to_ast_name(&call.name);
     let args = call
         .args
         .iter()
@@ -315,13 +315,13 @@ fn lower_func_call(call: &FuncCall) -> CoreResult<Expr> {
 
     Ok(Expr::new(ExprKind::Invoke(ExprInvoke {
         span: Span::null(),
-        target: ExprInvokeTarget::Function(locator),
+        target: ExprInvokeTarget::Function(name),
         args,
         kwargs: Vec::new(),
     })))
 }
 
-fn func_name_to_locator(name: &FuncName) -> Name {
+fn func_name_to_ast_name(name: &FuncName) -> Name {
     let mut segments = Vec::new();
     for namespace in &name.namespace {
         segments.push(Ident::new(namespace.as_str()));
@@ -591,8 +591,8 @@ fn peel_traversal(expr: &Expr, operators: &mut Vec<TraversalOperator>) -> CoreRe
 fn expr_to_hcl_expression_base(expr: &Expr) -> CoreResult<Expression> {
     match expr.kind() {
         ExprKind::Value(value) => value_to_hcl_expression_from_value(value),
-        ExprKind::Name(locator) => {
-            let name = locator.to_string();
+        ExprKind::Name(name) => {
+            let name = name.to_string();
             let var = hcl::expr::Variable::new(name.as_str())
                 .map_err(|err| CoreError::from(err.to_string()))?;
             Ok(Expression::Variable(var))
@@ -650,8 +650,8 @@ fn expr_invoke_to_hcl_expression(call: &ExprInvoke) -> CoreResult<Expression> {
         ));
     }
 
-    let locator = match &call.target {
-        ExprInvokeTarget::Function(locator) => locator,
+    let name = match &call.target {
+        ExprInvokeTarget::Function(name) => name,
         _ => {
             return Err(CoreError::from(
                 "hcl serialization only supports function call targets",
@@ -659,7 +659,7 @@ fn expr_invoke_to_hcl_expression(call: &ExprInvoke) -> CoreResult<Expression> {
         }
     };
 
-    let func_name = locator_to_func_name(locator)?;
+    let func_name = name_to_func_name(name)?;
     let args = call
         .args
         .iter()
@@ -673,8 +673,8 @@ fn expr_invoke_to_hcl_expression(call: &ExprInvoke) -> CoreResult<Expression> {
     })))
 }
 
-fn locator_to_func_name(locator: &Name) -> CoreResult<FuncName> {
-    let path = locator.to_path();
+fn name_to_func_name(name: &Name) -> CoreResult<FuncName> {
+    let path = name.to_path();
     let mut segments = path.segments.iter();
     let first = segments
         .next()
