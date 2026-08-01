@@ -91,7 +91,7 @@ pub struct PackageDescriptor {
 pub mod graph;
 pub mod provider;
 
-use crate::ast::{FunctionSignature, Item, TypeEnum, TypeStruct};
+use crate::ast::{FunctionSignature, Item, ItemId, TypeEnum, TypeStruct};
 use crate::lir::LirCompileUnit;
 use crate::module::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
@@ -111,6 +111,17 @@ pub struct PackageCrate {
     pub struct_defs: HashMap<QualifiedPath, TypeStruct>,
     pub enum_defs: HashMap<QualifiedPath, TypeEnum>,
     pub function_sigs: HashMap<QualifiedPath, FunctionSignature>,
+    /// The `ItemId` (see `ast::item::ItemId`'s doc comment) of the
+    /// `ItemDefFunction` node each locally-defined `function_sigs` entry
+    /// was registered from -- lets a later pass (generic monomorphization)
+    /// find that exact AST node again directly, instead of re-deriving a
+    /// location from the `QualifiedPath` key (which is a qualification
+    /// convention, not a record of real module nesting, and doesn't
+    /// generally correspond to a walkable path in a stored `File`). Not
+    /// merged into `FunctionSignature` itself: that type is also
+    /// constructed for synthetic/extern/builtin signatures with no
+    /// backing `Item` at all.
+    pub function_item_ids: HashMap<QualifiedPath, ItemId>,
     pub trait_defs: HashSet<QualifiedPath>,
 
     /// All known module paths within this crate.
@@ -140,6 +151,7 @@ impl PackageCrate {
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
             function_sigs: HashMap::new(),
+            function_item_ids: HashMap::new(),
             trait_defs: HashSet::new(),
             module_paths,
             lir_units: Vec::new(),

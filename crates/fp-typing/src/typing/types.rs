@@ -58,10 +58,22 @@ pub struct TypingOutcome {
     pub cross_crate_struct_refs: Vec<QualifiedPath>,
 }
 
+pub type ItemId = fp_core::ast::ItemId;
+
 /// A generic function invocation whose concrete type arguments have been resolved
 /// and are ready for monomorphization (specialization).
 #[derive(Debug, Clone)]
 pub struct GenericMonorph {
+    /// Stable identity of the `ItemDefFunction` node being specialized (see
+    /// `fp_core::ast::ItemId`'s doc comment) -- this, not `function_path`, is
+    /// what a later pass (`CompilerDriver::enqueue_generic`) uses to find the
+    /// function again in the stored typed AST. `function_path` is a
+    /// qualification convention (prefixed by whatever module/compile-unit
+    /// context was active when the signature was registered) and doesn't
+    /// generally correspond to real nested-module structure in that AST, so
+    /// it's kept only for the specialized function's display name and the
+    /// dedup key, not for re-locating the original definition.
+    pub item_id: ItemId,
     /// Qualified path of the generic function being called
     pub function_path: QualifiedPath,
     /// Names of the generic parameters (in definition order)
@@ -71,8 +83,13 @@ pub struct GenericMonorph {
 }
 
 impl GenericMonorph {
-    pub fn new(function_path: QualifiedPath, generic_params: Vec<String>, concrete_types: Vec<Ty>) -> Self {
-        Self { function_path, generic_params, concrete_types }
+    pub fn new(
+        item_id: ItemId,
+        function_path: QualifiedPath,
+        generic_params: Vec<String>,
+        concrete_types: Vec<Ty>,
+    ) -> Self {
+        Self { item_id, function_path, generic_params, concrete_types }
     }
 }
 

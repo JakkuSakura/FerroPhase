@@ -9643,9 +9643,29 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
+    /// A best-effort *guess* at an un-annotated local's type from its init
+    /// expression, used only to pre-declare the MIR local before the RHS
+    /// itself is lowered (`lower_assignment` fills in/refines the real type
+    /// once it actually lowers the init expression). `infer_initializer_ty`
+    /// only recognizes a handful of simple shapes (literals, if/else,
+    /// block tails, ...) and returns `None` for anything else -- notably
+    /// function calls, whose return type it can't know without lowering the
+    /// callee. `None` must not become `Tuple([])`/unit here: that's a
+    /// specific, false claim ("this local's type is unit"), not "unknown" --
+    /// and it leaks downstream. In particular, a generic call's
+    /// `destination` place feeds this pre-declared type into
+    /// `ensure_function_specialization`'s generic-parameter inference as
+    /// the call's "expected return type"; a bogus `unit` there collides
+    /// with whatever the call's arguments actually infer the generic
+    /// parameter to be, hard-failing with "conflicting generic inference"
+    /// on essentially any generic function call bound to a plain
+    /// `let x = generic_call(...)`. `TyKind::Infer` is the existing,
+    /// already-handled-everywhere convention for "not yet known" (see the
+    /// `matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_))` checks
+    /// throughout this module).
     fn implicit_local_init_ty(&self, expr: &hir::Expr) -> Ty {
         self.infer_initializer_ty(expr).unwrap_or_else(|| Ty {
-            kind: TyKind::Tuple(Vec::new()),
+            kind: TyKind::Infer(mir::ty::InferTy::FreshTy(0)),
         })
     }
 
@@ -12642,7 +12662,23 @@ impl<'a> BodyBuilder<'a> {
                                     });
                                 }
                             }
-                            if needs_fallback {
+                            // `self.function` is *this* body's own function (see
+                            // `BodyBuilder::function`) -- using its return type
+                            // as a stand-in for the callee's expected return
+                            // only makes sense when this call is itself in tail
+                            // position (its result becomes this function's own
+                            // return value), which is exactly the `is_result_ctor`
+                            // case this fallback was written for (`Ok(x)`/`Err(x)`
+                            // constructed as the tail expression of a function
+                            // that itself returns `Result<T, E>`). Applying it to
+                            // an arbitrary generic call (e.g. a plain
+                            // `let r = identity(10);`) substitutes a completely
+                            // unrelated function's return type -- observed
+                            // hard-failing generic calls with "conflicting
+                            // generic inference" (`T` inferred as the argument's
+                            // real type from the call site, vs `T` clobbered by
+                            // this function's own unrelated return type).
+                            if needs_fallback && is_result_ctor {
                                 let fallback = self.lower_type_expr(&self.function.sig.output);
                                 if !self.lowering.has_unresolved_ty(&fallback) {
                                     fallback_expected_return = Some(fallback.clone());

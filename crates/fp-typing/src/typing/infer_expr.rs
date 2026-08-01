@@ -2276,11 +2276,22 @@ impl AstTypeInferencer {
                 }
             }
             if all_resolved && !param_names.is_empty() {
-                self.inner.borrow_mut().pending_generics.push(GenericMonorph::new(
-                    sig_path.clone(),
-                    param_names,
-                    concrete_types,
-                ));
+                // Only a locally-defined function (registered in
+                // `own_function_item_ids` alongside its `own_function_sigs`
+                // entry -- see that map's doc comment) has an `Item` this
+                // compile unit's own typed AST can find again for
+                // specialization; a cross-crate/workspace signature
+                // (resolved via `env_ctx.find_function_sig`) has no such
+                // entry, and monomorphizing it isn't something this
+                // mechanism supports.
+                if let Some(item_id) = self.own_function_item_ids().get(sig_path).copied() {
+                    self.inner.borrow_mut().pending_generics.push(GenericMonorph::new(
+                        item_id,
+                        sig_path.clone(),
+                        param_names,
+                        concrete_types,
+                    ));
+                }
             }
 
             Ok(ret_var)

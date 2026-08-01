@@ -705,6 +705,7 @@ impl CompilerDriver {
                 continue;
             }
             let generic = GenericWorkRequest::new(
+                monomorph.item_id,
                 fqp,
                 monomorph.generic_params.clone(),
                 monomorph.concrete_types.clone(),
@@ -761,7 +762,7 @@ impl CompilerDriver {
 
         let typed_ast = self.state.typed_ast(typed_ast_id)?;
         let function_path = generic.path.path();
-        let mut func_item = Self::find_function_def(typed_ast, function_path)
+        let mut func_item = Self::find_item_by_id(&typed_ast.items, generic.item_id)
             .ok_or_else(|| CompilerDriverError::UnsupportedWork(format!(
                 "generic function not found: {}", function_path.to_key()
             )))?;
@@ -815,44 +816,40 @@ impl CompilerDriver {
         format!("{}#<{}>", path.to_key(), types_str.join(", "))
     }
 
-    fn find_function_def(file: &File, path: &QualifiedPath) -> Option<Item> {
-        let key = path.to_key();
-        let segments: Vec<&str> = key.split("::").collect();
-        for item in &file.items {
-            if let Some(found) = Self::find_in_items(item, &segments, 0) {
-                return Some(found);
+    /// Finds the `Item` with this exact stable identity (see
+    /// `fp_core::ast::ItemId`'s doc comment) within `items`, recursing into
+    /// `Module`/`Impl` bodies. Unlike a path-based search, this is a plain
+    /// equality check -- it doesn't need `items`' nesting to match any
+    /// particular qualification convention, because `ItemId` isn't derived
+    /// from one: it's assigned once, at the node's construction, by
+    /// `Item::new`/`Item::with_ty`.
+    fn find_item_by_id(items: &[Item], target: fp_core::ast::ItemId) -> Option<Item> {
+        for item in items {
+            if item.id() == target {
+                return Some(item.clone());
+            }
+            let found = match item.kind() {
+                ItemKind::Module(module) => Self::find_item_by_id(&module.items, target),
+                ItemKind::Impl(impl_block) => Self::find_item_by_id(&impl_block.items, target),
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
             }
         }
         None
     }
 
-    fn find_in_items(item: &Item, segments: &[&str], idx: usize) -> Option<Item> {
-        if idx >= segments.len() {
-            return None;
-        }
-        let target = segments[idx];
-        match item.kind() {
-            ItemKind::DefFunction(def) => {
-                if def.name.as_str() == target && idx == segments.len() - 1 {
-                    return Some(item.clone());
-                }
-                None
-            }
-            ItemKind::Module(module) => {
-                if module.name.as_str() == target {
-                    for child in &module.items {
-                        if let Some(found) = Self::find_in_items(child, segments, idx + 1) {
-                            return Some(found);
-                        }
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    fn substitute_in_ty(ty: &mut Ty, _param_names: &[String], concrete_types: &[Ty]) {
+    /// `param_names`/`concrete_types` are parallel (same index means the
+    /// same generic parameter). A user-written `fn f<T>(x: T) -> T`'s
+    /// declared parameter/return types are parsed as a bare name reference
+    /// (`Ty::Expr(Expr::ident("T"))`, matched below by name) -- `Ty::GenericVar`
+    /// is a *different* representation, produced only by this crate's own
+    /// let-polymorphism scheme machinery (`build_generalized_ty` in
+    /// fp-typing), not by parsing. Both are handled here since either can
+    /// appear (a scheme-generalized type may itself reference a
+    /// user-written generic parameter's declared type elsewhere).
+    fn substitute_in_ty(ty: &mut Ty, param_names: &[String], concrete_types: &[Ty]) {
         match ty {
             Ty::GenericVar(gv) => {
                 let idx = gv.index as usize;
@@ -860,29 +857,40 @@ impl CompilerDriver {
                     *ty = concrete_types[idx].clone();
                 }
             }
+            Ty::Expr(expr) => {
+                if let ExprKind::Name(locator) = expr.kind() {
+                    if let Some(name) = Self::simple_name_key(locator) {
+                        if let Some(idx) = param_names.iter().position(|p| *p == name) {
+                            if let Some(concrete) = concrete_types.get(idx) {
+                                *ty = concrete.clone();
+                            }
+                        }
+                    }
+                }
+            }
             Ty::Function(f) => {
                 for param in &mut f.params {
-                    Self::substitute_in_ty(param, _param_names, concrete_types);
+                    Self::substitute_in_ty(param, param_names, concrete_types);
                 }
                 if let Some(ret_ty) = &mut f.ret_ty {
-                    Self::substitute_in_ty(ret_ty, _param_names, concrete_types);
+                    Self::substitute_in_ty(ret_ty, param_names, concrete_types);
                 }
             }
             Ty::Reference(r) => {
-                Self::substitute_in_ty(&mut *r.ty, _param_names, concrete_types);
+                Self::substitute_in_ty(&mut *r.ty, param_names, concrete_types);
             }
             Ty::Slice(s) => {
-                Self::substitute_in_ty(&mut *s.elem, _param_names, concrete_types);
+                Self::substitute_in_ty(&mut *s.elem, param_names, concrete_types);
             }
             Ty::Array(a) => {
-                Self::substitute_in_ty(&mut *a.elem, _param_names, concrete_types);
+                Self::substitute_in_ty(&mut *a.elem, param_names, concrete_types);
             }
             Ty::Vec(v) => {
-                Self::substitute_in_ty(&mut *v.ty, _param_names, concrete_types);
+                Self::substitute_in_ty(&mut *v.ty, param_names, concrete_types);
             }
             Ty::Tuple(t) => {
                 for ty in &mut t.types {
-                    Self::substitute_in_ty(ty, _param_names, concrete_types);
+                    Self::substitute_in_ty(ty, param_names, concrete_types);
                 }
             }
             _ => {}
@@ -1834,6 +1842,62 @@ fn calculate() {
     enum ExampleResult {
         Completed { lowered: usize, executed: usize },
         TypedLooping { followups: usize },
+    }
+
+    /// Regression test for the generic-monomorphization identity fix: a
+    /// generic function that's actually *called* (not just declared --
+    /// `compile_unit_native_submits_enqueue_for_generic` above never calls
+    /// `id`, so it never exercised `enqueue_generic`'s function lookup at
+    /// all) must specialize successfully end to end through the real
+    /// driver, rather than failing with "generic function not found" (the
+    /// old path-based lookup treated the compile unit's own synthetic
+    /// identity prefix as if it were real `mod` nesting in the file).
+    #[test]
+    fn called_generic_function_specializes_end_to_end() {
+        let source = r#"
+fn identity<T>(a: T) -> T {
+    a
+}
+
+fn main() {
+    let r = identity(10);
+}
+"#;
+        let fe = fp_lang::FerroFrontend::new();
+        let result = fe
+            .parse_file(source, std::path::Path::new("generic_call.fp"))
+            .expect("parse generic-call source");
+        let ast_node = result.ast;
+
+        let mut workspace = fp_core::workspace::WorkspaceContext::new();
+        workspace.register_provider(
+            "std",
+            std::sync::Arc::new(fp_lang::provider::EmbeddedStdPackageProvider),
+        );
+        let mut driver = CompilerDriver::new();
+        driver.state.typing_ctx =
+            std::rc::Rc::new(fp_typing::TypingContext::new(std::rc::Rc::new(workspace)));
+        let ast_id = AstId::new("ast:test::generic_call");
+        driver.state.insert_ast(ast_id.clone(), ast_node);
+        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
+            ast: ast_id,
+            path: FullyQualifiedPath::from_segments(vec![
+                "test".to_string(),
+                "generic_call".to_string(),
+            ]),
+        });
+
+        let mut steps = 0;
+        while let Some(_) = driver.run_next().expect("driver should not error") {
+            steps += 1;
+            assert!(steps <= 50, "driver loop should not run forever");
+        }
+
+        assert_eq!(
+            driver.state.generic_instantiations.len(),
+            1,
+            "identity::<i64> should have been specialized exactly once"
+        );
     }
 
     fn compile_example_file(

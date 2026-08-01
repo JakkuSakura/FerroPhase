@@ -865,6 +865,7 @@ impl AstTypeInferencer {
                 (TypeVarKind::Unbound { .. }, TypeVarKind::Unbound { .. }) => {
                     this.inner.borrow_mut().type_vars[a_root].kind = TypeVarKind::Link(b_root);
                     this.merge_trait_bounds_into(b_root, a_root, true);
+                    this.merge_generic_identity_into(b_root, a_root);
                     Ok(())
                 }
                 (TypeVarKind::Unbound { .. }, TypeVarKind::Bound(ty)) => {
@@ -934,6 +935,24 @@ impl AstTypeInferencer {
             }
         } else {
             inner.generic_trait_bounds.insert(target, bounds);
+        }
+    }
+
+    /// When two still-`Unbound` vars merge, `unify` always links `source`
+    /// (the `a` side) into `target` (the surviving `b` root) -- regardless
+    /// of which one happens to be a registered generic parameter's own var
+    /// (see `register_generic_param`). Without this, whether a generic
+    /// parameter's identity survives the merge would depend on which side
+    /// of a given `unify` call it happened to be passed as, which isn't a
+    /// guaranteed convention anywhere it's called from. Propagating here,
+    /// at the one place vars actually merge, makes it survive regardless.
+    fn merge_generic_identity_into(&self, target: TypeVarId, source: TypeVarId) {
+        let mut inner = self.inner.borrow_mut();
+        if inner.generic_type_vars.contains_key(&target) {
+            return;
+        }
+        if let Some(name) = inner.generic_type_vars.remove(&source) {
+            inner.generic_type_vars.insert(target, name);
         }
     }
 
@@ -1264,7 +1283,19 @@ impl AstTypeInferencer {
             let kind = this.inner.borrow().type_vars[root].kind.clone();
             match kind {
                 TypeVarKind::Unbound { .. } => {
-                    Err(this.error_with_current_span("unresolved type variable"))
+                    // A registered generic parameter's own var (see
+                    // `register_generic_param`) is *supposed* to stay
+                    // Unbound -- it's genuinely abstract until a call site
+                    // instantiates it -- so resolving it while still typing
+                    // the generic definition itself (e.g. its own body's
+                    // trailing expression) isn't an error, just the same
+                    // plain name reference its declared type annotations
+                    // already use (see `generic_type_vars`'s doc comment).
+                    let generic_name = this.inner.borrow().generic_type_vars.get(&root).cloned();
+                    match generic_name {
+                        Some(name) => Ok(Ty::ident(fp_core::ast::Ident::new(name))),
+                        None => Err(this.error_with_current_span("unresolved type variable")),
+                    }
                 }
                 TypeVarKind::Bound(Ty::ErrorType(_)) => {
                     Err(this.error_with_current_span("error type variable"))

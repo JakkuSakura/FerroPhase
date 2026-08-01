@@ -380,6 +380,21 @@ struct Inner {
     current_span: Option<Span>,
     resolution_hook: Option<Box<dyn TypeResolutionHook>>,
     resolved_names: ResolvedNameTable,
+    /// Maps a registered generic parameter's own type var back to its name
+    /// -- lets `resolve_to_ty` resolve a still-abstract generic parameter
+    /// (one nothing has bound to a concrete type, by design, since it's
+    /// generic) to a plain name reference (`Ty::ident`) instead of erroring
+    /// as an unresolved type variable. A name reference (not `Ty::GenericVar`,
+    /// which is index-based and belongs to this crate's separate
+    /// let-polymorphism scheme machinery in `build_generalized_ty`/
+    /// `instantiate_poly_ty`) matches how a generic parameter's *declared*
+    /// type annotations (`fn f<T>(x: T) -> T`) are already represented --
+    /// `T` lowers as a plain identifier expression -- and how downstream
+    /// HIR/MIR generic-instantiation inference (`infer_generic_from_type_expr`
+    /// in fp-backend) matches a generic parameter by name. Consulted by
+    /// `resolve_to_ty`; entries are propagated to the surviving root when
+    /// two `Unbound` vars merge (see `unify`'s `merge_generic_identity_into`
+    /// call) so the identity isn't lost regardless of which side survives.
     generic_type_vars: HashMap<TypeVarId, String>,
     /// Generic invocations with resolved concrete types ready for monomorphization.
     pending_generics: Vec<GenericMonorph>,
@@ -484,6 +499,7 @@ impl AstTypeInferencer {
                     let name = prefix.with_segment(def.name.as_str().to_string());
                     this.own_function_sigs_mut()
                         .insert(name.clone(), def.sig.clone());
+                    this.own_function_item_ids_mut().insert(name.clone(), item.id());
                     let var = this.register_qualified_symbol(&name).await;
                     let saved = std::mem::replace(&mut this.inner.borrow_mut().module_path, prefix.clone());
                     this.prebind_function_signature(def, var).await;
@@ -549,6 +565,7 @@ impl AstTypeInferencer {
                                 // Also store as a function sig for ::call syntax
                                 let fn_path = struct_path.with_segment(func.name.as_str().to_string());
                                 this.own_function_sigs_mut().insert(fn_path.clone(), func.sig.clone());
+                                this.own_function_item_ids_mut().insert(fn_path.clone(), child.id());
                                 this.register_qualified_symbol(&fn_path).await;
                             }
                         }
@@ -619,6 +636,12 @@ impl AstTypeInferencer {
     }
     fn own_function_sigs_mut(&self) -> RefMut<'_, HashMap<QualifiedPath, FunctionSignature>> {
         RefMut::map(self.own_crate.borrow_mut(), |k| &mut k.function_sigs)
+    }
+    fn own_function_item_ids(&self) -> Ref<'_, HashMap<QualifiedPath, fp_core::ast::ItemId>> {
+        Ref::map(self.own_crate.borrow(), |k| &k.function_item_ids)
+    }
+    fn own_function_item_ids_mut(&self) -> RefMut<'_, HashMap<QualifiedPath, fp_core::ast::ItemId>> {
+        RefMut::map(self.own_crate.borrow_mut(), |k| &mut k.function_item_ids)
     }
     fn own_trait_defs(&self) -> Ref<'_, HashSet<QualifiedPath>> {
         Ref::map(self.own_crate.borrow(), |k| &k.trait_defs)
@@ -1650,14 +1673,15 @@ impl AstTypeInferencer {
         match_key.and_then(|key| self.own_enum_defs().get(&key).cloned().map(|def| (key, def)))
     }
 
-    fn record_function_signature(&self, name: &Ident, sig: &FunctionSignature) {
+    fn record_function_signature(&self, name: &Ident, sig: &FunctionSignature, item_id: fp_core::ast::ItemId) {
         let candidates = if self.inner.borrow().module_path.is_empty() {
             vec![QualifiedPath::new(vec![name.as_str().to_string()])]
         } else {
             vec![self.inner.borrow().module_path.with_segment(name.as_str().to_string())]
         };
         for candidate in candidates {
-            self.own_function_sigs_mut().insert(candidate, sig.clone());
+            self.own_function_sigs_mut().insert(candidate.clone(), sig.clone());
+            self.own_function_item_ids_mut().insert(candidate, item_id);
         }
     }
 
@@ -2411,7 +2435,7 @@ impl AstTypeInferencer {
                 self.record_unimplemented_symbol(&def.name, &def.attrs);
                 let in_impl = self.inner.borrow().impl_stack.last().is_some();
                 if !in_impl {
-                    self.record_function_signature(&def.name, &def.sig);
+                    self.record_function_signature(&def.name, &def.sig, item.id());
                 }
                 // Extracted to an owned local *before* the `if let`: this
                 // chain's final `else` branch awaits, and using the
@@ -2497,7 +2521,7 @@ impl AstTypeInferencer {
             ItemKind::DeclFunction(decl) => {
                 let in_impl = self.inner.borrow().impl_stack.last().is_some();
                 if !in_impl {
-                    self.record_function_signature(&decl.name, &decl.sig);
+                    self.record_function_signature(&decl.name, &decl.sig, item.id());
                     if decl.sig.abi.is_c() {
                         self.record_extern_function_signature(&decl.name, &decl.sig);
                     }
