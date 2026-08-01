@@ -1,10 +1,10 @@
 use crate::runtime::bytes_value_is_borrowed_string;
 use crate::unify::TypeVarKind;
 use crate::{
-    std_result_inner_types, AstTypeInferencer, BoxFuture, EnvEntry, GenericMonorph, PatternBinding,
+    std_result_inner_types, HirTypeInferencer, BoxFuture, EnvEntry, GenericMonorph, PatternBinding,
     PatternInfo, TypeVarId,
 };
-use fp_core::ast::*;
+use fp_core::hir::*;
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::path::{PathPrefix, QualifiedPath};
@@ -235,7 +235,7 @@ fn expr_contains_return(expr: &Expr) -> bool {
     }
 }
 
-impl AstTypeInferencer {
+impl HirTypeInferencer {
     fn normalize_signature_module_path(&self, module: QualifiedPath) -> QualifiedPath {
         if module.is_empty() {
             return module;

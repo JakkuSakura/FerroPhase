@@ -17,7 +17,7 @@ use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
 use fp_typing::{
-    AstTypeInferencer, TypeResolutionHook, TypingContext,
+    HirTypeInferencer, TypeResolutionHook, TypingContext,
     TypingOutcome, default_extern_prelude,
 };
 use std::cell::RefCell;
@@ -103,7 +103,7 @@ fn typing_future(
 ) -> impl Future<Output = fp_core::error::Result<()>> {
     async move {
         let outcome = {
-            let inferencer = AstTypeInferencer::new(typing_ctx.clone())
+            let inferencer = HirTypeInferencer::new(typing_ctx.clone())
                 .with_extern_prelude(default_extern_prelude())
                 .with_tasks(tasks)
                 .with_ast_key(ast_key);
@@ -270,7 +270,7 @@ impl CompilerDriver {
     /// generic-monomorphization-ready signals (`infer_generic_function_call_body`).
     ///
     /// A task suspends and resumes exactly where it needs an unloaded
-    /// package (`fp_typing::AstTypeInferencer::await_package`) or an
+    /// package (`fp_typing::HirTypeInferencer::await_package`) or an
     /// unresolved comptime value from a sibling task
     /// (`await_comptime`/`await_struct_alias`/`force`) — rather than the
     /// caller retyping already-resolved items from scratch to pick either
@@ -408,7 +408,7 @@ impl CompilerDriver {
     /// before the driver even started). Uniform for `std` or any other
     /// package a `PackageProvider` is registered for: discovery/parsing is
     /// the provider's job (`load_package_items`); typing it runs through the
-    /// same `AstTypeInferencer` machinery as any other module, just pointed
+    /// same `HirTypeInferencer` machinery as any other module, just pointed
     /// at the crate slot `env_ctx.begin_crate` just reserved in the shared
     /// root registry.
     ///
@@ -441,7 +441,7 @@ impl CompilerDriver {
 
         let own_crate = self.state.typing_ctx.env_ctx.begin_crate(name, raw.graph.clone());
         {
-            let inferencer = AstTypeInferencer::new(self.state.typing_ctx.clone())
+            let inferencer = HirTypeInferencer::new(self.state.typing_ctx.clone())
                 .with_extern_prelude(default_extern_prelude())
                 .with_own_crate(own_crate.clone())
                 .with_tasks(self.state.tasks.clone());

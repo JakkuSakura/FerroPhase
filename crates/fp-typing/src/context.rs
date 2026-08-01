@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::task::Waker;
 
-use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
+use fp_core::hir::{ExprResolutionTable, TypeStruct, Value};
 use fp_core::workspace::WorkspaceContext;
 
 use crate::types::GenericMonorph;
@@ -36,13 +36,13 @@ pub struct TypingContext {
     pub diagnostics: RefCell<Vec<TypingDiagnostic>>,
 
     /// Wakers of typing tasks currently suspended on a package (keyed by
-    /// package name) not yet loaded — see `AstTypeInferencer::await_package`.
+    /// package name) not yet loaded — see `HirTypeInferencer::await_package`.
     /// Drained by the driver once it finishes loading that package.
     pub package_wakers: RefCell<HashMap<String, Vec<Waker>>>,
 
     /// Wakers of typing tasks currently suspended on a comptime value (keyed
     /// by const/type-alias name) not yet resolved — see
-    /// `AstTypeInferencer::await_comptime`/`await_struct_alias`. Precisely
+    /// `HirTypeInferencer::await_comptime`/`await_struct_alias`. Precisely
     /// (not broadcast) woken by whichever write site
     /// (`resolved_consts`/`resolved_types`) actually resolves that name.
     pub comptime_wakers: RefCell<HashMap<String, Vec<Waker>>>,
@@ -51,7 +51,7 @@ pub struct TypingContext {
     /// resolved and are ready for monomorphization, written the moment
     /// typing discovers each one (see `infer_generic_function_call_body`),
     /// keyed by the same string the trivial "ready to specialize" task is
-    /// spawned under (see `AstTypeInferencer::tasks`/`CompilerDriver::
+    /// spawned under (see `HirTypeInferencer::tasks`/`CompilerDriver::
     /// run_pool_to_idle`). The task's only job is to make "this generic
     /// call is ready" show up through the shared task pool's normal
     /// resolve-and-dispatch loop; the actual payload the pool's `Result<()>`
@@ -78,7 +78,7 @@ impl TypingContext {
     /// Wake every task parked on `name`'s package load — call this right
     /// after `name` finishes loading (`CompilerDriver::load_package`).
     /// Mirrors `wake_comptime` exactly. Without this, any task whose
-    /// suspension (`AstTypeInferencer::await_package`) registered a *real*
+    /// suspension (`HirTypeInferencer::await_package`) registered a *real*
     /// pool waker under this name — not just the top-level module task, any
     /// nested one too — would never be re-enqueued onto the pool's ready
     /// queue and would park forever.

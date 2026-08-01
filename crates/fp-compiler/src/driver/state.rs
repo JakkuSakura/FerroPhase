@@ -40,7 +40,7 @@ pub struct CompilerState {
     pub(crate) cross_crate_items_cache: HashMap<QualifiedPath, (QualifiedPath, Vec<Item>)>,
     /// The one shared task pool every suspendable unit of driver work runs
     /// through: per-const/per-type-alias comptime resolution (spawned by
-    /// `fp-typing`'s `predeclare_item` via `AstTypeInferencer::tasks`, a
+    /// `fp-typing`'s `predeclare_item` via `HirTypeInferencer::tasks`, a
     /// clone of this same handle), the per-compile-unit module-typing task,
     /// and generic-monomorphization-ready signals (see
     /// `CompilerDriver::run_pool_to_idle`). Lives here, not on

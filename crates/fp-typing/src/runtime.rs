@@ -1,4 +1,4 @@
-use fp_core::ast::*;
+use fp_core::hir::*;
 use fp_core::module::path::PathPrefix;
 use std::collections::{HashMap, HashSet};
 

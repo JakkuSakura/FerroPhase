@@ -1,10 +1,10 @@
-use crate::{AstTypeInferencer, ContextBinding, EnvEntry};
-use fp_core::ast::*;
+use crate::{HirTypeInferencer, ContextBinding, EnvEntry};
+use fp_core::hir::*;
 use fp_core::error::Result;
 use fp_core::module::path::{ParsedPath, PathPrefix};
 use std::collections::{HashMap, HashSet};
 
-impl AstTypeInferencer {
+impl HirTypeInferencer {
     pub async fn infer_expression(&self, expr: &mut Expr) -> Result<()> {
         let var = self.infer_expr_inner(expr).await?;
         let ty = self.resolve_to_ty(var).await?;

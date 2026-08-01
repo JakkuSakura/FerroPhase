@@ -1,11 +1,11 @@
 use crate::*;
-use fp_core::ast::*;
+use fp_core::hir::*;
 use fp_core::error::Result;
 use fp_core::module::path::*;
 use std::cell::{Ref, RefMut};
 use std::collections::{HashMap, HashSet};
 
-impl AstTypeInferencer {
+impl HirTypeInferencer {
     pub(crate) async fn register_qualified_symbol(&self, path: &QualifiedPath) -> TypeVarId {
         let key = path.to_key();
         if let Some(var) = self.lookup_env_var(&key).await {
@@ -215,12 +215,12 @@ impl AstTypeInferencer {
     }
     pub(crate) fn own_function_item_ids(
         &self,
-    ) -> Ref<'_, HashMap<QualifiedPath, fp_core::ast::ItemId>> {
+    ) -> Ref<'_, HashMap<QualifiedPath, fp_core::hir::ItemId>> {
         Ref::map(self.own_crate.borrow(), |k| &k.function_item_ids)
     }
     pub(crate) fn own_function_item_ids_mut(
         &self,
-    ) -> RefMut<'_, HashMap<QualifiedPath, fp_core::ast::ItemId>> {
+    ) -> RefMut<'_, HashMap<QualifiedPath, fp_core::hir::ItemId>> {
         RefMut::map(self.own_crate.borrow_mut(), |k| &mut k.function_item_ids)
     }
     /// Inherent methods declared in an `impl SelfType { .. }` block, keyed
@@ -501,7 +501,7 @@ impl AstTypeInferencer {
                     self.record_unimplemented_symbol(&def.name, &def.attrs);
                 } else if let Ty::ConstBlock(block) = &def.value {
                     // Spawn this alias's struct-shape resolution as its own
-                    // independent task (see `AstTypeInferencer::tasks`), keyed
+                    // independent task (see `HirTypeInferencer::tasks`), keyed
                     // by the alias's own name so `force`/`await_struct_alias`
                     // can find and await it -- mirrors the `DefConst` arm
                     // above. Only computes/caches the resolved struct shape
@@ -613,7 +613,7 @@ impl AstTypeInferencer {
             ItemKind::DefConst(def) => {
                 self.register_symbol(&def.name);
                 // Spawn this const's comptime-value resolution as its own
-                // independent task (see `AstTypeInferencer::tasks`) -- so
+                // independent task (see `HirTypeInferencer::tasks`) -- so
                 // `force`/`await_comptime` can await it directly regardless
                 // of where in the item list it sits, instead of the
                 // sequential item loop's own order determining whether a

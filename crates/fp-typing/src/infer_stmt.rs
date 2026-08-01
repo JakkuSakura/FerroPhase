@@ -1,10 +1,10 @@
-use crate::{typing_error, AstTypeInferencer, BoxFuture, LoopContext, PatternInfo, TypeVarId};
-use fp_core::ast::*;
+use crate::{typing_error, HirTypeInferencer, BoxFuture, LoopContext, PatternInfo, TypeVarId};
+use fp_core::hir::*;
 use fp_core::error::Result;
 use fp_core::module::path::PathPrefix;
 use std::collections::{HashMap, HashSet};
 
-impl AstTypeInferencer {
+impl HirTypeInferencer {
     pub(crate) fn is_stmt_or_item_quote(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Quote(quote) => matches!(

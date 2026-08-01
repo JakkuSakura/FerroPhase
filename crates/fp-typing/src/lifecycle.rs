@@ -1,9 +1,9 @@
 use crate::*;
-use fp_core::ast::*;
+use fp_core::hir::*;
 use fp_core::error::Result;
 use fp_core::module::path::*;
 
-impl AstTypeInferencer {
+impl HirTypeInferencer {
     pub async fn infer_file(&self, file: &mut File) -> Result<TypingOutcome> {
         self.infer_module_inner(
             &QualifiedPath::new(Vec::new()),
@@ -241,7 +241,7 @@ impl AstTypeInferencer {
     /// Tries to resolve `key`'s compile-time value right now: forces
     /// whatever other const/type-alias items `expr` depends on first (each
     /// of which is its own independently-spawned task -- see
-    /// `AstTypeInferencer::tasks`/`predeclare_item`), then checks the cache and
+    /// `HirTypeInferencer::tasks`/`predeclare_item`), then checks the cache and
     /// tries the resolution hook once. Never suspends and never fails on a
     /// mere "couldn't resolve it this way" outcome -- returns `Ok(None)` so
     /// the caller decides what a non-resolution means for it. Shared by

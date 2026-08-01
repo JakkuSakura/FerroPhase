@@ -1,10 +1,10 @@
 use crate::*;
-use fp_core::ast::*;
+use fp_core::hir::*;
 use fp_core::error::Result;
 use fp_core::module::path::*;
 use fp_core::span::Span;
 
-impl AstTypeInferencer {
+impl HirTypeInferencer {
     pub(crate) fn infer_item_inner<'a>(&self, item: &'a mut Item) -> BoxFuture<'a, Result<()>> {
         let this = self.clone();
         Box::pin(async move {

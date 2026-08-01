@@ -1,4 +1,4 @@
-use fp_core::ast::Ty;
+use fp_core::hir::Ty;
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use std::collections::HashMap;
@@ -56,7 +56,7 @@ pub struct TypingOutcome {
     pub cross_crate_struct_refs: Vec<QualifiedPath>,
 }
 
-pub type ItemId = fp_core::ast::ItemId;
+pub type ItemId = fp_core::hir::ItemId;
 
 /// A generic function invocation whose concrete type arguments have been
 /// resolved and are ready for monomorphization (specialization). Written
@@ -68,7 +68,7 @@ pub type ItemId = fp_core::ast::ItemId;
 #[derive(Debug, Clone)]
 pub struct GenericMonorph {
     /// Stable identity of the `ItemDefFunction` node being specialized (see
-    /// `fp_core::ast::ItemId`'s doc comment) -- this, not `function_path`, is
+    /// `fp_core::hir::ItemId`'s doc comment) -- this, not `function_path`, is
     /// what `handle_resolved_task` uses to find the function again in the
     /// compile unit's own pre-typing stored AST. `function_path` is a
     /// qualification convention (prefixed by whatever module/compile-unit
@@ -79,7 +79,7 @@ pub struct GenericMonorph {
     pub item_id: ItemId,
     /// The discovering compile unit's own `AstId` (as a plain string --
     /// fp-typing can't name `fp-compiler`'s `AstId` type), carried verbatim
-    /// from `AstTypeInferencer::ast_key` rather than re-derived later from
+    /// from `HirTypeInferencer::ast_key` rather than re-derived later from
     /// `function_path`/a naming convention: `handle_resolved_task` runs
     /// once the pool is fully drained, with no compile-unit-specific
     /// context of its own, so this is the only way it knows which stored
@@ -111,7 +111,7 @@ impl GenericMonorph {
     }
 }
 
-pub type ExprId = fp_core::ast::ExprId;
+pub type ExprId = fp_core::hir::ExprId;
 
 pub type ResolvedNameTable = HashMap<ExprId, ResolvedName>;
 

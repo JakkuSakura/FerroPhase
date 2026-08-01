@@ -29,13 +29,15 @@ use crate::support::{
     make_std_result_ty, make_std_task_future_ty, std_error_ty, std_task_future_inner_ty,
     tokenize_macro_tokens,
 };
-use fp_core::ast::*;
+use fp_core::hir::*;
 use fp_core::error::Error;
 use fp_core::module::path::QualifiedPath;
 use fp_core::package::PackageCrate;
 use fp_core::span::Span;
 use std::cell::RefCell;
 use std::rc::Rc;
+use fp_core::ast::{FunctionSignature, StructuralField};
+
 // intrinsic and op kinds handled in submodules
 pub(crate) fn typing_error(msg: impl Into<String>) -> Error {
     Error::from(msg.into())
@@ -91,20 +93,20 @@ impl Drop for ExceptionContextGuard {
 }
 
 /// The mutually-recursive SCC's own per-pass state — every field here is
-/// reached only through `AstTypeInferencer::inner.borrow()`/`borrow_mut()`,
+/// reached only through `HirTypeInferencer::inner.borrow()`/`borrow_mut()`,
 /// scoped to short synchronous stretches that never span an `.await` (the
 /// same discipline already used for `TypingContext`'s `RefCell` fields
 /// elsewhere in this crate). This split exists so that multiple concurrent
-/// item-resolution tasks (see `AstTypeInferencer::tasks`) can
+/// item-resolution tasks (see `HirTypeInferencer::tasks`) can
 /// each hold their own cheap `Rc::clone` of the same underlying state,
-/// instead of requiring one exclusive `&mut AstTypeInferencer` per task.
+/// instead of requiring one exclusive `&mut HirTypeInferencer` per task.
 ///
 /// No lifetime parameter (unlike an earlier iteration of this split): the
 /// only field that ever needed one (`ctx: Option<&'ctx SharedScopedContext>`)
 /// was dead -- nothing in the crate ever read it, it was a holdover from
 /// before `TypingContext` existed -- and removing it, along with the now
-///-unnecessary `+ 'ctx` bound on `resolution_hook`, lets `AstTypeInferencer`
-/// be plain `Clone` + effectively `'static`, which `AstTypeInferencer::tasks`'
+///-unnecessary `+ 'ctx` bound on `resolution_hook`, lets `HirTypeInferencer`
+/// be plain `Clone` + effectively `'static`, which `HirTypeInferencer::tasks`'
 /// `Executor::spawn` (bound `+ 'static`) requires of anything it spawns.
 struct Inner {
     pub(crate) type_vars: Vec<TypeVar>,
@@ -168,7 +170,7 @@ struct Inner {
 /// indirection through `inner`) — only the ~30 fields that were plain owned
 /// collections before this conversion moved into `Inner`.
 #[derive(Clone)]
-pub struct AstTypeInferencer {
+pub struct HirTypeInferencer {
     /// Shared mutable state with the driver: resolved consts, types,
     /// module resolution, expression resolution, diagnostics, and the
     /// package-waker registry that makes `await_package` genuinely suspend.
@@ -207,7 +209,7 @@ pub struct AstTypeInferencer {
     pub(crate) inner: Rc<RefCell<Inner>>,
 }
 
-impl AstTypeInferencer {
+impl HirTypeInferencer {
     // --- Reference pattern for the `&mut self` -> `&self` conversion ---
     // (established here; applied mechanically to the rest of the SCC below
     // and in `typing/{infer_expr,infer_stmt,unify,solver}.rs`):
@@ -257,7 +259,7 @@ impl AstTypeInferencer {
     }
 
     /// Stamp this compile unit's own `AstId` (as a plain string) onto every
-    /// `GenericMonorph` this typer pushes -- see `AstTypeInferencer::ast_key`'s
+    /// `GenericMonorph` this typer pushes -- see `HirTypeInferencer::ast_key`'s
     /// doc comment for why the driver needs it back.
     pub fn with_ast_key(self, ast_key: impl Into<String>) -> Self {
         Self {
@@ -624,13 +626,14 @@ impl AstTypeInferencer {
 #[cfg(test)]
 mod deftype_normalize_tests {
     use super::*;
-    use fp_core::ast::Ident;
+    use fp_core::hir::Ident;
     use fp_core::package::provider::{PackageProvider, ProviderResult};
     use fp_core::package::{PackageDescriptor, PackageId};
     use fp_core::workspace::WorkspaceContext;
     use std::future::Future;
     use std::rc::Rc;
     use std::sync::Arc;
+    use fp_core::ast::{StructuralField, TypePrimitive, TypeStruct};
 
     struct NoopProvider;
     impl PackageProvider for NoopProvider {
@@ -647,13 +650,13 @@ mod deftype_normalize_tests {
         }
     }
 
-    fn new_inferencer(register_pending_package: Option<&str>) -> AstTypeInferencer {
+    fn new_inferencer(register_pending_package: Option<&str>) -> HirTypeInferencer {
         let mut workspace = WorkspaceContext::new();
         if let Some(name) = register_pending_package {
             workspace.register_provider(name, Arc::new(NoopProvider));
         }
         let typing_ctx = Rc::new(TypingContext::new(Rc::new(workspace)));
-        AstTypeInferencer::new(typing_ctx)
+        HirTypeInferencer::new(typing_ctx)
     }
 
     fn source_struct_ty(source_name: &str) -> Ty {

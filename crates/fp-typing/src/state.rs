@@ -1,5 +1,5 @@
 use crate::TypeVarId;
-use fp_core::ast::*;
+use fp_core::hir::*;
 use fp_core::module::path::QualifiedPath;
 
 #[derive(Clone, Debug)]

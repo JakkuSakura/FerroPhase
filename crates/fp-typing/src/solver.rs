@@ -1,6 +1,6 @@
 use crate::unify::TypeVarKind;
-use crate::{typing_error, AstTypeInferencer, BoxFuture, TypeVarId};
-use fp_core::ast::{Ty, TypeFunction, TypeInt, TypePrimitive};
+use crate::{typing_error, HirTypeInferencer, BoxFuture, TypeVarId};
+use fp_core::hir::{Ty, TypeFunction, TypeInt, TypePrimitive};
 use fp_core::error::Result;
 
 fn primitive_ty(ty: &Ty) -> Option<TypePrimitive> {
@@ -14,7 +14,7 @@ fn is_any_ty(ty: &Ty) -> bool {
     matches!(ty, Ty::Any(_))
 }
 
-impl AstTypeInferencer {
+impl HirTypeInferencer {
     pub(crate) fn ensure_numeric(&self, var: TypeVarId, context: &str) -> Result<()> {
         let root = self.find(var);
         let kind = self.inner.borrow().type_vars[root].kind.clone();

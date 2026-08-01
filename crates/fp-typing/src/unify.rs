@@ -1,5 +1,5 @@
-use crate::{AstTypeInferencer, BoxFuture, TypeVarId};
-use fp_core::ast::*;
+use crate::{HirTypeInferencer, BoxFuture, TypeVarId};
+use fp_core::hir::*;
 use fp_core::error::{Error, Result};
 use fp_core::module::path::{PathPrefix, QualifiedPath};
 
@@ -68,7 +68,7 @@ fn primitive_ty(ty: &Ty) -> Option<TypePrimitive> {
     }
 }
 
-impl AstTypeInferencer {
+impl HirTypeInferencer {
     pub(crate) fn bind_reference_term(&self, var: TypeVarId, inner: TypeVarId) {
         self.bind(
             var,
@@ -920,8 +920,8 @@ impl AstTypeInferencer {
         })
     }
 
-    fn same_width(a: &fp_core::ast::TypeInt, b: &fp_core::ast::TypeInt) -> bool {
-        use fp_core::ast::TypeInt::*;
+    fn same_width(a: &fp_core::hir::TypeInt, b: &fp_core::hir::TypeInt) -> bool {
+        use fp_core::hir::TypeInt::*;
         matches!(
             (a, b),
             (I64, U64)
@@ -1311,7 +1311,7 @@ impl AstTypeInferencer {
                     // already use (see `generic_type_vars`'s doc comment).
                     let generic_name = this.inner.borrow().generic_type_vars.get(&root).cloned();
                     match generic_name {
-                        Some(name) => Ok(Ty::ident(fp_core::ast::Ident::new(name))),
+                        Some(name) => Ok(Ty::ident(fp_core::hir::Ident::new(name))),
                         None => Err(this.error_with_current_span("unresolved type variable")),
                     }
                 }
@@ -2099,7 +2099,7 @@ mod tests {
 
     #[test]
     fn merges_structural_types_with_plus() {
-        let typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(std::rc::Rc::new(
+        let typer = HirTypeInferencer::new(std::rc::Rc::new(TypingContext::new(std::rc::Rc::new(
             fp_core::workspace::WorkspaceContext::new(),
         ))));
 
@@ -2136,7 +2136,7 @@ mod tests {
 
     #[test]
     fn rejects_conflicting_field_types_on_merge() {
-        let typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(std::rc::Rc::new(
+        let typer = HirTypeInferencer::new(std::rc::Rc::new(TypingContext::new(std::rc::Rc::new(
             fp_core::workspace::WorkspaceContext::new(),
         ))));
 
@@ -2167,7 +2167,7 @@ mod tests {
 
     #[test]
     fn intersects_structural_types_with_ampersand() {
-        let typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(std::rc::Rc::new(
+        let typer = HirTypeInferencer::new(std::rc::Rc::new(TypingContext::new(std::rc::Rc::new(
             fp_core::workspace::WorkspaceContext::new(),
         ))));
 
@@ -2215,7 +2215,7 @@ mod tests {
 
     #[test]
     fn unify_errors_carry_active_span() {
-        let typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(std::rc::Rc::new(
+        let typer = HirTypeInferencer::new(std::rc::Rc::new(TypingContext::new(std::rc::Rc::new(
             fp_core::workspace::WorkspaceContext::new(),
         ))));
         let span = Span::new(1, 10, 12);
@@ -2248,7 +2248,7 @@ mod tests {
 
     #[test]
     fn subtracts_fields_with_minus() {
-        let typer = AstTypeInferencer::new(std::rc::Rc::new(TypingContext::new(std::rc::Rc::new(
+        let typer = HirTypeInferencer::new(std::rc::Rc::new(TypingContext::new(std::rc::Rc::new(
             fp_core::workspace::WorkspaceContext::new(),
         ))));
 

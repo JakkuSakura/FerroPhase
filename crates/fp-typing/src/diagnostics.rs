@@ -1,12 +1,12 @@
 use crate::unify::TypeVarKind;
-use crate::{AstTypeInferencer, BoxFuture, TypeVarId, TypingDiagnostic};
-use fp_core::ast::*;
+use crate::{HirTypeInferencer, BoxFuture, TypeVarId, TypingDiagnostic};
+use fp_core::hir::*;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::{Error, Result};
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 
-impl AstTypeInferencer {
+impl HirTypeInferencer {
     pub(crate) fn emit_error(&self, message: impl Into<String>) {
         let span = self.inner.borrow().current_span;
         self.emit_error_with_span(span, message);

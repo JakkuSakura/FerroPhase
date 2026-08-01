@@ -1,11 +1,11 @@
 use crate::*;
-use fp_core::ast::*;
+use fp_core::hir::*;
 use fp_core::error::Result;
 use fp_core::module::path::*;
 use fp_core::span::Span;
 use std::collections::{HashMap, HashSet};
 
-impl AstTypeInferencer {
+impl HirTypeInferencer {
     pub(crate) fn heap_inner_ty<'a>(&self, ty: &'a Ty) -> Option<&'a Ty> {
         match ty {
             Ty::Reference(reference) => Some(&reference.ty),
@@ -281,7 +281,7 @@ impl AstTypeInferencer {
         &self,
         name: &Ident,
         sig: &FunctionSignature,
-        item_id: fp_core::ast::ItemId,
+        item_id: fp_core::hir::ItemId,
     ) {
         let candidates = if self.inner.borrow().module_path.is_empty() {
             vec![QualifiedPath::new(vec![name.as_str().to_string()])]

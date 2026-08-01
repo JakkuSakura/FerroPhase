@@ -1,4 +1,4 @@
-use fp_core::ast::{
+use fp_core::hir::{
     AttrMeta, AttrMetaList, Attribute, Expr, ExprKind, Ident, Name, ParameterPath,
     ParameterPathSegment, Path, Ty,
 };
