@@ -912,6 +912,16 @@ impl FunctionSignature {
     }
 }
 
+/// A method signature retains the generic environment of its impl block.
+/// Method-level generics alone are insufficient for signatures such as
+/// `impl<T> Option<T> { fn unwrap(self) -> T }`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MethodSignature {
+    pub sig: FunctionSignature,
+    pub impl_generics_params: Vec<GenericParam>,
+    pub self_ty: Ty,
+}
+
 common_struct! {
     pub struct ValueFunction {
         pub sig: FunctionSignature,

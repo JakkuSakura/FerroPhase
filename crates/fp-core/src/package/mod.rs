@@ -91,7 +91,7 @@ pub struct PackageDescriptor {
 pub mod graph;
 pub mod provider;
 
-use crate::ast::{FunctionSignature, Item, ItemId, TypeEnum, TypeStruct};
+use crate::ast::{FunctionSignature, Item, ItemId, MethodSignature, TypeEnum, TypeStruct};
 use crate::lir::LirCompileUnit;
 use crate::module::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
@@ -132,7 +132,7 @@ pub struct PackageCrate {
     /// storage those crates never use). One shared table regardless of
     /// whether `SelfType` resolves to a struct, an enum, or anything else
     /// nominal -- registration and lookup don't need to branch on that.
-    pub method_sigs: HashMap<QualifiedPath, Vec<(String, FunctionSignature)>>,
+    pub method_sigs: HashMap<QualifiedPath, Vec<(String, MethodSignature)>>,
 
     /// All known module paths within this crate.
     pub module_paths: HashSet<QualifiedPath>,

@@ -1999,7 +1999,7 @@ impl AstTypeInferencer {
                     {
                         eprintln!("debug unwrap invoke: before lookup_struct_method");
                     }
-                    self.lookup_struct_method(obj_var, &select.field, &mut invoke.args).await?
+                    self.lookup_struct_method(obj_var, &select.field).await?
                 }
             }
         };
@@ -2042,7 +2042,7 @@ impl AstTypeInferencer {
             .map(|seg| seg.as_str().to_string())
             .collect::<Vec<_>>();
         let enum_key = self.resolve_segments_key(path.prefix, &enum_segments)?;
-        let enum_def = self.own_enum_defs().get(&enum_key).cloned()?;
+        let enum_def = self.lookup_enum(&enum_key).await?;
         let variant = enum_def
             .variants
             .iter()
@@ -2983,11 +2983,7 @@ impl AstTypeInferencer {
                         if let Some(enum_key) =
                             this.resolve_segments_key(path.prefix, &enum_segments)
                         {
-                            enum_def = this.own_enum_defs().get(&enum_key).cloned();
-                        }
-                        if enum_def.is_none() {
-                            let enum_name = enum_segments.join("::");
-                            enum_def = this.lookup_enum_def_by_name(&enum_name).map(|(_, def)| def);
+                            enum_def = this.lookup_enum(&enum_key).await;
                         }
                         if let Some(enum_def) = enum_def {
                             if let Some(variant) = enum_def
@@ -2995,16 +2991,6 @@ impl AstTypeInferencer {
                                 .iter()
                                 .find(|v| v.name.as_str() == variant_name)
                             {
-                                this.enter_scope();
-                                let mut generic_vars: Vec<(String, TypeVarId)> = Vec::new();
-                                for param in &enum_def.generics_params {
-                                    let var = this.register_generic_param(param.name.as_str());
-                                    generic_vars.push((param.name.as_str().to_string(), var));
-                                    let bounds = Self::extract_trait_bounds(&param.bounds);
-                                    if !bounds.is_empty() {
-                                        this.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
-                                    }
-                                }
                                 match &variant.value {
                                     Ty::Tuple(tuple_ty) => {
                                         for (idx, expected_ty) in tuple_ty
@@ -3025,17 +3011,8 @@ impl AstTypeInferencer {
                                     _ => {}
                                 }
 
-                                let mut args = Vec::with_capacity(generic_vars.len());
-                                for (_, var) in &generic_vars {
-                                    let ty = this
-                                        .resolve_to_ty(*var).await
-                                        .unwrap_or(Ty::Unknown(TypeUnknown));
-                                    args.push(ty);
-                                }
-                                let concrete = this.apply_generic_args_to_enum(&enum_def, &args);
-                                this.exit_scope();
                                 let enum_var = this.fresh_type_var();
-                                this.bind(enum_var, Ty::Enum(concrete));
+                                this.bind(enum_var, Ty::Enum(enum_def));
                                 return Ok(PatternInfo {
                                     var: enum_var,
                                     bindings,
@@ -3068,13 +3045,7 @@ impl AstTypeInferencer {
                                 if let Some(enum_key) =
                                     this.resolve_segments_key(path.prefix, &enum_segments)
                                 {
-                                    enum_def = this.own_enum_defs().get(&enum_key).cloned();
-                                }
-                                if enum_def.is_none() {
-                                    let enum_name = enum_segments.join("::");
-                                    enum_def = this
-                                        .lookup_enum_def_by_name(&enum_name)
-                                        .map(|(_, def)| def);
+                                    enum_def = this.lookup_enum(&enum_key).await;
                                 }
                                 if let Some(enum_def) = enum_def {
                                     let enum_var = this.fresh_type_var();
@@ -3092,26 +3063,6 @@ impl AstTypeInferencer {
                                             ) = (&def_variant.value, inner.kind_mut())
                                             {
                                                 let mut bindings = Vec::new();
-                                                this.enter_scope();
-                                                let mut generic_vars: Vec<(String, TypeVarId)> =
-                                                    Vec::new();
-                                                for param in &enum_def.generics_params {
-                                                    let var = this.register_generic_param(
-                                                        param.name.as_str(),
-                                                    );
-                                                    generic_vars.push((
-                                                        param.name.as_str().to_string(),
-                                                        var,
-                                                    ));
-                                                    let bounds =
-                                                        Self::extract_trait_bounds(&param.bounds);
-                                                    if !bounds.is_empty() {
-                                                        this.inner
-                                                            .borrow_mut()
-                                                            .generic_trait_bounds
-                                                            .insert(var, bounds);
-                                                    }
-                                                }
                                                 for field in &mut pat.fields {
                                                     if let Some(expected_field) = structural
                                                         .fields
@@ -3144,18 +3095,7 @@ impl AstTypeInferencer {
                                                         }
                                                     }
                                                 }
-                                                let mut args =
-                                                    Vec::with_capacity(generic_vars.len());
-                                                for (_, var) in &generic_vars {
-                                                    let ty = this
-                                                        .resolve_to_ty(*var).await
-                                                        .unwrap_or(Ty::Unknown(TypeUnknown));
-                                                    args.push(ty);
-                                                }
-                                                let concrete = this
-                                                    .apply_generic_args_to_enum(&enum_def, &args);
-                                                this.exit_scope();
-                                                this.bind(enum_var, Ty::Enum(concrete));
+                                                this.bind(enum_var, Ty::Enum(enum_def));
                                                 return Ok(PatternInfo {
                                                     var: enum_var,
                                                     bindings,
@@ -3253,7 +3193,7 @@ impl AstTypeInferencer {
         })
     }
 
-    async fn lookup_struct_method(&self, obj_var: TypeVarId, field: &Ident, args: &mut [Expr]) -> Result<TypeVarId> {
+    async fn lookup_struct_method(&self, obj_var: TypeVarId, field: &Ident) -> Result<TypeVarId> {
         let ty = self.resolve_to_ty(obj_var).await?;
         let resolved_ty = Self::peel_reference(ty.clone());
         let struct_path = match &resolved_ty {
@@ -3294,7 +3234,7 @@ impl AstTypeInferencer {
         // `insert_prelude_symbol_alias`) is tried first -- module-relative
         // candidates alone can never reach a cross-crate type that shares
         // none of the current module's path segments.
-        let mut sig_found: Option<FunctionSignature> = None;
+        let mut sig_found: Option<MethodSignature> = None;
         let bare_name = struct_path.head().map(|s| s.to_string());
         let alias_candidate = bare_name.as_deref().and_then(|n| self.lookup_symbol_alias(n));
         for candidate in alias_candidate
@@ -3316,43 +3256,12 @@ impl AstTypeInferencer {
             }
         }
 
-        if let Some(sig) = sig_found {
-            if sig.receiver.is_some() {
-                let rec_ty = resolved_ty.clone();
-                let receiver_var = self.type_from_ast_ty(&rec_ty).await?;
-                let expect_ref = matches!(rec_ty, Ty::Reference(_));
-                let actual_ref = matches!(ty, Ty::Reference(_));
-                if !expect_ref || actual_ref {
-                    self.unify(obj_var, receiver_var).await?;
-                }
-            }
-            if !sig.generics_params.is_empty() {
-                if let Ok(scheme) = self.scheme_from_method_signature(&sig).await {
-                    return Ok(self.instantiate_scheme(&scheme).await);
-                }
-            }
-            // Type the invoke arguments against the method params
-            if args.len() == sig.params.len() {
-                for (arg_expr, param) in args.iter_mut().zip(sig.params.iter()) {
-                    let arg_var = self.infer_expr_inner(arg_expr).await?;
-                    let param_var = self.type_from_ast_ty(&param.ty).await?;
-                    self.unify(arg_var, param_var).await?;
-                }
-            }
-            let ret_var = if let Some(ret_ty) = &sig.ret_ty {
-                self.type_from_ast_ty(ret_ty).await?
-            } else {
-                let unit = self.fresh_type_var();
-                self.bind(unit, Ty::Unit(TypeUnit));
-                unit
-            };
-            let sig_params: Vec<_> = sig.params.iter().map(|p| p.ty.clone()).collect();
-            let fn_ty = Ty::Function(TypeFunction {
-                params: sig_params,
-                generics_params: Vec::new(),
-                ret_ty: Some(Box::new(Ty::infer_var(ret_var))),
-            });
-            let fn_var = self.type_from_ast_ty(&fn_ty).await?;
+        if let Some(method) = sig_found {
+            let (receiver_var, method_params, method_ret) =
+                self.instantiate_method_signature(&method).await?;
+            self.unify(obj_var, receiver_var).await?;
+            let fn_var = self.fresh_type_var();
+            self.bind_function_term(fn_var, method_params, method_ret);
             return Ok(fn_var);
         }
 

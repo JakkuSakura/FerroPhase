@@ -188,7 +188,7 @@ impl WorkspaceDependency {
 
 // ── Compiled workspace context (typer lookup) ────────────────────
 
-use crate::ast::{FunctionSignature, TypeEnum, TypeStruct};
+use crate::ast::{FunctionSignature, MethodSignature, TypeEnum, TypeStruct};
 use crate::module::path::QualifiedPath;
 use crate::package::graph::PackageGraph;
 use crate::package::provider::PackageProvider;
@@ -295,7 +295,7 @@ impl WorkspaceContext {
     /// `PackageCrate::method_sigs`'s doc comment) -- the cross-crate
     /// counterpart to `own_method_sigs` in `fp-typing`, mirroring
     /// `find_struct`/`find_function_sig` exactly.
-    pub fn find_method_sigs(&self, path: &QualifiedPath) -> Option<Vec<(String, FunctionSignature)>> {
+    pub fn find_method_sigs(&self, path: &QualifiedPath) -> Option<Vec<(String, MethodSignature)>> {
         for krate in self.crates.borrow().values() {
             if let Some(sigs) = krate.borrow().method_sigs.get(path) {
                 return Some(sigs.clone());

@@ -1,4 +1,4 @@
-use crate::{typing_error, AstTypeInferencer, BoxFuture, LoopContext, TypeVarId};
+use crate::{typing_error, AstTypeInferencer, BoxFuture, LoopContext, PatternInfo, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::Result;
 use fp_core::module::path::PathPrefix;
@@ -226,41 +226,17 @@ impl AstTypeInferencer {
         if let Some(scrutinee) = match_expr.scrutinee.as_mut() {
             let scrutinee_var = self.infer_expr_inner(scrutinee.as_mut()).await?;
             let scrutinee_ty_initial = self.resolve_to_ty(scrutinee_var).await.ok();
-            let scrutinee_enum_hint =
-                self.scrutinee_enum_from_explicit_generic_invoke(scrutinee.as_ref()).await;
+            let scrutinee_pattern_var = match scrutinee_ty_initial.as_ref() {
+                Some(Ty::Reference(reference)) => self.type_from_ast_ty(&reference.ty).await?,
+                _ => scrutinee_var,
+            };
             for case in &mut match_expr.cases {
                 self.enter_scope();
 
                 if let Some(pat) = case.pat.as_mut() {
-                    let mut enum_ty = scrutinee_enum_hint.clone().or_else(|| {
-                        match scrutinee_ty_initial.as_ref() {
-                            Some(Ty::Enum(enum_ty)) => Some(enum_ty.clone()),
-                            _ => None,
-                        }
-                    });
-                    if enum_ty.is_none() {
-                        enum_ty = self.enum_ty_from_pattern_variant(pat.as_ref());
-                    }
-                    let enum_ty_hint = enum_ty.clone();
-                    if let Some(enum_ty) = enum_ty.as_ref() {
-                        if scrutinee_enum_hint.is_some()
-                            || !matches!(scrutinee_ty_initial, Some(Ty::Enum(_)))
-                        {
-                            let enum_var = self.fresh_type_var();
-                            self.bind(enum_var, Ty::Enum(enum_ty.clone()));
-                            self.unify(enum_var, scrutinee_var).await?;
-                        }
-                        qualify_enum_variant_pattern(pat, enum_ty);
-                    }
-                    let pat_info = self.infer_pattern(pat.as_mut()).await?;
-                    self.unify(pat_info.var, scrutinee_var).await?;
-                    let resolved_enum = match self.resolve_to_ty(scrutinee_var).await {
-                        Ok(Ty::Enum(enum_ty)) => Some(enum_ty),
-                        _ => enum_ty_hint,
-                    };
-                    if let Some(enum_ty) = resolved_enum.as_ref() {
-                        self.bind_enum_variant_pattern(pat.as_ref(), enum_ty).await?;
-                    }
+                    let pat_info = self
+                        .infer_match_pattern(pat, scrutinee_pattern_var)
+                        .await?;
                     self.apply_pattern_generalization(&pat_info).await?;
                 }
 
@@ -301,82 +277,40 @@ impl AstTypeInferencer {
         }
     }
 
-    async fn scrutinee_enum_from_explicit_generic_invoke(
+    fn infer_match_pattern<'a>(
         &self,
-        scrutinee: &Expr,
-    ) -> Option<TypeEnum> {
-        let ExprKind::Invoke(invoke) = scrutinee.kind() else {
-            return None;
-        };
-        let ExprInvokeTarget::Function(name) = &invoke.target else {
-            return None;
-        };
-        let generic_args = Self::match_name_generic_args(name)?;
-        if generic_args.is_empty() {
-            return None;
-        }
-        let sig = self.lookup_function_signature(name)?;
-        if sig.generics_params.len() != generic_args.len() {
-            return None;
-        }
-        let mut generic_mapping: HashMap<String, Ty> = HashMap::new();
-        for (param, arg_ty) in sig.generics_params.iter().zip(generic_args.iter()) {
-            if Self::is_inferred_generic_argument(arg_ty) {
-                continue;
+        pattern: &'a mut Pattern,
+        expected_var: TypeVarId,
+    ) -> BoxFuture<'a, Result<PatternInfo>> {
+        let this = self.clone();
+        Box::pin(async move {
+            let expected = this.resolve_to_ty(expected_var).await?;
+            match expected {
+                Ty::Reference(reference) => {
+                    let inner_var = this.type_from_ast_ty(&reference.ty).await?;
+                    this.infer_match_pattern(pattern, inner_var).await
+                }
+                Ty::Enum(enum_ty) => {
+                    qualify_enum_variant_pattern(pattern, &enum_ty);
+                    let info = this.infer_pattern(pattern).await?;
+                    this.unify(info.var, expected_var).await?;
+                    this.bind_enum_variant_pattern(pattern, &enum_ty).await?;
+                    Ok(info)
+                }
+                _ => {
+                    let info = this.infer_pattern(pattern).await?;
+                    this.unify(info.var, expected_var).await?;
+                    Ok(info)
+                }
             }
-            generic_mapping.insert(param.name.as_str().to_string(), arg_ty.clone());
-        }
-        let ret_ty = sig.ret_ty.as_ref()?;
-        let substituted_ret_ty = if generic_mapping.is_empty() {
-            ret_ty.clone()
-        } else {
-            self.substitute_generic_ty(ret_ty, &generic_mapping)
-        };
-        let ret_var = self.type_from_ast_ty(&substituted_ret_ty).await.ok()?;
-        match self.resolve_to_ty(ret_var).await.ok()? {
-            Ty::Enum(enum_ty) => Some(enum_ty),
-            _ => None,
-        }
-    }
-
-    fn is_inferred_generic_argument(arg_ty: &Ty) -> bool {
-        // `_` generic placeholders are parsed as `Ty::Unknown`.
-        // Keep `()` as a real explicit generic argument.
-        matches!(arg_ty, Ty::Unknown(_))
-    }
-
-    fn match_name_generic_args(name: &Name) -> Option<&[Ty]> {
-        let Name::ParameterPath(path) = name else {
-            return None;
-        };
-        let segment = path
-            .segments
-            .iter()
-            .rev()
-            .find(|seg| !seg.args.is_empty())?;
-        Some(segment.args.as_slice())
+        })
     }
 
     async fn bind_enum_variant_pattern(&self, pat: &Pattern, enum_ty: &TypeEnum) -> Result<()> {
-        let needs_generics = !enum_ty.generics_params.is_empty();
-        if needs_generics {
-            self.enter_scope();
-            for param in &enum_ty.generics_params {
-                let var = self.register_generic_param(param.name.as_str());
-                let bounds = Self::extract_trait_bounds(&param.bounds);
-                if !bounds.is_empty() {
-                    self.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
-                }
-            }
-        }
         // Split into a helper so the early `?`-returns don't skip
         // `exit_scope()` -- a plain (sync) closure can't contain `.await`,
         // so this replaces the old IIFE-closure trick.
-        let result = self.bind_enum_variant_pattern_body(pat, enum_ty).await;
-        if needs_generics {
-            self.exit_scope();
-        }
-        result
+        self.bind_enum_variant_pattern_body(pat, enum_ty).await
     }
 
     async fn bind_enum_variant_pattern_body(
@@ -471,44 +405,6 @@ impl AstTypeInferencer {
             }
             Ok(())
         }
-    }
-
-    fn enum_ty_from_pattern_variant(&self, pat: &Pattern) -> Option<TypeEnum> {
-        let variant_name = match pat.kind() {
-            PatternKind::TupleStruct(tuple_struct) => match &tuple_struct.name {
-                Name::Ident(ident) => Some(ident.as_str()),
-                Name::Path(path)
-                    if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
-                {
-                    Some(path.segments[0].as_str())
-                }
-                _ => None,
-            },
-            PatternKind::Variant(variant) => match variant.name.kind() {
-                ExprKind::Name(Name::Ident(ident)) => Some(ident.as_str()),
-                ExprKind::Name(Name::Path(path))
-                    if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
-                {
-                    Some(path.segments[0].as_str())
-                }
-                _ => None,
-            },
-            _ => None,
-        }?;
-        let mut candidate: Option<TypeEnum> = None;
-        for enum_def in self.own_enum_defs().values() {
-            if enum_def
-                .variants
-                .iter()
-                .any(|variant| variant.name.as_str() == variant_name)
-            {
-                if candidate.is_some() {
-                    return None;
-                }
-                candidate = Some(enum_def.clone());
-            }
-        }
-        candidate
     }
 
     pub(crate) fn resolve_enum_variant_expected_value(
