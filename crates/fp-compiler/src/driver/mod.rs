@@ -70,7 +70,7 @@ struct CompileUnitCoreResult {
 }
 
 /// Result of driving one compile unit's typing future to completion (see
-/// `CompilerDriver::drive_typing_to_completion`). `items` is handed back to
+/// `CompilerDriver::drive_to_completion`). `items` is handed back to
 /// the caller because the future owns it for its lifetime (mutated in place
 /// — typing stamps a concrete `Ty` on every node — so the caller needs it
 /// back to store as the typed AST).
@@ -189,9 +189,11 @@ impl CompilerDriver {
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
+        let typing_ctx = self.state.typing_ctx.clone();
+        let task = Box::pin(typing_future(typing_ctx, module_path.clone(), items));
         let TypingTaskOutput {
             items, outcome, ..
-        } = self.drive_typing_to_completion(module_path.clone(), items, ast_id)?;
+        } = self.drive_to_completion(task, ast_id)?;
         let outcome = outcome?;
 
         let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
@@ -212,7 +214,7 @@ impl CompilerDriver {
             },
         );
 
-        // `drive_typing_to_completion` only returns once every package/
+        // `drive_to_completion` only returns once every package/
         // comptime need the typer touched has actually been satisfied in
         // place — nothing pending to check for here, just lower for real.
         let hir_id = self.lower_to_hir(&module_path, &typed_ast_id, path, &outcome.cross_crate_struct_refs)?;
@@ -225,54 +227,60 @@ impl CompilerDriver {
         })
     }
 
-    /// Spawn `infer_module`'s future for one compile unit and poll it to
-    /// completion in place — typing suspends and resumes exactly where it
-    /// needs an unloaded package (`fp_typing::AstTypeInferencer::await_package`)
-    /// or an unresolved comptime value from a sibling const/type-alias item
+    /// Poll an arbitrary future to completion in place, servicing whatever
+    /// side-channel work shows up in the shared `TypingContext` between polls
+    /// — this is the *one* manual poll loop in the whole system, and it is
+    /// deliberately agnostic of what `task` actually computes. Today its only
+    /// caller drives `typing_future` (one compile unit's `infer_module`
+    /// pass), but nothing below is specific to typing, a module, or `Item`s;
+    /// `ast_id` is needed only to attribute deadlock errors and to look up
+    /// the calling compile unit's own stored items for
+    /// `drain_pending_generics`.
+    ///
+    /// The future being driven suspends and resumes exactly where it needs
+    /// an unloaded package (`fp_typing::AstTypeInferencer::await_package`) or
+    /// an unresolved comptime value from a sibling const/type-alias item
     /// (`await_comptime`/`await_struct_alias`/`force`, backed by tasks
     /// spawned into the shared `TypingContext::tasks` executor during
-    /// `predeclare_item`) — rather than retyping already-resolved items from
-    /// scratch to pick either up.
+    /// `predeclare_item`) — rather than the caller retyping already-resolved
+    /// items from scratch to pick either up.
     ///
-    /// This is the *one* manual poll loop in the whole system. After *every*
-    /// poll (both `Pending` and `Ready` -- a compile unit with no comptime/
-    /// package need at all can resolve on the very first poll, so this can't
-    /// be confined to the `Pending` arm), it drains any generic function
-    /// calls typing discovered are ready to specialize (`TypingContext::
-    /// pending_generics`, see `drain_pending_generics`) and submits their
-    /// compiles as independent follow-up work -- the discovering compile
-    /// unit's own answer never depends on that finishing (see
-    /// `drain_pending_generics`'s doc comment for why this must not be an
-    /// ordinary, dependency-implying `submit`).
+    /// After *every* poll (both `Pending` and `Ready` -- a compile unit with
+    /// no comptime/package need at all can resolve on the very first poll,
+    /// so this can't be confined to the `Pending` arm), it drains any generic
+    /// function calls typing discovered are ready to specialize
+    /// (`TypingContext::pending_generics`, see `drain_pending_generics`) and
+    /// submits their compiles as independent follow-up work -- `task`'s own
+    /// answer never depends on that finishing (see `drain_pending_generics`'s
+    /// doc comment for why this must not be an ordinary, dependency-implying
+    /// `submit`).
     ///
-    /// Each round that the top-level task comes back `Pending`, it also:
+    /// Each round that `task` comes back `Pending`, it also:
     /// 1. Drains every currently-ready item-resolution task in
     ///    `TypingContext::tasks` to a fixed point — each one that completes
     ///    writes its value/struct-shape into `TypingContext` and precisely
     ///    wakes whoever was waiting on it (see `TypingContext::wake_comptime`),
-    ///    which may be this compile unit's own top-level task.
-    /// 2. Eagerly loads whatever package name(s) are currently blocking the
-    ///    typing future (`TypingContext::package_wakers`) — the typer only
+    ///    which may be `task` itself.
+    /// 2. Eagerly loads whatever package name(s) are currently blocking
+    ///    `task` (`TypingContext::package_wakers`) — the typer only
     ///    *requests* a package and suspends; it never loads one itself.
     ///
     /// If neither of those two steps makes any progress in a round, nothing
-    /// will ever wake the top-level task — a genuine deadlock (e.g. a
-    /// same-pass comptime cycle, already reported with a specific error by
-    /// `force`'s own cycle handling if it's *that* kind of cycle, or some
-    /// other stuck state), reported immediately rather than retried on a
-    /// heuristic bound. (Generic monomorphization is never part of this
-    /// progress check -- per its own doc comment, it's never something the
-    /// top-level task is actually waiting on.)
-    fn drive_typing_to_completion(
+    /// will ever wake `task` — a genuine deadlock (e.g. a same-pass comptime
+    /// cycle, already reported with a specific error by `force`'s own cycle
+    /// handling if it's *that* kind of cycle, or some other stuck state),
+    /// reported immediately rather than retried on a heuristic bound.
+    /// (Generic monomorphization is never part of this progress check -- per
+    /// its own doc comment, it's never something `task` is actually waiting
+    /// on.)
+    fn drive_to_completion<F: Future>(
         &mut self,
-        module_path: QualifiedPath,
-        items: Vec<Item>,
+        mut task: std::pin::Pin<Box<F>>,
         ast_id: &AstId,
-    ) -> Result<TypingTaskOutput, CompilerDriverError> {
+    ) -> Result<F::Output, CompilerDriverError> {
         let typing_ctx = self.state.typing_ctx.clone();
         let waker = std::task::Waker::noop();
         let mut cx = std::task::Context::from_waker(waker);
-        let mut task = Box::pin(typing_future(typing_ctx.clone(), module_path, items));
         loop {
             let poll = task.as_mut().poll(&mut cx);
             self.drain_pending_generics(&typing_ctx, ast_id)?;
@@ -313,7 +321,7 @@ impl CompilerDriver {
     /// dedup, unchanged), finds the original definition by its stable
     /// `ItemId` in *this compile unit's own pre-typing stored AST*
     /// (`self.state.ast(ast_id)` — not `self.state.typed_ast`, which isn't
-    /// populated until `drive_typing_to_completion` returns and so isn't
+    /// populated until `drive_to_completion` returns and so isn't
     /// usable from inside its own poll loop; safe because `Item` derives
     /// `Clone` including its `id`, so the pre-typing clone typing is
     /// currently working from carries the identical `ItemId`), substitutes
@@ -390,7 +398,7 @@ impl CompilerDriver {
     ///
     /// `inject_module` is driven with `fp_core::executor::block_on` (a single
     /// poll, panicking on real `Poll::Pending`) rather than through
-    /// `drive_typing_to_completion`'s loop — a package whose own items
+    /// `drive_to_completion`'s loop — a package whose own items
     /// reference *another* not-yet-loaded package would need that, but no
     /// registered provider in this codebase has that shape today. If one
     /// ever does, this is the spot to switch to the same drive-loop
@@ -791,7 +799,7 @@ impl CompilerDriver {
         Ok(CompilerAnswer::CompileUnitCompileBytecode)
     }
 
-    /// Nothing submits this work item anymore (see `drive_typing_to_completion`
+    /// Nothing submits this work item anymore (see `drive_to_completion`
     /// — comptime needs are resolved in place, not by retrying the whole
     /// unit as a separate scheduler request), but the variant stays a valid
     /// `CompilerWork`/`CompilerAnswer` case — `scheduler/stack.rs`'s own
