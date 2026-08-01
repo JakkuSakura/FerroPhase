@@ -185,6 +185,27 @@ impl AstTypeInferencer {
         self.typing_ctx.env_ctx.find_struct(path)
     }
 
+    /// Enum counterpart to `lookup_struct` -- without this, a cross-crate
+    /// enum (e.g. `std::option::Option`/`std::result::Result`, defined in
+    /// `std`'s own `PackageCrate`) can never resolve here: `own_enum_defs()`
+    /// only holds the crate currently being typed, and unlike `lookup_struct`
+    /// there was no `env_ctx.find_enum`/on-demand-package-load fallback at
+    /// all.
+    pub(crate) async fn lookup_enum(&self, path: &QualifiedPath) -> Option<TypeEnum> {
+        if let Some(def) = self.own_enum_defs().get(path).cloned() {
+            return Some(def);
+        }
+        if let Some(def) = self.typing_ctx.env_ctx.find_enum(path) {
+            return Some(def);
+        }
+        let head = path.head()?;
+        if !self.typing_ctx.env_ctx.is_registered(head) {
+            return None;
+        }
+        self.await_package(head).await;
+        self.typing_ctx.env_ctx.find_enum(path)
+    }
+
     /// Suspends until `name` is loaded -- a no-op poll if it's already
     /// loaded (the common case: most references hit an already-loaded
     /// package). Whoever finishes loading `name` (the driver's
@@ -1692,7 +1713,7 @@ impl AstTypeInferencer {
                                 }
                                 let mut handled = false;
                                 if let Some(key) = this.resolve_locator_key(loc) {
-                                    let enum_ty = this.own_enum_defs().get(&key).cloned();
+                                    let enum_ty = this.lookup_enum(&key).await;
                                     if let Some(enum_ty) = enum_ty {
                                         if enum_ty.generics_params.len() == concrete_args.len() {
                                             let concrete = this.apply_generic_args_to_enum(
@@ -1729,34 +1750,6 @@ impl AstTypeInferencer {
                                         return Ok(var);
                                     }
                                 }
-                                if name == "Option" && concrete_args.len() == 1 {
-                                    let std_option = QualifiedPath::new(vec![
-                                        "std".to_string(),
-                                        "option".to_string(),
-                                        "Option".to_string(),
-                                    ]);
-                                    let enum_ty = this.own_enum_defs().get(&std_option).cloned();
-                                    if let Some(enum_ty) = enum_ty {
-                                        let concrete = this
-                                            .apply_generic_args_to_enum(&enum_ty, &concrete_args);
-                                        this.bind(var, Ty::Enum(concrete));
-                                        return Ok(var);
-                                    }
-                                }
-                                if name == "Result" && concrete_args.len() == 2 {
-                                    let std_result = QualifiedPath::new(vec![
-                                        "std".to_string(),
-                                        "result".to_string(),
-                                        "Result".to_string(),
-                                    ]);
-                                    let enum_ty = this.own_enum_defs().get(&std_result).cloned();
-                                    if let Some(enum_ty) = enum_ty {
-                                        let concrete = this
-                                            .apply_generic_args_to_enum(&enum_ty, &concrete_args);
-                                        this.bind(var, Ty::Enum(concrete));
-                                        return Ok(var);
-                                    }
-                                }
                                 if let Some((_, struct_ty)) = this.lookup_struct_def_by_name(name).await {
                                     if struct_ty.generics_params.len() == concrete_args.len() {
                                         let concrete = this.apply_generic_args_to_struct(
@@ -1766,48 +1759,6 @@ impl AstTypeInferencer {
                                         this.bind(var, Ty::Struct(concrete));
                                         return Ok(var);
                                     }
-                                }
-                                if name == "Option" && concrete_args.len() == 1 {
-                                    let enum_ty = TypeEnum {
-                                        name: Ident::new("Option"),
-                                        generics_params: Vec::new(),
-                                        repr: ReprOptions::default(),
-                                        variants: vec![
-                                            EnumTypeVariant {
-                                                name: Ident::new("Some"),
-                                                value: concrete_args[0].clone(),
-                                                discriminant: None,
-                                            },
-                                            EnumTypeVariant {
-                                                name: Ident::new("None"),
-                                                value: Ty::Unit(TypeUnit),
-                                                discriminant: None,
-                                            },
-                                        ],
-                                    };
-                                    this.bind(var, Ty::Enum(enum_ty));
-                                    return Ok(var);
-                                }
-                                if name == "Result" && concrete_args.len() == 2 {
-                                    let enum_ty = TypeEnum {
-                                        name: Ident::new("Result"),
-                                        generics_params: Vec::new(),
-                                        repr: ReprOptions::default(),
-                                        variants: vec![
-                                            EnumTypeVariant {
-                                                name: Ident::new("Ok"),
-                                                value: concrete_args[0].clone(),
-                                                discriminant: None,
-                                            },
-                                            EnumTypeVariant {
-                                                name: Ident::new("Err"),
-                                                value: concrete_args[1].clone(),
-                                                discriminant: None,
-                                            },
-                                        ],
-                                    };
-                                    this.bind(var, Ty::Enum(enum_ty));
-                                    return Ok(var);
                                 }
                             }
                         }
@@ -1946,7 +1897,6 @@ impl AstTypeInferencer {
                                 name: Ident::new("HashMap"),
                                 generics_params: Vec::new(),
                                 repr: ReprOptions::default(),
-                                method_sigs: Vec::new(),
                                 fields: Vec::new(),
                             };
                             this.bind(var, Ty::Struct(struct_ty));
@@ -2255,7 +2205,6 @@ mod tests {
                 generics_params: Vec::new(),
                 repr: Default::default(),
                 fields: Vec::new(),
-                method_sigs: Vec::new(),
             }),
         );
         let ret_var = typer.unit_type_var();

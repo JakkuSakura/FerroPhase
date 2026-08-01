@@ -338,7 +338,6 @@ impl LirInterpreter {
                         name: fp_core::ast::Ident::new(struct_name),
                         generics_params: vec![],
                         repr: fp_core::ast::ReprOptions::default(),
-                        method_sigs: vec![],
                         fields,
                     });
                     let obj = Value::Type(struct_ty);

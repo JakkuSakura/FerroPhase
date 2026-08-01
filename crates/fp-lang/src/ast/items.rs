@@ -253,7 +253,6 @@ fn parse_struct_item(
                 name,
                 generics_params,
                 repr: ReprOptions::default(),
-                method_sigs: vec![],
                 fields,
             },
         })));
@@ -280,7 +279,6 @@ fn parse_struct_item(
                 name,
                 generics_params,
                 repr: ReprOptions::default(),
-                method_sigs: vec![],
                 fields,
             },
         })));
@@ -317,7 +315,6 @@ fn parse_struct_item(
             name,
             generics_params,
             repr: ReprOptions::default(),
-            method_sigs: vec![],
             fields,
         },
     })))

@@ -502,8 +502,6 @@ common_struct! {
         #[serde(default)]
         pub repr: ReprOptions,
         pub fields: Vec<StructuralField>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        pub method_sigs: Vec<(String, FunctionSignature)>,
     }
 }
 common_struct! {

@@ -51,7 +51,6 @@ fn lift_item(item: &hir::Item) -> Result<Item> {
                 name: Ident::new(def.name.as_str()),
                 generics_params: Vec::new(),
                 repr: def.repr.clone(),
-                method_sigs: vec![],
                 fields: def
                     .fields
                     .iter()

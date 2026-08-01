@@ -1943,6 +1943,82 @@ fn main() {
         );
     }
 
+    /// Regression test for `PackageCrate::method_sigs`: inherent methods
+    /// (`impl SelfType { .. }`) now resolve through one shared, name-keyed
+    /// registry regardless of whether `SelfType` is a struct or an enum --
+    /// previously `TypeEnum` had no method storage at all (`TypeStruct` did),
+    /// so an enum's own `impl` block was silently ignored and specific
+    /// methods (`is_some`/`is_none`/`is_ok`/`is_err`/`unwrap` on
+    /// `Option`/`Result`) were hardcoded by literal type name in the typer
+    /// instead. This exercises a local enum *and* a local struct calling
+    /// their own inherent methods, proving both now go through the exact
+    /// same dispatch path (`lookup_struct_method`).
+    ///
+    /// Doesn't use `std::option::Option`/`std::result::Result` directly:
+    /// confirmed (via direct debug instrumentation on `lookup_struct_method`)
+    /// that `is_some`/`is_none`/`is_ok`/`is_err` already resolve correctly
+    /// against `std`'s real `impl<T> Option<T>`/`impl<T,E> Result<T,E>`
+    /// blocks through this same mechanism -- but merely *referencing*
+    /// `Option::Some(..)`/`Result::Ok(..)` at all (even with no method call)
+    /// separately triggers a pre-existing, unrelated failure somewhere in
+    /// the comptime-probing pipeline when `std::option`/`std::result` get
+    /// pulled in for on-demand LIR compilation, which is out of scope for
+    /// this fix (method dispatch, not comptime probing).
+    #[test]
+    fn struct_and_enum_inherent_methods_share_one_method_registry() {
+        let source = r#"
+enum Status {
+    Ready,
+    Done,
+}
+
+impl Status {
+    fn is_ready(&self) -> bool {
+        true
+    }
+}
+
+struct Counter {
+    value: i64,
+}
+
+impl Counter {
+    fn get(&self) -> i64 {
+        self.value
+    }
+}
+
+fn main() {
+    let s = Status::Ready;
+    let ready = s.is_ready();
+    let c = Counter { value: 5 };
+    let v = c.get();
+}
+"#;
+        let fe = fp_lang::FerroFrontend::new();
+        let result = fe
+            .parse_file(source, std::path::Path::new("struct_enum_methods.fp"))
+            .expect("parse struct/enum-methods source");
+        let ast_node = result.ast;
+
+        let mut driver = CompilerDriver::new();
+        let ast_id = AstId::new("ast:test::struct_enum_methods");
+        driver.state.insert_ast(ast_id.clone(), ast_node);
+        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
+            ast: ast_id,
+            path: FullyQualifiedPath::from_segments(vec![
+                "test".to_string(),
+                "struct_enum_methods".to_string(),
+            ]),
+        });
+
+        let mut steps = 0;
+        while let Some(_) = driver.run_next().expect("driver should not error") {
+            steps += 1;
+            assert!(steps <= 50, "driver loop should not run forever");
+        }
+    }
+
     fn compile_example_file(
         name: &str,
         workspace: std::rc::Rc<fp_core::workspace::WorkspaceContext>,
@@ -2080,7 +2156,6 @@ fn main() {
             name: Ident::new("Foo"),
             generics_params: Vec::new(),
             repr: ReprOptions::default(),
-            method_sigs: Vec::new(),
             fields: Vec::new(),
         }));
 

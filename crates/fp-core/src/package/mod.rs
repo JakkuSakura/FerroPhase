@@ -124,6 +124,16 @@ pub struct PackageCrate {
     pub function_item_ids: HashMap<QualifiedPath, ItemId>,
     pub trait_defs: HashSet<QualifiedPath>,
 
+    /// Inherent methods declared in an `impl SelfType { .. }` block, keyed
+    /// by `SelfType`'s own fully-qualified path -- deliberately not a field
+    /// on `TypeStruct`/`TypeEnum` themselves (nothing outside `fp-typing`
+    /// ever reads a struct/enum's methods, so embedding it in the shared
+    /// `Ty` representation every other crate also constructs would be
+    /// storage those crates never use). One shared table regardless of
+    /// whether `SelfType` resolves to a struct, an enum, or anything else
+    /// nominal -- registration and lookup don't need to branch on that.
+    pub method_sigs: HashMap<QualifiedPath, Vec<(String, FunctionSignature)>>,
+
     /// All known module paths within this crate.
     pub module_paths: HashSet<QualifiedPath>,
 
@@ -153,6 +163,7 @@ impl PackageCrate {
             function_sigs: HashMap::new(),
             function_item_ids: HashMap::new(),
             trait_defs: HashSet::new(),
+            method_sigs: HashMap::new(),
             module_paths,
             lir_units: Vec::new(),
             items: HashMap::new(),

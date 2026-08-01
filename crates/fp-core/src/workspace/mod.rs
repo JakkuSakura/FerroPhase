@@ -188,7 +188,7 @@ impl WorkspaceDependency {
 
 // ── Compiled workspace context (typer lookup) ────────────────────
 
-use crate::ast::{FunctionSignature, TypeStruct};
+use crate::ast::{FunctionSignature, TypeEnum, TypeStruct};
 use crate::module::path::QualifiedPath;
 use crate::package::graph::PackageGraph;
 use crate::package::provider::PackageProvider;
@@ -270,10 +270,35 @@ impl WorkspaceContext {
         None
     }
 
+    /// Cross-crate counterpart to `find_struct`, for enums (e.g.
+    /// `std::option::Option`/`std::result::Result`, defined in `std`'s own
+    /// `PackageCrate`, not whatever crate is currently being typed).
+    pub fn find_enum(&self, path: &QualifiedPath) -> Option<TypeEnum> {
+        for krate in self.crates.borrow().values() {
+            if let Some(e) = krate.borrow().enum_defs.get(path) {
+                return Some(e.clone());
+            }
+        }
+        None
+    }
+
     pub fn find_function_sig(&self, path: &QualifiedPath) -> Option<FunctionSignature> {
         for krate in self.crates.borrow().values() {
             if let Some(sig) = krate.borrow().function_sigs.get(path) {
                 return Some(sig.clone());
+            }
+        }
+        None
+    }
+
+    /// Search every crate for `path`'s inherent methods (see
+    /// `PackageCrate::method_sigs`'s doc comment) -- the cross-crate
+    /// counterpart to `own_method_sigs` in `fp-typing`, mirroring
+    /// `find_struct`/`find_function_sig` exactly.
+    pub fn find_method_sigs(&self, path: &QualifiedPath) -> Option<Vec<(String, FunctionSignature)>> {
+        for krate in self.crates.borrow().values() {
+            if let Some(sigs) = krate.borrow().method_sigs.get(path) {
+                return Some(sigs.clone());
             }
         }
         None

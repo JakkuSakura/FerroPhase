@@ -2565,7 +2565,6 @@ impl AstTypeInferencer {
             name: Ident::new("HashMap"),
             generics_params: Vec::new(),
             repr: ReprOptions::default(),
-            method_sigs: Vec::new(),
             fields: Vec::new(),
         }
     }
@@ -3257,15 +3256,9 @@ impl AstTypeInferencer {
     async fn lookup_struct_method(&self, obj_var: TypeVarId, field: &Ident, args: &mut [Expr]) -> Result<TypeVarId> {
         let ty = self.resolve_to_ty(obj_var).await?;
         let resolved_ty = Self::peel_reference(ty.clone());
-        let (type_name, struct_path) = match &resolved_ty {
-            Ty::Struct(struct_ty) => {
-                let name = struct_ty.name.as_str().to_string();
-                (name.clone(), QualifiedPath::new(vec![name]))
-            }
-            Ty::Enum(enum_ty) => {
-                let name = enum_ty.name.as_str().to_string();
-                (name.clone(), QualifiedPath::new(vec![name]))
-            }
+        let struct_path = match &resolved_ty {
+            Ty::Struct(struct_ty) => QualifiedPath::new(vec![struct_ty.name.as_str().to_string()]),
+            Ty::Enum(enum_ty) => QualifiedPath::new(vec![enum_ty.name.as_str().to_string()]),
             _ => {
                 if let Some(var) = self.lookup_trait_method_for_receiver(obj_var, field).await? {
                     return Ok(var);
@@ -3285,35 +3278,42 @@ impl AstTypeInferencer {
                 return Ok(self.error_type_var());
             }
         };
-        if std::env::var("FP_DEBUG_UNWRAP").is_ok() && field.as_str() == "unwrap" {
-            eprintln!(
-                "debug unwrap pre: resolved_ty={:?} type_name={}",
-                resolved_ty, type_name
-            );
-        }
-        let is_result_like = match &resolved_ty {
-            Ty::Enum(enum_ty) => {
-                let mut has_ok = false;
-                let mut has_err = false;
-                for variant in &enum_ty.variants {
-                    match variant.name.as_str() {
-                        "Ok" => has_ok = true,
-                        "Err" => has_err = true,
-                        _ => {}
-                    }
-                }
-                has_ok && has_err
-            }
-            _ => false,
-        };
+        // Inherent methods (`impl SelfType { .. }`) live in the driver's
+        // shared, name-keyed registry (see `PackageCrate::method_sigs`'s doc
+        // comment), not on `resolved_ty` itself -- one lookup regardless of
+        // whether `resolved_ty` is a struct, an enum, or anything else
+        // nominal. `struct_path` is only the bare type name (`TypeStruct`/
+        // `TypeEnum` carry no module context), so try the same candidate
+        // qualified paths `register_method_stub` already registers under,
+        // local crate first, then every other already-loaded crate (the
+        // receiver's own type is already resolved, so its defining crate --
+        // e.g. `std` -- must already be loaded; no on-demand package load
+        // needed here, unlike `lookup_associated_function`'s `Struct::method`
+        // syntax which can name a not-yet-loaded package). A bare name's
+        // *prelude* alias (e.g. `Option` -> `std::option::Option`, see
+        // `insert_prelude_symbol_alias`) is tried first -- module-relative
+        // candidates alone can never reach a cross-crate type that shares
+        // none of the current module's path segments.
         let mut sig_found: Option<FunctionSignature> = None;
-        let method_sigs = match &resolved_ty {
-            Ty::Struct(s) => s.method_sigs.clone(),
-            Ty::Enum(_) => Vec::new(),
-            _ => Vec::new(),
-        };
-        if let Some((_, sig)) = method_sigs.iter().find(|(n, _)| n == field.as_str()) {
-            sig_found = Some(sig.clone());
+        let bare_name = struct_path.head().map(|s| s.to_string());
+        let alias_candidate = bare_name.as_deref().and_then(|n| self.lookup_symbol_alias(n));
+        for candidate in alias_candidate
+            .into_iter()
+            .chain(self.struct_name_variants_for_path(&struct_path, true))
+        {
+            let found = self
+                .own_method_sigs()
+                .get(&candidate)
+                .and_then(|sigs| sigs.iter().find(|(n, _)| n == field.as_str()).map(|(_, sig)| sig.clone()))
+                .or_else(|| {
+                    self.typing_ctx.env_ctx.find_method_sigs(&candidate).and_then(|sigs| {
+                        sigs.into_iter().find(|(n, _)| n == field.as_str()).map(|(_, sig)| sig)
+                    })
+                });
+            if found.is_some() {
+                sig_found = found;
+                break;
+            }
         }
 
         if let Some(sig) = sig_found {
@@ -3356,108 +3356,8 @@ impl AstTypeInferencer {
             return Ok(fn_var);
         }
 
-        if type_name == "Result" || is_result_like {
-            match field.as_str() {
-                "is_ok" | "is_err" => {
-                    let result_var = self.fresh_type_var();
-                    self.bind(result_var, Ty::Primitive(TypePrimitive::Bool));
-                    let fn_var = self.fresh_type_var();
-                    self.bind_function_term(fn_var, Vec::new(), result_var);
-                    return Ok(fn_var);
-                }
-                "unwrap" => {
-                    if std::env::var("FP_DEBUG_UNWRAP").is_ok() {
-                        eprintln!("debug unwrap: resolved_ty={:?}", resolved_ty);
-                    }
-                    let ret_var = if let Ty::Enum(enum_ty) = &resolved_ty {
-                        let expected = self
-                            .resolve_enum_variant_expected_value(enum_ty, "Ok")?
-                            .or_else(|| {
-                                enum_ty
-                                    .variants
-                                    .iter()
-                                    .find(|variant| variant.name.as_str() == "Ok")
-                                    .map(|variant| variant.value.clone())
-                            });
-                        if let Some(expected) = expected {
-                            if enum_ty.generics_params.is_empty() {
-                                self.type_from_ast_ty(&expected).await?
-                            } else {
-                                self.enter_scope();
-                                for param in &enum_ty.generics_params {
-                                    let var = self.register_generic_param(param.name.as_str());
-                                    let bounds = Self::extract_trait_bounds(&param.bounds);
-                                    if !bounds.is_empty() {
-                                        self.inner.borrow_mut().generic_trait_bounds.insert(var, bounds);
-                                    }
-                                }
-                                let ret = self.type_from_ast_ty(&expected).await;
-                                self.exit_scope();
-                                ret?
-                            }
-                        } else {
-                            self.fresh_type_var()
-                        }
-                    } else {
-                        self.fresh_type_var()
-                    };
-                    let fn_var = self.fresh_type_var();
-                    self.bind_function_term(fn_var, Vec::new(), ret_var);
-                    return Ok(fn_var);
-                }
-                _ => {}
-            }
-        }
-
         if let Some(var) = self.lookup_env_var(field.as_str()).await {
             return Ok(var);
-        }
-        if type_name == "Option" {
-            match field.as_str() {
-                "is_some" | "is_none" => {
-                    let result_var = self.fresh_type_var();
-                    self.bind(result_var, Ty::Primitive(TypePrimitive::Bool));
-                    let fn_var = self.fresh_type_var();
-                    self.bind_function_term(fn_var, Vec::new(), result_var);
-                    return Ok(fn_var);
-                }
-                _ => {}
-            }
-        }
-        if type_name == "ProcessResult" {
-            match field.as_str() {
-                "success" => {
-                    let result_var = self.fresh_type_var();
-                    self.bind(result_var, Ty::Primitive(TypePrimitive::Bool));
-                    let fn_var = self.fresh_type_var();
-                    self.bind_function_term(fn_var, Vec::new(), result_var);
-                    return Ok(fn_var);
-                }
-                "status" => {
-                    let result_var = self.fresh_type_var();
-                    self.bind(result_var, Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
-                    let fn_var = self.fresh_type_var();
-                    self.bind_function_term(fn_var, Vec::new(), result_var);
-                    return Ok(fn_var);
-                }
-                "stdout" | "stderr" => {
-                    let string_var = self.fresh_type_var();
-                    self.bind(string_var, Ty::Primitive(TypePrimitive::String));
-                    let ref_var = self.fresh_type_var();
-                    self.bind_reference_term(ref_var, string_var);
-                    let fn_var = self.fresh_type_var();
-                    self.bind_function_term(fn_var, Vec::new(), ref_var);
-                    return Ok(fn_var);
-                }
-                "into_stdout" | "into_stderr" => {
-                    let result_var = self.fresh_type_var();
-                    self.bind(result_var, Ty::Primitive(TypePrimitive::String));
-                    let fn_var = self.fresh_type_var();
-                    self.bind_function_term(fn_var, Vec::new(), result_var);
-                    return Ok(fn_var);
-                }
-                _ => {}
-            }
         }
         self.emit_error(format!(
             "unknown method {} on struct {}",

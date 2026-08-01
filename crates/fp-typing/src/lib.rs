@@ -577,10 +577,12 @@ impl AstTypeInferencer {
                         let struct_path = prefix.with_segment(self_name);
                         for child in &impl_block.items {
                             if let ItemKind::DefFunction(func) = child.kind() {
-                                // Store on the struct for method lookup
-                                if let Some(s) = this.own_struct_defs_mut().get_mut(&struct_path) {
-                                    s.method_sigs.push((func.name.as_str().to_string(), func.sig.clone()));
-                                }
+                                // Store for method lookup -- keyed purely by
+                                // path, so no struct-vs-enum branch needed.
+                                this.own_method_sigs_mut()
+                                    .entry(struct_path.clone())
+                                    .or_default()
+                                    .push((func.name.as_str().to_string(), func.sig.clone()));
                                 // Also store as a function sig for ::call syntax
                                 let fn_path = struct_path.with_segment(func.name.as_str().to_string());
                                 this.own_function_sigs_mut().insert(fn_path.clone(), func.sig.clone());
@@ -661,6 +663,17 @@ impl AstTypeInferencer {
     }
     fn own_function_item_ids_mut(&self) -> RefMut<'_, HashMap<QualifiedPath, fp_core::ast::ItemId>> {
         RefMut::map(self.own_crate.borrow_mut(), |k| &mut k.function_item_ids)
+    }
+    /// Inherent methods declared in an `impl SelfType { .. }` block, keyed
+    /// by `SelfType`'s own fully-qualified path -- one shared table
+    /// regardless of whether `SelfType` resolves to a struct, an enum, or
+    /// anything else nominal (see `PackageCrate::method_sigs`'s doc
+    /// comment for why this isn't a field on `Ty` itself).
+    fn own_method_sigs(&self) -> Ref<'_, HashMap<QualifiedPath, Vec<(String, FunctionSignature)>>> {
+        Ref::map(self.own_crate.borrow(), |k| &k.method_sigs)
+    }
+    fn own_method_sigs_mut(&self) -> RefMut<'_, HashMap<QualifiedPath, Vec<(String, FunctionSignature)>>> {
+        RefMut::map(self.own_crate.borrow_mut(), |k| &mut k.method_sigs)
     }
     fn own_trait_defs(&self) -> Ref<'_, HashSet<QualifiedPath>> {
         Ref::map(self.own_crate.borrow(), |k| &k.trait_defs)
@@ -1676,6 +1689,14 @@ impl AstTypeInferencer {
         if let Some(def) = self.own_enum_defs().get(&name_path).cloned() {
             return Some((name_path, def));
         }
+        // Cross-crate counterpart to `lookup_struct_def_by_name`'s own
+        // `env_ctx.find_struct` check -- without this, an enum defined in
+        // another already-loaded crate (e.g. `std::option::Option`,
+        // `std::result::Result`) can never be found by bare name, since
+        // `own_enum_defs()` only holds the crate currently being typed.
+        if let Some(def) = self.typing_ctx.env_ctx.find_enum(&name_path) {
+            return Some((name_path, def));
+        }
         if !self.inner.borrow().module_path.is_empty() && segments.len() == 1 {
             let qualified = self.inner.borrow().module_path.with_segment(segments[0].clone());
             if let Some(def) = self.own_enum_defs().get(&qualified).cloned() {
@@ -2189,7 +2210,6 @@ impl AstTypeInferencer {
                 name: Ident::new(placeholder_name),
                 generics_params: Vec::new(),
                 repr: ReprOptions::default(),
-                method_sigs: Vec::new(),
                 fields: Vec::new(),
             };
             self.emit_warning(format!(
@@ -2262,9 +2282,10 @@ impl AstTypeInferencer {
         for candidate in self
             .struct_name_variants_for_path(&ctx.struct_name, ctx.struct_name.segments.len() == 1)
         {
-            if let Some(s) = self.own_struct_defs_mut().get_mut(&candidate) {
-                s.method_sigs.push((func.name.as_str().to_string(), func.sig.clone()));
-            }
+            self.own_method_sigs_mut()
+                .entry(candidate)
+                .or_default()
+                .push((func.name.as_str().to_string(), func.sig.clone()));
         }
     }
 
@@ -2318,7 +2339,6 @@ impl AstTypeInferencer {
                     name: def.name.clone(),
                     generics_params: Vec::new(),
                     repr: ReprOptions::default(),
-                    method_sigs: Vec::new(),
                     fields: def.value.fields.clone(),
                 };
                 self.insert_struct_def(&def.name, struct_ty);
@@ -2682,7 +2702,6 @@ impl AstTypeInferencer {
             name: Ident::new(name),
             generics_params: Vec::new(),
             repr: ReprOptions::default(),
-            method_sigs: Vec::new(),
             fields: Vec::new(),
         };
         self.own_struct_defs_mut().insert(key, ty);
@@ -3064,7 +3083,6 @@ impl AstTypeInferencer {
                         name: def.name.clone(),
                         generics_params: Vec::new(),
                         repr: ReprOptions::default(),
-                        method_sigs: Vec::new(),
                         fields: def.value.fields.clone(),
                     };
                     this.insert_struct_def(&def.name, struct_ty.clone());
@@ -3395,12 +3413,12 @@ impl AstTypeInferencer {
                                     &ctx.struct_name,
                                     ctx.struct_name.segments.len() == 1,
                                 ) {
-                                    if let Some(s) = this.own_struct_defs_mut().get_mut(&candidate) {
-                                        if s.method_sigs.iter().any(|(n, _)| n == &method_name) {
-                                            continue;
-                                        }
-                                        s.method_sigs.push((method_name.clone(), sig.clone()));
+                                    let mut method_sigs = this.own_method_sigs_mut();
+                                    let entry = method_sigs.entry(candidate).or_default();
+                                    if entry.iter().any(|(n, _)| n == &method_name) {
+                                        continue;
                                     }
+                                    entry.push((method_name.clone(), sig.clone()));
                                 }
                             }
                         }
@@ -3684,10 +3702,10 @@ impl AstTypeInferencer {
                 &ctx.struct_name,
                 ctx.struct_name.segments.len() == 1,
             ) {
-                if let Some(s) = self.own_struct_defs_mut().get_mut(&candidate) {
-                    if !s.method_sigs.iter().any(|(n, _)| n == func.name.as_str()) {
-                        s.method_sigs.push((func.name.as_str().to_string(), func.sig.clone()));
-                    }
+                let mut method_sigs = self.own_method_sigs_mut();
+                let entry = method_sigs.entry(candidate).or_default();
+                if !entry.iter().any(|(n, _)| n == func.name.as_str()) {
+                    entry.push((func.name.as_str().to_string(), func.sig.clone()));
                 }
             }
         }
@@ -3989,7 +4007,6 @@ impl AstTypeInferencer {
                     name: name.clone(),
                     generics_params: Vec::new(),
                     repr: ReprOptions::default(),
-                    method_sigs: Vec::new(),
                     fields: structural.fields.clone(),
                 };
                 self.insert_struct_def(name, struct_ty.clone());
@@ -4112,31 +4129,28 @@ impl AstTypeInferencer {
                             if let Some(var) = self.lookup_env_var(&qualified.to_key()).await {
                                 return Ok(Some(var));
                             }
-                            // Only borrow/clone the struct def long enough to
-                            // find the one matching method signature — the
-                            // local case doesn't need to clone the whole
-                            // `TypeStruct` at all (cross-crate lookups
-                            // already clone internally via `find_struct`,
-                            // since crates now live behind a `RefCell` for
-                            // on-demand loading).
-                            let local = self.own_struct_defs().get(&candidate).map(|s| {
+                            // Only clone the one matching method signature,
+                            // not the whole method list -- the local case
+                            // doesn't need to clone anything else (cross-crate
+                            // lookups already clone internally via
+                            // `find_method_sigs`, since crates now live
+                            // behind a `RefCell` for on-demand loading).
+                            let local = self.own_method_sigs().get(&candidate).map(|sigs| {
                                 (
                                     false,
-                                    s.method_sigs
-                                        .iter()
+                                    sigs.iter()
                                         .find(|(n, _)| n == method_name)
                                         .map(|(_, sig)| sig.clone()),
                                 )
                             });
                             let (is_cross_crate, found_sig) = if let Some(result) = local {
                                 result
-                            } else if let Some(s) =
-                                self.typing_ctx.env_ctx.find_struct(&candidate)
+                            } else if let Some(sigs) =
+                                self.typing_ctx.env_ctx.find_method_sigs(&candidate)
                             {
                                 (
                                     true,
-                                    s.method_sigs
-                                        .into_iter()
+                                    sigs.into_iter()
                                         .find(|(n, _)| n == method_name)
                                         .map(|(_, sig)| sig),
                                 )
@@ -4146,11 +4160,10 @@ impl AstTypeInferencer {
                                     .is_some_and(|head| self.typing_ctx.env_ctx.is_registered(head));
                                 if registered {
                                     self.await_package(candidate.head().unwrap()).await;
-                                    match self.typing_ctx.env_ctx.find_struct(&candidate) {
-                                        Some(s) => (
+                                    match self.typing_ctx.env_ctx.find_method_sigs(&candidate) {
+                                        Some(sigs) => (
                                             true,
-                                            s.method_sigs
-                                                .into_iter()
+                                            sigs.into_iter()
                                                 .find(|(n, _)| n == method_name)
                                                 .map(|(_, sig)| sig),
                                         ),
@@ -4160,7 +4173,7 @@ impl AstTypeInferencer {
                                     (false, None)
                                 }
                             };
-                            if is_cross_crate || self.own_struct_defs().contains_key(&candidate) {
+                            if is_cross_crate || self.own_method_sigs().contains_key(&candidate) {
                                 if is_cross_crate {
                                     self.inner.borrow_mut().cross_crate_struct_refs.insert(candidate.clone());
                                 }
@@ -4182,7 +4195,11 @@ impl AstTypeInferencer {
                         }
 
                         // Enum tuple variant constructors: `Enum::Variant(...)`.
-                        let enum_def = self.own_enum_defs().get(&struct_name).cloned();
+                        // `lookup_enum` (not `own_enum_defs()` alone) so a
+                        // cross-crate enum like `std::option::Option` -- not
+                        // defined in whatever crate is currently being typed
+                        // -- resolves here too.
+                        let enum_def = self.lookup_enum(&struct_name).await;
                         if let Some(enum_def) = enum_def {
                             if let Some(variant) = enum_def
                                 .variants
@@ -4878,7 +4895,12 @@ impl AstTypeInferencer {
 
 pub fn impl_self_ty_name(expr: &Expr) -> Option<String> {
     match expr.kind() {
-        ExprKind::Name(name) => Some(name.to_string()),
+        // `Name`'s own `Display` includes generic args for a
+        // `ParameterPath` (e.g. `impl<T> Option<T>`'s self type would
+        // stringify as `"Option<T>"`), which is never what a registration
+        // key should look like -- go through `to_path()` (idents only, no
+        // args) and take its last segment instead.
+        ExprKind::Name(name) => name.to_path().segments.last().map(|ident| ident.as_str().to_string()),
         _ => None,
     }
 }
@@ -4922,7 +4944,6 @@ mod deftype_normalize_tests {
             name: Ident::new(source_name),
             generics_params: Vec::new(),
             repr: ReprOptions::default(),
-            method_sigs: Vec::new(),
             fields: vec![StructuralField::new(
                 Ident::new("extra"),
                 Ty::Primitive(TypePrimitive::Bool),
