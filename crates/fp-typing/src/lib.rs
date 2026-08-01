@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+mod api;
 pub mod context;
+mod diagnostics;
 pub mod infer_expr;
 pub mod infer_stmt;
 pub mod runtime;
@@ -25,7 +27,6 @@ use crate::support::{
 };
 use fp_core::ast::*;
 use fp_core::ast::{AttributesExt, Ident, Name};
-use fp_core::diagnostics::Diagnostic;
 use fp_core::error::{Error, Result};
 use fp_core::module::path::{parse_path, resolve_item_path, ParsedPath, PathPrefix, QualifiedPath};
 use fp_core::package::PackageCrate;
@@ -63,58 +64,11 @@ pub trait TypeResolutionHook {
 }
 
 use crate::unify::{TypeVar, TypeVarKind};
-#[derive(Clone, Debug)]
-struct ImplContext {
-    struct_name: QualifiedPath,
-    self_ty: Ty,
-    impl_generics_params: Vec<GenericParam>,
-}
-#[derive(Clone)]
-pub(crate) enum EnvEntry {
-    Mono(TypeVarId),
-    Poly(Ty),
-}
-pub(crate) struct PatternBinding {
-    name: String,
-    var: TypeVarId,
-}
-pub(crate) struct PatternInfo {
-    pub(crate) var: TypeVarId,
-    pub(crate) bindings: Vec<PatternBinding>,
-}
-impl PatternInfo {
-    fn new(var: TypeVarId) -> Self {
-        Self {
-            var,
-            bindings: Vec::new(),
-        }
-    }
-    fn with_binding(mut self, name: String, var: TypeVarId) -> Self {
-        self.bindings.push(PatternBinding { name, var });
-        self
-    }
-}
-pub(crate) struct FunctionTypeInfo {
-    pub(crate) params: Vec<TypeVarId>,
-    pub(crate) ret: TypeVarId,
-}
-pub(crate) struct LoopContext {
-    pub(crate) result_var: TypeVarId,
-    pub(crate) saw_break: bool,
-}
-impl LoopContext {
-    fn new(result_var: TypeVarId) -> Self {
-        Self {
-            result_var,
-            saw_break: false,
-        }
-    }
-}
-#[derive(Clone)]
-struct ContextBinding {
-    ty: Ty,
-    expr: Expr,
-}
+mod state;
+pub(crate) use state::{
+    ContextBinding, EnvEntry, FunctionTypeInfo, ImplContext, LoopContext, PatternBinding,
+    PatternInfo,
+};
 #[derive(Clone, Copy)]
 pub(crate) enum ExceptionReturnPolicy {
     Disabled,
@@ -125,7 +79,7 @@ struct ExceptionContext {
     policy: ExceptionReturnPolicy,
 }
 struct ExceptionContextGuard {
-    inner: Rc<RefCell<Inner>>,
+    pub(crate) inner: Rc<RefCell<Inner>>,
 }
 impl Drop for ExceptionContextGuard {
     fn drop(&mut self) {
@@ -4640,350 +4594,10 @@ impl AstTypeInferencer {
         }
     }
 
-    fn emit_error(&self, message: impl Into<String>) {
-        let span = self.inner.borrow().current_span;
-        self.emit_error_with_span(span, message);
-    }
-
-    fn emit_error_with_span(&self, span: Option<Span>, message: impl Into<String>) {
-        let message = message.into();
-        let mut inner = self.inner.borrow_mut();
-        if inner.lossy_mode {
-            if let Some(span) = span {
-                inner
-                    .diagnostics
-                    .push(TypingDiagnostic::warning_with_span(message, span));
-            } else {
-                inner.diagnostics.push(TypingDiagnostic::warning(message));
-            }
-        } else {
-            inner.has_errors = true;
-            if let Some(span) = span {
-                inner
-                    .diagnostics
-                    .push(TypingDiagnostic::error_with_span(message, span));
-            } else {
-                inner.diagnostics.push(TypingDiagnostic::error(message));
-            }
-        }
-    }
-
-    fn span_option(&self, span: Span) -> Option<Span> {
-        if span.is_null() {
-            None
-        } else {
-            Some(span)
-        }
-    }
-
-    fn span_or_previous(&self, span: Span, previous: Option<Span>) -> Option<Span> {
-        if span.is_null() {
-            previous
-        } else {
-            Some(span)
-        }
-    }
-
-    fn error_with_span(&self, err: Error, span: Option<Span>) -> Error {
-        let Some(span) = span else {
-            return err;
-        };
-        if let Error::Diagnostic(ref diagnostic) = err {
-            if diagnostic.span.is_some() {
-                return err;
-            }
-        }
-        Error::diagnostic(Diagnostic::error(err.to_string()).with_span(span))
-    }
-
-    fn error_with_current_span(&self, message: impl Into<String>) -> Error {
-        let message = message.into();
-        if let Some(span) = self.inner.borrow().current_span {
-            Error::diagnostic(Diagnostic::error(message).with_span(span))
-        } else {
-            Error::from(message)
-        }
-    }
-
-    fn emit_warning(&self, message: impl Into<String>) {
-        self.inner
-            .borrow_mut()
-            .diagnostics
-            .push(TypingDiagnostic::warning(message));
-    }
-
-    fn error_type_var(&self) -> TypeVarId {
-        let var = self.fresh_type_var();
-        self.bind_error(var);
-        var
-    }
-
-    fn expect_reference<'a>(
-        &self,
-        var: TypeVarId,
-        context: &'a str,
-    ) -> BoxFuture<'a, Result<TypeVarId>> {
-        let this = self.clone();
-        Box::pin(async move {
-            let root = this.find(var);
-            // Extracted to an owned local first: the `Bound(Reference)` and
-            // `Link` arms below await, and matching directly on
-            // `this.inner.borrow()...` would extend the guard's scope
-            // across those `.await`s.
-            let root_kind = this.inner.borrow().type_vars[root].kind.clone();
-            match root_kind {
-                TypeVarKind::Unbound { .. } => {
-                    let inner = this.fresh_type_var();
-                    this.inner.borrow_mut().type_vars[root].kind =
-                        TypeVarKind::Bound(Ty::Reference(TypeReference {
-                            ty: Box::new(Ty::infer_var(inner)),
-                            mutability: None,
-                            lifetime: None,
-                        }));
-                    Ok(inner)
-                }
-                TypeVarKind::Bound(Ty::Reference(reference)) => match reference.ty.as_ref() {
-                    Ty::InferVar(infer) => Ok(infer.id),
-                    other => this.type_from_ast_ty(other).await,
-                },
-                TypeVarKind::Link(next) => this.expect_reference(next, context).await,
-                _other => {
-                    this.emit_error(format!(
-                        "expected reference value for {} (hint: add `&`/`&mut` or change the annotation to a non-reference type)",
-                        context
-                    ));
-                    let placeholder = this.error_type_var();
-                    this.inner.borrow_mut().type_vars[root].kind =
-                        TypeVarKind::Bound(Ty::Reference(TypeReference {
-                            ty: Box::new(Ty::infer_var(placeholder)),
-                            mutability: None,
-                            lifetime: None,
-                        }));
-                    Ok(placeholder)
-                }
-            }
-        })
-    }
-
     async fn generalize_symbol(&self, name: &str, var: TypeVarId) -> Result<()> {
         let scheme = self.generalize(var).await?;
         self.replace_env_entry(name, EnvEntry::Poly(scheme));
         Ok(())
-    }
-
-    fn ty_from_function_signature(&self, sig: &FunctionSignature) -> Result<Ty> {
-        self.validate_extern_c_signature(sig);
-        let mut params = Vec::new();
-        for param in &sig.params {
-            params.push(param.ty.clone());
-        }
-        let ret_ty = sig.ret_ty.clone().unwrap_or_else(|| Ty::Unit(TypeUnit));
-        Ok(Ty::Function(TypeFunction {
-            params,
-            generics_params: sig.generics_params.clone(),
-            ret_ty: Some(Box::new(ret_ty)),
-        }))
-    }
-
-    fn validate_extern_c_signature(&self, sig: &FunctionSignature) {
-        if !sig.abi.is_c() {
-            return;
-        }
-        for param in &sig.params {
-            if self.is_disallowed_c_string_type(&param.ty) {
-                self.emit_error(format!(
-                    "extern \"C\" functions must use &CStr for string parameters: {}",
-                    param.name
-                ));
-            }
-        }
-        if let Some(ret_ty) = &sig.ret_ty {
-            if self.is_disallowed_c_string_type(ret_ty) {
-                self.emit_error("extern \"C\" functions must use &CStr for string return types");
-            }
-        }
-    }
-
-    fn is_disallowed_c_string_type(&self, ty: &Ty) -> bool {
-        if self.is_cstr_reference(ty) {
-            return false;
-        }
-        if self.is_string_like_type(ty) {
-            return true;
-        }
-        if let Ty::Reference(reference) = ty {
-            if self.is_string_like_type(reference.ty.as_ref()) {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn is_cstr_reference(&self, ty: &Ty) -> bool {
-        let Ty::Reference(reference) = ty else {
-            return false;
-        };
-        self.type_name(reference.ty.as_ref()) == Some("CStr")
-    }
-
-    fn is_string_like_type(&self, ty: &Ty) -> bool {
-        match ty {
-            Ty::Primitive(TypePrimitive::String) => true,
-            _ => matches!(
-                self.type_name(ty),
-                Some("str") | Some("String") | Some("string")
-            ),
-        }
-    }
-
-    fn type_name<'a>(&self, ty: &'a Ty) -> Option<&'a str> {
-        match ty {
-            Ty::Struct(struct_ty) => Some(struct_ty.name.as_str()),
-            Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Name(name) => match name {
-                    Name::Ident(ident) => Some(ident.as_str()),
-                    Name::Path(path) => path.segments.last().map(|seg| seg.as_str()),
-                    Name::ParameterPath(path) => path.last().map(|seg| seg.ident.as_str()),
-                },
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn struct_name_from_expr(&self, expr: &Expr) -> Option<QualifiedPath> {
-        match expr.kind() {
-            ExprKind::Name(name) => {
-                let name = match name {
-                    Name::ParameterPath(path) => path
-                        .segments
-                        .last()
-                        .map(|seg| seg.ident.as_str().to_string())?,
-                    Name::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string())?,
-                    Name::Ident(ident) => ident.as_str().to_string(),
-                };
-                if name == "Self" {
-                    self.inner
-                        .borrow()
-                        .impl_stack
-                        .last()
-                        .and_then(|ctx| ctx.as_ref())
-                        .map(|ctx| ctx.struct_name.clone())
-                } else {
-                    Some(QualifiedPath::new(vec![name]))
-                }
-            }
-            ExprKind::Value(value) => match &**value {
-                Value::Type(Ty::Struct(struct_ty)) => Some(QualifiedPath::new(vec![struct_ty
-                    .name
-                    .as_str()
-                    .to_string()])),
-                Value::Type(Ty::Enum(enum_ty)) => {
-                    Some(QualifiedPath::new(vec![enum_ty.name.as_str().to_string()]))
-                }
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-}
-
-impl AstTypeInferencer {
-    pub async fn infer_expression(&self, expr: &mut Expr) -> Result<()> {
-        let var = self.infer_expr_inner(expr).await?;
-        let ty = self.resolve_to_ty(var).await?;
-        expr.set_ty(ty);
-        Ok(())
-    }
-
-    pub fn push_scope(&self) {
-        let mut inner = self.inner.borrow_mut();
-        inner.env.push(HashMap::new());
-        inner.generic_scopes.push(HashSet::new());
-        inner.context_env.push(Vec::new());
-        inner.current_level += 1;
-    }
-
-    pub fn pop_scope(&self) {
-        let mut inner = self.inner.borrow_mut();
-        inner.env.pop();
-        inner.generic_scopes.pop();
-        inner.context_env.pop();
-        if inner.current_level > 0 {
-            inner.current_level -= 1;
-        }
-    }
-
-    pub async fn bind_variable(&self, name: &str, ty: Ty) {
-        let type_var = match self.type_from_ast_ty(&ty).await {
-            Ok(var) => var,
-            Err(_) => self.fresh_type_var(),
-        };
-        if let Some(current_env) = self.inner.borrow_mut().env.last_mut() {
-            current_env.insert(name.to_string(), EnvEntry::Mono(type_var));
-        }
-    }
-
-    fn push_context_binding(&self, ty: Ty, expr: Expr) {
-        if let Some(scope) = self.inner.borrow_mut().context_env.last_mut() {
-            scope.push(ContextBinding { ty, expr });
-        }
-    }
-
-    fn resolve_context_argument(&self, param: &FunctionParam) -> Option<Expr> {
-        if !param.is_context {
-            return None;
-        }
-
-        self.inner
-            .borrow()
-            .context_env
-            .iter()
-            .rev()
-            .flat_map(|scope| scope.iter().rev())
-            .find(|binding| binding.ty == param.ty)
-            .map(|binding| binding.expr.clone())
-    }
-}
-
-/// Pre-walk: collect quote-valued DefConst items and replace splice(NAME)
-/// expressions with extracted items. Recurses into modules and impl blocks.
-/// Called by the scheduler before typing.
-
-impl AstTypeInferencer {
-    fn name_tail(&self, name: &Name) -> Option<String> {
-        match name {
-            Name::Ident(ident) => Some(ident.as_str().to_string()),
-            Name::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string()),
-            Name::ParameterPath(path) => path
-                .segments
-                .last()
-                .map(|seg| seg.ident.as_str().to_string()),
-        }
-    }
-
-    fn resolution_parsed_path(&self, name: &Name) -> Option<ParsedPath> {
-        let (prefix, segments) = match name {
-            Name::Ident(ident) => (PathPrefix::Plain, vec![ident.as_str().to_string()]),
-            Name::Path(path) => (
-                path.prefix,
-                path.segments
-                    .iter()
-                    .map(|seg| seg.as_str().to_string())
-                    .collect(),
-            ),
-            Name::ParameterPath(path) => (
-                path.prefix,
-                path.segments
-                    .iter()
-                    .map(|seg| seg.ident.as_str().to_string())
-                    .collect(),
-            ),
-        };
-        if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
-            return None;
-        }
-        Some(ParsedPath { prefix, segments })
     }
 }
 
