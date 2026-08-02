@@ -1120,8 +1120,18 @@ impl HirTypeChecker {
         else {
             return Err(Error::from(format!("{context} requires an ADT scrutinee")));
         };
-        if actual_def.did != expected_def.did || actual_args != expected_args {
+        if actual_def.did != expected_def.did || actual_args.len() != expected_args.len() {
             return Err(Error::from(format!("{context} does not match scrutinee type")));
+        }
+        let mut substitutions = HashMap::new();
+        for (actual, expected) in actual_args.iter().zip(expected_args) {
+            match (actual, expected) {
+                (GenericArg::Type(actual), GenericArg::Type(expected)) => {
+                    self.unify_call_types(expected, actual, &mut substitutions)?;
+                }
+                (actual, expected) if actual == expected => {}
+                _ => return Err(Error::from(format!("{context} does not match scrutinee type"))),
+            }
         }
         Ok(())
     }
