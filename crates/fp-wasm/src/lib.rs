@@ -1174,9 +1174,25 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
 
         let name = match function {
             LirValue::Function(name) => name.clone(),
-            _ => "".to_string(),
+            LirValue::FunctionInPackage(package_id, name) => {
+                return Err(fp_core::error::Error::from(format!(
+                    "package-qualified function `{package_id}::{name}` is not supported by WASM lowering"
+                )));
+            }
+            LirValue::FunctionDef(def_id) => {
+                return Err(fp_core::error::Error::from(format!(
+                    "function definition `{def_id}` is not supported by WASM lowering"
+                )));
+            }
+            _ => {
+                return Err(fp_core::error::Error::from(
+                    "WASM call target is not a named function",
+                ));
+            }
         };
-        let idx = self.emitter.func_index.get(&name).copied().unwrap_or(0);
+        let idx = self.emitter.func_index.get(&name).copied().ok_or_else(|| {
+            fp_core::error::Error::from(format!("unknown WASM function `{name}`"))
+        })?;
         func.instruction(&Instruction::Call(idx));
 
         if let Some(ty) = instr.type_hint.clone() {
@@ -1648,6 +1664,16 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
                 let idx = self.emitter.func_index.get(name).copied().unwrap_or(0);
                 func.instruction(&Instruction::I64Const(idx as i64));
             }
+            LirValue::FunctionInPackage(package_id, name) => {
+                return Err(fp_core::error::Error::from(format!(
+                    "package-qualified function `{package_id}::{name}` is not supported by WASM lowering"
+                )));
+            }
+            LirValue::FunctionDef(def_id) => {
+                return Err(fp_core::error::Error::from(format!(
+                    "function definition `{def_id}` is not supported by WASM lowering"
+                )));
+            }
             LirValue::Local(id) => {
                 let local = self.locals_map.get(id).copied().unwrap_or(0);
                 func.instruction(&Instruction::LocalGet(local));
@@ -1709,7 +1735,9 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
             LirValue::Register(id) => self.register_types.get(id).cloned().unwrap_or(LirType::I64),
             LirValue::Constant(constant) => constant_type(constant),
             LirValue::Global(_, ty) => ty.clone(),
-            LirValue::Function(_) => LirType::Ptr(Box::new(LirType::I8)),
+            LirValue::Function(_) | LirValue::FunctionInPackage(_, _) | LirValue::FunctionDef(_) => {
+                LirType::Ptr(Box::new(LirType::I8))
+            }
             LirValue::Local(id) => self
                 .func
                 .locals
@@ -2118,7 +2146,9 @@ fn value_type_for(
         LirValue::Register(id) => reg_types.get(id).cloned().unwrap_or(LirType::I64),
         LirValue::Constant(constant) => constant_type(constant),
         LirValue::Global(_, ty) => ty.clone(),
-        LirValue::Function(_) => LirType::Ptr(Box::new(LirType::I8)),
+        LirValue::Function(_) | LirValue::FunctionInPackage(_, _) | LirValue::FunctionDef(_) => {
+            LirType::Ptr(Box::new(LirType::I8))
+        }
         LirValue::Local(id) => func
             .locals
             .iter()

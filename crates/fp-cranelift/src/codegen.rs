@@ -1146,6 +1146,12 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
                 Ok(self.builder.ins().func_addr(self.pointer_type, func_ref))
             }
+            LirValue::FunctionInPackage(package_id, name) => Err(fp_core::error::Error::from(
+                format!("package-qualified function `{package_id}::{name}` is not supported by Cranelift lowering"),
+            )),
+            LirValue::FunctionDef(def_id) => Err(fp_core::error::Error::from(
+                format!("function definition `{def_id}` is not supported by Cranelift lowering"),
+            )),
             LirValue::Local(id) => self
                 .local_values
                 .get(id)
@@ -1240,7 +1246,9 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 LirConstant::Undef(ty) => ty.clone(),
             }),
             LirValue::Global(_, ty) => Ok(ty.clone()),
-            LirValue::Function(_) => Ok(LirType::Ptr(Box::new(LirType::I8))),
+            LirValue::Function(_) | LirValue::FunctionInPackage(_, _) | LirValue::FunctionDef(_) => {
+                Ok(LirType::Ptr(Box::new(LirType::I8)))
+            }
             LirValue::Undef(ty) | LirValue::Null(ty) => Ok(ty.clone()),
         }
     }

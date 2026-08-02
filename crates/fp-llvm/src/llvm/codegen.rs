@@ -1703,6 +1703,19 @@ impl<'a> LirCodegen<'a> {
 
                 Ok(function.as_global_value().as_pointer_value().into())
             }
+            lir::LirValue::FunctionInPackage(package_id, name) => Err(
+                report_error_with_context(
+                    LOG_AREA,
+                    format!(
+                        "Package-qualified function `{}::{}` is not supported by LLVM lowering",
+                        package_id, name
+                    ),
+                ),
+            ),
+            lir::LirValue::FunctionDef(def_id) => Err(report_error_with_context(
+                LOG_AREA,
+                format!("Function definition `{def_id}` is not supported by LLVM lowering"),
+            )),
             lir::LirValue::Local(local_id) => self
                 .argument_operands
                 .get(&local_id)
