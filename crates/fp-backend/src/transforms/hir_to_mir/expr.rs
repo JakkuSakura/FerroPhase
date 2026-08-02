@@ -397,6 +397,7 @@ pub struct MirLowering {
     typeck_type_exprs: HashMap<hir::HirId, Ty>,
     typeck_exprs: HashMap<hir::HirId, Ty>,
     typeck_method_resolutions: HashMap<hir::HirId, hir::DefId>,
+    typeck_generic_call_args: HashMap<hir::HirId, Vec<Ty>>,
 }
 
 fn terminal_segment(name: &str) -> &str {
@@ -476,6 +477,7 @@ impl MirLowering {
             typeck_type_exprs: HashMap::new(),
             typeck_exprs: HashMap::new(),
             typeck_method_resolutions: HashMap::new(),
+            typeck_generic_call_args: HashMap::new(),
         }
     }
 
@@ -524,6 +526,18 @@ impl MirLowering {
             .map(|(id, ty)| lower_hir_ty(ty).map(|ty| (*id, ty)))
             .collect::<Result<HashMap<_, _>>>()?;
         self.typeck_method_resolutions = results.method_resolutions.clone();
+        self.typeck_generic_call_args = results
+            .generic_call_args
+            .iter()
+            .map(|(hir_id, resolution)| {
+                resolution
+                    .args
+                    .iter()
+                    .map(lower_hir_ty)
+                    .collect::<Result<Vec<_>>>()
+                    .map(|args| (*hir_id, args))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
         Ok(self)
     }
 
@@ -12112,6 +12126,11 @@ impl<'a> BodyBuilder<'a> {
                 .find_map(|segment| segment.args.as_ref())
             {
                 explicit_args = self.lowering.lower_generic_args(Some(args), expr.span);
+            }
+            if explicit_args.is_empty() {
+                if let Some(args) = self.lowering.typeck_generic_call_args.get(&expr.hir_id) {
+                    explicit_args = args.clone();
+                }
             }
             if let Some(hir::Res::Def(def_id)) = &path.res {
                 if self.lowering.generic_function_defs.contains_key(def_id) {

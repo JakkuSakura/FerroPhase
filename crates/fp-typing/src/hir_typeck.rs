@@ -4,7 +4,7 @@ use fp_core::hir::ty::{self, AdtDef, AdtFlags, GenericArg, ReprFlags, ReprOption
 use fp_core::ast::{DecimalType, TypeInt, TypePrimitive};
 use std::collections::HashMap;
 
-use crate::types::TypeckResults;
+use crate::types::{GenericCallResolution, TypeckResults};
 
 /// Type checks resolved HIR and records semantic types outside the source tree.
 /// This is deliberately a side-table pass: HIR nodes remain source-shaped and
@@ -205,9 +205,19 @@ impl HirTypeChecker {
                     .iter()
                     .map(|arg| self.check_expr(&arg.value))
                     .collect::<Result<Vec<_>>>()?;
-                let Some((_, output)) = self.instantiate_call(&callee_ty, &arg_types)? else {
+                let Some((substitutions, output)) = self.instantiate_call(&callee_ty, &arg_types)? else {
                     return Err(Error::from("called expression is not a function"));
                 };
+                if let hir::ExprKind::Path(path) = &callee.kind {
+                    if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+                        if let Some(args) = self.generic_call_args(*def_id, &substitutions)? {
+                            self.results.generic_call_args.insert(
+                                expr.hir_id,
+                                GenericCallResolution { def_id: *def_id, args },
+                            );
+                        }
+                    }
+                }
                 output
             }
             hir::ExprKind::MethodCall(receiver, method, args) => {
@@ -627,7 +637,11 @@ impl HirTypeChecker {
         })
     }
 
-    fn instantiate_call(&self, callable: &Ty, actuals: &[Ty]) -> Result<Option<(Vec<Ty>, Ty)>> {
+    fn instantiate_call(
+        &self,
+        callable: &Ty,
+        actuals: &[Ty],
+    ) -> Result<Option<(HashMap<ty::ParamTy, Ty>, Ty)>> {
         let TyKind::FnPtr(signature) = &callable.kind else { return Ok(None) };
         if signature.binder.value.inputs.len() != actuals.len() {
             return Err(Error::from("call argument count does not match function signature"));
@@ -636,15 +650,39 @@ impl HirTypeChecker {
         for (expected, actual) in signature.binder.value.inputs.iter().zip(actuals) {
             self.unify_call_types(expected, actual, &mut substitutions)?;
         }
-        let inputs = signature
-            .binder
-            .value
-            .inputs
-            .iter()
-            .map(|input| self.substitute_param_map(input, &substitutions))
-            .collect();
         let output = self.substitute_param_map(&signature.binder.value.output, &substitutions);
-        Ok(Some((inputs, output)))
+        Ok(Some((substitutions, output)))
+    }
+
+    fn generic_call_args(
+        &self,
+        def_id: hir::DefId,
+        substitutions: &HashMap<ty::ParamTy, Ty>,
+    ) -> Result<Option<Vec<Ty>>> {
+        let Some(item) = self.program.def_map.get(&def_id) else {
+            return Ok(None);
+        };
+        let hir::ItemKind::Function(function) = &item.kind else {
+            return Ok(None);
+        };
+        if function.sig.generics.params.is_empty() {
+            return Ok(None);
+        }
+        let mut args = Vec::with_capacity(function.sig.generics.params.len());
+        for (index, parameter) in function.sig.generics.params.iter().enumerate() {
+            let param = ty::ParamTy {
+                index: index as u32,
+                name: parameter.name.clone(),
+            };
+            let Some(argument) = substitutions.get(&param) else {
+                return Err(Error::from(format!(
+                    "could not infer generic parameter `{}` for `{def_id}`",
+                    parameter.name
+                )));
+            };
+            args.push(argument.clone());
+        }
+        Ok(Some(args))
     }
 
     fn unify_call_types(&self, expected: &Ty, actual: &Ty, substitutions: &mut HashMap<ty::ParamTy, Ty>) -> Result<()> {
