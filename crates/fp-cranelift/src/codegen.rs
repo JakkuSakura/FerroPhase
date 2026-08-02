@@ -1147,7 +1147,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 Ok(self.builder.ins().func_addr(self.pointer_type, func_ref))
             }
             LirValue::FunctionInPackage(package_id, name) => Err(fp_core::error::Error::from(
-                format!("package-qualified function `{package_id}::{name}` is not supported by Cranelift lowering"),
+                format!("package-qualified function `{:?}::{name}` is not supported by Cranelift lowering", package_id),
             )),
             LirValue::FunctionDef(def_id) => Err(fp_core::error::Error::from(
                 format!("function definition `{def_id}` is not supported by Cranelift lowering"),

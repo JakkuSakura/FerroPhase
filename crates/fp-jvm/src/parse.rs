@@ -136,6 +136,7 @@ fn lower_method_to_lir(method: &ParsedMethod) -> Result<Option<LirFunction>, Jvm
                 // ireturn
                 let value = stack.pop();
                 return Ok(Some(LirFunction {
+                    def_id: None,
                     name: Name::new(method.name.clone()),
                     signature: LirFunctionSignature {
                         params: Vec::new(),
@@ -167,6 +168,7 @@ fn lower_method_to_lir(method: &ParsedMethod) -> Result<Option<LirFunction>, Jvm
             0xB1 => {
                 // return
                 return Ok(Some(LirFunction {
+                    def_id: None,
                     name: Name::new(method.name.clone()),
                     signature: LirFunctionSignature {
                         params: Vec::new(),

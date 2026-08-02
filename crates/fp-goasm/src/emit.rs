@@ -466,6 +466,10 @@ fn format_value(value: &LirValue) -> String {
         LirValue::Constant(constant) => format_constant(constant),
         LirValue::Global(name, _) => format!("{}(SB)", go_symbol(name)),
         LirValue::Function(name) => format!("{}(SB)", go_symbol(name)),
+        LirValue::FunctionInPackage(_, name) => format!("{}(SB)", go_symbol(name)),
+        LirValue::FunctionDef(def_id) => {
+            panic!("function definition `{def_id}` is not supported by GoASM lowering")
+        }
         LirValue::Local(id) => format!("local{}", id),
         LirValue::StackSlot(id) => format!("stack{}", id),
         LirValue::Undef(_) | LirValue::Null(_) => "$0".into(),

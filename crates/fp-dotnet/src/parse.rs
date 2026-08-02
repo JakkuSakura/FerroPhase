@@ -188,6 +188,7 @@ fn lower_method(method: ParsedMethod) -> Result<LirFunction> {
     }
 
     Ok(LirFunction {
+        def_id: None,
         name: method.name,
         signature: LirFunctionSignature {
             params: Vec::new(),

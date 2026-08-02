@@ -157,6 +157,7 @@ fn lower_function(function: ParsedFunction, target: GoAsmTarget) -> Result<LirFu
     }
 
     Ok(LirFunction {
+        def_id: None,
         name: function.name,
         signature: LirFunctionSignature {
             params: Vec::new(),

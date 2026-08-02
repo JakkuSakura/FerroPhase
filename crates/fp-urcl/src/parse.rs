@@ -129,6 +129,7 @@ fn lower_function(function: ParsedFunction) -> Result<LirFunction> {
     }
 
     Ok(LirFunction {
+        def_id: None,
         name: function.name,
         signature: LirFunctionSignature {
             params: Vec::new(),

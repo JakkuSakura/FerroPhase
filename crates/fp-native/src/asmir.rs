@@ -4691,6 +4691,10 @@ fn map_value(value: &LirValue) -> AsmValue {
         LirValue::Constant(constant) => AsmValue::Constant(map_constant(constant)),
         LirValue::Global(name, ty) => AsmValue::Global(name.clone(), ty.clone()),
         LirValue::Function(name) => AsmValue::Function(name.clone()),
+        LirValue::FunctionInPackage(_, name) => AsmValue::Function(name.clone()),
+        LirValue::FunctionDef(def_id) => {
+            unreachable!("function definition `{def_id}` is not supported by native ASMir")
+        }
         LirValue::Local(id) => AsmValue::Local(*id),
         LirValue::StackSlot(id) => AsmValue::StackSlot(*id),
         LirValue::Undef(ty) => AsmValue::Undef(ty.clone()),

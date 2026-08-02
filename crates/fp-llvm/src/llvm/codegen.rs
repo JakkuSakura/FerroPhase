@@ -1707,7 +1707,7 @@ impl<'a> LirCodegen<'a> {
                 report_error_with_context(
                     LOG_AREA,
                     format!(
-                        "Package-qualified function `{}::{}` is not supported by LLVM lowering",
+                        "Package-qualified function `{:?}::{}` is not supported by LLVM lowering",
                         package_id, name
                     ),
                 ),

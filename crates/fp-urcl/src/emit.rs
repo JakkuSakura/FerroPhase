@@ -327,6 +327,10 @@ fn format_value(value: &LirValue) -> String {
         LirValue::Constant(constant) => format_constant(constant),
         LirValue::Global(name, _) => format!("@{}", name),
         LirValue::Function(name) => name.to_string(),
+        LirValue::FunctionInPackage(_, name) => name.to_string(),
+        LirValue::FunctionDef(def_id) => {
+            panic!("function definition `{def_id}` is not supported by URCL lowering")
+        }
         LirValue::Local(id) => format!("local{}", id),
         LirValue::StackSlot(id) => format!("stack{}", id),
         LirValue::Undef(_) => "undef".into(),

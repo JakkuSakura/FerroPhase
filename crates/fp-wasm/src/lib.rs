@@ -1176,7 +1176,8 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
             LirValue::Function(name) => name.clone(),
             LirValue::FunctionInPackage(package_id, name) => {
                 return Err(fp_core::error::Error::from(format!(
-                    "package-qualified function `{package_id}::{name}` is not supported by WASM lowering"
+                    "package-qualified function `{:?}::{name}` is not supported by WASM lowering",
+                    package_id
                 )));
             }
             LirValue::FunctionDef(def_id) => {
@@ -1666,7 +1667,8 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
             }
             LirValue::FunctionInPackage(package_id, name) => {
                 return Err(fp_core::error::Error::from(format!(
-                    "package-qualified function `{package_id}::{name}` is not supported by WASM lowering"
+                    "package-qualified function `{:?}::{name}` is not supported by WASM lowering",
+                    package_id
                 )));
             }
             LirValue::FunctionDef(def_id) => {

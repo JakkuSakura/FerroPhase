@@ -363,6 +363,7 @@ fn dump_bytes(out: &mut String, bytes: &[u8]) {
 
 fn default_lir_program() -> LirProgram {
     let func = LirFunction {
+        def_id: None,
         name: Name::new("main"),
         signature: LirFunctionSignature {
             params: Vec::new(),
