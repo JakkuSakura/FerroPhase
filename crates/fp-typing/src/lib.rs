@@ -6,7 +6,7 @@ pub mod types;
 
 pub use context::TypingContext;
 pub use hir_typeck::HirTypeChecker;
-pub use support::{block_on, default_extern_prelude, impl_self_ty_name};
+pub use support::{block_on, default_extern_prelude, impl_self_ty_name, BoxFuture};
 pub use types::{
     ExprId, GenericMonorph, ResolvedName, ResolvedNameNamespace, ResolvedNameTable,
     TypeckResults, TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome,

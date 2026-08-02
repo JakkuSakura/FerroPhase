@@ -3,6 +3,7 @@ use fp_core::hir;
 use fp_core::hir::ty::{self, AdtDef, AdtFlags, GenericArg, ReprFlags, ReprOptions, Ty, TyKind};
 use fp_core::ast::{DecimalType, TypeInt, TypePrimitive};
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 
 use crate::types::{GenericCallResolution, TypeckResults};
 
@@ -17,6 +18,30 @@ pub struct HirTypeChecker {
     self_types: Vec<Ty>,
 }
 
+struct GenericScope<'a> {
+    checker: &'a mut HirTypeChecker,
+}
+
+impl Deref for GenericScope<'_> {
+    type Target = HirTypeChecker;
+
+    fn deref(&self) -> &Self::Target {
+        self.checker
+    }
+}
+
+impl DerefMut for GenericScope<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.checker
+    }
+}
+
+impl Drop for GenericScope<'_> {
+    fn drop(&mut self) {
+        self.checker.generic_scopes.pop();
+    }
+}
+
 impl HirTypeChecker {
     pub fn new(program: hir::Program) -> Self {
         Self {
@@ -28,7 +53,11 @@ impl HirTypeChecker {
         }
     }
 
-    pub fn check(mut self) -> Result<(hir::Program, TypeckResults)> {
+    pub fn check(self) -> crate::BoxFuture<'static, Result<(hir::Program, TypeckResults)>> {
+        Box::pin(async move { self.check_sync() })
+    }
+
+    fn check_sync(mut self) -> Result<(hir::Program, TypeckResults)> {
         let items = self.program.items.clone();
         for item in &items {
             self.check_item(item)?;
@@ -46,42 +75,39 @@ impl HirTypeChecker {
                 self.check_body(&constant.body)?;
             }
             hir::ItemKind::Impl(impl_item) => {
-                self.push_generics(&impl_item.generics);
-                let self_ty = self.check_type_expr(&impl_item.self_ty)?;
-                self.self_types.push(self_ty);
+                let mut scope = self.generic_scope(&impl_item.generics);
+                let self_ty = scope.check_type_expr(&impl_item.self_ty)?;
+                scope.self_types.push(self_ty);
                 if let Some(trait_ty) = &impl_item.trait_ty {
-                    self.check_type_expr(trait_ty)?;
+                    scope.check_type_expr(trait_ty)?;
                 }
                 for item in &impl_item.items {
                     match &item.kind {
-                        hir::ImplItemKind::Method(function) => self.check_function(function)?,
+                        hir::ImplItemKind::Method(function) => scope.check_function(function)?,
                         hir::ImplItemKind::AssocConst(constant) => {
-                            self.check_type_expr(&constant.ty)?;
-                            self.check_body(&constant.body)?;
+                            scope.check_type_expr(&constant.ty)?;
+                            scope.check_body(&constant.body)?;
                         }
                     }
                 }
-                self.self_types.pop();
-                self.pop_generics();
+                scope.self_types.pop();
             }
             hir::ItemKind::Struct(def) => {
-                self.push_generics(&def.generics);
+                let mut scope = self.generic_scope(&def.generics);
                 for field in &def.fields {
-                    self.check_type_expr(&field.ty)?;
+                    scope.check_type_expr(&field.ty)?;
                 }
-                self.pop_generics();
             }
             hir::ItemKind::Enum(def) => {
-                self.push_generics(&def.generics);
+                let mut scope = self.generic_scope(&def.generics);
                 for variant in &def.variants {
                     if let Some(payload) = &variant.payload {
-                        self.check_type_expr(payload)?;
+                        scope.check_type_expr(payload)?;
                     }
                     if let Some(discriminant) = &variant.discriminant {
-                        self.check_expr(discriminant)?;
+                        scope.check_expr(discriminant)?;
                     }
                 }
-                self.pop_generics();
             }
             hir::ItemKind::Query(_) => {}
             hir::ItemKind::Expr(expr) => {
@@ -92,13 +118,16 @@ impl HirTypeChecker {
     }
 
     fn check_function(&mut self, function: &hir::Function) -> Result<()> {
-        self.push_generics(&function.sig.generics);
-        self.check_signature(&function.sig)?;
-        if let Some(body) = &function.body {
-            self.check_body(body)?;
-        }
-        self.pop_generics();
-        Ok(())
+        let mut scope = self.generic_scope(&function.sig.generics);
+        (|| {
+            scope.check_signature(&function.sig)
+                .map_err(|error| Error::from(format!("in function `{}` signature: {error}", function.sig.name)))?;
+            if let Some(body) = &function.body {
+                scope.check_body(body)
+                    .map_err(|error| Error::from(format!("in function `{}` body: {error}", function.sig.name)))?;
+            }
+            Ok(())
+        })()
     }
 
     fn push_generics(&mut self, generics: &hir::Generics) {
@@ -119,8 +148,9 @@ impl HirTypeChecker {
         self.generic_scopes.push(scope);
     }
 
-    fn pop_generics(&mut self) {
-        self.generic_scopes.pop();
+    fn generic_scope(&mut self, generics: &hir::Generics) -> GenericScope<'_> {
+        self.push_generics(generics);
+        GenericScope { checker: self }
     }
 
     fn generic_ty(&self, def_id: hir::DefId) -> Option<Ty> {
@@ -210,7 +240,10 @@ impl HirTypeChecker {
                 };
                 if let hir::ExprKind::Path(path) = &callee.kind {
                     if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
-                        if let Some(args) = self.generic_call_args(*def_id, &substitutions)? {
+                        let args = self
+                            .generic_call_args(*def_id, &substitutions)?
+                            .or_else(|| self.callable_output_args(&callee_ty, &substitutions));
+                        if let Some(args) = args {
                             self.results.generic_call_args.insert(
                                 expr.hir_id,
                                 GenericCallResolution { def_id: *def_id, args },
@@ -400,7 +433,11 @@ impl HirTypeChecker {
                         (Some(annotation), Some(init)) => {
                             let ty = self.check_type_expr(annotation)?;
                             let init_ty = self.check_expr(init)?;
-                            self.require_same(&ty, &init_ty)?;
+                            let mut substitutions = HashMap::new();
+                            self.unify_call_types(&init_ty, &ty, &mut substitutions)?;
+                            let resolved_init = self.substitute_param_map(&init_ty, &substitutions);
+                            self.require_same(&ty, &resolved_init)?;
+                            self.results.record_expr_type(init.hir_id, resolved_init);
                             ty
                         }
                         (Some(annotation), None) => self.check_type_expr(annotation)?,
@@ -433,6 +470,28 @@ impl HirTypeChecker {
         })();
         self.locals.pop();
         result
+    }
+
+    fn callable_output_args(
+        &self,
+        callable: &Ty,
+        substitutions: &HashMap<ty::ParamTy, Ty>,
+    ) -> Option<Vec<Ty>> {
+        let TyKind::FnPtr(signature) = &callable.kind else {
+            return None;
+        };
+        let output = self.substitute_param_map(&signature.binder.value.output, substitutions);
+        let TyKind::Adt(_, args) = output.kind else {
+            return None;
+        };
+        let args = args
+            .into_iter()
+            .filter_map(|arg| match arg {
+                GenericArg::Type(ty) => Some(ty),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        (!args.is_empty()).then_some(args)
     }
 
     fn check_type_expr(&mut self, expr: &hir::TypeExpr) -> Result<Ty> {
@@ -559,6 +618,32 @@ impl HirTypeChecker {
             return Err(Error::from("unresolved value path"));
         };
         let Some(item) = self.program.def_map.get(&def_id).cloned() else {
+            let associated = self.program.items.iter().find_map(|item| {
+                let hir::ItemKind::Impl(impl_item) = &item.kind else {
+                    return None;
+                };
+                impl_item.items.iter().find_map(|impl_member| {
+                    if impl_member.def_id != def_id {
+                        return None;
+                    }
+                    let hir::ImplItemKind::Method(function) = &impl_member.kind else {
+                        return None;
+                    };
+                    Some((
+                        impl_item.generics.clone(),
+                        impl_item.self_ty.clone(),
+                        function.clone(),
+                    ))
+                })
+            });
+            if let Some((generics, self_ty, function)) = associated {
+                let mut scope = self.generic_scope(&generics);
+                let self_ty = scope.check_type_expr(&self_ty)?;
+                scope.self_types.push(self_ty);
+                let result = scope.function_signature(&function);
+                scope.self_types.pop();
+                return result;
+            }
             for enum_item in self.program.items.clone() {
                 let hir::ItemKind::Enum(enum_def) = &enum_item.kind else {
                     continue;
@@ -568,9 +653,8 @@ impl HirTypeChecker {
                 };
                 let enum_ty = self.enum_item_ty(&enum_item, path)?;
                 if let Some(payload) = &variant.payload {
-                    self.push_generics(&enum_def.generics);
-                    let payload_result = self.check_type_expr(payload);
-                    self.pop_generics();
+                    let mut scope = self.generic_scope(&enum_def.generics);
+                    let payload_result = scope.check_type_expr(payload);
                     let payload_ty = payload_result?;
                     return Ok(Ty {
                         kind: TyKind::FnPtr(ty::PolyFnSig {
@@ -668,15 +752,14 @@ impl HirTypeChecker {
     }
 
     fn function_signature(&mut self, function: &hir::Function) -> Result<Ty> {
-        self.push_generics(&function.sig.generics);
+        let mut scope = self.generic_scope(&function.sig.generics);
         let inputs = function
             .sig
             .inputs
             .iter()
-            .map(|input| self.check_type_expr(&input.ty).map(Box::new))
+            .map(|input| scope.check_type_expr(&input.ty).map(Box::new))
             .collect::<Result<Vec<_>>>()?;
-        let output = Box::new(self.check_type_expr(&function.sig.output)?);
-        self.pop_generics();
+        let output = Box::new(scope.check_type_expr(&function.sig.output)?);
         Ok(Ty {
             kind: TyKind::FnPtr(ty::PolyFnSig {
                 binder: ty::Binder {
@@ -838,20 +921,18 @@ impl HirTypeChecker {
             if !matches!(path.res, Some(hir::Res::Def(def_id)) if def_id == receiver_def) {
                 continue;
             }
-            self.push_generics(&impl_item.generics);
+            let mut scope = self.generic_scope(&impl_item.generics);
             let impl_generics = impl_item.generics.clone();
             for impl_item in impl_item.items {
                 let hir::ImplItemKind::Method(function) = impl_item.kind else {
                     continue;
                 };
-                if function.sig.name == *method {
-                    let signature = self.function_signature(&function)?;
-                    let Some((substitutions, result)) = self.instantiate_call(&signature, actuals)? else {
-                        self.pop_generics();
+                if impl_item.name == *method {
+                    let signature = scope.function_signature(&function)?;
+                    let Some((substitutions, result)) = scope.instantiate_call(&signature, actuals)? else {
                         return Err(Error::from("method arguments do not match its signature"));
                     };
-                    self.pop_generics();
-                    let args = self.method_generic_args(
+                    let args = scope.method_generic_args(
                         &impl_generics,
                         &function.sig.generics,
                         &substitutions,
@@ -859,7 +940,6 @@ impl HirTypeChecker {
                     return Ok((impl_item.def_id, args, result));
                 }
             }
-            self.pop_generics();
         }
         Err(Error::from(format!("method `{method}` was not found")))
     }
@@ -967,8 +1047,12 @@ impl HirTypeChecker {
         let Some(field_def) = def.fields.iter().find(|candidate| candidate.name == *field) else {
             return Err(Error::from(format!("field `{field}` was not found")));
         };
-        let ty = self.check_type_expr(&field_def.ty)?;
-        Ok(self.substitute_params(ty, args))
+        let mut scope = self.generic_scope(&def.generics);
+        let result = scope.check_type_expr(&field_def.ty);
+        let ty = result?;
+        let substituted = scope.substitute_params(ty, args);
+        drop(scope);
+        Ok(substituted)
     }
 
     fn variant_payload_types(&mut self, path: &hir::Path) -> Result<(Ty, Vec<Ty>)> {
@@ -981,8 +1065,11 @@ impl HirTypeChecker {
             let enum_ty = self.enum_item_ty(&item, path)?;
             let args = match &enum_ty.kind { TyKind::Adt(_, args) => args.clone(), _ => Vec::new() };
             let Some(payload) = &variant.payload else { return Ok((enum_ty, Vec::new())) };
-            let payload = self.check_type_expr(payload)?;
-            let payload = self.substitute_params(payload, &args);
+            let mut scope = self.generic_scope(&def.generics);
+            let payload_result = scope.check_type_expr(payload);
+            let payload = payload_result?;
+            let payload = scope.substitute_params(payload, &args);
+            drop(scope);
             let payloads = match payload.kind {
                 TyKind::Tuple(fields) => fields.into_iter().map(|field| *field).collect(),
                 _ => vec![payload],
@@ -1199,7 +1286,8 @@ mod tests {
             span: fp_core::span::Span::null(),
         });
 
-        let (_, results) = HirTypeChecker::new(program).check().expect("HIR type check");
+        let (_, results) = crate::block_on(HirTypeChecker::new(program).check())
+            .expect("HIR type check");
         assert_eq!(results.expr_types.get(&7), Some(&Ty::int(ty::IntTy::I64)));
     }
 
@@ -1234,7 +1322,8 @@ mod tests {
             span: fp_core::span::Span::null(),
         });
 
-        let (_, results) = HirTypeChecker::new(program).check().expect("HIR type check");
+        let (_, results) = crate::block_on(HirTypeChecker::new(program).check())
+            .expect("HIR type check");
         assert_eq!(results.pat_types.get(&8), Some(&Ty::int(ty::IntTy::I64)));
     }
 }

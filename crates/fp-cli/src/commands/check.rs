@@ -12,6 +12,9 @@ pub struct CheckArgs {
     /// Files or directories to check
     #[arg(default_value = ".")]
     pub paths: Vec<PathBuf>,
+    /// Package name used to qualify source identities
+    #[arg(long = "package", required = true)]
+    pub package: String,
     /// Include patterns (glob)
     #[arg(long)]
     pub include: Vec<String>,
@@ -31,6 +34,7 @@ pub async fn check_command(args: CheckArgs, _config: &CliConfig) -> Result<()> {
     for file in &files {
         compiler::check_path(
             file,
+            &args.package,
             args.syntax_only,
             None,
             compiler::LossyCompileOptions {

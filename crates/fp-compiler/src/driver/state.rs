@@ -20,6 +20,7 @@ pub struct CompilerState {
     hir_typeck: BTreeMap<HirId, TypeckResults>,
     mir: BTreeMap<MirId, mir::Program>,
     lir: BTreeMap<LirId, lir::LirProgram>,
+    runtime_entrypoints: BTreeMap<LirId, hir::DefId>,
     const_values: BTreeMap<ConstValueId, Value>,
     /// MIR-level const values for HIR→MIR lowering seed.
     resolved_const_values: BTreeMap<String, mir::Constant>,
@@ -73,6 +74,21 @@ impl CompilerState {
 
     pub fn insert_lir(&mut self, lir_id: LirId, lir: lir::LirProgram) {
         self.lir.insert(lir_id, lir);
+    }
+
+    pub fn insert_runtime_entrypoint(&mut self, lir_id: LirId, def_id: hir::DefId) {
+        self.runtime_entrypoints.insert(lir_id, def_id);
+    }
+
+    pub fn runtime_entrypoint(&self, lir_id: &LirId) -> Result<hir::DefId, CompilerDriverError> {
+        self.runtime_entrypoints
+            .get(lir_id)
+            .copied()
+            .ok_or_else(|| {
+                CompilerDriverError::Interpreter(
+                    "program has no explicit entrypoint".to_string(),
+                )
+            })
     }
 
     pub fn insert_const_value(&mut self, value_id: ConstValueId, value: Value) {
@@ -219,6 +235,7 @@ impl Default for CompilerState {
             hir_typeck: BTreeMap::new(),
             mir: BTreeMap::new(),
             lir: BTreeMap::new(),
+            runtime_entrypoints: BTreeMap::new(),
             const_values: BTreeMap::new(),
             resolved_const_values: BTreeMap::new(),
             typing_ctx: std::rc::Rc::new(TypingContext::new(

@@ -81,7 +81,7 @@ impl HirGenerator {
             }
 
             let sig = hir::FunctionSig {
-                name: hir::Symbol::new(self.qualify_name(&func.name.name)),
+                name: hir::Symbol::new(func.name.name.clone()),
                 inputs: params.clone(),
                 output: output.clone(),
                 generics,
@@ -136,7 +136,7 @@ impl HirGenerator {
             };
 
             let sig = hir::FunctionSig {
-                name: hir::Symbol::new(self.qualify_name(&func.name.name)),
+                name: hir::Symbol::new(func.name.name.clone()),
                 inputs: params,
                 output,
                 generics,
@@ -293,11 +293,12 @@ impl HirGenerator {
                             Some(self_ty.clone()),
                             !stub_methods && !attrs_has_name(&func.attrs, "unimplemented"),
                         )?;
+                        let method_def_id = self.def_id_for_item(item);
                         method_names.insert(method.sig.name.as_str().to_string());
                         items.push(hir::ImplItem {
-                            def_id: self.next_def_id(),
+                            def_id: method_def_id,
                             hir_id: self.next_id(),
-                            name: method.sig.name.clone(),
+                            name: func.name.name.clone().into(),
                             kind: hir::ImplItemKind::Method(method),
                         });
                     }

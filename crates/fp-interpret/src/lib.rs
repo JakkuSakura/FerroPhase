@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use fp_core::ast::{Ty, TypeStruct, TypeType, TypeUnknown, Value, ValueList, ValueMapEntry, ValueString, ValueTuple};
 use fp_core::lir::{
     BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirCompileUnit, LirConstant,
-    LirFunction, LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType,
+    LirFunction, LirInstruction, LirInstructionKind, LirLocal, LirProgram, LirTerminator, LirType,
     LirValue, RegisterId,
 };
+use fp_core::lir::layout;
 use fp_core::hir::PackageId;
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
@@ -22,6 +23,7 @@ type LirResult<T> = Result<T, VmError>;
 pub struct LirInterpreter {
     state: ThreadState,
     register_types: HashMap<RegisterId, LirType>,
+    register_values: HashMap<RegisterId, Value>,
     /// Global object handles keyed by name, populated from the LIR
     /// program during run_main / package-scoped run_function_named.
     global_values: HashMap<String, u64>,
@@ -45,6 +47,7 @@ impl LirInterpreter {
         Self {
             state: ThreadState::new(),
             register_types: HashMap::new(),
+            register_values: HashMap::new(),
             global_values: HashMap::new(),
             ffi: FfiRuntime::new().ok(),
             extern_sigs: HashMap::new(),
@@ -57,14 +60,28 @@ impl LirInterpreter {
 
     pub fn run_main(&mut self, program: &LirProgram) -> LirResult<Value> {
         self.populate_functions_from_program(program);
+        self.populate_functions_for_package(program, PackageId(0));
         self.populate_globals(program);
-        let entry = program
-            .functions
-            .iter()
-            .find(|f| f.name.as_str() == "main")
-            .or_else(|| program.functions.first());
+        let entry = program.functions.iter().find(|f| f.name.as_str() == "main");
         let func = entry.ok_or(VmError::Runtime("no entry point".into()))?;
         self.run_function(program, func, &[])
+    }
+
+    pub fn run_entrypoint(
+        &mut self,
+        program: &LirProgram,
+        def_id: fp_core::hir::DefId,
+    ) -> LirResult<Value> {
+        self.populate_functions_from_program(program);
+        self.populate_functions_for_package(program, def_id.package_id);
+        self.populate_globals(program);
+        let func = program
+            .functions
+            .iter()
+            .find(|function| function.def_id == Some(def_id))
+            .ok_or(VmError::Runtime(format!("entrypoint {def_id} was not emitted")))?;
+        let func = func.clone();
+        self.run_function(program, &func, &[])
     }
 
     pub fn run_function_named(
@@ -112,32 +129,52 @@ impl LirInterpreter {
         }
     }
 
+    fn populate_functions_for_package(&mut self, program: &LirProgram, package_id: PackageId) {
+        for function in &program.functions {
+            self.package_functions
+                .insert((package_id, function.name.as_str().to_string()), function.clone());
+        }
+    }
+
     pub fn run_function(
         &mut self,
         _program: &LirProgram,
         func: &LirFunction,
         args: &[Value],
     ) -> LirResult<Value> {
+        let saved_registers = self.state.regs.gpr;
+        let saved_register_types = self.register_types.clone();
+        let saved_register_values = self.register_values.clone();
         self.state.push_frame(func.name.as_str().to_string());
         self.register_types.clear();
+        self.register_values.clear();
         for local in &func.locals {
-            if !local.is_argument {
-                let (bits, _) = lir_type_info(&local.ty);
-                let size = (bits as u64 + 7) / 8;
-                let sp = self.state.regs.sp();
-                let addr = self.state.mem.stack_alloc(sp, size, 8)?;
-                self.state.regs.set_sp(addr);
-                self.state.set_local_addr(local.id, addr);
-            }
+            let size = layout::size_of(&local.ty).max(8);
+            let sp = self.state.regs.sp();
+            let addr = self
+                .state
+                .mem
+                .stack_alloc(sp, size, layout::align_of(&local.ty))?;
+            self.state.regs.set_sp(addr);
+            self.state.set_local_addr(local.id, addr);
         }
+        let argument_locals: Vec<&LirLocal> = func
+            .locals
+            .iter()
+            .filter(|local| local.is_argument)
+            .collect();
         for (i, arg) in args.iter().enumerate() {
             let reg = i as RegisterId + 1;
-            if i < func.signature.params.len() && is_object_type(&func.signature.params[i]) {
-                let handle = self.state.objects.len() as u64;
-                self.state.objects.push(arg.clone());
-                self.state.regs.write(reg, handle);
+            let raw = if i < func.signature.params.len() {
+                self.value_to_slot_raw(arg.clone(), &func.signature.params[i])
             } else {
-                self.state.regs.write(reg, value_to_raw(arg));
+                value_to_raw(arg)
+            };
+            self.write_register(reg, raw);
+            if let Some(local) = argument_locals.get(i) {
+                self.state
+                    .mem
+                    .store_u64(self.state.local_addr(local.id), raw)?;
             }
         }
         let mut current = func.basic_blocks.first().map(|b| b.id).unwrap_or(0);
@@ -155,7 +192,7 @@ impl LirInterpreter {
                     let ret_ty = &func.signature.return_type;
                     let v = match val {
                         Some(v) => self.resolve_typed(v, ret_ty)?,
-                        None => Value::unit(),
+                        None => self.resolve_typed(&LirValue::Local(0), ret_ty)?,
                     };
                     break Ok(v);
                 }
@@ -180,6 +217,9 @@ impl LirInterpreter {
             }
         };
         self.state.pop_frame();
+        self.state.regs.gpr = saved_registers;
+        self.register_types = saved_register_types;
+        self.register_values = saved_register_values;
         result
     }
 
@@ -238,23 +278,22 @@ impl LirInterpreter {
             }
             LirInstructionKind::Store { value, address, .. } => {
                 let ty = self.infer_type(value);
-                let val = if Self::is_aggregate_runtime_type(&ty) {
-                    let aggregate_value = self.resolve_aggregate_value(value, &ty)?;
-                    self.value_to_slot_raw(aggregate_value, &ty)
-                } else if matches!(ty, LirType::Ptr(_)) {
-                    let runtime_value = self.resolve_runtime_value(value, &ty)?;
-                    self.value_to_slot_raw(runtime_value, &ty)
-                } else {
-                    self.resolve_raw(value)?
-                };
                 let addr = self.resolve_addr(address)?;
-                mem_store(&mut self.state.mem, addr, val, &ty)
+                let runtime_value = self.resolve_runtime_value(value, &ty)?;
+                self.store_value_at(addr, &ty, &runtime_value)
             }
             LirInstructionKind::Load { address, .. } => {
                 let addr = self.resolve_addr(address)?;
                 let ty = instr.type_hint.as_ref().unwrap_or(&LirType::I64);
-                let val = mem_load(&self.state.mem, addr, ty)?;
-                self.wr(dst, val);
+                if Self::is_aggregate_runtime_type(ty) {
+                    let value = self.load_value_at(addr, ty)?;
+                    let handle = self.state.objects.len() as u64;
+                    self.state.objects.push(value);
+                    self.wr(dst, handle);
+                } else {
+                    let val = mem_load(&self.state.mem, addr, ty)?;
+                    self.wr(dst, val);
+                }
                 Ok(())
             }
             LirInstructionKind::GetElementPtr { ptr, indices, .. } => {
@@ -346,7 +385,14 @@ impl LirInterpreter {
             LirInstructionKind::Call { function, args, .. } => {
                 self.handle_call(dst, function, args)
             }
-            LirInstructionKind::IntrinsicCall { .. } => {
+            LirInstructionKind::IntrinsicCall { kind, format, args } => {
+                let rendered = self.render_intrinsic(format, args)?;
+                match kind {
+                    fp_core::lir::LirIntrinsicKind::Print
+                    | fp_core::lir::LirIntrinsicKind::Format => print!("{rendered}"),
+                    fp_core::lir::LirIntrinsicKind::Println => println!("{rendered}"),
+                    fp_core::lir::LirIntrinsicKind::TimeNow => {}
+                }
                 self.wr(dst, 0);
                 Ok(())
             }
@@ -417,19 +463,51 @@ impl LirInterpreter {
         if result.is_ok() {
             if let Some(ty) = instr.type_hint.as_ref() {
                 self.register_types.insert(dst, ty.clone());
+                self.capture_typed_register(dst, ty)?;
             }
         }
         result
     }
 
     fn wr(&mut self, dst: u32, val: u64) {
-        // JUSTIFY: r1 is the stack pointer — never overwrite it with
-        // instruction results, as some LIR producers may assign
-        // instruction IDs that alias the sp register.
-        if dst == 1 {
-            return;
+        self.write_register(dst, val);
+    }
+
+    fn register_slot(register: RegisterId) -> RegisterId {
+        register.saturating_add(2)
+    }
+
+    fn write_register(&mut self, register: RegisterId, value: u64) {
+        self.state.regs.write(Self::register_slot(register), value);
+        self.register_values.insert(register, Value::uint(value));
+    }
+
+    fn read_register(&self, register: RegisterId) -> u64 {
+        match self.register_values.get(&register) {
+            Some(Value::Int(value)) => value.value as u64,
+            Some(Value::UInt(value)) => value.value,
+            Some(Value::Bool(value)) => u64::from(value.value),
+            Some(Value::Decimal(value)) => value.value.to_bits(),
+            Some(Value::Pointer(value)) => value.value as u64,
+            Some(_) => self.state.regs.read(Self::register_slot(register)),
+            None => self.state.regs.read(Self::register_slot(register)),
         }
-        self.state.regs.write(dst, val);
+    }
+
+    fn capture_typed_register(&mut self, register: RegisterId, ty: &LirType) -> LirResult<()> {
+        let raw = self.state.regs.read(Self::register_slot(register));
+        let value = match ty {
+            LirType::Struct { .. } | LirType::Array(..) | LirType::Vector(..) => self
+                .state
+                .objects
+                .get(raw as usize)
+                .cloned()
+                .ok_or_else(|| VmError::Runtime(format!("dangling aggregate handle {raw}")))?,
+            LirType::Ptr(_) => Value::Pointer(fp_core::ast::ValuePointer::new(raw as i64)),
+            _ => self.value_from_typed_raw(raw, ty)?,
+        };
+        self.register_values.insert(register, value);
+        Ok(())
     }
 
     fn resolve_string_value(&self, val: &LirValue) -> String {
@@ -457,7 +535,7 @@ impl LirInterpreter {
 
     fn resolve_raw(&self, val: &LirValue) -> LirResult<u64> {
         match val {
-            LirValue::Register(id) => Ok(self.state.regs.read(*id)),
+            LirValue::Register(id) => Ok(self.read_register(*id)),
             LirValue::Constant(LirConstant::GlobalRef(name, _, _)) => self
                 .global_values
                 .get(name.as_str())
@@ -540,7 +618,11 @@ impl LirInterpreter {
                 .ok_or(VmError::Runtime(format!("dangling object handle {idx}")));
         }
         let (bits, signed) = lir_type_info(ty);
-        Ok(raw_to_value(raw, signed, bits))
+        match ty {
+            LirType::F32 => Ok(Value::decimal(f32::from_bits(raw as u32) as f64)),
+            LirType::F64 => Ok(Value::decimal(f64::from_bits(raw))),
+            _ => Ok(raw_to_value(raw, signed, bits)),
+        }
     }
 
     fn infer_type(&self, val: &LirValue) -> LirType {
@@ -610,6 +692,13 @@ impl LirInterpreter {
         if let Some(value) = self.try_resolve_i8_slice(val, ty)? {
             return Ok(value);
         }
+        if let LirValue::Register(register) = val {
+            if let Some(value) = self.register_values.get(register) {
+                if Self::is_aggregate_runtime_type(ty) || matches!(ty, LirType::Ptr(_)) {
+                    return Ok(value.clone());
+                }
+            }
+        }
         if Self::is_aggregate_runtime_type(ty) {
             return self.resolve_aggregate_value(val, ty);
         }
@@ -619,18 +708,30 @@ impl LirInterpreter {
                     Ok(Value::String(ValueString::new_ref(text.clone())))
                 }
                 LirValue::Constant(LirConstant::Null(_)) | LirValue::Null(_) => Ok(Value::null()),
-                _ => Ok(Value::uint(self.resolve_raw(val)?)),
+                _ => {
+                    let raw = self.resolve_raw(val)?;
+                    Ok(self
+                        .state
+                        .objects
+                        .get(raw as usize)
+                        .cloned()
+                        .unwrap_or_else(|| Value::uint(raw)))
+                }
             };
         }
         let raw = self.resolve_raw(val)?;
-        let (bits, signed) = lir_type_info(ty);
-        Ok(raw_to_value(raw, signed, bits))
+        self.value_from_typed_raw(raw, ty)
     }
 
     fn resolve_aggregate_value(&self, val: &LirValue, ty: &LirType) -> LirResult<Value> {
         match val {
             LirValue::Register(id) => {
-                let idx = self.state.regs.read(*id) as usize;
+                if let Some(value) = self.register_values.get(id) {
+                    if Self::is_aggregate_runtime_type(ty) {
+                        return Ok(value.clone());
+                    }
+                }
+                let idx = self.read_register(*id) as usize;
                 let value = self
                     .state
                     .objects
@@ -1056,8 +1157,19 @@ impl LirInterpreter {
                     .get(def_id)
                     .cloned()
                     .ok_or(VmError::Runtime(format!("missing function definition {def_id}")))?;
-                let name = function.name.to_string();
-                self.handle_call_named(dst, &name, args, None, Some(function))
+                let resolved_args: Vec<Value> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, arg)| {
+                        let ty = function.signature.params.get(index).unwrap_or(&LirType::Void);
+                        self.resolve_runtime_value(arg, ty)
+                    })
+                    .collect::<LirResult<Vec<_>>>()?;
+                let program = LirProgram::new();
+                let value = self.run_function(&program, &function, &resolved_args)?;
+                let raw = self.value_to_slot_raw(value, &function.signature.return_type);
+                self.wr(dst, raw);
+                Ok(())
             }
             _ => Err(VmError::Runtime("indirect call".into())),
         }
@@ -1116,12 +1228,16 @@ impl LirInterpreter {
                     if let Some(func) = func {
                         let resolved_args: Vec<Value> = args
                             .iter()
-                            .map(|a| self.resolve_runtime_value(a, &LirType::Void)
-                                .unwrap_or(Value::unit()))
-                            .collect();
+                            .enumerate()
+                            .map(|(index, arg)| {
+                                let ty = func.signature.params.get(index).unwrap_or(&LirType::Void);
+                                self.resolve_runtime_value(arg, ty)
+                            })
+                            .collect::<LirResult<Vec<_>>>()?;
                         let prog = LirProgram::new();
                         if let Ok(v) = self.run_function(&prog, &func, &resolved_args) {
-                            self.wr(dst, value_to_raw(&v));
+                            let raw = self.value_to_slot_raw(v, &func.signature.return_type);
+                            self.wr(dst, raw);
                             return Ok(());
                         }
                     }
@@ -1135,7 +1251,36 @@ impl LirInterpreter {
             return self.call_bc_intrinsic(rest, args);
         }
         match name {
-            "println" | "print" | "eprintln" | "eprint" | "printf" => Ok(0),
+            "println" => {
+                for &raw in args {
+                    let value = self.raw_to_value(raw);
+                    print!("{}", self.render_value(&value));
+                }
+                println!();
+                Ok(0)
+            }
+            "print" | "printf" => {
+                for &raw in args {
+                    let value = self.raw_to_value(raw);
+                    print!("{}", self.render_value(&value));
+                }
+                Ok(0)
+            }
+            "eprintln" => {
+                for &raw in args {
+                    let value = self.raw_to_value(raw);
+                    eprint!("{}", self.render_value(&value));
+                }
+                eprintln!();
+                Ok(0)
+            }
+            "eprint" => {
+                for &raw in args {
+                    let value = self.raw_to_value(raw);
+                    eprint!("{}", self.render_value(&value));
+                }
+                Ok(0)
+            }
             "sizeof" | "strlen" => Ok(0),
             "malloc" => {
                 let size = args.first().copied().unwrap_or(0) as usize;
@@ -1310,6 +1455,126 @@ impl LirInterpreter {
 
     fn raw_to_value(&self, raw: u64) -> Value {
         Value::uint(raw)
+    }
+
+    fn store_value_at(&mut self, addr: u64, ty: &LirType, value: &Value) -> LirResult<()> {
+        match ty {
+            LirType::Struct { fields, .. } => {
+                let layout = layout::struct_layout(ty)
+                    .ok_or_else(|| VmError::Runtime(format!("missing layout for {ty:?}")))?;
+                for (index, field_ty) in fields.iter().enumerate() {
+                    let field = Self::aggregate_field(value, index)?;
+                    self.store_value_at(addr + layout.field_offsets[index], field_ty, field)?;
+                }
+                Ok(())
+            }
+            LirType::Array(elem_ty, count) => {
+                let stride = layout::size_of(elem_ty);
+                for index in 0..*count as usize {
+                    let element = Self::aggregate_field(value, index)?;
+                    self.store_value_at(addr + stride * index as u64, elem_ty, element)?;
+                }
+                Ok(())
+            }
+            LirType::Vector(elem_ty, count) => {
+                let stride = layout::size_of(elem_ty);
+                for index in 0..*count as usize {
+                    let element = Self::aggregate_field(value, index)?;
+                    self.store_value_at(addr + stride * index as u64, elem_ty, element)?;
+                }
+                Ok(())
+            }
+            _ => {
+                let raw = self.value_to_slot_raw(value.clone(), ty);
+                mem_store(&mut self.state.mem, addr, raw, ty)
+            }
+        }
+    }
+
+    fn load_value_at(&self, addr: u64, ty: &LirType) -> LirResult<Value> {
+        match ty {
+            LirType::Struct { fields, .. } => {
+                let layout = layout::struct_layout(ty)
+                    .ok_or_else(|| VmError::Runtime(format!("missing layout for {ty:?}")))?;
+                let mut values = Vec::with_capacity(fields.len());
+                for (index, field_ty) in fields.iter().enumerate() {
+                    values.push(self.load_value_at(addr + layout.field_offsets[index], field_ty)?);
+                }
+                Ok(Value::Tuple(ValueTuple::new(values)))
+            }
+            LirType::Array(elem_ty, count) => {
+                let stride = layout::size_of(elem_ty);
+                let mut values = Vec::with_capacity(*count as usize);
+                for index in 0..*count as usize {
+                    values.push(self.load_value_at(addr + stride * index as u64, elem_ty)?);
+                }
+                Ok(Value::List(ValueList::new(values)))
+            }
+            LirType::Vector(elem_ty, count) => {
+                let stride = layout::size_of(elem_ty);
+                let mut values = Vec::with_capacity(*count as usize);
+                for index in 0..*count as usize {
+                    values.push(self.load_value_at(addr + stride * index as u64, elem_ty)?);
+                }
+                Ok(Value::List(ValueList::new(values)))
+            }
+            _ => {
+                let raw = mem_load(&self.state.mem, addr, ty)?;
+                self.value_from_typed_raw(raw, ty)
+            }
+        }
+    }
+
+    fn aggregate_field(value: &Value, index: usize) -> LirResult<&Value> {
+        match value {
+            Value::Tuple(tuple) => tuple.values.get(index).ok_or_else(|| {
+                VmError::Runtime(format!("aggregate field {index} out of bounds"))
+            }),
+            Value::List(list) => list.values.get(index).ok_or_else(|| {
+                VmError::Runtime(format!("aggregate field {index} out of bounds"))
+            }),
+            Value::Struct(structure) => structure
+                .structural
+                .fields
+                .get(index)
+                .map(|field| &field.value)
+                .ok_or_else(|| VmError::Runtime(format!("aggregate field {index} out of bounds"))),
+            Value::Structural(structure) => structure
+                .fields
+                .get(index)
+                .map(|field| &field.value)
+                .ok_or_else(|| VmError::Runtime(format!("aggregate field {index} out of bounds"))),
+            _ => Err(VmError::Runtime(format!("expected aggregate, found {value:?}"))),
+        }
+    }
+
+    fn value_from_typed_raw(&self, raw: u64, ty: &LirType) -> LirResult<Value> {
+        let (bits, signed) = lir_type_info(ty);
+        match ty {
+            LirType::F32 => Ok(Value::decimal(f32::from_bits(raw as u32) as f64)),
+            LirType::F64 => Ok(Value::decimal(f64::from_bits(raw))),
+            _ => Ok(raw_to_value(raw, signed, bits)),
+        }
+    }
+
+    fn render_intrinsic(
+        &self,
+        format: &str,
+        args: &[LirValue],
+    ) -> LirResult<String> {
+        let mut rendered = format.to_string();
+        for arg in args {
+            let ty = self.infer_type(arg);
+            let value = self.resolve_runtime_value(arg, &ty)?;
+            let text = self.render_value(&value);
+            let placeholder = ["{}", "%lld", "%llu", "%ld", "%lu", "%d", "%i", "%f", "%s"]
+                .iter()
+                .find(|placeholder| rendered.contains(**placeholder));
+            if let Some(placeholder) = placeholder {
+                rendered = rendered.replacen(placeholder, &text, 1);
+            }
+        }
+        Ok(rendered)
     }
 
     fn value_to_handle_or_raw(&mut self, v: &Value) -> u64 {

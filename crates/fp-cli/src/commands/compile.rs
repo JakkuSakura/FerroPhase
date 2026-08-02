@@ -59,6 +59,9 @@ pub struct CompileArgs {
     /// Input file(s) to compile
     #[arg(required = true)]
     pub input: Vec<PathBuf>,
+    /// Package name used to qualify source identities
+    #[arg(long = "package", required = true)]
+    pub package: String,
 
     /// Output backend (binary, ebpf, cil, dotnet, rust, llvm, wasm, bytecode, text-bytecode, jvm-bytecode, interpret)
     #[arg(short = 'b', long = "backend", default_value = "binary")]
@@ -524,6 +527,7 @@ fn try_compile_with_compiler(
                 EmitterKind::Llvm => {
                     let artifact = compiler::compile_llvm_file(
                         input,
+                        &args.package,
                         args.source_language.as_deref(),
                         resolver.clone(),
                         lossy,
@@ -550,6 +554,7 @@ fn try_compile_with_compiler(
                 EmitterKind::Cranelift => {
                     let artifact = compiler::compile_cranelift_file(
                         input,
+                        &args.package,
                         args.source_language.as_deref(),
                         resolver.clone(),
                         lossy,
@@ -570,6 +575,7 @@ fn try_compile_with_compiler(
             };
             let artifact = compiler::compile_native_file(
                 input,
+                &args.package,
                 args.source_language.as_deref(),
                 resolver,
                 lossy,
@@ -592,6 +598,7 @@ fn try_compile_with_compiler(
         BackendKind::Bytecode | BackendKind::TextBytecode => {
             let artifact = compiler::compile_bytecode_file(
                 input,
+                &args.package,
                 args.source_language.as_deref(),
                 resolver,
                 lossy,
@@ -610,6 +617,7 @@ fn try_compile_with_compiler(
                 .map(|stem| stem.to_string());
             let artifact = compiler::compile_jvm_file(
                 input,
+                &args.package,
                 args.source_language.as_deref(),
                 resolver,
                 lossy,
@@ -624,6 +632,7 @@ fn try_compile_with_compiler(
         BackendKind::Wasm => {
             let artifact = compiler::compile_wasm_file(
                 input,
+                &args.package,
                 args.source_language.as_deref(),
                 resolver,
                 lossy,
@@ -636,6 +645,7 @@ fn try_compile_with_compiler(
         BackendKind::Ebpf => {
             let artifact = compiler::compile_ebpf_file(
                 input,
+                &args.package,
                 args.source_language.as_deref(),
                 resolver,
                 lossy,
@@ -667,6 +677,7 @@ fn try_compile_with_compiler(
         BackendKind::Llvm => {
             let artifact = compiler::compile_llvm_file(
                 input,
+                &args.package,
                 args.source_language.as_deref(),
                 resolver,
                 lossy,

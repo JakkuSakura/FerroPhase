@@ -413,6 +413,17 @@ impl HirGenerator {
             .insert(qualified, SymbolEntry { res, export });
     }
 
+    fn record_value_path(
+        &mut self,
+        path: &fp_core::module::path::QualifiedPath,
+        res: hir::Res,
+        visibility: &ast::Visibility,
+    ) {
+        let export = self.symbol_export_marker(visibility);
+        self.global_value_defs
+            .insert(path.to_key(), SymbolEntry { res, export });
+    }
+
     fn record_type_symbol(&mut self, name: &str, res: hir::Res, visibility: &ast::Visibility) {
         let qualified = self.qualify_name(name);
         let export = self.symbol_export_marker(visibility);
@@ -685,7 +696,34 @@ impl HirGenerator {
                     }
                 }
                 ItemKind::Impl(_) => {
+                    let ItemKind::Impl(impl_block) = item.kind() else {
+                        unreachable!();
+                    };
                     self.allocate_def_id_for_item(item);
+                    let self_path = self.ast_expr_to_hir_path(
+                        &impl_block.self_ty,
+                        PathResolutionScope::Type,
+                    )?;
+                    let mut method_path = self.module_path.segments.clone();
+                    method_path.extend(
+                        self_path
+                            .segments
+                            .iter()
+                            .map(|segment| segment.name.as_str().to_string()),
+                    );
+                    for impl_item in &impl_block.items {
+                        let ast::ItemKind::DefFunction(function) = impl_item.kind() else {
+                            continue;
+                        };
+                        let method_def_id = self.allocate_def_id_for_item(impl_item);
+                        method_path.push(function.name.name.clone());
+                        self.record_value_path(
+                            &fp_core::module::path::QualifiedPath::new(method_path.clone()),
+                            hir::Res::Def(method_def_id),
+                            &function.visibility,
+                        );
+                        method_path.pop();
+                    }
                 }
                 _ => {}
             }

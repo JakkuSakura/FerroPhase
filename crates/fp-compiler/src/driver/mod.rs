@@ -37,6 +37,7 @@ pub struct CompilerDriver {
 struct CompileUnitCoreResult {
     mir_id: MirId,
     lir_id: LirId,
+    entrypoint: Option<hir::DefId>,
 }
 
 /// Real output of driving one compile unit's HIR typing task to completion.
@@ -60,10 +61,13 @@ fn typing_future(
     output: Rc<RefCell<Option<TypingTaskOutput>>>,
 ) -> impl Future<Output = fp_core::error::Result<()>> {
     async move {
-        let result = HirGenerator::new()
+        let result = match HirGenerator::new()
             .with_package_id(package_id)
             .transform_module_with_items(&module_path, &items, &extra_modules)
-            .and_then(|program| HirTypeChecker::new(program).check());
+        {
+            Ok(program) => HirTypeChecker::new(program).check().await,
+            Err(error) => Err(error),
+        };
         *output.borrow_mut() = Some(TypingTaskOutput { result });
         Ok(())
     }
@@ -105,7 +109,8 @@ impl CompilerDriver {
         self.interpreter = LirInterpreter::new();
         let resolved = self.collect_resolved_const_values();
         self.interpreter.inject_globals(&resolved);
-        let value = self.interpreter.run_main(&lir)?;
+        let entrypoint = self.state.runtime_entrypoint(lir_id)?;
+        let value = self.interpreter.run_entrypoint(&lir, entrypoint)?;
         let value_id = RuntimeValueId::new(format!("runtime_value:{}", lir_id.as_str()));
         self.state.insert_runtime_value(value_id, value.clone());
         Ok(value)
@@ -140,7 +145,13 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
     ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
         let ast = self.state.ast(ast_id)?.clone();
-        self.compile_module_core(path.path().clone(), ast.items, ast_id, path)
+        let result = self.compile_module_core(path.path().clone(), ast.items, ast_id, path)?;
+        if result.entrypoint.is_none() {
+            return Err(CompilerDriverError::Core(fp_core::error::Error::from(
+                "program has no explicit main entrypoint",
+            )));
+        }
+        Ok(result)
     }
 
     /// Runs the typer → HIR → MIR → LIR pipeline for a module's items
@@ -187,6 +198,12 @@ impl CompilerDriver {
             "module task's key was included in a just-fully-drained pool, so it must have run",
         );
         let (hir_program, typeck_results) = result?;
+        let entrypoint = hir_program.items.iter().find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function) if function.sig.name.as_str() == "main" => {
+                Some(item.def_id)
+            }
+            _ => None,
+        });
 
         // `run_pool_to_idle` only returns once every package/comptime need
         // the typer touched has actually been satisfied in place — nothing
@@ -196,10 +213,15 @@ impl CompilerDriver {
         self.state.insert_hir_typeck(hir_id.clone(), typeck_results);
         let mir_id = self.lower_to_mir(&hir_id, path)?;
         let lir_id = self.lower_to_lir(&mir_id, path)?;
+        if let Some(entrypoint) = entrypoint {
+            self.state
+                .insert_runtime_entrypoint(lir_id.clone(), entrypoint);
+        }
 
         Ok(CompileUnitCoreResult {
             mir_id,
             lir_id,
+            entrypoint,
         })
     }
 
@@ -1226,7 +1248,7 @@ fn collect_imported_module_paths(items: &[Item], out: &mut HashSet<QualifiedPath
     }
 }
 
-fn lower_to_hir(
+async fn lower_to_hir(
         &mut self,
         module_path: &QualifiedPath,
         items: &[Item],
@@ -1248,6 +1270,7 @@ fn lower_to_hir(
             .transform_module_with_items(module_path, items, &extra_modules)?;
         let (hir_program, typeck_results) = HirTypeChecker::new(hir_program)
             .check()
+            .await
             .map_err(|error| CompilerDriverError::Core(error))?;
         let hir = HirId::new(format!("hir:{}", path.to_key()));
         self.state.insert_hir(hir.clone(), hir_program);

@@ -121,7 +121,7 @@ impl HirGenerator {
             if first == "crate" {
                 path_prefix = PathPrefix::Crate;
                 segments.remove(0);
-            } else if first == "self" {
+            } else if first == "self" && (scope == PathResolutionScope::Type || segments.len() > 1) {
                 path_prefix = PathPrefix::SelfMod;
                 segments.remove(0);
             } else if first == "super" {
@@ -213,6 +213,29 @@ impl HirGenerator {
         }
 
         if segments.len() > 1 && path_prefix == PathPrefix::Plain {
+            let local_path = self.module_path.join(
+                &segments
+                    .iter()
+                    .map(|segment| segment.name.as_str().to_string())
+                    .collect::<Vec<_>>(),
+            );
+            if let Some(res) = self.lookup_global_res(&local_path, scope) {
+                return Ok(hir::Path {
+                    segments: local_path
+                        .segments
+                        .iter()
+                        .enumerate()
+                        .map(|(index, name)| {
+                            let offset = local_path.segments.len().saturating_sub(segments.len());
+                            let args = (index >= offset)
+                                .then(|| segments[index - offset].args.clone())
+                                .flatten();
+                            self.make_path_segment(name, args)
+                        })
+                        .collect(),
+                    res: Some(res),
+                });
+            }
             if let Some(first) = segments.first() {
                 if let Some(hir::Res::Module(module_path)) =
                     self.resolve_value_symbol(first.name.as_str())
@@ -444,10 +467,12 @@ impl HirGenerator {
         match expr.kind() {
             ast::ExprKind::Name(name) => {
                 if let Some(resolved_name) = self.resolved_names.get(&expr.id()).cloned() {
-                    if let Some(path) =
+                    if !resolved_name.path.segments.is_empty() {
+                        if let Some(path) =
                         self.resolved_name_to_hir_path(&resolved_name, name, scope)?
-                    {
-                        return Ok(path);
+                        {
+                            return Ok(path);
+                        }
                     }
                 }
                 self.name_to_hir_path_with_scope(name, scope)

@@ -1,5 +1,9 @@
 use fp_core::ast::{Expr, ExprKind};
 use std::collections::HashSet;
+use std::future::Future;
+use std::pin::Pin;
+
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 pub fn block_on<F: std::future::Future>(fut: F) -> F::Output {
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};

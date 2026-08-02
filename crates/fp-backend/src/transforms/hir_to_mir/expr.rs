@@ -2044,23 +2044,26 @@ impl MirLowering {
             substs.insert(name.clone(), ty);
         }
 
-        if let (Some(self_ty), Some(self_arg_ty)) = (self_ty, self_arg_ty) {
-            self.infer_generic_from_type_expr(self_ty, self_arg_ty, generics, &mut substs, span)?;
-        }
-
-        for (param, actual_ty) in params.iter().zip(arg_types.iter()) {
-            self.infer_generic_from_type_expr(&param.ty, actual_ty, generics, &mut substs, span)?;
-        }
+        let has_explicit_substitutions = explicit_args.len() == generics.len();
         let return_ty = return_ty.map(|ty| self.unwrap_expr_type_expr(ty));
         let expected_return = expected_return.map(|ty| self.unwrap_expr_actual_ty(ty));
-        if let (Some(return_ty), Some(expected_return)) = (return_ty, expected_return) {
-            self.infer_generic_from_type_expr(
-                return_ty,
-                expected_return,
-                generics,
-                &mut substs,
-                span,
-            )?;
+        if !has_explicit_substitutions {
+            if let (Some(self_ty), Some(self_arg_ty)) = (self_ty, self_arg_ty) {
+                self.infer_generic_from_type_expr(self_ty, self_arg_ty, generics, &mut substs, span)?;
+            }
+
+            for (param, actual_ty) in params.iter().zip(arg_types.iter()) {
+                self.infer_generic_from_type_expr(&param.ty, actual_ty, generics, &mut substs, span)?;
+            }
+            if let (Some(return_ty), Some(expected_return)) = (return_ty, expected_return) {
+                self.infer_generic_from_type_expr(
+                    return_ty,
+                    expected_return,
+                    generics,
+                    &mut substs,
+                    span,
+                )?;
+            }
         }
         if substs.len() != generics.len() {
             if let (Some(return_ty), Some(expected_return)) = (return_ty, expected_return) {
@@ -7034,10 +7037,23 @@ impl MirLowering {
         match &ty.kind {
             TyKind::Ref(_, inner, _) => self.enum_layout_for_ty(inner),
             TyKind::RawPtr(type_and_mut) => self.enum_layout_for_ty(&type_and_mut.ty),
-            _ => self
-                .enum_layouts
-                .values()
-                .find(|layout| layout.enum_ty == *ty),
+            _ => self.enum_layouts.values().find(|layout| {
+                Self::enum_layout_ty_matches(&layout.enum_ty, ty)
+            }),
+        }
+    }
+
+    fn enum_layout_ty_matches(layout_ty: &Ty, requested_ty: &Ty) -> bool {
+        match (&layout_ty.kind, &requested_ty.kind) {
+            (TyKind::Infer(_), _) | (_, TyKind::Infer(_)) => true,
+            (TyKind::Tuple(layout), TyKind::Tuple(requested)) => {
+                layout.len() == requested.len()
+                    && layout
+                        .iter()
+                        .zip(requested)
+                        .all(|(layout, requested)| Self::enum_layout_ty_matches(layout, requested))
+            }
+            _ => layout_ty == requested_ty,
         }
     }
 
@@ -10901,14 +10917,24 @@ impl<'a> BodyBuilder<'a> {
         }));
 
         for (idx, slot_ty) in layout.payload_tys.iter().enumerate() {
+            let storage_ty = match scrutinee_ty.map(|ty| &ty.kind) {
+                Some(TyKind::Tuple(fields)) => fields
+                    .get(idx + 1)
+                    .map(|field| field.as_ref())
+                    .unwrap_or(slot_ty),
+                _ => slot_ty,
+            };
             if let Some(arg) = args.get(idx) {
-                let expected_ty = payload_tys.get(idx).unwrap_or(slot_ty);
+                let expected_ty = payload_tys.get(idx).unwrap_or(storage_ty);
                 let operand = self.lower_operand(&arg.value, Some(expected_ty))?;
                 operands.push(operand.operand);
             } else {
-                return Err(fp_core::error::Error::from(format!(
-                    "enum variant payload slot {idx} is missing during MIR lowering (slot_ty={slot_ty})"
-                )));
+                let literal = self.lowering.catch_unwind_default_constant_for_ty(storage_ty)?;
+                operands.push(mir::Operand::Constant(mir::Constant {
+                    span,
+                    user_ty: None,
+                    literal,
+                }));
             }
         }
 

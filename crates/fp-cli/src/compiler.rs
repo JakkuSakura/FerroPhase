@@ -45,6 +45,7 @@ use fp_typescript::frontend::TsParseMode;
 
 pub fn check_path(
     path: &Path,
+    package: &str,
     syntax_only: bool,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
     lossy: LossyCompileOptions,
@@ -54,7 +55,7 @@ pub fn check_path(
         return Ok(());
     }
 
-    let identity = CompilerIdentity::for_file(path);
+    let identity = CompilerIdentity::for_file(package, path);
     let mut driver = CompilerDriver::new();
     driver.state.set_lossy(lossy.enabled);
     if let Some(resolver) = resolver {
@@ -84,25 +85,9 @@ pub fn eval_expr(source: &str) -> Result<Value> {
     )
 }
 
-pub fn eval_file(path: &Path, resolver: Option<Arc<dyn CompilerModuleResolver>>) -> Result<Value> {
-    let ast = parse_file_with_mode(
-        path,
-        None,
-        FrontendParseMode::Strict,
-        LossyCompileOptions::default(),
-    )?;
-    execute_ast(
-        ast,
-        CompilerIdentity::for_file(path),
-        fp_core::context::ExecutionMode::Runtime,
-        path,
-        resolver,
-        LossyCompileOptions::default(),
-    )
-}
-
-pub fn interpret_file(
+pub fn eval_file(
     path: &Path,
+    package: &str,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
 ) -> Result<Value> {
     let ast = parse_file_with_mode(
@@ -113,7 +98,28 @@ pub fn interpret_file(
     )?;
     execute_ast(
         ast,
-        CompilerIdentity::for_file(path),
+        CompilerIdentity::for_file(package, path),
+        fp_core::context::ExecutionMode::Runtime,
+        path,
+        resolver,
+        LossyCompileOptions::default(),
+    )
+}
+
+pub fn interpret_file(
+    path: &Path,
+    package: &str,
+    resolver: Option<Arc<dyn CompilerModuleResolver>>,
+) -> Result<Value> {
+    let ast = parse_file_with_mode(
+        path,
+        None,
+        FrontendParseMode::Strict,
+        LossyCompileOptions::default(),
+    )?;
+    execute_ast(
+        ast,
+        CompilerIdentity::for_file(package, path),
         fp_core::context::ExecutionMode::Runtime,
         path,
         resolver,
@@ -217,12 +223,13 @@ pub struct LirBundle {
 
 pub fn compile_native_file(
     path: &Path,
+    package: &str,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
     lossy: LossyCompileOptions,
     options: &NativeCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language, resolver, lossy)?;
+    let lowered = lower_file(path, package, source_language, resolver, lossy)?;
     let lir = lowered.lir()?;
 
     match options.emitter {
@@ -275,12 +282,13 @@ pub fn compile_native_file(
 
 pub fn compile_bytecode_file(
     path: &Path,
+    package: &str,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
     lossy: LossyCompileOptions,
     options: &BytecodeCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language, resolver, lossy)?;
+    let lowered = lower_file(path, package, source_language, resolver, lossy)?;
     let bytecode = lowered.bytecode()?;
 
     if let Some(parent) = options.output.parent() {
@@ -316,12 +324,13 @@ pub fn compile_bytecode_file(
 
 pub fn compile_jvm_file(
     path: &Path,
+    package: &str,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
     lossy: LossyCompileOptions,
     options: &JvmCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language, resolver, lossy)?;
+    let lowered = lower_file(path, package, source_language, resolver, lossy)?;
     let mir = lowered.mir()?;
     let class_stem = options.class_name_hint.as_deref().unwrap_or("Main");
     let jvm_options = fp_jvm::JvmBackendOptions {
@@ -374,12 +383,13 @@ pub fn compile_jvm_file(
 
 pub fn compile_wasm_file(
     path: &Path,
+    package: &str,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
     lossy: LossyCompileOptions,
     options: &WasmCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language, resolver, lossy)?;
+    let lowered = lower_file(path, package, source_language, resolver, lossy)?;
     let lir = lowered.lir()?;
     let wasm_bytes = fp_wasm::emit_wasm(&lir)
         .map_err(|err| CliError::Compilation(format!("Failed to emit wasm: {}", err)))?;
@@ -392,12 +402,13 @@ pub fn compile_wasm_file(
 
 pub fn compile_ebpf_file(
     path: &Path,
+    package: &str,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
     lossy: LossyCompileOptions,
     options: &EbpfCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, source_language, resolver, lossy)?;
+    let lowered = lower_file(path, package, source_language, resolver, lossy)?;
     let lir = lowered.lir()?;
     if let Some(parent) = options.output.parent() {
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
@@ -435,6 +446,7 @@ pub fn compile_dotnet_file(
 
 pub fn compile_llvm_file(
     path: &Path,
+    package: &str,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
     lossy: LossyCompileOptions,
@@ -442,7 +454,7 @@ pub fn compile_llvm_file(
 ) -> Result<PathBuf> {
     #[cfg(feature = "llvm")]
     {
-        let lowered = lower_file(path, source_language, resolver, lossy)?;
+        let lowered = lower_file(path, package, source_language, resolver, lossy)?;
         let lir = lowered.lir()?;
         let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let llvm_output = if options.output.extension().and_then(|ext| ext.to_str()) == Some("ll") {
@@ -514,6 +526,7 @@ pub fn compile_llvm_file(
 
 pub fn compile_cranelift_file(
     path: &Path,
+    package: &str,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
     lossy: LossyCompileOptions,
@@ -521,7 +534,7 @@ pub fn compile_cranelift_file(
 ) -> Result<PathBuf> {
     #[cfg(feature = "cranelift")]
     {
-        let lowered = lower_file(path, source_language, resolver, lossy)?;
+        let lowered = lower_file(path, package, source_language, resolver, lossy)?;
         let lir = lowered.lir()?;
         let object_path =
             options
@@ -774,12 +787,13 @@ fn execute_ast(
 
 fn lower_file(
     path: &Path,
+    package: &str,
     source_language: Option<&str>,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
     lossy: LossyCompileOptions,
 ) -> Result<LoweredProgram> {
     let ast = parse_file(path, source_language, lossy)?;
-    let identity = CompilerIdentity::for_file(path);
+    let identity = CompilerIdentity::for_file(package, path);
     let path_key = identity.path.to_key();
     let mut driver = lower_ast(ast, &identity, path, resolver, lossy)?;
     drain_driver(&mut driver, lossy)?;
@@ -864,6 +878,7 @@ pub fn parse_ast_target_file(path: &Path, source_language: Option<&str>) -> Resu
 
 pub fn compile_file_to_lir_bundle(
     path: &Path,
+    package: &str,
     source_language: Option<&str>,
     lossy: LossyCompileOptions,
 ) -> Result<LirBundle> {
@@ -873,7 +888,7 @@ pub fn compile_file_to_lir_bundle(
         ast: parsed.ast.clone(),
         frontend_snapshot: parsed.frontend_snapshot.clone(),
     };
-    let identity = CompilerIdentity::for_file(path);
+    let identity = CompilerIdentity::for_file(package, path);
     let path_key = identity.path.to_key();
     let mut driver = lower_ast(parsed.ast, &identity, path, None, lossy)?;
     drain_driver(&mut driver, lossy)?;
@@ -1109,9 +1124,13 @@ impl CompilerIdentity {
         Self::new(vec!["cli".to_string(), "eval_expr".to_string()])
     }
 
-    fn for_file(path: &Path) -> Self {
-        let canonical = path.canonicalize().unwrap_or_else(|_| PathBuf::from(path));
-        Self::new(vec!["cli".to_string(), canonical.display().to_string()])
+    fn for_file(package: &str, path: &Path) -> Self {
+        let module = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| "module".to_string());
+        Self::new(vec![package.to_string(), module])
     }
 
     fn new(segments: Vec<String>) -> Self {

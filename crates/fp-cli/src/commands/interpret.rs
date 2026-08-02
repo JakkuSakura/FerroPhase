@@ -18,6 +18,9 @@ pub struct InterpretArgs {
     /// Path to a workspace graph (JSON) for dependency resolution
     #[arg(long = "graph")]
     pub graph: Option<PathBuf>,
+    /// Package name used to qualify source identities
+    #[arg(long = "package", required = true)]
+    pub package: String,
     /// Enable the JIT for interpreter execution
     #[arg(long)]
     pub jit: bool,
@@ -60,7 +63,7 @@ async fn interpret_source(path: &Path, args: &InterpretArgs) -> Result<()> {
         None => None,
     };
 
-    let _ = compiler::interpret_file(path, resolver)?;
+    let _ = compiler::interpret_file(path, &args.package, resolver)?;
     Ok(())
 }
 

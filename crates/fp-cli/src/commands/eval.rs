@@ -7,6 +7,9 @@ use tracing::info;
 /// Arguments for the eval command
 #[derive(Debug, Clone, Args)]
 pub struct EvalArgs {
+    /// Package name used to qualify source identities
+    #[arg(long = "package")]
+    pub package: Option<String>,
     /// Expression to evaluate
     #[arg(short, long, conflicts_with = "file")]
     pub expr: Option<String>,
@@ -49,7 +52,10 @@ pub async fn eval_command(mut args: EvalArgs, _config: &CliConfig) -> Result<()>
         for file in &args.file {
             let description = format!("file '{}'", file.display());
             info!("Evaluating {}", description);
-            let value = compiler::eval_file(file, None)?;
+            let package = args.package.as_deref().ok_or_else(|| {
+                CliError::InvalidInput("eval --file requires --package".to_string())
+            })?;
+            let value = compiler::eval_file(file, package, None)?;
             let label = if args.file.len() > 1 {
                 Some(file.as_path())
             } else {
