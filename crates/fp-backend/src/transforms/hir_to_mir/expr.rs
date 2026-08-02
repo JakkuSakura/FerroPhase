@@ -5793,21 +5793,18 @@ impl MirLowering {
                     }
                 }
                 let item = program.def_map.get(def_id)?;
-                let hir::ItemKind::Function(function) = &item.kind else {
+                let hir::ItemKind::Function(_function) = &item.kind else {
                     return None;
                 };
                 let (TyKind::FnDef(_, _) | TyKind::FnPtr(_)) = expected_ty.map(|ty| &ty.kind)?
                 else {
                     return None;
                 };
-                let fn_ty = expected_ty.cloned().unwrap_or_else(Self::unit_ty);
+                let fn_ty = expected_ty.cloned()?;
                 Some(mir::Constant {
                     span: expr.span,
                     user_ty: None,
-                    literal: mir::ConstantKind::Fn(
-                        mir::Symbol::new(function.sig.name.as_str()),
-                        fn_ty,
-                    ),
+                    literal: mir::ConstantKind::FnDef(*def_id, fn_ty),
                 })
             }
             hir::ExprKind::Slice(slice) => {
