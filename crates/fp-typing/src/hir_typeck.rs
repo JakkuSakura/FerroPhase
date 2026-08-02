@@ -501,7 +501,37 @@ impl HirTypeChecker {
                     hir::GenericArg::Const(_) => Err(Error::from("const generic arguments are not supported")),
                 })
                 .collect::<Result<Vec<_>>>()?,
-            None => Vec::new(),
+            None => match &item.kind {
+                hir::ItemKind::Struct(def) => def
+                    .generics
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(index, parameter)| {
+                        GenericArg::Type(Ty {
+                            kind: TyKind::Param(ty::ParamTy {
+                                index: index as u32,
+                                name: parameter.name.clone(),
+                            }),
+                        })
+                    })
+                    .collect(),
+                hir::ItemKind::Enum(def) => def
+                    .generics
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(index, parameter)| {
+                        GenericArg::Type(Ty {
+                            kind: TyKind::Param(ty::ParamTy {
+                                index: index as u32,
+                                name: parameter.name.clone(),
+                            }),
+                        })
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            },
         };
         Ok(Ty { kind: TyKind::Adt(AdtDef { did: def_id, variants, flags, repr: ReprOptions { int: None, align: None, pack: None, flags: ReprFlags::empty(), field_shuffle_seed: 0 } }, args) })
     }
@@ -538,7 +568,10 @@ impl HirTypeChecker {
                 };
                 let enum_ty = self.enum_item_ty(&enum_item, path)?;
                 if let Some(payload) = &variant.payload {
-                    let payload_ty = self.check_type_expr(payload)?;
+                    self.push_generics(&enum_def.generics);
+                    let payload_result = self.check_type_expr(payload);
+                    self.pop_generics();
+                    let payload_ty = payload_result?;
                     return Ok(Ty {
                         kind: TyKind::FnPtr(ty::PolyFnSig {
                             binder: ty::Binder {
@@ -600,7 +633,20 @@ impl HirTypeChecker {
             .transpose()?;
         let args = match args {
             Some(args) => args,
-            None => Vec::new(),
+            None => enum_def
+                .generics
+                .params
+                .iter()
+                .enumerate()
+                .map(|(index, parameter)| {
+                    GenericArg::Type(Ty {
+                        kind: TyKind::Param(ty::ParamTy {
+                            index: index as u32,
+                            name: parameter.name.clone(),
+                        }),
+                    })
+                })
+                .collect(),
         };
         Ok(Ty {
             kind: TyKind::Adt(
