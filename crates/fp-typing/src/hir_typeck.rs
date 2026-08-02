@@ -228,10 +228,20 @@ impl HirTypeChecker {
                         .map(|arg| self.check_expr(&arg.value))
                         .collect::<Result<Vec<_>>>()?,
                 );
-                let (method_def_id, output) = self.method_output(&receiver_ty, method, &arg_types)?;
+                let (method_def_id, generic_args, output) =
+                    self.method_output(&receiver_ty, method, &arg_types)?;
                 self.results
                     .method_resolutions
                     .insert(expr.hir_id, method_def_id);
+                if let Some(args) = generic_args {
+                    self.results.generic_method_args.insert(
+                        expr.hir_id,
+                        GenericCallResolution {
+                            def_id: method_def_id,
+                            args,
+                        },
+                    );
+                }
                 output
             }
             hir::ExprKind::FieldAccess(receiver, field) => {
@@ -763,7 +773,7 @@ impl HirTypeChecker {
         receiver_ty: &Ty,
         method: &hir::Symbol,
         actuals: &[Ty],
-    ) -> Result<(hir::DefId, Ty)> {
+    ) -> Result<(hir::DefId, Option<Vec<Ty>>, Ty)> {
         let receiver_def = match &receiver_ty.kind {
             TyKind::Adt(receiver, _) => receiver.did,
             TyKind::Ref(_, inner, _) => match &inner.kind {
@@ -783,23 +793,68 @@ impl HirTypeChecker {
                 continue;
             }
             self.push_generics(&impl_item.generics);
+            let impl_generics = impl_item.generics.clone();
             for impl_item in impl_item.items {
                 let hir::ImplItemKind::Method(function) = impl_item.kind else {
                     continue;
                 };
                 if function.sig.name == *method {
                     let signature = self.function_signature(&function)?;
-                    let Some((_, result)) = self.instantiate_call(&signature, actuals)? else {
+                    let Some((substitutions, result)) = self.instantiate_call(&signature, actuals)? else {
                         self.pop_generics();
                         return Err(Error::from("method arguments do not match its signature"));
                     };
                     self.pop_generics();
-                    return Ok((impl_item.def_id, result));
+                    let args = self.method_generic_args(
+                        &impl_generics,
+                        &function.sig.generics,
+                        &substitutions,
+                    )?;
+                    return Ok((impl_item.def_id, args, result));
                 }
             }
             self.pop_generics();
         }
         Err(Error::from(format!("method `{method}` was not found")))
+    }
+
+    fn method_generic_args(
+        &self,
+        impl_generics: &hir::Generics,
+        method_generics: &hir::Generics,
+        substitutions: &HashMap<ty::ParamTy, Ty>,
+    ) -> Result<Option<Vec<Ty>>> {
+        if impl_generics.params.is_empty() && method_generics.params.is_empty() {
+            return Ok(None);
+        }
+        let mut args = Vec::new();
+        for (index, parameter) in impl_generics.params.iter().enumerate() {
+            let param = ty::ParamTy {
+                index: index as u32,
+                name: parameter.name.clone(),
+            };
+            let Some(argument) = substitutions.get(&param) else {
+                return Err(Error::from(format!(
+                    "could not infer generic parameter `{}` in impl method",
+                    parameter.name
+                )));
+            };
+            args.push(argument.clone());
+        }
+        for (index, parameter) in method_generics.params.iter().enumerate() {
+            let param = ty::ParamTy {
+                index: index as u32,
+                name: parameter.name.clone(),
+            };
+            let Some(argument) = substitutions.get(&param) else {
+                return Err(Error::from(format!(
+                    "could not infer generic parameter `{}` in method",
+                    parameter.name
+                )));
+            };
+            args.push(argument.clone());
+        }
+        Ok(Some(args))
     }
 
     fn bind_pattern(&mut self, pattern: &hir::Pat, ty: Ty) -> Result<()> {

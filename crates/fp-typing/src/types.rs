@@ -16,6 +16,7 @@ pub struct TypeckResults {
     pub resolutions: HashMap<HirId, hir::Res>,
     pub method_resolutions: HashMap<HirId, hir::DefId>,
     pub generic_call_args: HashMap<HirId, GenericCallResolution>,
+    pub generic_method_args: HashMap<HirId, GenericCallResolution>,
 }
 
 #[derive(Debug, Clone)]

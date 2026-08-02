@@ -398,6 +398,7 @@ pub struct MirLowering {
     typeck_exprs: HashMap<hir::HirId, Ty>,
     typeck_method_resolutions: HashMap<hir::HirId, hir::DefId>,
     typeck_generic_call_args: HashMap<hir::HirId, Vec<Ty>>,
+    typeck_generic_method_args: HashMap<hir::HirId, Vec<Ty>>,
 }
 
 fn terminal_segment(name: &str) -> &str {
@@ -478,6 +479,7 @@ impl MirLowering {
             typeck_exprs: HashMap::new(),
             typeck_method_resolutions: HashMap::new(),
             typeck_generic_call_args: HashMap::new(),
+            typeck_generic_method_args: HashMap::new(),
         }
     }
 
@@ -528,6 +530,18 @@ impl MirLowering {
         self.typeck_method_resolutions = results.method_resolutions.clone();
         self.typeck_generic_call_args = results
             .generic_call_args
+            .iter()
+            .map(|(hir_id, resolution)| {
+                resolution
+                    .args
+                    .iter()
+                    .map(lower_hir_ty)
+                    .collect::<Result<Vec<_>>>()
+                    .map(|args| (*hir_id, args))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+        self.typeck_generic_method_args = results
+            .generic_method_args
             .iter()
             .map(|(hir_id, resolution)| {
                 resolution
@@ -18069,10 +18083,20 @@ impl<'a> BodyBuilder<'a> {
                                     lowered_args.push(operand.operand);
                                 }
 
+                                let generic_args = self
+                                    .lowering
+                                    .typeck_generic_method_args
+                                    .get(&expr.hir_id)
+                                    .cloned()
+                                    .ok_or_else(|| {
+                                        crate::error::optimization_error(
+                                            "missing HIR generic method substitutions",
+                                        )
+                                    })?;
                                 let info = self.lowering.ensure_method_specialization(
                                     self.program,
                                     &def,
-                                    &[],
+                                    &generic_args,
                                     &arg_types,
                                     Some(&place_info.ty),
                                     expr.span,
@@ -18158,10 +18182,20 @@ impl<'a> BodyBuilder<'a> {
                                     lowered_args.push(operand.operand);
                                 }
 
+                                let generic_args = self
+                                    .lowering
+                                    .typeck_generic_method_args
+                                    .get(&expr.hir_id)
+                                    .cloned()
+                                    .ok_or_else(|| {
+                                        crate::error::optimization_error(
+                                            "missing HIR generic method substitutions",
+                                        )
+                                    })?;
                                 let info = self.lowering.ensure_method_specialization(
                                     self.program,
                                     &def,
-                                    &[],
+                                    &generic_args,
                                     &arg_types,
                                     Some(&place_info.ty),
                                     expr.span,
