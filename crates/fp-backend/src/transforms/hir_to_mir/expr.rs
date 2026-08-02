@@ -8691,12 +8691,14 @@ impl<'a> BodyBuilder<'a> {
         let implicit_ty = init
             .as_deref()
             .map(|expr| self.implicit_local_init_ty(expr))
-            .unwrap_or_else(|| Ty {
-                kind: TyKind::Tuple(Vec::new()),
-            });
+            .transpose()?;
+        let local_ty = declared_ty
+            .as_ref()
+            .or(implicit_ty.as_ref())
+            .ok_or_else(|| fp_core::error::Error::from("local declaration has no type"))?;
         let mut decl = self
             .lowering
-            .make_local_decl(declared_ty.as_ref().unwrap_or(&implicit_ty), init_span);
+            .make_local_decl(local_ty, init_span);
         decl.local_info = mir::LocalInfo::User(());
 
         if let hir::PatKind::Binding { mutable, .. } = &pat.kind {
@@ -8706,7 +8708,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         let local_id = self.push_local(decl);
-        self.bind_pattern(pat, local_id, declared_ty.as_ref());
+        self.bind_pattern(pat, local_id, Some(local_ty));
 
         if let Some(init_expr) = init {
             self.update_null_tracking(
@@ -9877,84 +9879,6 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    /// A best-effort *guess* at an un-annotated local's type from its init
-    /// expression, used only to pre-declare the MIR local before the RHS
-    /// itself is lowered (`lower_assignment` fills in/refines the real type
-    /// once it actually lowers the init expression). `infer_initializer_ty`
-    /// only recognizes a handful of simple shapes (literals, if/else,
-    /// block tails, ...) and returns `None` for anything else -- notably
-    /// function calls, whose return type it can't know without lowering the
-    /// callee. `None` must not become `Tuple([])`/unit here: that's a
-    /// specific, false claim ("this local's type is unit"), not "unknown" --
-    /// and it leaks downstream. In particular, a generic call's
-    /// `destination` place feeds this pre-declared type into
-    /// `ensure_function_specialization`'s generic-parameter inference as
-    /// the call's "expected return type"; a bogus `unit` there collides
-    /// with whatever the call's arguments actually infer the generic
-    /// parameter to be, hard-failing with "conflicting generic inference"
-    /// on essentially any generic function call bound to a plain
-    /// `let x = generic_call(...)`. `TyKind::Infer` is the existing,
-    /// already-handled-everywhere convention for "not yet known" (see the
-    /// `matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_))` checks
-    /// throughout this module).
-    fn implicit_local_init_ty(&self, expr: &hir::Expr) -> Ty {
-        self.infer_initializer_ty(expr).unwrap_or_else(|| Ty {
-            kind: TyKind::Infer(mir::ty::InferTy::FreshTy(0)),
-        })
-    }
-
-    fn infer_initializer_ty(&self, expr: &hir::Expr) -> Option<Ty> {
-        match &expr.kind {
-            hir::ExprKind::Query(_) => Some(Ty {
-                kind: TyKind::Int(IntTy::I64),
-            }),
-            hir::ExprKind::Literal(lit) => {
-                let constant = mir::Constant {
-                    span: expr.span,
-                    user_ty: None,
-                    literal: match lit {
-                        hir::Lit::Bool(value) => mir::ConstantKind::Bool(*value),
-                        hir::Lit::Integer(value) => mir::ConstantKind::Int(*value),
-                        hir::Lit::Float(value) => mir::ConstantKind::Float(*value),
-                        hir::Lit::Str(value) => mir::ConstantKind::Str(value.clone()),
-                        hir::Lit::Char(value) => mir::ConstantKind::Int(*value as i64),
-                        hir::Lit::Null => mir::ConstantKind::Null,
-                    },
-                };
-                self.constant_ty_from_constant(&constant)
-            }
-            hir::ExprKind::If(_, then_expr, else_expr) => {
-                let then_ty = self.infer_initializer_ty(then_expr)?;
-                let else_ty = else_expr
-                    .as_deref()
-                    .and_then(|expr| self.infer_initializer_ty(expr))?;
-                if then_ty == else_ty {
-                    Some(then_ty)
-                } else {
-                    None
-                }
-            }
-            hir::ExprKind::Block(block) => block
-                .expr
-                .as_deref()
-                .and_then(|expr| self.infer_initializer_ty(expr)),
-            hir::ExprKind::Reference(reference) => {
-                let inner_ty = self.infer_initializer_ty(reference.expr.as_ref())?;
-                Some(Ty {
-                    kind: TyKind::Ref(
-                        mir::ty::Region::ReErased,
-                        Box::new(inner_ty),
-                        match reference.mutable {
-                            hir::ty::Mutability::Mut => Mutability::Mut,
-                            hir::ty::Mutability::Not => Mutability::Not,
-                        },
-                    ),
-                })
-            }
-            _ => None,
-        }
-    }
-
     fn lower_local(&mut self, local: &hir::Local) -> Result<()> {
         let init_span = local
             .init
@@ -9965,6 +9889,12 @@ impl<'a> BodyBuilder<'a> {
         let mut declared_ty = local
             .ty
             .as_ref()
+            .filter(|ty_expr| {
+                !matches!(
+                    ty_expr.kind,
+                    hir::TypeExprKind::Infer | hir::TypeExprKind::Error
+                )
+            })
             .map(|ty_expr| self.lower_type_expr(ty_expr));
         let annotated_enum_def = local.ty.as_ref().and_then(|ty_expr| {
             let hir::TypeExprKind::Path(path) = &ty_expr.kind else {
@@ -10010,12 +9940,14 @@ impl<'a> BodyBuilder<'a> {
             .init
             .as_ref()
             .map(|expr| self.implicit_local_init_ty(expr))
-            .unwrap_or_else(|| Ty {
-                kind: TyKind::Tuple(Vec::new()),
-            });
+            .transpose()?;
+        let local_ty = declared_ty
+            .as_ref()
+            .or(implicit_ty.as_ref())
+            .ok_or_else(|| fp_core::error::Error::from("local declaration has no type"))?;
         let mut decl = self
             .lowering
-            .make_local_decl(declared_ty.as_ref().unwrap_or(&implicit_ty), init_span);
+            .make_local_decl(local_ty, init_span);
         decl.local_info = mir::LocalInfo::User(());
 
         if let hir::PatKind::Binding { mutable, .. } = &local.pat.kind {
@@ -10025,7 +9957,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         let local_id = self.push_local(decl);
-        self.bind_pattern(&local.pat, local_id, declared_ty.as_ref());
+        self.bind_pattern(&local.pat, local_id, Some(local_ty));
 
         if let Some(init_expr) = &local.init {
             self.update_null_tracking(
@@ -10042,6 +9974,19 @@ impl<'a> BodyBuilder<'a> {
         }
 
         Ok(())
+    }
+
+    fn implicit_local_init_ty(&self, expr: &hir::Expr) -> Result<Ty> {
+        self.lowering
+            .typeck_exprs
+            .get(&expr.hir_id)
+            .cloned()
+            .ok_or_else(|| {
+                fp_core::error::Error::from(format!(
+                    "missing HIR type for local initializer {}",
+                    expr.hir_id
+                ))
+            })
     }
 
     fn lower_inner_item(&mut self, item: &hir::Item) -> Result<()> {
