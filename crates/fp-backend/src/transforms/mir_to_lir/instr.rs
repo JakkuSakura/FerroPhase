@@ -20,6 +20,7 @@ use crate::abi;
 /// Generator for transforming MIR to LIR (Low-level IR)
 pub struct LirGenerator {
     package_id: hir::PackageId,
+    data_layout: lir::LirDataLayout,
     next_lir_id: lir::LirId,
     next_label: u32,
     register_map: HashMap<mir::LocalId, lir::LirValue>,
@@ -90,16 +91,18 @@ impl LirGenerator {
     }
 
     /// Create a new LIR generator
-    pub fn new() -> Self {
-        Self::new_with_runtime_symbol_map(|_| None)
+    pub fn new(data_layout: lir::LirDataLayout) -> Self {
+        Self::new_with_runtime_symbol_map(data_layout, |_| None)
     }
 
     /// Create a new LIR generator with a backend-specific runtime symbol mapper.
     pub fn new_with_runtime_symbol_map(
+        data_layout: lir::LirDataLayout,
         runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
     ) -> Self {
         Self {
             package_id: hir::PackageId(0),
+            data_layout,
             next_lir_id: 0,
             next_label: 0,
             register_map: HashMap::new(),
@@ -130,13 +133,27 @@ impl LirGenerator {
         self
     }
 
-    fn function_value(&self, name: String) -> lir::LirValue {
-        lir::LirValue::FunctionInPackage(self.package_id, name)
+    fn function_value(&self, name: String) -> Result<lir::LirValue> {
+        let signature = self.function_signatures.get(&name).ok_or_else(|| {
+            fp_core::error::Error::from(format!("missing LIR signature for function `{name}`"))
+        })?;
+        let ty = lir::LirType::Ptr(Box::new(lir::LirType::Function {
+            return_type: Box::new(signature.return_type.clone()),
+            param_types: signature.params.clone(),
+            is_variadic: signature.is_variadic,
+        }));
+        Ok(lir::LirValue::function(
+            lir::LirFunctionRef::Package {
+                package_id: self.package_id,
+                name: lir::Name::new(name),
+            },
+            ty,
+        ))
     }
 
     /// Transform a MIR program to LIR
     pub fn transform(&mut self, mir_program: mir::Program) -> Result<lir::LirProgram> {
-        let mut lir_program = lir::LirProgram::new();
+        let mut lir_program = lir::LirProgram::new(self.data_layout.clone());
 
         self.predeclare_function_signatures(&mir_program);
 
@@ -504,22 +521,21 @@ impl LirGenerator {
                 }
             }
             mir::ConstantKind::Null => lir::LirConstant::Null(target_ty.clone()),
-            mir::ConstantKind::Val(value, value_ty) => {
-                self.const_value_to_lir_constant(value, value_ty)?
+            mir::ConstantKind::Val(value) => {
+                self.const_value_to_lir_constant(value, &constant.ty)?
             }
-            mir::ConstantKind::FnDef(_, _) => {
+            mir::ConstantKind::FnDef(_) => {
                 return Err(fp_core::error::Error::from(
                     "function definition references are not valid static initializer data",
                 ));
             }
-            mir::ConstantKind::Fn(name, _ty) => lir::LirConstant::FunctionRef(
+            mir::ConstantKind::Fn(name) => lir::LirConstant::FunctionRef(
                 lir::Name::new(name.as_str().to_string()),
                 target_ty.clone(),
             ),
-            mir::ConstantKind::Global(name, _ty) => lir::LirConstant::GlobalRef(
-                lir::Name::new(name.as_str().to_string()),
+            mir::ConstantKind::Global(name) => lir::LirConstant::global_address(
                 target_ty.clone(),
-                Vec::new(),
+                lir::Name::new(name.as_str().to_string()),
             ),
             mir::ConstantKind::Ty(_) => {
                 return Err(fp_core::error::Error::from(
@@ -815,6 +831,7 @@ impl LirGenerator {
             lir::LirConstant::Bool(_)
             | lir::LirConstant::Int(..)
             | lir::LirConstant::UInt(..)
+            | lir::LirConstant::F32(..)
             | lir::LirConstant::Float(..) => {
                 Self::try_encode_global_initializer_bytes(&initializer, ty)
                     .map(|(bytes, relocations)| (lir::LirConstant::Bytes(bytes), relocations))
@@ -880,6 +897,9 @@ impl LirGenerator {
                     layout::size_of(int_ty) as usize,
                     false,
                 )?;
+            }
+            lir::LirConstant::F32(value) => {
+                Self::write_initializer_float(out, base, f64::from(*value), 4)?;
             }
             lir::LirConstant::Float(value, float_ty) => {
                 Self::write_initializer_float(
@@ -1292,7 +1312,12 @@ impl LirGenerator {
             mir::Rvalue::IntrinsicCall { kind, format, args } => {
                 let mut instructions = Vec::new();
 
-                if matches!(kind, IntrinsicCallKind::CreateStruct | IntrinsicCallKind::AddField | IntrinsicCallKind::BuildType) {
+                if matches!(
+                    kind,
+                    IntrinsicCallKind::CreateStruct
+                        | IntrinsicCallKind::AddField
+                        | IntrinsicCallKind::BuildType
+                ) {
                     let mut lir_args = Vec::with_capacity(args.len());
                     for arg in args {
                         let value = self.transform_operand(arg)?;
@@ -1300,24 +1325,32 @@ impl LirGenerator {
                         lir_args.push(value);
                     }
                     let comptime_op = match kind {
-                        IntrinsicCallKind::CreateStruct => {
-                            lir::ComptimeOp::CreateStruct {
-                                name: lir_args.into_iter().next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
-                            }
-                        }
+                        IntrinsicCallKind::CreateStruct => lir::ComptimeOp::CreateStruct {
+                            name: lir_args
+                                .into_iter()
+                                .next()
+                                .unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
+                        },
                         IntrinsicCallKind::AddField => {
                             let mut iter = lir_args.into_iter();
                             lir::ComptimeOp::AddField {
-                                struct_handle: iter.next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
-                                field_name: iter.next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
-                                field_type: iter.next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
+                                struct_handle: iter
+                                    .next()
+                                    .unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
+                                field_name: iter
+                                    .next()
+                                    .unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
+                                field_type: iter
+                                    .next()
+                                    .unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
                             }
                         }
-                        IntrinsicCallKind::BuildType => {
-                            lir::ComptimeOp::IntoType {
-                                value: lir_args.into_iter().next().unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
-                            }
-                        }
+                        IntrinsicCallKind::BuildType => lir::ComptimeOp::IntoType {
+                            value: lir_args
+                                .into_iter()
+                                .next()
+                                .unwrap_or(lir::LirValue::Null(lir::LirType::Void)),
+                        },
                         _ => unreachable!(),
                     };
                     let instr_id = self.next_id();
@@ -1369,9 +1402,7 @@ impl LirGenerator {
                                 Some(lir::LirType::Ptr(elem)) => Some((**elem).clone()),
                                 _ => None,
                             })
-                            .unwrap_or_else(|| {
-                                lir::LirType::I8
-                            });
+                            .unwrap_or_else(|| lir::LirType::I8);
 
                         let ptr_ty = lir::LirType::Ptr(Box::new(elem_lir_ty.clone()));
                         let base_ptr = match base_lir_ty.as_ref() {
@@ -1430,7 +1461,7 @@ impl LirGenerator {
                             len_value,
                             &elem_lir_ty,
                             &mut instructions,
-                        );
+                        )?;
                         result_value = Some(slice_value);
                         return Ok(instructions);
                     }
@@ -1472,9 +1503,7 @@ impl LirGenerator {
                     self.lower_binary_op(bin_op.clone(), lhs_value.clone(), rhs_value.clone());
                 let type_hint = destination_lir_ty
                     .clone()
-                    .or_else(|| {
-                        Some(lir::LirType::I32)
-                    });
+                    .or_else(|| Some(lir::LirType::I32));
 
                 instructions.push(lir::LirInstruction {
                     id: instr_id,
@@ -1599,7 +1628,7 @@ impl LirGenerator {
                             len,
                             &elem_lir_ty,
                             &mut instructions,
-                        ));
+                        )?);
                         if slice_wrapper.is_some() {
                             let wrapper_ty = destination_lir_ty
                                 .clone()
@@ -1723,8 +1752,12 @@ impl LirGenerator {
                     });
                 }
 
-                result_value =
-                    Some(self.build_slice_value(array_ptr, len, &elem_lir_ty, &mut instructions));
+                result_value = Some(self.build_slice_value(
+                    array_ptr,
+                    len,
+                    &elem_lir_ty,
+                    &mut instructions,
+                )?);
             }
             mir::Rvalue::ContainerMapLiteral { kind, entries } => {
                 let entry_lir_ty = self.container_element_lir_type(kind);
@@ -1750,12 +1783,14 @@ impl LirGenerator {
                     lir::LirType::Struct { fields, .. } => fields.clone(),
                     _ => vec![lir::LirType::I64, lir::LirType::I64],
                 };
-                let key_ty = entry_fields.get(0).cloned().unwrap_or_else(|| {
-                    lir::LirType::I64
-                });
-                let value_ty = entry_fields.get(1).cloned().unwrap_or_else(|| {
-                    lir::LirType::I64
-                });
+                let key_ty = entry_fields
+                    .get(0)
+                    .cloned()
+                    .unwrap_or_else(|| lir::LirType::I64);
+                let value_ty = entry_fields
+                    .get(1)
+                    .cloned()
+                    .unwrap_or_else(|| lir::LirType::I64);
 
                 for (idx, (key_op, value_op)) in entries.iter().enumerate() {
                     let key_val = self.transform_operand(key_op)?;
@@ -1826,8 +1861,12 @@ impl LirGenerator {
                     });
                 }
 
-                result_value =
-                    Some(self.build_slice_value(array_ptr, len, &entry_lir_ty, &mut instructions));
+                result_value = Some(self.build_slice_value(
+                    array_ptr,
+                    len,
+                    &entry_lir_ty,
+                    &mut instructions,
+                )?);
             }
             mir::Rvalue::ContainerLen { kind, container } => {
                 if let mir::ContainerKind::List { len: 0, .. } = kind {
@@ -1905,10 +1944,8 @@ impl LirGenerator {
 
                         let mut current =
                             lir::LirValue::Constant(lir::LirConstant::Undef(value_lir_ty.clone()));
-                        let found_zero = lir::LirValue::Constant(lir::LirConstant::Int(
-                            0,
-                            lir::LirType::I64,
-                        ));
+                        let found_zero =
+                            lir::LirValue::Constant(lir::LirConstant::Int(0, lir::LirType::I64));
                         let mut found = found_zero.clone();
 
                         for idx in 0..*len {
@@ -2344,9 +2381,9 @@ impl LirGenerator {
         block: &mut lir::LirBasicBlock,
     ) -> Result<lir::LirTerminator> {
         match &terminator.kind {
-            mir::TerminatorKind::Return => {
-                Ok(lir::LirTerminator::Return(self.prepare_return_value(block)?))
-            }
+            mir::TerminatorKind::Return => Ok(lir::LirTerminator::Return(
+                self.prepare_return_value(block)?,
+            )),
             mir::TerminatorKind::Goto { target } => Ok(lir::LirTerminator::Br(*target)),
             mir::TerminatorKind::Unreachable => Ok(lir::LirTerminator::Unreachable),
             mir::TerminatorKind::Call {
@@ -2401,11 +2438,9 @@ impl LirGenerator {
                     })
                 }
             }
-            other => {
-                Err(crate::error::optimization_error(format!(
-                    "unhandled MIR terminator: {other:?}"
-                )))
-            }
+            other => Err(crate::error::optimization_error(format!(
+                "unhandled MIR terminator: {other:?}"
+            ))),
         }
     }
 
@@ -2424,61 +2459,72 @@ impl LirGenerator {
                                 alignment: Some(addr.alignment),
                                 volatile: false,
                             },
-                            type_hint: Some(addr.lir_ty.clone()),
+                            result: Some(lir::LirRegister {
+                                id: load_id,
+                                ty: addr.lir_ty.clone(),
+                            }),
                             debug_info: None,
                         });
-                        Ok(lir::LirValue::Register(load_id))
+                        Ok(lir::LirValue::register(load_id, addr.lir_ty))
                     }
                     PlaceAccess::Value { value, .. } => Ok(value),
                 }
             }
             mir::Operand::Constant(constant) => match &constant.literal {
-                mir::ConstantKind::FnDef(def_id, _ty) => {
-                    Ok(lir::LirValue::FunctionDef(*def_id))
-                }
-                mir::ConstantKind::Fn(name, _ty) => {
+                mir::ConstantKind::FnDef(def_id) => Ok(lir::LirValue::function(
+                    lir::LirFunctionRef::Definition(*def_id),
+                    self.lir_type_from_ty(&constant.ty),
+                )),
+                mir::ConstantKind::Fn(name) => {
                     let function_name = self
                         .function_symbol_map
                         .get(&String::from(name.clone()))
                         .cloned()
                         .unwrap_or_else(|| String::from(name.clone()));
-                    Ok(self.function_value(function_name))
+                    self.function_value(function_name)
                 }
-                mir::ConstantKind::Global(name, ty) => {
+                mir::ConstantKind::Global(name) => {
                     let mapped_name = self
                         .function_symbol_map
                         .get(&String::from(name.clone()))
                         .cloned()
                         .unwrap_or_else(|| String::from(name.clone()));
                     if self.function_signatures.contains_key(&mapped_name) {
-                        return Ok(self.function_value(mapped_name));
+                        return self.function_value(mapped_name);
                     }
                     if let Some(runtime_target) = (self.runtime_symbol_map)(&mapped_name) {
-                        return Ok(lir::LirValue::Function(runtime_target.as_str().to_string()));
+                        return self.function_value(runtime_target.as_str().to_owned());
                     }
-                    Ok(lir::LirValue::Global(
-                        mapped_name,
-                        self.lir_type_from_ty(ty),
+                    Ok(lir::LirValue::global(
+                        lir::Name::new(mapped_name),
+                        self.lir_type_from_ty(&constant.ty),
                     ))
                 }
-                mir::ConstantKind::Str(s) => Ok(lir::LirValue::Constant(self.const_string_ptr(s))),
-                mir::ConstantKind::Int(value) => Ok(lir::LirValue::Constant(
-                    lir::LirConstant::Int(*value, lir::LirType::I64),
+                mir::ConstantKind::Str(s) => Ok(lir::LirValue::constant(self.const_string_ptr(s))),
+                mir::ConstantKind::Int(value) => Ok(lir::LirValue::constant(
+                    lir::LirConstant::integer(
+                        lir::LirType::I64,
+                        lir::LirInteger::I64(u64::from_ne_bytes(value.to_ne_bytes())),
+                    )
+                    .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
                 )),
-                mir::ConstantKind::UInt(value) => Ok(lir::LirValue::Constant(
-                    lir::LirConstant::UInt(*value, lir::LirType::I64),
+                mir::ConstantKind::UInt(value) => Ok(lir::LirValue::constant(
+                    lir::LirConstant::integer(lir::LirType::I64, lir::LirInteger::I64(*value))
+                        .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
                 )),
-                mir::ConstantKind::Float(value) => Ok(lir::LirValue::Constant(
-                    lir::LirConstant::Float(*value, lir::LirType::F64),
+                mir::ConstantKind::Float(value) => Ok(lir::LirValue::constant(
+                    lir::LirConstant::float(lir::LirType::F64, lir::LirFloat::F64(value.to_bits()))
+                        .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
                 )),
-                mir::ConstantKind::Bool(b) => {
-                    Ok(lir::LirValue::Constant(lir::LirConstant::Bool(*b)))
-                }
-                mir::ConstantKind::Null => Ok(lir::LirValue::Null(lir::LirType::Ptr(Box::new(
-                    lir::LirType::I8,
-                )))),
-                mir::ConstantKind::Val(value, ty) => Ok(lir::LirValue::Constant(
-                    self.const_value_to_lir_constant(value, ty)?,
+                mir::ConstantKind::Bool(value) => Ok(lir::LirValue::constant(
+                    lir::LirConstant::integer(lir::LirType::I1, lir::LirInteger::I1(*value))
+                        .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
+                )),
+                mir::ConstantKind::Null => Ok(lir::LirValue::constant(lir::LirConstant::null(
+                    lir::LirType::Ptr(Box::new(lir::LirType::I8)),
+                ))),
+                mir::ConstantKind::Val(value) => Ok(lir::LirValue::constant(
+                    self.const_value_to_lir_constant(value, &constant.ty)?,
                 )),
                 _ => {
                     return Err(crate::error::optimization_error(
@@ -2834,7 +2880,7 @@ impl LirGenerator {
                             slice_len,
                             &elem_lir_ty,
                             &mut instructions,
-                        );
+                        )?;
                         self.queued_instructions.extend(instructions);
                         Ok(PlaceAccess::Value {
                             value: slice_value,
@@ -2911,7 +2957,7 @@ impl LirGenerator {
                             slice_len,
                             &elem_lir_ty,
                             &mut instructions,
-                        );
+                        )?;
                         self.queued_instructions.extend(instructions);
                         Ok(PlaceAccess::Value {
                             value: slice_value,
@@ -2924,11 +2970,9 @@ impl LirGenerator {
                     )),
                 }
             }
-            mir::PlaceElem::Downcast(_, _) => {
-                Err(crate::error::optimization_error(
-                    "MIR→LIR: downcast place projection is not supported"
-                ))
-            }
+            mir::PlaceElem::Downcast(_, _) => Err(crate::error::optimization_error(
+                "MIR→LIR: downcast place projection is not supported",
+            )),
         }
     }
 
@@ -3131,9 +3175,7 @@ impl LirGenerator {
         let mut index_value = self.transform_operand(&index_operand)?;
         let index_lir_ty = self
             .type_of_operand(&index_operand)
-            .unwrap_or_else(|| {
-                lir::LirType::I64
-            });
+            .unwrap_or_else(|| lir::LirType::I64);
         if index_lir_ty != lir::LirType::I64 {
             let cast_id = self.next_id();
             self.queued_instructions.push(lir::LirInstruction {
@@ -3351,9 +3393,7 @@ impl LirGenerator {
     ) -> lir::LirValue {
         let current_ty = self
             .infer_lir_value_type(&value)
-            .unwrap_or_else(|| {
-                lir::LirType::I64
-            });
+            .unwrap_or_else(|| lir::LirType::I64);
         if current_ty == lir::LirType::I64 {
             return value;
         }
@@ -3435,9 +3475,9 @@ impl LirGenerator {
         len: u64,
         elem_lir: &lir::LirType,
         instructions: &mut Vec<lir::LirInstruction>,
-    ) -> lir::LirValue {
+    ) -> Result<lir::LirValue> {
         let slice_ty = self.slice_lir_type(elem_lir);
-        let mut current = lir::LirValue::Constant(lir::LirConstant::Undef(slice_ty.clone()));
+        let mut current = lir::LirValue::constant(lir::LirConstant::undef(slice_ty.clone()));
         let ptr_insert = self.next_id();
         instructions.push(lir::LirInstruction {
             id: ptr_insert,
@@ -3446,12 +3486,18 @@ impl LirGenerator {
                 element: ptr,
                 indices: vec![0],
             },
-            type_hint: Some(slice_ty.clone()),
+            result: Some(lir::LirRegister {
+                id: ptr_insert,
+                ty: slice_ty.clone(),
+            }),
             debug_info: None,
         });
-        current = lir::LirValue::Register(ptr_insert);
+        current = lir::LirValue::register(ptr_insert, slice_ty.clone());
 
-        let len_value = lir::LirValue::Constant(lir::LirConstant::UInt(len, lir::LirType::I64));
+        let len_value = lir::LirValue::constant(
+            lir::LirConstant::integer(lir::LirType::I64, lir::LirInteger::I64(len))
+                .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
+        );
         let len_insert = self.next_id();
         instructions.push(lir::LirInstruction {
             id: len_insert,
@@ -3460,10 +3506,13 @@ impl LirGenerator {
                 element: len_value,
                 indices: vec![1],
             },
-            type_hint: Some(slice_ty),
+            result: Some(lir::LirRegister {
+                id: len_insert,
+                ty: slice_ty.clone(),
+            }),
             debug_info: None,
         });
-        lir::LirValue::Register(len_insert)
+        Ok(lir::LirValue::register(len_insert, slice_ty))
     }
 
     fn build_slice_value_with_len_value(
@@ -3472,31 +3521,37 @@ impl LirGenerator {
         len: lir::LirValue,
         elem_lir: &lir::LirType,
         instructions: &mut Vec<lir::LirInstruction>,
-    ) -> lir::LirValue {
+    ) -> Result<lir::LirValue> {
         let slice_ty = self.slice_lir_type(elem_lir);
         let ptr_insert = self.next_id();
         instructions.push(lir::LirInstruction {
             id: ptr_insert,
             kind: lir::LirInstructionKind::InsertValue {
-                aggregate: lir::LirValue::Constant(lir::LirConstant::Undef(slice_ty.clone())),
+                aggregate: lir::LirValue::constant(lir::LirConstant::undef(slice_ty.clone())),
                 element: ptr,
                 indices: vec![0],
             },
-            type_hint: Some(slice_ty.clone()),
+            result: Some(lir::LirRegister {
+                id: ptr_insert,
+                ty: slice_ty.clone(),
+            }),
             debug_info: None,
         });
         let len_insert = self.next_id();
         instructions.push(lir::LirInstruction {
             id: len_insert,
             kind: lir::LirInstructionKind::InsertValue {
-                aggregate: lir::LirValue::Register(ptr_insert),
+                aggregate: lir::LirValue::register(ptr_insert, slice_ty.clone()),
                 element: len,
                 indices: vec![1],
             },
-            type_hint: Some(slice_ty),
+            result: Some(lir::LirRegister {
+                id: len_insert,
+                ty: slice_ty.clone(),
+            }),
             debug_info: None,
         });
-        lir::LirValue::Register(len_insert)
+        Ok(lir::LirValue::register(len_insert, slice_ty))
     }
 
     fn slice_element_type(expected: &lir::LirType) -> Option<lir::LirType> {
@@ -3529,10 +3584,13 @@ impl LirGenerator {
                 aggregate: value,
                 indices: vec![field_index],
             },
-            type_hint: Some(field_ty),
+            result: Some(lir::LirRegister {
+                id: extract_id,
+                ty: field_ty.clone(),
+            }),
             debug_info: None,
         });
-        lir::LirValue::Register(extract_id)
+        lir::LirValue::register(extract_id, field_ty)
     }
 
     fn size_of_lir_type(ty: &lir::LirType) -> u64 {
@@ -3550,7 +3608,7 @@ impl LirGenerator {
         block: &mut lir::LirBasicBlock,
     ) -> lir::LirValue {
         if Self::is_zero_sized(&addr.ty) {
-            return lir::LirValue::Constant(lir::LirConstant::Undef(addr.lir_ty));
+            return lir::LirValue::constant(lir::LirConstant::undef(addr.lir_ty));
         }
         let load_id = self.next_id();
         block.instructions.push(lir::LirInstruction {
@@ -3560,10 +3618,13 @@ impl LirGenerator {
                 alignment: Some(addr.alignment),
                 volatile: false,
             },
-            type_hint: Some(addr.lir_ty.clone()),
+            result: Some(lir::LirRegister {
+                id: load_id,
+                ty: addr.lir_ty.clone(),
+            }),
             debug_info: None,
         });
-        lir::LirValue::Register(load_id)
+        lir::LirValue::register(load_id, addr.lir_ty)
     }
 
     fn materialize_pointer_from_value(
@@ -3571,10 +3632,13 @@ impl LirGenerator {
         value: lir::LirValue,
         value_ty: lir::LirType,
         block: &mut lir::LirBasicBlock,
-    ) -> lir::LirValue {
+    ) -> Result<lir::LirValue> {
         let alloca_id = self.next_id();
         let pointer_type = lir::LirType::Ptr(Box::new(value_ty.clone()));
-        let size_value = lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
+        let size_value = lir::LirValue::constant(
+            lir::LirConstant::integer(lir::LirType::I32, lir::LirInteger::I32(1))
+                .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
+        );
         let alignment = Self::alignment_for_lir_type(&value_ty);
         block.instructions.push(lir::LirInstruction {
             id: alloca_id,
@@ -3582,11 +3646,14 @@ impl LirGenerator {
                 size: size_value,
                 alignment,
             },
-            type_hint: Some(pointer_type.clone()),
+            result: Some(lir::LirRegister {
+                id: alloca_id,
+                ty: pointer_type.clone(),
+            }),
             debug_info: None,
         });
 
-        let ptr_value = lir::LirValue::Register(alloca_id);
+        let ptr_value = lir::LirValue::register(alloca_id, pointer_type);
         let store_id = self.next_id();
         block.instructions.push(lir::LirInstruction {
             id: store_id,
@@ -3596,11 +3663,11 @@ impl LirGenerator {
                 alignment: Some(alignment),
                 volatile: false,
             },
-            type_hint: None,
+            result: None,
             debug_info: None,
         });
 
-        ptr_value
+        Ok(ptr_value)
     }
 
     fn adjust_call_argument(
@@ -3610,7 +3677,7 @@ impl LirGenerator {
         source_lir_ty: &lir::LirType,
         expected_ty: Option<&lir::LirType>,
         block: &mut lir::LirBasicBlock,
-    ) -> lir::LirValue {
+    ) -> Result<lir::LirValue> {
         if let Some(expected) = expected_ty {
             if let (Some(elem_lir_ty), lir::LirType::Array(_, len)) =
                 (Self::slice_element_type(expected), source_lir_ty)
@@ -3618,38 +3685,38 @@ impl LirGenerator {
                 return self.build_slice_from_array_value(value, elem_lir_ty, *len, block);
             }
             if matches!(expected, lir::LirType::Ptr(_)) {
-                if let lir::LirValue::Constant(constant) = &value {
-                    match constant {
-                        lir::LirConstant::UInt(v, _) if *v == 0 => {
-                            return lir::LirValue::Constant(lir::LirConstant::Null(
-                                expected.clone(),
-                            ));
-                        }
-                        lir::LirConstant::Int(v, _) if *v == 0 => {
-                            return lir::LirValue::Constant(lir::LirConstant::Null(
-                                expected.clone(),
-                            ));
-                        }
-                        _ => {}
+                if let lir::LirValueKind::Constant(lir::LirConstantKind::Data(
+                    lir::LirConstantData::Integer(integer),
+                )) = &value.kind
+                {
+                    if integer.is_zero() {
+                        return Ok(lir::LirValue::constant(lir::LirConstant::null(
+                            expected.clone(),
+                        )));
                     }
                 }
             }
 
             if matches!(source_lir_ty, lir::LirType::Void) {
-                return if matches!(expected, lir::LirType::Ptr(_)) {
-                    lir::LirValue::Constant(lir::LirConstant::Null(expected.clone()))
+                return Ok(if matches!(expected, lir::LirType::Ptr(_)) {
+                    lir::LirValue::constant(lir::LirConstant::null(expected.clone()))
                 } else {
-                    lir::LirValue::Constant(lir::LirConstant::Undef(expected.clone()))
-                };
+                    lir::LirValue::constant(lir::LirConstant::undef(expected.clone()))
+                });
             }
 
             if source_lir_ty == expected {
-                return value;
+                return Ok(value);
             }
-            return self.cast_value_to_type(value, source_lir_ty.clone(), expected.clone(), block);
+            return Ok(self.cast_value_to_type(
+                value,
+                source_lir_ty.clone(),
+                expected.clone(),
+                block,
+            ));
         }
 
-        self.promote_vararg_argument(value, source_ty, source_lir_ty, block)
+        Ok(self.promote_vararg_argument(value, source_ty, source_lir_ty, block))
     }
 
     fn build_slice_from_array_ptr(
@@ -3658,9 +3725,16 @@ impl LirGenerator {
         elem_lir_ty: lir::LirType,
         len: u64,
         block: &mut lir::LirBasicBlock,
-    ) -> lir::LirValue {
+    ) -> Result<lir::LirValue> {
         let slice_ty = self.slice_lir_type(&elem_lir_ty);
-        let zero = lir::LirValue::Constant(lir::LirConstant::Int(0, lir::LirType::I64));
+        let zero = lir::LirValue::constant(
+            lir::LirConstant::integer(lir::LirType::I64, lir::LirInteger::I64(0))
+                .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
+        );
+        let array_ptr_ty = lir::LirType::Ptr(Box::new(lir::LirType::Array(
+            Box::new(elem_lir_ty.clone()),
+            len,
+        )));
 
         let gep_id = self.next_id();
         block.instructions.push(lir::LirInstruction {
@@ -3670,40 +3744,49 @@ impl LirGenerator {
                 indices: vec![zero.clone(), zero],
                 inbounds: true,
             },
-            type_hint: Some(lir::LirType::Ptr(Box::new(lir::LirType::Array(
-                Box::new(elem_lir_ty.clone()),
-                len,
-            )))),
+            result: Some(lir::LirRegister {
+                id: gep_id,
+                ty: array_ptr_ty.clone(),
+            }),
             debug_info: None,
         });
-        let elem_ptr = lir::LirValue::Register(gep_id);
+        let elem_ptr = lir::LirValue::register(gep_id, array_ptr_ty);
 
         let insert_ptr_id = self.next_id();
         block.instructions.push(lir::LirInstruction {
             id: insert_ptr_id,
             kind: lir::LirInstructionKind::InsertValue {
-                aggregate: lir::LirValue::Constant(lir::LirConstant::Undef(slice_ty.clone())),
+                aggregate: lir::LirValue::constant(lir::LirConstant::undef(slice_ty.clone())),
                 element: elem_ptr,
                 indices: vec![0],
             },
-            type_hint: Some(slice_ty.clone()),
+            result: Some(lir::LirRegister {
+                id: insert_ptr_id,
+                ty: slice_ty.clone(),
+            }),
             debug_info: None,
         });
 
-        let len_value = lir::LirValue::Constant(lir::LirConstant::UInt(len, lir::LirType::I64));
+        let len_value = lir::LirValue::constant(
+            lir::LirConstant::integer(lir::LirType::I64, lir::LirInteger::I64(len))
+                .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
+        );
         let insert_len_id = self.next_id();
         block.instructions.push(lir::LirInstruction {
             id: insert_len_id,
             kind: lir::LirInstructionKind::InsertValue {
-                aggregate: lir::LirValue::Register(insert_ptr_id),
+                aggregate: lir::LirValue::register(insert_ptr_id, slice_ty.clone()),
                 element: len_value,
                 indices: vec![1],
             },
-            type_hint: Some(slice_ty.clone()),
+            result: Some(lir::LirRegister {
+                id: insert_len_id,
+                ty: slice_ty.clone(),
+            }),
             debug_info: None,
         });
 
-        lir::LirValue::Register(insert_len_id)
+        Ok(lir::LirValue::register(insert_len_id, slice_ty))
     }
 
     fn build_slice_from_array_value(
@@ -3712,9 +3795,9 @@ impl LirGenerator {
         elem_lir_ty: lir::LirType,
         len: u64,
         block: &mut lir::LirBasicBlock,
-    ) -> lir::LirValue {
+    ) -> Result<lir::LirValue> {
         let array_ty = lir::LirType::Array(Box::new(elem_lir_ty.clone()), len);
-        let array_ptr = self.materialize_pointer_from_value(value, array_ty, block);
+        let array_ptr = self.materialize_pointer_from_value(value, array_ty, block)?;
         self.build_slice_from_array_ptr(array_ptr, elem_lir_ty, len, block)
     }
 
@@ -4032,29 +4115,7 @@ impl LirGenerator {
     }
 
     fn infer_lir_value_type(&self, value: &lir::LirValue) -> Option<lir::LirType> {
-        match value {
-            lir::LirValue::Constant(constant) => match constant {
-                lir::LirConstant::Int(_, ty)
-                | lir::LirConstant::UInt(_, ty)
-                | lir::LirConstant::Float(_, ty)
-                | lir::LirConstant::Struct(_, ty)
-                | lir::LirConstant::GlobalRef(_, ty, _)
-                | lir::LirConstant::FunctionRef(_, ty)
-                | lir::LirConstant::Null(ty)
-                | lir::LirConstant::Undef(ty) => Some(ty.clone()),
-                lir::LirConstant::Bytes(bytes) => Some(lir::LirType::Array(
-                    Box::new(lir::LirType::I8),
-                    bytes.len() as u64,
-                )),
-                lir::LirConstant::Array(elements, elem_ty) => Some(lir::LirType::Array(
-                    Box::new(elem_ty.clone()),
-                    elements.len() as u64,
-                )),
-                lir::LirConstant::Bool(_) => Some(lir::LirType::I1),
-                lir::LirConstant::String(_) => Some(lir::LirType::Ptr(Box::new(lir::LirType::I8))),
-            },
-            _ => None,
-        }
+        Some(value.ty.clone())
     }
 
     fn take_queued_instructions(&mut self) -> Vec<lir::LirInstruction> {
@@ -4121,9 +4182,7 @@ impl LirGenerator {
                     operand_ty
                         .clone()
                         .or_else(|| self.infer_lir_value_type(value))
-                        .unwrap_or_else(|| {
-                            lir::LirType::Ptr(Box::new(lir::LirType::I8))
-                        })
+                        .unwrap_or_else(|| lir::LirType::Ptr(Box::new(lir::LirType::I8)))
                 })
                 .collect();
         }
@@ -4181,9 +4240,7 @@ impl LirGenerator {
                         let elem_ty = expected_field_tys
                             .get(0)
                             .cloned()
-                            .unwrap_or_else(|| {
-                                lir::LirType::I64
-                            });
+                            .unwrap_or_else(|| lir::LirType::I64);
                         Some(lir::LirType::Array(
                             Box::new(elem_ty),
                             raw_values.len() as u64,
@@ -4513,10 +4570,10 @@ impl LirGenerator {
                         .into_iter()
                         .enumerate()
                         .map(|(idx, field_const)| {
-                            let field_ty =
-                                target_fields.get(idx).cloned().unwrap_or_else(|| {
-                                    lir::LirType::I64
-                                });
+                            let field_ty = target_fields
+                                .get(idx)
+                                .cloned()
+                                .unwrap_or_else(|| lir::LirType::I64);
                             self.cast_constant_to_lir_type(field_const, &field_ty)
                         })
                         .collect();
@@ -4584,12 +4641,12 @@ impl LirGenerator {
                                 (Self::slice_element_type(expected), &addr.ty.kind)
                             {
                                 let length = self.array_length_from_const(len);
-                                return Ok(self.build_slice_from_array_ptr(
+                                return self.build_slice_from_array_ptr(
                                     addr.ptr,
                                     elem_lir_ty,
                                     length,
                                     block,
-                                ));
+                                );
                             }
                         }
                         if expects_pointer {
@@ -4600,13 +4657,13 @@ impl LirGenerator {
                             }
                         } else {
                             let loaded = self.emit_load_from_address(addr.clone(), block);
-                            Ok(self.adjust_call_argument(
+                            self.adjust_call_argument(
                                 loaded,
                                 Some(&addr.ty),
                                 &addr.lir_ty,
                                 expected_ty,
                                 block,
-                            ))
+                            )
                         }
                     }
                     PlaceAccess::Value { value, ty, lir_ty } => {
@@ -4614,16 +4671,10 @@ impl LirGenerator {
                             if matches!(lir_ty, lir::LirType::Ptr(_)) {
                                 Ok(value)
                             } else {
-                                Ok(self.materialize_pointer_from_value(value, lir_ty, block))
+                                self.materialize_pointer_from_value(value, lir_ty, block)
                             }
                         } else {
-                            Ok(self.adjust_call_argument(
-                                value,
-                                Some(&ty),
-                                &lir_ty,
-                                expected_ty,
-                                block,
-                            ))
+                            self.adjust_call_argument(value, Some(&ty), &lir_ty, expected_ty, block)
                         }
                     }
                 }
@@ -4635,9 +4686,9 @@ impl LirGenerator {
                 let adjusted = if let Some(lir_ty) = value_ty {
                     self.adjust_call_argument(value, None, &lir_ty, expected_ty, block)
                 } else {
-                    value
+                    Ok(value)
                 };
-                Ok(adjusted)
+                adjusted
             }
         }
     }
@@ -4712,11 +4763,15 @@ impl LirGenerator {
         let mut function_value = self.transform_operand(func)?;
         block.instructions.extend(self.take_queued_instructions());
 
-        function_value = self.normalize_callee_value(func, function_value);
-        let callee_name = match &function_value {
-            lir::LirValue::Function(name) | lir::LirValue::FunctionInPackage(_, name) => {
-                Some(name.clone())
+        function_value = self.normalize_callee_value(func, function_value)?;
+        let callee_name = match &function_value.kind {
+            lir::LirValueKind::Function(lir::LirFunctionRef::Name(name)) => {
+                Some(name.as_str().to_owned())
             }
+            lir::LirValueKind::Function(lir::LirFunctionRef::Package { name, .. }) => {
+                Some(name.as_str().to_owned())
+            }
+            lir::LirValueKind::Function(lir::LirFunctionRef::Definition(_)) => None,
             _ => None,
         };
         let expected_params = callee_name
@@ -4862,7 +4917,7 @@ impl LirGenerator {
         }
 
         Err(crate::error::optimization_error(
-            "MIR→LIR: call terminator without destination"
+            "MIR→LIR: call terminator without destination",
         ))
     }
 
@@ -4870,27 +4925,34 @@ impl LirGenerator {
         &mut self,
         func_operand: &mir::Operand,
         value: lir::LirValue,
-    ) -> lir::LirValue {
-        match value {
-            lir::LirValue::Register(id) => {
+    ) -> Result<lir::LirValue> {
+        match &value.kind {
+            lir::LirValueKind::Register(_) => {
                 if let Some(place) = Self::operand_place(func_operand) {
-                    if let Some(lir::LirValue::FunctionInPackage(_, name)) = self.register_map.get(&place.local)
-                    {
-                        return self.function_value(self.resolve_function_symbol(name));
+                    if let Some(existing) = self.register_map.get(&place.local) {
+                        if let lir::LirValueKind::Function(lir::LirFunctionRef::Package {
+                            name,
+                            ..
+                        }) = &existing.kind
+                        {
+                            return self
+                                .function_value(self.resolve_function_symbol(name.as_str()));
+                        }
                     }
                 }
-                lir::LirValue::Register(id)
+                Ok(value)
             }
-            lir::LirValue::Global(name, _) => {
-                self.function_value(self.resolve_function_symbol(&name))
+            lir::LirValueKind::Global(name) => {
+                self.function_value(self.resolve_function_symbol(name.as_str()))
             }
-            lir::LirValue::Function(name) => {
-                lir::LirValue::Function(self.resolve_function_symbol(&name))
+            lir::LirValueKind::Function(lir::LirFunctionRef::Name(name)) => {
+                self.function_value(self.resolve_function_symbol(name.as_str()))
             }
-            lir::LirValue::FunctionInPackage(_, name) => {
-                self.function_value(self.resolve_function_symbol(&name))
+            lir::LirValueKind::Function(lir::LirFunctionRef::Package { name, .. }) => {
+                self.function_value(self.resolve_function_symbol(name.as_str()))
             }
-            other => other,
+            lir::LirValueKind::Function(lir::LirFunctionRef::Definition(_)) => Ok(value),
+            _ => Ok(value),
         }
     }
 
@@ -4919,8 +4981,13 @@ impl LirGenerator {
         }
     }
 
-    fn prepare_return_value(&mut self, block: &mut lir::LirBasicBlock) -> Result<Option<lir::LirValue>> {
-        let return_ty = self.current_return_type.clone()
+    fn prepare_return_value(
+        &mut self,
+        block: &mut lir::LirBasicBlock,
+    ) -> Result<Option<lir::LirValue>> {
+        let return_ty = self
+            .current_return_type
+            .clone()
             .ok_or_else(|| crate::error::optimization_error("MIR→LIR: no return type set"))?;
         if matches!(return_ty, lir::LirType::Void) {
             return Ok(None);
@@ -4979,7 +5046,7 @@ impl LirGenerator {
         }
 
         Err(crate::error::optimization_error(
-            "MIR→LIR: could not determine return value".to_string()
+            "MIR→LIR: could not determine return value".to_string(),
         ))
     }
 
@@ -5484,8 +5551,8 @@ impl LirGenerator {
                 mir::ConstantKind::Bool(_) => Some(lir::LirType::I1),
                 mir::ConstantKind::Int(_) | mir::ConstantKind::UInt(_) => Some(lir::LirType::I64),
                 mir::ConstantKind::Float(_) => Some(lir::LirType::F64),
-                mir::ConstantKind::Fn(_, _) | mir::ConstantKind::Global(_, _) => {
-                    Some(lir::LirType::Ptr(Box::new(lir::LirType::I8)))
+                mir::ConstantKind::Fn(_) | mir::ConstantKind::Global(_) => {
+                    Some(self.lir_type_from_ty(&constant.ty))
                 }
                 mir::ConstantKind::Null => Some(lir::LirType::Ptr(Box::new(lir::LirType::I8))),
                 _ => None,

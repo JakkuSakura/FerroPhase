@@ -1146,12 +1146,15 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
                 Ok(self.builder.ins().func_addr(self.pointer_type, func_ref))
             }
-            LirValue::FunctionInPackage(package_id, name) => Err(fp_core::error::Error::from(
-                format!("package-qualified function `{:?}::{name}` is not supported by Cranelift lowering", package_id),
-            )),
-            LirValue::FunctionDef(def_id) => Err(fp_core::error::Error::from(
-                format!("function definition `{def_id}` is not supported by Cranelift lowering"),
-            )),
+            LirValue::FunctionInPackage(package_id, name) => {
+                Err(fp_core::error::Error::from(format!(
+                    "package-qualified function `{:?}::{name}` is not supported by Cranelift lowering",
+                    package_id
+                )))
+            }
+            LirValue::FunctionDef(def_id) => Err(fp_core::error::Error::from(format!(
+                "function definition `{def_id}` is not supported by Cranelift lowering"
+            ))),
             LirValue::Local(id) => self
                 .local_values
                 .get(id)
@@ -1180,6 +1183,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let ty = clif_type_for_lir(ty, self.pointer_type);
                 Ok(self.builder.ins().iconst(ty, *val as i64))
             }
+            LirConstant::F32(val) => Ok(self.builder.ins().f32const(*val)),
             LirConstant::Float(val, ty) => {
                 let ty = clif_type_for_lir(ty, self.pointer_type);
                 if ty == types::F32 {
@@ -1232,6 +1236,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
             LirValue::Constant(constant) => Ok(match constant {
                 LirConstant::Int(_, ty) => ty.clone(),
                 LirConstant::UInt(_, ty) => ty.clone(),
+                LirConstant::F32(_) => LirType::F32,
                 LirConstant::Float(_, ty) => ty.clone(),
                 LirConstant::Bool(_) => LirType::I1,
                 LirConstant::String(_) => LirType::Ptr(Box::new(LirType::I8)),
@@ -1246,9 +1251,9 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 LirConstant::Undef(ty) => ty.clone(),
             }),
             LirValue::Global(_, ty) => Ok(ty.clone()),
-            LirValue::Function(_) | LirValue::FunctionInPackage(_, _) | LirValue::FunctionDef(_) => {
-                Ok(LirType::Ptr(Box::new(LirType::I8)))
-            }
+            LirValue::Function(_)
+            | LirValue::FunctionInPackage(_, _)
+            | LirValue::FunctionDef(_) => Ok(LirType::Ptr(Box::new(LirType::I8))),
             LirValue::Undef(ty) | LirValue::Null(ty) => Ok(ty.clone()),
         }
     }
@@ -1580,6 +1585,7 @@ fn encode_constant(
         LirConstant::UInt(val, _) => {
             write_int(buf, base, *val as u128, size_of(ty) as usize, false)
         }
+        LirConstant::F32(val) => write_float(buf, base, f64::from(*val), size_of(ty) as usize),
         LirConstant::Float(val, _) => write_float(buf, base, *val, size_of(ty) as usize),
         LirConstant::Bool(val) => write_int(buf, base, if *val { 1 } else { 0 }, 1, false),
         LirConstant::String(text) => {

@@ -276,6 +276,10 @@ pub enum PlaceElem {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Constant {
     pub span: Span,
+    /// The authoritative type of this constant operand. Like rustc's
+    /// `ConstOperand`, a MIR constant owns its type rather than relying on
+    /// the consumer's expected type or payload-specific copies.
+    pub ty: Ty,
     pub user_ty: Option<UserTypeAnnotationIndex>,
     pub literal: ConstantKind,
 }
@@ -283,19 +287,18 @@ pub struct Constant {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstantKind {
     Ty(ConstTy),
-    Val(ConstValue, Ty),
+    Val(ConstValue),
     /// Reference to a function by name (simple)
-    Fn(Symbol, Ty),
+    Fn(Symbol),
     /// Reference to a language function by its definition identity.
-    FnDef(DefId, Ty),
+    FnDef(DefId),
     /// Reference to a global constant by name
-    Global(Symbol, Ty),
+    Global(Symbol),
     /// Token stream — comptime-only quote token carrying AST items.
     /// The payload is extracted from the typed AST by the driver.
     TokenStream {
         kind: QuoteFragmentKind,
         item_kind: Option<QuoteItemKind>,
-        ty: Ty,
     },
     Null,
     Int(i64),

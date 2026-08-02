@@ -420,7 +420,11 @@ async fn transpile_jvm_bytecode(
                             class.internal_name
                         ))
                     })?;
-                    merged.extend(program);
+                    merged.extend(program).map_err(|err| {
+                        CliError::Compilation(format!(
+                            "Cannot merge classfile LIR programs with different target layouts: {err}"
+                        ))
+                    })?;
                 }
                 merged
             } else {

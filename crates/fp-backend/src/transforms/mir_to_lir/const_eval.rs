@@ -47,16 +47,46 @@ impl LirGenerator {
                 if let mir::Operand::Constant(constant) = operand {
                     match &constant.literal {
                         mir::ConstantKind::Int(value) => {
-                            Ok(Some(lir::LirConstant::Int(*value, lir::LirType::I32)))
+                            let value = i32::try_from(*value).map_err(|_| {
+                                fp_core::error::Error::from("constant does not fit i32")
+                            })?;
+                            Ok(Some(
+                                lir::LirConstant::integer(
+                                    lir::LirType::I32,
+                                    lir::LirInteger::I32(u32::from_ne_bytes(value.to_ne_bytes())),
+                                )
+                                .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
+                            ))
                         }
                         mir::ConstantKind::UInt(value) => {
-                            Ok(Some(lir::LirConstant::UInt(*value, lir::LirType::I32)))
+                            let value = u32::try_from(*value).map_err(|_| {
+                                fp_core::error::Error::from("constant does not fit i32")
+                            })?;
+                            Ok(Some(
+                                lir::LirConstant::integer(
+                                    lir::LirType::I32,
+                                    lir::LirInteger::I32(value),
+                                )
+                                .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
+                            ))
                         }
-                        mir::ConstantKind::Float(value) => {
-                            Ok(Some(lir::LirConstant::Float(*value, lir::LirType::F64)))
-                        }
-                        mir::ConstantKind::Bool(b) => Ok(Some(lir::LirConstant::Bool(*b))),
-                        mir::ConstantKind::Str(s) => Ok(Some(lir::LirConstant::String(s.clone()))),
+                        mir::ConstantKind::Float(value) => Ok(Some(
+                            lir::LirConstant::float(
+                                lir::LirType::F64,
+                                lir::LirFloat::F64(value.to_bits()),
+                            )
+                            .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
+                        )),
+                        mir::ConstantKind::Bool(value) => Ok(Some(
+                            lir::LirConstant::integer(
+                                lir::LirType::I1,
+                                lir::LirInteger::I1(*value),
+                            )
+                            .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
+                        )),
+                        // LIR strings are data globals plus an address constant. This
+                        // local-only const evaluator cannot create that global.
+                        mir::ConstantKind::Str(_) => Ok(None),
                         _ => Ok(None),
                     }
                 } else {
@@ -84,7 +114,16 @@ impl LirGenerator {
                             }
                             _ => return Ok(None),
                         };
-                        Ok(Some(lir::LirConstant::Int(result, lir::LirType::I32)))
+                        let result = i32::try_from(result).map_err(|_| {
+                            fp_core::error::Error::from("constant result does not fit i32")
+                        })?;
+                        Ok(Some(
+                            lir::LirConstant::integer(
+                                lir::LirType::I32,
+                                lir::LirInteger::I32(u32::from_ne_bytes(result.to_ne_bytes())),
+                            )
+                            .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
+                        ))
                     } else {
                         Ok(None)
                     }

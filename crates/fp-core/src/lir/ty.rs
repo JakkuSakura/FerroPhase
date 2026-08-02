@@ -1,5 +1,8 @@
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Ty {
+    /// An LLVM-style integer type whose bit width is not one of the language
+    /// convenience spellings below.
+    Integer(u32),
     I1,
     I8,
     I16,

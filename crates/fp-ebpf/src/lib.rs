@@ -1530,7 +1530,7 @@ fn validate_instruction(
         Phi { .. } => Err(Error::from("phi nodes must be lowered before fp-ebpf")),
         Select { .. } => Err(Error::from("select must be lowered before fp-ebpf")),
         InlineAsm { .. } => Err(Error::from("inline asm is not supported in fp-ebpf")),
-        LandingPad { .. } | Unreachable  | LirInstructionKind::ComptimeOp(_) => Err(Error::from(
+        LandingPad { .. } | Unreachable | LirInstructionKind::ComptimeOp(_) => Err(Error::from(
             "exception/unreachable instructions are not supported in fp-ebpf",
         )),
     };
@@ -1668,6 +1668,7 @@ fn constant_scalar(constant: &LirConstant) -> Result<i64> {
         LirConstant::Int(value, _) => Ok(*value),
         LirConstant::UInt(value, _) => Ok(*value as i64),
         LirConstant::Bool(value) => Ok(i64::from(*value)),
+        LirConstant::F32(_) => Err(Error::from("f32 is not an integer immediate")),
         LirConstant::Null(_) | LirConstant::Undef(_) => Ok(0),
         other => Err(Error::from(format!(
             "constant {:?} is not a scalar immediate supported by fp-ebpf",
@@ -1684,6 +1685,7 @@ fn constant_type(constant: &LirConstant) -> LirType {
         | LirConstant::Null(ty)
         | LirConstant::Undef(ty) => ty.clone(),
         LirConstant::Bool(_) => LirType::I1,
+        LirConstant::F32(_) => LirType::F32,
         LirConstant::String(value) => LirType::Array(Box::new(LirType::I8), value.len() as u64),
         LirConstant::Array(_, ty)
         | LirConstant::Struct(_, ty)

@@ -24,8 +24,7 @@ use std::rc::Rc;
 
 use crate::scheduler::{
     AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
-    ConstValueId, FullyQualifiedPath, HirId,
-    LirId, MirId, RuntimeValueId, ScheduledAnswer,
+    ConstValueId, FullyQualifiedPath, HirId, LirId, MirId, RuntimeValueId, ScheduledAnswer,
 };
 
 pub struct CompilerDriver {
@@ -74,10 +73,10 @@ fn typing_future(
 }
 
 impl CompilerDriver {
-    pub fn new() -> Self {
+    pub fn new(data_layout: fp_core::lir::LirDataLayout) -> Self {
         Self {
             scheduler: CompilerScheduler::new(),
-            state: CompilerState::new(),
+            state: CompilerState::new(data_layout),
             interpreter: LirInterpreter::new(),
         }
     }
@@ -121,10 +120,9 @@ impl CompilerDriver {
         request: &CompilerRequest,
     ) -> Result<CompilerAnswer, CompilerDriverError> {
         match &request.work {
-            CompilerWork::CompileUnitCompileNative {
-                ast,
-                path,
-            } => self.compile_unit_compile_native(ast, path),
+            CompilerWork::CompileUnitCompileNative { ast, path } => {
+                self.compile_unit_compile_native(ast, path)
+            }
             CompilerWork::CompileUnitAnswerComptime { ast, path } => {
                 self.compile_unit_answer_comptime(ast, path)
             }
@@ -333,7 +331,13 @@ impl CompilerDriver {
     /// actually finish), the scheduler would resubmit that unrelated
     /// request as fresh follow-up work for no reason.
     fn handle_resolved_task(&mut self, key: &str) -> Result<(), CompilerDriverError> {
-        let Some(monomorph) = self.state.typing_ctx.ready_generics.borrow_mut().remove(key) else {
+        let Some(monomorph) = self
+            .state
+            .typing_ctx
+            .ready_generics
+            .borrow_mut()
+            .remove(key)
+        else {
             return Ok(());
         };
         let cannon_key = Self::generic_cannon_key(
@@ -347,25 +351,39 @@ impl CompilerDriver {
 
         let ast_id = AstId::new(monomorph.ast_key.clone());
         let original = self.state.ast(&ast_id)?;
-        let mut func_item = Self::find_item_by_id(&original.items, monomorph.item_id)
-            .ok_or_else(|| CompilerDriverError::UnsupportedWork(format!(
-                "generic function not found: {}", monomorph.function_path.to_key()
-            )))?;
+        let mut func_item =
+            Self::find_item_by_id(&original.items, monomorph.item_id).ok_or_else(|| {
+                CompilerDriverError::UnsupportedWork(format!(
+                    "generic function not found: {}",
+                    monomorph.function_path.to_key()
+                ))
+            })?;
 
         if let ItemKind::DefFunction(def) = func_item.kind_mut() {
             for param in &mut def.sig.params {
-                Self::substitute_in_ty(&mut param.ty, &monomorph.generic_params, &monomorph.concrete_types);
+                Self::substitute_in_ty(
+                    &mut param.ty,
+                    &monomorph.generic_params,
+                    &monomorph.concrete_types,
+                );
             }
             if let Some(ret_ty) = &mut def.sig.ret_ty {
-                Self::substitute_in_ty(ret_ty, &monomorph.generic_params, &monomorph.concrete_types);
+                Self::substitute_in_ty(
+                    ret_ty,
+                    &monomorph.generic_params,
+                    &monomorph.concrete_types,
+                );
             }
             def.sig.generics_params.clear();
-            Self::substitute_in_body(&mut def.body, &monomorph.generic_params, &monomorph.concrete_types);
+            Self::substitute_in_body(
+                &mut def.body,
+                &monomorph.generic_params,
+                &monomorph.concrete_types,
+            );
         }
 
-        let specialized_path = FullyQualifiedPath::new(
-            monomorph.function_path.with_segment(cannon_key.clone())
-        );
+        let specialized_path =
+            FullyQualifiedPath::new(monomorph.function_path.with_segment(cannon_key.clone()));
         let specialized_ast_id = AstId::new(format!("ast:{}", specialized_path.to_key()));
         let file = File {
             path: std::path::PathBuf::new(),
@@ -375,10 +393,11 @@ impl CompilerDriver {
         };
         self.state.insert_ast(specialized_ast_id.clone(), file);
 
-        self.scheduler.submit_independent(CompilerWork::CompileUnitCompileNative {
-            ast: specialized_ast_id,
-            path: specialized_path,
-        });
+        self.scheduler
+            .submit_independent(CompilerWork::CompileUnitCompileNative {
+                ast: specialized_ast_id,
+                path: specialized_path,
+            });
         Ok(())
     }
 
@@ -417,7 +436,11 @@ impl CompilerDriver {
             .load_package_items(&fp_core::package::PackageId::new(name))
             .map_err(|e| CompilerDriverError::UnresolvablePackage(format!("{name}: {e}")))?;
 
-        let own_crate = self.state.typing_ctx.env_ctx.begin_crate(name, raw.graph.clone());
+        let own_crate = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .begin_crate(name, raw.graph.clone());
         // Parsed items are the package's source-level module index. HIR
         // lowering and HIR type checking consume them when a module is
         // compiled; package loading itself does not run an AST type pass.
@@ -473,7 +496,8 @@ impl CompilerDriver {
             let hir_program =
                 HirGenerator::new().transform_expr_with_items(&probe_expr, &extra_items)?;
             let mir_program = MirLowering::new().transform(hir_program)?;
-            let lir_program = LirGenerator::new().transform(mir_program)?;
+            let lir_program =
+                LirGenerator::new(typing_ctx.data_layout.clone()).transform(mir_program)?;
 
             let mut units = vec![fp_core::lir::LirCompileUnit {
                 package_id: fp_core::hir::PackageId(0),
@@ -489,17 +513,15 @@ impl CompilerDriver {
             }
             let mut interpreter = LirInterpreter::new();
             interpreter.inject_globals(&Self::resolved_const_values_snapshot(typing_ctx));
-            let mut value = interpreter.run_function_named(
-                &units,
-                fp_core::hir::PackageId(0),
-                "main",
-            )?;
+            let mut value =
+                interpreter.run_function_named(&units, fp_core::hir::PackageId(0), "main")?;
             // Only int/uint results that are *actually* comptime struct
             // construction (per the expression's own type) are raw object
             // handles needing resolution — treating every plain integer as a
             // possible handle risks coincidentally resolving to an unrelated
             // object in this probe's otherwise-mostly-empty object table.
-            let is_struct_construction = matches!(expr.ty(), Some(Ty::Type(_)) | Some(Ty::Struct(_)));
+            let is_struct_construction =
+                matches!(expr.ty(), Some(Ty::Type(_)) | Some(Ty::Struct(_)));
             if is_struct_construction {
                 if let Some(resolved) = Self::resolve_comptime_value(&mut interpreter, &value) {
                     value = resolved;
@@ -525,10 +547,16 @@ impl CompilerDriver {
         // `DefConst`) and, if this is a `ConstBlock`'s key, also into
         // `expr_resolutions` (checked by expr id) — the two lookups the
         // fp-typing call sites use to recognize an already-resolved value.
-        typing_ctx.resolved_consts.borrow_mut().insert(key.to_string(), value.clone());
+        typing_ctx
+            .resolved_consts
+            .borrow_mut()
+            .insert(key.to_string(), value.clone());
         typing_ctx.wake_comptime(key);
         if let Some(expr_id) = Self::expr_id_from_const_key(key) {
-            typing_ctx.expr_resolutions.borrow_mut().insert_value(expr_id, value);
+            typing_ctx
+                .expr_resolutions
+                .borrow_mut()
+                .insert_value(expr_id, value);
         }
         true
     }
@@ -755,7 +783,11 @@ impl CompilerDriver {
     /// Takes a bare `&TypingContext` rather than `&self` — usable from
     /// `resolve_comptime_now`, which only holds `Rc<TypingContext>`, not a
     /// `&CompilerDriver` (see `ComptimeHook`'s doc comment for why).
-    fn impl_items_for_types(typing_ctx: &TypingContext, names: &HashSet<String>, out: &mut Vec<Item>) {
+    fn impl_items_for_types(
+        typing_ctx: &TypingContext,
+        names: &HashSet<String>,
+        out: &mut Vec<Item>,
+    ) {
         if names.is_empty() {
             return;
         }
@@ -912,11 +944,7 @@ impl CompilerDriver {
         }
     }
 
-    fn substitute_in_body(
-        expr: &mut Expr,
-        param_names: &[String],
-        concrete_types: &[Ty],
-    ) {
+    fn substitute_in_body(expr: &mut Expr, param_names: &[String], concrete_types: &[Ty]) {
         if let Some(ty) = expr.ty_mut() {
             Self::substitute_in_ty(ty, param_names, concrete_types);
         }
@@ -924,7 +952,9 @@ impl CompilerDriver {
             ExprKind::Block(block) => {
                 for stmt in &mut block.stmts {
                     match stmt {
-                        BlockStmt::Expr(e) => Self::substitute_in_body(&mut e.expr, param_names, concrete_types),
+                        BlockStmt::Expr(e) => {
+                            Self::substitute_in_body(&mut e.expr, param_names, concrete_types)
+                        }
                         BlockStmt::Let(s) => {
                             if let Some(init) = s.init.as_mut() {
                                 Self::substitute_in_body(init, param_names, concrete_types);
@@ -1036,7 +1066,9 @@ impl CompilerDriver {
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
         let mut units = Vec::new();
         for (path, items) in items_map {
-            if items.is_empty() { continue; }
+            if items.is_empty() {
+                continue;
+            }
 
             let ast_id = AstId::new(format!("on_demand:{}", path.to_key()));
             // Stored purely so `compile_unit_core`'s thin `File`-based
@@ -1056,7 +1088,10 @@ impl CompilerDriver {
             let core = match self.compile_module_core(path.clone(), items.clone(), &ast_id, &fqp) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("WARNING: compile_module_core failed for {}: {e}", path.to_key());
+                    eprintln!(
+                        "WARNING: compile_module_core failed for {}: {e}",
+                        path.to_key()
+                    );
                     continue;
                 }
             };
@@ -1107,7 +1142,11 @@ impl CompilerDriver {
         }
 
         // On-demand: compile workspace crate items that have no LIR
-        let crates_to_compile: Vec<_> = self.state.typing_ctx.env_ctx.crates()
+        let crates_to_compile: Vec<_> = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .crates()
             .values()
             .map(|c| c.borrow())
             .filter(|c| c.lir_units.is_empty() && !c.items.is_empty())
@@ -1123,7 +1162,8 @@ impl CompilerDriver {
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
 
         if comptime_entries.is_empty() {
-            self.state.insert_const_value(value_id.clone(), Value::unit());
+            self.state
+                .insert_const_value(value_id.clone(), Value::unit());
             return Ok(0);
         }
 
@@ -1151,16 +1191,21 @@ impl CompilerDriver {
             let entry_struct = Self::extract_struct_type(&value);
             if let Some(ref struct_ty) = entry_struct {
                 let name = struct_ty.name.as_str().to_string();
-                self.state.typing_ctx.resolved_types.borrow_mut()
+                self.state
+                    .typing_ctx
+                    .resolved_types
+                    .borrow_mut()
                     .insert(name.clone(), struct_ty.clone());
                 self.state.typing_ctx.wake_comptime(&name);
             }
-            let constant = self.value_to_mir_constant(&value, &entry.ty).ok_or_else(|| {
-                CompilerDriverError::UnsupportedWork(format!(
-                    "unsupported comptime result for {}",
-                    entry.key
-                ))
-            })?;
+            let constant = self
+                .value_to_mir_constant(&value, &entry.ty)
+                .ok_or_else(|| {
+                    CompilerDriverError::UnsupportedWork(format!(
+                        "unsupported comptime result for {}",
+                        entry.key
+                    ))
+                })?;
             self.state
                 .insert_resolved_const_value(entry.key.clone(), constant);
             self.state
@@ -1179,76 +1224,76 @@ impl CompilerDriver {
         Ok(count)
     }
 
-fn extract_struct_type(value: &Value) -> Option<TypeStruct> {
-    match value {
-        Value::Type(Ty::Struct(s)) => Some(s.clone()),
-        Value::Type(Ty::Type(TypeType { inner: Some(inner), .. })) => {
-            match inner.as_ref() {
+    fn extract_struct_type(value: &Value) -> Option<TypeStruct> {
+        match value {
+            Value::Type(Ty::Struct(s)) => Some(s.clone()),
+            Value::Type(Ty::Type(TypeType {
+                inner: Some(inner), ..
+            })) => match inner.as_ref() {
                 Ty::Struct(s) => Some(s.clone()),
                 _ => None,
-            }
+            },
+            _ => None,
         }
-        _ => None,
     }
-}
 
-/// Resolve a raw handle (u64) from the interpreter's objects table.
-/// During comptime evaluation, struct construction produces handles that
-/// need to be looked up to get the actual struct type.
-fn resolve_comptime_value(interp: &mut LirInterpreter, value: &Value) -> Option<Value> {
-    let handle = match value {
-        Value::Int(v) => v.value as u64,
-        Value::UInt(v) => v.value,
-        _ => return None,
-    };
-    interp.resolve_object(handle)
-}
+    /// Resolve a raw handle (u64) from the interpreter's objects table.
+    /// During comptime evaluation, struct construction produces handles that
+    /// need to be looked up to get the actual struct type.
+    fn resolve_comptime_value(interp: &mut LirInterpreter, value: &Value) -> Option<Value> {
+        let handle = match value {
+            Value::Int(v) => v.value as u64,
+            Value::UInt(v) => v.value,
+            _ => return None,
+        };
+        interp.resolve_object(handle)
+    }
 
-fn collect_imported_module_paths(items: &[Item], out: &mut HashSet<QualifiedPath>) {
-    for item in items {
-        match item.kind() {
-            ItemKind::Import(import) => {
-                let raw = import
-                    .module_path()
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| import.tree.to_string());
-                let mut segments: Vec<String> = raw
-                    .split("::")
-                    .filter(|segment| !segment.is_empty() && *segment != "*")
-                    .map(str::to_owned)
-                    .collect();
-                if import.module_path().is_none() && segments.len() > 1 {
-                    segments.pop();
+    fn collect_imported_module_paths(items: &[Item], out: &mut HashSet<QualifiedPath>) {
+        for item in items {
+            match item.kind() {
+                ItemKind::Import(import) => {
+                    let raw = import
+                        .module_path()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| import.tree.to_string());
+                    let mut segments: Vec<String> = raw
+                        .split("::")
+                        .filter(|segment| !segment.is_empty() && *segment != "*")
+                        .map(str::to_owned)
+                        .collect();
+                    if import.module_path().is_none() && segments.len() > 1 {
+                        segments.pop();
+                    }
+                    if !segments.is_empty() {
+                        out.insert(QualifiedPath::new(segments));
+                    }
                 }
-                if !segments.is_empty() {
-                    out.insert(QualifiedPath::new(segments));
-                }
-            }
-            ItemKind::Module(module) => Self::collect_imported_module_paths(&module.items, out),
-            ItemKind::Impl(impl_block) => {
-                for item in &impl_block.items {
-                    if let ItemKind::Import(import) = item.kind() {
-                        let raw = import
-                            .module_path()
-                            .map(ToString::to_string)
-                            .unwrap_or_else(|| import.tree.to_string());
-                        let segments: Vec<String> = raw
-                            .split("::")
-                            .filter(|segment| !segment.is_empty() && *segment != "*")
-                            .map(str::to_owned)
-                            .collect();
-                        if !segments.is_empty() {
-                            out.insert(QualifiedPath::new(segments));
+                ItemKind::Module(module) => Self::collect_imported_module_paths(&module.items, out),
+                ItemKind::Impl(impl_block) => {
+                    for item in &impl_block.items {
+                        if let ItemKind::Import(import) = item.kind() {
+                            let raw = import
+                                .module_path()
+                                .map(ToString::to_string)
+                                .unwrap_or_else(|| import.tree.to_string());
+                            let segments: Vec<String> = raw
+                                .split("::")
+                                .filter(|segment| !segment.is_empty() && *segment != "*")
+                                .map(str::to_owned)
+                                .collect();
+                            if !segments.is_empty() {
+                                out.insert(QualifiedPath::new(segments));
+                            }
                         }
                     }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
-}
 
-async fn lower_to_hir(
+    async fn lower_to_hir(
         &mut self,
         module_path: &QualifiedPath,
         items: &[Item],
@@ -1286,7 +1331,10 @@ async fn lower_to_hir(
     /// group under its own module context, since e.g. `TypeBuilder`'s impl
     /// block must resolve as `std::meta::TypeBuilder`, not get requalified
     /// under the caller's own module.
-    fn collect_cross_crate_items(&mut self, struct_refs: &[QualifiedPath]) -> Vec<(QualifiedPath, Vec<Item>)> {
+    fn collect_cross_crate_items(
+        &mut self,
+        struct_refs: &[QualifiedPath],
+    ) -> Vec<(QualifiedPath, Vec<Item>)> {
         let mut by_module: HashMap<QualifiedPath, Vec<Item>> = HashMap::new();
         for struct_path in struct_refs {
             // Two different compile units referencing the same cross-crate
@@ -1295,8 +1343,12 @@ async fn lower_to_hir(
             // for the same match — cache the resolved group per struct path,
             // mirroring `generic_instantiations`' existing dedup role for
             // generic monomorphization.
-            if let Some((module_path, items)) = self.state.cross_crate_items_cache.get(struct_path) {
-                by_module.entry(module_path.clone()).or_default().extend(items.iter().cloned());
+            if let Some((module_path, items)) = self.state.cross_crate_items_cache.get(struct_path)
+            {
+                by_module
+                    .entry(module_path.clone())
+                    .or_default()
+                    .extend(items.iter().cloned());
                 continue;
             }
 
@@ -1327,10 +1379,14 @@ async fn lower_to_hir(
                     }
                 }
             }
-            self.state
-                .cross_crate_items_cache
-                .insert(struct_path.clone(), (module_path.clone(), matched_items.clone()));
-            by_module.entry(module_path).or_default().extend(matched_items);
+            self.state.cross_crate_items_cache.insert(
+                struct_path.clone(),
+                (module_path.clone(), matched_items.clone()),
+            );
+            by_module
+                .entry(module_path)
+                .or_default()
+                .extend(matched_items);
         }
         by_module.into_iter().collect()
     }
@@ -1399,7 +1455,8 @@ async fn lower_to_hir(
             .env_ctx
             .package_id_for_module(path.path())
             .unwrap_or_default();
-        let mut lowering = LirGenerator::new().with_package_id(package_id);
+        let mut lowering = LirGenerator::new(self.state.typing_ctx.data_layout.clone())
+            .with_package_id(package_id);
         let lir = lowering.transform(mir)?;
         let lir_id = LirId::new(format!("lir:{}", path.to_key()));
         self.state.insert_lir(lir_id.clone(), lir);
@@ -1627,12 +1684,6 @@ async fn lower_to_hir(
     }
 }
 
-impl Default for CompilerDriver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1649,21 +1700,22 @@ mod tests {
         let path = path();
         let ast_id = AstId::new("ast:crate::main");
         let mut driver = CompilerDriver::new();
+        driver.state.insert_ast(
+            ast_id.clone(),
+            File {
+                path: std::path::PathBuf::new(),
+                attrs: Vec::new(),
+                collected_items: Vec::new(),
+                items: vec![Item::new(ItemKind::Expr(Expr::unit()))],
+            },
+        );
+
         driver
-            .state
-            .insert_ast(ast_id.clone(), File {
-            path: std::path::PathBuf::new(),
-            attrs: Vec::new(),
-            collected_items: Vec::new(),
-            items: vec![Item::new(ItemKind::Expr(Expr::unit()))],
-        });
+            .scheduler
+            .submit(CompilerWork::CompileUnitCompileNative { ast: ast_id, path });
 
-        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: ast_id,
-            path,
-        });
-
-        let scheduled = driver.run_next()
+        let scheduled = driver
+            .run_next()
             .expect("compile unit")
             .expect("compiled answer");
         assert!(matches!(
@@ -1693,17 +1745,22 @@ mod tests {
         let expr = Expr::from(fp_core::ast::ExprKind::ConstBlock(const_block));
 
         let mut driver = CompilerDriver::new();
-        driver.state.insert_ast(ast_id.clone(), File {
-            path: std::path::PathBuf::new(),
-            attrs: Vec::new(),
-            collected_items: Vec::new(),
-            items: vec![Item::new(ItemKind::Expr(expr))],
-        });
+        driver.state.insert_ast(
+            ast_id.clone(),
+            File {
+                path: std::path::PathBuf::new(),
+                attrs: Vec::new(),
+                collected_items: Vec::new(),
+                items: vec![Item::new(ItemKind::Expr(expr))],
+            },
+        );
 
-        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: ast_id,
-            path: path.clone(),
-        });
+        driver
+            .scheduler
+            .submit(CompilerWork::CompileUnitCompileNative {
+                ast: ast_id,
+                path: path.clone(),
+            });
 
         // Drain the scheduler — comptime is resolved through auto-block + retry
         let mut steps = 0;
@@ -1712,7 +1769,11 @@ mod tests {
             assert!(steps <= 20, "driver loop should not run forever");
         }
 
-        assert_eq!(driver.state.const_value_len(), 1, "const block should produce const value");
+        assert_eq!(
+            driver.state.const_value_len(),
+            1,
+            "const block should produce const value"
+        );
         assert!(
             driver.scheduler.is_idle(),
             "scheduler should be idle after compile + comptime resolves"
@@ -1724,19 +1785,19 @@ mod tests {
         let path = path();
         let ast_id = AstId::new("ast:crate::const");
         let mut driver = CompilerDriver::new();
-        driver
-            .state
-            .insert_ast(ast_id.clone(), File {
-            path: std::path::PathBuf::new(),
-            attrs: Vec::new(),
-            collected_items: Vec::new(),
-            items: vec![Item::new(ItemKind::Expr(Expr::unit()))],
-        });
+        driver.state.insert_ast(
+            ast_id.clone(),
+            File {
+                path: std::path::PathBuf::new(),
+                attrs: Vec::new(),
+                collected_items: Vec::new(),
+                items: vec![Item::new(ItemKind::Expr(Expr::unit()))],
+            },
+        );
 
-        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: ast_id,
-            path,
-        });
+        driver
+            .scheduler
+            .submit(CompilerWork::CompileUnitCompileNative { ast: ast_id, path });
 
         let mut steps = 0;
         while let Ok(Some(scheduled)) = driver.run_next() {
@@ -1777,24 +1838,31 @@ mod tests {
             collected_items: Vec::new(),
             items: vec![Item::from(generic_function)],
         };
+        driver.state.insert_ast(ast_id.clone(), file);
+
         driver
-            .state
-            .insert_ast(ast_id.clone(), file);
+            .scheduler
+            .submit(CompilerWork::CompileUnitCompileNative { ast: ast_id, path });
 
-        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: ast_id,
-            path,
-        });
-
-        let scheduled = driver.run_next().expect("compile unit").expect("compiled answer");
-        assert!(
-            matches!(scheduled.completed.answer, CompilerAnswer::CompileUnitCompileNative)
-        );
+        let scheduled = driver
+            .run_next()
+            .expect("compile unit")
+            .expect("compiled answer");
+        assert!(matches!(
+            scheduled.completed.answer,
+            CompilerAnswer::CompileUnitCompileNative
+        ));
 
         // Bytecode followup work enqueued
-        assert!(!scheduled.followups.is_empty(), "should have bytecode followup");
+        assert!(
+            !scheduled.followups.is_empty(),
+            "should have bytecode followup"
+        );
         let next = driver.scheduler.next_request().expect("bytecode work");
-        assert!(matches!(next.work, CompilerWork::CompileUnitCompileBytecode { .. }));
+        assert!(matches!(
+            next.work,
+            CompilerWork::CompileUnitCompileBytecode { .. }
+        ));
     }
 }
 
@@ -1827,14 +1895,22 @@ fn main() {
         let ast_id = AstId::new("ast:test::main");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
-        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: ast_id,
-            path: path(),
-        });
+        driver
+            .scheduler
+            .submit(CompilerWork::CompileUnitCompileNative {
+                ast: ast_id,
+                path: path(),
+            });
 
-        let scheduled = driver.run_next().expect("compile unit").expect("compiled answer");
+        let scheduled = driver
+            .run_next()
+            .expect("compile unit")
+            .expect("compiled answer");
         assert!(
-            matches!(scheduled.completed.answer, CompilerAnswer::CompileUnitCompileNative),
+            matches!(
+                scheduled.completed.answer,
+                CompilerAnswer::CompileUnitCompileNative
+            ),
             "const item and const block should produce compile with comptime resolution"
         );
     }
@@ -1852,10 +1928,12 @@ fn main() {
         let ast_id = AstId::new("ast:test::const");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
-        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: ast_id,
-            path: path(),
-        });
+        driver
+            .scheduler
+            .submit(CompilerWork::CompileUnitCompileNative {
+                ast: ast_id,
+                path: path(),
+            });
 
         // Compile handles comptime evaluation inline
         let _scheduled = driver.run_next().expect("compile unit").expect("compiled");
@@ -1887,10 +1965,12 @@ const AREA: i64 = WIDTH * HEIGHT;
         let ast_id = AstId::new("ast:test::multi");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
-        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: ast_id,
-            path: path(),
-        });
+        driver
+            .scheduler
+            .submit(CompilerWork::CompileUnitCompileNative {
+                ast: ast_id,
+                path: path(),
+            });
 
         let _scheduled = driver.run_next().expect("compile unit").expect("compiled");
         // Should produce comptime work
@@ -1917,10 +1997,12 @@ fn calculate() {
         let ast_id = AstId::new("ast:test::block");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
-        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: ast_id,
-            path: path(),
-        });
+        driver
+            .scheduler
+            .submit(CompilerWork::CompileUnitCompileNative {
+                ast: ast_id,
+                path: path(),
+            });
 
         let _scheduled = driver.run_next().expect("compile unit").expect("compiled");
         // Const block should trigger comptime work
@@ -1966,13 +2048,15 @@ fn main() {
             std::rc::Rc::new(fp_typing::TypingContext::new(std::rc::Rc::new(workspace)));
         let ast_id = AstId::new("ast:test::generic_call");
         driver.state.insert_ast(ast_id.clone(), ast_node);
-        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: ast_id,
-            path: FullyQualifiedPath::from_segments(vec![
-                "test".to_string(),
-                "generic_call".to_string(),
-            ]),
-        });
+        driver
+            .scheduler
+            .submit(CompilerWork::CompileUnitCompileNative {
+                ast: ast_id,
+                path: FullyQualifiedPath::from_segments(vec![
+                    "test".to_string(),
+                    "generic_call".to_string(),
+                ]),
+            });
 
         let mut steps = 0;
         while let Some(_) = driver.run_next().expect("driver should not error") {
@@ -2048,13 +2132,15 @@ fn main() {
         let mut driver = CompilerDriver::new();
         let ast_id = AstId::new("ast:test::struct_enum_methods");
         driver.state.insert_ast(ast_id.clone(), ast_node);
-        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: ast_id,
-            path: FullyQualifiedPath::from_segments(vec![
-                "test".to_string(),
-                "struct_enum_methods".to_string(),
-            ]),
-        });
+        driver
+            .scheduler
+            .submit(CompilerWork::CompileUnitCompileNative {
+                ast: ast_id,
+                path: FullyQualifiedPath::from_segments(vec![
+                    "test".to_string(),
+                    "struct_enum_methods".to_string(),
+                ]),
+            });
 
         let mut steps = 0;
         while let Some(_) = driver.run_next().expect("driver should not error") {
@@ -2084,10 +2170,12 @@ fn main() {
         let ast_id = AstId::new(format!("ast:example::{label}"));
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
-        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: ast_id,
-            path: FullyQualifiedPath::from_segments(vec!["example".into(), label.to_string()]),
-        });
+        driver
+            .scheduler
+            .submit(CompilerWork::CompileUnitCompileNative {
+                ast: ast_id,
+                path: FullyQualifiedPath::from_segments(vec!["example".into(), label.to_string()]),
+            });
 
         let scheduled = driver.run_next().map_err(|e| format!("run_next: {e}"))?;
         let scheduled = scheduled.ok_or_else(|| "no work returned".to_string())?;
@@ -2101,10 +2189,7 @@ fn main() {
             if step > 500 {
                 return Ok(ExampleResult::TypedLooping { followups });
             }
-            if matches!(
-                s.completed.answer,
-                CompilerAnswer::CompileUnitCompileNative
-            ) {
+            if matches!(s.completed.answer, CompilerAnswer::CompileUnitCompileNative) {
                 lowered += 1;
             }
             if matches!(
@@ -2191,9 +2276,7 @@ fn main() {
     /// synthetic stub with no real body.
     #[test]
     fn collect_referenced_struct_enum_items_walks_method_call_receiver() {
-        use fp_core::ast::{
-            ExprSelect, ExprSelectType, Ident, ReprOptions, TypeStruct,
-        };
+        use fp_core::ast::{ExprSelect, ExprSelectType, Ident, ReprOptions, TypeStruct};
 
         let mut receiver = Expr::ident(Ident::new("builder"));
         receiver.set_ty(Ty::Struct(TypeStruct {
@@ -2224,9 +2307,9 @@ fn main() {
             "expected the method call's receiver type to be discovered, got {seen:?}"
         );
         assert!(
-            extra_items
-                .iter()
-                .any(|item| matches!(item.kind(), ItemKind::DefStruct(d) if d.name.as_str() == "Foo")),
+            extra_items.iter().any(
+                |item| matches!(item.kind(), ItemKind::DefStruct(d) if d.name.as_str() == "Foo")
+            ),
             "expected a DefStruct item for the discovered receiver type"
         );
     }
@@ -2241,11 +2324,10 @@ fn main() {
         use fp_core::ast::{Ident, ItemImpl};
 
         let driver = CompilerDriver::new();
-        let krate = driver
-            .state
-            .typing_ctx
-            .env_ctx
-            .begin_crate("somepkg", fp_core::package::graph::PackageGraph::new(vec![]));
+        let krate = driver.state.typing_ctx.env_ctx.begin_crate(
+            "somepkg",
+            fp_core::package::graph::PackageGraph::new(vec![]),
+        );
         let impl_item = Item::new(ItemKind::Impl(ItemImpl {
             attrs: Vec::new(),
             is_negative: false,
@@ -2255,17 +2337,21 @@ fn main() {
             collected_items: Vec::new(),
             items: Vec::new(),
         }));
-        krate
-            .borrow_mut()
-            .items
-            .insert(QualifiedPath::new(vec!["somepkg".to_string()]), vec![impl_item]);
+        krate.borrow_mut().items.insert(
+            QualifiedPath::new(vec!["somepkg".to_string()]),
+            vec![impl_item],
+        );
 
         let mut names = HashSet::new();
         names.insert("Foo".to_string());
         let mut extra_items = Vec::new();
         CompilerDriver::impl_items_for_types(&driver.state.typing_ctx, &names, &mut extra_items);
 
-        assert_eq!(extra_items.len(), 1, "expected exactly the one matching impl block");
+        assert_eq!(
+            extra_items.len(),
+            1,
+            "expected exactly the one matching impl block"
+        );
         assert!(matches!(extra_items[0].kind(), ItemKind::Impl(_)));
     }
 
@@ -2289,9 +2375,8 @@ fn main() {
             fn load_package(
                 &self,
                 _id: &fp_core::package::PackageId,
-            ) -> fp_core::package::provider::ProviderResult<
-                Arc<fp_core::package::PackageDescriptor>,
-            > {
+            ) -> fp_core::package::provider::ProviderResult<Arc<fp_core::package::PackageDescriptor>>
+            {
                 Err(fp_core::package::provider::ProviderError::other(
                     "unused in test",
                 ))
@@ -2324,9 +2409,8 @@ fn main() {
             }),
         );
         let mut driver = CompilerDriver::new();
-        driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
-            std::rc::Rc::new(workspace),
-        ));
+        driver.state.typing_ctx =
+            std::rc::Rc::new(fp_typing::TypingContext::new(std::rc::Rc::new(workspace)));
 
         // Simulates two different compile units each independently requesting
         // `std`: the scheduler would dispatch a `LoadPackage` work item per
@@ -2334,8 +2418,9 @@ fn main() {
         // must see `is_loaded` and no-op instead of reloading via the
         // provider (see `CompilerDriver::load_package`'s dedup guard).
         let first = driver.load_package("std").expect("first load");
-        let second =
-            driver.load_package("std").expect("second load (already loaded)");
+        let second = driver
+            .load_package("std")
+            .expect("second load (already loaded)");
 
         assert!(matches!(first, CompilerAnswer::PackageLoaded { .. }));
         assert!(matches!(second, CompilerAnswer::PackageLoaded { .. }));
@@ -2362,15 +2447,18 @@ fn main() {
         let ast_id = AstId::new("ast:example::inline");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
-        driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-            ast: ast_id,
-            path: FullyQualifiedPath::from_segments(vec!["example".into(), "inline".into()]),
-        });
+        driver
+            .scheduler
+            .submit(CompilerWork::CompileUnitCompileNative {
+                ast: ast_id,
+                path: FullyQualifiedPath::from_segments(vec!["example".into(), "inline".into()]),
+            });
 
         let scheduled = driver.run_next().expect("compile unit").expect("compiled");
-        assert!(
-            matches!(scheduled.completed.answer, CompilerAnswer::CompileUnitCompileNative)
-        );
+        assert!(matches!(
+            scheduled.completed.answer,
+            CompilerAnswer::CompileUnitCompileNative
+        ));
 
         // Drain any comptime + retry work
         let mut steps = 0;

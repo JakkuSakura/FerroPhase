@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::task::Waker;
 
 use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
+use fp_core::lir::LirDataLayout;
 use fp_core::workspace::WorkspaceContext;
 
 use crate::types::GenericMonorph;
@@ -15,6 +16,9 @@ use crate::TypingDiagnostic;
 /// driver and the typer to read/write without threading state through function
 /// parameters.
 pub struct TypingContext {
+    /// Target ABI data shared by typing-triggered comptime probes and normal
+    /// MIR-to-LIR lowering for this compilation session.
+    pub data_layout: LirDataLayout,
     /// Comptime-evaluated const values, keyed by const name.
     /// Driver writes after each comptime pass; typer reads on next pass.
     pub resolved_consts: RefCell<HashMap<String, Value>>,
@@ -61,8 +65,9 @@ pub struct TypingContext {
 }
 
 impl TypingContext {
-    pub fn new(env_ctx: std::rc::Rc<WorkspaceContext>) -> Self {
+    pub fn new(data_layout: LirDataLayout, env_ctx: std::rc::Rc<WorkspaceContext>) -> Self {
         Self {
+            data_layout,
             resolved_consts: RefCell::new(HashMap::new()),
             resolved_types: RefCell::new(HashMap::new()),
             env_ctx,

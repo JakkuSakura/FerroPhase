@@ -52,8 +52,29 @@ pub struct CompilerState {
 }
 
 impl CompilerState {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(data_layout: lir::LirDataLayout) -> Self {
+        Self {
+            ast: BTreeMap::new(),
+            hir: BTreeMap::new(),
+            hir_typeck: BTreeMap::new(),
+            mir: BTreeMap::new(),
+            lir: BTreeMap::new(),
+            runtime_entrypoints: BTreeMap::new(),
+            const_values: BTreeMap::new(),
+            resolved_const_values: BTreeMap::new(),
+            typing_ctx: std::rc::Rc::new(TypingContext::new(
+                data_layout,
+                std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
+            )),
+            runtime_values: BTreeMap::new(),
+            lossy: false,
+            module_resolver: None,
+            module_resolutions: BTreeMap::new(),
+            generic_instantiations: HashSet::new(),
+            bytecode: BTreeMap::new(),
+            cross_crate_items_cache: HashMap::new(),
+            tasks: std::rc::Rc::new(fp_core::executor::Executor::new()),
+        }
     }
 
     pub fn insert_ast(&mut self, ast_id: AstId, ast: File) {
@@ -85,9 +106,7 @@ impl CompilerState {
             .get(lir_id)
             .copied()
             .ok_or_else(|| {
-                CompilerDriverError::Interpreter(
-                    "program has no explicit entrypoint".to_string(),
-                )
+                CompilerDriverError::Interpreter("program has no explicit entrypoint".to_string())
             })
     }
 
@@ -103,16 +122,25 @@ impl CompilerState {
     /// typer can see it on the next pass.
     pub fn insert_typing_const(&mut self, key: impl Into<String>, value: Value) {
         let key = key.into();
-        self.typing_ctx.resolved_consts.borrow_mut().insert(key.clone(), value);
+        self.typing_ctx
+            .resolved_consts
+            .borrow_mut()
+            .insert(key.clone(), value);
         self.typing_ctx.wake_comptime(&key);
     }
 
     pub fn insert_expr_resolution_source(&mut self, expr_id: ExprId, expr: Expr) {
-        self.typing_ctx.expr_resolutions.borrow_mut().insert_source(expr_id, expr);
+        self.typing_ctx
+            .expr_resolutions
+            .borrow_mut()
+            .insert_source(expr_id, expr);
     }
 
     pub fn insert_expr_resolution_value(&mut self, expr_id: ExprId, value: Value) {
-        self.typing_ctx.expr_resolutions.borrow_mut().insert_value(expr_id, value);
+        self.typing_ctx
+            .expr_resolutions
+            .borrow_mut()
+            .insert_value(expr_id, value);
     }
 
     pub fn insert_runtime_value(&mut self, value_id: RuntimeValueId, value: Value) {
@@ -220,34 +248,12 @@ impl CompilerState {
         self.bytecode.insert(id, program);
     }
 
-    pub fn bytecode_program(&self, id: &BytecodeId) -> Result<&fp_bytecode::BytecodeProgram, CompilerDriverError> {
+    pub fn bytecode_program(
+        &self,
+        id: &BytecodeId,
+    ) -> Result<&fp_bytecode::BytecodeProgram, CompilerDriverError> {
         self.bytecode
             .get(id)
             .ok_or_else(|| CompilerDriverError::MissingBytecode(id.clone()))
-    }
-}
-
-impl Default for CompilerState {
-    fn default() -> Self {
-        Self {
-            ast: BTreeMap::new(),
-            hir: BTreeMap::new(),
-            hir_typeck: BTreeMap::new(),
-            mir: BTreeMap::new(),
-            lir: BTreeMap::new(),
-            runtime_entrypoints: BTreeMap::new(),
-            const_values: BTreeMap::new(),
-            resolved_const_values: BTreeMap::new(),
-            typing_ctx: std::rc::Rc::new(TypingContext::new(
-                std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()))),
-            runtime_values: BTreeMap::new(),
-            lossy: false,
-            module_resolver: None,
-            module_resolutions: BTreeMap::new(),
-            generic_instantiations: HashSet::new(),
-            bytecode: BTreeMap::new(),
-            cross_crate_items_cache: HashMap::new(),
-            tasks: std::rc::Rc::new(fp_core::executor::Executor::new()),
-        }
     }
 }

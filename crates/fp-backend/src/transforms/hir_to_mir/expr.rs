@@ -38,7 +38,9 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
                 mir::ty::ConstKind::Infer(mir::ty::InferConst::Fresh(*id))
             }
             hir::ty::ConstKind::Infer(hir::ty::InferConst::Var(_)) => {
-                return Err(fp_core::error::Error::from("unsupported HIR const inference variable in MIR type bridge"));
+                return Err(fp_core::error::Error::from(
+                    "unsupported HIR const inference variable in MIR type bridge",
+                ));
             }
             hir::ty::ConstKind::Value(value) => mir::ty::ConstKind::Value(match value {
                 hir::ty::ConstValue::Scalar(scalar) => mir::ty::ConstValue::Scalar(match scalar {
@@ -48,16 +50,22 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
                     }),
                     hir::ty::Scalar::Ptr(pointer) => mir::ty::Scalar::Ptr(mir::ty::Pointer {
                         alloc_id: mir::ty::AllocId(pointer.alloc_id.0),
-                        offset: mir::ty::Size { bytes: pointer.offset.bytes },
+                        offset: mir::ty::Size {
+                            bytes: pointer.offset.bytes,
+                        },
                     }),
                 }),
                 hir::ty::ConstValue::ZeroSized => mir::ty::ConstValue::ZeroSized,
-                hir::ty::ConstValue::Slice { data, start, end } => {
-                    mir::ty::ConstValue::Slice { data: data.clone(), start: *start, end: *end }
-                }
+                hir::ty::ConstValue::Slice { data, start, end } => mir::ty::ConstValue::Slice {
+                    data: data.clone(),
+                    start: *start,
+                    end: *end,
+                },
                 hir::ty::ConstValue::ByRef { alloc, offset } => mir::ty::ConstValue::ByRef {
                     alloc: mir::ty::AllocId(alloc.0),
-                    offset: mir::ty::Size { bytes: offset.bytes },
+                    offset: mir::ty::Size {
+                        bytes: offset.bytes,
+                    },
                 },
             }),
             hir::ty::ConstKind::Error(error) => {
@@ -67,7 +75,9 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
             | hir::ty::ConstKind::Bound(_, _)
             | hir::ty::ConstKind::Placeholder(_)
             | hir::ty::ConstKind::Unevaluated(_) => {
-                return Err(fp_core::error::Error::from("unsupported HIR const kind in MIR type bridge"));
+                return Err(fp_core::error::Error::from(
+                    "unsupported HIR const kind in MIR type bridge",
+                ));
             }
         })
     }
@@ -131,7 +141,9 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
                 flags: AdtFlags::from_bits_retain(def.flags.bits()),
                 repr: ReprOptions {
                     int: def.repr.int.map(|value| match value {
-                        hir::ty::IntegerType::Pointer(value) => mir::ty::IntegerType::Pointer(value),
+                        hir::ty::IntegerType::Pointer(value) => {
+                            mir::ty::IntegerType::Pointer(value)
+                        }
                         hir::ty::IntegerType::Fixed(value, signed) => mir::ty::IntegerType::Fixed(
                             match value {
                                 hir::ty::Integer::I8 => mir::ty::Integer::I8,
@@ -143,8 +155,14 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
                             signed,
                         ),
                     }),
-                    align: def.repr.align.map(|value| mir::ty::Align { pow2: value.pow2 }),
-                    pack: def.repr.pack.map(|value| mir::ty::Align { pow2: value.pow2 }),
+                    align: def
+                        .repr
+                        .align
+                        .map(|value| mir::ty::Align { pow2: value.pow2 }),
+                    pack: def
+                        .repr
+                        .pack
+                        .map(|value| mir::ty::Align { pow2: value.pow2 }),
                     flags: mir::ty::ReprFlags::from_bits_retain(def.repr.flags.bits()),
                     field_shuffle_seed: def.repr.field_shuffle_seed,
                 },
@@ -173,7 +191,13 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
         hir::ty::TyKind::FnPtr(signature) => TyKind::FnPtr(mir::ty::PolyFnSig {
             binder: mir::ty::Binder {
                 value: mir::ty::FnSig {
-                    inputs: signature.binder.value.inputs.iter().map(|ty| lower_hir_ty(ty).map(Box::new)).collect::<Result<Vec<_>>>()?,
+                    inputs: signature
+                        .binder
+                        .value
+                        .inputs
+                        .iter()
+                        .map(|ty| lower_hir_ty(ty).map(Box::new))
+                        .collect::<Result<Vec<_>>>()?,
                     output: Box::new(lower_hir_ty(&signature.binder.value.output)?),
                     c_variadic: signature.binder.value.c_variadic,
                     unsafety: match signature.binder.value.unsafety {
@@ -185,22 +209,43 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
                 bound_vars: Vec::new(),
             },
         }),
-        hir::ty::TyKind::FnDef(def, args) => TyKind::FnDef(*def, args.iter().map(lower_arg).collect::<Result<Vec<_>>>()?),
-        hir::ty::TyKind::Opaque(def, args) => TyKind::Opaque(*def, args.iter().map(lower_arg).collect::<Result<Vec<_>>>()?),
+        hir::ty::TyKind::FnDef(def, args) => TyKind::FnDef(
+            *def,
+            args.iter().map(lower_arg).collect::<Result<Vec<_>>>()?,
+        ),
+        hir::ty::TyKind::Opaque(def, args) => TyKind::Opaque(
+            *def,
+            args.iter().map(lower_arg).collect::<Result<Vec<_>>>()?,
+        ),
         hir::ty::TyKind::Never => TyKind::Never,
-        hir::ty::TyKind::Tuple(items) => TyKind::Tuple(items.iter().map(|item| lower_hir_ty(item).map(Box::new)).collect::<Result<Vec<_>>>()?),
+        hir::ty::TyKind::Tuple(items) => TyKind::Tuple(
+            items
+                .iter()
+                .map(|item| lower_hir_ty(item).map(Box::new))
+                .collect::<Result<Vec<_>>>()?,
+        ),
         hir::ty::TyKind::Param(param) => TyKind::Param(mir::ty::ParamTy {
             index: param.index,
             name: param.name.clone().into(),
         }),
-        hir::ty::TyKind::Infer(hir::ty::InferTy::FreshTy(id)) => TyKind::Infer(mir::ty::InferTy::FreshTy(*id)),
-        hir::ty::TyKind::Infer(_) => return Err(fp_core::error::Error::from("unsupported HIR inference variable in MIR type bridge")),
+        hir::ty::TyKind::Infer(hir::ty::InferTy::FreshTy(id)) => {
+            TyKind::Infer(mir::ty::InferTy::FreshTy(*id))
+        }
+        hir::ty::TyKind::Infer(_) => {
+            return Err(fp_core::error::Error::from(
+                "unsupported HIR inference variable in MIR type bridge",
+            ))
+        }
         hir::ty::TyKind::Error(_) => {
             return Err(fp_core::error::Error::from(
                 "cannot lower an HIR error type into MIR",
             ));
         }
-        _ => return Err(fp_core::error::Error::from("unsupported HIR type in MIR type bridge")),
+        _ => {
+            return Err(fp_core::error::Error::from(
+                "unsupported HIR type in MIR type bridge",
+            ))
+        }
     };
     Ok(Ty { kind })
 }
@@ -2049,11 +2094,23 @@ impl MirLowering {
         let expected_return = expected_return.map(|ty| self.unwrap_expr_actual_ty(ty));
         if !has_explicit_substitutions {
             if let (Some(self_ty), Some(self_arg_ty)) = (self_ty, self_arg_ty) {
-                self.infer_generic_from_type_expr(self_ty, self_arg_ty, generics, &mut substs, span)?;
+                self.infer_generic_from_type_expr(
+                    self_ty,
+                    self_arg_ty,
+                    generics,
+                    &mut substs,
+                    span,
+                )?;
             }
 
             for (param, actual_ty) in params.iter().zip(arg_types.iter()) {
-                self.infer_generic_from_type_expr(&param.ty, actual_ty, generics, &mut substs, span)?;
+                self.infer_generic_from_type_expr(
+                    &param.ty,
+                    actual_ty,
+                    generics,
+                    &mut substs,
+                    span,
+                )?;
             }
             if let (Some(return_ty), Some(expected_return)) = (return_ty, expected_return) {
                 self.infer_generic_from_type_expr(
@@ -5731,9 +5788,15 @@ impl MirLowering {
         expected_ty: Option<&Ty>,
         container_args: Option<&ConstContainerArgs>,
     ) -> Option<mir::Constant> {
+        let constant_ty = || {
+            expected_ty
+                .cloned()
+                .or_else(|| self.typeck_exprs.get(&expr.hir_id).cloned())
+        };
         match &expr.kind {
             hir::ExprKind::Literal(lit) => Some(mir::Constant {
                 span: expr.span,
+                ty: constant_ty()?,
                 user_ty: None,
                 literal: self.lower_literal(lit),
             }),
@@ -5741,11 +5804,12 @@ impl MirLowering {
                 if let Some(inner) = &block.expr {
                     return self.lower_const_expr(program, inner, expected_ty, container_args);
                 }
-                let ty = expected_ty.cloned().unwrap_or_else(Self::unit_ty);
+                let ty = constant_ty()?;
                 Some(mir::Constant {
                     span: expr.span,
+                    ty: ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::Val(mir::ConstValue::Unit, ty),
+                    literal: mir::ConstantKind::Val(mir::ConstValue::Unit),
                 })
             }
             hir::ExprKind::Array(elements) => {
@@ -5768,11 +5832,12 @@ impl MirLowering {
                         Some(elem_ty.as_ref()),
                     )?);
                 }
-                let ty = expected_ty.cloned().unwrap_or_else(Self::unit_ty);
+                let ty = constant_ty()?;
                 Some(mir::Constant {
                     span: expr.span,
+                    ty: ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::Val(mir::ConstValue::Array(lowered), ty),
+                    literal: mir::ConstantKind::Val(mir::ConstValue::Array(lowered)),
                 })
             }
             hir::ExprKind::ArrayRepeat { elem, len } => {
@@ -5792,20 +5857,22 @@ impl MirLowering {
                 let value = self.lower_const_value(program, elem, Some(elem_ty.as_ref()))?;
                 let mut lowered = Vec::with_capacity(repeat_len as usize);
                 lowered.resize(repeat_len as usize, value);
-                let ty = expected_ty.cloned().unwrap_or_else(Self::unit_ty);
+                let ty = constant_ty()?;
                 Some(mir::Constant {
                     span: expr.span,
+                    ty: ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::Val(mir::ConstValue::Array(lowered), ty),
+                    literal: mir::ConstantKind::Val(mir::ConstValue::Array(lowered)),
                 })
             }
             hir::ExprKind::Struct(_, _) => {
                 let value = self.lower_const_value(program, expr, expected_ty)?;
-                let ty = expected_ty.cloned().unwrap_or_else(Self::unit_ty);
+                let ty = constant_ty()?;
                 Some(mir::Constant {
                     span: expr.span,
+                    ty: ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::Val(value, ty),
+                    literal: mir::ConstantKind::Val(value),
                 })
             }
             hir::ExprKind::Path(path) => {
@@ -5834,14 +5901,16 @@ impl MirLowering {
                 let fn_ty = expected_ty.cloned()?;
                 Some(mir::Constant {
                     span: expr.span,
+                    ty: fn_ty,
                     user_ty: None,
-                    literal: mir::ConstantKind::FnDef(*def_id, fn_ty),
+                    literal: mir::ConstantKind::FnDef(*def_id),
                 })
             }
             hir::ExprKind::Slice(slice) => {
                 let value = self.lower_const_string_slice(program, slice)?;
                 Some(mir::Constant {
                     span: expr.span,
+                    ty: constant_ty()?,
                     user_ty: None,
                     literal: mir::ConstantKind::Str(value),
                 })
@@ -5881,7 +5950,7 @@ impl MirLowering {
                 self.lower_const_expr(program, branch, expected_ty, container_args)
             }
             hir::ExprKind::MethodCall(receiver, method_name, args) => {
-                let ty = expected_ty.cloned().unwrap_or_else(Self::unit_ty);
+                let ty = constant_ty()?;
                 let value = self.lower_const_method_value(
                     program,
                     receiver,
@@ -5891,6 +5960,7 @@ impl MirLowering {
                 )?;
                 Some(mir::Constant {
                     span: expr.span,
+                    ty: ty.clone(),
                     user_ty: None,
                     literal: self.const_value_to_constant(expr.span, &value, &ty).literal,
                 })
@@ -5908,6 +5978,7 @@ impl MirLowering {
                 }?;
                 Some(mir::Constant {
                     span: expr.span,
+                    ty: constant_ty()?,
                     user_ty: None,
                     literal: kind,
                 })
@@ -6219,10 +6290,7 @@ impl MirLowering {
             return Some(
                 self.lower_const_struct_field_from_constant(&constant, field, span)
                     .unwrap_or_else(|| {
-                        self.emit_error(
-                            span,
-                            format!("unsupported const field access `{field}`"),
-                        );
+                        self.emit_error(span, format!("unsupported const field access `{field}`"));
                         self.error_constant(span)
                     }),
             );
@@ -6720,11 +6788,12 @@ impl MirLowering {
             mir::ConstValue::Float(value) => mir::ConstantKind::Float(*value),
             mir::ConstValue::Str(value) => mir::ConstantKind::Str(value.clone()),
             mir::ConstValue::Null => mir::ConstantKind::Null,
-            mir::ConstValue::Fn(name) => mir::ConstantKind::Fn(name.clone(), ty.clone()),
-            _ => mir::ConstantKind::Val(value.clone(), ty.clone()),
+            mir::ConstValue::Fn(name) => mir::ConstantKind::Fn(name.clone()),
+            _ => mir::ConstantKind::Val(value.clone()),
         };
         mir::Constant {
             span,
+            ty: ty.clone(),
             user_ty: None,
             literal,
         }
@@ -6770,9 +6839,7 @@ impl MirLowering {
     }
 
     fn type_ty() -> Ty {
-        Ty {
-            kind: TyKind::Type,
-        }
+        Ty { kind: TyKind::Type }
     }
 
     fn is_unit_ty(ty: &Ty) -> bool {
@@ -7010,6 +7077,7 @@ impl MirLowering {
         self.emit_error(span, "unable to lower expression to a constant");
         mir::Constant {
             span,
+            ty: self.error_ty(),
             user_ty: None,
             literal: mir::ConstantKind::Bool(false),
         }
@@ -7037,9 +7105,10 @@ impl MirLowering {
         match &ty.kind {
             TyKind::Ref(_, inner, _) => self.enum_layout_for_ty(inner),
             TyKind::RawPtr(type_and_mut) => self.enum_layout_for_ty(&type_and_mut.ty),
-            _ => self.enum_layouts.values().find(|layout| {
-                Self::enum_layout_ty_matches(&layout.enum_ty, ty)
-            }),
+            _ => self
+                .enum_layouts
+                .values()
+                .find(|layout| Self::enum_layout_ty_matches(&layout.enum_ty, ty)),
         }
     }
 
@@ -7999,13 +8068,11 @@ impl<'a> BodyBuilder<'a> {
     fn lower_type_expr(&mut self, ty_expr: &hir::TypeExpr) -> Ty {
         if let Some(ctx) = self.method_context.as_ref() {
             if Self::type_expr_mentions_self(ty_expr) {
-                return self
-                    .lowering
-                    .lower_type_expr_with_context_and_substs(
-                        ty_expr,
-                        Some(ctx),
-                        &self.type_substs,
-                    );
+                return self.lowering.lower_type_expr_with_context_and_substs(
+                    ty_expr,
+                    Some(ctx),
+                    &self.type_substs,
+                );
             }
         }
         if let Some(ty) = self.lowering.typeck_type_exprs.get(&ty_expr.hir_id) {
@@ -8031,9 +8098,9 @@ impl<'a> BodyBuilder<'a> {
                 .first()
                 .map(|segment| segment.name.as_str() == "Self")
                 .unwrap_or(false),
-            hir::TypeExprKind::Tuple(items) => items
-                .iter()
-                .any(|item| Self::type_expr_mentions_self(item)),
+            hir::TypeExprKind::Tuple(items) => {
+                items.iter().any(|item| Self::type_expr_mentions_self(item))
+            }
             hir::TypeExprKind::Array(item, _) | hir::TypeExprKind::Slice(item) => {
                 Self::type_expr_mentions_self(item)
             }
@@ -8451,8 +8518,7 @@ impl<'a> BodyBuilder<'a> {
         if self.locals[0].ty != expected_return_ty {
             return Err(fp_core::error::Error::from(format!(
                 "function body lowered to `{}` but expected return type `{}`",
-                self.locals[0].ty,
-                expected_return_ty
+                self.locals[0].ty, expected_return_ty
             )));
         }
 
@@ -8763,9 +8829,7 @@ impl<'a> BodyBuilder<'a> {
             .as_ref()
             .or(implicit_ty.as_ref())
             .ok_or_else(|| fp_core::error::Error::from("local declaration has no type"))?;
-        let mut decl = self
-            .lowering
-            .make_local_decl(local_ty, init_span);
+        let mut decl = self.lowering.make_local_decl(local_ty, init_span);
         decl.local_info = mir::LocalInfo::User(());
 
         if let hir::PatKind::Binding { mutable, .. } = &pat.kind {
@@ -10012,9 +10076,7 @@ impl<'a> BodyBuilder<'a> {
             .as_ref()
             .or(implicit_ty.as_ref())
             .ok_or_else(|| fp_core::error::Error::from("local declaration has no type"))?;
-        let mut decl = self
-            .lowering
-            .make_local_decl(local_ty, init_span);
+        let mut decl = self.lowering.make_local_decl(local_ty, init_span);
         decl.local_info = mir::LocalInfo::User(());
 
         if let hir::PatKind::Binding { mutable, .. } = &local.pat.kind {
@@ -10929,7 +10991,9 @@ impl<'a> BodyBuilder<'a> {
                 let operand = self.lower_operand(&arg.value, Some(expected_ty))?;
                 operands.push(operand.operand);
             } else {
-                let literal = self.lowering.catch_unwind_default_constant_for_ty(storage_ty)?;
+                let literal = self
+                    .lowering
+                    .catch_unwind_default_constant_for_ty(storage_ty)?;
                 operands.push(mir::Operand::Constant(mir::Constant {
                     span,
                     user_ty: None,
@@ -13225,14 +13289,12 @@ impl<'a> BodyBuilder<'a> {
 
     fn param_names_for_callee(&self, path: &hir::Path) -> Option<Vec<hir::Symbol>> {
         match &path.res {
-            Some(hir::Res::Def(def_id)) => self
-                .param_names_for_def_id(*def_id)
-                .or_else(|| {
-                    self.lowering
-                        .method_defs_by_def
-                        .get(def_id)
-                        .and_then(|def| self.param_names_from_params(&def.function.sig.inputs))
-                }),
+            Some(hir::Res::Def(def_id)) => self.param_names_for_def_id(*def_id).or_else(|| {
+                self.lowering
+                    .method_defs_by_def
+                    .get(def_id)
+                    .and_then(|def| self.param_names_from_params(&def.function.sig.inputs))
+            }),
             _ => None,
         }
     }
@@ -13568,19 +13630,19 @@ impl<'a> BodyBuilder<'a> {
 
         if let Some(hir::Res::Def(def_id)) = resolved_path.res.as_ref() {
             if let Some(info) = self.lowering.method_lookup_by_def.get(def_id) {
-            let literal = match info.def_id {
-                Some(def_id) => mir::ConstantKind::FnDef(def_id, info.fn_ty.clone()),
-                None => mir::ConstantKind::Fn(
-                    mir::Symbol::new(info.fn_name.clone()),
-                    info.fn_ty.clone(),
-                ),
-            };
-            let operand = mir::Operand::Constant(mir::Constant {
-                span: callee.span,
-                user_ty: None,
-                literal,
-            });
-            return Ok((operand, info.sig.clone(), Some(info.fn_name.clone())));
+                let literal = match info.def_id {
+                    Some(def_id) => mir::ConstantKind::FnDef(def_id, info.fn_ty.clone()),
+                    None => mir::ConstantKind::Fn(
+                        mir::Symbol::new(info.fn_name.clone()),
+                        info.fn_ty.clone(),
+                    ),
+                };
+                let operand = mir::Operand::Constant(mir::Constant {
+                    span: callee.span,
+                    user_ty: None,
+                    literal,
+                });
+                return Ok((operand, info.sig.clone(), Some(info.fn_name.clone())));
             }
         }
 
@@ -13719,9 +13781,9 @@ impl<'a> BodyBuilder<'a> {
                 self.lower_reference_operand(reference, expr.span)
             }
             hir::ExprKind::Query(query) => {
-                let query_ty = expected
-                    .cloned()
-                    .ok_or_else(|| fp_core::error::Error::from("query expression requires an expected result type"))?;
+                let query_ty = expected.cloned().ok_or_else(|| {
+                    fp_core::error::Error::from("query expression requires an expected result type")
+                })?;
                 let local_id = self.allocate_temp(query_ty.clone(), expr.span);
                 let place = mir::Place::from_local(local_id);
                 self.push_statement(mir::Statement {
@@ -14008,11 +14070,9 @@ impl<'a> BodyBuilder<'a> {
 
                 if has_explicit_args {
                     let method_def = match resolved_path.res.as_ref() {
-                        Some(hir::Res::Def(def_id)) => self
-                            .lowering
-                            .method_defs_by_def
-                            .get(def_id)
-                            .cloned(),
+                        Some(hir::Res::Def(def_id)) => {
+                            self.lowering.method_defs_by_def.get(def_id).cloned()
+                        }
                         _ => None,
                     };
                     if let Some(def) = method_def {
@@ -14790,10 +14850,8 @@ impl<'a> BodyBuilder<'a> {
                         .iter()
                         .map(|arg| self.lower_operand(&arg.value, None))
                         .collect::<Result<Vec<_>>>()?;
-                    let operands: Vec<mir::Operand> = lowered_args
-                        .iter()
-                        .map(|a| a.operand.clone())
-                        .collect();
+                    let operands: Vec<mir::Operand> =
+                        lowered_args.iter().map(|a| a.operand.clone()).collect();
                     let ty = MirLowering::type_ty();
                     let local_id = self.allocate_temp(ty.clone(), expr.span);
                     let local_place = mir::Place::from_local(local_id);
@@ -17614,11 +17672,7 @@ impl<'a> BodyBuilder<'a> {
                 let mut resolved_info: Option<(MethodLoweringInfo, Option<PlaceInfo>)> = None;
                 let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
-                if let Some(def_id) = self
-                    .lowering
-                    .typeck_method_resolutions
-                    .get(&expr.hir_id)
-                {
+                if let Some(def_id) = self.lowering.typeck_method_resolutions.get(&expr.hir_id) {
                     if let Some(info) = self.lowering.method_lookup_by_def.get(def_id) {
                         resolved_info = Some((info.clone(), None));
                     }
@@ -19023,9 +19077,25 @@ impl<'a> BodyBuilder<'a> {
 fn is_known_type_name(name: &str) -> bool {
     matches!(
         name,
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
-        | "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
-        | "f32" | "f64" | "bool" | "char" | "str" | "string"
-        | "type" | "__fp_type" | "__fp_escaped"
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+            | "str"
+            | "string"
+            | "type"
+            | "__fp_type"
+            | "__fp_escaped"
     )
 }

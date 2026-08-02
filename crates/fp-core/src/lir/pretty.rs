@@ -1,11 +1,13 @@
 use std::fmt::{self, Formatter};
 
-use crate::pretty::{escape_string, PrettyCtx, PrettyPrintable};
+use crate::pretty::{PrettyCtx, PrettyPrintable};
 
 use super::ty::Ty;
 use super::{
-    CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirGlobal, LirInstruction,
-    LirInstructionKind, LirProgram, LirQuery, LirTerminator, LirValue, Visibility,
+    CallingConvention, Linkage, LirBasicBlock, LirConstant, LirConstantAggregate, LirConstantData,
+    LirConstantExpr, LirConstantKind, LirFloat, LirFunction, LirFunctionRef, LirGlobal,
+    LirInstruction, LirInstructionKind, LirProgram, LirQuery, LirTerminator, LirValue,
+    LirValueKind, Visibility,
 };
 
 impl PrettyPrintable for LirProgram {
@@ -208,8 +210,8 @@ fn write_block(
         for inst in &block.instructions {
             let mut line = format!("i{}: {}", inst.id, summarize_instruction(inst));
             if ctx.options.show_types {
-                if let Some(ty) = &inst.type_hint {
-                    line.push_str(&format!(" : {}", format_type(ty)));
+                if let Some(result) = &inst.result {
+                    line.push_str(&format!(" : {}", format_type(&result.ty)));
                 }
             }
             ctx.writeln(f, line)?;
@@ -704,33 +706,39 @@ fn summarize_terminator(term: &LirTerminator) -> String {
 }
 
 fn format_value(value: &LirValue) -> String {
-    use LirValue::*;
-
-    match value {
-        Register(id) => format!("%r{}", id),
-        Constant(constant) => format_constant(constant),
-        Global(name, _) => format!("@{}", name),
-        Function(name) => format!("@{}", name),
-        FunctionInPackage(_, name) => format!("@{}", name),
-        FunctionDef(def_id) => format!("@def({})", def_id),
-        Local(id) => format!("%local{}", id),
-        StackSlot(id) => format!("%stack{}", id),
-        Undef(ty) => format!("undef {}", format_type(ty)),
-        Null(ty) => format!("null {}", format_type(ty)),
+    match &value.kind {
+        LirValueKind::Register(id) => format!("%r{}", id),
+        LirValueKind::Constant(kind) => format_constant_kind(kind, &value.ty),
+        LirValueKind::Global(name) => format!("@{}", name),
+        LirValueKind::Function(function) => match function {
+            LirFunctionRef::Name(name) => format!("@{}", name),
+            LirFunctionRef::Package { name, .. } => format!("@{}", name),
+            LirFunctionRef::Definition(def_id) => format!("@def({})", def_id),
+        },
+        LirValueKind::Local(id) => format!("%local{}", id),
+        LirValueKind::StackSlot(id) => format!("%stack{}", id),
     }
 }
 
 fn format_constant(constant: &LirConstant) -> String {
-    use LirConstant::*;
+    format_constant_kind(&constant.kind, &constant.ty)
+}
 
-    match constant {
-        Int(value, ty) => format!("{} {}", format_type(ty), value),
-        UInt(value, ty) => format!("{} {}", format_type(ty), value),
-        Float(value, ty) => format!("{} {}", format_type(ty), value),
-        Bool(value) => format!("bool {}", value),
-        String(s) => format!("c\"{}\"", escape_string(s)),
-        Bytes(bytes) => format!("bytes(len={})", bytes.len()),
-        Array(elements, ty) => {
+fn format_constant_kind(kind: &LirConstantKind, ty: &Ty) -> String {
+    match kind {
+        LirConstantKind::Data(LirConstantData::Integer(value)) => {
+            format!("{} {}", format_type(ty), value)
+        }
+        LirConstantKind::Data(LirConstantData::Float(LirFloat::F32(bits))) => {
+            format!("f32 0x{bits:08x}")
+        }
+        LirConstantKind::Data(LirConstantData::Float(LirFloat::F64(bits))) => {
+            format!("f64 0x{bits:016x}")
+        }
+        LirConstantKind::Data(LirConstantData::Bytes(bytes)) => {
+            format!("bytes(len={})", bytes.len())
+        }
+        LirConstantKind::Aggregate(LirConstantAggregate::Array(elements)) => {
             let elems = elements
                 .iter()
                 .map(format_constant)
@@ -738,7 +746,7 @@ fn format_constant(constant: &LirConstant) -> String {
                 .join(", ");
             format!("[{} x {}] {{ {} }}", elements.len(), format_type(ty), elems)
         }
-        Struct(fields, ty) => {
+        LirConstantKind::Aggregate(LirConstantAggregate::Struct(fields)) => {
             let elems = fields
                 .iter()
                 .map(format_constant)
@@ -746,21 +754,41 @@ fn format_constant(constant: &LirConstant) -> String {
                 .join(", ");
             format!("struct {} {{ {} }}", format_type(ty), elems)
         }
-        GlobalRef(name, ty, indices) => {
-            if indices.is_empty() {
-                format!("global {} as {}", name, format_type(ty))
-            } else {
-                let index_list = indices
-                    .iter()
-                    .map(|idx| idx.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("global {}[{}] as {}", name, index_list, format_type(ty))
-            }
+        LirConstantKind::Aggregate(LirConstantAggregate::Vector(elements)) => {
+            let elems = elements
+                .iter()
+                .map(format_constant)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("vector {} {{ {} }}", format_type(ty), elems)
         }
-        FunctionRef(name, ty) => format!("fn {} as {}", name, format_type(ty)),
-        Null(ty) => format!("null {}", format_type(ty)),
-        Undef(ty) => format!("undef {}", format_type(ty)),
+        LirConstantKind::GlobalAddress { global } => {
+            format!("global {} as {}", global, format_type(ty))
+        }
+        LirConstantKind::FunctionAddress(function) => {
+            format!("fn {function:?} as {}", format_type(ty))
+        }
+        LirConstantKind::Null => format!("null {}", format_type(ty)),
+        LirConstantKind::Undef => format!("undef {}", format_type(ty)),
+        LirConstantKind::Poison => format!("poison {}", format_type(ty)),
+        LirConstantKind::Expr(LirConstantExpr::GetElementPtr {
+            base,
+            indices,
+            inbounds,
+        }) => {
+            let indices = indices
+                .iter()
+                .map(format_constant)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let marker = if *inbounds { "inbounds " } else { "" };
+            format!(
+                "{marker}gep {}, [{}] as {}",
+                format_constant(base),
+                indices,
+                format_type(ty)
+            )
+        }
     }
 }
 
@@ -768,6 +796,7 @@ fn format_type(ty: &Ty) -> String {
     use Ty::*;
 
     match ty {
+        Integer(width) => format!("i{width}"),
         I1 => "i1".into(),
         I8 => "i8".into(),
         I16 => "i16".into(),

@@ -1,5 +1,3 @@
-// use std::collections::HashMap; // Temporarily disabled - unused
-
 pub mod ident;
 pub mod layout;
 pub mod pretty;
@@ -73,11 +71,45 @@ pub struct LirCompileUnit {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirProgram {
+    pub data_layout: LirDataLayout,
     pub functions: Vec<LirFunction>,
     pub globals: Vec<LirGlobal>,
     pub type_definitions: Vec<LirTypeDefinition>,
     pub comptime_entries: Vec<LirComptimeEntry>,
     pub queries: Vec<LirQuery>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LirDataLayout {
+    pub pointer_size_bits: u32,
+    pub pointer_alignment: u32,
+    pub integer_alignments: Vec<(u32, u32)>,
+}
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum LirDataLayoutError {
+    #[error("pointer size must be non-zero and byte-addressable, got {0}")]
+    InvalidPointerSize(u32),
+    #[error("pointer alignment must be non-zero, got {0}")]
+    InvalidPointerAlignment(u32),
+    #[error("integer alignment for i{width} must be non-zero, got {alignment}")]
+    InvalidIntegerAlignment { width: u32, alignment: u32 },
+    #[error("duplicate integer alignment for i{0}")]
+    DuplicateIntegerAlignment(u32),
+    #[error("data layout has no alignment for i{0}")]
+    MissingIntegerAlignment(u32),
+    #[error("layout size overflow")]
+    SizeOverflow,
+    #[error("expected a struct type, got {0:?}")]
+    ExpectedStruct(LirType),
+    #[error("the error type has no data layout")]
+    ErrorTypeHasNoLayout,
+}
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum LirProgramError {
+    #[error("cannot merge LIR programs with different data layouts")]
+    DataLayoutMismatch,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -132,7 +164,9 @@ pub struct LirBasicBlock {
 pub struct LirInstruction {
     pub id: LirId,
     pub kind: LirInstructionKind,
-    pub type_hint: Option<LirType>,
+    /// The SSA value defined by this instruction. Void instructions do not
+    /// define a value.
+    pub result: Option<LirRegister>,
     pub debug_info: Option<DebugInfo>,
 }
 
@@ -278,9 +312,17 @@ pub enum LirIntrinsicKind {
 /// Only the LIR interpreter handles these; codegen backends skip them.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComptimeOp {
-    CreateStruct { name: LirValue },
-    AddField { struct_handle: LirValue, field_name: LirValue, field_type: LirValue },
-    IntoType { value: LirValue },
+    CreateStruct {
+        name: LirValue,
+    },
+    AddField {
+        struct_handle: LirValue,
+        field_name: LirValue,
+        field_type: LirValue,
+    },
+    IntoType {
+        value: LirValue,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -325,49 +367,193 @@ pub enum LirTerminator {
     },
 }
 
+/// A typed SSA definition. LLVM instructions that produce a result are Values;
+/// this is the operand-level reference to such a definition.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LirRegister {
+    pub id: RegisterId,
+    pub ty: LirType,
+}
+
+/// A typed operand in LIR. Every operand owns one authoritative type; callers
+/// do not infer it from its producer or from an instruction-side hint.
 #[derive(Debug, Clone, PartialEq)]
-pub enum LirValue {
-    // Registers/SSA values
-    Register(RegisterId),
-
-    // Constants
-    Constant(LirConstant),
-
-    // Global references
-    Global(String, Ty),
-
-    // Function references
-    Function(String),
-    FunctionInPackage(crate::hir::PackageId, String),
-    FunctionDef(crate::hir::DefId),
-
-    // Local variable references
-    Local(u32),
-
-    // Stack slot references
-    StackSlot(u32),
-
-    // Undefined value
-    Undef(LirType),
-
-    // Null pointer
-    Null(LirType),
+pub struct LirValue {
+    pub ty: LirType,
+    pub kind: LirValueKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum LirConstant {
-    Int(i64, LirType),
-    UInt(u64, LirType),
-    Float(f64, LirType),
-    Bool(bool),
-    String(String),
+pub enum LirValueKind {
+    Register(RegisterId),
+    Constant(LirConstantKind),
+    Global(Name),
+    Function(LirFunctionRef),
+    Local(u32),
+    StackSlot(u32),
+}
+
+/// The identity of a function value. The value's function-pointer type lives
+/// on `LirValue`, exactly as the type of a global or function value does in
+/// LLVM IR.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LirFunctionRef {
+    Name(Name),
+    Package {
+        package_id: crate::hir::PackageId,
+        name: Name,
+    },
+    Definition(crate::hir::DefId),
+}
+
+/// A typed constant value. This is the Rust analogue of LLVM's `Constant`
+/// base class: its type is stored once here, not repeated in each payload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LirConstant {
+    pub ty: LirType,
+    pub kind: LirConstantKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LirConstantKind {
+    Data(LirConstantData),
+    Aggregate(LirConstantAggregate),
+    GlobalAddress { global: Name },
+    FunctionAddress(LirFunctionRef),
+    Null,
+    Undef,
+    Poison,
+    Expr(LirConstantExpr),
+}
+
+/// Operand-less constant data, corresponding to LLVM's `ConstantData`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LirConstantData {
+    Integer(LirInteger),
+    Float(LirFloat),
     Bytes(Vec<u8>),
-    Array(Vec<LirConstant>, LirType),
-    Struct(Vec<LirConstant>, LirType),
-    GlobalRef(Name, LirType, Vec<u64>),
-    FunctionRef(Name, LirType),
-    Null(LirType),
-    Undef(LirType),
+}
+
+/// An integer constant payload. Fixed-width language types retain their native
+/// representation; arbitrary LLVM widths use the APInt-style word buffer.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LirInteger {
+    I1(bool),
+    I8(u8),
+    I16(u16),
+    I32(u32),
+    I64(u64),
+    I128(u128),
+    Arbitrary(LirApInt),
+}
+
+/// A width-carrying arbitrary integer bit pattern, modeled after LLVM's
+/// `APInt`. It is used only where no native-width LIR integer applies.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LirApInt {
+    pub bit_width: u32,
+    pub words: Box<[u64]>,
+}
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum LirConstantError {
+    #[error("integer payload {integer:?} is incompatible with {ty:?}")]
+    IntegerTypeMismatch { ty: LirType, integer: LirInteger },
+    #[error("floating payload {float:?} is incompatible with {ty:?}")]
+    FloatTypeMismatch { ty: LirType, float: LirFloat },
+}
+
+impl LirApInt {
+    pub fn from_words(bit_width: u32, words: Vec<u64>) -> Option<Self> {
+        let word_count = usize::try_from(bit_width.div_ceil(64)).ok()?;
+        if bit_width == 0 || words.len() != word_count {
+            return None;
+        }
+        let used_bits_in_last_word = bit_width % 64;
+        if used_bits_in_last_word != 0 {
+            let valid_mask = u64::MAX >> (64 - used_bits_in_last_word);
+            if words.last().is_some_and(|word| *word & !valid_mask != 0) {
+                return None;
+            }
+        }
+        Some(Self {
+            bit_width,
+            words: words.into_boxed_slice(),
+        })
+    }
+}
+
+impl LirInteger {
+    pub fn is_zero(&self) -> bool {
+        match self {
+            LirInteger::I1(value) => !*value,
+            LirInteger::I8(value) => *value == 0,
+            LirInteger::I16(value) => *value == 0,
+            LirInteger::I32(value) => *value == 0,
+            LirInteger::I64(value) => *value == 0,
+            LirInteger::I128(value) => *value == 0,
+            LirInteger::Arbitrary(value) => value.words.iter().all(|word| *word == 0),
+        }
+    }
+
+    pub fn matches_type(&self, ty: &LirType) -> bool {
+        match (self, ty) {
+            (LirInteger::I1(_), LirType::I1)
+            | (LirInteger::I8(_), LirType::I8)
+            | (LirInteger::I16(_), LirType::I16)
+            | (LirInteger::I32(_), LirType::I32)
+            | (LirInteger::I64(_), LirType::I64)
+            | (LirInteger::I128(_), LirType::I128) => true,
+            (LirInteger::Arbitrary(value), LirType::Integer(width)) => value.bit_width == *width,
+            _ => false,
+        }
+    }
+}
+
+impl std::fmt::Display for LirInteger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LirInteger::I1(value) => write!(f, "{}", u8::from(*value)),
+            LirInteger::I8(value) => write!(f, "{value}"),
+            LirInteger::I16(value) => write!(f, "{value}"),
+            LirInteger::I32(value) => write!(f, "{value}"),
+            LirInteger::I64(value) => write!(f, "{value}"),
+            LirInteger::I128(value) => write!(f, "{value}"),
+            LirInteger::Arbitrary(value) => {
+                write!(f, "0x")?;
+                for word in value.words.iter().rev() {
+                    write!(f, "{word:016x}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+/// The exact IEEE payload of an LIR floating constant. Decimal source values
+/// are rounded during lowering; LIR itself never stores an untyped `f64`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LirFloat {
+    F32(u32),
+    F64(u64),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LirConstantAggregate {
+    Array(Vec<LirConstant>),
+    Struct(Vec<LirConstant>),
+    Vector(Vec<LirConstant>),
+}
+
+/// A constant expression is an immutable, typed expression whose operands are
+/// themselves constants. Ordinary computations must use instructions.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LirConstantExpr {
+    GetElementPtr {
+        base: Box<LirConstant>,
+        indices: Vec<LirConstant>,
+        inbounds: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -490,8 +676,9 @@ pub struct DebugInfo {
 
 // Implementation helpers
 impl LirProgram {
-    pub fn new() -> Self {
+    pub fn new(data_layout: LirDataLayout) -> Self {
         Self {
+            data_layout,
             functions: Vec::new(),
             globals: Vec::new(),
             type_definitions: Vec::new(),
@@ -508,12 +695,16 @@ impl LirProgram {
         self.globals.push(global);
     }
 
-    pub fn extend(&mut self, mut other: LirProgram) {
+    pub fn extend(&mut self, mut other: LirProgram) -> Result<(), LirProgramError> {
+        if self.data_layout != other.data_layout {
+            return Err(LirProgramError::DataLayoutMismatch);
+        }
         self.functions.append(&mut other.functions);
         self.globals.append(&mut other.globals);
         self.type_definitions.append(&mut other.type_definitions);
         self.comptime_entries.append(&mut other.comptime_entries);
         self.queries.append(&mut other.queries);
+        Ok(())
     }
 
     /// Return the only embedded query item in this LIR program.
@@ -590,13 +781,13 @@ impl LirInstruction {
         Self {
             id,
             kind,
-            type_hint: None,
+            result: None,
             debug_info: None,
         }
     }
 
-    pub fn with_type(mut self, ty: LirType) -> Self {
-        self.type_hint = Some(ty);
+    pub fn with_result(mut self, ty: LirType) -> Self {
+        self.result = Some(LirRegister { id: self.id, ty });
         self
     }
 
@@ -606,11 +797,152 @@ impl LirInstruction {
     }
 }
 
+impl LirValue {
+    pub fn register(id: RegisterId, ty: LirType) -> Self {
+        Self {
+            ty,
+            kind: LirValueKind::Register(id),
+        }
+    }
+
+    pub fn constant(constant: LirConstant) -> Self {
+        Self {
+            ty: constant.ty.clone(),
+            kind: LirValueKind::Constant(constant.kind),
+        }
+    }
+
+    pub fn global(name: Name, ty: LirType) -> Self {
+        Self {
+            ty,
+            kind: LirValueKind::Global(name),
+        }
+    }
+
+    pub fn function(function: LirFunctionRef, ty: LirType) -> Self {
+        Self {
+            ty,
+            kind: LirValueKind::Function(function),
+        }
+    }
+
+    pub fn local(id: u32, ty: LirType) -> Self {
+        Self {
+            ty,
+            kind: LirValueKind::Local(id),
+        }
+    }
+
+    pub fn stack_slot(id: u32, ty: LirType) -> Self {
+        Self {
+            ty,
+            kind: LirValueKind::StackSlot(id),
+        }
+    }
+}
+
+impl LirConstant {
+    pub fn integer(ty: LirType, value: LirInteger) -> Result<Self, LirConstantError> {
+        if !value.matches_type(&ty) {
+            return Err(LirConstantError::IntegerTypeMismatch { ty, integer: value });
+        }
+        Ok(Self {
+            ty,
+            kind: LirConstantKind::Data(LirConstantData::Integer(value)),
+        })
+    }
+
+    pub fn float(ty: LirType, value: LirFloat) -> Result<Self, LirConstantError> {
+        let matches_type = matches!(
+            (&ty, value),
+            (LirType::F32, LirFloat::F32(_)) | (LirType::F64, LirFloat::F64(_))
+        );
+        if !matches_type {
+            return Err(LirConstantError::FloatTypeMismatch { ty, float: value });
+        }
+        Ok(Self {
+            ty,
+            kind: LirConstantKind::Data(LirConstantData::Float(value)),
+        })
+    }
+
+    pub fn bytes(ty: LirType, value: Vec<u8>) -> Self {
+        Self {
+            ty,
+            kind: LirConstantKind::Data(LirConstantData::Bytes(value)),
+        }
+    }
+
+    pub fn aggregate(ty: LirType, value: LirConstantAggregate) -> Self {
+        Self {
+            ty,
+            kind: LirConstantKind::Aggregate(value),
+        }
+    }
+
+    pub fn global_address(ty: LirType, global: Name) -> Self {
+        Self {
+            ty,
+            kind: LirConstantKind::GlobalAddress { global },
+        }
+    }
+
+    pub fn function_address(ty: LirType, function: LirFunctionRef) -> Self {
+        Self {
+            ty,
+            kind: LirConstantKind::FunctionAddress(function),
+        }
+    }
+
+    pub fn get_element_ptr(
+        ty: LirType,
+        base: LirConstant,
+        indices: Vec<LirConstant>,
+        inbounds: bool,
+    ) -> Self {
+        Self {
+            ty,
+            kind: LirConstantKind::Expr(LirConstantExpr::GetElementPtr {
+                base: Box::new(base),
+                indices,
+                inbounds,
+            }),
+        }
+    }
+
+    pub fn null(ty: LirType) -> Self {
+        Self {
+            ty,
+            kind: LirConstantKind::Null,
+        }
+    }
+
+    pub fn undef(ty: LirType) -> Self {
+        Self {
+            ty,
+            kind: LirConstantKind::Undef,
+        }
+    }
+
+    pub fn poison(ty: LirType) -> Self {
+        Self {
+            ty,
+            kind: LirConstantKind::Poison,
+        }
+    }
+}
+
 impl LirType {
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
-            LirType::I1 | LirType::I8 | LirType::I16 | LirType::I32 | LirType::I64 | LirType::I128
+            LirType::Integer(_)
+                | LirType::I1
+                | LirType::I8
+                | LirType::I16
+                | LirType::I32
+                | LirType::I64
+                | LirType::I128
         )
     }
 
@@ -624,6 +956,7 @@ impl LirType {
 
     pub fn size_in_bits(&self) -> Option<u32> {
         match self {
+            LirType::Integer(width) => Some(*width),
             LirType::I1 => Some(1),
             LirType::I8 => Some(8),
             LirType::I16 => Some(16),
@@ -634,7 +967,8 @@ impl LirType {
             LirType::F64 => Some(64),
             LirType::Ptr(_) => Some(64), // Assume 64-bit pointers
             LirType::Array(element_ty, count) => {
-                element_ty.size_in_bits().map(|size| size * (*count as u32))
+                let count = u32::try_from(*count).ok()?;
+                element_ty.size_in_bits()?.checked_mul(count)
             }
             _ => None,
         }
@@ -656,6 +990,49 @@ impl Default for Linkage {
 impl Default for Visibility {
     fn default() -> Self {
         Visibility::Default
+    }
+}
+
+impl LirDataLayout {
+    pub fn new(
+        pointer_size_bits: u32,
+        pointer_alignment: u32,
+        integer_alignments: Vec<(u32, u32)>,
+    ) -> Result<Self, LirDataLayoutError> {
+        if pointer_size_bits == 0 || !pointer_size_bits.is_multiple_of(8) {
+            return Err(LirDataLayoutError::InvalidPointerSize(pointer_size_bits));
+        }
+        if pointer_alignment == 0 {
+            return Err(LirDataLayoutError::InvalidPointerAlignment(
+                pointer_alignment,
+            ));
+        }
+        for (index, (width, alignment)) in integer_alignments.iter().enumerate() {
+            if *width == 0 || *alignment == 0 {
+                return Err(LirDataLayoutError::InvalidIntegerAlignment {
+                    width: *width,
+                    alignment: *alignment,
+                });
+            }
+            if integer_alignments[..index]
+                .iter()
+                .any(|(previous_width, _)| previous_width == width)
+            {
+                return Err(LirDataLayoutError::DuplicateIntegerAlignment(*width));
+            }
+        }
+        Ok(Self {
+            pointer_size_bits,
+            pointer_alignment,
+            integer_alignments,
+        })
+    }
+
+    pub fn integer_alignment(&self, width: u32) -> Result<u32, LirDataLayoutError> {
+        self.integer_alignments
+            .iter()
+            .find_map(|(layout_width, alignment)| (*layout_width == width).then_some(*alignment))
+            .ok_or(LirDataLayoutError::MissingIntegerAlignment(width))
     }
 }
 
@@ -692,6 +1069,55 @@ impl LirInstructionKind {
 impl LirTerminator {
     pub fn span(&self) -> Span {
         Span::null()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LirApInt, LirConstant, LirDataLayout, LirInteger, LirProgram, LirType};
+
+    fn data_layout() -> LirDataLayout {
+        LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .expect("valid data layout")
+    }
+
+    #[test]
+    fn integer_constant_requires_matching_native_type() {
+        assert!(LirConstant::integer(LirType::I32, LirInteger::I32(42)).is_ok());
+        assert!(LirConstant::integer(LirType::I64, LirInteger::I32(42)).is_err());
+    }
+
+    #[test]
+    fn arbitrary_integer_constant_requires_matching_width() {
+        let value = LirApInt::from_words(256, vec![0; 4]).expect("valid APInt words");
+        assert!(LirConstant::integer(LirType::Integer(256), LirInteger::Arbitrary(value)).is_ok());
+
+        let value = LirApInt::from_words(256, vec![0; 4]).expect("valid APInt words");
+        assert!(LirConstant::integer(LirType::Integer(257), LirInteger::Arbitrary(value)).is_err());
+    }
+
+    #[test]
+    fn arbitrary_integer_rejects_unused_high_bits() {
+        assert!(LirApInt::from_words(65, vec![0, 2]).is_none());
+        assert!(LirApInt::from_words(65, vec![0, 1]).is_some());
+    }
+
+    #[test]
+    fn program_extend_rejects_layout_mismatch() {
+        let mut program = LirProgram::new(data_layout());
+        let other = LirProgram::new(
+            LirDataLayout::new(
+                32,
+                4,
+                vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+            )
+            .expect("valid data layout"),
+        );
+        assert!(program.extend(other).is_err());
     }
 }
 

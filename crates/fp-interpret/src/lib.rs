@@ -2,14 +2,16 @@ mod vm;
 
 use std::collections::HashMap;
 
-use fp_core::ast::{Ty, TypeStruct, TypeType, TypeUnknown, Value, ValueList, ValueMapEntry, ValueString, ValueTuple};
+use fp_core::ast::{
+    Ty, TypeStruct, TypeType, TypeUnknown, Value, ValueList, ValueMapEntry, ValueString, ValueTuple,
+};
+use fp_core::hir::PackageId;
+use fp_core::lir::layout;
 use fp_core::lir::{
     BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirCompileUnit, LirConstant,
     LirFunction, LirInstruction, LirInstructionKind, LirLocal, LirProgram, LirTerminator, LirType,
     LirValue, RegisterId,
 };
-use fp_core::lir::layout;
-use fp_core::hir::PackageId;
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
 use crate::vm::{
@@ -79,7 +81,9 @@ impl LirInterpreter {
             .functions
             .iter()
             .find(|function| function.def_id == Some(def_id))
-            .ok_or(VmError::Runtime(format!("entrypoint {def_id} was not emitted")))?;
+            .ok_or(VmError::Runtime(format!(
+                "entrypoint {def_id} was not emitted"
+            )))?;
         let func = func.clone();
         self.run_function(program, &func, &[])
     }
@@ -95,7 +99,12 @@ impl LirInterpreter {
             self.populate_globals(&unit.program);
         }
         for unit in units.iter().filter(|unit| unit.package_id == package_id) {
-            if let Some(func) = unit.program.functions.iter().find(|f| f.name.as_str() == name) {
+            if let Some(func) = unit
+                .program
+                .functions
+                .iter()
+                .find(|f| f.name.as_str() == name)
+            {
                 return self.run_function(&unit.program, func, &[]);
             }
         }
@@ -116,8 +125,10 @@ impl LirInterpreter {
                 if let Some(def_id) = function.def_id {
                     self.definition_functions.insert(def_id, function.clone());
                 }
-                self.package_functions
-                    .insert((unit.package_id, function.name.as_str().to_string()), function.clone());
+                self.package_functions.insert(
+                    (unit.package_id, function.name.as_str().to_string()),
+                    function.clone(),
+                );
             }
             self.populate_functions_from_program(&unit.program);
         }
@@ -125,14 +136,17 @@ impl LirInterpreter {
 
     fn populate_functions_from_program(&mut self, program: &LirProgram) {
         for func in &program.functions {
-            self.program_functions.insert(func.name.as_str().to_string(), func.clone());
+            self.program_functions
+                .insert(func.name.as_str().to_string(), func.clone());
         }
     }
 
     fn populate_functions_for_package(&mut self, program: &LirProgram, package_id: PackageId) {
         for function in &program.functions {
-            self.package_functions
-                .insert((package_id, function.name.as_str().to_string()), function.clone());
+            self.package_functions.insert(
+                (package_id, function.name.as_str().to_string()),
+                function.clone(),
+            );
         }
     }
 
@@ -347,8 +361,9 @@ impl LirInterpreter {
                 self.wr(dst, result);
                 Ok(())
             }
-            LirInstructionKind::FPTrunc(v, _)
-            | LirInstructionKind::FPExt(v, _) => self.unary(dst, v, |x| x),
+            LirInstructionKind::FPTrunc(v, _) | LirInstructionKind::FPExt(v, _) => {
+                self.unary(dst, v, |x| x)
+            }
             LirInstructionKind::FPToUI(v, _) => {
                 let raw = self.resolve_raw(v)?;
                 let val = f64::from_bits(raw);
@@ -412,12 +427,21 @@ impl LirInterpreter {
                     self.wr(dst, handle);
                     Ok(())
                 }
-                ComptimeOp::AddField { struct_handle, field_name, field_type } => {
+                ComptimeOp::AddField {
+                    struct_handle,
+                    field_name,
+                    field_type,
+                } => {
                     let handle = self.resolve_raw(struct_handle)? as usize;
-                    let struct_val = self.state.objects.get(handle)
+                    let struct_val = self
+                        .state
+                        .objects
+                        .get(handle)
                         .ok_or_else(|| VmError::Runtime("struct handle out of range".into()))?;
                     let field_name_str = self.resolve_string_value(field_name);
-                    let field_ty = match self.resolve_runtime_value(field_type, &LirType::Ptr(Box::new(LirType::I8))) {
+                    let field_ty = match self
+                        .resolve_runtime_value(field_type, &LirType::Ptr(Box::new(LirType::I8)))
+                    {
                         Ok(Value::Type(ty)) => ty,
                         _ => Ty::Unknown(TypeUnknown),
                     };
@@ -438,11 +462,16 @@ impl LirInterpreter {
                 }
                 ComptimeOp::IntoType { value } => {
                     let handle = self.resolve_raw(value)? as usize;
-                    let struct_val = self.state.objects.get(handle)
+                    let struct_val = self
+                        .state
+                        .objects
+                        .get(handle)
                         .ok_or_else(|| VmError::Runtime("type handle out of range".into()))?;
                     let struct_ty = match struct_val {
                         Value::Type(Ty::Struct(s)) => s.clone(),
-                        _ => return Err(VmError::Runtime("expected struct type in IntoType".into())),
+                        _ => {
+                            return Err(VmError::Runtime("expected struct type in IntoType".into()))
+                        }
                     };
                     let wrapped = Value::Type(Ty::Type(TypeType {
                         span: fp_core::span::Span::null(),
@@ -759,6 +788,7 @@ impl LirInterpreter {
         Ok(match constant {
             LirConstant::Int(v, _) => Value::int(*v),
             LirConstant::UInt(v, _) => Value::uint(*v),
+            LirConstant::F32(v) => Value::decimal(f64::from(*v)),
             LirConstant::Float(v, _) => Value::decimal(*v),
             LirConstant::Bool(v) => Value::bool(*v),
             LirConstant::String(text) => Value::String(ValueString::new_ref(text.clone())),
@@ -984,7 +1014,9 @@ impl LirInterpreter {
                 if idx >= vs.structural.fields.len() {
                     return Err(VmError::Runtime(format!(
                         "InsertValue index {} out of bounds for struct {} ({} fields)",
-                        first, vs.ty.name, vs.structural.fields.len()
+                        first,
+                        vs.ty.name,
+                        vs.structural.fields.len()
                     )));
                 }
                 let slot = &mut vs.structural.fields[idx].value;
@@ -999,7 +1031,8 @@ impl LirInterpreter {
                 if idx >= vs.fields.len() {
                     return Err(VmError::Runtime(format!(
                         "InsertValue index {} out of bounds for structural ({} fields)",
-                        first, vs.fields.len()
+                        first,
+                        vs.fields.len()
                     )));
                 }
                 let slot = &mut vs.fields[idx].value;
@@ -1027,19 +1060,26 @@ impl LirInterpreter {
                 })?,
                 Value::Struct(vs) => {
                     let idx = *index as usize;
-                    vs.structural.fields.get(idx).map(|f| &f.value).ok_or_else(|| {
-                        VmError::Runtime(format!(
-                            "ExtractValue index {} out of bounds for struct {} ({} fields)",
-                            index, vs.ty.name, vs.structural.fields.len()
-                        ))
-                    })?
+                    vs.structural
+                        .fields
+                        .get(idx)
+                        .map(|f| &f.value)
+                        .ok_or_else(|| {
+                            VmError::Runtime(format!(
+                                "ExtractValue index {} out of bounds for struct {} ({} fields)",
+                                index,
+                                vs.ty.name,
+                                vs.structural.fields.len()
+                            ))
+                        })?
                 }
                 Value::Structural(vs) => {
                     let idx = *index as usize;
                     vs.fields.get(idx).map(|f| &f.value).ok_or_else(|| {
                         VmError::Runtime(format!(
                             "ExtractValue index {} out of bounds for structural ({} fields)",
-                            index, vs.fields.len()
+                            index,
+                            vs.fields.len()
                         ))
                     })?
                 }
@@ -1113,7 +1153,13 @@ impl LirInterpreter {
         Ok(())
     }
 
-    fn binop_div(&mut self, dst: u32, a: &LirValue, b: &LirValue, ty: Option<&LirType>) -> LirResult<()> {
+    fn binop_div(
+        &mut self,
+        dst: u32,
+        a: &LirValue,
+        b: &LirValue,
+        ty: Option<&LirType>,
+    ) -> LirResult<()> {
         let rhs = self.resolve_raw(b)?;
         if rhs == 0 {
             return Err(VmError::DivisionByZero);
@@ -1129,7 +1175,13 @@ impl LirInterpreter {
         Ok(())
     }
 
-    fn binop_rem(&mut self, dst: u32, a: &LirValue, b: &LirValue, ty: Option<&LirType>) -> LirResult<()> {
+    fn binop_rem(
+        &mut self,
+        dst: u32,
+        a: &LirValue,
+        b: &LirValue,
+        ty: Option<&LirType>,
+    ) -> LirResult<()> {
         let rhs = self.resolve_raw(b)?;
         if rhs == 0 {
             return Err(VmError::DivisionByZero);
@@ -1152,16 +1204,22 @@ impl LirInterpreter {
                 self.handle_call_named(dst, name, args, Some(*package_id), None)
             }
             LirValue::FunctionDef(def_id) => {
-                let function = self
-                    .definition_functions
-                    .get(def_id)
-                    .cloned()
-                    .ok_or(VmError::Runtime(format!("missing function definition {def_id}")))?;
+                let function =
+                    self.definition_functions
+                        .get(def_id)
+                        .cloned()
+                        .ok_or(VmError::Runtime(format!(
+                            "missing function definition {def_id}"
+                        )))?;
                 let resolved_args: Vec<Value> = args
                     .iter()
                     .enumerate()
                     .map(|(index, arg)| {
-                        let ty = function.signature.params.get(index).unwrap_or(&LirType::Void);
+                        let ty = function
+                            .signature
+                            .params
+                            .get(index)
+                            .unwrap_or(&LirType::Void);
                         self.resolve_runtime_value(arg, ty)
                     })
                     .collect::<LirResult<Vec<_>>>()?;
@@ -1183,67 +1241,67 @@ impl LirInterpreter {
         package_id: Option<PackageId>,
         definition: Option<LirFunction>,
     ) -> LirResult<()> {
-                let raws: Vec<u64> = args
+        let raws: Vec<u64> = args
+            .iter()
+            .map(|a| self.resolve_raw(a))
+            .collect::<LirResult<Vec<_>>>()?;
+
+        // Try FFI dispatch for extern C functions.
+        if let Some(sig) = self.extern_sigs.get(name) {
+            if let Some(ref mut ffi) = self.ffi {
+                match ffi.call(name, sig, &raws) {
+                    Ok(Some(ret)) => {
+                        self.wr(dst, ret);
+                        return Ok(());
+                    }
+                    Ok(None) => {
+                        self.wr(dst, 0);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        // FFI call failed — fall through to intrinsic
+                        // stubs so comptime evaluation keeps working.
+                        eprintln!("ffi call '{name}' failed: {e}");
+                    }
+                }
+            }
+        }
+
+        let r = self.call_intrinsic(name, &raws)?;
+
+        // If the intrinsic returned 0 AND it's not a known intrinsic,
+        // try regular LIR function call (cross-module const fn).
+        if r == 0 && !Self::is_known_intrinsic(name) {
+            let func = if definition.is_some() {
+                definition
+            } else {
+                match package_id {
+                    Some(package_id) => self
+                        .package_functions
+                        .get(&(package_id, name.to_string()))
+                        .cloned(),
+                    None => self.program_functions.get(name).cloned(),
+                }
+            };
+            if let Some(func) = func {
+                let resolved_args: Vec<Value> = args
                     .iter()
-                    .map(|a| self.resolve_raw(a))
+                    .enumerate()
+                    .map(|(index, arg)| {
+                        let ty = func.signature.params.get(index).unwrap_or(&LirType::Void);
+                        self.resolve_runtime_value(arg, ty)
+                    })
                     .collect::<LirResult<Vec<_>>>()?;
-
-                // Try FFI dispatch for extern C functions.
-                if let Some(sig) = self.extern_sigs.get(name) {
-                    if let Some(ref mut ffi) = self.ffi {
-                        match ffi.call(name, sig, &raws) {
-                            Ok(Some(ret)) => {
-                                self.wr(dst, ret);
-                                return Ok(());
-                            }
-                            Ok(None) => {
-                                self.wr(dst, 0);
-                                return Ok(());
-                            }
-                            Err(e) => {
-                                // FFI call failed — fall through to intrinsic
-                                // stubs so comptime evaluation keeps working.
-                                eprintln!("ffi call '{name}' failed: {e}");
-                            }
-                        }
-                    }
+                let prog = LirProgram::new();
+                if let Ok(v) = self.run_function(&prog, &func, &resolved_args) {
+                    let raw = self.value_to_slot_raw(v, &func.signature.return_type);
+                    self.wr(dst, raw);
+                    return Ok(());
                 }
-
-                let r = self.call_intrinsic(name, &raws)?;
-
-                // If the intrinsic returned 0 AND it's not a known intrinsic,
-                // try regular LIR function call (cross-module const fn).
-                if r == 0 && !Self::is_known_intrinsic(name) {
-                    let func = if definition.is_some() {
-                        definition
-                    } else {
-                        match package_id {
-                        Some(package_id) => self
-                            .package_functions
-                            .get(&(package_id, name.to_string()))
-                            .cloned(),
-                        None => self.program_functions.get(name).cloned(),
-                        }
-                    };
-                    if let Some(func) = func {
-                        let resolved_args: Vec<Value> = args
-                            .iter()
-                            .enumerate()
-                            .map(|(index, arg)| {
-                                let ty = func.signature.params.get(index).unwrap_or(&LirType::Void);
-                                self.resolve_runtime_value(arg, ty)
-                            })
-                            .collect::<LirResult<Vec<_>>>()?;
-                        let prog = LirProgram::new();
-                        if let Ok(v) = self.run_function(&prog, &func, &resolved_args) {
-                            let raw = self.value_to_slot_raw(v, &func.signature.return_type);
-                            self.wr(dst, raw);
-                            return Ok(());
-                        }
-                    }
-                }
-                self.wr(dst, r);
-                Ok(())
+            }
+        }
+        self.wr(dst, r);
+        Ok(())
     }
 
     fn call_intrinsic(&mut self, name: &str, args: &[u64]) -> LirResult<u64> {
@@ -1309,11 +1367,27 @@ impl LirInterpreter {
     }
 
     fn is_known_intrinsic(name: &str) -> bool {
-        if name.starts_with("__bc_") { return true; }
-        matches!(name,
-            "println" | "print" | "eprintln" | "eprint" | "printf"
-            | "sizeof" | "strlen" | "malloc" | "free" | "realloc"
-            | "sin" | "cos" | "tan" | "sqrt" | "pow" | "strcmp"
+        if name.starts_with("__bc_") {
+            return true;
+        }
+        matches!(
+            name,
+            "println"
+                | "print"
+                | "eprintln"
+                | "eprint"
+                | "printf"
+                | "sizeof"
+                | "strlen"
+                | "malloc"
+                | "free"
+                | "realloc"
+                | "sin"
+                | "cos"
+                | "tan"
+                | "sqrt"
+                | "pow"
+                | "strcmp"
         )
     }
 
@@ -1527,12 +1601,14 @@ impl LirInterpreter {
 
     fn aggregate_field(value: &Value, index: usize) -> LirResult<&Value> {
         match value {
-            Value::Tuple(tuple) => tuple.values.get(index).ok_or_else(|| {
-                VmError::Runtime(format!("aggregate field {index} out of bounds"))
-            }),
-            Value::List(list) => list.values.get(index).ok_or_else(|| {
-                VmError::Runtime(format!("aggregate field {index} out of bounds"))
-            }),
+            Value::Tuple(tuple) => tuple
+                .values
+                .get(index)
+                .ok_or_else(|| VmError::Runtime(format!("aggregate field {index} out of bounds"))),
+            Value::List(list) => list
+                .values
+                .get(index)
+                .ok_or_else(|| VmError::Runtime(format!("aggregate field {index} out of bounds"))),
             Value::Struct(structure) => structure
                 .structural
                 .fields
@@ -1544,7 +1620,9 @@ impl LirInterpreter {
                 .get(index)
                 .map(|field| &field.value)
                 .ok_or_else(|| VmError::Runtime(format!("aggregate field {index} out of bounds"))),
-            _ => Err(VmError::Runtime(format!("expected aggregate, found {value:?}"))),
+            _ => Err(VmError::Runtime(format!(
+                "expected aggregate, found {value:?}"
+            ))),
         }
     }
 
@@ -1557,11 +1635,7 @@ impl LirInterpreter {
         }
     }
 
-    fn render_intrinsic(
-        &self,
-        format: &str,
-        args: &[LirValue],
-    ) -> LirResult<String> {
+    fn render_intrinsic(&self, format: &str, args: &[LirValue]) -> LirResult<String> {
         let mut rendered = format.to_string();
         for arg in args {
             let ty = self.infer_type(arg);
@@ -1637,6 +1711,7 @@ fn const_raw(c: &LirConstant) -> u64 {
     match c {
         LirConstant::Int(v, _) => *v as u64,
         LirConstant::UInt(v, _) => *v,
+        LirConstant::F32(v) => u64::from(v.to_bits()),
         LirConstant::Float(v, _) => v.to_bits(),
         LirConstant::Bool(v) => {
             if *v {
@@ -1661,6 +1736,7 @@ fn const_ty(c: &LirConstant) -> LirType {
         | LirConstant::GlobalRef(_, ty, _)
         | LirConstant::FunctionRef(_, ty) => ty.clone(),
         LirConstant::Bool(_) => LirType::I1,
+        LirConstant::F32(_) => LirType::F32,
         LirConstant::String(_) => LirType::Ptr(Box::new(LirType::I8)),
         LirConstant::Bytes(bytes) => LirType::Array(Box::new(LirType::I8), bytes.len() as u64),
     }
