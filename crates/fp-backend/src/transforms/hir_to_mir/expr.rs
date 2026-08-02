@@ -12157,10 +12157,17 @@ impl<'a> BodyBuilder<'a> {
         } else {
             self.resolve_callee(callee)?
         };
-        let mut associated_struct = callee_name
-            .as_ref()
-            .and_then(|name| self.lowering.method_lookup.get(name))
-            .and_then(|info| info.struct_def);
+        let mut associated_struct = match &callee.kind {
+            hir::ExprKind::Path(path) => path
+                .res
+                .as_ref()
+                .and_then(|res| match res {
+                    hir::Res::Def(def_id) => self.lowering.method_lookup_by_def.get(def_id),
+                    _ => None,
+                })
+                .and_then(|info| info.struct_def),
+            _ => None,
+        };
         let callee_tail = if let hir::ExprKind::Path(path) = &callee.kind {
             path.segments.last().map(|seg| seg.name.as_str())
         } else {
