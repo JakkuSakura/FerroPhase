@@ -3,6 +3,7 @@ use std::fmt::{self, Display};
 
 use semver::{Version, VersionReq};
 
+use crate::hir::PackageId as HirPackageId;
 use crate::module::{FeatureRef, ModuleId};
 use crate::vfs::VirtualPath;
 
@@ -103,6 +104,7 @@ use std::collections::{HashMap, HashSet};
 /// or re-type-checking.
 #[derive(Clone, Debug, Default)]
 pub struct PackageCrate {
+    pub package_id: HirPackageId,
     pub name: String,
     pub graph: graph::PackageGraph,
 
@@ -148,7 +150,7 @@ pub struct PackageCrate {
 }
 
 impl PackageCrate {
-    pub fn new(name: impl Into<String>, graph: graph::PackageGraph) -> Self {
+    pub fn new(package_id: HirPackageId, name: impl Into<String>, graph: graph::PackageGraph) -> Self {
         let module_paths: HashSet<QualifiedPath> = graph
             .modules()
             .filter(|m| !m.module_path.is_empty())
@@ -156,6 +158,7 @@ impl PackageCrate {
             .collect();
 
         Self {
+            package_id,
             name: name.into(),
             graph,
             struct_defs: HashMap::new(),

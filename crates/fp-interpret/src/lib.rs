@@ -8,6 +8,7 @@ use fp_core::lir::{
     LirFunction, LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType,
     LirValue, RegisterId,
 };
+use fp_core::hir::PackageId;
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
 use crate::vm::{
@@ -22,7 +23,7 @@ pub struct LirInterpreter {
     state: ThreadState,
     register_types: HashMap<RegisterId, LirType>,
     /// Global object handles keyed by name, populated from the LIR
-    /// program during run_main / run_function_named.
+    /// program during run_main / package-scoped run_function_named.
     global_values: HashMap<String, u64>,
     /// Optional FFI runtime for calling extern C functions.  Set
     /// before running if the program contains extern declarations.
@@ -35,6 +36,7 @@ pub struct LirInterpreter {
     /// All LIR functions keyed by name, for cross-module call resolution.
     /// Populated from the LirProgram on each call to run_function_named.
     program_functions: HashMap<String, LirFunction>,
+    package_functions: HashMap<(PackageId, String), LirFunction>,
 }
 
 impl LirInterpreter {
@@ -47,6 +49,7 @@ impl LirInterpreter {
             extern_sigs: HashMap::new(),
             last_predecessor: None,
             program_functions: HashMap::new(),
+            package_functions: HashMap::new(),
         }
     }
 
@@ -62,17 +65,25 @@ impl LirInterpreter {
         self.run_function(program, func, &[])
     }
 
-    pub fn run_function_named(&mut self, units: &[LirCompileUnit], name: &str) -> LirResult<Value> {
+    pub fn run_function_named(
+        &mut self,
+        units: &[LirCompileUnit],
+        package_id: PackageId,
+        name: &str,
+    ) -> LirResult<Value> {
         self.populate_functions_from_units(units);
         for unit in units {
             self.populate_globals(&unit.program);
         }
-        for unit in units {
+        for unit in units.iter().filter(|unit| unit.package_id == package_id) {
             if let Some(func) = unit.program.functions.iter().find(|f| f.name.as_str() == name) {
                 return self.run_function(&unit.program, func, &[]);
             }
         }
-        Err(VmError::Runtime(format!("missing function {name}")))
+        Err(VmError::Runtime(format!(
+            "missing function {name} in package {}",
+            package_id.0
+        )))
     }
 
     /// Look up an object handle from the objects table.
@@ -82,6 +93,10 @@ impl LirInterpreter {
 
     fn populate_functions_from_units(&mut self, units: &[LirCompileUnit]) {
         for unit in units {
+            for function in &unit.program.functions {
+                self.package_functions
+                    .insert((unit.package_id, function.name.as_str().to_string()), function.clone());
+            }
             self.populate_functions_from_program(&unit.program);
         }
     }
@@ -459,7 +474,7 @@ impl LirInterpreter {
                 .get(name.as_str())
                 .copied()
                 .ok_or_else(|| VmError::Runtime(format!("missing global {name}"))),
-            LirValue::Function(_) => Ok(0),
+            LirValue::Function(_) | LirValue::FunctionInPackage(_, _) => Ok(0),
             LirValue::Undef(_) | LirValue::Null(_) => Ok(0),
         }
     }
@@ -1024,14 +1039,28 @@ impl LirInterpreter {
 
     fn handle_call(&mut self, dst: u32, function: &LirValue, args: &[LirValue]) -> LirResult<()> {
         match function {
-            LirValue::Function(name) => {
+            LirValue::Function(name) => self.handle_call_named(dst, name, args, None),
+            LirValue::FunctionInPackage(package_id, name) => {
+                self.handle_call_named(dst, name, args, Some(*package_id))
+            }
+            _ => Err(VmError::Runtime("indirect call".into())),
+        }
+    }
+
+    fn handle_call_named(
+        &mut self,
+        dst: u32,
+        name: &str,
+        args: &[LirValue],
+        package_id: Option<PackageId>,
+    ) -> LirResult<()> {
                 let raws: Vec<u64> = args
                     .iter()
                     .map(|a| self.resolve_raw(a))
                     .collect::<LirResult<Vec<_>>>()?;
 
                 // Try FFI dispatch for extern C functions.
-                if let Some(sig) = self.extern_sigs.get(name.as_str()) {
+                if let Some(sig) = self.extern_sigs.get(name) {
                     if let Some(ref mut ffi) = self.ffi {
                         match ffi.call(name, sig, &raws) {
                             Ok(Some(ret)) => {
@@ -1056,19 +1085,13 @@ impl LirInterpreter {
                 // If the intrinsic returned 0 AND it's not a known intrinsic,
                 // try regular LIR function call (cross-module const fn).
                 if r == 0 && !Self::is_known_intrinsic(name) {
-                    let sanitized = name.replace("::", "__");
-                    let func = self.program_functions.get(name)
-                        .or_else(|| self.program_functions.get(&sanitized))
-                        .or_else(|| {
-                            self.program_functions.values().find(|f| {
-                                let fn_name = f.name.as_str();
-                                fn_name.ends_with(&format!("::{name}"))
-                                    || fn_name.ends_with(&format!("__{}", sanitized))
-                                    || fn_name == name
-                                    || fn_name == sanitized
-                            })
-                        })
-                        .cloned();
+                    let func = match package_id {
+                        Some(package_id) => self
+                            .package_functions
+                            .get(&(package_id, name.to_string()))
+                            .cloned(),
+                        None => self.program_functions.get(name).cloned(),
+                    };
                     if let Some(func) = func {
                         let resolved_args: Vec<Value> = args
                             .iter()
@@ -1084,9 +1107,6 @@ impl LirInterpreter {
                 }
                 self.wr(dst, r);
                 Ok(())
-            }
-            _ => Err(VmError::Runtime("indirect call".into())),
-        }
     }
 
     fn call_intrinsic(&mut self, name: &str, args: &[u64]) -> LirResult<u64> {

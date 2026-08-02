@@ -711,6 +711,7 @@ fn format_value(value: &LirValue) -> String {
         Constant(constant) => format_constant(constant),
         Global(name, _) => format!("@{}", name),
         Function(name) => format!("@{}", name),
+        FunctionInPackage(_, name) => format!("@{}", name),
         Local(id) => format!("%local{}", id),
         StackSlot(id) => format!("%stack{}", id),
         Undef(ty) => format!("undef {}", format_type(ty)),

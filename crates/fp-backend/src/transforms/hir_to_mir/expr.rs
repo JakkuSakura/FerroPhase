@@ -433,7 +433,7 @@ impl MirLowering {
             next_mir_id: 0,
             next_body_id: 0,
             next_error_id: 0,
-            next_synthetic_def_id: 1,
+            next_synthetic_def_id: mir::ty::DefId::local(1),
             diagnostics: Vec::new(),
             has_errors: false,
             struct_defs: HashMap::new(),
@@ -464,7 +464,7 @@ impl MirLowering {
             synthetic_runtime_functions: HashSet::new(),
             tolerate_errors: false,
             lossy_mode: fp_core::config::lossy_mode(),
-            next_synthetic_hir_def_id: 1,
+            next_synthetic_hir_def_id: hir::DefId::local(1),
             typeck_type_exprs: HashMap::new(),
             typeck_exprs: HashMap::new(),
         }
@@ -543,7 +543,7 @@ impl MirLowering {
             .iter()
             .map(|item| item.def_id)
             .max()
-            .unwrap_or(0)
+            .unwrap_or(hir::DefId::local(0))
             .saturating_add(1);
 
         let reachable = self.collect_reachable_def_ids(program);

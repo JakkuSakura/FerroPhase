@@ -1,7 +1,7 @@
 // use std::collections::HashMap; // Temporarily disabled - unused
 use std::fmt;
 
-pub type DefId = u32;
+pub use super::{DefId, PackageId};
 pub type LocalDefId = u32;
 pub type InternedTy = u32;
 

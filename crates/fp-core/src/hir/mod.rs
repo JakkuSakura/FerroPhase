@@ -1,6 +1,7 @@
 use crate::ast::{TypeBinaryOpKind, TypePrimitive};
 use crate::intrinsics::IntrinsicCallKind;
 use crate::query::{QueryIrDocument, QueryOrigin};
+use std::fmt;
 use std::collections::HashMap;
 
 pub mod ident;
@@ -11,8 +12,42 @@ pub use ident::Symbol;
 pub use ty::{Abi, Ty};
 
 pub type HirId = u32;
-pub type DefId = u32;
 pub type NodeId = u32;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PackageId(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct DefId {
+    pub package_id: PackageId,
+    pub index: u32,
+}
+
+impl DefId {
+    pub const fn local(index: u32) -> Self {
+        Self {
+            package_id: PackageId(0),
+            index,
+        }
+    }
+
+    pub const fn new(package_id: PackageId, index: u32) -> Self {
+        Self { package_id, index }
+    }
+
+    pub const fn saturating_add(self, amount: u32) -> Self {
+        Self {
+            package_id: self.package_id,
+            index: self.index.saturating_add(amount),
+        }
+    }
+}
+
+impl fmt::Display for DefId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.package_id.0, self.index)
+    }
+}
 
 // Remove the old type alias
 // pub type Symbol = String;
@@ -401,6 +436,7 @@ pub struct Generics {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericParam {
     pub hir_id: HirId,
+    pub def_id: DefId,
     pub name: Symbol,
     pub kind: GenericParamKind,
 }

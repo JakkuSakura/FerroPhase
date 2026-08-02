@@ -378,7 +378,7 @@ impl HirGenerator {
     pub(super) fn next_def_id(&mut self) -> hir::DefId {
         let id = self.next_def_id;
         self.next_def_id += 1;
-        id
+        hir::DefId::new(self.package_id, id)
     }
 
     // transform_function moved to items.rs

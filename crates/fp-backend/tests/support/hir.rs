@@ -43,7 +43,7 @@ pub fn function_item(name: &str, body: Expr) -> Item {
 
     Item {
         hir_id: 0,
-        def_id: 0,
+        def_id: hir::DefId::local(0),
         visibility: hir::Visibility::Public,
         kind: ItemKind::Function(function),
         span: Span::new(0, 0, 0),

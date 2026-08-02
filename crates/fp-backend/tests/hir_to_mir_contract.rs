@@ -15,6 +15,10 @@ fn span() -> Span {
     Span::new(0, 0, 0)
 }
 
+fn def_id(index: u32) -> hir::DefId {
+    hir::DefId::local(index)
+}
+
 fn primitive_type(kind: TypePrimitive) -> TypeExpr {
     TypeExpr {
         hir_id: 0,
@@ -124,7 +128,7 @@ fn lowers_constant_return_function_into_mir_assign_and_return() {
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
         hir_id: 3,
-        def_id: 10,
+        def_id: def_id(10),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
         span: span(),
@@ -221,7 +225,7 @@ fn lowers_identity_function_with_parameter() {
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
         hir_id: 9,
-        def_id: 11,
+        def_id: def_id(11),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
         span: span(),
@@ -290,7 +294,7 @@ fn rejects_unresolved_value_path_in_function_body() {
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
         hir_id: 23,
-        def_id: 42,
+        def_id: def_id(42),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
         span: span(),
@@ -346,7 +350,7 @@ fn rejects_binary_operations_with_unit_operands() {
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
         hir_id: 35,
-        def_id: 43,
+        def_id: def_id(43),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
         span: span(),
@@ -367,8 +371,8 @@ fn rejects_binary_operations_with_unit_operands() {
 
 #[test]
 fn rejects_enum_variant_call_with_missing_payload_values() {
-    let enum_def_id = 100;
-    let variant_def_id = 101;
+    let enum_def_id = def_id(100);
+    let variant_def_id = def_id(101);
 
     let enum_item = Item {
         hir_id: 40,
@@ -437,7 +441,7 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
     );
     let function_item = Item {
         hir_id: 46,
-        def_id: 102,
+        def_id: def_id(102),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
         span: span(),
@@ -458,9 +462,9 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
 
 #[test]
 fn rejects_struct_like_enum_variant_with_missing_fields() {
-    let payload_struct_def_id = 110;
-    let enum_def_id = 111;
-    let variant_def_id = 112;
+    let payload_struct_def_id = def_id(110);
+    let enum_def_id = def_id(111);
+    let variant_def_id = def_id(112);
 
     let payload_struct_item = Item {
         hir_id: 50,
@@ -553,7 +557,7 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
     );
     let function_item = Item {
         hir_id: 58,
-        def_id: 113,
+        def_id: def_id(113),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
         span: span(),
@@ -586,7 +590,7 @@ fn stubs_bodyless_functions_as_unreachable() {
     let function = Function::new(sig, None, false, false);
     let item = Item {
         hir_id: 60,
-        def_id: 120,
+        def_id: def_id(120),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
         span: span(),
@@ -631,7 +635,7 @@ fn lowers_const_item_to_mir_static_with_integer_initializer() {
     };
     let item = Item {
         hir_id: 14,
-        def_id: 42,
+        def_id: def_id(42),
         visibility: Visibility::Public,
         kind: ItemKind::Const(konst),
         span: span(),
@@ -752,7 +756,7 @@ fn lowers_index_expression_into_place_projection() {
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
         hir_id: 30,
-        def_id: 40,
+        def_id: def_id(40),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
         span: span(),
@@ -840,7 +844,7 @@ fn lowers_index_on_static_slice_into_subslice_then_index_projection() {
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
         hir_id: 52,
-        def_id: 53,
+        def_id: def_id(53),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
         span: span(),
@@ -955,7 +959,7 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
         hir_id: 75,
-        def_id: 76,
+        def_id: def_id(76),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
         span: span(),
@@ -1074,7 +1078,7 @@ fn return_value_is_materialized_before_finally_runs() {
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
         hir_id: 112,
-        def_id: 113,
+        def_id: def_id(113),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
         span: span(),
@@ -1195,7 +1199,7 @@ fn break_value_is_materialized_before_finally_runs() {
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
         hir_id: 132,
-        def_id: 133,
+        def_id: def_id(133),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
         span: span(),

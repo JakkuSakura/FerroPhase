@@ -66,6 +66,7 @@ impl RuntimeSymbol {
 /// the full pipeline. Multiple LirCompileUnits form a Package.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirCompileUnit {
+    pub package_id: crate::hir::PackageId,
     pub module_path: crate::module::path::QualifiedPath,
     pub program: LirProgram,
 }
@@ -336,6 +337,7 @@ pub enum LirValue {
 
     // Function references
     Function(String),
+    FunctionInPackage(crate::hir::PackageId, String),
 
     // Local variable references
     Local(u32),

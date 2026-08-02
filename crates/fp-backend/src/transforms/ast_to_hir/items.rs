@@ -193,12 +193,14 @@ impl HirGenerator {
         let mut hir_params = Vec::new();
         for param in params {
             let hir_id = self.next_id();
+            let def_id = self.next_def_id();
             hir_params.push(hir::GenericParam {
                 hir_id,
+                def_id,
                 name: param.name.clone().into(),
                 kind: hir::GenericParamKind::Type { default: None },
             });
-            self.register_type_generic(&param.name.name, hir_id);
+            self.register_type_generic(&param.name.name, def_id);
         }
 
         hir::Generics {

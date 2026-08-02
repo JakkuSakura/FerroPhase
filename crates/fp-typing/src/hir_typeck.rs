@@ -106,7 +106,7 @@ impl HirTypeChecker {
         for (index, parameter) in generics.params.iter().enumerate() {
             if matches!(parameter.kind, hir::GenericParamKind::Type { .. }) {
                 scope.insert(
-                    parameter.hir_id,
+                    parameter.def_id,
                     Ty {
                         kind: TyKind::Param(ty::ParamTy {
                             index: index as u32,

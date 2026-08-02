@@ -189,11 +189,12 @@ impl WorkspaceDependency {
 // ── Compiled workspace context (typer lookup) ────────────────────
 
 use crate::ast::{FunctionSignature, MethodSignature, TypeEnum, TypeStruct};
+use crate::hir::PackageId as HirPackageId;
 use crate::module::path::QualifiedPath;
 use crate::package::graph::PackageGraph;
 use crate::package::provider::PackageProvider;
 use crate::package::PackageCrate;
-use std::cell::{Ref, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -213,6 +214,7 @@ use std::sync::Arc;
 pub struct WorkspaceContext {
     crates: RefCell<HashMap<String, Rc<RefCell<PackageCrate>>>>,
     providers: HashMap<String, Arc<dyn PackageProvider>>,
+    next_package_id: Cell<u32>,
 }
 
 impl WorkspaceContext {
@@ -234,7 +236,9 @@ impl WorkspaceContext {
     /// for every write.
     pub fn begin_crate(&self, name: impl Into<String>, graph: PackageGraph) -> Rc<RefCell<PackageCrate>> {
         let name = name.into();
-        let krate = Rc::new(RefCell::new(PackageCrate::new(name.clone(), graph)));
+        let package_id = HirPackageId(self.next_package_id.get());
+        self.next_package_id.set(package_id.0.saturating_add(1));
+        let krate = Rc::new(RefCell::new(PackageCrate::new(package_id, name.clone(), graph)));
         self.crates.borrow_mut().insert(name, krate.clone());
         krate
     }
@@ -316,5 +320,15 @@ impl WorkspaceContext {
     /// gathering LIR units) rather than looking up one qualified path.
     pub fn crates(&self) -> Ref<'_, HashMap<String, Rc<RefCell<PackageCrate>>>> {
         self.crates.borrow()
+    }
+
+    pub fn package_id_for_module(&self, path: &QualifiedPath) -> Option<HirPackageId> {
+        self.crates.borrow().values().find_map(|krate| {
+            let krate = krate.borrow();
+            (krate.name == path.head().unwrap_or_default()
+                || krate.module_paths.contains(path)
+                || krate.items.contains_key(path))
+            .then_some(krate.package_id)
+        })
     }
 }

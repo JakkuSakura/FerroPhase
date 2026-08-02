@@ -35,8 +35,9 @@ fn query_origin(document: &QueryDocument) -> QueryOrigin {
 /// NOTE: This is transitioning from stateful to share-nothing architecture.
 /// The generator now supports lossy mode and will gradually become more pure.
 pub struct HirGenerator {
+    package_id: hir::PackageId,
     next_hir_id: hir::HirId,
-    next_def_id: hir::DefId,
+    next_def_id: u32,
     current_file: FileId,
     current_position: u32,
     type_scopes: Vec<HashMap<String, hir::Res>>,
@@ -280,6 +281,7 @@ impl HirGenerator {
     /// Create a new HIR generator
     pub fn new() -> Self {
         Self {
+            package_id: hir::PackageId(0),
             next_hir_id: 0,
             next_def_id: 0,
             current_file: 0, // Default file ID
@@ -308,6 +310,11 @@ impl HirGenerator {
             target_env: TargetEnv::host(),
             respect_cfg: true,
         }
+    }
+
+    pub fn with_package_id(mut self, package_id: hir::PackageId) -> Self {
+        self.package_id = package_id;
+        self
     }
 
     pub fn with_resolved_names(mut self, resolved_names: ResolvedNameTable) -> Self {
@@ -370,9 +377,9 @@ impl HirGenerator {
             .expect("at least one value scope must exist")
     }
 
-    fn register_type_generic(&mut self, name: &str, hir_id: hir::HirId) {
+    fn register_type_generic(&mut self, name: &str, def_id: hir::DefId) {
         self.current_type_scope()
-            .insert(name.to_string(), hir::Res::Local(hir_id));
+            .insert(name.to_string(), hir::Res::Def(def_id));
     }
 
     fn register_value_def(&mut self, name: &str, def_id: hir::DefId, visibility: &ast::Visibility) {

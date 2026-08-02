@@ -10,7 +10,7 @@ use fp_core::lir::layout;
 use fp_core::mir::ty::{
     ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, TypeAndMut, UintTy,
 };
-use fp_core::{lir, mir};
+use fp_core::{hir, lir, mir};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::abi;
@@ -19,6 +19,7 @@ use crate::abi;
 
 /// Generator for transforming MIR to LIR (Low-level IR)
 pub struct LirGenerator {
+    package_id: hir::PackageId,
     next_lir_id: lir::LirId,
     next_label: u32,
     register_map: HashMap<mir::LocalId, lir::LirValue>,
@@ -98,6 +99,7 @@ impl LirGenerator {
         runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
     ) -> Self {
         Self {
+            package_id: hir::PackageId(0),
             next_lir_id: 0,
             next_label: 0,
             register_map: HashMap::new(),
@@ -121,6 +123,15 @@ impl LirGenerator {
             function_declarations: HashMap::new(),
             runtime_symbol_map,
         }
+    }
+
+    pub fn with_package_id(mut self, package_id: hir::PackageId) -> Self {
+        self.package_id = package_id;
+        self
+    }
+
+    fn function_value(&self, name: String) -> lir::LirValue {
+        lir::LirValue::FunctionInPackage(self.package_id, name)
     }
 
     /// Transform a MIR program to LIR
@@ -2272,7 +2283,10 @@ impl LirGenerator {
             }
 
             if let PlaceAccess::Address(addr) = &target_access {
-                if matches!(adjusted_value, lir::LirValue::Function(_)) {
+                if matches!(
+                    adjusted_value,
+                    lir::LirValue::Function(_) | lir::LirValue::FunctionInPackage(_, _)
+                ) {
                     self.local_storage.remove(&place.local);
                 } else if !target_is_zst {
                     let store_id = self.next_id();
@@ -2302,7 +2316,10 @@ impl LirGenerator {
                 }
             }
 
-            if matches!(adjusted_value, lir::LirValue::Function(_)) {
+            if matches!(
+                adjusted_value,
+                lir::LirValue::Function(_) | lir::LirValue::FunctionInPackage(_, _)
+            ) {
                 should_update_register_map = true;
             }
 
@@ -2416,7 +2433,7 @@ impl LirGenerator {
                         .get(&String::from(name.clone()))
                         .cloned()
                         .unwrap_or_else(|| String::from(name.clone()));
-                    Ok(lir::LirValue::Function(function_name))
+                    Ok(self.function_value(function_name))
                 }
                 mir::ConstantKind::Global(name, ty) => {
                     let mapped_name = self
@@ -2425,7 +2442,7 @@ impl LirGenerator {
                         .cloned()
                         .unwrap_or_else(|| String::from(name.clone()));
                     if self.function_signatures.contains_key(&mapped_name) {
-                        return Ok(lir::LirValue::Function(mapped_name));
+                        return Ok(self.function_value(mapped_name));
                     }
                     if let Some(runtime_target) = (self.runtime_symbol_map)(&mapped_name) {
                         return Ok(lir::LirValue::Function(runtime_target.as_str().to_string()));
@@ -4688,7 +4705,9 @@ impl LirGenerator {
 
         function_value = self.normalize_callee_value(func, function_value);
         let callee_name = match &function_value {
-            lir::LirValue::Function(name) => Some(name.clone()),
+            lir::LirValue::Function(name) | lir::LirValue::FunctionInPackage(_, name) => {
+                Some(name.clone())
+            }
             _ => None,
         };
         let expected_params = callee_name
@@ -4846,18 +4865,21 @@ impl LirGenerator {
         match value {
             lir::LirValue::Register(id) => {
                 if let Some(place) = Self::operand_place(func_operand) {
-                    if let Some(lir::LirValue::Function(name)) = self.register_map.get(&place.local)
+                    if let Some(lir::LirValue::FunctionInPackage(_, name)) = self.register_map.get(&place.local)
                     {
-                        return lir::LirValue::Function(self.resolve_function_symbol(name));
+                        return self.function_value(self.resolve_function_symbol(name));
                     }
                 }
                 lir::LirValue::Register(id)
             }
             lir::LirValue::Global(name, _) => {
-                lir::LirValue::Function(self.resolve_function_symbol(&name))
+                self.function_value(self.resolve_function_symbol(&name))
             }
             lir::LirValue::Function(name) => {
                 lir::LirValue::Function(self.resolve_function_symbol(&name))
+            }
+            lir::LirValue::FunctionInPackage(_, name) => {
+                self.function_value(self.resolve_function_symbol(&name))
             }
             other => other,
         }

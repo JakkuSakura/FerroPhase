@@ -54,12 +54,14 @@ struct TypingTaskOutput {
 /// Build (but don't spawn or drive) the HIR typing task for one compile unit.
 fn typing_future(
     module_path: QualifiedPath,
+    package_id: hir::PackageId,
     items: Vec<Item>,
     extra_modules: Vec<(QualifiedPath, Vec<Item>)>,
     output: Rc<RefCell<Option<TypingTaskOutput>>>,
 ) -> impl Future<Output = fp_core::error::Result<()>> {
     async move {
         let result = HirGenerator::new()
+            .with_package_id(package_id)
             .transform_module_with_items(&module_path, &items, &extra_modules)
             .and_then(|program| HirTypeChecker::new(program).check());
         *output.borrow_mut() = Some(TypingTaskOutput { result });
@@ -160,6 +162,12 @@ impl CompilerDriver {
             self.load_package("std")?;
         }
         let key = format!("module:{}", ast_id.as_str());
+        let package_id = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .package_id_for_module(&module_path)
+            .unwrap_or_default();
         let output: Rc<RefCell<Option<TypingTaskOutput>>> = Rc::new(RefCell::new(None));
         if !self.state.tasks.contains(&key) {
             let extra_modules = self.loaded_source_modules(&items);
@@ -167,6 +175,7 @@ impl CompilerDriver {
                 key.clone(),
                 typing_future(
                     module_path.clone(),
+                    package_id,
                     items,
                     extra_modules,
                     output.clone(),
@@ -445,6 +454,7 @@ impl CompilerDriver {
             let lir_program = LirGenerator::new().transform(mir_program)?;
 
             let mut units = vec![fp_core::lir::LirCompileUnit {
+                package_id: fp_core::hir::PackageId(0),
                 module_path: QualifiedPath::new(Vec::new()),
                 program: lir_program,
             }];
@@ -457,7 +467,11 @@ impl CompilerDriver {
             }
             let mut interpreter = LirInterpreter::new();
             interpreter.inject_globals(&Self::resolved_const_values_snapshot(typing_ctx));
-            let mut value = interpreter.run_function_named(&units, "main")?;
+            let mut value = interpreter.run_function_named(
+                &units,
+                fp_core::hir::PackageId(0),
+                "main",
+            )?;
             // Only int/uint results that are *actually* comptime struct
             // construction (per the expression's own type) are raw object
             // handles needing resolution — treating every plain integer as a
@@ -1026,6 +1040,12 @@ impl CompilerDriver {
             };
             let lir = self.state.lir(&core.lir_id)?.clone();
             units.push(fp_core::lir::LirCompileUnit {
+                package_id: self
+                    .state
+                    .typing_ctx
+                    .env_ctx
+                    .package_id_for_module(path)
+                    .unwrap_or_default(),
                 module_path: path.clone(),
                 program: lir,
             });
@@ -1045,8 +1065,15 @@ impl CompilerDriver {
         let comptime_entries = lir.comptime_entries.clone();
 
         // Collect all LirCompileUnits: user's module + workspace crates
+        let package_id = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .package_id_for_module(path.path())
+            .unwrap_or_default();
         let mut all_units: Vec<fp_core::lir::LirCompileUnit> = Vec::new();
         all_units.push(fp_core::lir::LirCompileUnit {
+            package_id,
             module_path: path.path().clone(),
             program: lir,
         });
@@ -1084,7 +1111,11 @@ impl CompilerDriver {
         let resolved = self.collect_resolved_const_values();
         self.interpreter.inject_globals(&resolved);
         for entry in &comptime_entries {
-            let mut value = match self.interpreter.run_function_named(&all_units, entry.function.as_str()) {
+            let mut value = match self.interpreter.run_function_named(
+                &all_units,
+                package_id,
+                entry.function.as_str(),
+            ) {
                 Ok(v) => v,
                 Err(_) => continue,
             };
@@ -1339,7 +1370,13 @@ fn lower_to_hir(
         path: &FullyQualifiedPath,
     ) -> Result<LirId, CompilerDriverError> {
         let mir = self.state.mir(mir_id)?.clone();
-        let mut lowering = LirGenerator::new();
+        let package_id = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .package_id_for_module(path.path())
+            .unwrap_or_default();
+        let mut lowering = LirGenerator::new().with_package_id(package_id);
         let lir = lowering.transform(mir)?;
         let lir_id = LirId::new(format!("lir:{}", path.to_key()));
         self.state.insert_lir(lir_id.clone(), lir);
@@ -2248,6 +2285,7 @@ fn main() {
             {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 Ok(fp_core::package::PackageCrate::new(
+                    fp_core::hir::PackageId(0),
                     id.0.clone(),
                     fp_core::package::graph::PackageGraph::new(vec![]),
                 ))

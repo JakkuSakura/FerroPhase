@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use fp_core::ast::Item;
 use fp_core::frontend::LanguageFrontend;
+use fp_core::hir::PackageId as HirPackageId;
 use fp_core::module::path::QualifiedPath;
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::package::graph::PackageGraph;
@@ -109,7 +110,7 @@ impl PackageProvider for EmbeddedStdPackageProvider {
             graph.insert_module(desc);
         }
 
-        let mut krate = PackageCrate::new(STD_PACKAGE_NAME, graph);
+        let mut krate = PackageCrate::new(HirPackageId(0), STD_PACKAGE_NAME, graph);
         krate.items = items_by_path;
         Ok(krate)
     }

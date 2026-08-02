@@ -602,9 +602,10 @@ mod tests {
         }
     }
 
-    fn function_item(def_id: hir::DefId, name: &str) -> Item {
+    fn function_item(index: u32, name: &str) -> Item {
+        let def_id = hir::DefId::local(index);
         Item {
-            hir_id: def_id,
+            hir_id: index,
             def_id,
             visibility: Visibility::Private,
             kind: ItemKind::Function(Function {
@@ -616,9 +617,9 @@ mod tests {
                     abi: hir::Abi::Rust,
                 },
                 body: Some(Body {
-                    hir_id: def_id,
+                    hir_id: index,
                     params: Vec::new(),
-                    value: literal_expr(def_id, 0),
+                    value: literal_expr(index, 0),
                 }),
                 is_const: false,
                 is_extern: false,
@@ -628,9 +629,10 @@ mod tests {
         }
     }
 
-    fn expr_item(def_id: hir::DefId, expr: Expr) -> Item {
+    fn expr_item(index: u32, expr: Expr) -> Item {
+        let def_id = hir::DefId::local(index);
         Item {
-            hir_id: def_id,
+            hir_id: index,
             def_id,
             visibility: Visibility::Private,
             kind: ItemKind::Expr(expr),
@@ -654,7 +656,10 @@ mod tests {
     fn dce_keeps_functions_reached_from_top_level_expr_items() {
         let used = function_item(1, "shell");
         let unused = function_item(2, "copy");
-        let root = expr_item(3, call_expr(30, &["shell"], Some(hir::Res::Def(1))));
+        let root = expr_item(
+            3,
+            call_expr(30, &["shell"], Some(hir::Res::Def(hir::DefId::local(1)))),
+        );
         let mut program = program(vec![used, unused, root]);
 
         let removed = eliminate_dead_code(&mut program);
