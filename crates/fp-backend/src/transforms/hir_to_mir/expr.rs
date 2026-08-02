@@ -381,8 +381,10 @@ pub struct MirLowering {
     generic_function_defs: HashMap<hir::DefId, hir::Function>,
     runtime_functions: HashMap<String, mir::FunctionSig>,
     struct_methods: HashMap<String, HashMap<String, MethodLoweringInfo>>,
+    method_lookup_by_def: HashMap<hir::DefId, MethodLoweringInfo>,
     method_lookup: HashMap<String, MethodLoweringInfo>,
     method_defs: HashMap<String, MethodDefinition>,
+    method_defs_by_def: HashMap<hir::DefId, MethodDefinition>,
     method_specializations: HashMap<MethodSpecializationKey, MethodLoweringInfo>,
     function_specializations: HashMap<FunctionSpecializationKey, FunctionSpecializationInfo>,
     extra_items: Vec<mir::Item>,
@@ -394,6 +396,7 @@ pub struct MirLowering {
     next_synthetic_hir_def_id: hir::DefId,
     typeck_type_exprs: HashMap<hir::HirId, Ty>,
     typeck_exprs: HashMap<hir::HirId, Ty>,
+    typeck_method_resolutions: HashMap<hir::HirId, hir::DefId>,
 }
 
 fn terminal_segment(name: &str) -> &str {
@@ -457,8 +460,10 @@ impl MirLowering {
             generic_function_defs: HashMap::new(),
             runtime_functions: Self::default_runtime_signatures(),
             struct_methods: HashMap::new(),
+            method_lookup_by_def: HashMap::new(),
             method_lookup: HashMap::new(),
             method_defs: HashMap::new(),
+            method_defs_by_def: HashMap::new(),
             method_specializations: HashMap::new(),
             function_specializations: HashMap::new(),
             extra_items: Vec::new(),
@@ -470,6 +475,7 @@ impl MirLowering {
             next_synthetic_hir_def_id: hir::DefId::local(1),
             typeck_type_exprs: HashMap::new(),
             typeck_exprs: HashMap::new(),
+            typeck_method_resolutions: HashMap::new(),
         }
     }
 
@@ -517,6 +523,7 @@ impl MirLowering {
             .iter()
             .map(|(id, ty)| lower_hir_ty(ty).map(|ty| (*id, ty)))
             .collect::<Result<HashMap<_, _>>>()?;
+        self.typeck_method_resolutions = results.method_resolutions.clone();
         Ok(self)
     }
 
@@ -5468,6 +5475,8 @@ impl MirLowering {
                             self_def: method_context.as_ref().and_then(|ctx| ctx.def_id),
                             method_name: qualified_name.clone(),
                         };
+                        self.method_defs_by_def
+                            .insert(impl_item.def_id, def.clone());
                         self.method_defs.insert(qualified_name, def);
                         continue;
                     }
@@ -5511,6 +5520,8 @@ impl MirLowering {
                             struct_def,
                         };
 
+                        self.method_lookup_by_def
+                            .insert(impl_item.def_id, info.clone());
                         self.method_lookup.insert(fn_name.clone(), info.clone());
                         self.method_lookup
                             .insert(format!("{}::{}", struct_name, method_tail), info.clone());
@@ -17573,9 +17584,18 @@ impl<'a> BodyBuilder<'a> {
                     });
                     return Ok(());
                 }
-                let method_key = method_name.clone();
                 let mut resolved_info: Option<(MethodLoweringInfo, Option<PlaceInfo>)> = None;
                 let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
+
+                if let Some(def_id) = self
+                    .lowering
+                    .typeck_method_resolutions
+                    .get(&expr.hir_id)
+                {
+                    if let Some(info) = self.lowering.method_lookup_by_def.get(def_id) {
+                        resolved_info = Some((info.clone(), None));
+                    }
+                }
 
                 if (method_name.as_str() == "get_unchecked"
                     || method_name.as_str().ends_with("::get_unchecked"))
@@ -17963,51 +17983,6 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
-                if let Ok(Some(place_info)) = self.lower_place(receiver) {
-                    if let Some(def_id) = place_info
-                        .struct_def
-                        .or_else(|| self.struct_def_from_ty(&place_info.ty))
-                    {
-                        if let Some(struct_entry) = self.lowering.struct_defs.get(&def_id) {
-                            if let Some(info) = self
-                                .lowering
-                                .struct_methods
-                                .get(&struct_entry.name)
-                                .and_then(|methods| methods.get(&String::from(method_key.clone())))
-                            {
-                                resolved_info = Some((info.clone(), Some(place_info)));
-                            }
-                        }
-                    } else if let Some(enum_def) = self.enum_def_from_ty(&place_info.ty) {
-                        if let Some(enum_entry) = self.lowering.enum_defs.get(&enum_def) {
-                            if let Some(info) =
-                                self.lowering.struct_methods.get(&enum_entry.name).and_then(
-                                    |methods| methods.get(&String::from(method_key.clone())),
-                                )
-                            {
-                                resolved_info = Some((info.clone(), Some(place_info)));
-                            }
-                        }
-                    }
-                }
-
-                if resolved_info.is_none() {
-                    let mut matches = self
-                        .lowering
-                        .struct_methods
-                        .iter()
-                        .filter_map(|(_struct_name, methods)| {
-                            methods
-                                .get(&String::from(method_key.clone()))
-                                .map(|info| info.clone())
-                        })
-                        .collect::<Vec<_>>();
-                    if matches.len() == 1 {
-                        let info = matches.remove(0);
-                        resolved_info = Some((info, None));
-                    }
-                }
-
                 if let Some((info, _cached_place)) = resolved_info {
                     let receiver_expected = info.sig.inputs.get(0);
                     let receiver_operand = self.lower_operand(receiver, receiver_expected)?;
@@ -18020,13 +17995,17 @@ impl<'a> BodyBuilder<'a> {
                         lowered_args.push(operand.operand);
                     }
 
-                    let func_operand = mir::Operand::Constant(mir::Constant {
-                        span: expr.span,
-                        user_ty: None,
-                        literal: mir::ConstantKind::Fn(
+                    let literal = match info.def_id {
+                        Some(def_id) => mir::ConstantKind::FnDef(def_id, info.fn_ty.clone()),
+                        None => mir::ConstantKind::Fn(
                             mir::Symbol::new(info.fn_name.clone()),
                             info.fn_ty.clone(),
                         ),
+                    };
+                    let func_operand = mir::Operand::Constant(mir::Constant {
+                        span: expr.span,
+                        user_ty: None,
+                        literal,
                     });
 
                     let continue_block = self.new_block();
@@ -18062,10 +18041,14 @@ impl<'a> BodyBuilder<'a> {
                         .struct_def
                         .or_else(|| self.struct_def_from_ty(&place_info.ty))
                     {
-                        if let Some(struct_entry) = self.lowering.struct_defs.get(&def_id) {
-                            let method_key =
-                                format!("{}::{}", struct_entry.name, method_name.as_str());
-                            if let Some(def) = self.lowering.method_defs.get(&method_key).cloned() {
+                        if let Some(_struct_entry) = self.lowering.struct_defs.get(&def_id) {
+                            let method_def = self
+                                .lowering
+                                .typeck_method_resolutions
+                                .get(&expr.hir_id)
+                                .and_then(|def_id| self.lowering.method_defs_by_def.get(def_id))
+                                .cloned();
+                            if let Some(def) = method_def {
                                 let method_ctx = self.lowering.make_method_context(&def.self_ty);
                                 let tentative_sig = self
                                     .lowering
@@ -18147,10 +18130,14 @@ impl<'a> BodyBuilder<'a> {
                             }
                         }
                     } else if let Some(enum_def) = self.enum_def_from_ty(&place_info.ty) {
-                        if let Some(enum_entry) = self.lowering.enum_defs.get(&enum_def) {
-                            let method_key =
-                                format!("{}::{}", enum_entry.name, method_name.as_str());
-                            if let Some(def) = self.lowering.method_defs.get(&method_key).cloned() {
+                        if let Some(_enum_entry) = self.lowering.enum_defs.get(&enum_def) {
+                            let method_def = self
+                                .lowering
+                                .typeck_method_resolutions
+                                .get(&expr.hir_id)
+                                .and_then(|def_id| self.lowering.method_defs_by_def.get(def_id))
+                                .cloned();
+                            if let Some(def) = method_def {
                                 let method_ctx = self.lowering.make_method_context(&def.self_ty);
                                 let tentative_sig = self
                                     .lowering

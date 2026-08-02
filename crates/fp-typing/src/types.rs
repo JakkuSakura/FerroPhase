@@ -14,6 +14,7 @@ pub struct TypeckResults {
     pub type_expr_types: HashMap<HirId, HirTy>,
     pub pat_types: HashMap<HirId, HirTy>,
     pub resolutions: HashMap<HirId, hir::Res>,
+    pub method_resolutions: HashMap<HirId, hir::DefId>,
 }
 
 impl TypeckResults {

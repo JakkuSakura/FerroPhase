@@ -218,7 +218,11 @@ impl HirTypeChecker {
                         .map(|arg| self.check_expr(&arg.value))
                         .collect::<Result<Vec<_>>>()?,
                 );
-                self.method_output(&receiver_ty, method, &arg_types)?
+                let (method_def_id, output) = self.method_output(&receiver_ty, method, &arg_types)?;
+                self.results
+                    .method_resolutions
+                    .insert(expr.hir_id, method_def_id);
+                output
             }
             hir::ExprKind::FieldAccess(receiver, field) => {
                 let receiver_ty = self.check_expr(receiver)?;
@@ -716,7 +720,12 @@ impl HirTypeChecker {
         }
     }
 
-    fn method_output(&mut self, receiver_ty: &Ty, method: &hir::Symbol, actuals: &[Ty]) -> Result<Ty> {
+    fn method_output(
+        &mut self,
+        receiver_ty: &Ty,
+        method: &hir::Symbol,
+        actuals: &[Ty],
+    ) -> Result<(hir::DefId, Ty)> {
         let receiver_def = match &receiver_ty.kind {
             TyKind::Adt(receiver, _) => receiver.did,
             TyKind::Ref(_, inner, _) => match &inner.kind {
@@ -747,7 +756,7 @@ impl HirTypeChecker {
                         return Err(Error::from("method arguments do not match its signature"));
                     };
                     self.pop_generics();
-                    return Ok(result);
+                    return Ok((impl_item.def_id, result));
                 }
             }
             self.pop_generics();
@@ -1035,7 +1044,7 @@ mod tests {
         let mut program = hir::Program::new();
         program.items.push(hir::Item {
             hir_id: 1,
-            def_id: 1,
+            def_id: hir::DefId::local(1),
             visibility: hir::Visibility::Private,
             kind: hir::ItemKind::Expr(expr),
             span: fp_core::span::Span::null(),
@@ -1070,7 +1079,7 @@ mod tests {
         let mut program = hir::Program::new();
         program.items.push(hir::Item {
             hir_id: 1,
-            def_id: 1,
+            def_id: hir::DefId::local(1),
             visibility: hir::Visibility::Private,
             kind: hir::ItemKind::Expr(expr),
             span: fp_core::span::Span::null(),
