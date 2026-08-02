@@ -12118,21 +12118,8 @@ impl<'a> BodyBuilder<'a> {
                     generic_def_id = Some(*def_id);
                 }
             }
-            let qualified_name = path
-                .segments
-                .iter()
-                .map(|seg| seg.name.as_str())
-                .collect::<Vec<_>>()
-                .join("::");
-            if let Some(def) = self.lowering.method_defs.get(&qualified_name) {
-                generic_method_def = Some(def.clone());
-            } else if path.segments.len() >= 2 {
-                let tail = format!(
-                    "{}::{}",
-                    path.segments[path.segments.len() - 2].name.as_str(),
-                    path.segments[path.segments.len() - 1].name.as_str()
-                );
-                if let Some(def) = self.lowering.method_defs.get(&tail) {
+            if let Some(hir::Res::Def(def_id)) = &path.res {
+                if let Some(def) = self.lowering.method_defs_by_def.get(def_id) {
                     generic_method_def = Some(def.clone());
                 }
             }
@@ -13172,29 +13159,15 @@ impl<'a> BodyBuilder<'a> {
 
     fn param_names_for_callee(&self, path: &hir::Path) -> Option<Vec<hir::Symbol>> {
         match &path.res {
-            Some(hir::Res::Def(def_id)) => self.param_names_for_def_id(*def_id),
-            _ => {
-                let qualified_name = path
-                    .segments
-                    .iter()
-                    .map(|seg| seg.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join("::");
-                if let Some(def) = self.lowering.method_defs.get(&qualified_name) {
-                    return self.param_names_from_params(&def.function.sig.inputs);
-                }
-                if path.segments.len() >= 2 {
-                    let tail = format!(
-                        "{}::{}",
-                        path.segments[path.segments.len() - 2].name.as_str(),
-                        path.segments[path.segments.len() - 1].name.as_str()
-                    );
-                    if let Some(def) = self.lowering.method_defs.get(&tail) {
-                        return self.param_names_from_params(&def.function.sig.inputs);
-                    }
-                }
-                None
-            }
+            Some(hir::Res::Def(def_id)) => self
+                .param_names_for_def_id(*def_id)
+                .or_else(|| {
+                    self.lowering
+                        .method_defs_by_def
+                        .get(def_id)
+                        .and_then(|def| self.param_names_from_params(&def.function.sig.inputs))
+                }),
+            _ => None,
         }
     }
 
@@ -13527,7 +13500,8 @@ impl<'a> BodyBuilder<'a> {
             return Ok((operand, sig, Some(name)));
         }
 
-        if let Some(info) = self.lowering.method_lookup.get(&name) {
+        if let Some(hir::Res::Def(def_id)) = resolved_path.res.as_ref() {
+            if let Some(info) = self.lowering.method_lookup_by_def.get(def_id) {
             let literal = match info.def_id {
                 Some(def_id) => mir::ConstantKind::FnDef(def_id, info.fn_ty.clone()),
                 None => mir::ConstantKind::Fn(
@@ -13541,6 +13515,7 @@ impl<'a> BodyBuilder<'a> {
                 literal,
             });
             return Ok((operand, info.sig.clone(), Some(info.fn_name.clone())));
+            }
         }
 
         self.lowering.emit_error(
@@ -13966,25 +13941,14 @@ impl<'a> BodyBuilder<'a> {
                 }
 
                 if has_explicit_args {
-                    let qualified_name = resolved_path
-                        .segments
-                        .iter()
-                        .map(|seg| seg.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join("::");
-                    let mut method_def = self.lowering.method_defs.get(&qualified_name).cloned();
-                    if method_def.is_none() && resolved_path.segments.len() >= 2 {
-                        let tail = format!(
-                            "{}::{}",
-                            resolved_path.segments[resolved_path.segments.len() - 2]
-                                .name
-                                .as_str(),
-                            resolved_path.segments[resolved_path.segments.len() - 1]
-                                .name
-                                .as_str()
-                        );
-                        method_def = self.lowering.method_defs.get(&tail).cloned();
-                    }
+                    let method_def = match resolved_path.res.as_ref() {
+                        Some(hir::Res::Def(def_id)) => self
+                            .lowering
+                            .method_defs_by_def
+                            .get(def_id)
+                            .cloned(),
+                        _ => None,
+                    };
                     if let Some(def) = method_def {
                         let info = self
                             .lowering
