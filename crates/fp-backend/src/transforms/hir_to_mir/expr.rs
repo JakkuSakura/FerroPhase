@@ -212,6 +212,7 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
 /// so callers can decide whether to abort or continue.
 #[derive(Clone, Debug)]
 struct MethodLoweringInfo {
+    def_id: Option<hir::DefId>,
     sig: mir::FunctionSig,
     fn_name: String,
     fn_ty: Ty,
@@ -231,6 +232,7 @@ struct MethodLoweringInfo {
 // bitcasts (e.g., in examples/17_generics).
 #[derive(Clone)]
 struct MethodDefinition {
+    def_id: hir::DefId,
     function: hir::Function,
     impl_generics: hir::Generics,
     self_ty: hir::TypeExpr,
@@ -240,6 +242,7 @@ struct MethodDefinition {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct MethodSpecializationKey {
+    def_id: hir::DefId,
     method_name: String,
     args: Vec<Ty>,
 }
@@ -1640,6 +1643,7 @@ impl MirLowering {
             .filter_map(|name| substs.get(name).cloned())
             .collect::<Vec<_>>();
         let key = MethodSpecializationKey {
+            def_id: def.def_id,
             method_name: def.method_name.clone(),
             args: args_in_order.clone(),
         };
@@ -1708,6 +1712,7 @@ impl MirLowering {
         self.extra_bodies.push((body_id, mir_body));
 
         let info = MethodLoweringInfo {
+            def_id: None,
             sig,
             fn_name: name.clone(),
             fn_ty,
@@ -1744,6 +1749,7 @@ impl MirLowering {
             .filter_map(|name| substs.get(name).cloned())
             .collect::<Vec<_>>();
         let key = MethodSpecializationKey {
+            def_id: def.def_id,
             method_name: def.method_name.clone(),
             args: args_in_order.clone(),
         };
@@ -1812,6 +1818,7 @@ impl MirLowering {
         self.extra_bodies.push((body_id, mir_body));
 
         let info = MethodLoweringInfo {
+            def_id: None,
             sig,
             fn_name: name.clone(),
             fn_ty,
@@ -5454,6 +5461,7 @@ impl MirLowering {
                             None => function.sig.name.as_str().to_string(),
                         };
                         let def = MethodDefinition {
+                            def_id: impl_item.def_id,
                             function: function.clone(),
                             impl_generics: impl_block.generics.clone(),
                             self_ty: impl_block.self_ty.clone(),
@@ -5464,8 +5472,13 @@ impl MirLowering {
                         continue;
                     }
 
-                    let (mir_item, body_id, body, sig) =
-                        self.lower_method(program, function, item.span, method_context.as_ref())?;
+                    let (mir_item, body_id, body, sig) = self.lower_method(
+                        program,
+                        impl_item.def_id,
+                        function,
+                        item.span,
+                        method_context.as_ref(),
+                    )?;
                     emit_function(self, mir_item, body_id, body);
 
                     if let Some(struct_name) = struct_name.as_deref() {
@@ -5491,6 +5504,7 @@ impl MirLowering {
                         let method_tail = terminal_segment(function.sig.name.as_str()).to_string();
                         let impl_item_tail = terminal_segment(impl_item.name.as_str()).to_string();
                         let info = MethodLoweringInfo {
+                            def_id: Some(impl_item.def_id),
                             sig: sig.clone(),
                             fn_name: fn_name.clone(),
                             fn_ty: fn_ty.clone(),
@@ -5520,6 +5534,7 @@ impl MirLowering {
     fn lower_method(
         &mut self,
         program: &hir::Program,
+        def_id: hir::DefId,
         function: &hir::Function,
         parent_span: Span,
         method_context: Option<&MethodContext>,
@@ -5561,7 +5576,7 @@ impl MirLowering {
         let mir_function = mir::Function {
             name: mir::Symbol::new(qualified_name),
             path: Vec::new(),
-            def_id: None,
+            def_id: Some(def_id),
             sig: sig.clone(),
             body_id,
             abi: self.map_abi(&function.sig.abi),
@@ -13475,13 +13490,17 @@ impl<'a> BodyBuilder<'a> {
                 .get(&String::from(struct_name.clone()))
                 .and_then(|methods| methods.get(&String::from(method_name.clone())))
             {
-                let operand = mir::Operand::Constant(mir::Constant {
-                    span: callee.span,
-                    user_ty: None,
-                    literal: mir::ConstantKind::Fn(
+                let literal = match info.def_id {
+                    Some(def_id) => mir::ConstantKind::FnDef(def_id, info.fn_ty.clone()),
+                    None => mir::ConstantKind::Fn(
                         mir::Symbol::new(info.fn_name.clone()),
                         info.fn_ty.clone(),
                     ),
+                };
+                let operand = mir::Operand::Constant(mir::Constant {
+                    span: callee.span,
+                    user_ty: None,
+                    literal,
                 });
                 let qualified_name = format!("{}::{}", struct_name, method_name);
                 return Ok((operand, info.sig.clone(), Some(qualified_name)));
@@ -13501,13 +13520,17 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(info) = self.lowering.method_lookup.get(&name) {
-            let operand = mir::Operand::Constant(mir::Constant {
-                span: callee.span,
-                user_ty: None,
-                literal: mir::ConstantKind::Fn(
+            let literal = match info.def_id {
+                Some(def_id) => mir::ConstantKind::FnDef(def_id, info.fn_ty.clone()),
+                None => mir::ConstantKind::Fn(
                     mir::Symbol::new(info.fn_name.clone()),
                     info.fn_ty.clone(),
                 ),
+            };
+            let operand = mir::Operand::Constant(mir::Constant {
+                span: callee.span,
+                user_ty: None,
+                literal,
             });
             return Ok((operand, info.sig.clone(), Some(info.fn_name.clone())));
         }

@@ -163,6 +163,7 @@ pub struct Query {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImplItem {
+    pub def_id: DefId,
     pub hir_id: HirId,
     pub name: Symbol,
     pub kind: ImplItemKind,

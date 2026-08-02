@@ -295,6 +295,7 @@ impl HirGenerator {
                         )?;
                         method_names.insert(method.sig.name.as_str().to_string());
                         items.push(hir::ImplItem {
+                            def_id: self.next_def_id(),
                             hir_id: self.next_id(),
                             name: method.sig.name.clone(),
                             kind: hir::ImplItemKind::Method(method),
@@ -303,6 +304,7 @@ impl HirGenerator {
                     ast::ItemKind::DefConst(const_item) => {
                         let assoc_const = self.transform_const_def(const_item)?;
                         items.push(hir::ImplItem {
+                            def_id: self.next_def_id(),
                             hir_id: self.next_id(),
                             name: const_item.name.clone().into(),
                             kind: hir::ImplItemKind::AssocConst(assoc_const),
@@ -346,6 +348,7 @@ impl HirGenerator {
                         )?;
                         method_names.insert(method.sig.name.as_str().to_string());
                         items.push(hir::ImplItem {
+                            def_id: self.next_def_id(),
                             hir_id: self.next_id(),
                             name: method.sig.name.clone(),
                             kind: hir::ImplItemKind::Method(method),
