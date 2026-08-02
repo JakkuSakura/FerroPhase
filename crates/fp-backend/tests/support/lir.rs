@@ -15,6 +15,7 @@ pub fn empty_program() -> LirProgram {
 
 pub fn return_function(name: &str) -> LirFunction {
     LirFunction {
+        def_id: None,
         name: lir::Name::new(name),
         signature: LirFunctionSignature {
             params: Vec::new(),

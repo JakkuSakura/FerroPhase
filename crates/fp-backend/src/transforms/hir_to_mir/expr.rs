@@ -13436,7 +13436,7 @@ impl<'a> BodyBuilder<'a> {
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
                     user_ty: None,
-                    literal: mir::ConstantKind::Fn(mir::Symbol::from(name.clone()), ty),
+                    literal: mir::ConstantKind::FnDef(*def_id, ty),
                 });
                 return Ok((operand, sig, Some(String::from(name))));
             }
@@ -13449,7 +13449,7 @@ impl<'a> BodyBuilder<'a> {
                     let operand = mir::Operand::Constant(mir::Constant {
                         span: callee.span,
                         user_ty: None,
-                        literal: mir::ConstantKind::Fn(mir::Symbol::from(name.clone()), ty),
+                        literal: mir::ConstantKind::FnDef(*def_id, ty),
                     });
                     return Ok((operand, sig, Some(String::from(name))));
                 }
@@ -15027,6 +15027,7 @@ impl<'a> BodyBuilder<'a> {
             mir::ConstantKind::Str(_) => Some(self.lowering.string_slice_ty()),
             mir::ConstantKind::Val(_, ty)
             | mir::ConstantKind::Fn(_, ty)
+            | mir::ConstantKind::FnDef(_, ty)
             | mir::ConstantKind::Global(_, ty)
             | mir::ConstantKind::TokenStream { ty, .. } => Some(ty.clone()),
             mir::ConstantKind::Ty(_) => None,

@@ -100,6 +100,7 @@ pub struct LirQuery {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirFunction {
+    pub def_id: Option<crate::hir::DefId>,
     pub name: Name,
     pub signature: LirFunctionSignature,
     pub basic_blocks: Vec<LirBasicBlock>,
@@ -338,6 +339,7 @@ pub enum LirValue {
     // Function references
     Function(String),
     FunctionInPackage(crate::hir::PackageId, String),
+    FunctionDef(crate::hir::DefId),
 
     // Local variable references
     Local(u32),
@@ -537,6 +539,7 @@ impl LirFunction {
         linkage: Linkage,
     ) -> Self {
         Self {
+            def_id: None,
             name,
             signature,
             basic_blocks: Vec::new(),

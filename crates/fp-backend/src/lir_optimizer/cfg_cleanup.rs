@@ -254,6 +254,7 @@ mod tests {
         let mut program = LirProgram {
             globals: Vec::new(),
             functions: vec![LirFunction {
+                def_id: None,
                 name: Name::new("test"),
                 signature: LirFunctionSignature {
                     params: Vec::new(),
@@ -310,6 +311,7 @@ mod tests {
         let mut program = LirProgram {
             globals: Vec::new(),
             functions: vec![LirFunction {
+                def_id: None,
                 name: Name::new("test"),
                 signature: LirFunctionSignature {
                     params: Vec::new(),

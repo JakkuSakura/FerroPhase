@@ -400,6 +400,7 @@ fn summarize_constant(constant: &Constant) -> String {
         ConstantKind::Bool(value) => value.to_string(),
         ConstantKind::Str(value) => format!("\"{}\"", escape_str(value)),
         ConstantKind::Fn(name, _) => format!("fn {}", name),
+        ConstantKind::FnDef(def_id, _) => format!("fn <{}>", def_id),
         ConstantKind::Global(name, _) => format!("global {}", name),
         ConstantKind::Ty(_) => "<type>".into(),
         ConstantKind::Val(_, ty) => format!("const <{}>", ty),

@@ -286,6 +286,8 @@ pub enum ConstantKind {
     Val(ConstValue, Ty),
     /// Reference to a function by name (simple)
     Fn(Symbol, Ty),
+    /// Reference to a language function by its definition identity.
+    FnDef(DefId, Ty),
     /// Reference to a global constant by name
     Global(Symbol, Ty),
     /// Token stream — comptime-only quote token carrying AST items.

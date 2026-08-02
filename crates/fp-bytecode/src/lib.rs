@@ -1815,6 +1815,12 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
         mir::ConstantKind::Fn(symbol, _) => {
             Ok(BytecodeConst::Function(symbol.as_str().to_string()))
         }
+        mir::ConstantKind::FnDef(def_id, _) => Err(BytecodeError::Lowering {
+            message: format!(
+                "function definition reference {:?} cannot be represented in bytecode",
+                def_id
+            ),
+        }),
         mir::ConstantKind::Global(symbol, _) => {
             Ok(BytecodeConst::Function(symbol.as_str().to_string()))
         }
@@ -1914,6 +1920,12 @@ fn lower_callee(operand: &mir::Operand) -> Result<BytecodeCallee, BytecodeError>
             mir::ConstantKind::Fn(symbol, _) => {
                 Ok(BytecodeCallee::Function(symbol.as_str().to_string()))
             }
+            mir::ConstantKind::FnDef(def_id, _) => Err(BytecodeError::Lowering {
+                message: format!(
+                    "function definition reference {:?} cannot be called from bytecode",
+                    def_id
+                ),
+            }),
             mir::ConstantKind::Global(symbol, _) => {
                 Ok(BytecodeCallee::Function(symbol.as_str().to_string()))
             }

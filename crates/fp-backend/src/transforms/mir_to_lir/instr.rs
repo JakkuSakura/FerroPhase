@@ -278,6 +278,7 @@ impl LirGenerator {
         let is_declaration = mir_func.is_extern;
 
         let mut lir_func = lir::LirFunction {
+            def_id: mir_func.def_id,
             name: lir::Name::new(function_name),
             signature,
             basic_blocks: Vec::new(),
@@ -505,6 +506,11 @@ impl LirGenerator {
             mir::ConstantKind::Null => lir::LirConstant::Null(target_ty.clone()),
             mir::ConstantKind::Val(value, value_ty) => {
                 self.const_value_to_lir_constant(value, value_ty)?
+            }
+            mir::ConstantKind::FnDef(_, _) => {
+                return Err(fp_core::error::Error::from(
+                    "function definition references are not valid static initializer data",
+                ));
             }
             mir::ConstantKind::Fn(name, _ty) => lir::LirConstant::FunctionRef(
                 lir::Name::new(name.as_str().to_string()),
@@ -2427,6 +2433,9 @@ impl LirGenerator {
                 }
             }
             mir::Operand::Constant(constant) => match &constant.literal {
+                mir::ConstantKind::FnDef(def_id, _ty) => {
+                    Ok(lir::LirValue::FunctionDef(*def_id))
+                }
                 mir::ConstantKind::Fn(name, _ty) => {
                     let function_name = self
                         .function_symbol_map

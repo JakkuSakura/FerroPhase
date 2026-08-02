@@ -37,6 +37,7 @@ pub struct LirInterpreter {
     /// Populated from the LirProgram on each call to run_function_named.
     program_functions: HashMap<String, LirFunction>,
     package_functions: HashMap<(PackageId, String), LirFunction>,
+    definition_functions: HashMap<fp_core::hir::DefId, LirFunction>,
 }
 
 impl LirInterpreter {
@@ -50,6 +51,7 @@ impl LirInterpreter {
             last_predecessor: None,
             program_functions: HashMap::new(),
             package_functions: HashMap::new(),
+            definition_functions: HashMap::new(),
         }
     }
 
@@ -94,6 +96,9 @@ impl LirInterpreter {
     fn populate_functions_from_units(&mut self, units: &[LirCompileUnit]) {
         for unit in units {
             for function in &unit.program.functions {
+                if let Some(def_id) = function.def_id {
+                    self.definition_functions.insert(def_id, function.clone());
+                }
                 self.package_functions
                     .insert((unit.package_id, function.name.as_str().to_string()), function.clone());
             }
@@ -474,7 +479,9 @@ impl LirInterpreter {
                 .get(name.as_str())
                 .copied()
                 .ok_or_else(|| VmError::Runtime(format!("missing global {name}"))),
-            LirValue::Function(_) | LirValue::FunctionInPackage(_, _) => Ok(0),
+            LirValue::Function(_)
+            | LirValue::FunctionInPackage(_, _)
+            | LirValue::FunctionDef(_) => Ok(0),
             LirValue::Undef(_) | LirValue::Null(_) => Ok(0),
         }
     }
@@ -1039,9 +1046,18 @@ impl LirInterpreter {
 
     fn handle_call(&mut self, dst: u32, function: &LirValue, args: &[LirValue]) -> LirResult<()> {
         match function {
-            LirValue::Function(name) => self.handle_call_named(dst, name, args, None),
+            LirValue::Function(name) => self.handle_call_named(dst, name, args, None, None),
             LirValue::FunctionInPackage(package_id, name) => {
-                self.handle_call_named(dst, name, args, Some(*package_id))
+                self.handle_call_named(dst, name, args, Some(*package_id), None)
+            }
+            LirValue::FunctionDef(def_id) => {
+                let function = self
+                    .definition_functions
+                    .get(def_id)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("missing function definition {def_id}")))?;
+                let name = function.name.to_string();
+                self.handle_call_named(dst, &name, args, None, Some(function))
             }
             _ => Err(VmError::Runtime("indirect call".into())),
         }
@@ -1053,6 +1069,7 @@ impl LirInterpreter {
         name: &str,
         args: &[LirValue],
         package_id: Option<PackageId>,
+        definition: Option<LirFunction>,
     ) -> LirResult<()> {
                 let raws: Vec<u64> = args
                     .iter()
@@ -1085,12 +1102,16 @@ impl LirInterpreter {
                 // If the intrinsic returned 0 AND it's not a known intrinsic,
                 // try regular LIR function call (cross-module const fn).
                 if r == 0 && !Self::is_known_intrinsic(name) {
-                    let func = match package_id {
+                    let func = if definition.is_some() {
+                        definition
+                    } else {
+                        match package_id {
                         Some(package_id) => self
                             .package_functions
                             .get(&(package_id, name.to_string()))
                             .cloned(),
                         None => self.program_functions.get(name).cloned(),
+                        }
                     };
                     if let Some(func) = func {
                         let resolved_args: Vec<Value> = args
@@ -1472,6 +1493,7 @@ mod tests {
     #[test]
     fn constant() {
         let f = LirFunction {
+            def_id: None,
             name: Name::new("main"),
             signature: sig(&[], LirType::I64),
             basic_blocks: vec![bb(
@@ -1494,6 +1516,7 @@ mod tests {
     #[test]
     fn arith_chain() {
         let f = LirFunction {
+            def_id: None,
             name: Name::new("main"),
             signature: sig(&[], LirType::I64),
             basic_blocks: vec![bb(
@@ -1520,6 +1543,7 @@ mod tests {
 
     fn cond_br_f(take: bool) -> LirProgram {
         make(LirFunction {
+            def_id: None,
             name: Name::new("main"),
             signature: sig(&[], LirType::I64),
             basic_blocks: vec![
@@ -1573,6 +1597,7 @@ mod tests {
             name: Some("slice".into()),
         };
         let f = LirFunction {
+            def_id: None,
             name: Name::new("main"),
             signature: sig(&[], LirType::I64),
             basic_blocks: vec![bb(
@@ -1625,6 +1650,7 @@ mod tests {
     fn extract_string_pointer_from_aggregate() {
         let array_ty = LirType::Array(Box::new(LirType::Ptr(Box::new(LirType::I8))), 1);
         let f = LirFunction {
+            def_id: None,
             name: Name::new("main"),
             signature: sig(&[], LirType::Ptr(Box::new(LirType::I8))),
             basic_blocks: vec![bb(

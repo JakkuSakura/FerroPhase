@@ -108,6 +108,7 @@ mod tests {
 
     fn test_function(blocks: Vec<LirBasicBlock>) -> LirFunction {
         LirFunction {
+            def_id: None,
             name: Name::new("test"),
             signature: LirFunctionSignature {
                 params: vec![LirType::I1],
