@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use super::identity::{
     AstId, BytecodeId, ConstValueId, FullyQualifiedPath, HirId, JitObjectId, LirId, MirId,
     NativeObjectId, RuntimeValueId, SavedOutputId,
-    TypedAstId,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -36,7 +35,6 @@ pub enum CompilerWork {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InvalidatedObjectId {
     Ast(AstId),
-    TypedAst(TypedAstId),
     Hir(HirId),
     Mir(MirId),
     Lir(LirId),

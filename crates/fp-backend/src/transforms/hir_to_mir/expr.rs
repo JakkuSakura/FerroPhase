@@ -25,10 +25,185 @@ use fp_core::mir::ty::{
 use fp_core::mir::{self, Symbol};
 use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
+use fp_typing::TypeckResults;
 use std::collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
 const DIAGNOSTIC_CONTEXT: &str = "hir→mir";
+
+fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
+    fn lower_const(value: &hir::ty::ConstKind) -> Result<mir::ty::ConstKind> {
+        Ok(match value {
+            hir::ty::ConstKind::Infer(hir::ty::InferConst::Fresh(id)) => {
+                mir::ty::ConstKind::Infer(mir::ty::InferConst::Fresh(*id))
+            }
+            hir::ty::ConstKind::Infer(hir::ty::InferConst::Var(_)) => {
+                return Err(fp_core::error::Error::from("unsupported HIR const inference variable in MIR type bridge"));
+            }
+            hir::ty::ConstKind::Value(value) => mir::ty::ConstKind::Value(match value {
+                hir::ty::ConstValue::Scalar(scalar) => mir::ty::ConstValue::Scalar(match scalar {
+                    hir::ty::Scalar::Int(value) => mir::ty::Scalar::Int(mir::ty::ScalarInt {
+                        data: value.data,
+                        size: value.size,
+                    }),
+                    hir::ty::Scalar::Ptr(pointer) => mir::ty::Scalar::Ptr(mir::ty::Pointer {
+                        alloc_id: mir::ty::AllocId(pointer.alloc_id.0),
+                        offset: mir::ty::Size { bytes: pointer.offset.bytes },
+                    }),
+                }),
+                hir::ty::ConstValue::ZeroSized => mir::ty::ConstValue::ZeroSized,
+                hir::ty::ConstValue::Slice { data, start, end } => {
+                    mir::ty::ConstValue::Slice { data: data.clone(), start: *start, end: *end }
+                }
+                hir::ty::ConstValue::ByRef { alloc, offset } => mir::ty::ConstValue::ByRef {
+                    alloc: mir::ty::AllocId(alloc.0),
+                    offset: mir::ty::Size { bytes: offset.bytes },
+                },
+            }),
+            hir::ty::ConstKind::Error(error) => {
+                mir::ty::ConstKind::Error(mir::ty::ErrorGuaranteed { index: error.index })
+            }
+            hir::ty::ConstKind::Param(_)
+            | hir::ty::ConstKind::Bound(_, _)
+            | hir::ty::ConstKind::Placeholder(_)
+            | hir::ty::ConstKind::Unevaluated(_) => {
+                return Err(fp_core::error::Error::from("unsupported HIR const kind in MIR type bridge"));
+            }
+        })
+    }
+
+    fn lower_arg(arg: &hir::ty::GenericArg) -> Result<mir::ty::GenericArg> {
+        Ok(match arg {
+            hir::ty::GenericArg::Type(ty) => mir::ty::GenericArg::Type(lower_hir_ty(ty)?),
+            hir::ty::GenericArg::Const(value) => mir::ty::GenericArg::Const(lower_const(value)?),
+            hir::ty::GenericArg::Lifetime(_) => {
+                mir::ty::GenericArg::Lifetime(mir::ty::Region::ReErased)
+            }
+        })
+    }
+
+    let kind = match &ty.kind {
+        hir::ty::TyKind::Bool => TyKind::Bool,
+        hir::ty::TyKind::Char => TyKind::Char,
+        hir::ty::TyKind::Int(value) => TyKind::Int(match value {
+            hir::ty::IntTy::Isize => IntTy::Isize,
+            hir::ty::IntTy::I8 => IntTy::I8,
+            hir::ty::IntTy::I16 => IntTy::I16,
+            hir::ty::IntTy::I32 => IntTy::I32,
+            hir::ty::IntTy::I64 => IntTy::I64,
+            hir::ty::IntTy::I128 => IntTy::I128,
+        }),
+        hir::ty::TyKind::Uint(value) => TyKind::Uint(match value {
+            hir::ty::UintTy::Usize => UintTy::Usize,
+            hir::ty::UintTy::U8 => UintTy::U8,
+            hir::ty::UintTy::U16 => UintTy::U16,
+            hir::ty::UintTy::U32 => UintTy::U32,
+            hir::ty::UintTy::U64 => UintTy::U64,
+            hir::ty::UintTy::U128 => UintTy::U128,
+        }),
+        hir::ty::TyKind::Float(value) => TyKind::Float(match value {
+            hir::ty::FloatTy::F32 => FloatTy::F32,
+            hir::ty::FloatTy::F64 => FloatTy::F64,
+        }),
+        hir::ty::TyKind::Adt(def, args) => TyKind::Adt(
+            AdtDef {
+                did: def.did,
+                variants: def
+                    .variants
+                    .iter()
+                    .map(|variant| VariantDef {
+                        def_id: variant.def_id,
+                        ctor_def_id: variant.ctor_def_id,
+                        ident: variant.ident.clone().into(),
+                        discr: match variant.discr {
+                            hir::ty::VariantDiscr::Relative(value) => VariantDiscr::Relative(value),
+                            hir::ty::VariantDiscr::Explicit(value) => VariantDiscr::Explicit(value),
+                        },
+                        fields: Vec::new(),
+                        ctor_kind: match variant.ctor_kind {
+                            hir::ty::CtorKind::Fn => CtorKind::Fn,
+                            hir::ty::CtorKind::Const => CtorKind::Const,
+                            hir::ty::CtorKind::Fictive => CtorKind::Fictive,
+                        },
+                        is_recovered: variant.is_recovered,
+                    })
+                    .collect(),
+                flags: AdtFlags::from_bits_retain(def.flags.bits()),
+                repr: ReprOptions {
+                    int: def.repr.int.map(|value| match value {
+                        hir::ty::IntegerType::Pointer(value) => mir::ty::IntegerType::Pointer(value),
+                        hir::ty::IntegerType::Fixed(value, signed) => mir::ty::IntegerType::Fixed(
+                            match value {
+                                hir::ty::Integer::I8 => mir::ty::Integer::I8,
+                                hir::ty::Integer::I16 => mir::ty::Integer::I16,
+                                hir::ty::Integer::I32 => mir::ty::Integer::I32,
+                                hir::ty::Integer::I64 => mir::ty::Integer::I64,
+                                hir::ty::Integer::I128 => mir::ty::Integer::I128,
+                            },
+                            signed,
+                        ),
+                    }),
+                    align: def.repr.align.map(|value| mir::ty::Align { pow2: value.pow2 }),
+                    pack: def.repr.pack.map(|value| mir::ty::Align { pow2: value.pow2 }),
+                    flags: mir::ty::ReprFlags::from_bits_retain(def.repr.flags.bits()),
+                    field_shuffle_seed: def.repr.field_shuffle_seed,
+                },
+            },
+            args.iter().map(lower_arg).collect::<Result<Vec<_>>>()?,
+        ),
+        hir::ty::TyKind::Array(inner, length) => {
+            TyKind::Array(Box::new(lower_hir_ty(inner)?), lower_const(length)?)
+        }
+        hir::ty::TyKind::Slice(inner) => TyKind::Slice(Box::new(lower_hir_ty(inner)?)),
+        hir::ty::TyKind::RawPtr(value) => TyKind::RawPtr(TypeAndMut {
+            ty: Box::new(lower_hir_ty(&value.ty)?),
+            mutbl: match value.mutbl {
+                hir::ty::Mutability::Mut => Mutability::Mut,
+                hir::ty::Mutability::Not => Mutability::Not,
+            },
+        }),
+        hir::ty::TyKind::Ref(_, inner, mutbl) => TyKind::Ref(
+            mir::ty::Region::ReErased,
+            Box::new(lower_hir_ty(inner)?),
+            match mutbl {
+                hir::ty::Mutability::Mut => Mutability::Mut,
+                hir::ty::Mutability::Not => Mutability::Not,
+            },
+        ),
+        hir::ty::TyKind::FnPtr(signature) => TyKind::FnPtr(mir::ty::PolyFnSig {
+            binder: mir::ty::Binder {
+                value: mir::ty::FnSig {
+                    inputs: signature.binder.value.inputs.iter().map(|ty| lower_hir_ty(ty).map(Box::new)).collect::<Result<Vec<_>>>()?,
+                    output: Box::new(lower_hir_ty(&signature.binder.value.output)?),
+                    c_variadic: signature.binder.value.c_variadic,
+                    unsafety: match signature.binder.value.unsafety {
+                        hir::ty::Unsafety::Unsafe => mir::ty::Unsafety::Unsafe,
+                        hir::ty::Unsafety::Normal => mir::ty::Unsafety::Normal,
+                    },
+                    abi: mir::ty::Abi::Rust,
+                },
+                bound_vars: Vec::new(),
+            },
+        }),
+        hir::ty::TyKind::FnDef(def, args) => TyKind::FnDef(*def, args.iter().map(lower_arg).collect::<Result<Vec<_>>>()?),
+        hir::ty::TyKind::Opaque(def, args) => TyKind::Opaque(*def, args.iter().map(lower_arg).collect::<Result<Vec<_>>>()?),
+        hir::ty::TyKind::Never => TyKind::Never,
+        hir::ty::TyKind::Tuple(items) => TyKind::Tuple(items.iter().map(|item| lower_hir_ty(item).map(Box::new)).collect::<Result<Vec<_>>>()?),
+        hir::ty::TyKind::Param(param) => TyKind::Param(mir::ty::ParamTy {
+            index: param.index,
+            name: param.name.clone().into(),
+        }),
+        hir::ty::TyKind::Infer(hir::ty::InferTy::FreshTy(id)) => TyKind::Infer(mir::ty::InferTy::FreshTy(*id)),
+        hir::ty::TyKind::Infer(_) => return Err(fp_core::error::Error::from("unsupported HIR inference variable in MIR type bridge")),
+        hir::ty::TyKind::Error(_) => {
+            return Err(fp_core::error::Error::from(
+                "cannot lower an HIR error type into MIR",
+            ));
+        }
+        _ => return Err(fp_core::error::Error::from("unsupported HIR type in MIR type bridge")),
+    };
+    Ok(Ty { kind })
+}
 
 /// Minimal HIR → MIR lowering pass.
 ///
@@ -214,6 +389,8 @@ pub struct MirLowering {
     tolerate_errors: bool,
     lossy_mode: bool,
     next_synthetic_hir_def_id: hir::DefId,
+    typeck_type_exprs: HashMap<hir::HirId, Ty>,
+    typeck_exprs: HashMap<hir::HirId, Ty>,
 }
 
 fn terminal_segment(name: &str) -> &str {
@@ -288,6 +465,8 @@ impl MirLowering {
             tolerate_errors: false,
             lossy_mode: fp_core::config::lossy_mode(),
             next_synthetic_hir_def_id: 1,
+            typeck_type_exprs: HashMap::new(),
+            typeck_exprs: HashMap::new(),
         }
     }
 
@@ -322,6 +501,20 @@ impl MirLowering {
 
     pub fn seed_resolved_const(&mut self, key: impl Into<String>, value: mir::Constant) {
         self.resolved_const_values.insert(key.into(), value);
+    }
+
+    pub fn with_typeck_results(mut self, results: &TypeckResults) -> Result<Self> {
+        self.typeck_type_exprs = results
+            .type_expr_types
+            .iter()
+            .map(|(id, ty)| lower_hir_ty(ty).map(|ty| (*id, ty)))
+            .collect::<Result<HashMap<_, _>>>()?;
+        self.typeck_exprs = results
+            .expr_types
+            .iter()
+            .map(|(id, ty)| lower_hir_ty(ty).map(|ty| (*id, ty)))
+            .collect::<Result<HashMap<_, _>>>()?;
+        Ok(self)
     }
 
     fn const_key(&self, name: &str, span: Span) -> String {
@@ -2326,7 +2519,9 @@ impl MirLowering {
             }
             return;
         }
-        let path_args = path_args.unwrap();
+        let Some(path_args) = path_args else {
+            return;
+        };
         let path_type_args = path_args
             .args
             .iter()
@@ -3343,6 +3538,9 @@ impl MirLowering {
     }
 
     fn lower_type_expr(&mut self, ty_expr: &hir::TypeExpr) -> Ty {
+        if let Some(ty) = self.typeck_type_exprs.get(&ty_expr.hir_id) {
+            return ty.clone();
+        }
         match &ty_expr.kind {
             hir::TypeExprKind::Primitive(primitive) => {
                 self.lower_primitive_type(primitive, ty_expr.span)
@@ -7733,10 +7931,19 @@ impl<'a> BodyBuilder<'a> {
 
     fn lower_type_expr(&mut self, ty_expr: &hir::TypeExpr) -> Ty {
         if let Some(ctx) = self.method_context.as_ref() {
-            if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
-                if path.segments.first().map(|seg| seg.name.as_str()) == Some("Self") {
-                    return ctx.mir_self_ty.clone();
-                }
+            if Self::type_expr_mentions_self(ty_expr) {
+                return self
+                    .lowering
+                    .lower_type_expr_with_context_and_substs(
+                        ty_expr,
+                        Some(ctx),
+                        &self.type_substs,
+                    );
+            }
+        }
+        if let Some(ty) = self.lowering.typeck_type_exprs.get(&ty_expr.hir_id) {
+            if !matches!(ty.kind, TyKind::Error(_)) {
+                return ty.clone();
             }
         }
         // NOTE(jakku): This is the key hook for generic lowering. When
@@ -7748,6 +7955,33 @@ impl<'a> BodyBuilder<'a> {
         }
         self.lowering
             .lower_type_expr_with_substs(ty_expr, &self.type_substs)
+    }
+
+    fn type_expr_mentions_self(ty_expr: &hir::TypeExpr) -> bool {
+        match &ty_expr.kind {
+            hir::TypeExprKind::Path(path) => path
+                .segments
+                .first()
+                .map(|segment| segment.name.as_str() == "Self")
+                .unwrap_or(false),
+            hir::TypeExprKind::Tuple(items) => items
+                .iter()
+                .any(|item| Self::type_expr_mentions_self(item)),
+            hir::TypeExprKind::Array(item, _) | hir::TypeExprKind::Slice(item) => {
+                Self::type_expr_mentions_self(item)
+            }
+            hir::TypeExprKind::Ptr(item) | hir::TypeExprKind::Ref(item) => {
+                Self::type_expr_mentions_self(item)
+            }
+            hir::TypeExprKind::FnPtr(function) => {
+                function
+                    .inputs
+                    .iter()
+                    .any(|item| Self::type_expr_mentions_self(item))
+                    || Self::type_expr_mentions_self(&function.output)
+            }
+            _ => false,
+        }
     }
 
     fn bind_pattern(&mut self, pat: &hir::Pat, local: mir::LocalId, ty: Option<&Ty>) {
@@ -13348,6 +13582,12 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn lower_operand(&mut self, expr: &hir::Expr, expected: Option<&Ty>) -> Result<OperandInfo> {
+        let inferred_expected = if expected.is_none() {
+            self.lowering.typeck_exprs.get(&expr.hir_id).cloned()
+        } else {
+            None
+        };
+        let expected = expected.or(inferred_expected.as_ref());
         if self.active_exprs.contains(&expr.hir_id) {
             let message = "recursive expression detected during MIR lowering";
             if self.lowering.lossy_mode {
@@ -13462,9 +13702,9 @@ impl<'a> BodyBuilder<'a> {
                 self.lower_reference_operand(reference, expr.span)
             }
             hir::ExprKind::Query(query) => {
-                let query_ty = expected.cloned().unwrap_or_else(|| Ty {
-                    kind: TyKind::Int(IntTy::I64),
-                });
+                let query_ty = expected
+                    .cloned()
+                    .ok_or_else(|| fp_core::error::Error::from("query expression requires an expected result type"))?;
                 let local_id = self.allocate_temp(query_ty.clone(), expr.span);
                 let place = mir::Place::from_local(local_id);
                 self.push_statement(mir::Statement {

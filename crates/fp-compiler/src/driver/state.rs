@@ -8,16 +8,16 @@ use fp_core::{
     module::path::QualifiedPath,
     module::resolution::ModuleResolutionContext,
 };
-use fp_typing::TypingContext;
+use fp_typing::{TypeckResults, TypingContext};
 
 use crate::driver::CompilerDriverError;
 use crate::module_resolution::CompilerModuleResolver;
-use crate::scheduler::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, TypedAstId};
+use crate::scheduler::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
 pub struct CompilerState {
     ast: BTreeMap<AstId, File>,
-    typed_ast: BTreeMap<TypedAstId, File>,
     hir: BTreeMap<HirId, hir::Program>,
+    hir_typeck: BTreeMap<HirId, TypeckResults>,
     mir: BTreeMap<MirId, mir::Program>,
     lir: BTreeMap<LirId, lir::LirProgram>,
     const_values: BTreeMap<ConstValueId, Value>,
@@ -39,11 +39,8 @@ pub struct CompilerState {
     /// role for generic monomorphization.
     pub(crate) cross_crate_items_cache: HashMap<QualifiedPath, (QualifiedPath, Vec<Item>)>,
     /// The one shared task pool every suspendable unit of driver work runs
-    /// through: per-const/per-type-alias comptime resolution (spawned by
-    /// `fp-typing`'s `predeclare_item` via `HirTypeInferencer::tasks`, a
-    /// clone of this same handle), the per-compile-unit module-typing task,
-    /// and generic-monomorphization-ready signals (see
-    /// `CompilerDriver::run_pool_to_idle`). Lives here, not on
+    /// through: per-compile-unit HIR typing tasks and compiler-owned
+    /// comptime work. Lives here, not on
     /// `TypingContext`, because scheduling ("what task runs next") is the
     /// driver's concern, not typing's — `TypingContext` only holds typing
     /// data. `Rc`, not `Rc<RefCell<_>>`: `Executor` is already internally
@@ -62,12 +59,12 @@ impl CompilerState {
         self.ast.insert(ast_id, ast);
     }
 
-    pub fn insert_typed_ast(&mut self, typed_ast_id: TypedAstId, ast: File) {
-        self.typed_ast.insert(typed_ast_id, ast);
-    }
-
     pub fn insert_hir(&mut self, hir_id: HirId, hir: hir::Program) {
         self.hir.insert(hir_id, hir);
+    }
+
+    pub fn insert_hir_typeck(&mut self, hir_id: HirId, results: TypeckResults) {
+        self.hir_typeck.insert(hir_id, results);
     }
 
     pub fn insert_mir(&mut self, mir_id: MirId, mir: mir::Program) {
@@ -133,14 +130,14 @@ impl CompilerState {
             .ok_or_else(|| CompilerDriverError::MissingAst(ast_id.clone()))
     }
 
-    pub fn typed_ast(&self, typed_ast_id: &TypedAstId) -> Result<&File, CompilerDriverError> {
-        self.typed_ast
-            .get(typed_ast_id)
-            .ok_or_else(|| CompilerDriverError::MissingTypedAst(typed_ast_id.clone()))
-    }
-
     pub fn hir(&self, hir_id: &HirId) -> Result<&hir::Program, CompilerDriverError> {
         self.hir
+            .get(hir_id)
+            .ok_or_else(|| CompilerDriverError::MissingHir(hir_id.clone()))
+    }
+
+    pub fn hir_typeck(&self, hir_id: &HirId) -> Result<&TypeckResults, CompilerDriverError> {
+        self.hir_typeck
             .get(hir_id)
             .ok_or_else(|| CompilerDriverError::MissingHir(hir_id.clone()))
     }
@@ -218,8 +215,8 @@ impl Default for CompilerState {
     fn default() -> Self {
         Self {
             ast: BTreeMap::new(),
-            typed_ast: BTreeMap::new(),
             hir: BTreeMap::new(),
+            hir_typeck: BTreeMap::new(),
             mir: BTreeMap::new(),
             lir: BTreeMap::new(),
             const_values: BTreeMap::new(),

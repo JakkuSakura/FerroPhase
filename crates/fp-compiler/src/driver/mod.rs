@@ -10,16 +10,13 @@ use fp_core::ast::{
     Name, Ty, TypeStruct, TypeType, Value, Visibility,
 };
 use fp_core::diagnostics::DiagnosticLevel;
-use fp_core::error::Error as FpError;
+use fp_core::hir;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
-use fp_typing::{
-    HirTypeInferencer, TypeResolutionHook, TypingContext,
-    TypingOutcome, default_extern_prelude,
-};
+use fp_typing::{HirTypeChecker, TypeckResults, TypingContext};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -29,7 +26,6 @@ use crate::scheduler::{
     AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
     ConstValueId, FullyQualifiedPath, HirId,
     LirId, MirId, RuntimeValueId, ScheduledAnswer,
-    TypedAstId,
 };
 
 pub struct CompilerDriver {
@@ -38,43 +34,12 @@ pub struct CompilerDriver {
     interpreter: LirInterpreter,
 }
 
-/// Bridges the typer's `TypeResolutionHook` extension point to the driver so
-/// comptime needs are resolved synchronously, in place, while typing is in
-/// progress — instead of the typer only reporting "something is pending"
-/// after the fact and the driver relowering the whole compile unit lossily
-/// to try to catch up. See `CompilerDriver::resolve_comptime_now`.
-///
-/// Holds only `Rc<TypingContext>` — everything `resolve_comptime_now` touches
-/// is reachable through it — rather than `&mut CompilerDriver`, because once
-/// typing can suspend across `.await` a live `&mut CompilerDriver` borrow
-/// can't be captured inside a future the executor also needs `&mut` access to
-/// drive.
-struct ComptimeHook {
-    typing_ctx: Rc<TypingContext>,
-}
-
-impl TypeResolutionHook for ComptimeHook {
-    fn resolve_symbol(&mut self, _name: &str) -> bool {
-        // Unknown item/module resolution isn't wired through this hook yet;
-        // callers fall back to their existing deferred handling.
-        false
-    }
-
-    fn request_comptime(&mut self, key: &str, expr: &Expr) -> bool {
-        CompilerDriver::resolve_comptime_now(&self.typing_ctx, key, expr)
-    }
-}
-
 struct CompileUnitCoreResult {
     mir_id: MirId,
     lir_id: LirId,
 }
 
-/// Real output of driving one compile unit's typing task to completion (see
-/// `CompilerDriver::run_pool_to_idle`). `items` is handed back to the
-/// caller because the task owns it for its lifetime (mutated in place —
-/// typing stamps a concrete `Ty` on every node — so the caller needs it back
-/// to store as the typed AST).
+/// Real output of driving one compile unit's HIR typing task to completion.
 ///
 /// The task pool's own output type is a bare `fp_core::error::Result<()>`
 /// (shared by every kind of task, const/type-alias resolution included) —
@@ -83,37 +48,21 @@ struct CompileUnitCoreResult {
 /// right before the task returns, and read back out by `compile_module_core`
 /// once the pool reports the task's key resolved.
 struct TypingTaskOutput {
-    items: Vec<Item>,
-    outcome: Result<TypingOutcome, FpError>,
+    result: fp_core::error::Result<(hir::Program, TypeckResults)>,
 }
 
-/// Build (but don't spawn or drive) the task body for typing one compile
-/// unit's items. Not a method on `CompilerDriver` because the future must
-/// not borrow `&mut CompilerDriver` — see `ComptimeHook`'s doc comment for
-/// why; it only closes over `Rc`-shared handles plus its owned inputs, and
-/// writes its real result into `output` (see `TypingTaskOutput`'s doc
-/// comment) rather than returning it directly.
+/// Build (but don't spawn or drive) the HIR typing task for one compile unit.
 fn typing_future(
-    typing_ctx: Rc<TypingContext>,
-    tasks: Rc<fp_core::executor::Executor<fp_core::error::Result<()>>>,
-    ast_key: String,
     module_path: QualifiedPath,
-    mut items: Vec<Item>,
+    items: Vec<Item>,
+    extra_modules: Vec<(QualifiedPath, Vec<Item>)>,
     output: Rc<RefCell<Option<TypingTaskOutput>>>,
 ) -> impl Future<Output = fp_core::error::Result<()>> {
     async move {
-        let outcome = {
-            let inferencer = HirTypeInferencer::new(typing_ctx.clone())
-                .with_extern_prelude(default_extern_prelude())
-                .with_tasks(tasks)
-                .with_ast_key(ast_key);
-            inferencer.seed_workspace_graph();
-            inferencer.set_resolution_hook(Box::new(ComptimeHook {
-                typing_ctx: typing_ctx.clone(),
-            }));
-            inferencer.infer_module(&module_path, &mut items).await
-        };
-        *output.borrow_mut() = Some(TypingTaskOutput { items, outcome });
+        let result = HirGenerator::new()
+            .transform_module_with_items(&module_path, &items, &extra_modules)
+            .and_then(|program| HirTypeChecker::new(program).check());
+        *output.borrow_mut() = Some(TypingTaskOutput { result });
         Ok(())
     }
 }
@@ -205,51 +154,37 @@ impl CompilerDriver {
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
+        if !self.state.typing_ctx.env_ctx.is_loaded("std")
+            && self.state.typing_ctx.env_ctx.provider("std").is_some()
+        {
+            self.load_package("std")?;
+        }
         let key = format!("module:{}", ast_id.as_str());
         let output: Rc<RefCell<Option<TypingTaskOutput>>> = Rc::new(RefCell::new(None));
         if !self.state.tasks.contains(&key) {
-            let typing_ctx = self.state.typing_ctx.clone();
-            let tasks = self.state.tasks.clone();
+            let extra_modules = self.loaded_source_modules(&items);
             self.state.tasks.spawn(
                 key.clone(),
                 typing_future(
-                    typing_ctx,
-                    tasks,
-                    ast_id.as_str().to_string(),
                     module_path.clone(),
                     items,
+                    extra_modules,
                     output.clone(),
                 ),
             );
         }
         self.run_pool_to_idle()?;
-        let TypingTaskOutput { items, outcome } = output.borrow_mut().take().expect(
+        let TypingTaskOutput { result } = output.borrow_mut().take().expect(
             "module task's key was included in a just-fully-drained pool, so it must have run",
         );
-        let outcome = outcome?;
-
-        let typed_ast_id = TypedAstId::new(format!("typed_ast:{}", path.to_key()));
-        // `File` is used here purely as the existing storage-map value type
-        // — it's never passed to a generator; `path`/`attrs`/
-        // `collected_items` are irrelevant placeholders for on-demand
-        // module compiles that have no real source file. (Generic
-        // specialization looks up its function by `ItemId` in the
-        // *original*, pre-typing `self.state.ast(ast_id)` instead, from
-        // `handle_resolved_task` -- see its doc comment.)
-        self.state.insert_typed_ast(
-            typed_ast_id.clone(),
-            File {
-                path: std::path::PathBuf::from(module_path.to_key()),
-                items,
-                attrs: Vec::new(),
-                collected_items: Vec::new(),
-            },
-        );
+        let (hir_program, typeck_results) = result?;
 
         // `run_pool_to_idle` only returns once every package/comptime need
         // the typer touched has actually been satisfied in place — nothing
         // pending to check for here, just lower for real.
-        let hir_id = self.lower_to_hir(&module_path, &typed_ast_id, path, &outcome.cross_crate_struct_refs)?;
+        let hir_id = HirId::new(format!("hir:{}", path.to_key()));
+        self.state.insert_hir(hir_id.clone(), hir_program);
+        self.state.insert_hir_typeck(hir_id.clone(), typeck_results);
         let mir_id = self.lower_to_mir(&hir_id, path)?;
         let lir_id = self.lower_to_lir(&mir_id, path)?;
 
@@ -257,6 +192,24 @@ impl CompilerDriver {
             mir_id,
             lir_id,
         })
+    }
+
+    fn loaded_source_modules(&self, items: &[Item]) -> Vec<(QualifiedPath, Vec<Item>)> {
+        let mut requested = HashSet::new();
+        Self::collect_imported_module_paths(items, &mut requested);
+        let mut modules = Vec::new();
+        for krate in self.state.typing_ctx.env_ctx.crates().values() {
+            let krate = krate.borrow();
+            for (path, module_items) in &krate.items {
+                if requested
+                    .iter()
+                    .any(|prefix| path.segments.starts_with(&prefix.segments))
+                {
+                    modules.push((path.clone(), module_items.clone()));
+                }
+            }
+        }
+        modules
     }
 
     /// Ticks the shared task pool (`CompilerState::tasks`) until nothing is
@@ -270,11 +223,8 @@ impl CompilerDriver {
     /// generic-monomorphization-ready signals (`infer_generic_function_call_body`).
     ///
     /// A task suspends and resumes exactly where it needs an unloaded
-    /// package (`fp_typing::HirTypeInferencer::await_package`) or an
-    /// unresolved comptime value from a sibling task
-    /// (`await_comptime`/`await_struct_alias`/`force`) — rather than the
-    /// caller retyping already-resolved items from scratch to pick either
-    /// up.
+    /// package or compiler-owned comptime value — rather than the caller
+    /// retyping already-resolved items from scratch.
     ///
     /// Safe to run all the way to full idle (not just until one specific
     /// task resolves): nothing in this pool ever suspends waiting on a task
@@ -338,10 +288,8 @@ impl CompilerDriver {
     /// When it is one: dedups via `generic_cannon_key`/`generic_instantiations`
     /// (unchanged), finds the original definition by its stable `ItemId` in
     /// *the discovering compile unit's own pre-typing stored AST*
-    /// (`self.state.ast(&AstId::new(monomorph.ast_key))` — not
-    /// `self.state.typed_ast`, which isn't populated until that compile
-    /// unit's own `compile_module_core` call returns, long before or after
-    /// this generic key happens to resolve; safe because `Item` derives
+    /// (`self.state.ast(&AstId::new(monomorph.ast_key))`; safe because
+    /// `Item` derives
     /// `Clone` including its `id`, so the pre-typing clone typing was
     /// working from carries the identical `ItemId`), substitutes the
     /// concrete types into a clone of it, and submits its compile via
@@ -408,9 +356,8 @@ impl CompilerDriver {
     /// before the driver even started). Uniform for `std` or any other
     /// package a `PackageProvider` is registered for: discovery/parsing is
     /// the provider's job (`load_package_items`); typing it runs through the
-    /// same `HirTypeInferencer` machinery as any other module, just pointed
-    /// at the crate slot `env_ctx.begin_crate` just reserved in the shared
-    /// root registry.
+    /// same HIR module pipeline as any other module, just pointed at the
+    /// crate slot `env_ctx.begin_crate` just reserved in the shared registry.
     ///
     /// `inject_module` is driven with `fp_core::executor::block_on` (a single
     /// poll, panicking on real `Poll::Pending`) rather than through
@@ -440,18 +387,9 @@ impl CompilerDriver {
             .map_err(|e| CompilerDriverError::UnresolvablePackage(format!("{name}: {e}")))?;
 
         let own_crate = self.state.typing_ctx.env_ctx.begin_crate(name, raw.graph.clone());
-        {
-            let inferencer = HirTypeInferencer::new(self.state.typing_ctx.clone())
-                .with_extern_prelude(default_extern_prelude())
-                .with_own_crate(own_crate.clone())
-                .with_tasks(self.state.tasks.clone());
-            for (path, items) in &raw.items {
-                fp_core::executor::block_on(inferencer.inject_module(path, items));
-            }
-        }
-        // Parsed items, kept for on-demand LIR compilation later
-        // (`compile_items_to_lir_units`) — typing tables are already
-        // populated in-place on `own_crate` via the inferencer above.
+        // Parsed items are the package's source-level module index. HIR
+        // lowering and HIR type checking consume them when a module is
+        // compiled; package loading itself does not run an AST type pass.
         own_crate.borrow_mut().items = raw.items;
 
         // Wake every task (the module-typing task that requested `name`, or
@@ -478,8 +416,7 @@ impl CompilerDriver {
     /// then runs through the interpreter. On success the value is stored
     /// under `key` (and, if `key` is a `__fp_expr_<id>` key, also into
     /// `expr_resolutions` so the originating `ConstBlock` expression sees
-    /// it). This is the `TypeResolutionHook::request_comptime`
-    /// implementation's real work — see `ComptimeHook` below.
+    /// it). This is the compiler's comptime probe implementation.
     ///
     /// Returns `false` on any lowering/evaluation failure — e.g. the
     /// expression references another dependency this scoped lowering can't
@@ -490,8 +427,7 @@ impl CompilerDriver {
     /// Takes `&TypingContext` rather than `&mut self`/`&self` — everything
     /// this needs (resolved consts/types, the workspace's compiled crates)
     /// is reachable through it, and `ComptimeHook` only holds an
-    /// `Rc<TypingContext>`, not a `&CompilerDriver` (see `ComptimeHook`'s
-    /// doc comment for why).
+    /// `Rc<TypingContext>`, not a `&CompilerDriver`.
     fn resolve_comptime_now(typing_ctx: &TypingContext, key: &str, expr: &Expr) -> bool {
         let mut probe_expr = expr.clone();
         let resolved_names = Self::resolved_const_values_snapshot(typing_ctx);
@@ -1215,10 +1151,54 @@ fn resolve_comptime_value(interp: &mut LirInterpreter, value: &Value) -> Option<
     interp.resolve_object(handle)
 }
 
+fn collect_imported_module_paths(items: &[Item], out: &mut HashSet<QualifiedPath>) {
+    for item in items {
+        match item.kind() {
+            ItemKind::Import(import) => {
+                let raw = import
+                    .module_path()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| import.tree.to_string());
+                let mut segments: Vec<String> = raw
+                    .split("::")
+                    .filter(|segment| !segment.is_empty() && *segment != "*")
+                    .map(str::to_owned)
+                    .collect();
+                if import.module_path().is_none() && segments.len() > 1 {
+                    segments.pop();
+                }
+                if !segments.is_empty() {
+                    out.insert(QualifiedPath::new(segments));
+                }
+            }
+            ItemKind::Module(module) => Self::collect_imported_module_paths(&module.items, out),
+            ItemKind::Impl(impl_block) => {
+                for item in &impl_block.items {
+                    if let ItemKind::Import(import) = item.kind() {
+                        let raw = import
+                            .module_path()
+                            .map(ToString::to_string)
+                            .unwrap_or_else(|| import.tree.to_string());
+                        let segments: Vec<String> = raw
+                            .split("::")
+                            .filter(|segment| !segment.is_empty() && *segment != "*")
+                            .map(str::to_owned)
+                            .collect();
+                        if !segments.is_empty() {
+                            out.insert(QualifiedPath::new(segments));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn lower_to_hir(
         &mut self,
         module_path: &QualifiedPath,
-        typed_ast_id: &TypedAstId,
+        items: &[Item],
         path: &FullyQualifiedPath,
         cross_crate_struct_refs: &[QualifiedPath],
     ) -> Result<HirId, CompilerDriverError> {
@@ -1231,13 +1211,16 @@ fn lower_to_hir(
         // latter regressed `run_all_example_files` from 16/40 to 0/40 (std's
         // own enums colliding with existing special-cased handling).
         let extra_modules = self.collect_cross_crate_items(cross_crate_struct_refs);
-        let ast = self.state.typed_ast(typed_ast_id)?;
         let expr_res = self.state.typing_ctx.expr_resolutions.borrow().clone();
         let hir_program = HirGenerator::new()
             .with_expr_resolution(expr_res)
-            .transform_module_with_items(module_path, &ast.items, &extra_modules)?;
+            .transform_module_with_items(module_path, items, &extra_modules)?;
+        let (hir_program, typeck_results) = HirTypeChecker::new(hir_program)
+            .check()
+            .map_err(|error| CompilerDriverError::Core(error))?;
         let hir = HirId::new(format!("hir:{}", path.to_key()));
         self.state.insert_hir(hir.clone(), hir_program);
+        self.state.insert_hir_typeck(hir.clone(), typeck_results);
         Ok(hir)
     }
 
@@ -1316,7 +1299,8 @@ fn lower_to_hir(
         allow_errors: bool,
     ) -> Result<MirId, CompilerDriverError> {
         let hir = self.state.hir(hir_id)?.clone();
-        let mut lowering = MirLowering::new();
+        let typeck_results = self.state.hir_typeck(hir_id)?.clone();
+        let mut lowering = MirLowering::new().with_typeck_results(&typeck_results)?;
         lowering.set_lossy(self.state.lossy() || allow_errors);
         for (key, value) in self.state.resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());

@@ -3,7 +3,6 @@ use thiserror::Error;
 use crate::module_resolution::ModuleResolutionError;
 use crate::scheduler::{
     AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, SchedulerError,
-    TypedAstId,
 };
 
 impl From<fp_interpret::VmError> for CompilerDriverError {
@@ -28,8 +27,6 @@ pub enum CompilerDriverError {
     Interpreter(String),
     #[error("missing AST {0}")]
     MissingAst(AstId),
-    #[error("missing typed AST {0}")]
-    MissingTypedAst(TypedAstId),
     #[error("missing HIR {0}")]
     MissingHir(HirId),
     #[error("missing MIR {0}")]

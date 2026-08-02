@@ -89,7 +89,6 @@ macro_rules! define_storage_id {
 }
 
 define_storage_id!(AstId, "Storage identity for canonical AST.");
-define_storage_id!(TypedAstId, "Storage identity for typed canonical AST.");
 define_storage_id!(HirId, "Storage identity for HIR.");
 define_storage_id!(MirId, "Storage identity for MIR.");
 define_storage_id!(LirId, "Storage identity for LIR.");

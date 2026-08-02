@@ -1,7 +1,34 @@
-use fp_core::hir::Ty;
+use fp_core::ast::Ty;
+use fp_core::hir;
+use fp_core::hir::ty::Ty as HirTy;
+use fp_core::hir::HirId;
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use std::collections::HashMap;
+
+/// Semantic information produced by HIR type checking. HIR itself remains a
+/// source-shaped tree; inferred types and resolutions are keyed by HIR node.
+#[derive(Debug, Clone, Default)]
+pub struct TypeckResults {
+    pub expr_types: HashMap<HirId, HirTy>,
+    pub type_expr_types: HashMap<HirId, HirTy>,
+    pub pat_types: HashMap<HirId, HirTy>,
+    pub resolutions: HashMap<HirId, hir::Res>,
+}
+
+impl TypeckResults {
+    pub fn record_expr_type(&mut self, id: HirId, ty: HirTy) {
+        self.expr_types.insert(id, ty);
+    }
+
+    pub fn record_type_expr_type(&mut self, id: HirId, ty: HirTy) {
+        self.type_expr_types.insert(id, ty);
+    }
+
+    pub fn record_pat_type(&mut self, id: HirId, ty: HirTy) {
+        self.pat_types.insert(id, ty);
+    }
+}
 
 #[derive(Clone, Copy)]
 pub enum TypingDiagnosticLevel {
@@ -56,7 +83,7 @@ pub struct TypingOutcome {
     pub cross_crate_struct_refs: Vec<QualifiedPath>,
 }
 
-pub type ItemId = fp_core::hir::ItemId;
+pub type ItemId = fp_core::ast::ItemId;
 
 /// A generic function invocation whose concrete type arguments have been
 /// resolved and are ready for monomorphization (specialization). Written
@@ -68,7 +95,7 @@ pub type ItemId = fp_core::hir::ItemId;
 #[derive(Debug, Clone)]
 pub struct GenericMonorph {
     /// Stable identity of the `ItemDefFunction` node being specialized (see
-    /// `fp_core::hir::ItemId`'s doc comment) -- this, not `function_path`, is
+    /// `fp_core::ast::ItemId`'s doc comment) -- this, not `function_path`, is
     /// what `handle_resolved_task` uses to find the function again in the
     /// compile unit's own pre-typing stored AST. `function_path` is a
     /// qualification convention (prefixed by whatever module/compile-unit
@@ -79,7 +106,7 @@ pub struct GenericMonorph {
     pub item_id: ItemId,
     /// The discovering compile unit's own `AstId` (as a plain string --
     /// fp-typing can't name `fp-compiler`'s `AstId` type), carried verbatim
-    /// from `HirTypeInferencer::ast_key` rather than re-derived later from
+    /// from the discovering compile unit rather than re-derived later from
     /// `function_path`/a naming convention: `handle_resolved_task` runs
     /// once the pool is fully drained, with no compile-unit-specific
     /// context of its own, so this is the only way it knows which stored
@@ -111,7 +138,7 @@ impl GenericMonorph {
     }
 }
 
-pub type ExprId = fp_core::hir::ExprId;
+pub type ExprId = fp_core::ast::ExprId;
 
 pub type ResolvedNameTable = HashMap<ExprId, ResolvedName>;
 

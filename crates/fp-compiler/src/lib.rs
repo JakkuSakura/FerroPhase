@@ -10,5 +10,5 @@ pub use scheduler::{
     CompilerWork, CompletedRequest, ConstValueId, FullyQualifiedPath,
     HirId, InvalidatedObjectId, JitObjectId, LirId, MirId,
     NativeObjectId, RequestId, RuntimeValueId,
-    SavedOutputId, ScheduledAnswer, SchedulerError, TypedAstId,
+    SavedOutputId, ScheduledAnswer, SchedulerError,
 };
