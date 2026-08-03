@@ -1,14 +1,10 @@
 #[op = "env_current_dir"]
 pub fn current_dir() -> str { std::intrinsics::env::current_dir() }
 
-#[op = "env_temp_dir"]
-pub fn temp_dir() -> str { std::intrinsics::env::temp_dir() }
+pub fn temp_dir() -> str { unsafe { ::libc::getenv("TMPDIR").as_str_unchecked() } }
 
-#[op = "env_home_dir"]
-pub fn home_dir() -> str { std::intrinsics::env::home_dir() }
+pub fn home_dir() -> str { unsafe { ::libc::getenv("HOME").as_str_unchecked() } }
 
-#[op = "env_var"]
-pub fn var(name: &str) -> str { std::intrinsics::env::var(name) }
+pub fn var(name: &str) -> str { unsafe { ::libc::getenv(name).as_str_unchecked() } }
 
-#[op = "env_var_exists"]
-pub fn exists(name: &str) -> bool { std::intrinsics::env::exists(name) }
+pub fn exists(name: &str) -> bool { !::libc::getenv(name).is_null() }

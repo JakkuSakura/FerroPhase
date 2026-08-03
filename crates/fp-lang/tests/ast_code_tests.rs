@@ -1,7 +1,7 @@
 use fp_core::ast::*;
 use fp_core::frontend::LanguageFrontend;
-use fp_lang::ast::FerroPhaseParser;
 use fp_lang::FerroFrontend;
+use fp_lang::ast::FerroPhaseParser;
 use std::path::PathBuf;
 
 // --- Small test helpers to streamline assertions ---
@@ -152,7 +152,7 @@ fn raw_ptr_requires_const_or_mut() {
 }
 
 #[test]
-fn parses_std_libc_rust_syntax_surface() {
+fn parses_libc_rust_syntax_surface() {
     let fe = FerroFrontend::new();
     let source = r#"
 mod libc {
@@ -176,24 +176,28 @@ mod libc {
     let parsed = fe.parse(source, None);
     assert!(
         parsed.is_ok(),
-        "expected std::libc rust syntax surface to parse"
+        "expected libc rust syntax surface to parse"
     );
 }
 
 #[test]
-fn parses_std_libc_generated_module_reexports() {
+fn parses_libc_platform_module_reexports() {
     let fe = FerroFrontend::new();
     let source = r#"
 mod libc {
-    mod generated;
-    pub use generated::*;
+    pub type void = ();
+    pub type char = u8;
+    #[cfg(target_os = "linux")]
+    pub mod linux;
+    #[cfg(target_os = "linux")]
+    pub use linux::*;
 }
 "#;
 
     let parsed = fe.parse(source, None);
     assert!(
         parsed.is_ok(),
-        "expected std::libc generated module reexports to parse"
+        "expected libc platform module reexports to parse"
     );
 }
 

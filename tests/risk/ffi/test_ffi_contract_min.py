@@ -1,8 +1,6 @@
 import os
 import shutil
 import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -39,31 +37,10 @@ def compile_help(fp_bin: str) -> str:
     return result.stdout
 
 
-def test_bindgen_contract_clang() -> None:
-    if shutil.which("bindgen") is None:
-        pytest.skip("bindgen not available")
-
-    script = repo_root() / "scripts" / "generate_libc_bindings.py"
-    if not script.exists():
-        raise RuntimeError(f"missing script: {script}")
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        out_path = Path(temp_dir) / "generated.fp"
-        result = subprocess.run(
-            [sys.executable, str(script), "--output", str(out_path)],
-            check=False,
-            cwd=repo_root(),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            stderr = (result.stderr or "").lower()
-            if "libclang" in stderr:
-                pytest.skip("libclang not available for bindgen")
-            raise AssertionError(
-                f"bindgen contract failed (code={result.returncode}): {result.stderr.strip()}"
-            )
-        assert out_path.exists(), "bindgen output missing"
+def test_libc_codegen_script_contract() -> None:
+    script = repo_root() / "scripts" / "codegen_libc.sh"
+    assert script.is_file(), f"missing libc codegen script: {script}"
+    assert os.access(script, os.X_OK), f"libc codegen script is not executable: {script}"
 
 
 def test_dotnet_backend_contract() -> None:

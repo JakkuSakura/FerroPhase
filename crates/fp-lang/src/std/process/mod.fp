@@ -132,7 +132,7 @@ impl Process {
             Option::None => ProcessResult {
                 stdout: "",
                 stderr: "",
-                status: decode_exit_status(std::libc::system(&rendered_command)),
+                status: decode_exit_status(::libc::system(&rendered_command)),
             },
         }
     }

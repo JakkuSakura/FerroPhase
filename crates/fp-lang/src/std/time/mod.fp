@@ -4,5 +4,5 @@ fn now() -> f64 {
 }
 
 fn sleep(seconds: f64) -> () {
-    std::time::sleep(seconds)
+    ::libc::usleep((seconds * 1000000.0) as ::libc::useconds_t);
 }
