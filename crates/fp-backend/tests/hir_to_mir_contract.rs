@@ -988,7 +988,7 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
 
     let slice_value_local = block.statements.iter().find_map(|stmt| match &stmt.kind {
         StatementKind::Assign(place, Rvalue::IntrinsicCall { kind, .. })
-            if matches!(kind, fp_core::intrinsics::IntrinsicCallKind::Slice) =>
+            if matches!(kind, fp_core::intrinsics::IntrinsicKind::Slice) =>
         {
             Some(place.local)
         }

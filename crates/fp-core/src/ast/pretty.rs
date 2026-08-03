@@ -10,7 +10,7 @@ use crate::ast;
 use crate::ast::{
     Pattern, PatternKind, PatternStructField, SchemaDocument, SchemaKind, SchemaNode,
 };
-use crate::intrinsics::IntrinsicCallKind;
+use crate::intrinsics::CallKind;
 use crate::pretty::{escape_char, escape_string, PrettyCtx, PrettyPrintable};
 use crate::query;
 
@@ -1614,83 +1614,8 @@ fn render_select_kind(kind: &ast::ExprSelectType) -> &'static str {
     }
 }
 
-fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
-    match kind {
-        IntrinsicCallKind::Println => "println",
-        IntrinsicCallKind::Print => "print",
-        IntrinsicCallKind::Format => "format",
-        IntrinsicCallKind::Len => "len",
-        IntrinsicCallKind::Slice => "slice",
-        IntrinsicCallKind::DebugAssertions => "debug_assertions",
-        IntrinsicCallKind::Input => "input",
-        IntrinsicCallKind::Panic => "panic",
-        IntrinsicCallKind::CatchUnwind => "catch_unwind",
-        IntrinsicCallKind::CatchUnwindResult => "catch_unwind_result",
-        IntrinsicCallKind::TimeNow => "time_now",
-        IntrinsicCallKind::FsReadDir => "fs_read_dir",
-        IntrinsicCallKind::FsWalkDir => "fs_walk_dir",
-        IntrinsicCallKind::FsReadToString => "fs_read_to_string",
-        IntrinsicCallKind::FsWriteString => "fs_write_string",
-        IntrinsicCallKind::FsAppendString => "fs_append_string",
-        IntrinsicCallKind::FsExists => "fs_exists",
-        IntrinsicCallKind::FsIsDir => "fs_is_dir",
-        IntrinsicCallKind::FsIsFile => "fs_is_file",
-        IntrinsicCallKind::FsCreateDirAll => "fs_create_dir_all",
-        IntrinsicCallKind::FsRemoveFile => "fs_remove_file",
-        IntrinsicCallKind::FsRemoveDirAll => "fs_remove_dir_all",
-        IntrinsicCallKind::FsGlob => "fs_glob",
-        IntrinsicCallKind::EnvCurrentDir => "env_current_dir",
-        IntrinsicCallKind::EnvTempDir => "env_temp_dir",
-        IntrinsicCallKind::EnvHomeDir => "env_home_dir",
-        IntrinsicCallKind::EnvVar => "env_var",
-        IntrinsicCallKind::EnvVarExists => "env_var_exists",
-        IntrinsicCallKind::PathJoin => "path_join",
-        IntrinsicCallKind::PathParent => "path_parent",
-        IntrinsicCallKind::PathFileName => "path_file_name",
-        IntrinsicCallKind::PathExtension => "path_extension",
-        IntrinsicCallKind::PathStem => "path_stem",
-        IntrinsicCallKind::PathIsAbsolute => "path_is_absolute",
-        IntrinsicCallKind::PathNormalize => "path_normalize",
-        IntrinsicCallKind::IoReadStdinToString => "io_read_stdin_to_string",
-        IntrinsicCallKind::IoWriteStdout => "io_write_stdout",
-        IntrinsicCallKind::IoWriteStderr => "io_write_stderr",
-        IntrinsicCallKind::YamlToJson => "yaml_to_json",
-        IntrinsicCallKind::JsonParse => "json_parse",
-        IntrinsicCallKind::TestCommandMockReset => "test_command_mock_reset",
-        IntrinsicCallKind::TestCommandMockPush => "test_command_mock_push",
-        IntrinsicCallKind::TestCommandMockTakeCalls => "test_command_mock_take_calls",
-        IntrinsicCallKind::TestCommandMockApply => "test_command_mock_apply",
-        IntrinsicCallKind::Sleep => "sleep",
-        IntrinsicCallKind::Spawn => "spawn",
-        IntrinsicCallKind::Join => "join",
-        IntrinsicCallKind::Select => "select",
-        IntrinsicCallKind::Yield => "yield",
-        IntrinsicCallKind::SizeOf => "size_of",
-        IntrinsicCallKind::ReflectFields => "reflect_fields",
-        IntrinsicCallKind::HasMethod => "has_method",
-        IntrinsicCallKind::TypeName => "type_name",
-        IntrinsicCallKind::TypeOf => "type_of",
-        IntrinsicCallKind::CreateStruct => "create_struct",
-        IntrinsicCallKind::CloneStruct => "clone_struct",
-        IntrinsicCallKind::AddField => "add_field",
-        IntrinsicCallKind::BuildType => "build_type",
-        IntrinsicCallKind::HasField => "has_field",
-        IntrinsicCallKind::FieldCount => "field_count",
-        IntrinsicCallKind::MethodCount => "method_count",
-        IntrinsicCallKind::FieldType => "field_type",
-        IntrinsicCallKind::VecType => "vec_type",
-        IntrinsicCallKind::FieldNameAt => "field_name_at",
-        IntrinsicCallKind::StructSize => "struct_size",
-        IntrinsicCallKind::GenerateMethod => "generate_method",
-        IntrinsicCallKind::CompileError => "compile_error",
-        IntrinsicCallKind::CompileWarning => "compile_warning",
-        IntrinsicCallKind::ProcMacroTokenStreamFromStr => "token_stream_from_str",
-        IntrinsicCallKind::ProcMacroTokenStreamToString => "token_stream_to_string",
-        IntrinsicCallKind::ShellExec => "shell_exec",
-        IntrinsicCallKind::ShellFileCopy => "shell_file_copy",
-        IntrinsicCallKind::ShellFileTemplate => "shell_file_template",
-        IntrinsicCallKind::ShellFileRsync => "shell_file_rsync",
-    }
+fn render_intrinsic_kind(kind: CallKind) -> &'static str {
+    kind.name()
 }
 
 fn render_format_template(template: &ast::ExprStringTemplate) -> String {

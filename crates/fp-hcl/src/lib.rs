@@ -12,7 +12,7 @@ use fp_core::ast::{
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::CallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 use hcl::expr::{
@@ -263,8 +263,7 @@ fn lower_template_expr(template_expr: &TemplateExpr) -> CoreResult<Expr> {
 
     Ok(Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall {
         span: Span::null(),
-        kind: IntrinsicCallKind::Format,
-        origin: fp_core::intrinsics::IntrinsicCallOrigin::Intrinsic,
+        kind: CallKind::Format,
         args: call_args,
         kwargs: Vec::new(),
     })))
@@ -788,7 +787,7 @@ mod tests {
         let ExprKind::IntrinsicCall(call) = expr.kind() else {
             panic!("expected intrinsic call");
         };
-        assert!(matches!(call.kind, IntrinsicCallKind::Format));
+        assert!(matches!(call.kind, CallKind::Format));
         assert_eq!(call.args.len(), 2);
         assert!(matches!(call.args[0].kind(), ExprKind::FormatString(_)));
     }

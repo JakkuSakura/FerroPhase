@@ -246,7 +246,7 @@ pub mod calls;
 mod lang_instrinstic;
 pub mod normalize;
 
-pub use calls::{IntrinsicCallKind, IntrinsicCallOrigin};
+pub use calls::{CallKind, IntrinsicKind, OpKind};
 pub use lang_instrinstic::{
     lang_instrinstic_call_kind, lang_instrinstic_capability, lang_instrinstic_for_lang_item,
     lang_instrinstic_lang_item, lang_instrinstic_spec, LangInstrinstic, LangInstrinsticCapability,

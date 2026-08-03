@@ -8,7 +8,7 @@ use fp_core::ast::{
     ValueMap, ValueMapEntry, ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::CallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -550,15 +550,15 @@ impl GdscriptEmitter {
             BlockStmt::Expr(expr_stmt) => {
                 let expr = expr_stmt.expr.as_ref();
                 match expr.kind() {
-                    ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Print => {
+                    ExprKind::IntrinsicCall(call) if call.kind == CallKind::Print => {
                         self.emit_print_call(call)?;
                         Ok(())
                     }
-                    ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Println => {
+                    ExprKind::IntrinsicCall(call) if call.kind == CallKind::Println => {
                         self.emit_print_call(call)?;
                         Ok(())
                     }
-                    ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Sleep => {
+                    ExprKind::IntrinsicCall(call) if call.kind == CallKind::Sleep => {
                         let seconds = call
                             .args
                             .first()
@@ -790,7 +790,7 @@ impl GdscriptEmitter {
 
     fn render_intrinsic_call_expr(&mut self, call: &ExprIntrinsicCall) -> Result<String> {
         match call.kind {
-            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+            CallKind::Print | CallKind::Println => {
                 let rendered_args = if let Some(template) = call.args.first().and_then(|expr| {
                     let ExprKind::FormatString(template) = expr.kind() else {
                         return None;
@@ -808,7 +808,7 @@ impl GdscriptEmitter {
 
                 Ok(format!("print({rendered_args})"))
             }
-            IntrinsicCallKind::Format => {
+            CallKind::Format => {
                 let Some(template_expr) = call.args.first() else {
                     return Err(eyre!("format intrinsic expects a format template arg").into());
                 };
@@ -820,7 +820,7 @@ impl GdscriptEmitter {
                 };
                 self.render_format_template(template, &call.args[1..], &call.kwargs)
             }
-            IntrinsicCallKind::Sleep => Ok("null".to_string()),
+            CallKind::Sleep => Ok("null".to_string()),
             _ => Ok("null".to_string()),
         }
     }

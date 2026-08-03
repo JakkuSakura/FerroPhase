@@ -1,5 +1,5 @@
 use crate::ast::{TypeBinaryOpKind, TypePrimitive};
-use crate::intrinsics::IntrinsicCallKind;
+use crate::intrinsics::IntrinsicKind;
 use crate::query::{QueryIrDocument, QueryOrigin};
 use std::fmt;
 use std::collections::HashMap;
@@ -300,7 +300,7 @@ pub enum FormatArgRef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IntrinsicCallExpr {
-    pub kind: IntrinsicCallKind,
+    pub kind: IntrinsicKind,
     pub callargs: Vec<CallArg>,
 }
 

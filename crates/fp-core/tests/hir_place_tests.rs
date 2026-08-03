@@ -2,7 +2,7 @@ use fp_core::hir::{
     CallArg, Expr, ExprKind, IntrinsicCallExpr, Path, PathSegment, SliceExpr, Symbol,
 };
 use fp_core::hir_place::{project_hir_assign_target, HirAssignTargetProjection};
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::CallKind;
 use fp_core::span::Span;
 
 fn span() -> Span {
@@ -66,7 +66,7 @@ fn projects_intrinsic_slice_compatibility_path() {
     let slice_call = Expr::new(
         13,
         ExprKind::IntrinsicCall(IntrinsicCallExpr {
-            kind: IntrinsicCallKind::Slice,
+            kind: CallKind::Slice,
             callargs: vec![
                 CallArg {
                     name: Symbol::new("base"),

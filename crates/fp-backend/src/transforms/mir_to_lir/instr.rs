@@ -1,6 +1,6 @@
 use fp_core::diagnostics::{diagnostic_manager, Diagnostic};
 use fp_core::error::Result;
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::IntrinsicKind;
 use fp_core::mir::ty::{
     ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, TypeAndMut, UintTy,
 };
@@ -522,6 +522,7 @@ impl LirGenerator {
                 }
             }
             mir::ConstantKind::Null => lir::LirConstant::null(target_ty.clone()),
+            mir::ConstantKind::Undef => lir::LirConstant::undef(target_ty.clone()),
             mir::ConstantKind::Val(value) => {
                 self.const_value_to_lir_constant(value, &constant.ty)?
             }
@@ -1289,9 +1290,9 @@ impl LirGenerator {
             mir::StatementKind::Assign(place, rvalue) => self.transform_assign(place, rvalue),
             mir::StatementKind::IntrinsicCall { kind, format, args } => {
                 let lir_kind = match kind {
-                    IntrinsicCallKind::Print => lir::LirIntrinsicKind::Print,
-                    IntrinsicCallKind::Println => lir::LirIntrinsicKind::Println,
-                    IntrinsicCallKind::Format => {
+                    IntrinsicKind::Print => lir::LirIntrinsicKind::Print,
+                    IntrinsicKind::Println => lir::LirIntrinsicKind::Println,
+                    IntrinsicKind::Format => {
                         return Err(fp_core::error::Error::from(
                             "format intrinsic must be assigned to a place".to_string(),
                         ))
@@ -1454,9 +1455,9 @@ impl LirGenerator {
 
                 if matches!(
                     kind,
-                    IntrinsicCallKind::CreateStruct
-                        | IntrinsicCallKind::AddField
-                        | IntrinsicCallKind::BuildType
+                    IntrinsicKind::CreateStruct
+                        | IntrinsicKind::AddField
+                        | IntrinsicKind::BuildType
                 ) {
                     let mut lir_args = Vec::with_capacity(args.len());
                     for arg in args {
@@ -1465,12 +1466,12 @@ impl LirGenerator {
                         lir_args.push(value);
                     }
                     let comptime_op = match kind {
-                        IntrinsicCallKind::CreateStruct => lir::ComptimeOp::CreateStruct {
+                        IntrinsicKind::CreateStruct => lir::ComptimeOp::CreateStruct {
                             name: lir_args.into_iter().next().ok_or_else(|| {
                                 fp_core::error::Error::from("CreateStruct requires one argument")
                             })?,
                         },
-                        IntrinsicCallKind::AddField => {
+                        IntrinsicKind::AddField => {
                             let mut iter = lir_args.into_iter();
                             lir::ComptimeOp::AddField {
                                 struct_handle: iter.next().ok_or_else(|| {
@@ -1484,7 +1485,7 @@ impl LirGenerator {
                                 })?,
                             }
                         }
-                        IntrinsicCallKind::BuildType => lir::ComptimeOp::IntoType {
+                        IntrinsicKind::BuildType => lir::ComptimeOp::IntoType {
                             value: lir_args.into_iter().next().ok_or_else(|| {
                                 fp_core::error::Error::from("BuildType requires one argument")
                             })?,
@@ -1510,14 +1511,14 @@ impl LirGenerator {
                 }
 
                 let lir_kind = match kind {
-                    IntrinsicCallKind::Format => lir::LirIntrinsicKind::Format,
-                    IntrinsicCallKind::TimeNow => lir::LirIntrinsicKind::TimeNow,
-                    IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                    IntrinsicKind::Format => lir::LirIntrinsicKind::Format,
+                    IntrinsicKind::TimeNow => lir::LirIntrinsicKind::TimeNow,
+                    IntrinsicKind::Print | IntrinsicKind::Println => {
                         return Err(fp_core::error::Error::from(
                             "print/println must be emitted as statements".to_string(),
                         ))
                     }
-                    IntrinsicCallKind::Slice => {
+                    IntrinsicKind::Slice => {
                         if args.len() != 3 {
                             return Err(fp_core::error::Error::from(format!(
                                 "slice intrinsic expects 3 arguments, got {}",
@@ -2768,6 +2769,9 @@ impl LirGenerator {
                         .map_err(|error| fp_core::error::Error::from(error.to_string()))?,
                 )),
                 mir::ConstantKind::Null => Ok(lir::LirValue::constant(lir::LirConstant::null(
+                    self.lir_type_from_ty(&constant.ty),
+                ))),
+                mir::ConstantKind::Undef => Ok(lir::LirValue::constant(lir::LirConstant::undef(
                     self.lir_type_from_ty(&constant.ty),
                 ))),
                 mir::ConstantKind::Val(value) => Ok(lir::LirValue::constant(

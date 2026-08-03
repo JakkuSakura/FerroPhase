@@ -1102,12 +1102,12 @@ impl HirTypeChecker {
             .iter()
             .map(|arg| self.check_expr(&arg.value))
             .collect::<Result<Vec<_>>>()?;
-        use fp_core::intrinsics::IntrinsicCallKind;
+        use fp_core::intrinsics::IntrinsicKind;
         Ok(match call.kind {
-            IntrinsicCallKind::Print | IntrinsicCallKind::Println | IntrinsicCallKind::Panic => Ty { kind: TyKind::Tuple(Vec::new()) },
-            IntrinsicCallKind::Format => Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) },
-            IntrinsicCallKind::Len => Ty::uint(ty::UintTy::U64),
-            IntrinsicCallKind::Slice => {
+            IntrinsicKind::Print | IntrinsicKind::Println | IntrinsicKind::Panic => Ty { kind: TyKind::Tuple(Vec::new()) },
+            IntrinsicKind::Format => Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) },
+            IntrinsicKind::Len => Ty::uint(ty::UintTy::U64),
+            IntrinsicKind::Slice => {
                 let Some(base) = arg_types.first() else {
                     return Err(Error::from("slice intrinsic requires a base expression"));
                 };
@@ -1116,48 +1116,48 @@ impl HirTypeChecker {
                     _ => return Err(Error::from("slice intrinsic base must be an array or slice")),
                 }
             }
-            IntrinsicCallKind::DebugAssertions
-            | IntrinsicCallKind::FsExists
-            | IntrinsicCallKind::FsIsDir
-            | IntrinsicCallKind::FsIsFile
-            | IntrinsicCallKind::EnvVarExists
-            | IntrinsicCallKind::HasField
-            | IntrinsicCallKind::HasMethod => Ty::bool(),
-            IntrinsicCallKind::Input
-            | IntrinsicCallKind::FsReadToString
-            | IntrinsicCallKind::FsReadDir
-            | IntrinsicCallKind::FsWalkDir
-            | IntrinsicCallKind::FsGlob
-            | IntrinsicCallKind::EnvCurrentDir
-            | IntrinsicCallKind::EnvTempDir
-            | IntrinsicCallKind::EnvHomeDir
-            | IntrinsicCallKind::EnvVar
-            | IntrinsicCallKind::PathJoin
-            | IntrinsicCallKind::PathParent
-            | IntrinsicCallKind::PathFileName
-            | IntrinsicCallKind::PathExtension
-            | IntrinsicCallKind::PathStem
-            | IntrinsicCallKind::PathNormalize
-            | IntrinsicCallKind::IoReadStdinToString
-            | IntrinsicCallKind::YamlToJson
-            | IntrinsicCallKind::JsonParse
-            | IntrinsicCallKind::ProcMacroTokenStreamToString => Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) },
-            IntrinsicCallKind::PathIsAbsolute => Ty::bool(),
-            IntrinsicCallKind::TimeNow => Ty::float(ty::FloatTy::F64),
-            IntrinsicCallKind::CatchUnwind => Ty::bool(),
-            IntrinsicCallKind::CatchUnwindResult => {
+            IntrinsicKind::DebugAssertions
+            | IntrinsicKind::FsExists
+            | IntrinsicKind::FsIsDir
+            | IntrinsicKind::FsIsFile
+            | IntrinsicKind::EnvVarExists
+            | IntrinsicKind::HasField
+            | IntrinsicKind::HasMethod => Ty::bool(),
+            IntrinsicKind::Input
+            | IntrinsicKind::FsReadToString
+            | IntrinsicKind::FsReadDir
+            | IntrinsicKind::FsWalkDir
+            | IntrinsicKind::FsGlob
+            | IntrinsicKind::EnvCurrentDir
+            | IntrinsicKind::EnvTempDir
+            | IntrinsicKind::EnvHomeDir
+            | IntrinsicKind::EnvVar
+            | IntrinsicKind::PathJoin
+            | IntrinsicKind::PathParent
+            | IntrinsicKind::PathFileName
+            | IntrinsicKind::PathExtension
+            | IntrinsicKind::PathStem
+            | IntrinsicKind::PathNormalize
+            | IntrinsicKind::IoReadStdinToString
+            | IntrinsicKind::YamlToJson
+            | IntrinsicKind::JsonParse
+            | IntrinsicKind::ProcMacroTokenStreamToString => Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) },
+            IntrinsicKind::PathIsAbsolute => Ty::bool(),
+            IntrinsicKind::TimeNow => Ty::float(ty::FloatTy::F64),
+            IntrinsicKind::CatchUnwind => Ty::bool(),
+            IntrinsicKind::CatchUnwindResult => {
                 let Some(value) = arg_types.first().cloned() else {
                     return Err(Error::from("catch_unwind_result requires a callable argument"));
                 };
                 Ty { kind: TyKind::Tuple(vec![Box::new(Ty::bool()), Box::new(value)]) }
             }
-            IntrinsicCallKind::Spawn | IntrinsicCallKind::Select => {
+            IntrinsicKind::Spawn | IntrinsicKind::Select => {
                 let Some(value) = arg_types.first() else {
                     return Err(Error::from(format!("{:?} intrinsic requires an argument", call.kind)));
                 };
                 value.clone()
             }
-            IntrinsicCallKind::Join => {
+            IntrinsicKind::Join => {
                 if arg_types.len() == 1 {
                     arg_types[0].clone()
                 } else if arg_types.is_empty() {
@@ -1166,26 +1166,26 @@ impl HirTypeChecker {
                     Ty { kind: TyKind::Tuple(arg_types.into_iter().map(Box::new).collect()) }
                 }
             }
-            IntrinsicCallKind::SizeOf | IntrinsicCallKind::FieldCount | IntrinsicCallKind::MethodCount => Ty::uint(ty::UintTy::U64),
-            IntrinsicCallKind::FieldNameAt | IntrinsicCallKind::TypeName | IntrinsicCallKind::ProcMacroTokenStreamFromStr => Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) },
-            IntrinsicCallKind::FieldType | IntrinsicCallKind::VecType => return Err(Error::from("type-valued intrinsic has no HIR type representation")),
-            IntrinsicCallKind::TypeOf | IntrinsicCallKind::CreateStruct | IntrinsicCallKind::AddField | IntrinsicCallKind::BuildType => {
+            IntrinsicKind::SizeOf | IntrinsicKind::FieldCount | IntrinsicKind::MethodCount => Ty::uint(ty::UintTy::U64),
+            IntrinsicKind::FieldNameAt | IntrinsicKind::TypeName | IntrinsicKind::ProcMacroTokenStreamFromStr => Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) },
+            IntrinsicKind::FieldType | IntrinsicKind::VecType => return Err(Error::from("type-valued intrinsic has no HIR type representation")),
+            IntrinsicKind::TypeOf | IntrinsicKind::CreateStruct | IntrinsicKind::AddField | IntrinsicKind::BuildType => {
                 return Err(Error::from("type-valued intrinsic typing is not implemented"));
             }
-            IntrinsicCallKind::FsWriteString
-            | IntrinsicCallKind::FsAppendString
-            | IntrinsicCallKind::FsCreateDirAll
-            | IntrinsicCallKind::FsRemoveFile
-            | IntrinsicCallKind::FsRemoveDirAll
-            | IntrinsicCallKind::IoWriteStdout
-            | IntrinsicCallKind::IoWriteStderr
-            | IntrinsicCallKind::TestCommandMockReset
-            | IntrinsicCallKind::TestCommandMockPush
-            | IntrinsicCallKind::TestCommandMockApply
-            | IntrinsicCallKind::Sleep
-            | IntrinsicCallKind::Yield
-            | IntrinsicCallKind::CompileWarning => self.unit_ty(),
-            IntrinsicCallKind::CompileError => return Err(Error::from("compile_error intrinsic requested an error")),
+            IntrinsicKind::FsWriteString
+            | IntrinsicKind::FsAppendString
+            | IntrinsicKind::FsCreateDirAll
+            | IntrinsicKind::FsRemoveFile
+            | IntrinsicKind::FsRemoveDirAll
+            | IntrinsicKind::IoWriteStdout
+            | IntrinsicKind::IoWriteStderr
+            | IntrinsicKind::TestCommandMockReset
+            | IntrinsicKind::TestCommandMockPush
+            | IntrinsicKind::TestCommandMockApply
+            | IntrinsicKind::Sleep
+            | IntrinsicKind::Yield
+            | IntrinsicKind::CompileWarning => self.unit_ty(),
+            IntrinsicKind::CompileError => return Err(Error::from("compile_error intrinsic requested an error")),
             _ => return Err(Error::from(format!("intrinsic `{:?}` has no HIR type rule", call.kind))),
         })
     }

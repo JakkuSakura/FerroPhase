@@ -406,6 +406,7 @@ fn summarize_constant(constant: &Constant) -> String {
         ConstantKind::Val(_) => format!("const <{}>", constant.ty),
         ConstantKind::TokenStream { kind, .. } => format!("token_stream({kind:?})"),
         ConstantKind::Null => "null".into(),
+        ConstantKind::Undef => "undef".into(),
     }
 }
 

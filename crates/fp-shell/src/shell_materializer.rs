@@ -3,7 +3,7 @@ use fp_core::ast::{
     BlockStmt, Expr, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, File,
     FunctionSignature, Item, ItemKind, Name, Value,
 };
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicMaterializer};
+use fp_core::intrinsics::{CallKind, IntrinsicMaterializer};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -120,7 +120,7 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
         _expr_ty: &fp_core::ast::TySlot,
     ) -> Result<Option<Expr>> {
         match call.kind {
-            IntrinsicCallKind::ShellExec => {
+            CallKind::ShellExec => {
                 let host = call.args.get(1).and_then(string_val).unwrap_or_default();
                 let transport = self.host_transport_for(&host);
                 let suffix = match transport.as_deref() {
@@ -138,7 +138,7 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
                     &call.kwargs,
                 )))
             }
-            IntrinsicCallKind::ShellFileCopy => {
+            CallKind::ShellFileCopy => {
                 let host = call.args.get(2).and_then(string_val).unwrap_or_default();
                 let transport = self.host_transport_for(&host);
                 let suffix = match transport.as_deref() {
@@ -156,7 +156,7 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
                     &call.kwargs,
                 )))
             }
-            IntrinsicCallKind::ShellFileTemplate => {
+            CallKind::ShellFileTemplate => {
                 let host = call.args.get(2).and_then(string_val).unwrap_or_default();
                 let transport = self.host_transport_for(&host);
                 let suffix = match transport.as_deref() {
@@ -171,7 +171,7 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
                     &call.kwargs,
                 )))
             }
-            IntrinsicCallKind::ShellFileRsync => {
+            CallKind::ShellFileRsync => {
                 let host = call.args.get(2).and_then(string_val).unwrap_or_default();
                 let transport = self.host_transport_for(&host);
                 let suffix = match transport.as_deref() {
@@ -251,14 +251,14 @@ fn try_rewrite_to_intrinsic(invoke: &mut ExprInvoke) -> Option<Expr> {
     // Only rewrite unmangled names (the OUTPUT of materialize_call is already mangled,
     // so skip __fp_ prefixed names to avoid infinite recursion)
     let kind = match name.as_str() {
-        "std::ops::server::shell" | "std::ops::server::shell_local" => IntrinsicCallKind::ShellExec,
-        "std::ops::files::copy" | "std::ops::files::copy_local" => IntrinsicCallKind::ShellFileCopy,
+        "std::ops::server::shell" | "std::ops::server::shell_local" => CallKind::ShellExec,
+        "std::ops::files::copy" | "std::ops::files::copy_local" => CallKind::ShellFileCopy,
         "std::ops::files::template" | "std::ops::files::template_local" => {
-            IntrinsicCallKind::ShellFileTemplate
+            CallKind::ShellFileTemplate
         }
         "std::ops::files::rsync"
         | "std::ops::files::rsync_local"
-        | "std::ops::files::rsync_remote" => IntrinsicCallKind::ShellFileRsync,
+        | "std::ops::files::rsync_remote" => CallKind::ShellFileRsync,
         _ => {
             if name.starts_with("__fp_") {
                 return None; // Already materialized, skip
@@ -269,7 +269,6 @@ fn try_rewrite_to_intrinsic(invoke: &mut ExprInvoke) -> Option<Expr> {
     Some(Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall {
         span: invoke.span,
         kind,
-        origin: fp_core::intrinsics::IntrinsicCallOrigin::Intrinsic,
         args: std::mem::take(&mut invoke.args),
         kwargs: std::mem::take(&mut invoke.kwargs),
     })))

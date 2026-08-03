@@ -16,7 +16,7 @@ use fp_core::hir_place::{
 fn call_arg_values(args: &[hir::CallArg]) -> Vec<&hir::Expr> {
     args.iter().map(|arg| &arg.value).collect()
 }
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::IntrinsicKind;
 use fp_core::mir::ty::{
     AdtDef, AdtFlags, ConstKind, ConstValue, CtorKind, ErrorGuaranteed, FloatTy, IntTy, Mutability,
     ReprFlags, ReprOptions, Scalar, ScalarInt, Ty, TyKind, TypeAndMut, UintTy, VariantDef,
@@ -6298,7 +6298,7 @@ impl MirLowering {
         let hir::ExprKind::IntrinsicCall(call) = &base.kind else {
             return None;
         };
-        if call.kind != IntrinsicCallKind::TypeOf || call.callargs.len() != 1 {
+        if call.kind != IntrinsicKind::TypeOf || call.callargs.len() != 1 {
             return None;
         }
         let type_arg = &call.callargs[0].value;
@@ -8777,11 +8777,12 @@ impl<'a> BodyBuilder<'a> {
     ) -> Result<()> {
         let init_span = init.as_ref().map(|expr| expr.span).unwrap_or(span);
         let ty_is_infer = matches!(ty.kind, hir::TypeExprKind::Infer | hir::TypeExprKind::Error);
-        let mut declared_ty = if ty_is_infer {
+        let declared_ty = if ty_is_infer {
             None
         } else {
             Some(self.lower_type_expr(ty))
         };
+        let mut storage_ty = declared_ty.clone();
         let annotated_enum_def = if ty_is_infer {
             None
         } else if let hir::TypeExprKind::Path(path) = &ty.kind {
@@ -8823,7 +8824,7 @@ impl<'a> BodyBuilder<'a> {
                                 .enum_layout_for_instance(*def_id, &args, init_span)
                         };
                         if let Some(layout) = layout {
-                            declared_ty = Some(layout.enum_ty);
+                            storage_ty = Some(layout.enum_ty);
                         }
                     }
                 }
@@ -8834,7 +8835,7 @@ impl<'a> BodyBuilder<'a> {
             .as_deref()
             .map(|expr| self.implicit_local_init_ty(expr))
             .transpose()?;
-        let local_ty = declared_ty
+        let local_ty = storage_ty
             .as_ref()
             .or(implicit_ty.as_ref())
             .ok_or_else(|| fp_core::error::Error::from("local declaration has no type"))?;
@@ -10971,19 +10972,23 @@ impl<'a> BodyBuilder<'a> {
             literal: mir::ConstantKind::Int(variant.discriminant),
         }));
 
-        for idx in 0..layout.payload_tys.len() {
-            let arg = args.get(idx).ok_or_else(|| {
-                fp_core::error::Error::from(format!(
-                    "enum variant payload {idx} is missing after arity validation"
-                ))
-            })?;
-            let expected_ty = payload_tys.get(idx).ok_or_else(|| {
-                fp_core::error::Error::from(format!(
-                    "enum variant payload type {idx} is missing after layout validation"
-                ))
-            })?;
-            let operand = self.lower_operand(&arg.value, Some(expected_ty))?;
-            operands.push(operand.operand);
+        for (idx, slot_ty) in layout.payload_tys.iter().enumerate() {
+            if let Some(expected_ty) = payload_tys.get(idx) {
+                let arg = args.get(idx).ok_or_else(|| {
+                    fp_core::error::Error::from(format!(
+                        "enum variant payload {idx} is missing after arity validation"
+                    ))
+                })?;
+                let operand = self.lower_operand(&arg.value, Some(expected_ty))?;
+                operands.push(operand.operand);
+            } else {
+                operands.push(mir::Operand::Constant(mir::Constant {
+                    span,
+                    ty: slot_ty.clone(),
+                    user_ty: None,
+                    literal: mir::ConstantKind::Undef,
+                }));
+            }
         }
 
         self.push_statement(mir::Statement {
@@ -14413,7 +14418,7 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::IntrinsicCall(call) => {
                 if matches!(
                     call.kind,
-                    IntrinsicCallKind::Print | IntrinsicCallKind::Println
+                    IntrinsicKind::Print | IntrinsicKind::Println
                 ) {
                     self.emit_printf_call(call, expr.span)?;
                     let unit_ty = MirLowering::unit_ty();
@@ -14432,7 +14437,7 @@ impl<'a> BodyBuilder<'a> {
                         ty: unit_ty,
                     });
                 }
-                if call.kind == IntrinsicCallKind::Format {
+                if call.kind == IntrinsicKind::Format {
                     let (format, args) = self.prepare_format_call(call, expr.span)?;
                     let string_ty = Ty {
                         kind: TyKind::RawPtr(TypeAndMut {
@@ -14449,7 +14454,7 @@ impl<'a> BodyBuilder<'a> {
                         kind: mir::StatementKind::Assign(
                             local_place.clone(),
                             mir::Rvalue::IntrinsicCall {
-                                kind: IntrinsicCallKind::Format,
+                                kind: IntrinsicKind::Format,
                                 format,
                                 args,
                             },
@@ -14461,7 +14466,7 @@ impl<'a> BodyBuilder<'a> {
                         ty: string_ty,
                     });
                 }
-                if call.kind == IntrinsicCallKind::Panic {
+                if call.kind == IntrinsicKind::Panic {
                     self.emit_panic_intrinsic(call, expr.span)?;
                     let unit_ty = MirLowering::unit_ty();
                     return Ok(OperandInfo {
@@ -14474,13 +14479,13 @@ impl<'a> BodyBuilder<'a> {
                         ty: unit_ty,
                     });
                 }
-                if call.kind == IntrinsicCallKind::CatchUnwind {
+                if call.kind == IntrinsicKind::CatchUnwind {
                     return self.lower_catch_unwind(expr, call, None);
                 }
-                if call.kind == IntrinsicCallKind::CatchUnwindResult {
+                if call.kind == IntrinsicKind::CatchUnwindResult {
                     return self.lower_catch_unwind_result(expr, call, None);
                 }
-                if call.kind == IntrinsicCallKind::TimeNow {
+                if call.kind == IntrinsicKind::TimeNow {
                     let args = &call.callargs;
                     if !args.is_empty() {
                         self.lowering
@@ -14496,7 +14501,7 @@ impl<'a> BodyBuilder<'a> {
                         kind: mir::StatementKind::Assign(
                             local_place.clone(),
                             mir::Rvalue::IntrinsicCall {
-                                kind: IntrinsicCallKind::TimeNow,
+                                kind: IntrinsicKind::TimeNow,
                                 format: String::new(),
                                 args: Vec::new(),
                             },
@@ -14508,7 +14513,7 @@ impl<'a> BodyBuilder<'a> {
                         ty: now_ty,
                     });
                 }
-                if call.kind == IntrinsicCallKind::FsReadToString {
+                if call.kind == IntrinsicKind::FsReadToString {
                     let ty = expected.cloned().unwrap_or_else(|| Ty {
                         kind: TyKind::Slice(Box::new(Ty {
                             kind: TyKind::Int(IntTy::I8),
@@ -14522,7 +14527,7 @@ impl<'a> BodyBuilder<'a> {
                         ty,
                     });
                 }
-                if call.kind == IntrinsicCallKind::FsExists {
+                if call.kind == IntrinsicKind::FsExists {
                     let ty = Ty { kind: TyKind::Bool };
                     let local_id = self.allocate_temp(ty.clone(), expr.span);
                     let local_place = mir::Place::from_local(local_id);
@@ -14532,7 +14537,7 @@ impl<'a> BodyBuilder<'a> {
                         ty,
                     });
                 }
-                if call.kind == IntrinsicCallKind::FsRemoveFile {
+                if call.kind == IntrinsicKind::FsRemoveFile {
                     self.lower_fs_remove_file_as_statement(expr, call)?;
                     let unit_ty = MirLowering::unit_ty();
                     return Ok(OperandInfo {
@@ -14545,7 +14550,7 @@ impl<'a> BodyBuilder<'a> {
                         ty: unit_ty,
                     });
                 }
-                if call.kind == IntrinsicCallKind::EnvVarExists {
+                if call.kind == IntrinsicKind::EnvVarExists {
                     let ty = Ty { kind: TyKind::Bool };
                     let local_id = self.allocate_temp(ty.clone(), expr.span);
                     let local_place = mir::Place::from_local(local_id);
@@ -14555,7 +14560,7 @@ impl<'a> BodyBuilder<'a> {
                         ty,
                     });
                 }
-                if call.kind == IntrinsicCallKind::EnvVar {
+                if call.kind == IntrinsicKind::EnvVar {
                     let ty = expected.cloned().unwrap_or_else(|| Ty {
                         kind: TyKind::Slice(Box::new(Ty {
                             kind: TyKind::Int(IntTy::I8),
@@ -14571,10 +14576,10 @@ impl<'a> BodyBuilder<'a> {
                 }
                 if matches!(
                     call.kind,
-                    IntrinsicCallKind::FsWriteString
-                        | IntrinsicCallKind::FsAppendString
-                        | IntrinsicCallKind::FsIsDir
-                        | IntrinsicCallKind::FsIsFile
+                    IntrinsicKind::FsWriteString
+                        | IntrinsicKind::FsAppendString
+                        | IntrinsicKind::FsIsDir
+                        | IntrinsicKind::FsIsFile
                 ) {
                     self.lowering.emit_error(
                         expr.span,
@@ -14588,7 +14593,7 @@ impl<'a> BodyBuilder<'a> {
                         ty,
                     });
                 }
-                if call.kind == IntrinsicCallKind::Slice {
+                if call.kind == IntrinsicKind::Slice {
                     let args = &call.callargs;
                     if args.len() != 3 {
                         self.lowering.emit_error(
@@ -14633,7 +14638,7 @@ impl<'a> BodyBuilder<'a> {
                         kind: mir::StatementKind::Assign(
                             local_place.clone(),
                             mir::Rvalue::IntrinsicCall {
-                                kind: IntrinsicCallKind::Slice,
+                                kind: IntrinsicKind::Slice,
                                 format: String::new(),
                                 args,
                             },
@@ -14645,7 +14650,7 @@ impl<'a> BodyBuilder<'a> {
                         ty: slice_ty.clone(),
                     });
                 }
-                if call.kind == IntrinsicCallKind::Len {
+                if call.kind == IntrinsicKind::Len {
                     let args = &call.callargs;
                     let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
@@ -14726,7 +14731,7 @@ impl<'a> BodyBuilder<'a> {
                 }
                 if matches!(
                     call.kind,
-                    IntrinsicCallKind::Spawn | IntrinsicCallKind::Join | IntrinsicCallKind::Select
+                    IntrinsicKind::Spawn | IntrinsicKind::Join | IntrinsicKind::Select
                 ) {
                     let mut lowered_args = Vec::with_capacity(call.callargs.len());
                     for arg in &call.callargs {
@@ -14734,7 +14739,7 @@ impl<'a> BodyBuilder<'a> {
                     }
 
                     match call.kind {
-                        IntrinsicCallKind::Spawn | IntrinsicCallKind::Select => {
+                        IntrinsicKind::Spawn | IntrinsicKind::Select => {
                             if lowered_args.is_empty() {
                                 self.lowering.emit_error(
                                     expr.span,
@@ -14768,7 +14773,7 @@ impl<'a> BodyBuilder<'a> {
                                 .expect("checked non-empty intrinsic args");
                             return Ok(first);
                         }
-                        IntrinsicCallKind::Join => {
+                        IntrinsicKind::Join => {
                             if lowered_args.is_empty() {
                                 self.lowering
                                     .emit_error(expr.span, "join intrinsic expects arguments");
@@ -14831,9 +14836,9 @@ impl<'a> BodyBuilder<'a> {
                 // them to ComptimeOp instructions.
                 if matches!(
                     call.kind,
-                    IntrinsicCallKind::CreateStruct
-                        | IntrinsicCallKind::AddField
-                        | IntrinsicCallKind::BuildType
+                    IntrinsicKind::CreateStruct
+                        | IntrinsicKind::AddField
+                        | IntrinsicKind::BuildType
                 ) {
                     let lowered_args: Vec<OperandInfo> = call
                         .callargs
@@ -15055,7 +15060,7 @@ impl<'a> BodyBuilder<'a> {
             kind: mir::StatementKind::Assign(
                 local_place.clone(),
                 mir::Rvalue::IntrinsicCall {
-                    kind: IntrinsicCallKind::Slice,
+                    kind: IntrinsicKind::Slice,
                     format: String::new(),
                     args: vec![
                         base_operand.operand,
@@ -15222,7 +15227,7 @@ impl<'a> BodyBuilder<'a> {
         let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
         match call.kind {
-            IntrinsicCallKind::SizeOf => {
+            IntrinsicKind::SizeOf => {
                 let target_expr = match arg_values.get(0) {
                     Some(expr) => *expr,
                     None => {
@@ -15253,7 +15258,7 @@ impl<'a> BodyBuilder<'a> {
                     },
                 ))
             }
-            IntrinsicCallKind::FieldCount => {
+            IntrinsicKind::FieldCount => {
                 let target_expr = match arg_values.get(0) {
                     Some(expr) => *expr,
                     None => {
@@ -15288,7 +15293,7 @@ impl<'a> BodyBuilder<'a> {
                     },
                 ))
             }
-            IntrinsicCallKind::HasField => {
+            IntrinsicKind::HasField => {
                 if args.len() != 2 {
                     self.lowering
                         .emit_error(span, "hasfield! intrinsic expects a type and field name");
@@ -15323,7 +15328,7 @@ impl<'a> BodyBuilder<'a> {
                     Ty { kind: TyKind::Bool },
                 ))
             }
-            IntrinsicCallKind::MethodCount => {
+            IntrinsicKind::MethodCount => {
                 let target_expr = match arg_values.get(0) {
                     Some(expr) => *expr,
                     None => {
@@ -15462,7 +15467,7 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
-        if call.kind == IntrinsicCallKind::Println {
+        if call.kind == IntrinsicKind::Println {
             format.push('\n');
         }
 
@@ -15657,7 +15662,7 @@ impl<'a> BodyBuilder<'a> {
                         .any(|part| matches!(part, hir::FormatTemplatePart::Placeholder(_)));
                     if has_placeholders {
                         let format_call = hir::IntrinsicCallExpr {
-                            kind: IntrinsicCallKind::Format,
+                            kind: IntrinsicKind::Format,
                             callargs: call.callargs.clone(),
                         };
                         let (format, args) = match self.prepare_format_call(&format_call, span) {
@@ -15679,7 +15684,7 @@ impl<'a> BodyBuilder<'a> {
                                 kind: mir::StatementKind::Assign(
                                     local_place.clone(),
                                     mir::Rvalue::IntrinsicCall {
-                                        kind: IntrinsicCallKind::Format,
+                                        kind: IntrinsicKind::Format,
                                         format,
                                         args,
                                     },
@@ -17414,7 +17419,7 @@ impl<'a> BodyBuilder<'a> {
                 self.lower_match_expr(expr.span, scrutinee, arms, place, expected_ty)?;
             }
             hir::ExprKind::IntrinsicCall(call) => match call.kind {
-                IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                IntrinsicKind::Print | IntrinsicKind::Println => {
                     self.emit_printf_call(call, expr.span)?;
                     let statement = mir::Statement {
                         source_info: expr.span,
@@ -17429,14 +17434,14 @@ impl<'a> BodyBuilder<'a> {
                     }
                     return Ok(());
                 }
-                IntrinsicCallKind::Format => {
+                IntrinsicKind::Format => {
                     let (format, args) = self.prepare_format_call(call, expr.span)?;
                     let statement = mir::Statement {
                         source_info: expr.span,
                         kind: mir::StatementKind::Assign(
                             place.clone(),
                             mir::Rvalue::IntrinsicCall {
-                                kind: IntrinsicCallKind::Format,
+                                kind: IntrinsicKind::Format,
                                 format,
                                 args,
                             },
@@ -17445,7 +17450,7 @@ impl<'a> BodyBuilder<'a> {
                     self.push_statement(statement);
                     return Ok(());
                 }
-                IntrinsicCallKind::Panic => {
+                IntrinsicKind::Panic => {
                     let unit_assign = mir::Statement {
                         source_info: expr.span,
                         kind: mir::StatementKind::Assign(
@@ -17457,15 +17462,15 @@ impl<'a> BodyBuilder<'a> {
                     self.emit_panic_intrinsic(call, expr.span)?;
                     return Ok(());
                 }
-                IntrinsicCallKind::CatchUnwind => {
+                IntrinsicKind::CatchUnwind => {
                     self.lower_catch_unwind(expr, call, Some(place.clone()))?;
                     return Ok(());
                 }
-                IntrinsicCallKind::CatchUnwindResult => {
+                IntrinsicKind::CatchUnwindResult => {
                     self.lower_catch_unwind_result(expr, call, Some(place.clone()))?;
                     return Ok(());
                 }
-                IntrinsicCallKind::TimeNow => {
+                IntrinsicKind::TimeNow => {
                     let args = &call.callargs;
                     if !args.is_empty() {
                         self.lowering
@@ -17476,7 +17481,7 @@ impl<'a> BodyBuilder<'a> {
                         kind: mir::StatementKind::Assign(
                             place.clone(),
                             mir::Rvalue::IntrinsicCall {
-                                kind: IntrinsicCallKind::TimeNow,
+                                kind: IntrinsicKind::TimeNow,
                                 format: String::new(),
                                 args: Vec::new(),
                             },
@@ -17485,7 +17490,7 @@ impl<'a> BodyBuilder<'a> {
                     self.push_statement(statement);
                     return Ok(());
                 }
-                IntrinsicCallKind::FsReadToString => {
+                IntrinsicKind::FsReadToString => {
                     self.lower_fs_read_to_string_into_place(
                         expr,
                         call,
@@ -17494,10 +17499,10 @@ impl<'a> BodyBuilder<'a> {
                     )?;
                     return Ok(());
                 }
-                IntrinsicCallKind::FsWriteString
-                | IntrinsicCallKind::FsAppendString
-                | IntrinsicCallKind::FsIsDir
-                | IntrinsicCallKind::FsIsFile => {
+                IntrinsicKind::FsWriteString
+                | IntrinsicKind::FsAppendString
+                | IntrinsicKind::FsIsDir
+                | IntrinsicKind::FsIsFile => {
                     self.lowering.emit_error(
                         expr.span,
                         format!("{:?} is not implemented for compiled backends", call.kind),
@@ -17514,11 +17519,11 @@ impl<'a> BodyBuilder<'a> {
                     self.push_statement(statement);
                     return Ok(());
                 }
-                IntrinsicCallKind::FsExists => {
+                IntrinsicKind::FsExists => {
                     self.lower_fs_exists_into_place(expr, call, place.clone(), expected_ty)?;
                     return Ok(());
                 }
-                IntrinsicCallKind::FsRemoveFile => {
+                IntrinsicKind::FsRemoveFile => {
                     self.lower_fs_remove_file_as_statement(expr, call)?;
                     let statement = mir::Statement {
                         source_info: expr.span,
@@ -17530,15 +17535,15 @@ impl<'a> BodyBuilder<'a> {
                     self.push_statement(statement);
                     return Ok(());
                 }
-                IntrinsicCallKind::EnvVarExists => {
+                IntrinsicKind::EnvVarExists => {
                     self.lower_env_var_exists_into_place(expr, call, place.clone(), expected_ty)?;
                     return Ok(());
                 }
-                IntrinsicCallKind::EnvVar => {
+                IntrinsicKind::EnvVar => {
                     self.lower_env_var_into_place(expr, call, place.clone(), expected_ty)?;
                     return Ok(());
                 }
-                IntrinsicCallKind::Spawn | IntrinsicCallKind::Select => {
+                IntrinsicKind::Spawn | IntrinsicKind::Select => {
                     if let Some(first) = call.callargs.first() {
                         self.lower_expr_into_place(&first.value, place.clone(), expected_ty)?;
                     } else {
@@ -17557,7 +17562,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                     return Ok(());
                 }
-                IntrinsicCallKind::Join => {
+                IntrinsicKind::Join => {
                     let args = &call.callargs;
                     if args.is_empty() {
                         self.lowering

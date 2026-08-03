@@ -2,7 +2,7 @@ pub mod lowering;
 
 use fp_bytecode::{
     BytecodeBinOp, BytecodeCallee, BytecodeConst, BytecodeInstr, BytecodePlace, BytecodePlaceElem,
-    BytecodeProgram, BytecodeTerminator, BytecodeUnOp, IntrinsicCallKind,
+    BytecodeProgram, BytecodeTerminator, BytecodeUnOp, IntrinsicKind,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -16,6 +16,7 @@ pub enum Value {
     Float(f64),
     Str(String),
     Null,
+    Undefined,
     Tuple(Vec<Value>),
     Array(Vec<Value>),
     List(Vec<Value>),
@@ -517,12 +518,12 @@ fn eval_unop(op: &BytecodeUnOp, value: Value) -> Result<Value, VmError> {
 }
 
 fn exec_intrinsic(
-    kind: IntrinsicCallKind,
+    kind: IntrinsicKind,
     format: Option<&str>,
     args: Vec<Value>,
 ) -> Result<Option<Value>, VmError> {
     match kind {
-        IntrinsicCallKind::Println => {
+        IntrinsicKind::Println => {
             let rendered = render_args(format, &args);
             if format.is_some() {
                 print!("{}", rendered);
@@ -531,13 +532,13 @@ fn exec_intrinsic(
             }
             Ok(None)
         }
-        IntrinsicCallKind::Print => {
+        IntrinsicKind::Print => {
             let rendered = render_args(format, &args);
             print!("{}", rendered);
             Ok(None)
         }
-        IntrinsicCallKind::Format => Ok(Some(Value::Str(render_args(format, &args)))),
-        IntrinsicCallKind::Len => {
+        IntrinsicKind::Format => Ok(Some(Value::Str(render_args(format, &args)))),
+        IntrinsicKind::Len => {
             if args.len() != 1 {
                 return Err(VmError::Runtime {
                     message: "len expects 1 argument".to_string(),
@@ -557,7 +558,7 @@ fn exec_intrinsic(
             };
             Ok(Some(Value::Int(len)))
         }
-        IntrinsicCallKind::TimeNow => {
+        IntrinsicKind::TimeNow => {
             if !args.is_empty() {
                 return Err(VmError::Runtime {
                     message: "time::now expects no arguments".to_string(),
@@ -643,6 +644,7 @@ fn render_value(value: &Value) -> String {
         Value::Float(value) => value.to_string(),
         Value::Str(value) => value.clone(),
         Value::Null => "null".to_string(),
+        Value::Undefined => "undef".to_string(),
         Value::Tuple(items) => format!(
             "({})",
             items
@@ -848,6 +850,7 @@ fn convert_const(value: &BytecodeConst) -> Result<Value, VmError> {
         BytecodeConst::Str(value) => Value::Str(value.clone()),
         BytecodeConst::Function(name) => Value::Str(name.clone()),
         BytecodeConst::Null => Value::Null,
+        BytecodeConst::Undef => Value::Undefined,
         BytecodeConst::Tuple(items) => {
             Value::Tuple(items.iter().map(convert_const).collect::<Result<_, _>>()?)
         }
@@ -876,6 +879,7 @@ fn values_equal(left: &Value, right: &Value) -> bool {
         (Value::Float(a), Value::Float(b)) => a == b,
         (Value::Str(a), Value::Str(b)) => a == b,
         (Value::Null, Value::Null) => true,
+        (Value::Undefined, Value::Undefined) => true,
         (Value::Tuple(a), Value::Tuple(b))
         | (Value::Array(a), Value::Array(b))
         | (Value::List(a), Value::List(b)) => {

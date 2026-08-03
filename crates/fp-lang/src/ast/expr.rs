@@ -287,7 +287,7 @@ fn parse_cast(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
         // `expr as type<_>` or `expr as type<Concrete>` → intrinsic call
         if let Ty::Type(_) = ty {
             expr = ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                IntrinsicCallKind::BuildType,
+                CallKind::BuildType,
                 vec![expr.clone()],
                 Vec::new(),
             )).into();
@@ -315,7 +315,7 @@ fn parse_cast_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr>
         *input = probe;
         if let Ty::Type(_) = ty {
             expr = ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                IntrinsicCallKind::BuildType,
+                CallKind::BuildType,
                 vec![expr.clone()],
                 Vec::new(),
             )).into();

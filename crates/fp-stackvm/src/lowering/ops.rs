@@ -5,7 +5,7 @@
 //! called from the main dispatch loop in [`FunctionLowering::lower_block`].
 
 use fp_bytecode::{
-    BytecodeBinOp, BytecodeConst, BytecodePlace, BytecodePlaceElem, BytecodeUnOp, IntrinsicCallKind,
+    BytecodeBinOp, BytecodeConst, BytecodePlace, BytecodePlaceElem, BytecodeUnOp, IntrinsicKind,
 };
 use fp_core::lir::{
     BasicBlockId, CallingConvention, LirConstant, LirFloat, LirInstructionKind, LirInteger,
@@ -129,6 +129,13 @@ pub(crate) fn lower_load_const(
             block_id,
             LirInstructionKind::Add(
                 LirValue::constant(LirConstant::null(LirType::Ptr(Box::new(LirType::I64)))),
+                i64_value(0),
+            ),
+        ),
+        BytecodeConst::Undef => fl.emit_in_block(
+            block_id,
+            LirInstructionKind::Add(
+                LirValue::constant(LirConstant::undef(LirType::I64)),
                 i64_value(0),
             ),
         ),
@@ -298,12 +305,12 @@ pub(crate) fn lower_unop(
 pub(crate) fn lower_intrinsic(
     fl: &mut FunctionLowering,
     block_id: BasicBlockId,
-    kind: IntrinsicCallKind,
+    kind: IntrinsicKind,
     _format: Option<&str>,
     args: Vec<LirValue>,
 ) -> LowerResult<Option<RegisterId>> {
     match kind {
-        IntrinsicCallKind::Println | IntrinsicCallKind::Print | IntrinsicCallKind::Format => {
+        IntrinsicKind::Println | IntrinsicKind::Print | IntrinsicKind::Format => {
             let reg = lower_call_intrinsic(
                 fl,
                 block_id,
@@ -312,12 +319,12 @@ pub(crate) fn lower_intrinsic(
             )?;
             Ok(Some(reg))
         }
-        IntrinsicCallKind::Len => {
+        IntrinsicKind::Len => {
             let reg =
                 lower_call_intrinsic(fl, block_id, constants::INTRINSIC_CONTAINER_LEN, &args)?;
             Ok(Some(reg))
         }
-        IntrinsicCallKind::TimeNow => {
+        IntrinsicKind::TimeNow => {
             let reg = lower_call_intrinsic(fl, block_id, "__bc_time_now", &args)?;
             Ok(Some(reg))
         }

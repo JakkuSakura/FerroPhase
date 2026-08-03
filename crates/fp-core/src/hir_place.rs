@@ -1,6 +1,6 @@
 //! TODO: merge into hir::place
 use crate::hir::{self, Expr, ExprKind, Symbol};
-use crate::intrinsics::IntrinsicCallKind;
+use crate::intrinsics::IntrinsicKind;
 use crate::place::{
     AssignTargetBaseKind, AssignTargetProjectionKind, AssignTargetSliceKind,
     ProjectedAssignTargetKind,
@@ -51,7 +51,7 @@ pub fn project_hir_assign_target(expr: &Expr) -> Option<HirProjectedAssignTarget
             target.span = expr.span;
             Some(target)
         }
-        ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Slice => {
+        ExprKind::IntrinsicCall(call) if call.kind == IntrinsicKind::Slice => {
             let base = call
                 .callargs
                 .iter()

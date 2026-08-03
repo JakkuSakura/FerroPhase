@@ -10,7 +10,7 @@ use fp_core::ast::{
     ValueMap, ValueMapEntry, ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::CallKind;
 use fp_core::ops::UnOpKind;
 use itertools::Itertools;
 
@@ -264,7 +264,7 @@ impl PythonEmitter {
 
     fn emit_intrinsic_statement(&mut self, call: &ExprIntrinsicCall) -> Result<()> {
         match call.kind {
-            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+            CallKind::Print | CallKind::Println => {
                 let rendered_args =
                     if let Some((template, args, kwargs)) = extract_format_call(call) {
                         vec![self.render_format_string(template, args, kwargs)?]
@@ -553,14 +553,14 @@ impl PythonEmitter {
 
     fn render_intrinsic_expr(&mut self, call: &ExprIntrinsicCall) -> Result<String> {
         match call.kind {
-            IntrinsicCallKind::Format => {
+            CallKind::Format => {
                 if let Some((template, args, kwargs)) = extract_format_call(call) {
                     self.render_format_string(template, args, kwargs)
                 } else {
                     Err(eyre!("format intrinsic expects a format template").into())
                 }
             }
-            IntrinsicCallKind::Len => {
+            CallKind::Len => {
                 if !call.args.is_empty() {
                     Ok(format!("len({})", self.render_expr(&call.args[0])?))
                 } else {

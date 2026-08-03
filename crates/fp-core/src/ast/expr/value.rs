@@ -5,7 +5,7 @@ use crate::ast::{
     get_threadlocal_serializer, BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident,
     ItemChunk, Name, Pattern, Ty, Value, ValueFunction,
 };
-use crate::intrinsics::{IntrinsicCallKind, IntrinsicCallOrigin};
+use crate::intrinsics::CallKind;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::span::Span;
 use crate::{common_enum, common_struct};
@@ -161,35 +161,17 @@ common_struct! {
     pub struct ExprIntrinsicCall {
         #[serde(default)]
         pub span: Span,
-        pub kind: IntrinsicCallKind,
-        #[serde(default)]
-        pub origin: IntrinsicCallOrigin,
+        pub kind: CallKind,
         pub args: Vec<Expr>,
         pub kwargs: Vec<ExprKwArg>,
     }
 }
 
 impl ExprIntrinsicCall {
-    pub fn new(kind: IntrinsicCallKind, args: Vec<Expr>, kwargs: Vec<ExprKwArg>) -> Self {
+    pub fn new(kind: impl Into<CallKind>, args: Vec<Expr>, kwargs: Vec<ExprKwArg>) -> Self {
         Self {
             span: Span::null(),
-            kind,
-            origin: IntrinsicCallOrigin::Intrinsic,
-            args,
-            kwargs,
-        }
-    }
-
-    pub fn with_origin(
-        kind: IntrinsicCallKind,
-        origin: IntrinsicCallOrigin,
-        args: Vec<Expr>,
-        kwargs: Vec<ExprKwArg>,
-    ) -> Self {
-        Self {
-            span: Span::null(),
-            kind,
-            origin,
+            kind: kind.into(),
             args,
             kwargs,
         }
@@ -894,24 +876,18 @@ fn parse_decimal(bytes: &[u8], mut idx: usize) -> Result<(Option<usize>, usize),
 
 /// Attempt to recognise canonical intrinsic calls inside a generic invoke expression.
 pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCall> {
-    let (kind, origin, _name) = match &invoke.target {
+    let (kind, _name) = match &invoke.target {
         ExprInvokeTarget::Function(name) => {
-            let (kind, origin) = crate::lang::lookup_op_intrinsic(name)
-                .map(|kind| (kind, IntrinsicCallOrigin::Op))
-                .or_else(|| {
-                    crate::lang::lookup_intrinsic(name)
-                        .map(|kind| (kind, IntrinsicCallOrigin::Intrinsic))
-                })
-                .or_else(|| {
-                    detect_intrinsic_call(name).map(|kind| (kind, IntrinsicCallOrigin::Intrinsic))
-                })?;
-            (kind, origin, name)
+            let kind = crate::lang::lookup_op_intrinsic(name)
+                .or_else(|| crate::lang::lookup_intrinsic(name))
+                .or_else(|| detect_intrinsic_call(name))?;
+            (kind, name)
         }
         _ => return None,
     };
 
     let call = match kind {
-        IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+        CallKind::Print | CallKind::Println => {
             let (template, skip) =
                 build_string_template_from_args(&invoke.args, invoke.kwargs.len())?;
             let mut args = Vec::with_capacity(1 + invoke.args.len().saturating_sub(skip));
@@ -919,7 +895,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
             args.extend(invoke.args.iter().skip(skip).cloned());
             Some(ExprIntrinsicCall::new(kind, args, invoke.kwargs.clone()))
         }
-        IntrinsicCallKind::Len => {
+        CallKind::Len => {
             if invoke.args.len() != 1 {
                 return None;
             }
@@ -929,7 +905,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::TimeNow => {
+        CallKind::TimeNow => {
             if !invoke.args.is_empty() {
                 return None;
             }
@@ -939,7 +915,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::FsReadToString => {
+        CallKind::FsReadToString => {
             if invoke.args.len() != 1 {
                 return None;
             }
@@ -949,7 +925,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::FsWriteString | IntrinsicCallKind::FsAppendString => {
+        CallKind::FsWriteString | CallKind::FsAppendString => {
             if invoke.args.len() != 2 {
                 return None;
             }
@@ -959,7 +935,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::FsExists | IntrinsicCallKind::FsIsDir | IntrinsicCallKind::FsIsFile => {
+        CallKind::FsExists | CallKind::FsIsDir | CallKind::FsIsFile => {
             if invoke.args.len() != 1 {
                 return None;
             }
@@ -969,7 +945,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::Sleep => {
+        CallKind::Sleep => {
             if invoke.args.len() != 1 {
                 return None;
             }
@@ -979,7 +955,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::Spawn => {
+        CallKind::Spawn => {
             if invoke.args.len() != 1 {
                 return None;
             }
@@ -989,7 +965,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::Join => {
+        CallKind::Join => {
             if invoke.args.is_empty() {
                 return None;
             }
@@ -999,7 +975,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::Select => {
+        CallKind::Select => {
             if invoke.args.len() < 2 {
                 return None;
             }
@@ -1009,17 +985,17 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::CatchUnwind => Some(ExprIntrinsicCall::new(
+        CallKind::CatchUnwind => Some(ExprIntrinsicCall::new(
             kind,
             invoke.args.clone(),
             invoke.kwargs.clone(),
         )),
-        IntrinsicCallKind::CatchUnwindResult => Some(ExprIntrinsicCall::new(
+        CallKind::CatchUnwindResult => Some(ExprIntrinsicCall::new(
             kind,
             invoke.args.clone(),
             invoke.kwargs.clone(),
         )),
-        IntrinsicCallKind::ProcMacroTokenStreamFromStr => {
+        CallKind::ProcMacroTokenStreamFromStr => {
             if invoke.args.len() != 1 {
                 return None;
             }
@@ -1029,7 +1005,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::ProcMacroTokenStreamToString => {
+        CallKind::ProcMacroTokenStreamToString => {
             if invoke.args.len() != 1 {
                 return None;
             }
@@ -1039,7 +1015,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::TypeOf => {
+        CallKind::TypeOf => {
             if invoke.args.len() != 1 || !invoke.kwargs.is_empty() {
                 return None;
             }
@@ -1049,8 +1025,8 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 Vec::new(),
             ))
         }
-        IntrinsicCallKind::Format => None,
-        IntrinsicCallKind::CreateStruct => {
+        CallKind::Format => None,
+        CallKind::CreateStruct => {
             if invoke.args.len() != 1 {
                 return None;
             }
@@ -1060,7 +1036,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::AddField => {
+        CallKind::AddField => {
             if invoke.args.len() != 3 {
                 return None;
             }
@@ -1070,106 +1046,105 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
-        IntrinsicCallKind::DebugAssertions
-        | IntrinsicCallKind::Input
-        | IntrinsicCallKind::Panic
-        | IntrinsicCallKind::Slice
-        | IntrinsicCallKind::Yield
-        | IntrinsicCallKind::SizeOf
-        | IntrinsicCallKind::ReflectFields
-        | IntrinsicCallKind::HasMethod
-        | IntrinsicCallKind::TypeName
-        | IntrinsicCallKind::BuildType
-        | IntrinsicCallKind::CloneStruct
-        | IntrinsicCallKind::HasField
-        | IntrinsicCallKind::FieldCount
-        | IntrinsicCallKind::MethodCount
-        | IntrinsicCallKind::FieldType
-        | IntrinsicCallKind::VecType
-        | IntrinsicCallKind::FieldNameAt
-        | IntrinsicCallKind::StructSize
-        | IntrinsicCallKind::GenerateMethod
-        | IntrinsicCallKind::CompileError
-        | IntrinsicCallKind::CompileWarning
-        | IntrinsicCallKind::FsReadDir
-        | IntrinsicCallKind::FsWalkDir
-        | IntrinsicCallKind::FsCreateDirAll
-        | IntrinsicCallKind::FsRemoveFile
-        | IntrinsicCallKind::FsRemoveDirAll
-        | IntrinsicCallKind::FsGlob
-        | IntrinsicCallKind::EnvCurrentDir
-        | IntrinsicCallKind::EnvTempDir
-        | IntrinsicCallKind::EnvHomeDir
-        | IntrinsicCallKind::EnvVar
-        | IntrinsicCallKind::EnvVarExists
-        | IntrinsicCallKind::PathJoin
-        | IntrinsicCallKind::PathParent
-        | IntrinsicCallKind::PathFileName
-        | IntrinsicCallKind::PathExtension
-        | IntrinsicCallKind::PathStem
-        | IntrinsicCallKind::PathIsAbsolute
-        | IntrinsicCallKind::PathNormalize
-        | IntrinsicCallKind::IoReadStdinToString
-        | IntrinsicCallKind::IoWriteStdout
-        | IntrinsicCallKind::IoWriteStderr
-        | IntrinsicCallKind::YamlToJson
-        | IntrinsicCallKind::JsonParse
-        | IntrinsicCallKind::TestCommandMockReset
-        | IntrinsicCallKind::TestCommandMockPush
-        | IntrinsicCallKind::TestCommandMockTakeCalls
-        | IntrinsicCallKind::TestCommandMockApply => None,
-        IntrinsicCallKind::ShellExec
-        | IntrinsicCallKind::ShellFileCopy
-        | IntrinsicCallKind::ShellFileTemplate
-        | IntrinsicCallKind::ShellFileRsync => None,
+        CallKind::DebugAssertions
+        | CallKind::Input
+        | CallKind::Panic
+        | CallKind::Slice
+        | CallKind::Yield
+        | CallKind::SizeOf
+        | CallKind::ReflectFields
+        | CallKind::HasMethod
+        | CallKind::TypeName
+        | CallKind::BuildType
+        | CallKind::CloneStruct
+        | CallKind::HasField
+        | CallKind::FieldCount
+        | CallKind::MethodCount
+        | CallKind::FieldType
+        | CallKind::VecType
+        | CallKind::FieldNameAt
+        | CallKind::StructSize
+        | CallKind::GenerateMethod
+        | CallKind::CompileError
+        | CallKind::CompileWarning
+        | CallKind::FsReadDir
+        | CallKind::FsWalkDir
+        | CallKind::FsCreateDirAll
+        | CallKind::FsRemoveFile
+        | CallKind::FsRemoveDirAll
+        | CallKind::FsGlob
+        | CallKind::EnvCurrentDir
+        | CallKind::EnvTempDir
+        | CallKind::EnvHomeDir
+        | CallKind::EnvVar
+        | CallKind::EnvVarExists
+        | CallKind::PathJoin
+        | CallKind::PathParent
+        | CallKind::PathFileName
+        | CallKind::PathExtension
+        | CallKind::PathStem
+        | CallKind::PathIsAbsolute
+        | CallKind::PathNormalize
+        | CallKind::IoReadStdinToString
+        | CallKind::IoWriteStdout
+        | CallKind::IoWriteStderr
+        | CallKind::YamlToJson
+        | CallKind::JsonParse
+        | CallKind::TestCommandMockReset
+        | CallKind::TestCommandMockPush
+        | CallKind::TestCommandMockTakeCalls
+        | CallKind::TestCommandMockApply => None,
+        CallKind::ShellExec
+        | CallKind::ShellFileCopy
+        | CallKind::ShellFileTemplate
+        | CallKind::ShellFileRsync => None,
+        CallKind::Intrinsic(_) => None,
     }?;
-    let mut call = call;
-    call.origin = origin;
     Some(call)
 }
 
-fn detect_intrinsic_call(name: &Name) -> Option<IntrinsicCallKind> {
+fn detect_intrinsic_call(name: &Name) -> Option<CallKind> {
     if let Some(kind) = crate::lang::lookup_intrinsic(name) {
         return Some(kind);
     }
 
     match name {
         Name::Ident(ident) => match ident.name.as_str() {
-            "print" => Some(IntrinsicCallKind::Print),
-            "println" => Some(IntrinsicCallKind::Println),
-            "len" => Some(IntrinsicCallKind::Len),
-            "type" => Some(IntrinsicCallKind::TypeOf),
-            "catch_unwind" => Some(IntrinsicCallKind::CatchUnwind),
-            "catch_unwind_result" => Some(IntrinsicCallKind::CatchUnwindResult),
+            "print" => Some(CallKind::Print),
+            "println" => Some(CallKind::Println),
+            "len" => Some(CallKind::Len),
+            "type" => Some(CallKind::TypeOf),
+            "catch_unwind" => Some(CallKind::CatchUnwind),
+            "catch_unwind_result" => Some(CallKind::CatchUnwindResult),
             _ => None,
         },
         Name::Path(path) => {
             let names: Vec<_> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
             match names.as_slice() {
-                ["std", "print"] | ["std", "io", "print"] => Some(IntrinsicCallKind::Print),
-                ["std", "println"] | ["std", "io", "println"] => Some(IntrinsicCallKind::Println),
+                ["std", "print"] | ["std", "io", "print"] => Some(CallKind::Print),
+                ["std", "println"] | ["std", "io", "println"] => Some(CallKind::Println),
                 ["std", "len"] | ["std", "builtins", "len"] | ["len"] => {
-                    Some(IntrinsicCallKind::Len)
+                    Some(CallKind::Len)
                 }
                 ["type"] | ["std", "type"] | ["std", "builtins", "type"] => {
-                    Some(IntrinsicCallKind::TypeOf)
+                    Some(CallKind::TypeOf)
                 }
-                ["std", "time", "now"] => Some(IntrinsicCallKind::TimeNow),
-                ["std", "time", "sleep"] => Some(IntrinsicCallKind::Sleep),
-                ["std", "task", "spawn"] => Some(IntrinsicCallKind::Spawn),
-                ["std", "task", "join"] => Some(IntrinsicCallKind::Join),
-                ["std", "task", "select"] => Some(IntrinsicCallKind::Select),
+                ["std", "time", "now"] => Some(CallKind::TimeNow),
+                ["std", "time", "sleep"] => Some(CallKind::Sleep),
+                ["std", "task", "spawn"] => Some(CallKind::Spawn),
+                ["std", "task", "join"] => Some(CallKind::Join),
+                ["std", "task", "select"] => Some(CallKind::Select),
                 ["proc_macro", "token_stream_from_str"]
                 | ["std", "proc_macro", "token_stream_from_str"]
                 | ["proc_macro", "TokenStream", "from_str"]
                 | ["std", "proc_macro", "TokenStream", "from_str"] => {
-                    Some(IntrinsicCallKind::ProcMacroTokenStreamFromStr)
+                    Some(CallKind::ProcMacroTokenStreamFromStr)
                 }
                 ["proc_macro", "token_stream_to_string"]
                 | ["std", "proc_macro", "token_stream_to_string"]
                 | ["proc_macro", "TokenStream", "to_string"]
                 | ["std", "proc_macro", "TokenStream", "to_string"] => {
-                    Some(IntrinsicCallKind::ProcMacroTokenStreamToString)
+                    Some(CallKind::ProcMacroTokenStreamToString)
                 }
                 _ => None,
             }

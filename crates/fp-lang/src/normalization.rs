@@ -5,8 +5,8 @@ use fp_core::ast::{
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{
-    IntrinsicCallKind, IntrinsicCallOrigin, IntrinsicNormalizationMode, IntrinsicNormalizer,
-    NormalizeOutcome,
+    CallKind, IntrinsicKind, IntrinsicNormalizationMode, IntrinsicNormalizer, NormalizeOutcome,
+    OpKind,
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
@@ -40,21 +40,21 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     fn normalize_call(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         if self.mode != IntrinsicNormalizationMode::Compile {
             return Ok(NormalizeOutcome::Ignored(expr));
-        }
+        };
 
         let (id, ty_slot, span, kind) = expr.into_parts();
         let ExprKind::IntrinsicCall(call) = kind else {
             return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, kind)));
         };
-        if call.origin != IntrinsicCallOrigin::Op {
+        let CallKind::Op(op) = call.kind else {
             return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
                 id,
                 ty_slot,
                 span,
                 ExprKind::IntrinsicCall(call),
             )));
-        }
-        let Some(path) = compile_mode_std_path(call.kind) else {
+        };
+        let Some(path) = compile_mode_std_path(op) else {
             return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
                 id,
                 ty_slot,
@@ -220,7 +220,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     ty_slot.clone(),
                     span,
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                        IntrinsicCallKind::Format,
+                        CallKind::Op(OpKind::Format),
                         call_args,
                         Vec::new(),
                     )),
@@ -239,7 +239,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     ty_slot.clone(),
                     span,
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                        IntrinsicCallKind::TypeOf,
+                        CallKind::Intrinsic(IntrinsicKind::TypeOf),
                         args,
                         Vec::new(),
                     )),
@@ -249,9 +249,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             if macro_name == "print" || macro_name == "println" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 let kind = if macro_name == "println" {
-                    IntrinsicCallKind::Println
+                    CallKind::Op(OpKind::Println)
                 } else {
-                    IntrinsicCallKind::Print
+                    CallKind::Op(OpKind::Print)
                 };
                 let (template, skip) = build_print_template_from_args(&args)?;
                 let mut call_args = Vec::with_capacity(1 + args.len().saturating_sub(skip));
@@ -305,55 +305,50 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
 
 }
 
-fn compile_mode_std_path(kind: IntrinsicCallKind) -> Option<Vec<Ident>> {
+fn compile_mode_std_path(kind: OpKind) -> Option<Vec<Ident>> {
     let path = match kind {
-        IntrinsicCallKind::TimeNow => &["std", "time", "now"][..],
-        IntrinsicCallKind::Sleep => &["std", "time", "sleep"][..],
-        IntrinsicCallKind::Spawn => &["std", "task", "spawn"][..],
-        IntrinsicCallKind::Join => &["std", "task", "join"][..],
-        IntrinsicCallKind::Select => &["std", "task", "select"][..],
-        IntrinsicCallKind::FsReadDir => &["std", "fs", "read_dir"][..],
-        IntrinsicCallKind::FsWalkDir => &["std", "fs", "walk_dir"][..],
-        IntrinsicCallKind::FsReadToString => &["std", "fs", "read_to_string"][..],
-        IntrinsicCallKind::FsWriteString => &["std", "fs", "write_string"][..],
-        IntrinsicCallKind::FsAppendString => &["std", "fs", "append_string"][..],
-        IntrinsicCallKind::FsExists => &["std", "fs", "exists"][..],
-        IntrinsicCallKind::FsIsDir => &["std", "fs", "is_dir"][..],
-        IntrinsicCallKind::FsIsFile => &["std", "fs", "is_file"][..],
-        IntrinsicCallKind::FsCreateDirAll => &["std", "fs", "create_dir_all"][..],
-        IntrinsicCallKind::FsRemoveFile => &["std", "fs", "remove_file"][..],
-        IntrinsicCallKind::FsRemoveDirAll => &["std", "fs", "remove_dir_all"][..],
-        IntrinsicCallKind::FsGlob => &["std", "fs", "glob"][..],
-        IntrinsicCallKind::EnvCurrentDir => &["std", "env", "current_dir"][..],
-        IntrinsicCallKind::EnvTempDir => &["std", "env", "temp_dir"][..],
-        IntrinsicCallKind::EnvHomeDir => &["std", "env", "home_dir"][..],
-        IntrinsicCallKind::EnvVar => &["std", "env", "var"][..],
-        IntrinsicCallKind::EnvVarExists => &["std", "env", "exists"][..],
-        IntrinsicCallKind::IoReadStdinToString => {
+        OpKind::Format => return None,
+        OpKind::TimeNow => &["std", "time", "now"][..],
+        OpKind::Sleep => &["std", "time", "sleep"][..],
+        OpKind::Spawn => &["std", "task", "spawn"][..],
+        OpKind::Join => &["std", "task", "join"][..],
+        OpKind::Select => &["std", "task", "select"][..],
+        OpKind::FsReadDir => &["std", "fs", "read_dir"][..],
+        OpKind::FsWalkDir => &["std", "fs", "walk_dir"][..],
+        OpKind::FsReadToString => &["std", "fs", "read_to_string"][..],
+        OpKind::FsWriteString => &["std", "fs", "write_string"][..],
+        OpKind::FsAppendString => &["std", "fs", "append_string"][..],
+        OpKind::FsExists => &["std", "fs", "exists"][..],
+        OpKind::FsIsDir => &["std", "fs", "is_dir"][..],
+        OpKind::FsIsFile => &["std", "fs", "is_file"][..],
+        OpKind::FsCreateDirAll => &["std", "fs", "create_dir_all"][..],
+        OpKind::FsRemoveFile => &["std", "fs", "remove_file"][..],
+        OpKind::FsRemoveDirAll => &["std", "fs", "remove_dir_all"][..],
+        OpKind::FsGlob => &["std", "fs", "glob"][..],
+        OpKind::EnvCurrentDir => &["std", "env", "current_dir"][..],
+        OpKind::EnvTempDir => &["std", "env", "temp_dir"][..],
+        OpKind::EnvHomeDir => &["std", "env", "home_dir"][..],
+        OpKind::EnvVar => &["std", "env", "var"][..],
+        OpKind::EnvVarExists => &["std", "env", "exists"][..],
+        OpKind::IoReadStdinToString => {
             &["std", "io", "read_stdin_to_string"][..]
         }
-        IntrinsicCallKind::IoWriteStdout => &["std", "io", "write_stdout"][..],
-        IntrinsicCallKind::IoWriteStderr => &["std", "io", "write_stderr"][..],
-        IntrinsicCallKind::YamlToJson => &["std", "yaml", "to_json"][..],
-        IntrinsicCallKind::JsonParse => &["std", "json", "parse"][..],
-        IntrinsicCallKind::TestCommandMockReset => {
-            &["std", "test", "intrinsic_command_mock_reset"][..]
-        }
-        IntrinsicCallKind::TestCommandMockPush => {
-            &["std", "test", "intrinsic_command_mock_push"][..]
-        }
-        IntrinsicCallKind::TestCommandMockTakeCalls => {
-            &["std", "test", "intrinsic_command_mock_take_calls"][..]
-        }
-        IntrinsicCallKind::TestCommandMockApply => {
-            &["std", "test", "intrinsic_command_mock_apply"][..]
-        }
-        _ => return None,
+        OpKind::IoWriteStdout => &["std", "io", "write_stdout"][..],
+        OpKind::IoWriteStderr => &["std", "io", "write_stderr"][..],
+        OpKind::YamlToJson => &["std", "yaml", "to_json"][..],
+        OpKind::JsonParse => &["std", "json", "parse"][..],
+        OpKind::Print => &["std", "io", "print"][..],
+        OpKind::Println => &["std", "io", "println"][..],
+        OpKind::Input => &["std", "io", "input"][..],
+        OpKind::ShellExec => &["std", "shell", "exec"][..],
+        OpKind::ShellFileCopy => &["std", "shell", "file_copy"][..],
+        OpKind::ShellFileTemplate => &["std", "shell", "file_template"][..],
+        OpKind::ShellFileRsync => &["std", "shell", "file_rsync"][..],
     };
     Some(path.iter().map(|segment| Ident::new(*segment)).collect())
 }
 
-fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<IntrinsicCallKind> {
+fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
     let name = match &invoke.target {
         ExprInvokeTarget::Function(name) => name.to_string(),
         _ => return None,
@@ -363,29 +358,27 @@ fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<IntrinsicCallKind> {
     intrinsic_macro_kind(fn_name)
 }
 
-fn intrinsic_macro_kind(name: &str) -> Option<IntrinsicCallKind> {
+fn intrinsic_macro_kind(name: &str) -> Option<CallKind> {
     match name {
-        "join" => Some(IntrinsicCallKind::Join),
-        "sizeof" => Some(IntrinsicCallKind::SizeOf),
-        "reflect_fields" => Some(IntrinsicCallKind::ReflectFields),
-        "hasmethod" => Some(IntrinsicCallKind::HasMethod),
-        "type_name" => Some(IntrinsicCallKind::TypeName),
-        "type_info" => Some(IntrinsicCallKind::TypeOf),
-        "type_of" => Some(IntrinsicCallKind::TypeOf),
-        "clone_struct" => Some(IntrinsicCallKind::CloneStruct),
-        "create_struct" => Some(IntrinsicCallKind::CreateStruct),
-        "addfield" => Some(IntrinsicCallKind::AddField),
-        "hasfield" => Some(IntrinsicCallKind::HasField),
-        "count_fields" => Some(IntrinsicCallKind::FieldCount),
-        "field_count" => Some(IntrinsicCallKind::FieldCount),
-        "method_count" => Some(IntrinsicCallKind::MethodCount),
-        "field_type" => Some(IntrinsicCallKind::FieldType),
-        "vec_type" => Some(IntrinsicCallKind::VecType),
-        "field_name_at" => Some(IntrinsicCallKind::FieldNameAt),
-        "struct_size" => Some(IntrinsicCallKind::StructSize),
-        "generate_method" => Some(IntrinsicCallKind::GenerateMethod),
-        "compile_error" => Some(IntrinsicCallKind::CompileError),
-        "compile_warning" => Some(IntrinsicCallKind::CompileWarning),
+        "join" => Some(CallKind::Intrinsic(IntrinsicKind::Join)),
+        "sizeof" => Some(CallKind::Intrinsic(IntrinsicKind::SizeOf)),
+        "reflect_fields" => Some(CallKind::Intrinsic(IntrinsicKind::ReflectFields)),
+        "hasmethod" => Some(CallKind::Intrinsic(IntrinsicKind::HasMethod)),
+        "type_name" => Some(CallKind::Intrinsic(IntrinsicKind::TypeName)),
+        "type_info" | "type_of" => Some(CallKind::Intrinsic(IntrinsicKind::TypeOf)),
+        "clone_struct" => Some(CallKind::Intrinsic(IntrinsicKind::CloneStruct)),
+        "create_struct" => Some(CallKind::Intrinsic(IntrinsicKind::CreateStruct)),
+        "addfield" => Some(CallKind::Intrinsic(IntrinsicKind::AddField)),
+        "hasfield" => Some(CallKind::Intrinsic(IntrinsicKind::HasField)),
+        "count_fields" | "field_count" => Some(CallKind::Intrinsic(IntrinsicKind::FieldCount)),
+        "method_count" => Some(CallKind::Intrinsic(IntrinsicKind::MethodCount)),
+        "field_type" => Some(CallKind::Intrinsic(IntrinsicKind::FieldType)),
+        "vec_type" => Some(CallKind::Intrinsic(IntrinsicKind::VecType)),
+        "field_name_at" => Some(CallKind::Intrinsic(IntrinsicKind::FieldNameAt)),
+        "struct_size" => Some(CallKind::Intrinsic(IntrinsicKind::StructSize)),
+        "generate_method" => Some(CallKind::Intrinsic(IntrinsicKind::GenerateMethod)),
+        "compile_error" => Some(CallKind::Intrinsic(IntrinsicKind::CompileError)),
+        "compile_warning" => Some(CallKind::Intrinsic(IntrinsicKind::CompileWarning)),
         _ => None,
     }
 }
@@ -829,7 +822,7 @@ fn panic_call_from_args(args: Vec<Expr>) -> Expr {
         panic_call_with_message("panic! macro triggered")
     } else {
         Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-            IntrinsicCallKind::Panic,
+            CallKind::Intrinsic(IntrinsicKind::Panic),
             args,
             Vec::new(),
         )))
@@ -838,7 +831,7 @@ fn panic_call_from_args(args: Vec<Expr>) -> Expr {
 
 fn panic_call_with_message(message: &str) -> Expr {
     Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-        IntrinsicCallKind::Panic,
+        CallKind::Intrinsic(IntrinsicKind::Panic),
         vec![Expr::value(Value::string(message.to_string()))],
         Vec::new(),
     )))
@@ -848,12 +841,18 @@ fn panic_call_with_message(message: &str) -> Expr {
 mod tests {
     use super::*;
     use fp_core::frontend::LanguageFrontend;
-    use fp_core::intrinsics::IntrinsicCallOrigin;
 
-    fn call(kind: IntrinsicCallKind, origin: IntrinsicCallOrigin) -> Expr {
-        Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::with_origin(
-            kind,
-            origin,
+    fn op_call(kind: OpKind) -> Expr {
+        Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+            CallKind::Op(kind),
+            Vec::new(),
+            Vec::new(),
+        )))
+    }
+
+    fn intrinsic_call(kind: fp_core::intrinsics::IntrinsicKind) -> Expr {
+        Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+            CallKind::Intrinsic(kind),
             Vec::new(),
             Vec::new(),
         )))
@@ -864,18 +863,14 @@ mod tests {
         let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
 
         let op = normalizer
-            .normalize_call(call(
-                IntrinsicCallKind::FsReadToString,
-                IntrinsicCallOrigin::Op,
-            ))
+            .normalize_call(op_call(OpKind::FsReadToString))
             .expect("normalize op call")
             .into_inner();
         assert!(matches!(op.kind(), ExprKind::Invoke(_)));
 
         let intrinsic = normalizer
-            .normalize_call(call(
-                IntrinsicCallKind::FsReadToString,
-                IntrinsicCallOrigin::Intrinsic,
+            .normalize_call(intrinsic_call(
+                fp_core::intrinsics::IntrinsicKind::FsReadToString,
             ))
             .expect("normalize intrinsic call")
             .into_inner();
@@ -886,10 +881,7 @@ mod tests {
     fn transpile_mode_keeps_ops_canonical() {
         let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Transpile);
         let normalized = normalizer
-            .normalize_call(call(
-                IntrinsicCallKind::FsReadToString,
-                IntrinsicCallOrigin::Op,
-            ))
+            .normalize_call(op_call(OpKind::FsReadToString))
             .expect("normalize op call")
             .into_inner();
         assert!(matches!(normalized.kind(), ExprKind::IntrinsicCall(_)));
@@ -899,17 +891,17 @@ mod tests {
     fn compile_mode_restores_representative_std_paths() {
         let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
         let cases = [
-            (IntrinsicCallKind::FsWriteString, "std::fs::write_string"),
-            (IntrinsicCallKind::EnvVar, "std::env::var"),
-            (IntrinsicCallKind::IoWriteStdout, "std::io::write_stdout"),
-            (IntrinsicCallKind::TimeNow, "std::time::now"),
-            (IntrinsicCallKind::YamlToJson, "std::yaml::to_json"),
-            (IntrinsicCallKind::JsonParse, "std::json::parse"),
+            (OpKind::FsWriteString, "std::fs::write_string"),
+            (OpKind::EnvVar, "std::env::var"),
+            (OpKind::IoWriteStdout, "std::io::write_stdout"),
+            (OpKind::TimeNow, "std::time::now"),
+            (OpKind::YamlToJson, "std::yaml::to_json"),
+            (OpKind::JsonParse, "std::json::parse"),
         ];
 
         for (kind, expected_path) in cases {
             let normalized = normalizer
-                .normalize_call(call(kind, IntrinsicCallOrigin::Op))
+                .normalize_call(op_call(kind))
                 .expect("normalize lang call")
                 .into_inner();
             let ExprKind::Invoke(invoke) = normalized.kind() else {

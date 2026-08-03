@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::{CallKind, OpKind};
 use fp_core::module::path::PathPrefix;
 use fp_core::query::lower_fp_expr_to_query;
 
@@ -1362,7 +1362,7 @@ impl HirGenerator {
         for_expr: &ast::ExprFor,
         spec: EnumerateLoopSpec,
     ) -> Result<hir::ExprKind> {
-        use fp_core::intrinsics::IntrinsicCallKind;
+        use fp_core::intrinsics::IntrinsicKind;
 
         let mut stmts = Vec::new();
 
@@ -1424,7 +1424,7 @@ impl HirGenerator {
             hir::Expr {
                 hir_id: self.next_id(),
                 kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                    kind: IntrinsicCallKind::Len,
+                    kind: IntrinsicKind::Len,
                     callargs: vec![hir::CallArg {
                         name: hir::Symbol::new("arg0"),
                         value: base_expr.clone(),
@@ -1558,7 +1558,7 @@ impl HirGenerator {
         for_expr: &ast::ExprFor,
         spec: IterLoopSpec,
     ) -> Result<hir::ExprKind> {
-        use fp_core::intrinsics::IntrinsicCallKind;
+        use fp_core::intrinsics::IntrinsicKind;
 
         let mut stmts = Vec::new();
 
@@ -1620,7 +1620,7 @@ impl HirGenerator {
             hir::Expr {
                 hir_id: self.next_id(),
                 kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                    kind: IntrinsicCallKind::Len,
+                    kind: IntrinsicKind::Len,
                     callargs: vec![hir::CallArg {
                         name: hir::Symbol::new("arg0"),
                         value: base_expr.clone(),
@@ -1952,7 +1952,9 @@ impl HirGenerator {
 
         if matches!(
             call.kind,
-            IntrinsicCallKind::Print | IntrinsicCallKind::Println | IntrinsicCallKind::Format
+            CallKind::Op(OpKind::Print)
+                | CallKind::Op(OpKind::Println)
+                | CallKind::Op(OpKind::Format)
         ) {
             let mut existing = callargs
                 .iter()
@@ -2006,8 +2008,11 @@ impl HirGenerator {
             }
         }
 
+        let kind = call.kind.intrinsic_kind().ok_or_else(|| {
+            fp_core::error::Error::from("high-level op reached the compiler HIR")
+        })?;
         Ok(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-            kind: call.kind,
+            kind,
             callargs,
         }))
     }

@@ -10,7 +10,7 @@ use fp_core::ast::{
     ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::CallKind;
 
 /// Public entry point used by the CLI target emitter.
 #[derive(Clone, Debug)]
@@ -308,22 +308,22 @@ impl GoEmitter {
 
     fn render_intrinsic_call(&mut self, call: &ExprIntrinsicCall) -> Result<Option<String>> {
         match call.kind {
-            IntrinsicCallKind::Print => {
+            CallKind::Print => {
                 self.needs_fmt = true;
                 let args = self.render_call_args(&call.args)?;
                 Ok(Some(format!("fmt.Print({})", args)))
             }
-            IntrinsicCallKind::Println => {
+            CallKind::Println => {
                 self.needs_fmt = true;
                 let args = self.render_call_args(&call.args)?;
                 Ok(Some(format!("fmt.Println({})", args)))
             }
-            IntrinsicCallKind::Format => {
+            CallKind::Format => {
                 self.needs_fmt = true;
                 let args = self.render_call_args(&call.args)?;
                 Ok(Some(format!("fmt.Sprintf({})", args)))
             }
-            IntrinsicCallKind::Len => {
+            CallKind::Len => {
                 let args = self.render_call_args(&call.args)?;
                 Ok(Some(format!("len({})", args)))
             }
@@ -480,7 +480,7 @@ impl GoEmitter {
         match expr.kind() {
             ExprKind::IntrinsicCall(call) => matches!(
                 call.kind,
-                IntrinsicCallKind::Print | IntrinsicCallKind::Println | IntrinsicCallKind::Format
+                CallKind::Print | CallKind::Println | CallKind::Format
             ),
             ExprKind::Invoke(invoke) => invoke.args.iter().any(|arg| self.expr_uses_fmt(arg)),
             ExprKind::Block(block) => block.stmts.iter().any(|stmt| match stmt {

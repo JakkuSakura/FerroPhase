@@ -11,7 +11,7 @@ use fp_core::ast::{
     ValueTuple,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::CallKind;
 use fp_core::ops::UnOpKind;
 use itertools::Itertools;
 
@@ -615,7 +615,7 @@ impl ScriptEmitter {
 
     fn emit_intrinsic_statement(&mut self, call: &ExprIntrinsicCall) -> Result<()> {
         match call.kind {
-            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+            CallKind::Print | CallKind::Println => {
                 let rendered_args =
                     if let Some((template, args, kwargs)) = extract_format_call(call) {
                         vec![self.render_format_string(template, args, kwargs)?]
@@ -771,21 +771,21 @@ impl ScriptEmitter {
 
     fn render_intrinsic_expr(&mut self, call: &ExprIntrinsicCall) -> Result<String> {
         match call.kind {
-            IntrinsicCallKind::Format => {
+            CallKind::Format => {
                 if let Some((template, args, kwargs)) = extract_format_call(call) {
                     self.render_format_string(template, args, kwargs)
                 } else {
                     Err(eyre!("format intrinsic expects a format template").into())
                 }
             }
-            IntrinsicCallKind::Len => {
+            CallKind::Len => {
                 if !call.args.is_empty() {
                     Ok(format!("{}.length", self.render_expr(&call.args[0])?))
                 } else {
                     Err(eyre!("len intrinsic expects an argument").into())
                 }
             }
-            IntrinsicCallKind::SizeOf => {
+            CallKind::SizeOf => {
                 if call.args.len() == 1 {
                     if let Some(ty_name) = self.extract_type_name(&call.args[0]) {
                         Ok(format!("{}_SIZE", to_upper_snake(&ty_name)))
@@ -796,7 +796,7 @@ impl ScriptEmitter {
                     Ok("0".to_string())
                 }
             }
-            IntrinsicCallKind::FieldCount => {
+            CallKind::FieldCount => {
                 if call.args.len() == 1 {
                     if let Some(ty_name) = self.extract_type_name(&call.args[0]) {
                         Ok(format!("{}_SIZE", to_upper_snake(&ty_name)))
@@ -807,7 +807,7 @@ impl ScriptEmitter {
                     Ok("0".to_string())
                 }
             }
-            IntrinsicCallKind::HasField => {
+            CallKind::HasField => {
                 if call.args.len() >= 2 {
                     let Some(ty_name) = self.extract_type_name(&call.args[0]) else {
                         return Ok("false".to_string());
@@ -824,7 +824,7 @@ impl ScriptEmitter {
                     Ok("false".to_string())
                 }
             }
-            IntrinsicCallKind::MethodCount => Ok("0".to_string()),
+            CallKind::MethodCount => Ok("0".to_string()),
             _ => Err(eyre!("Unsupported intrinsic call {:?}", call.kind).into()),
         }
     }

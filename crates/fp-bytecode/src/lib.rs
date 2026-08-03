@@ -1,5 +1,5 @@
 use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
-pub use fp_core::intrinsics::IntrinsicCallKind;
+pub use fp_core::intrinsics::IntrinsicKind;
 use fp_core::mir;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -50,7 +50,7 @@ pub enum BytecodeInstr {
     BinaryOp(BytecodeBinOp),
     UnaryOp(BytecodeUnOp),
     IntrinsicCall {
-        kind: IntrinsicCallKind,
+        kind: IntrinsicKind,
         arg_count: u32,
         format: Option<String>,
     },
@@ -108,6 +108,7 @@ pub enum BytecodeConst {
     Str(String),
     Function(String),
     Null,
+    Undef,
     Tuple(Vec<BytecodeConst>),
     Array(Vec<BytecodeConst>),
     List(Vec<BytecodeConst>),
@@ -952,28 +953,28 @@ fn parse_intrinsic(rest: &str) -> Result<BytecodeInstr, BytecodeError> {
     })
 }
 
-fn parse_intrinsic_kind(raw: &str) -> Result<IntrinsicCallKind, BytecodeError> {
+fn parse_intrinsic_kind(raw: &str) -> Result<IntrinsicKind, BytecodeError> {
     match raw {
-        "Println" => Ok(IntrinsicCallKind::Println),
-        "Print" => Ok(IntrinsicCallKind::Print),
-        "Format" => Ok(IntrinsicCallKind::Format),
-        "Len" => Ok(IntrinsicCallKind::Len),
-        "DebugAssertions" => Ok(IntrinsicCallKind::DebugAssertions),
-        "Input" => Ok(IntrinsicCallKind::Input),
-        "Panic" => Ok(IntrinsicCallKind::Panic),
-        "CatchUnwind" => Ok(IntrinsicCallKind::CatchUnwind),
-        "SizeOf" => Ok(IntrinsicCallKind::SizeOf),
-        "ReflectFields" => Ok(IntrinsicCallKind::ReflectFields),
-        "HasMethod" => Ok(IntrinsicCallKind::HasMethod),
-        "TypeName" => Ok(IntrinsicCallKind::TypeName),
-        "TypeOf" => Ok(IntrinsicCallKind::TypeOf),        "HasField" => Ok(IntrinsicCallKind::HasField),
-        "FieldCount" => Ok(IntrinsicCallKind::FieldCount),
-        "MethodCount" => Ok(IntrinsicCallKind::MethodCount),
-        "FieldType" => Ok(IntrinsicCallKind::FieldType),
-        "StructSize" => Ok(IntrinsicCallKind::StructSize),
-        "GenerateMethod" => Ok(IntrinsicCallKind::GenerateMethod),
-        "CompileError" => Ok(IntrinsicCallKind::CompileError),
-        "CompileWarning" => Ok(IntrinsicCallKind::CompileWarning),
+        "Println" => Ok(IntrinsicKind::Println),
+        "Print" => Ok(IntrinsicKind::Print),
+        "Format" => Ok(IntrinsicKind::Format),
+        "Len" => Ok(IntrinsicKind::Len),
+        "DebugAssertions" => Ok(IntrinsicKind::DebugAssertions),
+        "Input" => Ok(IntrinsicKind::Input),
+        "Panic" => Ok(IntrinsicKind::Panic),
+        "CatchUnwind" => Ok(IntrinsicKind::CatchUnwind),
+        "SizeOf" => Ok(IntrinsicKind::SizeOf),
+        "ReflectFields" => Ok(IntrinsicKind::ReflectFields),
+        "HasMethod" => Ok(IntrinsicKind::HasMethod),
+        "TypeName" => Ok(IntrinsicKind::TypeName),
+        "TypeOf" => Ok(IntrinsicKind::TypeOf),        "HasField" => Ok(IntrinsicKind::HasField),
+        "FieldCount" => Ok(IntrinsicKind::FieldCount),
+        "MethodCount" => Ok(IntrinsicKind::MethodCount),
+        "FieldType" => Ok(IntrinsicKind::FieldType),
+        "StructSize" => Ok(IntrinsicKind::StructSize),
+        "GenerateMethod" => Ok(IntrinsicKind::GenerateMethod),
+        "CompileError" => Ok(IntrinsicKind::CompileError),
+        "CompileWarning" => Ok(IntrinsicKind::CompileWarning),
         _ => Err(BytecodeError::Format {
             message: format!("unknown intrinsic kind: {}", raw),
         }),
@@ -1807,6 +1808,7 @@ fn lower_operand(
 fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeError> {
     match &constant.literal {
         mir::ConstantKind::Null => Ok(BytecodeConst::Null),
+        mir::ConstantKind::Undef => Ok(BytecodeConst::Undef),
         mir::ConstantKind::Int(value) => Ok(BytecodeConst::Int(*value)),
         mir::ConstantKind::UInt(value) => Ok(BytecodeConst::UInt(*value)),
         mir::ConstantKind::Float(value) => Ok(BytecodeConst::Float(*value)),
@@ -1995,6 +1997,7 @@ fn format_const(value: &BytecodeConst) -> String {
         BytecodeConst::Str(value) => format!("{:?}", value),
         BytecodeConst::Function(name) => format!("fn {}", name),
         BytecodeConst::Null => "null".to_string(),
+        BytecodeConst::Undef => "undef".to_string(),
         BytecodeConst::Tuple(items) => format_list("tuple", items),
         BytecodeConst::Array(items) => format_list("array", items),
         BytecodeConst::List(items) => format_list("list", items),

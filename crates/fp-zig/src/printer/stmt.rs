@@ -1,6 +1,6 @@
 use eyre::Result;
 use fp_core::ast::{BlockStmt, ExprBlock, ExprIntrinsicCall, ExprKind};
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::CallKind;
 
 use super::ZigEmitter;
 
@@ -132,8 +132,8 @@ impl ZigEmitter {
 
     fn emit_intrinsic_statement(&mut self, call: &ExprIntrinsicCall) -> Result<bool> {
         match call.kind {
-            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
-                let newline = matches!(call.kind, IntrinsicCallKind::Println);
+            CallKind::Print | CallKind::Println => {
+                let newline = matches!(call.kind, CallKind::Println);
                 if let Some(rendered) = self.render_print_call(call, newline) {
                     self.push_line(&rendered);
                     return Ok(true);

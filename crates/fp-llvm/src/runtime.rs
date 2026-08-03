@@ -5,7 +5,7 @@ use fp_core::ast::{
 };
 use fp_core::ast::{Ident, Name};
 use fp_core::error::Result;
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::CallKind;
 use fp_core::intrinsics::{ensure_function_decl, make_function_decl, IntrinsicMaterializer};
 use fp_core::span::Span;
 
@@ -33,7 +33,7 @@ impl IntrinsicMaterializer for LlvmRuntimeIntrinsicMaterializer {
     ) -> Result<Option<Expr>> {
         if matches!(
             call.kind,
-            IntrinsicCallKind::Print | IntrinsicCallKind::Println
+            CallKind::Print | CallKind::Println
         ) {
             let Some((_template, args, kwargs)) = extract_format_call(call) else {
                 return Ok(None);
@@ -58,7 +58,7 @@ impl IntrinsicMaterializer for LlvmRuntimeIntrinsicMaterializer {
 }
 
 fn build_printf_invoke(expr_ty: TySlot, call: ExprIntrinsicCall) -> Result<Expr> {
-    let newline = matches!(call.kind, IntrinsicCallKind::Println);
+    let newline = matches!(call.kind, CallKind::Println);
     let (template, args, kwargs) = extract_format_call(&call).ok_or_else(|| {
         fp_core::error::Error::from(
             "printf lowering requires format template as the first argument".to_string(),

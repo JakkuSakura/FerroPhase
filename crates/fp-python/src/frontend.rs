@@ -17,7 +17,7 @@ use fp_core::ast::{
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
 use fp_core::frontend::{FrontendResult, LanguageFrontend};
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::CallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 use num_bigint::BigInt as NumBigInt;
@@ -947,8 +947,7 @@ fn lower_joined_str(joined: &py_ast::ExprJoinedStr<TextRange>) -> CoreResult<Exp
 
     Ok(Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall {
         span: Span::null(),
-        kind: IntrinsicCallKind::Format,
-        origin: fp_core::intrinsics::IntrinsicCallOrigin::Intrinsic,
+        kind: CallKind::Format,
         args: call_args,
         kwargs: Vec::new(),
     })))
@@ -1109,7 +1108,7 @@ mod tests {
         let ExprKind::IntrinsicCall(call) = assign.value.kind() else {
             panic!("expected format intrinsic");
         };
-        assert!(matches!(call.kind, IntrinsicCallKind::Format));
+        assert!(matches!(call.kind, CallKind::Format));
     }
 
     #[test]

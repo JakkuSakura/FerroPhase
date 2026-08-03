@@ -533,7 +533,7 @@ fn normalize_intrinsic_call(
 
     if matches!(
         call.kind,
-        crate::intrinsics::IntrinsicCallKind::Print | crate::intrinsics::IntrinsicCallKind::Println
+        crate::intrinsics::CallKind::Print | crate::intrinsics::CallKind::Println
     ) {
         if !matches!(
             call.args.first().map(|arg| arg.kind()),

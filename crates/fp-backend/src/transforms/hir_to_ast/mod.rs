@@ -13,6 +13,7 @@ use fp_core::ast::{
 };
 use fp_core::error::Result;
 use fp_core::hir;
+use fp_core::intrinsics::CallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
@@ -376,8 +377,7 @@ fn lift_expr(expr: &hir::Expr) -> Result<Expr> {
         hir::ExprKind::IntrinsicCall(call) => {
             Expr::new(ast::ExprKind::IntrinsicCall(ExprIntrinsicCall {
                 span: expr.span,
-                kind: call.kind,
-                origin: fp_core::intrinsics::IntrinsicCallOrigin::Intrinsic,
+                kind: CallKind::Intrinsic(call.kind),
                 args: lift_positional_args(&call.callargs)?,
                 kwargs: lift_keyword_args(&call.callargs)?,
             }))

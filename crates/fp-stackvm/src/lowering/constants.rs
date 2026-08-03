@@ -38,17 +38,17 @@ pub(crate) const INTRINSIC_CONTAINER_LEN: &str = "__bc_container_len";
 /// write the string bytes into the returned buffer.
 pub(crate) const INTRINSIC_STR_ALLOC: &str = "__bc_str_alloc";
 
-/// Map a bytecode [`IntrinsicCallKind`] to its runtime symbol name.
+/// Map a bytecode [`IntrinsicKind`] to its runtime symbol name.
 ///
 /// Returns `"__bc_unknown"` for kinds not yet wired up.
-pub(crate) fn intrinsic_to_runtime_name(kind: fp_bytecode::IntrinsicCallKind) -> &'static str {
-    use fp_bytecode::IntrinsicCallKind;
+pub(crate) fn intrinsic_to_runtime_name(kind: fp_bytecode::IntrinsicKind) -> &'static str {
+    use fp_bytecode::IntrinsicKind;
     match kind {
-        IntrinsicCallKind::Println => "__bc_println",
-        IntrinsicCallKind::Print => "__bc_print",
-        IntrinsicCallKind::Format => "__bc_format",
-        IntrinsicCallKind::Len => INTRINSIC_CONTAINER_LEN,
-        IntrinsicCallKind::TimeNow => "__bc_time_now",
+        IntrinsicKind::Println => "__bc_println",
+        IntrinsicKind::Print => "__bc_print",
+        IntrinsicKind::Format => "__bc_format",
+        IntrinsicKind::Len => INTRINSIC_CONTAINER_LEN,
+        IntrinsicKind::TimeNow => "__bc_time_now",
         _ => "__bc_unknown",
     }
 }

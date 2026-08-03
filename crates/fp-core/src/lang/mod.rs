@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::ast::{AttrMeta, Attribute, ExprKind, File, Ident, Item, ItemKind, Name, Path, Value};
 use crate::intrinsics::{
-    lang_instrinstic_call_kind, lang_instrinstic_for_lang_item, IntrinsicCallKind,
+    lang_instrinstic_call_kind, lang_instrinstic_for_lang_item, CallKind,
 };
 
 #[derive(Clone, Default)]
@@ -60,14 +60,18 @@ pub fn collect_lang_items(file: &File) -> LangItemRegistry {
     registry
 }
 
-pub fn lookup_intrinsic(name: &Name) -> Option<IntrinsicCallKind> {
+pub fn lookup_intrinsic(name: &Name) -> Option<CallKind> {
     let name = lookup_intrinsic_name(name)?;
-    lang_instrinstic_for_lang_item(&name).and_then(lang_instrinstic_call_kind)
+    lang_instrinstic_for_lang_item(&name)
+        .and_then(lang_instrinstic_call_kind)
+        .and_then(|kind| kind.intrinsic_kind().map(CallKind::from))
 }
 
-pub fn lookup_op_intrinsic(name: &Name) -> Option<IntrinsicCallKind> {
+pub fn lookup_op_intrinsic(name: &Name) -> Option<CallKind> {
     let name = lookup_op_name(name)?;
-    lang_instrinstic_for_lang_item(&name).and_then(lang_instrinstic_call_kind)
+    lang_instrinstic_for_lang_item(&name)
+        .and_then(lang_instrinstic_call_kind)
+        .and_then(|kind| kind.op_kind().map(CallKind::from))
 }
 
 pub fn lookup_intrinsic_name(name: &Name) -> Option<String> {

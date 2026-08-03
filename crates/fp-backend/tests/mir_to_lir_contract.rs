@@ -359,7 +359,7 @@ fn rejects_slice_intrinsic_assignment_with_wrong_arity() {
         kind: mir::StatementKind::Assign(
             mir::Place::from_local(0),
             mir::Rvalue::IntrinsicCall {
-                kind: fp_core::intrinsics::IntrinsicCallKind::Slice,
+                kind: fp_core::intrinsics::IntrinsicKind::Slice,
                 format: String::new(),
                 args: vec![
                     Operand::Constant(mir::Constant {
@@ -430,7 +430,7 @@ fn rejects_unsupported_intrinsic_assignment() {
         kind: mir::StatementKind::Assign(
             mir::Place::from_local(0),
             mir::Rvalue::IntrinsicCall {
-                kind: fp_core::intrinsics::IntrinsicCallKind::Len,
+                kind: fp_core::intrinsics::IntrinsicKind::Len,
                 format: String::new(),
                 args: Vec::new(),
             },

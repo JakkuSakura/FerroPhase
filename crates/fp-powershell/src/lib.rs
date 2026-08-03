@@ -3,7 +3,7 @@ use fp_core::ast::{
     ExprMatch, ExprStringTemplate, ExprTry, File, FormatArgRef, FormatTemplatePart,
     ItemDeclFunction, ItemDefFunction, ItemKind, Pattern, PatternKind, Ty, Value,
 };
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::CallKind;
 use fp_core::ops::BinOpKind;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
@@ -619,7 +619,7 @@ impl<'a> PowerShellRenderer<'a> {
                 Ok(format!("$({})", self.render_call(name, &invoke.args)?))
             }
             ExprKind::FormatString(template) => self.render_format_template_word(template),
-            ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Format => {
+            ExprKind::IntrinsicCall(call) if call.kind == CallKind::Format => {
                 self.render_format_call_word(call)
             }
             ExprKind::Paren(paren) => self.render_word(&paren.expr),
@@ -991,7 +991,7 @@ impl<'a> PowerShellRenderer<'a> {
                 Ok(format!("$({})", self.render_call(name, &invoke.args)?))
             }
             ExprKind::FormatString(template) => self.render_format_template_command(template),
-            ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Format => {
+            ExprKind::IntrinsicCall(call) if call.kind == CallKind::Format => {
                 self.render_format_call_command(call)
             }
             ExprKind::Paren(paren) => self.render_word_fragment(&paren.expr),
@@ -1018,7 +1018,7 @@ impl<'a> PowerShellRenderer<'a> {
                 Ok(format!("$({})", self.render_call(name, &invoke.args)?))
             }
             ExprKind::FormatString(template) => self.render_format_template_command(template),
-            ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Format => {
+            ExprKind::IntrinsicCall(call) if call.kind == CallKind::Format => {
                 self.render_format_call_command(call)
             }
             ExprKind::Paren(paren) => self.render_command_fragment(&paren.expr),

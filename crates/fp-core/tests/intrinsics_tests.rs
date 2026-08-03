@@ -5,7 +5,7 @@ use fp_core::ast::{
 use fp_core::intrinsics::{
     ensure_function_decl, lang_instrinstic_call_kind, lang_instrinstic_capability,
     lang_instrinstic_for_lang_item, lang_instrinstic_lang_item, make_function_decl,
-    IntrinsicCallKind, LangInstrinstic, LangInstrinsticCapability, StdIntrinsic,
+    CallKind, LangInstrinstic, LangInstrinsticCapability, StdIntrinsic,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -145,8 +145,8 @@ fn std_intrinsic_variants_are_hashable() {
 
 #[test]
 fn intrinsic_call_kind_matches_expected_variants() {
-    assert_eq!(IntrinsicCallKind::Print, IntrinsicCallKind::Print);
-    assert_ne!(IntrinsicCallKind::Print, IntrinsicCallKind::Println);
+    assert_eq!(CallKind::Print, CallKind::Print);
+    assert_ne!(CallKind::Print, CallKind::Println);
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn lang_instrinstic_maps_time_lang_item_to_call_kind() {
     assert_eq!(intrinsic, LangInstrinstic::TimeNow);
     assert_eq!(
         lang_instrinstic_call_kind(intrinsic),
-        Some(IntrinsicCallKind::TimeNow)
+        Some(CallKind::TimeNow)
     );
     assert_eq!(
         lang_instrinstic_capability(intrinsic),
@@ -171,7 +171,7 @@ fn lang_instrinstic_preserves_fs_lang_item_name() {
     assert_eq!(lang_instrinstic_lang_item(intrinsic), "fs_read_to_string");
     assert_eq!(
         lang_instrinstic_call_kind(intrinsic),
-        Some(IntrinsicCallKind::FsReadToString)
+        Some(CallKind::FsReadToString)
     );
 }
 
@@ -181,27 +181,27 @@ fn lang_instrinstic_maps_core_fs_lang_items_to_call_kinds() {
         (
             "fs_write_string",
             LangInstrinstic::FsWriteString,
-            IntrinsicCallKind::FsWriteString,
+            CallKind::FsWriteString,
         ),
         (
             "fs_append_string",
             LangInstrinstic::FsAppendString,
-            IntrinsicCallKind::FsAppendString,
+            CallKind::FsAppendString,
         ),
         (
             "fs_exists",
             LangInstrinstic::FsExists,
-            IntrinsicCallKind::FsExists,
+            CallKind::FsExists,
         ),
         (
             "fs_is_dir",
             LangInstrinstic::FsIsDir,
-            IntrinsicCallKind::FsIsDir,
+            CallKind::FsIsDir,
         ),
         (
             "fs_is_file",
             LangInstrinstic::FsIsFile,
-            IntrinsicCallKind::FsIsFile,
+            CallKind::FsIsFile,
         ),
     ];
 

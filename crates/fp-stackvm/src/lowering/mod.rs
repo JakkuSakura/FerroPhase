@@ -33,7 +33,7 @@
 //!   is cleared at each block entry.  This is sound for bytecode that
 //!   was produced by a φ-aware lowering, but would produce incorrect
 //!   LIR for general bytecode.
-//! - Most [`IntrinsicCallKind`] variants beyond `Println`/`Print`/
+//! - Most [`CallKind`] variants beyond `Println`/`Print`/
 //!   `Format`/`Len`/`TimeNow` return [`LowerError::Unsupported`].
 //! - The runtime intrinsics (`__bc_*`) are declared as external
 //!   `Call` targets but not yet implemented in `fp-interpret`.

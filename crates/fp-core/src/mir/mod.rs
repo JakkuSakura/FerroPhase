@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::QuoteFragmentKind;
 use crate::ast::QuoteItemKind;
-use crate::intrinsics::IntrinsicCallKind;
+use crate::intrinsics::IntrinsicKind;
 use crate::query::{QueryIrDocument, QueryOrigin};
 
 pub mod ident;
@@ -108,7 +108,7 @@ pub struct Statement {
 pub enum StatementKind {
     Assign(Place, Rvalue),
     IntrinsicCall {
-        kind: IntrinsicCallKind,
+        kind: IntrinsicKind,
         format: String,
         args: Vec<Operand>,
     },
@@ -206,7 +206,7 @@ pub enum Rvalue {
     Use(Operand),
     Query(Query),
     IntrinsicCall {
-        kind: IntrinsicCallKind,
+        kind: IntrinsicKind,
         format: String,
         args: Vec<Operand>,
     },
@@ -301,6 +301,7 @@ pub enum ConstantKind {
         item_kind: Option<QuoteItemKind>,
     },
     Null,
+    Undef,
     Int(i64),
     UInt(u64),
     Float(f64),

@@ -210,7 +210,7 @@ use fp_core::ast::{
     TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeFunction, TypeInt, TypePrimitive,
     TypeQuote, TypeReference, TypeSlice, TypeStruct, Value, ValueNone, Visibility,
 };
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::CallKind;
 use fp_core::module::path::PathPrefix;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::{FileId, Span};
@@ -728,7 +728,7 @@ fn parse_f_string_literal_local(
     call_args.push(Expr::new(ExprKind::FormatString(template)));
     call_args.extend(args);
     Ok(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-        IntrinsicCallKind::Format,
+        CallKind::Format,
         call_args,
         Vec::new(),
     ))

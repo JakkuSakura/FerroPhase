@@ -9,7 +9,7 @@ use fp_core::ast::{
     Pattern, PatternKind, Ty, TypeInt, TypePrimitive, Value,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::CallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use tempfile::TempDir;
 
@@ -629,12 +629,12 @@ impl<'a> MethodEmitter<'a> {
 
     fn emit_intrinsic_call(&mut self, call: &ExprIntrinsicCall) -> EyreResult<()> {
         match call.kind {
-            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+            CallKind::Print | CallKind::Println => {
                 if call.args.len() != 1 {
                     bail!("print intrinsics require exactly one argument in CIL output");
                 }
                 self.emit_expr(&call.args[0], EmitMode::Value)?;
-                let console_method = if call.kind == IntrinsicCallKind::Println {
+                let console_method = if call.kind == CallKind::Println {
                     "WriteLine"
                 } else {
                     "Write"
@@ -646,7 +646,7 @@ impl<'a> MethodEmitter<'a> {
                 ));
                 Ok(())
             }
-            IntrinsicCallKind::Format => {
+            CallKind::Format => {
                 bail!("format intrinsic is not yet supported in CIL output")
             }
             other => bail!("unsupported intrinsic for CIL output: {:?}", other),
