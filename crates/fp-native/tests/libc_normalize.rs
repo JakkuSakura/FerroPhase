@@ -3,7 +3,16 @@ use fp_core::asmir::{
     AsmGlobal, AsmInstruction, AsmInstructionKind, AsmObjectFormat, AsmOpcode, AsmProgram,
     AsmSection, AsmSectionFlag, AsmSectionKind, AsmTarget, AsmTerminator, AsmType, AsmValue,
 };
-use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
+use fp_core::lir::{CallingConvention, Linkage, LirDataLayout, Name, Visibility};
+
+fn layout() -> LirDataLayout {
+    LirDataLayout::new(
+        64,
+        8,
+        vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+    )
+    .expect("valid test data layout")
+}
 
 #[test]
 fn normalize_materializes_printf_format_strings_from_elf_rodata() {
@@ -13,7 +22,7 @@ fn normalize_materializes_printf_format_strings_from_elf_rodata() {
         endianness: fp_core::asmir::AsmEndianness::Little,
         pointer_width: 64,
         default_calling_convention: Some(CallingConvention::C),
-    });
+    }, layout());
     program.sections.push(AsmSection {
         name: ".text".to_string(),
         kind: AsmSectionKind::Text,

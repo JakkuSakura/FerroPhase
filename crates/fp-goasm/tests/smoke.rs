@@ -1,19 +1,27 @@
 use fp_core::lir::{
     CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-    LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, Name,
+    LirInstruction, LirInstructionKind, LirInteger, LirProgram, LirRegister, LirTerminator,
+    LirType, LirValue, Name,
 };
+
+fn i64_value(value: u64) -> LirValue {
+    LirValue::constant(
+        LirConstant::integer(LirType::I64, LirInteger::I64(value)).unwrap(),
+    )
+}
 
 fn sample_program() -> LirProgram {
     let add_inst = LirInstruction {
         id: 1,
         kind: LirInstructionKind::Add(
-            LirValue::Constant(LirConstant::Int(40, LirType::I64)),
-            LirValue::Constant(LirConstant::Int(2, LirType::I64)),
+            i64_value(40),
+            i64_value(2),
         ),
-        type_hint: Some(LirType::I64),
+        result: Some(LirRegister { id: 1, ty: LirType::I64 }),
         debug_info: None,
     };
     let main = LirFunction {
+        def_id: None,
         name: Name::new("main"),
         signature: LirFunctionSignature {
             params: Vec::new(),
@@ -24,7 +32,7 @@ fn sample_program() -> LirProgram {
             id: 0,
             label: Some(Name::new("entry")),
             instructions: vec![add_inst],
-            terminator: LirTerminator::Return(Some(LirValue::Register(1))),
+            terminator: LirTerminator::Return(Some(LirValue::register(1, LirType::I64))),
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -38,6 +46,13 @@ fn sample_program() -> LirProgram {
         functions: vec![main],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        data_layout: fp_core::lir::LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .unwrap(),
+        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }

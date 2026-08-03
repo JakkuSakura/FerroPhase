@@ -299,7 +299,7 @@ unsafe fn dlclose(handle: *mut c_void) {
 
 // ── transmute call helpers ────────────────────────────────────────
 
-unsafe fn call_void(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<()> {
+unsafe fn call_void(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<()> { unsafe {
     match args.len() {
         0 => {
             let f: extern "C" fn() = std::mem::transmute(fn_ptr);
@@ -332,9 +332,9 @@ unsafe fn call_void(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<()> {
         _ => return Err(FfiError::Message("ffi supports up to 6 arguments".into())),
     }
     Ok(())
-}
+}}
 
-unsafe fn call_i64(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<i64> {
+unsafe fn call_i64(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<i64> { unsafe {
     Ok(match args.len() {
         0 => {
             let f: extern "C" fn() -> i64 = std::mem::transmute(fn_ptr);
@@ -366,9 +366,9 @@ unsafe fn call_i64(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<i64> {
         }
         _ => return Err(FfiError::Message("ffi supports up to 6 arguments".into())),
     })
-}
+}}
 
-unsafe fn call_u64(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<u64> {
+unsafe fn call_u64(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<u64> { unsafe {
     Ok(match args.len() {
         0 => {
             let f: extern "C" fn() -> u64 = std::mem::transmute(fn_ptr);
@@ -400,9 +400,9 @@ unsafe fn call_u64(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<u64> {
         }
         _ => return Err(FfiError::Message("ffi supports up to 6 arguments".into())),
     })
-}
+}}
 
-unsafe fn call_ptr(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<*mut c_void> {
+unsafe fn call_ptr(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<*mut c_void> { unsafe {
     Ok(match args.len() {
         0 => {
             let f: extern "C" fn() -> *mut c_void = std::mem::transmute(fn_ptr);
@@ -436,4 +436,4 @@ unsafe fn call_ptr(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<*mut c_void
         }
         _ => return Err(FfiError::Message("ffi supports up to 6 arguments".into())),
     })
-}
+}}

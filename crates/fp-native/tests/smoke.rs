@@ -8,7 +8,14 @@ fn emits_and_links_minimal_exec() {
     // This test validates the end-to-end plumbing:
     // LIR -> native binary emission -> runnable executable.
     let lir = LirProgram {
+        data_layout: fp_core::lir::LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .unwrap(),
         functions: vec![LirFunction {
+            def_id: None,
             name: Name::new("main"),
             signature: LirFunctionSignature {
                 params: Vec::new(),
@@ -31,6 +38,7 @@ fn emits_and_links_minimal_exec() {
         }],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        comptime_entries: Vec::new(),
 
         queries: Vec::new(),
     };

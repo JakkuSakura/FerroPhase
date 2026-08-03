@@ -1,7 +1,8 @@
 use fp_core::error::Result;
 use fp_core::lir::{
-    BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirInstruction, LirInstructionKind,
-    LirIntrinsicKind, LirProgram, LirTerminator, LirValue,
+    BasicBlockId, LirBasicBlock, LirConstant, LirConstantData, LirConstantKind, LirFunction,
+    LirFunctionRef, LirInstruction, LirInstructionKind, LirIntrinsicKind, LirProgram,
+    LirTerminator, LirValue, LirValueKind,
 };
 use std::fmt::Write;
 
@@ -322,31 +323,27 @@ fn block_label(function: &LirFunction, block_id: BasicBlockId) -> String {
 }
 
 fn format_value(value: &LirValue) -> String {
-    match value {
-        LirValue::Register(id) => reg(*id),
-        LirValue::Constant(constant) => format_constant(constant),
-        LirValue::Global(name, _) => format!("@{}", name),
-        LirValue::Function(name) => name.to_string(),
-        LirValue::FunctionInPackage(_, name) => name.to_string(),
-        LirValue::FunctionDef(def_id) => {
+    match &value.kind {
+        LirValueKind::Register(id) => reg(*id),
+        LirValueKind::Constant(kind) => format_constant(&LirConstant { ty: value.ty.clone(), kind: kind.clone() }),
+        LirValueKind::Global(name) => format!("@{}", name),
+        LirValueKind::Function(LirFunctionRef::Name(name)) => name.to_string(),
+        LirValueKind::Function(LirFunctionRef::Package { name, .. }) => name.to_string(),
+        LirValueKind::Function(LirFunctionRef::Definition(def_id)) => {
             panic!("function definition `{def_id}` is not supported by URCL lowering")
         }
-        LirValue::Local(id) => format!("local{}", id),
-        LirValue::StackSlot(id) => format!("stack{}", id),
-        LirValue::Undef(_) => "undef".into(),
-        LirValue::Null(_) => "0".into(),
+        LirValueKind::Local(id) => format!("local{}", id),
+        LirValueKind::StackSlot(id) => format!("stack{}", id),
     }
 }
 
 fn format_constant(constant: &LirConstant) -> String {
-    match constant {
-        LirConstant::Int(value, _) => value.to_string(),
-        LirConstant::UInt(value, _) => value.to_string(),
-        LirConstant::Float(value, _) => value.to_string(),
-        LirConstant::Bool(value) => (*value as u8).to_string(),
-        LirConstant::String(value) => format!("\"{}\"", value.escape_default()),
-        LirConstant::Bytes(bytes) => format!("bytes(len={})", bytes.len()),
-        LirConstant::Array(values, _) => format!(
+    match &constant.kind {
+        LirConstantKind::Data(LirConstantData::Integer(value)) => format!("{:?}", value),
+        LirConstantKind::Data(LirConstantData::Float(value)) => format!("{:?}", value),
+        LirConstantKind::Data(LirConstantData::Bytes(bytes)) => format!("bytes(len={})", bytes.len()),
+        LirConstantKind::Aggregate(fp_core::lir::LirConstantAggregate::Array(values))
+        | LirConstantKind::Aggregate(fp_core::lir::LirConstantAggregate::Vector(values)) => format!(
             "[{}]",
             values
                 .iter()
@@ -354,7 +351,7 @@ fn format_constant(constant: &LirConstant) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        LirConstant::Struct(values, _) => format!(
+        LirConstantKind::Aggregate(fp_core::lir::LirConstantAggregate::Struct(values)) => format!(
             "{{{}}}",
             values
                 .iter()
@@ -362,9 +359,10 @@ fn format_constant(constant: &LirConstant) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        LirConstant::GlobalRef(name, _, indices) => format!("@{}{:?}", name.as_str(), indices),
-        LirConstant::FunctionRef(name, _) => name.as_str().to_string(),
-        LirConstant::Null(_) => "0".into(),
-        LirConstant::Undef(_) => "undef".into(),
+        LirConstantKind::GlobalAddress { global } => format!("@{}", global.as_str()),
+        LirConstantKind::FunctionAddress(LirFunctionRef::Name(name)) => name.as_str().to_string(),
+        LirConstantKind::Null => "0".into(),
+        LirConstantKind::Undef => "undef".into(),
+        _ => "unsupported".into(),
     }
 }

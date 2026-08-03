@@ -1,7 +1,7 @@
 use fp_backend::transformations::LirGenerator;
 use fp_core::lir::{
-    LirConstant, LirInstructionKind, LirRelocationKind, LirRelocationTarget, LirTerminator,
-    LirType, LirValue,
+    LirDataLayout, LirInstructionKind, LirRelocationKind, LirRelocationTarget,
+    LirTerminator, LirType, LirValue,
 };
 use fp_core::mir::LocalInfo;
 use fp_core::mir::ty::{IntTy, Ty, TyKind, UintTy};
@@ -10,6 +10,17 @@ use fp_core::span::Span;
 use std::collections::HashMap;
 
 mod support;
+
+fn generator() -> LirGenerator {
+    LirGenerator::new(
+        LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .unwrap(),
+    )
+}
 
 fn local_decl(ty: Ty, mutability: Mutability) -> mir::LocalDecl {
     mir::LocalDecl {
@@ -34,7 +45,7 @@ fn lowers_return_function_from_support_helpers() {
     program.bodies = bodies;
     program.items.push(support::mir::function_item(body_id));
 
-    let mut generator = LirGenerator::new();
+    let mut generator = generator();
     let lir_program = generator
         .transform(program)
         .expect("lowering should succeed");
@@ -77,7 +88,7 @@ fn mangles_function_path_into_lir_name() {
         bodies,
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = generator();
     let lir_program = generator
         .transform(program.clone())
         .expect("lowering should succeed");
@@ -93,6 +104,7 @@ fn lowers_static_integer_initializer_into_global_constant() {
     let ty = Ty::int(IntTy::I32);
     let constant = mir::Constant {
         span: Span::new(0, 0, 0),
+        ty: ty.clone(),
         user_ty: None,
         literal: mir::ConstantKind::Int(7),
     };
@@ -111,7 +123,7 @@ fn lowers_static_integer_initializer_into_global_constant() {
         bodies: HashMap::new(),
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = generator();
     let lir_program = generator
         .transform(program)
         .expect("lowering should succeed");
@@ -122,9 +134,14 @@ fn lowers_static_integer_initializer_into_global_constant() {
     assert_eq!(global.ty, LirType::I32);
     assert!(global.is_constant);
     match &global.initializer {
-        Some(LirConstant::Int(value, lir_ty)) => {
-            assert_eq!(*value, 7);
-            assert_eq!(*lir_ty, LirType::I32);
+        Some(constant) => {
+            assert_eq!(constant.ty, LirType::I32);
+            assert!(matches!(
+                constant.kind,
+                fp_core::lir::LirConstantKind::Data(
+                    fp_core::lir::LirConstantData::Integer(fp_core::lir::LirInteger::I32(7))
+                )
+            ));
         }
         other => panic!("expected integer initializer, got {:?}", other),
     }
@@ -147,7 +164,7 @@ fn rejects_non_constant_static_initializer_operand() {
         bodies: HashMap::new(),
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = generator();
     let err = generator
         .transform(program)
         .expect_err("lowering should reject non-constant static initializers");
@@ -163,10 +180,10 @@ fn rejects_tuple_constant_with_non_tuple_type_hint() {
     let ty = Ty::int(IntTy::I32);
     let constant = mir::Constant {
         span: Span::new(0, 0, 0),
+        ty: ty.clone(),
         user_ty: None,
         literal: mir::ConstantKind::Val(
             mir::ConstValue::Tuple(vec![mir::ConstValue::Int(7)]),
-            ty.clone(),
         ),
     };
 
@@ -184,7 +201,7 @@ fn rejects_tuple_constant_with_non_tuple_type_hint() {
         bodies: HashMap::new(),
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = generator();
     let err = generator
         .transform(program)
         .expect_err("lowering should reject tuple constants with scalar type hints");
@@ -202,6 +219,7 @@ fn lowers_slice_static_into_bytes_with_relocation() {
     };
     let constant = mir::Constant {
         span: Span::new(0, 0, 0),
+        ty: ty.clone(),
         user_ty: None,
         literal: mir::ConstantKind::Str("hi".to_string()),
     };
@@ -220,7 +238,7 @@ fn lowers_slice_static_into_bytes_with_relocation() {
         bodies: HashMap::new(),
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = generator();
     let lir_program = generator
         .transform(program)
         .expect("lowering should succeed");
@@ -230,7 +248,8 @@ fn lowers_slice_static_into_bytes_with_relocation() {
     let data_global = &lir_program.globals[1];
 
     match &slice_global.initializer {
-        Some(LirConstant::Bytes(bytes)) => {
+        Some(constant) if matches!(&constant.kind, fp_core::lir::LirConstantKind::Data(fp_core::lir::LirConstantData::Bytes(_))) => {
+            let fp_core::lir::LirConstantKind::Data(fp_core::lir::LirConstantData::Bytes(bytes)) = &constant.kind else { unreachable!() };
             assert_eq!(bytes.len(), 16);
             assert_eq!(&bytes[8..16], &(2u64).to_le_bytes());
         }
@@ -250,7 +269,10 @@ fn lowers_slice_static_into_bytes_with_relocation() {
     assert_eq!(reloc.addend, 0);
 
     match &data_global.initializer {
-        Some(LirConstant::Bytes(bytes)) => assert_eq!(bytes, b"hi\0"),
+        Some(constant) => {
+            let fp_core::lir::LirConstantKind::Data(fp_core::lir::LirConstantData::Bytes(bytes)) = &constant.kind else { panic!("expected bytes") };
+            assert_eq!(bytes, b"hi\0")
+        }
         other => panic!(
             "expected byte initializer for backing string, got {:?}",
             other
@@ -264,6 +286,7 @@ fn lowers_single_case_switchint_as_equality_compare() {
     let switch_ty = Ty::int(IntTy::I32);
     let discr = Operand::Constant(mir::Constant {
         span: Span::new(0, 0, 0),
+        ty: switch_ty.clone(),
         user_ty: None,
         literal: mir::ConstantKind::Int(5),
     });
@@ -309,7 +332,7 @@ fn lowers_single_case_switchint_as_equality_compare() {
         bodies: HashMap::from([(body_id, body)]),
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = generator();
     let lir_program = generator
         .transform(program)
         .expect("lowering should succeed");
@@ -322,7 +345,7 @@ fn lowers_single_case_switchint_as_equality_compare() {
 
     match &block.terminator {
         LirTerminator::CondBr { condition, .. } => {
-            assert_eq!(*condition, LirValue::Register(instr.id));
+            assert_eq!(*condition, LirValue::register(instr.id, LirType::I1));
         }
         other => panic!("expected CondBr terminator, got {:?}", other),
     }
@@ -341,11 +364,13 @@ fn rejects_slice_intrinsic_assignment_with_wrong_arity() {
                 args: vec![
                     Operand::Constant(mir::Constant {
                         span: Span::new(0, 0, 0),
+                        ty: Ty::int(IntTy::I32),
                         user_ty: None,
                         literal: mir::ConstantKind::Int(1),
                     }),
                     Operand::Constant(mir::Constant {
                         span: Span::new(0, 0, 0),
+                        ty: Ty::int(IntTy::I32),
                         user_ty: None,
                         literal: mir::ConstantKind::Int(2),
                     }),
@@ -386,7 +411,7 @@ fn rejects_slice_intrinsic_assignment_with_wrong_arity() {
         bodies: HashMap::from([(body_id, body)]),
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = generator();
     let err = generator
         .transform(program)
         .expect_err("lowering should reject malformed slice intrinsic assignments");
@@ -444,7 +469,7 @@ fn rejects_unsupported_intrinsic_assignment() {
         bodies: HashMap::from([(body_id, body)]),
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = generator();
     let err = generator
         .transform(program)
         .expect_err("lowering should reject unsupported intrinsic assignments");
@@ -490,7 +515,7 @@ fn rejects_unhandled_mir_terminator() {
         bodies: HashMap::from([(body_id, body)]),
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = generator();
     let err = generator
         .transform(program)
         .expect_err("lowering should reject unhandled MIR terminators");
@@ -508,6 +533,7 @@ fn rejects_call_terminator_without_destination() {
         kind: mir::TerminatorKind::Call {
             func: Operand::Constant(mir::Constant {
                 span: Span::new(0, 0, 0),
+                ty: Ty::int(IntTy::I32),
                 user_ty: None,
                 literal: mir::ConstantKind::Str("no_dest_fn".to_string()),
             }),
@@ -547,7 +573,7 @@ fn rejects_call_terminator_without_destination() {
         bodies: HashMap::from([(body_id, body)]),
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = generator();
     let err = generator
         .transform(program)
         .expect_err("lowering should reject call terminators without destination");
@@ -607,7 +633,7 @@ fn rejects_downcast_place_projection() {
         bodies: HashMap::from([(body_id, body)]),
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = generator();
     let err = generator
         .transform(program)
         .expect_err("lowering should reject downcast place projections");

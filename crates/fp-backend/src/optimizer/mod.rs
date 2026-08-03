@@ -150,7 +150,7 @@ impl MirOptimizer {
 #[derive(Debug, Clone, PartialEq)]
 enum ValueState {
     Unknown,
-    Const(mir::ConstantKind),
+    Const(mir::Constant),
     Alias(mir::LocalId),
 }
 
@@ -491,7 +491,7 @@ fn invalidate_place(state: &mut [ValueState], place: &mir::Place) {
 fn value_from_rvalue(rvalue: &mir::Rvalue) -> Option<ValueState> {
     match rvalue {
         mir::Rvalue::Use(operand) => match operand {
-            mir::Operand::Constant(constant) => Some(ValueState::Const(constant.literal.clone())),
+            mir::Operand::Constant(constant) => Some(ValueState::Const(constant.clone())),
             mir::Operand::Copy(place) if place.projection.is_empty() => {
                 Some(ValueState::Alias(place.local))
             }
@@ -1076,11 +1076,9 @@ fn rewrite_place_operand(
     let state = state.get(place.local as usize)?;
     match (policy, state) {
         (ReplacementPolicy::ConstOnly, ValueState::Const(constant)) => {
-            Some(mir::Operand::Constant(mir::Constant {
-                span,
-                user_ty: None,
-                literal: constant.clone(),
-            }))
+            let mut constant = constant.clone();
+            constant.span = span;
+            Some(mir::Operand::Constant(constant))
         }
         (ReplacementPolicy::AliasCopy, ValueState::Alias(alias))
             if is_copy && *alias != place.local =>
@@ -1096,7 +1094,7 @@ fn operand_to_constant(operand: &mir::Operand, state: &[ValueState]) -> Option<m
         mir::Operand::Constant(constant) => Some(constant.literal.clone()),
         mir::Operand::Copy(place) | mir::Operand::Move(place) if place.projection.is_empty() => {
             match state.get(place.local as usize)? {
-                ValueState::Const(value) => Some(value.clone()),
+                ValueState::Const(value) => Some(value.literal.clone()),
                 _ => None,
             }
         }
@@ -1145,20 +1143,39 @@ fn is_pure_rvalue(rvalue: &mir::Rvalue) -> bool {
 fn fold_rvalue(rvalue: &mir::Rvalue, span: mir::Span) -> Option<mir::Rvalue> {
     match rvalue {
         mir::Rvalue::BinaryOp(bin_op, lhs, rhs) => {
-            let lhs_kind = operand_constant_kind(lhs)?;
-            let rhs_kind = operand_constant_kind(rhs)?;
+            let lhs_constant = operand_constant(lhs)?;
+            let rhs_constant = operand_constant(rhs)?;
+            let lhs_kind = &lhs_constant.literal;
+            let rhs_kind = &rhs_constant.literal;
             let result = eval_binary_op(bin_op.clone(), lhs_kind, rhs_kind)?;
+            let result_ty = if matches!(
+                bin_op,
+                mir::BinOp::Eq
+                    | mir::BinOp::Ne
+                    | mir::BinOp::Lt
+                    | mir::BinOp::Le
+                    | mir::BinOp::Gt
+                    | mir::BinOp::Ge
+            ) {
+                mir::ty::Ty {
+                    kind: mir::ty::TyKind::Bool,
+                }
+            } else {
+                lhs_constant.ty.clone()
+            };
             Some(mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                 span,
+                ty: result_ty,
                 user_ty: None,
                 literal: result,
             })))
         }
         mir::Rvalue::UnaryOp(un_op, operand) => {
-            let value = operand_constant_kind(operand)?;
-            let result = eval_unary_op(un_op.clone(), value)?;
+            let constant = operand_constant(operand)?;
+            let result = eval_unary_op(un_op.clone(), &constant.literal)?;
             Some(mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                 span,
+                ty: constant.ty.clone(),
                 user_ty: None,
                 literal: result,
             })))
@@ -1167,9 +1184,9 @@ fn fold_rvalue(rvalue: &mir::Rvalue, span: mir::Span) -> Option<mir::Rvalue> {
     }
 }
 
-fn operand_constant_kind(operand: &mir::Operand) -> Option<&mir::ConstantKind> {
+fn operand_constant(operand: &mir::Operand) -> Option<&mir::Constant> {
     match operand {
-        mir::Operand::Constant(constant) => Some(&constant.literal),
+        mir::Operand::Constant(constant) => Some(constant),
         _ => None,
     }
 }

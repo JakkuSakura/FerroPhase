@@ -5,6 +5,12 @@ use fp_core::lir::{
 
 pub fn empty_program() -> LirProgram {
     LirProgram {
+        data_layout: lir::LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .unwrap(),
         functions: Vec::new(),
         globals: Vec::new(),
         type_definitions: Vec::new(),

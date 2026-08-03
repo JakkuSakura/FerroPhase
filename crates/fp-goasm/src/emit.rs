@@ -1,8 +1,9 @@
 use crate::config::GoAsmTarget;
 use fp_core::error::Result;
 use fp_core::lir::{
-    BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirInstruction, LirInstructionKind,
-    LirIntrinsicKind, LirProgram, LirTerminator, LirValue,
+    BasicBlockId, LirBasicBlock, LirConstant, LirConstantData, LirConstantKind, LirFunction,
+    LirInstruction,
+    LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirValue, LirValueKind,
 };
 use std::fmt::Write;
 
@@ -454,54 +455,50 @@ fn block_label(function: &LirFunction, block_id: BasicBlockId) -> String {
 }
 
 fn format_call_target(value: &LirValue) -> String {
-    match value {
-        LirValue::Function(name) => format!("{}(SB)", go_symbol(name)),
-        other => format_value(other),
+    match &value.kind {
+        LirValueKind::Function(function) => format!("{}(SB)", function_name(function)),
+        _ => format_value(value),
     }
 }
 
 fn format_value(value: &LirValue) -> String {
-    match value {
-        LirValue::Register(id) => reg(*id),
-        LirValue::Constant(constant) => format_constant(constant),
-        LirValue::Global(name, _) => format!("{}(SB)", go_symbol(name)),
-        LirValue::Function(name) => format!("{}(SB)", go_symbol(name)),
-        LirValue::FunctionInPackage(_, name) => format!("{}(SB)", go_symbol(name)),
-        LirValue::FunctionDef(def_id) => {
-            panic!("function definition `{def_id}` is not supported by GoASM lowering")
+    match &value.kind {
+        LirValueKind::Register(id) => reg(*id),
+        LirValueKind::Constant(constant) => format_constant_kind(constant),
+        LirValueKind::Global(name) => format!("{}(SB)", go_symbol(name)),
+        LirValueKind::Function(function) => format!("{}(SB)", function_name(function)),
+        LirValueKind::Local(id) => format!("local{}", id),
+        LirValueKind::StackSlot(id) => format!("stack{}", id),
+    }
+}
+
+fn function_name(function: &fp_core::lir::LirFunctionRef) -> String {
+    match function {
+        fp_core::lir::LirFunctionRef::Name(name) => name.to_string(),
+        fp_core::lir::LirFunctionRef::Package { name, .. } => name.to_string(),
+        fp_core::lir::LirFunctionRef::Definition(def_id) => def_id.to_string(),
+    }
+}
+
+fn format_constant_kind(constant: &LirConstantKind) -> String {
+    match constant {
+        LirConstantKind::Data(LirConstantData::Integer(value)) => format!("${value}"),
+        LirConstantKind::Data(LirConstantData::Float(value)) => format!("${value:?}"),
+        LirConstantKind::Data(LirConstantData::Bytes(bytes)) => {
+            format!("$bytes(len={})", bytes.len())
         }
-        LirValue::Local(id) => format!("local{}", id),
-        LirValue::StackSlot(id) => format!("stack{}", id),
-        LirValue::Undef(_) | LirValue::Null(_) => "$0".into(),
+        LirConstantKind::Null | LirConstantKind::Undef => "$0".into(),
+        LirConstantKind::GlobalAddress { global } => format!("${}(SB)", go_symbol(global.as_str())),
+        LirConstantKind::FunctionAddress(function) => {
+            format!("${}(SB)", go_symbol(&function_name(function)))
+        }
+        LirConstantKind::Aggregate(aggregate) => format!("${aggregate:?}"),
+        LirConstantKind::Poison | LirConstantKind::Expr(_) => {
+            panic!("unsupported GoASM constant kind: {constant:?}")
+        }
     }
 }
 
 fn format_constant(constant: &LirConstant) -> String {
-    match constant {
-        LirConstant::Int(value, _) => format!("${}", value),
-        LirConstant::UInt(value, _) => format!("${}", value),
-        LirConstant::Float(value, _) => format!("${}", value),
-        LirConstant::Bool(value) => format!("${}", *value as u8),
-        LirConstant::String(value) => format!("$\"{}\"", value.escape_default()),
-        LirConstant::Bytes(bytes) => format!("$bytes(len={})", bytes.len()),
-        LirConstant::Array(values, _) => format!(
-            "$[{}]",
-            values
-                .iter()
-                .map(format_constant)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        LirConstant::Struct(values, _) => format!(
-            "${{{}}}",
-            values
-                .iter()
-                .map(format_constant)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        LirConstant::GlobalRef(name, _, _) => format!("${}(SB)", go_symbol(name.as_str())),
-        LirConstant::FunctionRef(name, _) => format!("${}(SB)", go_symbol(name.as_str())),
-        LirConstant::Null(_) | LirConstant::Undef(_) => "$0".into(),
-    }
+    format_constant_kind(&constant.kind)
 }

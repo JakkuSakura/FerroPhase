@@ -2,7 +2,7 @@ use fp_core::asmir::AsmProgram;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirValue};
 
-use crate::emit::{CodegenOutput, TargetArch, TargetFormat, aarch64, x86_64};
+use crate::emit::{aarch64, x86_64, CodegenOutput, TargetArch, TargetFormat};
 
 pub fn emit_text_from_selection(
     lir_program: &LirProgram,
@@ -13,8 +13,8 @@ pub fn emit_text_from_selection(
     let func = lir_program
         .functions
         .iter()
-        .find(|func| !func.is_declaration)
-        .ok_or_else(|| Error::from("no defined functions in LIR program"))?;
+        .find(|func| func.name.as_str() == "main" && !func.is_declaration)
+        .ok_or_else(|| Error::from("native emitter requires a defined main function"))?;
 
     if func.basic_blocks.is_empty() {
         return Err(Error::from(
@@ -64,14 +64,13 @@ pub fn lower_program_for_native(lir_program: &LirProgram) -> Result<LirProgram> 
 }
 fn is_call_arg_value(value: &LirValue) -> bool {
     matches!(
-        value,
-        LirValue::Register(_)
-            | LirValue::Constant(_)
-            | LirValue::Local(_)
-            | LirValue::StackSlot(_)
-            | LirValue::Global(_, _)
-            | LirValue::Null(_)
-            | LirValue::Undef(_)
+        value.kind,
+        fp_core::lir::LirValueKind::Register(_)
+            | fp_core::lir::LirValueKind::Constant(_)
+            | fp_core::lir::LirValueKind::Local(_)
+            | fp_core::lir::LirValueKind::StackSlot(_)
+            | fp_core::lir::LirValueKind::Global(_)
+            | fp_core::lir::LirValueKind::Function(_)
     )
 }
 
@@ -109,7 +108,7 @@ fn lower_phi_in_function(function: &mut fp_core::lir::LirFunction) -> Result<()>
                     .push(LirInstruction {
                         id: instruction.id,
                         kind: LirInstructionKind::Freeze(value.clone()),
-                        type_hint: instruction.type_hint.clone(),
+                        result: instruction.result.clone(),
                         debug_info: instruction.debug_info.clone(),
                     });
             }

@@ -6,7 +6,7 @@ use crate::compiler::{
     self, BytecodeCompileOptions, CraneliftCompileOptions, EbpfCompileOptions, JvmCompileOptions,
     LlvmCompileOptions, NativeCompileOptions, NativeEmitterKind, WasmCompileOptions,
 };
-use crate::{CliError, Result, cli::CliConfig};
+use crate::{cli::CliConfig, CliError, Result};
 use console::style;
 use fp_core::ast::{AstSerializer, AstTarget, AstTargetOutput, File};
 use fp_core::config;
@@ -791,7 +791,8 @@ async fn maybe_transpile_native_asm(
             if matches!(target_arch, TargetArch::X86_64) {
                 program.to_text()
             } else {
-                let mut target_program = lift_from_x86_64(&program);
+                let mut target_program = lift_from_x86_64(&program)
+                    .map_err(|err| CliError::Compilation(err.to_string()))?;
                 target_program.target.architecture = fp_core::asmir::AsmArchitecture::Aarch64;
                 fp_native::asmir::normalize_for_target(&mut target_program);
                 lower_to_aarch64(&target_program).to_text()
@@ -801,7 +802,8 @@ async fn maybe_transpile_native_asm(
             if matches!(target_arch, TargetArch::Aarch64) {
                 program.to_text()
             } else {
-                let mut target_program = lift_from_aarch64(&program);
+                let mut target_program = lift_from_aarch64(&program)
+                    .map_err(|err| CliError::Compilation(err.to_string()))?;
                 target_program.target.architecture = fp_core::asmir::AsmArchitecture::X86_64;
                 fp_native::asmir::normalize_for_target(&mut target_program);
                 lower_to_x86_64(&target_program).to_text()
@@ -900,7 +902,7 @@ async fn compile_ast_target(
         ));
     }
 
-    use crate::languages::frontend::{LanguageSource, detect_language_source_by_path};
+    use crate::languages::frontend::{detect_language_source_by_path, LanguageSource};
     let detected = detect_language_source_by_path(input);
     let is_wit_input = matches!(detected, Some(LanguageSource::Wit));
     let is_typescript_input = matches!(
@@ -980,7 +982,10 @@ fn emit_ast_target(
                 let code = serializer
                     .serialize_file(node)
                     .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
+                Ok(fp_core::ast::AstTargetOutput {
+                    code,
+                    side_files: Vec::new(),
+                })
             }
             #[cfg(not(feature = "lang-typescript"))]
             {
@@ -997,7 +1002,10 @@ fn emit_ast_target(
                 let code = serializer
                     .serialize_file(node)
                     .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
+                Ok(fp_core::ast::AstTargetOutput {
+                    code,
+                    side_files: Vec::new(),
+                })
             }
             #[cfg(not(feature = "lang-csharp"))]
             {
@@ -1011,7 +1019,10 @@ fn emit_ast_target(
                 let code = serializer
                     .serialize_file(node)
                     .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
+                Ok(fp_core::ast::AstTargetOutput {
+                    code,
+                    side_files: Vec::new(),
+                })
             }
             #[cfg(not(feature = "lang-python"))]
             {
@@ -1025,7 +1036,10 @@ fn emit_ast_target(
                 let code = serializer
                     .serialize_file(node)
                     .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
+                Ok(fp_core::ast::AstTargetOutput {
+                    code,
+                    side_files: Vec::new(),
+                })
             }
             #[cfg(not(feature = "lang-golang"))]
             {
@@ -1039,7 +1053,10 @@ fn emit_ast_target(
                 let code = serializer
                     .serialize_file(node)
                     .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
+                Ok(fp_core::ast::AstTargetOutput {
+                    code,
+                    side_files: Vec::new(),
+                })
             }
             #[cfg(not(feature = "lang-godot"))]
             {
@@ -1056,7 +1073,10 @@ fn emit_ast_target(
                 let code = serializer
                     .serialize_file(node)
                     .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
+                Ok(fp_core::ast::AstTargetOutput {
+                    code,
+                    side_files: Vec::new(),
+                })
             }
             #[cfg(not(feature = "lang-zig"))]
             {
@@ -1070,7 +1090,10 @@ fn emit_ast_target(
                 let code = serializer
                     .serialize_file(node)
                     .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
+                Ok(fp_core::ast::AstTargetOutput {
+                    code,
+                    side_files: Vec::new(),
+                })
             }
             #[cfg(not(feature = "lang-sycl"))]
             {
@@ -1082,7 +1105,10 @@ fn emit_ast_target(
             let code = serializer
                 .serialize_file(node)
                 .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
+            Ok(fp_core::ast::AstTargetOutput {
+                code,
+                side_files: Vec::new(),
+            })
         }
         crate::languages::backend::AstLanguageTarget::Wit => {
             #[cfg(feature = "lang-wit")]
@@ -1092,7 +1118,10 @@ fn emit_ast_target(
                 let code = serializer
                     .serialize_file(node)
                     .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput { code, side_files: Vec::new() })
+                Ok(fp_core::ast::AstTargetOutput {
+                    code,
+                    side_files: Vec::new(),
+                })
             }
             #[cfg(not(feature = "lang-wit"))]
             {
@@ -1651,9 +1680,17 @@ fn determine_output_path(
                     } else if native_asm_text_target {
                         "s"
                     } else if native_object_target {
-                        if native_link_requested { "out" } else { "o" }
+                        if native_link_requested {
+                            "out"
+                        } else {
+                            "o"
+                        }
                     } else if native_archive_target {
-                        if native_link_requested { "out" } else { "a" }
+                        if native_link_requested {
+                            "out"
+                        } else {
+                            "a"
+                        }
                     } else if urcl_object_target {
                         "o"
                     } else if goasm_object_target {
@@ -1859,11 +1896,12 @@ mod tests {
                     package_manifest.to_string_lossy(),
                     package_root.to_string_lossy(),
                 )
-                .with_modules(vec![
-                    WorkspaceModule::new("demo", module_path.to_string_lossy())
-                        .with_module_path(Vec::new())
-                        .with_language(Some("ferro".to_string())),
-                ]),
+                .with_modules(vec![WorkspaceModule::new(
+                    "demo",
+                    module_path.to_string_lossy(),
+                )
+                .with_module_path(Vec::new())
+                .with_language(Some("ferro".to_string()))]),
             ]);
 
         let graph_path = root.join("workspace-graph.json");

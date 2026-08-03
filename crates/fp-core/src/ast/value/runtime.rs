@@ -174,8 +174,8 @@ impl RuntimeValue {
             RuntimeValue::Borrowed { .. } => {
                 bail!("Cannot mutate this value")
             }
-            RuntimeValue::Owned(ref mut v) => f(v),
-            RuntimeValue::BorrowedMut { ref mut value, .. } => f(value),
+            RuntimeValue::Owned(v) => f(v),
+            RuntimeValue::BorrowedMut { value, .. } => f(value),
             RuntimeValue::Shared(rc) => {
                 let mut borrowed = rc
                     .try_borrow_mut()

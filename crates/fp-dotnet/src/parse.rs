@@ -1,7 +1,8 @@
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature, LirInstruction,
-    LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, Name,
+    BasicBlockId, LirBasicBlock, LirConstant, LirDataLayout, LirFunction, LirFunctionSignature,
+    LirInstruction, LirInstructionKind, LirInteger, LirProgram, LirRegister, LirTerminator,
+    LirType, LirValue, Name,
 };
 use std::collections::HashMap;
 
@@ -11,7 +12,10 @@ use std::collections::HashMap;
 /// - Intended for CIL emitted by FerroPhase itself.
 /// - Supports `ldc.i4`, `ldloc`, `stloc`, `add/sub/mul/div`, `ret`, `br`, `brtrue`, labels.
 pub fn parse_cil_program(text: &str) -> Result<LirProgram> {
-    let mut program = LirProgram::new();
+    let mut program = LirProgram::new(
+        LirDataLayout::new(64, 8, vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)])
+            .expect("valid .NET LIR data layout"),
+    );
     for method in parse_methods(text)? {
         program.add_function(lower_method(method)?);
     }
@@ -276,7 +280,7 @@ fn parse_stack_instruction(
             .trim()
             .parse::<i64>()
             .map_err(|_| Error::from("cil parse: invalid ldc.i4"))?;
-        stack.push(LirValue::Constant(LirConstant::Int(value, LirType::I64)));
+        stack.push(LirValue::constant(LirConstant::integer(LirType::I64, LirInteger::I64(value as u64)).expect("valid .NET integer")));
         return Ok(None);
     }
     if let Some(rest) = line.strip_prefix("ldloc.") {
@@ -284,7 +288,7 @@ fn parse_stack_instruction(
             .trim()
             .parse::<u32>()
             .map_err(|_| Error::from("cil parse: invalid ldloc"))?;
-        stack.push(LirValue::Local(id));
+        stack.push(LirValue::local(id, LirType::I64));
         return Ok(None);
     }
     if let Some(rest) = line.strip_prefix("stloc.") {
@@ -300,7 +304,7 @@ fn parse_stack_instruction(
         return Ok(Some(LirInstruction {
             id: id_inst,
             kind: LirInstructionKind::Freeze(value),
-            type_hint: Some(LirType::I64),
+            result: Some(LirRegister { id: id_inst, ty: LirType::I64 }),
             debug_info: None,
         }));
     }
@@ -322,11 +326,11 @@ fn parse_stack_instruction(
         let id = *next_vreg;
         *next_vreg += 1;
         let kind = constructor(lhs.clone(), rhs.clone());
-        stack.push(LirValue::Register(id));
+        stack.push(LirValue::register(id, LirType::I64));
         return Ok(Some(LirInstruction {
             id,
             kind,
-            type_hint: Some(LirType::I64),
+            result: Some(LirRegister { id, ty: LirType::I64 }),
             debug_info: None,
         }));
     }

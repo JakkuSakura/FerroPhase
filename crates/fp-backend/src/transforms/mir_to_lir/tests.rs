@@ -10,6 +10,15 @@ use fp_core::{
 };
 use std::collections::HashMap;
 
+fn test_layout() -> lir::LirDataLayout {
+    lir::LirDataLayout::new(
+        64,
+        8,
+        vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+    )
+    .expect("valid test layout")
+}
+
 fn local_decl(ty: Ty) -> mir::LocalDecl {
     mir::LocalDecl {
         mutability: mir::Mutability::Not,
@@ -19,14 +28,6 @@ fn local_decl(ty: Ty) -> mir::LocalDecl {
         ty,
         user_ty: None,
         source_info: Span::new(0, 0, 0),
-    }
-}
-
-fn int_constant(value: i64) -> mir::Constant {
-    mir::Constant {
-        span: Span::new(0, 0, 0),
-        user_ty: None,
-        literal: mir::ConstantKind::Int(value),
     }
 }
 
@@ -70,7 +71,7 @@ fn builds_function_signature_and_locals() {
         bodies,
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = LirGenerator::new(test_layout());
     let lir_program = generator
         .transform(mir_program)
         .expect("lowering should succeed");
@@ -100,9 +101,15 @@ fn lowers_general_call_and_branches() {
             func: mir::Operand::Constant(mir::Constant {
                 span: Span::new(0, 0, 0),
                 user_ty: None,
-                literal: mir::ConstantKind::Fn(MirSymbol::new("foo"), return_ty.clone()),
+                ty: return_ty.clone(),
+                literal: mir::ConstantKind::Fn(MirSymbol::new("foo")),
             }),
-            args: vec![mir::Operand::Constant(int_constant(1))],
+            args: vec![mir::Operand::Constant(mir::Constant {
+                span: Span::new(0, 0, 0),
+                ty: Ty::int(IntTy::I32),
+                user_ty: None,
+                literal: mir::ConstantKind::Int(1),
+            })],
             destination: Some((mir::Place::from_local(2), 1)),
             cleanup: None,
             from_hir_call: false,
@@ -137,32 +144,56 @@ fn lowers_general_call_and_branches() {
 
     bodies.insert(mir::BodyId::new(0), body);
 
+    let foo = mir::Function {
+        name: MirSymbol::new("foo"),
+        path: vec![MirSymbol::new("foo")],
+        def_id: None,
+        sig: mir::FunctionSig {
+            inputs: vec![param_ty.clone()],
+            output: return_ty.clone(),
+        },
+        body_id: mir::BodyId::new(1),
+        abi: mir::ty::Abi::Rust,
+        is_extern: true,
+        attrs: Vec::new(),
+    };
+
     let mir_program = mir::Program {
-        items: vec![mir::Item {
-            mir_id: 0,
-            kind: mir::ItemKind::Function(mir::Function {
-                name: MirSymbol::new("test_fn"),
-                path: vec![MirSymbol::new("test_fn")],
-                def_id: None,
-                sig: mir::FunctionSig {
-                    inputs: vec![param_ty.clone()],
-                    output: return_ty.clone(),
-                },
-                body_id: mir::BodyId::new(0),
-                abi: mir::ty::Abi::Rust,
-                is_extern: false,
-                attrs: Vec::new(),
-            }),
-        }],
+        items: vec![
+            mir::Item {
+                mir_id: 1,
+                kind: mir::ItemKind::Function(foo),
+            },
+            mir::Item {
+                mir_id: 0,
+                kind: mir::ItemKind::Function(mir::Function {
+                    name: MirSymbol::new("test_fn"),
+                    path: vec![MirSymbol::new("test_fn")],
+                    def_id: None,
+                    sig: mir::FunctionSig {
+                        inputs: vec![param_ty.clone()],
+                        output: return_ty.clone(),
+                    },
+                    body_id: mir::BodyId::new(0),
+                    abi: mir::ty::Abi::Rust,
+                    is_extern: false,
+                    attrs: Vec::new(),
+                }),
+            },
+        ],
         bodies,
     };
 
-    let mut generator = LirGenerator::new();
+    let mut generator = LirGenerator::new(test_layout());
     let lir_program = generator
         .transform(mir_program)
         .expect("lowering should succeed");
 
-    let lir_func = &lir_program.functions[0];
+    let lir_func = lir_program
+        .functions
+        .iter()
+        .find(|function| function.name.as_str() == "test_fn")
+        .expect("test function should be lowered");
     assert_eq!(lir_func.basic_blocks.len(), 2);
 
     let entry_block = &lir_func.basic_blocks[0];
@@ -174,8 +205,21 @@ fn lowers_general_call_and_branches() {
     ));
     match &entry_block.instructions[1].kind {
         lir::LirInstructionKind::Call { function, .. } => match function {
-            lir::LirValue::Function(name) => assert_eq!(name.as_str(), "foo"),
-            lir::LirValue::Global(name, _) => assert_eq!(name.as_str(), "foo"),
+            lir::LirValue {
+                kind: lir::LirValueKind::Function(lir::LirFunctionRef::Name(name)),
+                ..
+            }
+            | lir::LirValue {
+                kind: lir::LirValueKind::Function(lir::LirFunctionRef::Package {
+                    name,
+                    ..
+                }),
+                ..
+            }
+            | lir::LirValue {
+                kind: lir::LirValueKind::Global(name),
+                ..
+            } => assert_eq!(name.as_str(), "foo"),
             other => panic!("expected function call, got {:?}", other),
         },
         other => panic!("expected call instruction, got {:?}", other),
@@ -185,7 +229,10 @@ fn lowers_general_call_and_branches() {
     let successor_block = &lir_func.basic_blocks[1];
     assert_eq!(successor_block.predecessors, vec![0]);
     match &successor_block.terminator {
-        lir::LirTerminator::Return(Some(lir::LirValue::Register(_))) => {}
+        lir::LirTerminator::Return(Some(lir::LirValue {
+            kind: lir::LirValueKind::Register(_),
+            ..
+        })) => {}
         other => panic!("expected return with register value, got {:?}", other),
     }
 }

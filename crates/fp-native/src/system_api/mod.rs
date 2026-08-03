@@ -6703,13 +6703,14 @@ mod tests {
     };
 
     fn program(target_format: AsmObjectFormat) -> AsmProgram {
-        AsmProgram::new(AsmTarget {
+        let target = AsmTarget {
             architecture: AsmArchitecture::X86_64,
             object_format: target_format,
             endianness: AsmEndianness::Little,
             pointer_width: 64,
             default_calling_convention: None,
-        })
+        };
+        AsmProgram::new(target.clone(), target.data_layout())
     }
 
     #[test]

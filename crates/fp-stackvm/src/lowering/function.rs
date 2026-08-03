@@ -7,7 +7,7 @@
 use fp_bytecode::{BytecodeCallee, BytecodeInstr, BytecodeTerminator};
 use fp_core::lir::{
     BasicBlockId, CallingConvention, LirBasicBlock, LirFunction, LirInstruction,
-    LirInstructionKind, LirTerminator, LirValue, RegisterId,
+    LirInstructionKind, LirTerminator, LirType, LirValue, RegisterId,
 };
 
 use super::LowerError;
@@ -63,9 +63,9 @@ impl<'a> FunctionLowering<'a> {
             .ok_or_else(|| LowerError::Internal("stack underflow during lowering".into()))
     }
 
-    /// Convenience: wrap a register in [`LirValue::Register`].
+    /// Convenience: wrap a register in a typed LIR value.
     pub fn reg_val(reg: RegisterId) -> LirValue {
-        LirValue::Register(reg)
+        LirValue::register(reg, LirType::I64)
     }
 
     // ---------------------------------------------------------------
@@ -134,7 +134,7 @@ impl<'a> FunctionLowering<'a> {
                     let val_reg = self.emit_in_block(
                         block_id,
                         LirInstructionKind::Load {
-                            address: LirValue::Local(*local),
+                            address: LirValue::local(*local, LirType::I64),
                             alignment: Some(8),
                             volatile: false,
                         },
@@ -147,7 +147,7 @@ impl<'a> FunctionLowering<'a> {
                         block_id,
                         LirInstructionKind::Store {
                             value: Self::reg_val(val_reg),
-                            address: LirValue::Local(*local),
+                            address: LirValue::local(*local, LirType::I64),
                             alignment: Some(8),
                             volatile: false,
                         },
@@ -258,7 +258,7 @@ impl<'a> FunctionLowering<'a> {
                 let val_reg = self.emit_in_block(
                     block_id,
                     LirInstructionKind::Load {
-                        address: LirValue::Local(0),
+                        address: LirValue::local(0, LirType::I64),
                         alignment: Some(8),
                         volatile: false,
                     },
@@ -319,7 +319,10 @@ impl<'a> FunctionLowering<'a> {
                 args.reverse();
 
                 let callee_val = match callee {
-                    BytecodeCallee::Function(name) => LirValue::Function(name.clone()),
+                    BytecodeCallee::Function(name) => LirValue::function(
+                        fp_core::lir::LirFunctionRef::Name(fp_core::lir::Name::new(name)),
+                        LirType::Ptr(Box::new(LirType::I8)),
+                    ),
                     BytecodeCallee::Local(place) => {
                         let reg = super::ops::lower_load_place(self, block_id, place)?;
                         Self::reg_val(reg)

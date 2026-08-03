@@ -11,6 +11,7 @@ use fp_core::{
     ast::{File, Value},
     diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager},
     frontend::{FrontendParseMode, FrontendResult, FrontendSnapshot, LanguageFrontend},
+    lir::LirDataLayout,
 };
 use fp_goasm::config::GoAsmTarget;
 use fp_lang::FerroFrontend;
@@ -43,6 +44,15 @@ use crate::{CliError, Result};
 #[cfg(feature = "lang-typescript")]
 use fp_typescript::frontend::TsParseMode;
 
+fn data_layout() -> LirDataLayout {
+    LirDataLayout::new(
+        64,
+        8,
+        vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+    )
+    .expect("valid CLI data layout")
+}
+
 pub fn check_path(
     path: &Path,
     package: &str,
@@ -56,7 +66,7 @@ pub fn check_path(
     }
 
     let identity = CompilerIdentity::for_file(package, path);
-    let mut driver = CompilerDriver::new();
+    let mut driver = CompilerDriver::new(data_layout());
     driver.state.set_lossy(lossy.enabled);
     if let Some(resolver) = resolver {
         driver.state.set_module_resolver(resolver);
@@ -809,7 +819,7 @@ fn lower_ast(
 ) -> Result<CompilerDriver> {
     let ast_id = identity.ast_id.clone();
     let path = identity.path.clone();
-    let mut driver = CompilerDriver::new();
+    let mut driver = CompilerDriver::new(data_layout());
     driver.state.set_lossy(lossy.enabled);
 
     // Register std's provider — its content loads on demand, the first
@@ -818,7 +828,7 @@ fn lower_ast(
     let mut workspace = fp_core::workspace::WorkspaceContext::new();
     workspace.register_provider("std", Arc::new(fp_lang::provider::EmbeddedStdPackageProvider));
     driver.state.typing_ctx = std::rc::Rc::new(
-        fp_typing::TypingContext::new(std::rc::Rc::new(workspace))
+        fp_typing::TypingContext::new(data_layout(), std::rc::Rc::new(workspace))
     );
 
     if let Some(resolver) = resolver {

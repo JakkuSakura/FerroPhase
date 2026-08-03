@@ -5,7 +5,7 @@
 //! [`FunctionLowering`][super::function::FunctionLowering].
 
 use fp_bytecode::{BytecodeFunction, BytecodeProgram};
-use fp_core::lir::LirProgram;
+use fp_core::lir::{LirDataLayout, LirProgram};
 
 use super::LowerResult;
 use super::function::FunctionLowering;
@@ -30,7 +30,14 @@ pub(crate) struct LoweringContext<'a> {
 impl<'a> LoweringContext<'a> {
     pub fn new(bytecode: &'a BytecodeProgram) -> Self {
         Self {
-            program: LirProgram::new(),
+            program: LirProgram::new(
+                LirDataLayout::new(
+                    64,
+                    8,
+                    vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+                )
+                .expect("valid stack VM data layout"),
+            ),
             bytecode,
         }
     }
@@ -68,7 +75,7 @@ impl<'a> LoweringContext<'a> {
 
         // The LirInterpreter pre-allocates stack slots for all locals
         // declared in func.locals during run_function().  We reference
-        // them by index (LirValue::Local) rather than emitting Alloca
+        // them by local index rather than emitting Alloca
         // instructions, which would permanently consume stack space.
 
         // Lower each basic block.

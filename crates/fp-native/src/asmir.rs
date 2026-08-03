@@ -16,11 +16,11 @@ use fp_core::asmir::{
     AsmSection, AsmSectionFlag, AsmSectionKind, AsmSyscallConvention, AsmTarget, AsmTerminator,
     AsmType, AsmTypeDefinition, AsmValue, OperandAccess,
 };
-use fp_core::error::Result;
-use fp_core::lir::layout::size_of;
+use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    Linkage, LirConstant, LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator,
-    LirValue, Name, Visibility,
+    Linkage, LirConstant, LirConstantAggregate, LirConstantData, LirConstantKind, LirFloat,
+    LirInstructionKind, LirInteger, LirIntrinsicKind, LirProgram, LirTerminator, LirValue,
+    LirValueKind, Name, Visibility,
 };
 use std::collections::HashMap;
 
@@ -29,13 +29,16 @@ pub fn select_program(
     format: TargetFormat,
     arch: TargetArch,
 ) -> Result<AsmProgram> {
-    let mut program = AsmProgram::new(AsmTarget {
-        architecture: map_arch(arch),
-        object_format: map_format(format),
-        endianness: AsmEndianness::Little,
-        pointer_width: 64,
-        default_calling_convention: None,
-    });
+    let mut program = AsmProgram::new(
+        AsmTarget {
+            architecture: map_arch(arch),
+            object_format: map_format(format),
+            endianness: AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: None,
+        },
+        lir_program.data_layout.clone(),
+    );
 
     program.sections.push(AsmSection {
         name: ".text".to_string(),
@@ -95,7 +98,7 @@ pub fn select_program(
                 instructions.push(AsmInstruction {
                     id: instruction.id,
                     kind: map_instruction_kind(&instruction.kind),
-                    type_hint: instruction.type_hint.clone(),
+                    type_hint: instruction.result.as_ref().map(|result| result.ty.clone()),
                     opcode: AsmOpcode::Generic(generic_opcode(&map_instruction_kind(
                         &instruction.kind,
                     ))),
@@ -640,23 +643,19 @@ fn canonicalize_value(
     }
 }
 
-pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> AsmProgram {
+pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> Result<AsmProgram> {
     let mut next_instruction_id = 0u32;
+    let target = AsmTarget {
+        architecture: AsmArchitecture::X86_64,
+        object_format: AsmObjectFormat::Raw,
+        endianness: AsmEndianness::Little,
+        pointer_width: 64,
+        default_calling_convention: None,
+    };
     let mut lifted = AsmProgram {
-        target: AsmTarget {
-            architecture: AsmArchitecture::X86_64,
-            object_format: AsmObjectFormat::Raw,
-            endianness: AsmEndianness::Little,
-            pointer_width: 64,
-            default_calling_convention: None,
-        },
-        lifted_from: Some(AsmTarget {
-            architecture: AsmArchitecture::X86_64,
-            object_format: AsmObjectFormat::Raw,
-            endianness: AsmEndianness::Little,
-            pointer_width: 64,
-            default_calling_convention: None,
-        }),
+        target: target.clone(),
+        data_layout: target.data_layout(),
+        lifted_from: Some(target.clone()),
         container: None,
         sections: vec![AsmSection {
             name: ".text".to_string(),
@@ -669,51 +668,54 @@ pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> AsmProgram {
         functions: program
             .functions
             .iter()
-            .map(|function| AsmFunction {
-                name: function.name.clone(),
-                signature: AsmFunctionSignature {
-                    params: Vec::new(),
-                    return_type: AsmType::Void,
-                    is_variadic: false,
-                },
-                basic_blocks: function
-                    .blocks
-                    .iter()
-                    .map(|block| {
-                        let instructions = block
-                            .instructions
-                            .iter()
-                            .map(|instruction| {
-                                let lifted = lift_x86_instruction(instruction, next_instruction_id);
-                                next_instruction_id += 1;
-                                lifted
+            .map(|function| -> Result<AsmFunction> {
+                Ok(AsmFunction {
+                    name: function.name.clone(),
+                    signature: AsmFunctionSignature {
+                        params: Vec::new(),
+                        return_type: AsmType::Void,
+                        is_variadic: false,
+                    },
+                    basic_blocks: function
+                        .blocks
+                        .iter()
+                        .map(|block| -> Result<AsmBlock> {
+                            let instructions = block
+                                .instructions
+                                .iter()
+                                .map(|instruction| -> Result<AsmInstruction> {
+                                    let lifted =
+                                        lift_x86_instruction(instruction, next_instruction_id)?;
+                                    next_instruction_id += 1;
+                                    Ok(lifted)
+                                })
+                                .collect::<Result<Vec<_>>>()?;
+                            let terminator = relink_comparison_condition(
+                                instructions.as_slice(),
+                                lift_x86_terminator(&block.terminator)?,
+                            );
+                            Ok(AsmBlock {
+                                id: block.id,
+                                label: Some(Name::new(format!("bb{}", block.id))),
+                                instructions,
+                                terminator,
+                                terminator_encoding: None,
+                                predecessors: Vec::new(),
+                                successors: block.terminator.targets.clone(),
                             })
-                            .collect::<Vec<_>>();
-                        let terminator = relink_comparison_condition(
-                            instructions.as_slice(),
-                            lift_x86_terminator(&block.terminator),
-                        );
-                        AsmBlock {
-                            id: block.id,
-                            label: Some(Name::new(format!("bb{}", block.id))),
-                            instructions,
-                            terminator,
-                            terminator_encoding: None,
-                            predecessors: Vec::new(),
-                            successors: block.terminator.targets.clone(),
-                        }
-                    })
-                    .collect(),
-                locals: Vec::new(),
-                stack_slots: Vec::new(),
-                frame: None,
-                linkage: fp_core::lir::Linkage::External,
-                visibility: Visibility::Default,
-                calling_convention: None,
-                section: Some(".text".to_string()),
-                is_declaration: false,
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                    locals: Vec::new(),
+                    stack_slots: Vec::new(),
+                    frame: None,
+                    linkage: fp_core::lir::Linkage::External,
+                    visibility: Visibility::Default,
+                    calling_convention: None,
+                    section: Some(".text".to_string()),
+                    is_declaration: false,
+                })
             })
-            .collect(),
+            .collect::<Result<Vec<_>>>()?,
     };
     if let Some(abi) = crate::abi::default_abi_for_target(
         &lifted.target.architecture,
@@ -725,26 +727,22 @@ pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> AsmProgram {
         }
     }
     canonicalize_physical_registers(&mut lifted);
-    lifted
+    Ok(lifted)
 }
 
-pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> AsmProgram {
+pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> Result<AsmProgram> {
     let mut next_instruction_id = 0u32;
+    let target = AsmTarget {
+        architecture: AsmArchitecture::Aarch64,
+        object_format: AsmObjectFormat::Raw,
+        endianness: AsmEndianness::Little,
+        pointer_width: 64,
+        default_calling_convention: None,
+    };
     let mut lifted = AsmProgram {
-        target: AsmTarget {
-            architecture: AsmArchitecture::Aarch64,
-            object_format: AsmObjectFormat::Raw,
-            endianness: AsmEndianness::Little,
-            pointer_width: 64,
-            default_calling_convention: None,
-        },
-        lifted_from: Some(AsmTarget {
-            architecture: AsmArchitecture::Aarch64,
-            object_format: AsmObjectFormat::Raw,
-            endianness: AsmEndianness::Little,
-            pointer_width: 64,
-            default_calling_convention: None,
-        }),
+        target: target.clone(),
+        data_layout: target.data_layout(),
+        lifted_from: Some(target.clone()),
         container: None,
         sections: vec![AsmSection {
             name: ".text".to_string(),
@@ -757,52 +755,54 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> AsmProgram
         functions: program
             .functions
             .iter()
-            .map(|function| AsmFunction {
-                name: function.name.clone(),
-                signature: AsmFunctionSignature {
-                    params: Vec::new(),
-                    return_type: AsmType::Void,
-                    is_variadic: false,
-                },
-                basic_blocks: function
-                    .blocks
-                    .iter()
-                    .map(|block| {
-                        let instructions = block
-                            .instructions
-                            .iter()
-                            .map(|instruction| {
-                                let lifted =
-                                    lift_aarch64_instruction(instruction, next_instruction_id);
-                                next_instruction_id += 1;
-                                lifted
+            .map(|function| -> Result<AsmFunction> {
+                Ok(AsmFunction {
+                    name: function.name.clone(),
+                    signature: AsmFunctionSignature {
+                        params: Vec::new(),
+                        return_type: AsmType::Void,
+                        is_variadic: false,
+                    },
+                    basic_blocks: function
+                        .blocks
+                        .iter()
+                        .map(|block| -> Result<AsmBlock> {
+                            let instructions = block
+                                .instructions
+                                .iter()
+                                .map(|instruction| -> Result<AsmInstruction> {
+                                    let lifted =
+                                        lift_aarch64_instruction(instruction, next_instruction_id)?;
+                                    next_instruction_id += 1;
+                                    Ok(lifted)
+                                })
+                                .collect::<Result<Vec<_>>>()?;
+                            let terminator = relink_comparison_condition(
+                                instructions.as_slice(),
+                                lift_aarch64_terminator(&block.terminator)?,
+                            );
+                            Ok(AsmBlock {
+                                id: block.id,
+                                label: Some(Name::new(format!("bb{}", block.id))),
+                                instructions,
+                                terminator,
+                                terminator_encoding: None,
+                                predecessors: Vec::new(),
+                                successors: block.terminator.targets.clone(),
                             })
-                            .collect::<Vec<_>>();
-                        let terminator = relink_comparison_condition(
-                            instructions.as_slice(),
-                            lift_aarch64_terminator(&block.terminator),
-                        );
-                        AsmBlock {
-                            id: block.id,
-                            label: Some(Name::new(format!("bb{}", block.id))),
-                            instructions,
-                            terminator,
-                            terminator_encoding: None,
-                            predecessors: Vec::new(),
-                            successors: block.terminator.targets.clone(),
-                        }
-                    })
-                    .collect(),
-                locals: Vec::new(),
-                stack_slots: Vec::new(),
-                frame: None,
-                linkage: fp_core::lir::Linkage::External,
-                visibility: Visibility::Default,
-                calling_convention: None,
-                section: Some(".text".to_string()),
-                is_declaration: false,
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                    locals: Vec::new(),
+                    stack_slots: Vec::new(),
+                    frame: None,
+                    linkage: fp_core::lir::Linkage::External,
+                    visibility: Visibility::Default,
+                    calling_convention: None,
+                    section: Some(".text".to_string()),
+                    is_declaration: false,
+                })
             })
-            .collect(),
+            .collect::<Result<Vec<_>>>()?,
     };
     if let Some(abi) = crate::abi::default_abi_for_target(
         &lifted.target.architecture,
@@ -814,7 +814,7 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> AsmProgram
         }
     }
     canonicalize_physical_registers(&mut lifted);
-    lifted
+    Ok(lifted)
 }
 
 fn normalize_program_for_target(program: &mut AsmProgram) {
@@ -3155,30 +3155,15 @@ fn asm_condition_from_aarch64(condition: &Aarch64ConditionCode) -> AsmConditionC
     }
 }
 
-fn lift_x86_instruction(instruction: &X86InstructionDetail, id: u32) -> AsmInstruction {
+fn lift_x86_instruction(instruction: &X86InstructionDetail, id: u32) -> Result<AsmInstruction> {
     let operands = instruction
         .operands
         .iter()
         .map(x86_operand_to_asm)
         .collect::<Vec<_>>();
     let type_hint = output_type_from_asm_operands(&operands);
-    let kind = semanticize_x86_detail(instruction, &operands).unwrap_or_else(|e| {
-        eprintln!(
-            "[fp-native] x86 semanticize failed for {:?}: {e}",
-            instruction.opcode
-        );
-        // JUSTIFY: lifter must produce an instruction for every input;
-        // InlineAsm preserves the original opcode/operands opaque to downstream.
-        AsmInstructionKind::InlineAsm {
-            asm_string: x86_custom_opcode_name(instruction),
-            constraints: String::new(),
-            inputs: operands.iter().filter_map(asm_operand_to_value).collect(),
-            output_type: type_hint.clone().unwrap_or(AsmType::Void),
-            side_effects: true,
-            align_stack: false,
-        }
-    });
-    AsmInstruction {
+    let kind = semanticize_x86_detail(instruction, &operands)?;
+    Ok(AsmInstruction {
         id,
         opcode: AsmOpcode::Generic(generic_opcode(&kind)),
         kind,
@@ -3189,33 +3174,21 @@ fn lift_x86_instruction(instruction: &X86InstructionDetail, id: u32) -> AsmInstr
         encoding: None,
         debug_info: None,
         annotations: Vec::new(),
-    }
+    })
 }
 
-fn lift_aarch64_instruction(instruction: &Aarch64InstructionDetail, id: u32) -> AsmInstruction {
+fn lift_aarch64_instruction(
+    instruction: &Aarch64InstructionDetail,
+    id: u32,
+) -> Result<AsmInstruction> {
     let operands = instruction
         .operands
         .iter()
         .map(aarch64_operand_to_asm)
         .collect::<Vec<_>>();
     let type_hint = output_type_from_asm_operands(&operands);
-    let kind = semanticize_aarch64_detail(instruction, &operands).unwrap_or_else(|e| {
-        eprintln!(
-            "[fp-native] aarch64 semanticize failed for {}: {e}",
-            instruction.opcode
-        );
-        // JUSTIFY: lifter must produce an instruction for every input;
-        // InlineAsm preserves the original opcode/operands opaque to downstream.
-        AsmInstructionKind::InlineAsm {
-            asm_string: aarch64_custom_opcode_name(instruction),
-            constraints: String::new(),
-            inputs: operands.iter().filter_map(asm_operand_to_value).collect(),
-            output_type: type_hint.clone().unwrap_or(AsmType::Void),
-            side_effects: true,
-            align_stack: false,
-        }
-    });
-    AsmInstruction {
+    let kind = semanticize_aarch64_detail(instruction, &operands)?;
+    Ok(AsmInstruction {
         id,
         opcode: AsmOpcode::Generic(generic_opcode(&kind)),
         kind,
@@ -3226,7 +3199,7 @@ fn lift_aarch64_instruction(instruction: &Aarch64InstructionDetail, id: u32) -> 
         encoding: None,
         debug_info: None,
         annotations: Vec::new(),
-    }
+    })
 }
 
 fn output_type_from_asm_operands(operands: &[AsmOperand]) -> Option<AsmType> {
@@ -3256,31 +3229,6 @@ fn type_from_bits(size_bits: u16) -> AsmType {
         64 => AsmType::I64,
         128 => AsmType::I128,
         _ => AsmType::I64,
-    }
-}
-
-fn asm_operand_to_value(operand: &AsmOperand) -> Option<AsmValue> {
-    match operand {
-        AsmOperand::Register {
-            reg: AsmRegister::Virtual { id, .. },
-            ..
-        } => Some(AsmValue::Register(*id)),
-        AsmOperand::Register {
-            reg: AsmRegister::Physical(register),
-            ..
-        } => Some(AsmValue::PhysicalRegister(register.clone())),
-        AsmOperand::Memory(memory) => Some(AsmValue::Address(Box::new(address_value_from_memory(
-            memory,
-        )))),
-        AsmOperand::Immediate(value) => Some(AsmValue::Constant(AsmConstant::Int(
-            *value as i64,
-            AsmType::I64,
-        ))),
-        AsmOperand::Symbol(name) => Some(AsmValue::Global(
-            name.to_string(),
-            AsmType::Ptr(Box::new(AsmType::I8)),
-        )),
-        _ => None,
     }
 }
 
@@ -3722,129 +3670,91 @@ fn aarch64_call_target_from_operand(operand: &Aarch64Operand) -> Aarch64CallTarg
     }
 }
 
-fn lift_x86_terminator(terminator: &X86TerminatorDetail) -> AsmTerminator {
+fn lift_x86_terminator(terminator: &X86TerminatorDetail) -> Result<AsmTerminator> {
     match terminator.opcode {
-        X86TerminatorOpcode::Ret => AsmTerminator::Return(None),
-        X86TerminatorOpcode::Jmp => {
-            AsmTerminator::Br(terminator.targets.first().copied().unwrap_or(0))
-        }
-        X86TerminatorOpcode::Jcc => AsmTerminator::CondBr {
-            condition: AsmValue::Condition(asm_condition_from_x86(
-                terminator
-                    .condition
-                    .as_ref()
-                    .unwrap_or(&X86ConditionCode::NonZero),
-            )),
-            if_true: terminator.targets.first().copied().unwrap_or(0),
-            if_false: terminator
+        X86TerminatorOpcode::Ret => Ok(AsmTerminator::Return(None)),
+        X86TerminatorOpcode::Jmp => Ok(AsmTerminator::Br(
+            terminator
+                .targets
+                .first()
+                .copied()
+                .ok_or_else(|| Error::from("direct branch is missing its target"))?,
+        )),
+        X86TerminatorOpcode::Jcc => {
+            let condition = terminator
+                .condition
+                .as_ref()
+                .ok_or_else(|| Error::from("conditional branch is missing its condition"))?;
+            let if_true = terminator
+                .targets
+                .first()
+                .copied()
+                .ok_or_else(|| Error::from("conditional branch is missing its true target"))?;
+            let if_false = terminator
                 .targets
                 .get(1)
                 .copied()
-                .unwrap_or_else(|| terminator.targets.first().copied().unwrap_or(0)),
-        },
-        X86TerminatorOpcode::Switch => AsmTerminator::Switch {
-            value: AsmValue::Undef(AsmType::I64),
-            default: terminator.targets.last().copied().unwrap_or(0),
-            cases: terminator
-                .targets
-                .iter()
-                .take(terminator.targets.len().saturating_sub(1))
-                .enumerate()
-                .map(|(index, target)| (index as u64, *target))
-                .collect(),
-        },
-        X86TerminatorOpcode::IndirectJmp => AsmTerminator::IndirectBr {
-            address: AsmValue::Global(
-                "indirect.branch".to_string(),
-                AsmType::Ptr(Box::new(AsmType::I8)),
-            ),
-            destinations: terminator.targets.clone(),
-        },
-        X86TerminatorOpcode::Invoke => AsmTerminator::Invoke {
-            function: AsmValue::Function("opaque.invoke".to_string()),
-            args: Vec::new(),
-            normal_dest: terminator.targets.first().copied().unwrap_or(0),
-            unwind_dest: terminator.targets.get(1).copied().unwrap_or(0),
-            calling_convention: fp_core::lir::CallingConvention::C,
-        },
-        X86TerminatorOpcode::Resume => AsmTerminator::Resume(AsmValue::Undef(AsmType::I8)),
-        X86TerminatorOpcode::CleanupRet => AsmTerminator::CleanupRet {
-            cleanup_pad: AsmValue::Undef(AsmType::I8),
-            unwind_dest: terminator.targets.first().copied(),
-        },
-        X86TerminatorOpcode::CatchRet => AsmTerminator::CatchRet {
-            catch_pad: AsmValue::Undef(AsmType::I8),
-            successor: terminator.targets.first().copied().unwrap_or(0),
-        },
-        X86TerminatorOpcode::CatchSwitch => AsmTerminator::CatchSwitch {
-            parent_pad: None,
-            handlers: terminator.targets.clone(),
-            unwind_dest: None,
-        },
-        X86TerminatorOpcode::Ud2 => AsmTerminator::Unreachable,
+                .ok_or_else(|| Error::from("conditional branch is missing its false target"))?;
+            Ok(AsmTerminator::CondBr {
+                condition: AsmValue::Condition(asm_condition_from_x86(condition)),
+                if_true,
+                if_false,
+            })
+        }
+        X86TerminatorOpcode::Ud2 => Ok(AsmTerminator::Unreachable),
+        X86TerminatorOpcode::Switch
+        | X86TerminatorOpcode::IndirectJmp
+        | X86TerminatorOpcode::Invoke
+        | X86TerminatorOpcode::Resume
+        | X86TerminatorOpcode::CleanupRet
+        | X86TerminatorOpcode::CatchRet
+        | X86TerminatorOpcode::CatchSwitch => Err(Error::from(
+            "raw x86 terminator lacks typed operands required by AsmIR",
+        )),
     }
 }
 
-fn lift_aarch64_terminator(terminator: &Aarch64TerminatorDetail) -> AsmTerminator {
+fn lift_aarch64_terminator(terminator: &Aarch64TerminatorDetail) -> Result<AsmTerminator> {
     match terminator.opcode {
-        Aarch64TerminatorOpcode::Ret => AsmTerminator::Return(None),
-        Aarch64TerminatorOpcode::B => {
-            AsmTerminator::Br(terminator.targets.first().copied().unwrap_or(0))
-        }
-        Aarch64TerminatorOpcode::BCond => AsmTerminator::CondBr {
-            condition: AsmValue::Condition(asm_condition_from_aarch64(
-                terminator
-                    .condition
-                    .as_ref()
-                    .unwrap_or(&Aarch64ConditionCode::NonZero),
-            )),
-            if_true: terminator.targets.first().copied().unwrap_or(0),
-            if_false: terminator
+        Aarch64TerminatorOpcode::Ret => Ok(AsmTerminator::Return(None)),
+        Aarch64TerminatorOpcode::B => Ok(AsmTerminator::Br(
+            terminator
+                .targets
+                .first()
+                .copied()
+                .ok_or_else(|| Error::from("direct branch is missing its target"))?,
+        )),
+        Aarch64TerminatorOpcode::BCond => {
+            let condition = terminator
+                .condition
+                .as_ref()
+                .ok_or_else(|| Error::from("conditional branch is missing its condition"))?;
+            let if_true = terminator
+                .targets
+                .first()
+                .copied()
+                .ok_or_else(|| Error::from("conditional branch is missing its true target"))?;
+            let if_false = terminator
                 .targets
                 .get(1)
                 .copied()
-                .unwrap_or_else(|| terminator.targets.first().copied().unwrap_or(0)),
-        },
-        Aarch64TerminatorOpcode::Br => AsmTerminator::IndirectBr {
-            address: AsmValue::Global(
-                "indirect.branch".to_string(),
-                AsmType::Ptr(Box::new(AsmType::I8)),
-            ),
-            destinations: terminator.targets.clone(),
-        },
-        Aarch64TerminatorOpcode::Switch => AsmTerminator::Switch {
-            value: AsmValue::Undef(AsmType::I64),
-            default: terminator.targets.last().copied().unwrap_or(0),
-            cases: terminator
-                .targets
-                .iter()
-                .take(terminator.targets.len().saturating_sub(1))
-                .enumerate()
-                .map(|(index, target)| (index as u64, *target))
-                .collect(),
-        },
-        Aarch64TerminatorOpcode::Invoke => AsmTerminator::Invoke {
-            function: AsmValue::Function("opaque.invoke".to_string()),
-            args: Vec::new(),
-            normal_dest: terminator.targets.first().copied().unwrap_or(0),
-            unwind_dest: terminator.targets.get(1).copied().unwrap_or(0),
-            calling_convention: fp_core::lir::CallingConvention::C,
-        },
-        Aarch64TerminatorOpcode::Resume => AsmTerminator::Resume(AsmValue::Undef(AsmType::I8)),
-        Aarch64TerminatorOpcode::CleanupRet => AsmTerminator::CleanupRet {
-            cleanup_pad: AsmValue::Undef(AsmType::I8),
-            unwind_dest: terminator.targets.first().copied(),
-        },
-        Aarch64TerminatorOpcode::CatchRet => AsmTerminator::CatchRet {
-            catch_pad: AsmValue::Undef(AsmType::I8),
-            successor: terminator.targets.first().copied().unwrap_or(0),
-        },
-        Aarch64TerminatorOpcode::CatchSwitch => AsmTerminator::CatchSwitch {
-            parent_pad: None,
-            handlers: terminator.targets.clone(),
-            unwind_dest: None,
-        },
-        Aarch64TerminatorOpcode::Brk => AsmTerminator::Unreachable,
+                .ok_or_else(|| Error::from("conditional branch is missing its false target"))?;
+            Ok(AsmTerminator::CondBr {
+                condition: AsmValue::Condition(asm_condition_from_aarch64(condition)),
+                if_true,
+                if_false,
+            })
+        }
+        Aarch64TerminatorOpcode::Brk => Ok(AsmTerminator::Unreachable),
+        Aarch64TerminatorOpcode::Br
+        | Aarch64TerminatorOpcode::Switch
+        | Aarch64TerminatorOpcode::Invoke
+        | Aarch64TerminatorOpcode::Resume
+        | Aarch64TerminatorOpcode::CleanupRet
+        | Aarch64TerminatorOpcode::CatchRet
+        | Aarch64TerminatorOpcode::CatchSwitch => Err(Error::from(
+            "raw AArch64 terminator lacks typed operands required by AsmIR",
+        )),
     }
 }
 
@@ -4111,11 +4021,12 @@ fn call_value_kind(operands: &[AsmOperand], values: &[AsmValue]) -> Result<AsmIn
 
 fn select_value_kind(operands: &[AsmOperand], values: &[AsmValue]) -> Result<AsmInstructionKind> {
     let first_read = first_read_operand_index(operands);
+    let condition = values
+        .get(first_read)
+        .cloned()
+        .ok_or_else(|| fp_core::error::Error::from("missing select condition"))?;
     Ok(AsmInstructionKind::Select {
-        condition: values
-            .get(first_read)
-            .cloned()
-            .unwrap_or_else(|| AsmValue::Constant(AsmConstant::Int(1, AsmType::I1))),
+        condition,
         if_true: values
             .get(first_read + 1)
             .cloned()
@@ -4329,12 +4240,20 @@ fn type_size_bits(ty: &AsmType) -> u16 {
 }
 
 fn type_size_bytes(ty: &AsmType) -> u16 {
-    let size = size_of(ty);
-    if size == 0 {
-        0
-    } else {
-        size.min(u16::MAX as u64) as u16
-    }
+    let size = match ty {
+        AsmType::I1 | AsmType::I8 => 1,
+        AsmType::I16 => 2,
+        AsmType::I32 | AsmType::F32 => 4,
+        AsmType::I64 | AsmType::F64 | AsmType::Ptr(_) | AsmType::Function { .. } => 8,
+        AsmType::I128 => 16,
+        AsmType::Integer(width) => u64::from(width.div_ceil(8)),
+        AsmType::Array(element, count) => u64::from(type_size_bytes(element)) * *count,
+        AsmType::Vector(element, count) => u64::from(type_size_bytes(element)) * u64::from(*count),
+        AsmType::Struct { fields, .. } => fields.iter().map(type_size_bytes).map(u64::from).sum(),
+        AsmType::Void | AsmType::Label | AsmType::Token | AsmType::Metadata => 0,
+        AsmType::Error => 0,
+    };
+    size.min(u64::from(u16::MAX)) as u16
 }
 
 fn is_float_type_opt(ty: Option<&AsmType>) -> bool {
@@ -4686,42 +4605,64 @@ fn map_terminator(term: &LirTerminator) -> AsmTerminator {
 }
 
 fn map_value(value: &LirValue) -> AsmValue {
-    match value {
-        LirValue::Register(id) => AsmValue::Register(*id),
-        LirValue::Constant(constant) => AsmValue::Constant(map_constant(constant)),
-        LirValue::Global(name, ty) => AsmValue::Global(name.clone(), ty.clone()),
-        LirValue::Function(name) => AsmValue::Function(name.clone()),
-        LirValue::FunctionInPackage(_, name) => AsmValue::Function(name.clone()),
-        LirValue::FunctionDef(def_id) => {
-            unreachable!("function definition `{def_id}` is not supported by native ASMir")
+    match &value.kind {
+        LirValueKind::Register(id) => AsmValue::Register(*id),
+        LirValueKind::Constant(constant) => {
+            AsmValue::Constant(map_constant_kind(constant, &value.ty))
         }
-        LirValue::Local(id) => AsmValue::Local(*id),
-        LirValue::StackSlot(id) => AsmValue::StackSlot(*id),
-        LirValue::Undef(ty) => AsmValue::Undef(ty.clone()),
-        LirValue::Null(ty) => AsmValue::Null(ty.clone()),
+        LirValueKind::Global(name) => AsmValue::Global(name.to_string(), value.ty.clone()),
+        LirValueKind::Function(function) => AsmValue::Function(function_name(function)),
+        LirValueKind::Local(id) => AsmValue::Local(*id),
+        LirValueKind::StackSlot(id) => AsmValue::StackSlot(*id),
     }
 }
 
 fn map_constant(constant: &LirConstant) -> AsmConstant {
-    match constant {
-        LirConstant::Int(value, ty) => AsmConstant::Int(*value, ty.clone()),
-        LirConstant::UInt(value, ty) => AsmConstant::UInt(*value, ty.clone()),
-        LirConstant::Float(value, ty) => AsmConstant::Float(*value, ty.clone()),
-        LirConstant::Bool(value) => AsmConstant::Bool(*value),
-        LirConstant::String(value) => AsmConstant::String(value.clone()),
-        LirConstant::Bytes(bytes) => AsmConstant::Bytes(bytes.clone()),
-        LirConstant::Array(values, ty) => {
+    map_constant_kind(&constant.kind, &constant.ty)
+}
+
+fn function_name(function: &fp_core::lir::LirFunctionRef) -> String {
+    match function {
+        fp_core::lir::LirFunctionRef::Name(name) => name.to_string(),
+        fp_core::lir::LirFunctionRef::Package { name, .. } => name.to_string(),
+        fp_core::lir::LirFunctionRef::Definition(def_id) => def_id.to_string(),
+    }
+}
+
+fn map_constant_kind(kind: &LirConstantKind, ty: &fp_core::lir::LirType) -> AsmConstant {
+    match kind {
+        LirConstantKind::Data(LirConstantData::Integer(integer)) => match integer {
+            LirInteger::I1(value) => AsmConstant::Bool(*value),
+            LirInteger::I8(value) => AsmConstant::UInt(u64::from(*value), ty.clone()),
+            LirInteger::I16(value) => AsmConstant::UInt(u64::from(*value), ty.clone()),
+            LirInteger::I32(value) => AsmConstant::UInt(u64::from(*value), ty.clone()),
+            LirInteger::I64(value) => AsmConstant::Int(*value as i64, ty.clone()),
+            LirInteger::I128(value) => AsmConstant::UInt(*value as u64, ty.clone()),
+            LirInteger::Arbitrary(_) => panic!("arbitrary-width native constant is unsupported"),
+        },
+        LirConstantKind::Data(LirConstantData::Float(float)) => match float {
+            LirFloat::F32(value) => AsmConstant::Float(f32::from_bits(*value) as f64, ty.clone()),
+            LirFloat::F64(value) => AsmConstant::Float(f64::from_bits(*value), ty.clone()),
+        },
+        LirConstantKind::Data(LirConstantData::Bytes(bytes)) => AsmConstant::Bytes(bytes.clone()),
+        LirConstantKind::Aggregate(LirConstantAggregate::Array(values)) => {
             AsmConstant::Array(values.iter().map(map_constant).collect(), ty.clone())
         }
-        LirConstant::Struct(values, ty) => {
+        LirConstantKind::Aggregate(LirConstantAggregate::Struct(values)) => {
             AsmConstant::Struct(values.iter().map(map_constant).collect(), ty.clone())
         }
-        LirConstant::GlobalRef(name, ty, path) => {
-            AsmConstant::GlobalRef(name.clone(), ty.clone(), path.clone())
+        LirConstantKind::Aggregate(LirConstantAggregate::Vector(values)) => {
+            AsmConstant::Array(values.iter().map(map_constant).collect(), ty.clone())
         }
-        LirConstant::FunctionRef(name, ty) => AsmConstant::FunctionRef(name.clone(), ty.clone()),
-        LirConstant::Null(ty) => AsmConstant::Null(ty.clone()),
-        LirConstant::Undef(ty) => AsmConstant::Undef(ty.clone()),
+        LirConstantKind::GlobalAddress { global } => {
+            AsmConstant::GlobalRef(global.clone(), ty.clone(), Vec::new())
+        }
+        LirConstantKind::FunctionAddress(function) => {
+            AsmConstant::FunctionRef(Name::new(function_name(function)), ty.clone())
+        }
+        LirConstantKind::Null => AsmConstant::Null(ty.clone()),
+        LirConstantKind::Undef | LirConstantKind::Poison => AsmConstant::Undef(ty.clone()),
+        LirConstantKind::Expr(_) => panic!("constant expression native lowering is unsupported"),
     }
 }
 
@@ -4817,14 +4758,34 @@ mod tests {
         AsmTerminator, AsmValue, OperandAccess,
     };
     use fp_core::lir::{
-        CallingConvention, LirBasicBlock, LirFunction, LirFunctionSignature, LirInstruction,
-        LirInstructionKind, LirProgram, LirTerminator, LirType, Name,
+        CallingConvention, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
+        LirInstruction, LirInstructionKind, LirInteger, LirProgram, LirRegister, LirTerminator,
+        LirType, LirValue, Name,
     };
+
+    fn layout() -> fp_core::lir::LirDataLayout {
+        fp_core::lir::LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .unwrap()
+    }
+
+    fn i32_value(value: u32) -> LirValue {
+        LirValue::constant(LirConstant::integer(LirType::I32, LirInteger::I32(value)).unwrap())
+    }
+
+    fn reg(id: u32, ty: LirType) -> LirValue {
+        LirValue::register(id, ty)
+    }
 
     #[test]
     fn select_program_builds_semantic_asmir() {
         let lir = LirProgram {
+            data_layout: layout(),
             functions: vec![LirFunction {
+                def_id: None,
                 name: Name::new("main"),
                 signature: LirFunctionSignature {
                     params: Vec::new(),
@@ -4836,13 +4797,16 @@ mod tests {
                     label: Some(Name::new("entry")),
                     instructions: vec![LirInstruction {
                         id: 1,
-                        kind: LirInstructionKind::Freeze(fp_core::lir::LirValue::Undef(
+                        kind: LirInstructionKind::Freeze(LirValue::constant(LirConstant::undef(
                             LirType::I32,
-                        )),
-                        type_hint: Some(LirType::I32),
+                        ))),
+                        result: Some(LirRegister {
+                            id: 1,
+                            ty: LirType::I32,
+                        }),
                         debug_info: None,
                     }],
-                    terminator: LirTerminator::Return(Some(fp_core::lir::LirValue::Register(1))),
+                    terminator: LirTerminator::Return(Some(reg(1, LirType::I32))),
                     predecessors: Vec::new(),
                     successors: Vec::new(),
                 }],
@@ -4854,6 +4818,7 @@ mod tests {
             }],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            comptime_entries: Vec::new(),
 
             queries: Vec::new(),
         };
@@ -4873,7 +4838,9 @@ mod tests {
     #[test]
     fn select_program_normalizes_x86_opcode_and_operands() {
         let lir = LirProgram {
+            data_layout: layout(),
             functions: vec![LirFunction {
+                def_id: None,
                 name: Name::new("main"),
                 signature: LirFunctionSignature {
                     params: Vec::new(),
@@ -4885,17 +4852,14 @@ mod tests {
                     label: Some(Name::new("entry")),
                     instructions: vec![LirInstruction {
                         id: 7,
-                        kind: LirInstructionKind::Add(
-                            fp_core::lir::LirValue::Register(1),
-                            fp_core::lir::LirValue::Constant(fp_core::lir::LirConstant::Int(
-                                4,
-                                LirType::I32,
-                            )),
-                        ),
-                        type_hint: Some(LirType::I32),
+                        kind: LirInstructionKind::Add(reg(1, LirType::I32), i32_value(4)),
+                        result: Some(LirRegister {
+                            id: 7,
+                            ty: LirType::I32,
+                        }),
                         debug_info: None,
                     }],
-                    terminator: LirTerminator::Return(Some(fp_core::lir::LirValue::Register(7))),
+                    terminator: LirTerminator::Return(Some(reg(7, LirType::I32))),
                     predecessors: Vec::new(),
                     successors: Vec::new(),
                 }],
@@ -4907,6 +4871,7 @@ mod tests {
             }],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            comptime_entries: Vec::new(),
 
             queries: Vec::new(),
         };
@@ -4934,7 +4899,9 @@ mod tests {
     #[test]
     fn select_program_records_x86_condition_and_call_target() {
         let lir = LirProgram {
+            data_layout: layout(),
             functions: vec![LirFunction {
+                def_id: None,
                 name: Name::new("main"),
                 signature: LirFunctionSignature {
                     params: Vec::new(),
@@ -4947,32 +4914,32 @@ mod tests {
                     instructions: vec![
                         LirInstruction {
                             id: 1,
-                            kind: LirInstructionKind::Eq(
-                                fp_core::lir::LirValue::Constant(fp_core::lir::LirConstant::Int(
-                                    1,
-                                    LirType::I32,
-                                )),
-                                fp_core::lir::LirValue::Constant(fp_core::lir::LirConstant::Int(
-                                    2,
-                                    LirType::I32,
-                                )),
-                            ),
-                            type_hint: Some(LirType::I1),
+                            kind: LirInstructionKind::Eq(i32_value(1), i32_value(2)),
+                            result: Some(LirRegister {
+                                id: 1,
+                                ty: LirType::I1,
+                            }),
                             debug_info: None,
                         },
                         LirInstruction {
                             id: 2,
                             kind: LirInstructionKind::Call {
-                                function: fp_core::lir::LirValue::Function("callee".to_string()),
+                                function: LirValue::function(
+                                    fp_core::lir::LirFunctionRef::Name(Name::new("callee")),
+                                    LirType::Ptr(Box::new(LirType::I8)),
+                                ),
                                 args: Vec::new(),
                                 calling_convention: CallingConvention::C,
                                 tail_call: false,
                             },
-                            type_hint: Some(LirType::I32),
+                            result: Some(LirRegister {
+                                id: 2,
+                                ty: LirType::I32,
+                            }),
                             debug_info: None,
                         },
                     ],
-                    terminator: LirTerminator::Return(Some(fp_core::lir::LirValue::Register(2))),
+                    terminator: LirTerminator::Return(Some(reg(2, LirType::I32))),
                     predecessors: Vec::new(),
                     successors: Vec::new(),
                 }],
@@ -4984,6 +4951,7 @@ mod tests {
             }],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            comptime_entries: Vec::new(),
 
             queries: Vec::new(),
         };
@@ -5003,7 +4971,9 @@ mod tests {
     #[test]
     fn lower_to_aarch64_preserves_concrete_branch_and_call_metadata() {
         let lir = LirProgram {
+            data_layout: layout(),
             functions: vec![LirFunction {
+                def_id: None,
                 name: Name::new("main"),
                 signature: LirFunctionSignature {
                     params: Vec::new(),
@@ -5017,28 +4987,28 @@ mod tests {
                         instructions: vec![
                             LirInstruction {
                                 id: 1,
-                                kind: LirInstructionKind::Eq(
-                                    fp_core::lir::LirValue::Constant(
-                                        fp_core::lir::LirConstant::Int(1, LirType::I32),
-                                    ),
-                                    fp_core::lir::LirValue::Constant(
-                                        fp_core::lir::LirConstant::Int(2, LirType::I32),
-                                    ),
-                                ),
-                                type_hint: Some(LirType::I1),
+                                kind: LirInstructionKind::Eq(i32_value(1), i32_value(2)),
+                                result: Some(LirRegister {
+                                    id: 1,
+                                    ty: LirType::I1,
+                                }),
                                 debug_info: None,
                             },
                             LirInstruction {
                                 id: 2,
                                 kind: LirInstructionKind::Call {
-                                    function: fp_core::lir::LirValue::Function(
-                                        "callee".to_string(),
+                                    function: LirValue::function(
+                                        fp_core::lir::LirFunctionRef::Name(Name::new("callee")),
+                                        LirType::Ptr(Box::new(LirType::I8)),
                                     ),
                                     args: Vec::new(),
                                     calling_convention: CallingConvention::C,
                                     tail_call: false,
                                 },
-                                type_hint: Some(LirType::I32),
+                                result: Some(LirRegister {
+                                    id: 2,
+                                    ty: LirType::I32,
+                                }),
                                 debug_info: None,
                             },
                         ],
@@ -5050,9 +5020,7 @@ mod tests {
                         id: 1,
                         label: Some(Name::new("exit")),
                         instructions: Vec::new(),
-                        terminator: LirTerminator::Return(Some(fp_core::lir::LirValue::Register(
-                            2,
-                        ))),
+                        terminator: LirTerminator::Return(Some(reg(2, LirType::I32))),
                         predecessors: vec![0],
                         successors: Vec::new(),
                     },
@@ -5065,6 +5033,7 @@ mod tests {
             }],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            comptime_entries: Vec::new(),
 
             queries: Vec::new(),
         };
@@ -5088,8 +5057,10 @@ mod tests {
     #[test]
     fn lower_to_x86_64_skips_declarations_and_maps_terminators() {
         let lir = LirProgram {
+            data_layout: layout(),
             functions: vec![
                 LirFunction {
+                    def_id: None,
                     name: Name::new("decl"),
                     signature: LirFunctionSignature {
                         params: Vec::new(),
@@ -5104,6 +5075,7 @@ mod tests {
                     is_declaration: true,
                 },
                 LirFunction {
+                    def_id: None,
                     name: Name::new("main"),
                     signature: LirFunctionSignature {
                         params: Vec::new(),
@@ -5115,7 +5087,7 @@ mod tests {
                         label: Some(Name::new("entry")),
                         instructions: Vec::new(),
                         terminator: LirTerminator::CondBr {
-                            condition: fp_core::lir::LirValue::Register(1),
+                            condition: reg(1, LirType::I1),
                             if_true: 1,
                             if_false: 2,
                         },
@@ -5131,6 +5103,7 @@ mod tests {
             ],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            comptime_entries: Vec::new(),
 
             queries: Vec::new(),
         };
@@ -5185,7 +5158,7 @@ mod tests {
             }],
         };
 
-        let asmir = lift_from_x86_64(&x86);
+        let asmir = lift_from_x86_64(&x86).unwrap();
         let lowered = lower_to_x86_64(&asmir);
 
         let lowered_inst = &lowered.functions[0].blocks[0].instructions[0];
@@ -5244,7 +5217,7 @@ mod tests {
             }],
         };
 
-        let asmir = lift_from_aarch64(&aarch64);
+        let asmir = lift_from_aarch64(&aarch64).unwrap();
         let lowered = lower_to_aarch64(&asmir);
 
         let lowered_inst = &lowered.functions[0].blocks[0].instructions[0];
@@ -5296,7 +5269,7 @@ mod tests {
             }],
         };
 
-        let asmir = lift_from_x86_64(&x86);
+        let asmir = lift_from_x86_64(&x86).unwrap();
         assert!(matches!(
             &asmir.functions[0].basic_blocks[0].terminator,
             AsmTerminator::CondBr {
@@ -5338,7 +5311,7 @@ mod tests {
             }],
         };
 
-        let asmir = lift_from_aarch64(&aarch64);
+        let asmir = lift_from_aarch64(&aarch64).unwrap();
         assert!(matches!(
             &asmir.functions[0].basic_blocks[0].terminator,
             AsmTerminator::CondBr {
@@ -5409,7 +5382,7 @@ mod tests {
             }],
         };
 
-        let asmir = lift_from_x86_64(&x86);
+        let asmir = lift_from_x86_64(&x86).unwrap();
         let lowered = lower_to_x86_64(&asmir);
 
         let instructions = &lowered.functions[0].blocks[0].instructions;
@@ -5419,13 +5392,10 @@ mod tests {
             operands: mov_operands,
             ..
         } = &instructions[0];
-        let [
-            X86Operand::Register {
-                reg: X86Register::Virtual { id: dst_id, .. },
-                ..
-            },
-            X86Operand::Memory(mem),
-        ] = mov_operands.as_slice()
+        let [X86Operand::Register {
+            reg: X86Register::Virtual { id: dst_id, .. },
+            ..
+        }, X86Operand::Memory(mem)] = mov_operands.as_slice()
         else {
             panic!("unexpected x86 mov operands: {mov_operands:?}");
         };
@@ -5440,12 +5410,10 @@ mod tests {
             call_target,
             ..
         } = &instructions[1];
-        let [
-            X86Operand::Register {
-                reg: X86Register::Virtual { id: call_id, .. },
-                ..
-            },
-        ] = call_operands.as_slice()
+        let [X86Operand::Register {
+            reg: X86Register::Virtual { id: call_id, .. },
+            ..
+        }] = call_operands.as_slice()
         else {
             panic!("unexpected x86 call operands: {call_operands:?}");
         };
@@ -5518,7 +5486,7 @@ mod tests {
             }],
         };
 
-        let asmir = lift_from_aarch64(&aarch64);
+        let asmir = lift_from_aarch64(&aarch64).unwrap();
         let lowered = lower_to_aarch64(&asmir);
 
         let instructions = &lowered.functions[0].blocks[0].instructions;
@@ -5528,13 +5496,10 @@ mod tests {
             operands: store_operands,
             ..
         } = &instructions[0];
-        let [
-            Aarch64Operand::Register {
-                reg: Aarch64Register::Virtual { .. },
-                ..
-            },
-            Aarch64Operand::Memory(mem),
-        ] = store_operands.as_slice()
+        let [Aarch64Operand::Register {
+            reg: Aarch64Register::Virtual { .. },
+            ..
+        }, Aarch64Operand::Memory(mem)] = store_operands.as_slice()
         else {
             panic!("unexpected aarch64 store operands: {store_operands:?}");
         };
@@ -5549,12 +5514,10 @@ mod tests {
             call_target,
             ..
         } = &instructions[1];
-        let [
-            Aarch64Operand::Register {
-                reg: Aarch64Register::Virtual { id: call_id, .. },
-                ..
-            },
-        ] = call_operands.as_slice()
+        let [Aarch64Operand::Register {
+            reg: Aarch64Register::Virtual { id: call_id, .. },
+            ..
+        }] = call_operands.as_slice()
         else {
             panic!("unexpected aarch64 call operands: {call_operands:?}");
         };

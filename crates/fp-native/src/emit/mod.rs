@@ -386,6 +386,12 @@ fn default_lir_program() -> LirProgram {
     };
 
     LirProgram {
+        data_layout: fp_core::lir::LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .expect("valid native data layout"),
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),

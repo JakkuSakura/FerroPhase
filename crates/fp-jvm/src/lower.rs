@@ -236,7 +236,7 @@ fn lower_callee(
 ) -> Result<(String, String, String), JvmError> {
     match operand {
         mir::Operand::Constant(constant) => match &constant.literal {
-            mir::ConstantKind::Fn(symbol, _) => Ok((
+            mir::ConstantKind::Fn(symbol) => Ok((
                 class_name.to_string(),
                 symbol.to_string(),
                 method_descriptors

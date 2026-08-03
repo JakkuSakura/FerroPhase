@@ -551,8 +551,8 @@ fn transform_generic_function_and_method() -> Result<()> {
     assert_eq!(identity.sig.generics.params.len(), 1);
     if let hir::TypeExprKind::Path(path) = &identity.sig.output.kind {
         assert!(
-            matches!(path.res, Some(hir::Res::Local(_))),
-            "generic return type should resolve to local generic param"
+            matches!(path.res, Some(hir::Res::Def(_))),
+            "generic return type should resolve to the generic definition"
         );
     } else {
         panic!("expected path return type for identity function");
@@ -560,8 +560,8 @@ fn transform_generic_function_and_method() -> Result<()> {
     let param_ty = &identity.sig.inputs[0].ty;
     if let hir::TypeExprKind::Path(path) = &param_ty.kind {
         assert!(
-            matches!(path.res, Some(hir::Res::Local(_))),
-            "generic parameter type should resolve to local generic param"
+            matches!(path.res, Some(hir::Res::Def(_))),
+            "generic parameter type should resolve to the generic definition"
         );
     } else {
         panic!("expected path param type for identity function parameter");

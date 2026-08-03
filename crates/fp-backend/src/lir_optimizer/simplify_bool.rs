@@ -1,7 +1,7 @@
 use fp_core::error::Error;
 use fp_core::lir::{
-    LirBasicBlock, LirConstant, LirFunction, LirInstructionKind, LirProgram, LirTerminator,
-    LirValue,
+    LirBasicBlock, LirConstantData, LirConstantKind, LirFunction, LirInstructionKind, LirProgram,
+    LirTerminator, LirValue, LirValueKind,
 };
 
 pub fn simplify_bool_conditions(program: &mut LirProgram) -> Result<usize, Error> {
@@ -33,7 +33,7 @@ fn simplify_block_condbr(block: &mut LirBasicBlock) -> usize {
     let Some(last) = block.instructions.last() else {
         return 0;
     };
-    let LirValue::Register(condition_id) = condition else {
+    let LirValueKind::Register(condition_id) = &condition.kind else {
         return 0;
     };
     if last.id != *condition_id {
@@ -58,7 +58,7 @@ fn simplify_block_return(block: &mut LirBasicBlock) -> usize {
     let Some(last) = block.instructions.last() else {
         return 0;
     };
-    let LirValue::Register(return_id) = value else {
+    let LirValueKind::Register(return_id) = &value.kind else {
         return 0;
     };
     if last.id != *return_id {
@@ -94,7 +94,13 @@ fn bool_alias_pair(lhs: &LirValue, rhs: &LirValue) -> Option<(LirValue, bool)> {
 
 fn bool_constant(value: &LirValue) -> Option<bool> {
     match value {
-        LirValue::Constant(LirConstant::Bool(value)) => Some(*value),
+        LirValue {
+            kind:
+                LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(
+                    fp_core::lir::LirInteger::I1(value),
+                ))),
+            ..
+        } => Some(*value),
         _ => None,
     }
 }
@@ -103,8 +109,39 @@ fn bool_constant(value: &LirValue) -> Option<bool> {
 mod tests {
     use super::*;
     use fp_core::lir::{
-        CallingConvention, Linkage, LirFunctionSignature, LirInstruction, LirType, Name,
+        CallingConvention, Linkage, LirConstant, LirDataLayout, LirFunctionSignature,
+        LirInstruction, LirInteger, LirRegister, LirType, Name,
     };
+
+    fn layout() -> LirDataLayout {
+        LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .expect("valid test layout")
+    }
+
+    fn bool_value(value: bool) -> LirValue {
+        LirValue::constant(
+            LirConstant::integer(LirType::I1, LirInteger::I1(value)).expect("valid bool"),
+        )
+    }
+
+    fn local(id: u32) -> LirValue {
+        LirValue::local(id, LirType::I1)
+    }
+
+    fn register(id: u32) -> LirValue {
+        LirValue::register(id, LirType::I1)
+    }
+
+    fn result(id: u32) -> LirRegister {
+        LirRegister {
+            id,
+            ty: LirType::I1,
+        }
+    }
 
     fn test_function(blocks: Vec<LirBasicBlock>) -> LirFunction {
         LirFunction {
@@ -127,28 +164,26 @@ mod tests {
     #[test]
     fn simplifies_bool_eq_true_before_condbr() {
         let mut program = LirProgram {
+            data_layout: layout(),
             functions: vec![test_function(vec![LirBasicBlock {
                 id: 0,
                 label: Some(Name::new("entry")),
                 instructions: vec![
                     LirInstruction {
                         id: 1,
-                        kind: LirInstructionKind::Freeze(LirValue::Local(1)),
-                        type_hint: Some(LirType::I1),
+                        kind: LirInstructionKind::Freeze(local(1)),
+                        result: Some(result(1)),
                         debug_info: None,
                     },
                     LirInstruction {
                         id: 2,
-                        kind: LirInstructionKind::Eq(
-                            LirValue::Register(1),
-                            LirValue::Constant(LirConstant::Bool(true)),
-                        ),
-                        type_hint: Some(LirType::I1),
+                        kind: LirInstructionKind::Eq(register(1), bool_value(true)),
+                        result: Some(result(2)),
                         debug_info: None,
                     },
                 ],
                 terminator: LirTerminator::CondBr {
-                    condition: LirValue::Register(2),
+                    condition: register(2),
                     if_true: 1,
                     if_false: 2,
                 },
@@ -169,7 +204,7 @@ mod tests {
         assert_eq!(
             block.terminator,
             LirTerminator::CondBr {
-                condition: LirValue::Register(1),
+                condition: register(1),
                 if_true: 1,
                 if_false: 2,
             }
@@ -179,20 +214,18 @@ mod tests {
     #[test]
     fn simplifies_bool_eq_false_by_inverting_branch() {
         let mut program = LirProgram {
+            data_layout: layout(),
             functions: vec![test_function(vec![LirBasicBlock {
                 id: 0,
                 label: Some(Name::new("entry")),
                 instructions: vec![LirInstruction {
                     id: 2,
-                    kind: LirInstructionKind::Eq(
-                        LirValue::Local(1),
-                        LirValue::Constant(LirConstant::Bool(false)),
-                    ),
-                    type_hint: Some(LirType::I1),
+                    kind: LirInstructionKind::Eq(local(1), bool_value(false)),
+                    result: Some(result(2)),
                     debug_info: None,
                 }],
                 terminator: LirTerminator::CondBr {
-                    condition: LirValue::Register(2),
+                    condition: register(2),
                     if_true: 1,
                     if_false: 2,
                 },
@@ -213,7 +246,7 @@ mod tests {
         assert_eq!(
             block.terminator,
             LirTerminator::CondBr {
-                condition: LirValue::Local(1),
+                condition: local(1),
                 if_true: 2,
                 if_false: 1,
             }
@@ -223,16 +256,17 @@ mod tests {
     #[test]
     fn simplifies_return_of_trailing_freeze() {
         let mut program = LirProgram {
+            data_layout: layout(),
             functions: vec![test_function(vec![LirBasicBlock {
                 id: 0,
                 label: Some(Name::new("entry")),
                 instructions: vec![LirInstruction {
                     id: 3,
-                    kind: LirInstructionKind::Freeze(LirValue::Constant(LirConstant::Bool(true))),
-                    type_hint: Some(LirType::I1),
+                    kind: LirInstructionKind::Freeze(bool_value(true)),
+                    result: Some(result(3)),
                     debug_info: None,
                 }],
-                terminator: LirTerminator::Return(Some(LirValue::Register(3))),
+                terminator: LirTerminator::Return(Some(register(3))),
                 predecessors: Vec::new(),
                 successors: Vec::new(),
             }])],
@@ -249,7 +283,7 @@ mod tests {
         assert!(block.instructions.is_empty());
         assert_eq!(
             block.terminator,
-            LirTerminator::Return(Some(LirValue::Constant(LirConstant::Bool(true))))
+            LirTerminator::Return(Some(bool_value(true)))
         );
     }
 }

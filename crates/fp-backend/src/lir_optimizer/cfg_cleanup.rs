@@ -245,13 +245,19 @@ fn terminator_successors(terminator: &LirTerminator) -> Vec<BasicBlockId> {
 mod tests {
     use super::*;
     use fp_core::lir::{
-        CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram,
-        LirTerminator, LirType, Name,
+        CallingConvention, Linkage, LirBasicBlock, LirDataLayout, LirFunction,
+        LirFunctionSignature, LirProgram, LirTerminator, LirType, Name,
     };
 
     #[test]
     fn removes_unreachable_blocks_and_rewrites_preds() {
         let mut program = LirProgram {
+            data_layout: LirDataLayout::new(
+                64,
+                8,
+                vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+            )
+            .expect("layout"),
             globals: Vec::new(),
             functions: vec![LirFunction {
                 def_id: None,
@@ -309,6 +315,12 @@ mod tests {
     #[test]
     fn collapses_trivial_jump_blocks() {
         let mut program = LirProgram {
+            data_layout: LirDataLayout::new(
+                64,
+                8,
+                vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+            )
+            .expect("layout"),
             globals: Vec::new(),
             functions: vec![LirFunction {
                 def_id: None,

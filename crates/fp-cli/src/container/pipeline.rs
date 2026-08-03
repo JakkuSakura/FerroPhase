@@ -412,7 +412,7 @@ async fn transpile_jvm_bytecode(
             let lir_program = if is_jar {
                 let classes = fp_jvm::extract_class_files_from_jar(bytes)
                     .map_err(|err| CliError::Compilation(format!("Failed to parse jar: {err}")))?;
-                let mut merged = fp_core::lir::LirProgram::new();
+                let mut merged: Option<fp_core::lir::LirProgram> = None;
                 for class in classes {
                     let program = fp_jvm::parse_class_to_lir(&class.bytes).map_err(|err| {
                         CliError::Compilation(format!(
@@ -420,13 +420,19 @@ async fn transpile_jvm_bytecode(
                             class.internal_name
                         ))
                     })?;
-                    merged.extend(program).map_err(|err| {
-                        CliError::Compilation(format!(
-                            "Cannot merge classfile LIR programs with different target layouts: {err}"
-                        ))
-                    })?;
+                    if let Some(merged_program) = merged.as_mut() {
+                        merged_program.extend(program).map_err(|err| {
+                            CliError::Compilation(format!(
+                                "Cannot merge classfile LIR programs with different target layouts: {err}"
+                            ))
+                        })?;
+                    } else {
+                        merged = Some(program);
+                    }
                 }
-                merged
+                merged.ok_or_else(|| {
+                    CliError::Compilation("JAR contains no class files".to_string())
+                })?
             } else {
                 fp_jvm::parse_class_to_lir(bytes).map_err(|err| {
                     CliError::Compilation(format!("Failed to parse classfile: {err}"))

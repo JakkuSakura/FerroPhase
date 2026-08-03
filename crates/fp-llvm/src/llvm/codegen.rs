@@ -1,7 +1,6 @@
 use crate::context::LlvmContext;
 use crate::intrinsics::{CRuntimeIntrinsics, IntrinsicSignature};
 use fp_core::diagnostics::report_error_with_context;
-use fp_core::lir::layout;
 use fp_core::tracing::debug;
 use fp_core::{
     error::{Error, Result},
@@ -11,7 +10,7 @@ use inkwell::builder::BuilderError;
 use inkwell::llvm_sys::core::LLVMConstArray2;
 use inkwell::llvm_sys::LLVMCallConv;
 use inkwell::types::{
-    AnyTypeEnum, AsTypeRef, BasicType, BasicTypeEnum, FloatType, FunctionType, IntType,
+    AsTypeRef, BasicType, BasicTypeEnum, FloatType, FunctionType, IntType,
 };
 use inkwell::values::{
     AggregateValueEnum, AsValueRef, BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue,
@@ -30,9 +29,6 @@ pub struct LirCodegen<'a> {
     stack_slot_map: HashMap<u32, (PointerValue<'static>, lir::LirType)>,
     block_map: HashMap<u32, inkwell::basic_block::BasicBlock<'static>>,
     current_function: Option<FunctionValue<'static>>,
-    string_globals: HashMap<String, PointerValue<'static>>,
-    next_string_id: u32,
-    symbol_prefix: String,
     referenced_globals: HashSet<String>,
     global_const_map: HashMap<String, lir::LirConstant>,
     constant_results: HashMap<u32, lir::LirConstant>,
@@ -42,6 +38,7 @@ pub struct LirCodegen<'a> {
     defined_functions: HashSet<String>,
     argument_operands: HashMap<u32, BasicValueEnum<'static>>,
     allow_unresolved_globals: bool,
+    data_layout: Option<lir::LirDataLayout>,
 }
 
 enum Callee {
@@ -71,9 +68,6 @@ impl<'a> LirCodegen<'a> {
         global_const_map: HashMap<String, lir::LirConstant>,
         allow_unresolved_globals: bool,
     ) -> Self {
-        let prefix = Self::sanitize_symbol_component(
-            &llvm_ctx.module.get_name().to_str().unwrap_or("module"),
-        );
         Self {
             llvm_ctx,
             register_map: HashMap::new(),
@@ -81,9 +75,6 @@ impl<'a> LirCodegen<'a> {
             stack_slot_map: HashMap::new(),
             block_map: HashMap::new(),
             current_function: None,
-            string_globals: HashMap::new(),
-            next_string_id: 0,
-            symbol_prefix: prefix,
             referenced_globals: HashSet::new(),
             global_const_map,
             constant_results: HashMap::new(),
@@ -93,6 +84,7 @@ impl<'a> LirCodegen<'a> {
             defined_functions: HashSet::new(),
             argument_operands: HashMap::new(),
             allow_unresolved_globals,
+            data_layout: None,
         }
     }
 
@@ -113,6 +105,7 @@ impl<'a> LirCodegen<'a> {
 
     /// Generate LLVM IR for a LIR program.
     pub fn generate_program(&mut self, lir_program: lir::LirProgram) -> Result<()> {
+        self.data_layout = Some(lir_program.data_layout.clone());
         let num_globals = lir_program.globals.len();
         let num_functions = lir_program.functions.len();
         debug!(
@@ -126,6 +119,7 @@ impl<'a> LirCodegen<'a> {
             type_definitions: _type_definitions,
             comptime_entries: _comptime_entries,
             queries: _queries,
+            data_layout: _data_layout,
         } = lir_program;
 
         self.function_signatures.clear();
@@ -256,7 +250,10 @@ impl<'a> LirCodegen<'a> {
 
         if let Some(init) = global.initializer {
             let value = match init {
-                lir::LirConstant::Bytes(bytes) if !global.relocations.is_empty() => self
+                lir::LirConstant {
+                    kind: lir::LirConstantKind::Data(lir::LirConstantData::Bytes(bytes)),
+                    ..
+                } if !global.relocations.is_empty() => self
                     .convert_global_bytes_to_typed_value(
                         &bytes,
                         &global.relocations,
@@ -366,7 +363,7 @@ impl<'a> LirCodegen<'a> {
 
     fn generate_instruction(&mut self, lir_instr: lir::LirInstruction) -> Result<()> {
         let instr_id = lir_instr.id;
-        let ty_hint = lir_instr.type_hint.clone();
+        let ty_hint = lir_instr.result.as_ref().map(|result| result.ty.clone());
 
         match lir_instr.kind {
             lir::LirInstructionKind::Add(lhs, rhs) => {
@@ -926,8 +923,9 @@ impl<'a> LirCodegen<'a> {
             }
             lir::LirInstructionKind::IntrinsicCall { kind, format, args } => {
                 let mut call_args = Vec::with_capacity(args.len() + 1);
-                call_args.push(lir::LirValue::Constant(lir::LirConstant::String(
-                    format.clone(),
+                call_args.push(lir::LirValue::constant(lir::LirConstant::bytes(
+                    lir::LirType::Array(Box::new(lir::LirType::I8), format.len() as u64),
+                    format.as_bytes().to_vec(),
                 )));
                 call_args.extend(args.into_iter());
 
@@ -936,7 +934,14 @@ impl<'a> LirCodegen<'a> {
                         let call_site = self.lower_call_instruction(
                             instr_id,
                             ty_hint.clone(),
-                            lir::LirValue::Function("printf".to_string()),
+                            lir::LirValue::function(
+                                lir::LirFunctionRef::Name(lir::Name::new("printf")),
+                                lir::LirType::Ptr(Box::new(lir::LirType::Function {
+                                    return_type: Box::new(lir::LirType::I32),
+                                    param_types: Vec::new(),
+                                    is_variadic: true,
+                                })),
+                            ),
                             call_args,
                             lir::CallingConvention::C,
                             false,
@@ -1287,14 +1292,15 @@ impl<'a> LirCodegen<'a> {
     }
 
     fn resolve_callee(&mut self, function: &lir::LirValue) -> Result<Callee> {
-        match function {
-            lir::LirValue::Function(name) | lir::LirValue::Global(name, _) => {
-                let llvm_name = self.llvm_symbol_for(name);
+        match &function.kind {
+            lir::LirValueKind::Function(lir::LirFunctionRef::Name(name))
+            | lir::LirValueKind::Global(name) => {
+                let llvm_name = self.llvm_symbol_for(name.as_str());
                 if let Some(func) = self.llvm_ctx.module.get_function(&llvm_name) {
                     return Ok(Callee::Direct(func));
                 }
 
-                if let Some(signature) = self.function_signatures.get(name).cloned() {
+                if let Some(signature) = self.function_signatures.get(name.as_str()).cloned() {
                     let fn_type = self.function_type_from_signature(signature)?;
                     let func = self.llvm_ctx.module.add_function(
                         &llvm_name,
@@ -1304,7 +1310,7 @@ impl<'a> LirCodegen<'a> {
                     return Ok(Callee::Direct(func));
                 }
 
-                if let Some(signature) = CRuntimeIntrinsics::get_intrinsic_signature(name) {
+                if let Some(signature) = CRuntimeIntrinsics::get_intrinsic_signature(name.as_str()) {
                     let IntrinsicSignature {
                         name,
                         params,
@@ -1332,7 +1338,7 @@ impl<'a> LirCodegen<'a> {
                     ),
                 ))
             }
-            lir::LirValue::Local(local_id) | lir::LirValue::Register(local_id) => {
+            lir::LirValueKind::Local(local_id) | lir::LirValueKind::Register(local_id) => {
                 let (value, lir_ty) = self
                     .register_map
                     .get(local_id)
@@ -1588,8 +1594,9 @@ impl<'a> LirCodegen<'a> {
         &mut self,
         lir_value: lir::LirValue,
     ) -> Result<BasicValueEnum<'static>> {
-        match lir_value {
-            lir::LirValue::Register(reg_id) => {
+        let value_ty = lir_value.ty.clone();
+        match lir_value.kind {
+            lir::LirValueKind::Register(reg_id) => {
                 if let Some(constant) = self.constant_results.get(&reg_id) {
                     return self.convert_lir_constant_to_value(constant.clone());
                 }
@@ -1603,10 +1610,10 @@ impl<'a> LirCodegen<'a> {
                         )
                     })
             }
-            lir::LirValue::Constant(constant) => self.convert_lir_constant_to_value(constant),
-            lir::LirValue::Global(name, ty) => {
-                let llvm_name = self.llvm_symbol_for(&name);
-                if let Some(signature) = self.function_signatures.get(&name) {
+            lir::LirValueKind::Constant(constant) => self.convert_lir_constant_to_value(lir::LirConstant { ty: value_ty, kind: constant }),
+            lir::LirValueKind::Global(name) => {
+                let llvm_name = self.llvm_symbol_for(name.as_str());
+                if let Some(signature) = self.function_signatures.get(name.as_str()) {
                     let fn_type = self.function_type_from_signature(signature.clone())?;
                     let fn_value = self
                         .llvm_ctx
@@ -1622,7 +1629,7 @@ impl<'a> LirCodegen<'a> {
                     return Ok(fn_value.as_global_value().as_pointer_value().into());
                 }
 
-                if let Some(lir_constant) = self.global_const_map.get(&name) {
+                if let Some(lir_constant) = self.global_const_map.get(name.as_str()) {
                     let llvm_constant = self.convert_lir_constant_to_value(lir_constant.clone())?;
                     tracing::debug!("LLVM: Found global '{}' in const map, using value", name);
                     return Ok(llvm_constant);
@@ -1632,7 +1639,7 @@ impl<'a> LirCodegen<'a> {
                     return Ok(global.as_pointer_value().into());
                 }
 
-                self.referenced_globals.insert(name.clone());
+                self.referenced_globals.insert(name.as_str().to_owned());
 
                 if self.allow_unresolved_globals {
                     tracing::warn!(
@@ -1645,17 +1652,17 @@ impl<'a> LirCodegen<'a> {
 
                 Err(report_error_with_context(
                     LOG_AREA,
-                    format!("Global variable '{}' of type {:?} not found", name, ty),
+                    format!("Global variable '{}' of type {:?} not found", name, value_ty),
                 ))
             }
-            lir::LirValue::Function(name) => {
-                let llvm_name = self.llvm_symbol_for(&name);
+            lir::LirValueKind::Function(lir::LirFunctionRef::Name(name)) => {
+                let llvm_name = self.llvm_symbol_for(name.as_str());
                 let function = self
                     .llvm_ctx
                     .module
                     .get_function(&llvm_name)
                     .or_else(|| {
-                        self.function_signatures.get(&name).and_then(|sig| {
+                        self.function_signatures.get(name.as_str()).and_then(|sig| {
                             self.function_type_from_signature(sig.clone())
                                 .ok()
                                 .map(|fn_type| {
@@ -1703,7 +1710,7 @@ impl<'a> LirCodegen<'a> {
 
                 Ok(function.as_global_value().as_pointer_value().into())
             }
-            lir::LirValue::FunctionInPackage(package_id, name) => Err(
+            lir::LirValueKind::Function(lir::LirFunctionRef::Package { package_id, name }) => Err(
                 report_error_with_context(
                     LOG_AREA,
                     format!(
@@ -1712,36 +1719,124 @@ impl<'a> LirCodegen<'a> {
                     ),
                 ),
             ),
-            lir::LirValue::FunctionDef(def_id) => Err(report_error_with_context(
+            lir::LirValueKind::Function(lir::LirFunctionRef::Definition(def_id)) => Err(report_error_with_context(
                 LOG_AREA,
                 format!("Function definition `{def_id}` is not supported by LLVM lowering"),
             )),
-            lir::LirValue::Local(local_id) => self
+            lir::LirValueKind::Local(local_id) => self
                 .argument_operands
                 .get(&local_id)
                 .copied()
                 .ok_or_else(|| {
                     report_error_with_context(LOG_AREA, format!("Unknown local: {}", local_id))
                 }),
-            lir::LirValue::StackSlot(slot_id) => self
+            lir::LirValueKind::StackSlot(slot_id) => self
                 .stack_slot_map
                 .get(&slot_id)
                 .map(|(ptr, _)| (*ptr).into())
                 .ok_or_else(|| {
                     report_error_with_context(LOG_AREA, format!("Unknown stack slot: {}", slot_id))
                 }),
-            lir::LirValue::Undef(ty) => {
-                let llvm_ty = self.llvm_basic_type(&ty)?;
-                Ok(self.undef_value_for_type(llvm_ty))
-            }
-            lir::LirValue::Null(ty) => {
-                let llvm_ty = self.llvm_basic_type(&ty)?;
-                Ok(llvm_ty.const_zero())
-            }
         }
     }
 
     fn convert_lir_constant_to_value(
+        &mut self,
+        lir_const: lir::LirConstant,
+    ) -> Result<BasicValueEnum<'static>> {
+        let ty = lir_const.ty.clone();
+        match lir_const.kind {
+            lir::LirConstantKind::Data(lir::LirConstantData::Integer(integer)) => {
+                let int_ty = self.llvm_int_type(&ty)?;
+                let value = match integer {
+                    lir::LirInteger::I1(value) => u64::from(value),
+                    lir::LirInteger::I8(value) => u64::from(value),
+                    lir::LirInteger::I16(value) => u64::from(value),
+                    lir::LirInteger::I32(value) => u64::from(value),
+                    lir::LirInteger::I64(value) => value,
+                    lir::LirInteger::I128(value) => value as u64,
+                    lir::LirInteger::Arbitrary(_) => {
+                        return Err(Error::from("LLVM arbitrary integer constant lowering is unsupported"))
+                    }
+                };
+                Ok(int_ty.const_int(value, false).into())
+            }
+            lir::LirConstantKind::Data(lir::LirConstantData::Float(float)) => {
+                let float_ty = self.llvm_float_type(&ty)?;
+                let value = match float {
+                    lir::LirFloat::F32(value) => f32::from_bits(value) as f64,
+                    lir::LirFloat::F64(value) => f64::from_bits(value),
+                };
+                Ok(float_ty.const_float(value).into())
+            }
+            lir::LirConstantKind::Data(lir::LirConstantData::Bytes(bytes)) => {
+                let values = bytes
+                    .into_iter()
+                    .map(|byte| self.llvm_ctx.i8_type().const_int(u64::from(byte), false))
+                    .collect::<Vec<_>>();
+                Ok(self.llvm_ctx.i8_type().const_array(&values).into())
+            }
+            lir::LirConstantKind::Aggregate(aggregate) => {
+                let values = match aggregate {
+                    lir::LirConstantAggregate::Array(values)
+                    | lir::LirConstantAggregate::Vector(values)
+                    | lir::LirConstantAggregate::Struct(values) => values,
+                };
+                let converted = values
+                    .into_iter()
+                    .map(|value| self.convert_lir_constant_to_value(value))
+                    .collect::<Result<Vec<_>>>()?;
+                match self.llvm_basic_type(&ty)? {
+                    BasicTypeEnum::StructType(struct_ty) => {
+                        Ok(struct_ty.const_named_struct(&converted).into())
+                    }
+                    BasicTypeEnum::ArrayType(array_ty) => {
+                        let mut raw_values = converted.iter().map(|value| value.as_value_ref()).collect::<Vec<_>>();
+                        let value_ref = unsafe {
+                            LLVMConstArray2(
+                                array_ty.get_element_type().as_type_ref(),
+                                raw_values.as_mut_ptr(),
+                                raw_values.len() as u64,
+                            )
+                        };
+                        Ok(unsafe { inkwell::values::ArrayValue::new(value_ref) }.into())
+                    }
+                    _ => Err(Error::from("aggregate constant type mismatch")),
+                }
+            }
+            lir::LirConstantKind::GlobalAddress { global } => {
+                let llvm_name = self.llvm_symbol_for(global.as_str());
+                let global = self
+                    .llvm_ctx
+                    .module
+                    .get_global(&llvm_name)
+                    .ok_or_else(|| Error::from(format!("unknown global constant `{global}`")))?;
+                Ok(global.as_pointer_value().into())
+            }
+            lir::LirConstantKind::FunctionAddress(function) => {
+                let lir::LirFunctionRef::Name(name) = function else {
+                    return Err(Error::from("non-name function constant is unsupported"));
+                };
+                let llvm_name = self.llvm_symbol_for(name.as_str());
+                let function = self
+                    .llvm_ctx
+                    .module
+                    .get_function(&llvm_name)
+                    .ok_or_else(|| Error::from(format!("unknown function constant `{name}`")))?;
+                Ok(function.as_global_value().as_pointer_value().into())
+            }
+            lir::LirConstantKind::Null => Ok(self.llvm_basic_type(&ty)?.const_zero()),
+            lir::LirConstantKind::Undef => {
+                Ok(self.undef_value_for_type(self.llvm_basic_type(&ty)?))
+            }
+            lir::LirConstantKind::Poison | lir::LirConstantKind::Expr(_) => {
+                Err(Error::from("unsupported LLVM constant expression"))
+            }
+        }
+    }
+
+    /*
+    fn convert_lir_constant_to_value_legacy(
         &mut self,
         lir_const: lir::LirConstant,
     ) -> Result<BasicValueEnum<'static>> {
@@ -1894,29 +1989,7 @@ impl<'a> LirCodegen<'a> {
             }
         }
     }
-
-    fn get_or_create_string_ptr(&mut self, value: &str) -> Result<PointerValue<'static>> {
-        if let Some(ptr) = self.string_globals.get(value) {
-            return Ok(*ptr);
-        }
-
-        let name = format!(".str.{}.{}", self.symbol_prefix, self.next_string_id);
-        self.next_string_id += 1;
-
-        let const_str = self.llvm_ctx.context.const_string(value.as_bytes(), true);
-        let global = self.llvm_ctx.module.add_global(
-            const_str.get_type(),
-            Some(AddressSpace::default()),
-            &name,
-        );
-        global.set_initializer(&const_str);
-        global.set_constant(true);
-        let ptr = global.as_pointer_value();
-        let zero = self.llvm_ctx.i32_type().const_int(0, false);
-        let gep = unsafe { ptr.const_gep(const_str.get_type(), &[zero, zero]) };
-        self.string_globals.insert(value.to_string(), gep);
-        Ok(gep)
-    }
+    */
 
     fn convert_global_bytes_to_typed_value(
         &mut self,
@@ -1926,6 +1999,10 @@ impl<'a> LirCodegen<'a> {
         base: usize,
     ) -> Result<BasicValueEnum<'static>> {
         match ty {
+            lir::LirType::Integer(width) => {
+                let int_ty = self.llvm_ctx.context.custom_width_int_type(*width);
+                Ok(int_ty.const_int(Self::read_le_u128(bytes, base, (*width).div_ceil(8) as usize)? as u64, false).into())
+            }
             lir::LirType::I1 => Ok(self
                 .llvm_ctx
                 .i1_type()
@@ -1980,7 +2057,12 @@ impl<'a> LirCodegen<'a> {
             }
             lir::LirType::Array(element_ty, size) => {
                 let llvm_elem_ty = self.llvm_basic_type(element_ty)?;
-                let elem_size = layout::size_of(element_ty) as usize;
+                let elem_size = self
+                    .data_layout
+                    .as_ref()
+                    .ok_or_else(|| Error::from("LLVM data layout is not initialized"))?
+                    .size_of(element_ty)
+                    .map_err(|error| Error::from(error.to_string()))? as usize;
                 let mut values = Vec::with_capacity(*size as usize);
                 for index in 0..(*size as usize) {
                     values.push(self.convert_global_bytes_to_typed_value(
@@ -2010,7 +2092,13 @@ impl<'a> LirCodegen<'a> {
                         .collect::<Result<Vec<_>>>()?,
                     *packed,
                 );
-                let layout = layout::struct_layout(ty).ok_or_else(|| {
+                let layout = self
+                    .data_layout
+                    .as_ref()
+                    .ok_or_else(|| Error::from("LLVM data layout is not initialized"))?
+                    .struct_layout(ty)
+                    .map_err(|error| Error::from(error.to_string()))?
+                    .ok_or_else(|| {
                     report_error_with_context(LOG_AREA, "missing LIR struct layout")
                 })?;
                 let mut values = Vec::with_capacity(fields.len());
@@ -2095,7 +2183,15 @@ impl<'a> LirCodegen<'a> {
             return Ok(ptr.const_cast(target_ptr_ty).into());
         }
 
-        let raw = Self::read_le_u128(bytes, base, layout::size_of(ty) as usize)? as u64;
+        let raw = Self::read_le_u128(
+            bytes,
+            base,
+            self.data_layout
+                .as_ref()
+                .ok_or_else(|| Error::from("LLVM data layout is not initialized"))?
+                .size_of(ty)
+                .map_err(|error| Error::from(error.to_string()))? as usize,
+        )? as u64;
         if raw == 0 {
             return Ok(target_ptr_ty.const_null().into());
         }
@@ -2133,35 +2229,7 @@ impl<'a> LirCodegen<'a> {
     }
 
     fn lir_type_from_value(&self, value: &lir::LirValue) -> Option<lir::LirType> {
-        match value {
-            lir::LirValue::Register(id) => self.register_map.get(id).map(|(_, ty)| ty.clone()),
-            lir::LirValue::Constant(c) => Some(Self::lir_type_from_constant(c)),
-            lir::LirValue::Global(_, ty) => Some(ty.clone()),
-            lir::LirValue::Undef(ty) => Some(ty.clone()),
-            lir::LirValue::Null(ty) => Some(ty.clone()),
-            _ => None,
-        }
-    }
-
-    fn lir_type_from_constant(constant: &lir::LirConstant) -> lir::LirType {
-        match constant {
-            lir::LirConstant::Int(_, ty) => ty.clone(),
-            lir::LirConstant::UInt(_, ty) => ty.clone(),
-            lir::LirConstant::Float(_, ty) => ty.clone(),
-            lir::LirConstant::Bool(_) => lir::LirType::I1,
-            lir::LirConstant::String(_) => lir::LirType::Ptr(Box::new(lir::LirType::I8)),
-            lir::LirConstant::Bytes(bytes) => {
-                lir::LirType::Array(Box::new(lir::LirType::I8), bytes.len() as u64)
-            }
-            lir::LirConstant::Array(elements, elem_ty) => {
-                lir::LirType::Array(Box::new(elem_ty.clone()), elements.len() as u64)
-            }
-            lir::LirConstant::Struct(_, ty) => ty.clone(),
-            lir::LirConstant::GlobalRef(_, ty, _) => ty.clone(),
-            lir::LirConstant::FunctionRef(_, ty) => ty.clone(),
-            lir::LirConstant::Null(ty) => ty.clone(),
-            lir::LirConstant::Undef(ty) => ty.clone(),
-        }
+        Some(value.ty.clone())
     }
 
     fn llvm_basic_type(&self, lir_type: &lir::LirType) -> Result<BasicTypeEnum<'static>> {
@@ -2574,18 +2642,4 @@ impl<'a> LirCodegen<'a> {
         result
     }
 
-    fn sanitize_symbol_component(input: &str) -> String {
-        let mut sanitized = String::with_capacity(input.len());
-        for ch in input.chars() {
-            if ch.is_ascii_alphanumeric() {
-                sanitized.push(ch);
-            } else {
-                sanitized.push('_');
-            }
-        }
-        if sanitized.is_empty() {
-            sanitized.push_str("module");
-        }
-        sanitized
-    }
 }

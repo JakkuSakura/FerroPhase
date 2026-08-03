@@ -2,7 +2,8 @@ use crate::config::GoAsmTarget;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature, LirInstruction,
-    LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, Name,
+    LirInstructionKind, LirInteger, LirProgram, LirRegister, LirTerminator, LirType, LirValue,
+    Name,
 };
 use std::collections::HashMap;
 
@@ -25,11 +26,20 @@ struct ParsedBlock {
 pub fn parse_program(text: &str) -> Result<(LirProgram, GoAsmTarget)> {
     let target = detect_target(text);
     let functions = parse_functions(text)?;
-    let mut program = LirProgram::new();
+    let mut program = LirProgram::new(data_layout());
     for function in functions {
         program.add_function(lower_function(function, target)?);
     }
     Ok((program, target))
+}
+
+fn data_layout() -> fp_core::lir::LirDataLayout {
+    fp_core::lir::LirDataLayout::new(
+        64,
+        8,
+        vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+    )
+    .expect("valid Go assembler data layout")
 }
 
 fn detect_target(text: &str) -> GoAsmTarget {
@@ -264,7 +274,7 @@ fn parse_freeze(line: &str, target: GoAsmTarget) -> Result<Option<LirInstruction
     Ok(Some(LirInstruction {
         id,
         kind: LirInstructionKind::Freeze(value),
-        type_hint: Some(LirType::I64),
+        result: Some(LirRegister { id, ty: LirType::I64 }),
         debug_info: None,
     }))
 }
@@ -302,7 +312,7 @@ fn parse_binop_pattern(
         LirInstruction {
             id,
             kind,
-            type_hint: Some(LirType::I64),
+            result: Some(LirRegister { id, ty: LirType::I64 }),
             debug_info: None,
         },
         2,
@@ -332,7 +342,7 @@ fn parse_not_pattern(
         LirInstruction {
             id,
             kind: LirInstructionKind::Not(mov.src),
-            type_hint: Some(LirType::I64),
+            result: Some(LirRegister { id, ty: LirType::I64 }),
             debug_info: None,
         },
         2,
@@ -551,7 +561,7 @@ fn parse_conditional_jump(line: &str, target: GoAsmTarget) -> Result<Option<(Lir
     // Condition is always the last compare result register in the emitted form.
     // We recover it via the register that was written by the comparison pattern.
     // Here we just pass through a dummy; the compare peephole replaces it.
-    Ok(Some((LirValue::Register(0), label.to_string())))
+    Ok(Some((LirValue::register(0, LirType::I64), label.to_string())))
 }
 
 fn parse_jmp(line: &str) -> Result<Option<String>> {
@@ -678,7 +688,7 @@ fn parse_compare_pattern(
         LirInstruction {
             id,
             kind,
-            type_hint: Some(LirType::I1),
+            result: Some(LirRegister { id, ty: LirType::I1 }),
             debug_info: None,
         },
         7,
@@ -693,16 +703,19 @@ fn parse_value(token: Option<&str>, target: GoAsmTarget, line: &str) -> Result<L
             .trim_start_matches('$')
             .parse::<i64>()
             .map_err(|_| Error::from(format!("goasm parse: invalid immediate `{token}`")))?;
-        return Ok(LirValue::Constant(LirConstant::Int(number, LirType::I64)));
+        return Ok(LirValue::constant(
+            LirConstant::integer(LirType::I64, LirInteger::I64(number as u64))
+                .map_err(|err| Error::from(err.to_string()))?,
+        ));
     }
     if let Some(reg) = parse_register(token, target) {
         let id = reg
             .checked_sub(10)
             .ok_or_else(|| Error::from("goasm parse: invalid vreg"))?;
-        return Ok(LirValue::Register(id));
+        return Ok(LirValue::register(id, LirType::I64));
     }
     if parse_return_register(token, target).unwrap_or(false) {
-        return Ok(LirValue::Register(0));
+        return Ok(LirValue::register(0, LirType::I64));
     }
     Err(Error::from(format!(
         "goasm parse: unsupported operand `{token}`"

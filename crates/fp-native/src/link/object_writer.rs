@@ -807,13 +807,14 @@ mod tests {
 
     #[test]
     fn container_writer_emits_parseable_elf_object() {
-        let asmir = fp_core::asmir::AsmProgram::new(AsmTarget {
+        let target = AsmTarget {
             architecture: AsmArchitecture::X86_64,
             object_format: AsmObjectFormat::Elf,
             endianness: AsmEndianness::Little,
             pointer_width: 64,
             default_calling_convention: Some(CallingConvention::X86_64SysV),
-        });
+        };
+        let asmir = fp_core::asmir::AsmProgram::new(target.clone(), target.data_layout());
         let mut symbols = HashMap::new();
         symbols.insert("main".to_string(), 0);
         let plan = EmitPlan {
@@ -844,13 +845,14 @@ mod tests {
 
     #[test]
     fn container_from_emit_plan_preserves_symbol_scopes_from_asmir_container() {
-        let mut asmir = fp_core::asmir::AsmProgram::new(AsmTarget {
+        let target = AsmTarget {
             architecture: AsmArchitecture::X86_64,
             object_format: AsmObjectFormat::Elf,
             endianness: AsmEndianness::Little,
             pointer_width: 64,
             default_calling_convention: Some(CallingConvention::X86_64SysV),
-        });
+        };
+        let mut asmir = fp_core::asmir::AsmProgram::new(target.clone(), target.data_layout());
         let mut preserved = ContainerFile::new(
             ContainerKind::Object,
             AsmObjectFormat::Elf,

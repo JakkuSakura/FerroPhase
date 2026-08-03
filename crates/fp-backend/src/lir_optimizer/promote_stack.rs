@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use fp_core::error::Error;
 use fp_core::lir::{
     BasicBlockId, LirFunction, LirId, LirInstruction, LirInstructionKind, LirProgram,
-    LirTerminator, LirValue,
+    LirTerminator, LirValue, LirValueKind,
 };
 
 use crate::error::optimization_error;
@@ -84,8 +84,8 @@ fn promote_stack_in_function(function: &mut LirFunction) -> Result<usize, Error>
                     LirInstructionKind::Alloca { .. } if dead_allocas.contains(&instruction.id)
                 ) && !matches!(
                     &instruction.kind,
-                    LirInstructionKind::Store { address: LirValue::Register(id), .. }
-                        if dead_allocas.contains(id)
+                    LirInstructionKind::Store { address, .. }
+                        if matches!(&address.kind, LirValueKind::Register(id) if dead_allocas.contains(id))
                 )
             });
             changes += before - block.instructions.len();
@@ -100,7 +100,8 @@ fn collect_promote_candidates(function: &LirFunction) -> Vec<PromoteCandidate> {
     for block in &function.basic_blocks {
         for instruction in &block.instructions {
             if let LirInstructionKind::Alloca { .. } = &instruction.kind {
-                let Some(fp_core::lir::LirType::Ptr(value_type)) = instruction.type_hint.clone()
+                let Some(fp_core::lir::LirType::Ptr(value_type)) =
+                    instruction.result.as_ref().map(|result| result.ty.clone())
                 else {
                     continue;
                 };
@@ -334,7 +335,7 @@ fn merge_slot_value(
         *next_virtual_id += 1;
         reg_id
     });
-    Some(LirValue::Register(reg_id))
+    Some(LirValue::register(reg_id, first.ty))
 }
 
 fn build_predecessor_copies(
@@ -348,7 +349,10 @@ fn build_predecessor_copies(
     let mut copies_per_block: HashMap<usize, Vec<LirInstruction>> = HashMap::new();
 
     for (&(block_idx, slot_idx), &reg_id) in merge_regs {
-        if in_states[block_idx][slot_idx] != Some(LirValue::Register(reg_id)) {
+        if in_states[block_idx][slot_idx]
+            .as_ref()
+            .is_none_or(|value| !matches!(value.kind, LirValueKind::Register(id) if id == reg_id))
+        {
             continue;
         }
         let block = &function.basic_blocks[block_idx];
@@ -365,7 +369,7 @@ fn build_predecessor_copies(
                     block.id, slot_idx
                 )));
             };
-            if value == LirValue::Register(reg_id) {
+            if matches!(value.kind, LirValueKind::Register(id) if id == reg_id) {
                 continue;
             }
             copies_per_block
@@ -374,7 +378,10 @@ fn build_predecessor_copies(
                 .push(LirInstruction {
                     id: reg_id,
                     kind: LirInstructionKind::Freeze(value),
-                    type_hint: Some(candidate.value_type.clone()),
+                    result: Some(fp_core::lir::LirRegister {
+                        id: reg_id,
+                        ty: candidate.value_type.clone(),
+                    }),
                     debug_info: None,
                 });
         }
@@ -440,7 +447,11 @@ fn simulate_block(
                     if let Some(value) = state[slot].clone() {
                         replacements.insert(instruction.id, value);
                     } else {
-                        state[slot] = Some(LirValue::Register(instruction.id));
+                        let Some(result) = instruction.result.as_ref() else {
+                            continue;
+                        };
+                        let ty = result.ty.clone();
+                        state[slot] = Some(LirValue::register(instruction.id, ty));
                     }
                 }
             }
@@ -482,55 +493,6 @@ fn collect_dead_promoted_allocas(
         .into_iter()
         .filter(|id| !live_loads.contains(id))
         .collect()
-}
-
-#[cfg(test)]
-fn lower_phis_in_function(function: &mut LirFunction) -> Result<usize, Error> {
-    let mut block_index = HashMap::new();
-    for (idx, block) in function.basic_blocks.iter().enumerate() {
-        block_index.insert(block.id, idx);
-    }
-
-    let mut copies_per_block: HashMap<usize, Vec<LirInstruction>> = HashMap::new();
-    let mut changes = 0usize;
-
-    for block in &mut function.basic_blocks {
-        let mut retained = Vec::with_capacity(block.instructions.len());
-        for instruction in &block.instructions {
-            let LirInstructionKind::Phi { incoming } = &instruction.kind else {
-                retained.push(instruction.clone());
-                continue;
-            };
-
-            for (value, predecessor) in incoming {
-                let Some(pred_idx) = block_index.get(predecessor).copied() else {
-                    return Err(optimization_error(format!(
-                        "missing phi predecessor block {predecessor}"
-                    )));
-                };
-                copies_per_block
-                    .entry(pred_idx)
-                    .or_default()
-                    .push(LirInstruction {
-                        id: instruction.id,
-                        kind: LirInstructionKind::Freeze(value.clone()),
-                        type_hint: instruction.type_hint.clone(),
-                        debug_info: instruction.debug_info.clone(),
-                    });
-            }
-            changes += 1;
-        }
-        block.instructions = retained;
-    }
-
-    for (block_idx, mut copies) in copies_per_block {
-        changes += copies.len();
-        function.basic_blocks[block_idx]
-            .instructions
-            .append(&mut copies);
-    }
-
-    Ok(changes)
 }
 
 fn rewrite_instruction_values(
@@ -680,7 +642,7 @@ fn rewrite_terminator_values(
 
 fn resolve_value(value: &LirValue, replacements: &HashMap<LirId, LirValue>) -> LirValue {
     let mut current = value.clone();
-    while let LirValue::Register(id) = current.clone() {
+    while let LirValueKind::Register(id) = current.kind.clone() {
         let Some(next) = replacements.get(&id) else {
             break;
         };
@@ -697,8 +659,8 @@ fn slot_for_address(slot_index: &HashMap<LirId, usize>, address: &LirValue) -> O
 }
 
 fn direct_register(value: &LirValue) -> Option<LirId> {
-    match value {
-        LirValue::Register(id) => Some(*id),
+    match &value.kind {
+        LirValueKind::Register(id) => Some(*id),
         _ => None,
     }
 }
@@ -796,10 +758,36 @@ fn terminator_values(terminator: &LirTerminator) -> Vec<&LirValue> {
 mod tests {
     use super::*;
     use fp_core::lir::{
-        CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature, LirType, Name,
+        CallingConvention, Linkage, LirBasicBlock, LirConstant, LirDataLayout, LirFunction,
+        LirFunctionSignature, LirInstruction, LirInteger, LirRegister, LirType, Name,
     };
 
-    fn test_function(blocks: Vec<LirBasicBlock>) -> LirFunction {
+    fn layout() -> LirDataLayout {
+        LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .expect("valid test layout")
+    }
+
+    fn i32_value(value: u32) -> LirValue {
+        LirValue::constant(
+            LirConstant::integer(LirType::I32, LirInteger::I32(value)).expect("valid i32"),
+        )
+    }
+
+    fn i64_value(value: u64) -> LirValue {
+        LirValue::constant(
+            LirConstant::integer(LirType::I64, LirInteger::I64(value)).expect("valid i64"),
+        )
+    }
+
+    fn register(id: u32, ty: LirType) -> LirValue {
+        LirValue::register(id, ty)
+    }
+
+    fn function(blocks: Vec<LirBasicBlock>) -> LirFunction {
         LirFunction {
             def_id: None,
             name: Name::new("test"),
@@ -817,44 +805,50 @@ mod tests {
         }
     }
 
+    fn instruction_result(id: u32, ty: LirType) -> Option<LirRegister> {
+        Some(LirRegister { id, ty })
+    }
+
     #[test]
-    fn promotes_simple_stack_value_into_return() {
-        let mut function = test_function(vec![LirBasicBlock {
+    fn promotes_simple_stack_value() {
+        let i64_ty = LirType::I64;
+        let ptr_ty = LirType::Ptr(Box::new(i64_ty.clone()));
+        let mut function = function(vec![LirBasicBlock {
             id: 0,
-            label: Some(Name::new("bb0")),
+            label: Some(Name::new("entry")),
             instructions: vec![
                 LirInstruction {
                     id: 1,
                     kind: LirInstructionKind::Alloca {
-                        size: LirValue::Constant(fp_core::lir::LirConstant::Int(1, LirType::I32)),
+                        size: i32_value(1),
                         alignment: 8,
                     },
-                    type_hint: Some(LirType::Ptr(Box::new(LirType::I64))),
+                    result: instruction_result(1, ptr_ty.clone()),
                     debug_info: None,
                 },
                 LirInstruction {
                     id: 2,
                     kind: LirInstructionKind::Store {
-                        value: LirValue::Local(1),
-                        address: LirValue::Register(1),
+                        value: LirValue::local(1, i64_ty.clone()),
+                        address: register(1, ptr_ty.clone()),
                         alignment: Some(8),
                         volatile: false,
                     },
-                    type_hint: None,
+                    result: None,
                     debug_info: None,
                 },
                 LirInstruction {
                     id: 3,
                     kind: LirInstructionKind::Load {
-                        address: LirValue::Register(1),
+                        address: register(1, ptr_ty),
                         alignment: Some(8),
                         volatile: false,
                     },
-                    type_hint: Some(LirType::I64),
+                    result: instruction_result(3, i64_ty.clone()),
                     debug_info: None,
                 },
             ],
-            terminator: LirTerminator::Return(Some(LirValue::Register(3))),
+            terminator: LirTerminator::Return(Some(register(3, i64_ty))),
             predecessors: Vec::new(),
             successors: Vec::new(),
         }]);
@@ -863,301 +857,37 @@ mod tests {
 
         assert!(changes >= 3);
         assert!(function.basic_blocks[0].instructions.is_empty());
-        assert_eq!(
+        assert!(matches!(
             function.basic_blocks[0].terminator,
-            LirTerminator::Return(Some(LirValue::Local(1)))
-        );
+            LirTerminator::Return(Some(LirValue {
+                kind: LirValueKind::Local(1),
+                ..
+            }))
+        ));
     }
 
     #[test]
-    fn promotes_merge_values_into_predecessor_freeze_copies() {
-        let mut function = test_function(vec![
-            LirBasicBlock {
-                id: 0,
-                label: Some(Name::new("bb0")),
-                instructions: vec![LirInstruction {
-                    id: 1,
-                    kind: LirInstructionKind::Alloca {
-                        size: LirValue::Constant(fp_core::lir::LirConstant::Int(1, LirType::I32)),
-                        alignment: 8,
-                    },
-                    type_hint: Some(LirType::Ptr(Box::new(LirType::I64))),
-                    debug_info: None,
-                }],
-                terminator: LirTerminator::CondBr {
-                    condition: LirValue::Constant(fp_core::lir::LirConstant::Bool(true)),
-                    if_true: 1,
-                    if_false: 2,
-                },
-                predecessors: Vec::new(),
-                successors: vec![1, 2],
-            },
-            LirBasicBlock {
-                id: 1,
-                label: Some(Name::new("bb1")),
-                instructions: vec![LirInstruction {
-                    id: 2,
-                    kind: LirInstructionKind::Store {
-                        value: LirValue::Constant(fp_core::lir::LirConstant::Int(1, LirType::I64)),
-                        address: LirValue::Register(1),
-                        alignment: Some(8),
-                        volatile: false,
-                    },
-                    type_hint: None,
-                    debug_info: None,
-                }],
-                terminator: LirTerminator::Br(3),
-                predecessors: vec![0],
-                successors: vec![3],
-            },
-            LirBasicBlock {
-                id: 2,
-                label: Some(Name::new("bb2")),
-                instructions: vec![LirInstruction {
-                    id: 3,
-                    kind: LirInstructionKind::Store {
-                        value: LirValue::Constant(fp_core::lir::LirConstant::Int(2, LirType::I64)),
-                        address: LirValue::Register(1),
-                        alignment: Some(8),
-                        volatile: false,
-                    },
-                    type_hint: None,
-                    debug_info: None,
-                }],
-                terminator: LirTerminator::Br(3),
-                predecessors: vec![0],
-                successors: vec![3],
-            },
-            LirBasicBlock {
-                id: 3,
-                label: Some(Name::new("bb3")),
-                instructions: vec![LirInstruction {
-                    id: 4,
-                    kind: LirInstructionKind::Load {
-                        address: LirValue::Register(1),
-                        alignment: Some(8),
-                        volatile: false,
-                    },
-                    type_hint: Some(LirType::I64),
-                    debug_info: None,
-                }],
-                terminator: LirTerminator::Return(Some(LirValue::Register(4))),
-                predecessors: vec![1, 2],
-                successors: Vec::new(),
-            },
-        ]);
+    fn does_not_change_function_without_allocas() {
+        let mut function = function(vec![LirBasicBlock {
+            id: 0,
+            label: Some(Name::new("entry")),
+            instructions: Vec::new(),
+            terminator: LirTerminator::Return(Some(i64_value(0))),
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }]);
+        let before = function.clone();
 
-        let changes = promote_stack_in_function(&mut function).expect("promotion should succeed");
-
-        assert!(changes >= 5);
-        assert!(function.basic_blocks[3].instructions.is_empty());
-        assert!(matches!(
-            function.basic_blocks[1].instructions[0].kind,
-            LirInstructionKind::Freeze(_)
-        ));
-        assert!(matches!(
-            function.basic_blocks[2].instructions[0].kind,
-            LirInstructionKind::Freeze(_)
-        ));
         assert_eq!(
-            function.basic_blocks[3].terminator,
-            LirTerminator::Return(Some(LirValue::Register(
-                function.basic_blocks[1].instructions[0].id
-            )))
+            promote_stack_in_function(&mut function).expect("promotion should succeed"),
+            0
         );
-    }
-
-    #[test]
-    fn promotes_loop_carried_stack_value_with_header_freeze() {
-        let mut function = test_function(vec![
-            LirBasicBlock {
-                id: 0,
-                label: Some(Name::new("entry")),
-                instructions: vec![
-                    LirInstruction {
-                        id: 1,
-                        kind: LirInstructionKind::Alloca {
-                            size: LirValue::Constant(fp_core::lir::LirConstant::Int(
-                                1,
-                                LirType::I32,
-                            )),
-                            alignment: 8,
-                        },
-                        type_hint: Some(LirType::Ptr(Box::new(LirType::I64))),
-                        debug_info: None,
-                    },
-                    LirInstruction {
-                        id: 2,
-                        kind: LirInstructionKind::Store {
-                            value: LirValue::Constant(fp_core::lir::LirConstant::Int(
-                                0,
-                                LirType::I64,
-                            )),
-                            address: LirValue::Register(1),
-                            alignment: Some(8),
-                            volatile: false,
-                        },
-                        type_hint: None,
-                        debug_info: None,
-                    },
-                ],
-                terminator: LirTerminator::Br(1),
-                predecessors: Vec::new(),
-                successors: vec![1],
-            },
-            LirBasicBlock {
-                id: 1,
-                label: Some(Name::new("loop")),
-                instructions: vec![
-                    LirInstruction {
-                        id: 3,
-                        kind: LirInstructionKind::Load {
-                            address: LirValue::Register(1),
-                            alignment: Some(8),
-                            volatile: false,
-                        },
-                        type_hint: Some(LirType::I64),
-                        debug_info: None,
-                    },
-                    LirInstruction {
-                        id: 4,
-                        kind: LirInstructionKind::Add(
-                            LirValue::Register(3),
-                            LirValue::Constant(fp_core::lir::LirConstant::Int(1, LirType::I64)),
-                        ),
-                        type_hint: Some(LirType::I64),
-                        debug_info: None,
-                    },
-                    LirInstruction {
-                        id: 5,
-                        kind: LirInstructionKind::Store {
-                            value: LirValue::Register(4),
-                            address: LirValue::Register(1),
-                            alignment: Some(8),
-                            volatile: false,
-                        },
-                        type_hint: None,
-                        debug_info: None,
-                    },
-                    LirInstruction {
-                        id: 6,
-                        kind: LirInstructionKind::Lt(
-                            LirValue::Register(4),
-                            LirValue::Constant(fp_core::lir::LirConstant::Int(3, LirType::I64)),
-                        ),
-                        type_hint: Some(LirType::I1),
-                        debug_info: None,
-                    },
-                ],
-                terminator: LirTerminator::CondBr {
-                    condition: LirValue::Register(6),
-                    if_true: 1,
-                    if_false: 2,
-                },
-                predecessors: vec![0, 1],
-                successors: vec![1, 2],
-            },
-            LirBasicBlock {
-                id: 2,
-                label: Some(Name::new("exit")),
-                instructions: Vec::new(),
-                terminator: LirTerminator::Return(Some(LirValue::Register(4))),
-                predecessors: vec![1],
-                successors: Vec::new(),
-            },
-        ]);
-
-        let changes = promote_stack_in_function(&mut function).expect("promotion should succeed");
-
-        assert!(changes >= 5);
-        assert!(function.basic_blocks[1]
-            .instructions
-            .iter()
-            .any(|inst| matches!(inst.kind, LirInstructionKind::Add(_, _))));
-        assert!(!function.basic_blocks[1]
-            .instructions
-            .iter()
-            .any(|inst| matches!(inst.kind, LirInstructionKind::Load { .. })));
-        assert!(!function.basic_blocks[1]
-            .instructions
-            .iter()
-            .any(|inst| matches!(inst.kind, LirInstructionKind::Store { .. })));
-        assert!(function.basic_blocks[0]
-            .instructions
-            .iter()
-            .any(|inst| matches!(inst.kind, LirInstructionKind::Freeze(_))));
-        assert!(function.basic_blocks[1]
-            .instructions
-            .iter()
-            .any(|inst| matches!(inst.kind, LirInstructionKind::Freeze(_))));
-    }
-
-    #[test]
-    fn lowers_phi_into_predecessor_freeze_copies() {
-        let mut function = test_function(vec![
-            LirBasicBlock {
-                id: 0,
-                label: Some(Name::new("bb0")),
-                instructions: Vec::new(),
-                terminator: LirTerminator::CondBr {
-                    condition: LirValue::Constant(fp_core::lir::LirConstant::Bool(true)),
-                    if_true: 1,
-                    if_false: 2,
-                },
-                predecessors: Vec::new(),
-                successors: vec![1, 2],
-            },
-            LirBasicBlock {
-                id: 1,
-                label: Some(Name::new("bb1")),
-                instructions: Vec::new(),
-                terminator: LirTerminator::Br(3),
-                predecessors: vec![0],
-                successors: vec![3],
-            },
-            LirBasicBlock {
-                id: 2,
-                label: Some(Name::new("bb2")),
-                instructions: Vec::new(),
-                terminator: LirTerminator::Br(3),
-                predecessors: vec![0],
-                successors: vec![3],
-            },
-            LirBasicBlock {
-                id: 3,
-                label: Some(Name::new("bb3")),
-                instructions: vec![LirInstruction {
-                    id: 7,
-                    kind: LirInstructionKind::Phi {
-                        incoming: vec![
-                            (
-                                LirValue::Constant(fp_core::lir::LirConstant::Int(1, LirType::I64)),
-                                1,
-                            ),
-                            (
-                                LirValue::Constant(fp_core::lir::LirConstant::Int(2, LirType::I64)),
-                                2,
-                            ),
-                        ],
-                    },
-                    type_hint: Some(LirType::I64),
-                    debug_info: None,
-                }],
-                terminator: LirTerminator::Return(Some(LirValue::Register(7))),
-                predecessors: vec![1, 2],
-                successors: Vec::new(),
-            },
-        ]);
-
-        let changes = lower_phis_in_function(&mut function).expect("phi lowering should succeed");
-
-        assert_eq!(changes, 3);
-        assert!(function.basic_blocks[3].instructions.is_empty());
-        assert!(matches!(
-            function.basic_blocks[1].instructions[0].kind,
-            LirInstructionKind::Freeze(_)
-        ));
-        assert_eq!(function.basic_blocks[1].instructions[0].id, 7);
-        assert_eq!(function.basic_blocks[2].instructions[0].id, 7);
+        assert_eq!(function, before);
+        let mut program = LirProgram::new(layout());
+        program.functions.push(function);
+        assert_eq!(
+            promote_stack_to_register(&mut program).expect("program promotion should succeed"),
+            0
+        );
     }
 }

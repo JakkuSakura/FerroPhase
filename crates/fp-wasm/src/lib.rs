@@ -1,9 +1,10 @@
 use fp_core::error::{Error, Result};
-use fp_core::lir::layout;
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature, LirGlobal,
+    LirConstantAggregate, LirConstantData, LirConstantKind, LirDataLayout, LirFloat, LirFunctionRef,
+    LirInteger,
     LirInstruction, LirInstructionKind, LirIntrinsicKind, LirProgram, LirRelocationKind,
-    LirRelocationTarget, LirTerminator, LirType, LirValue, RegisterId,
+    LirRelocationTarget, LirTerminator, LirType, LirValue, LirValueKind, RegisterId,
 };
 use std::collections::HashMap;
 use wasm_encoder::{
@@ -155,7 +156,7 @@ impl<'a> WasmEmitter<'a> {
             let mut reg_types = HashMap::new();
             for block in &func.basic_blocks {
                 for instr in &block.instructions {
-                    if let Some(ty) = instr.type_hint.clone() {
+                    if let Some(ty) = instr.result.as_ref().map(|result| result.ty.clone()) {
                         reg_types.insert(instr.id, ty);
                     }
                 }
@@ -163,11 +164,11 @@ impl<'a> WasmEmitter<'a> {
             for block in &func.basic_blocks {
                 for instr in &block.instructions {
                     if let LirInstructionKind::Call { function, args, .. } = &instr.kind {
-                        let LirValue::Function(name) = function else {
+                        let LirValueKind::Function(LirFunctionRef::Name(name)) = &function.kind else {
                             continue;
                         };
-                        if self.func_index.contains_key(name)
-                            || self.extern_funcs.contains_key(name)
+                        if self.func_index.contains_key(name.as_str())
+                            || self.extern_funcs.contains_key(name.as_str())
                         {
                             continue;
                         }
@@ -176,12 +177,13 @@ impl<'a> WasmEmitter<'a> {
                             .map(|arg| lower_val_type(&value_type_for(func, &reg_types, arg)))
                             .collect::<Vec<_>>();
                         let results = instr
-                            .type_hint
-                            .clone()
+                            .result
+                            .as_ref()
+                            .map(|result| result.ty.clone())
                             .map(|ty| vec![lower_val_type(&ty)])
                             .unwrap_or_default();
                         self.extern_funcs
-                            .insert(name.clone(), SignatureKey { params, results });
+                            .insert(name.as_str().to_owned(), SignatureKey { params, results });
                     }
                 }
             }
@@ -293,22 +295,24 @@ impl<'a> WasmEmitter<'a> {
     }
 
     fn encode_constant_bytes(&mut self, constant: &LirConstant, ty: &LirType) -> Result<Vec<u8>> {
-        match constant {
-            LirConstant::Int(value, ty) => Ok(int_to_bytes(*value as u128, ty)),
-            LirConstant::UInt(value, ty) => Ok(int_to_bytes(*value as u128, ty)),
-            LirConstant::Float(value, ty) => Ok(float_to_bytes(*value, ty)),
-            LirConstant::Bool(value) => Ok(vec![*value as u8]),
-            LirConstant::String(value) => {
-                let ptr = self.write_string_data(value);
-                Ok(int_to_bytes(ptr as u128, ty))
-            }
-            LirConstant::Bytes(bytes) => Ok(bytes.clone()),
-            LirConstant::Array(elements, const_elem_ty) => {
+        match &constant.kind {
+            LirConstantKind::Data(LirConstantData::Integer(value)) => Ok(int_to_bytes(match value {
+                LirInteger::I1(v) => u128::from(*v), LirInteger::I8(v) => u128::from(*v),
+                LirInteger::I16(v) => u128::from(*v), LirInteger::I32(v) => u128::from(*v),
+                LirInteger::I64(v) => u128::from(*v), LirInteger::I128(v) => *v,
+                LirInteger::Arbitrary(_) => return Err(Error::from("wide integer WASM constant unsupported")),
+            }, ty)),
+            LirConstantKind::Data(LirConstantData::Float(value)) => Ok(match value {
+                LirFloat::F32(v) => float_to_bytes(f32::from_bits(*v) as f64, ty),
+                LirFloat::F64(v) => float_to_bytes(f64::from_bits(*v), ty),
+            }),
+            LirConstantKind::Data(LirConstantData::Bytes(bytes)) => Ok(bytes.clone()),
+            LirConstantKind::Aggregate(LirConstantAggregate::Array(elements)) | LirConstantKind::Aggregate(LirConstantAggregate::Vector(elements)) => {
                 // Encode arrays to the *expected* type width so global initializers don't get
                 // truncated (which would shift subsequent globals and corrupt memory).
                 let (elem_ty, expected_len) = match ty {
                     LirType::Array(elem, len) => (elem.as_ref(), *len as usize),
-                    _ => (const_elem_ty, elements.len()),
+                    _ => (ty, elements.len()),
                 };
 
                 let mut out = Vec::new();
@@ -322,14 +326,11 @@ impl<'a> WasmEmitter<'a> {
                 }
                 Ok(out)
             }
-            LirConstant::Struct(values, const_struct_ty) => {
+            LirConstantKind::Aggregate(LirConstantAggregate::Struct(values)) => {
                 // Same rationale as arrays: encode to the expected struct layout.
                 let fields = match ty {
                     LirType::Struct { fields, .. } => fields,
-                    _ => match const_struct_ty {
-                        LirType::Struct { fields, .. } => fields,
-                        _ => return Err(Error::from("struct constant expects struct type")),
-                    },
+                    _ => return Err(Error::from("struct constant expects struct type")),
                 };
 
                 let mut out = Vec::new();
@@ -343,16 +344,15 @@ impl<'a> WasmEmitter<'a> {
                 }
                 Ok(out)
             }
-            LirConstant::GlobalRef(name, ty, indices) => {
+            LirConstantKind::GlobalAddress { global: name } => {
                 let base = self.global_addr.get(name.as_str()).copied().unwrap_or(0);
-                let offset =
-                    offset_for_indices(ty, &indices.iter().map(|v| *v as u32).collect::<Vec<_>>());
-                Ok(int_to_bytes((base + offset) as u128, ty))
+                Ok(int_to_bytes(base as u128, ty))
             }
-            LirConstant::FunctionRef(_, ty) => Ok(int_to_bytes(0, ty)),
-            LirConstant::Null(ty) | LirConstant::Undef(ty) => {
+            LirConstantKind::FunctionAddress(_) => Ok(int_to_bytes(0, ty)),
+            LirConstantKind::Null | LirConstantKind::Undef => {
                 Ok(vec![0; size_of_type(ty) as usize])
             }
+            _ => Err(Error::from("unsupported WASM constant initializer")),
         }
     }
 
@@ -541,7 +541,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
     fn collect_register_types(&mut self) {
         for block in &self.func.basic_blocks {
             for instr in &block.instructions {
-                if let Some(ty) = instr.type_hint.clone() {
+                if let Some(ty) = instr.result.as_ref().map(|result| result.ty.clone()) {
                     self.register_types.insert(instr.id, ty);
                 }
             }
@@ -561,7 +561,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         for block in &self.func.basic_blocks {
             for instr in &block.instructions {
                 if let LirInstructionKind::Load { address, .. } = &instr.kind {
-                    if let Some(LirType::Struct { .. }) = &instr.type_hint {
+                    if let Some(LirType::Struct { .. }) = instr.result.as_ref().map(|result| &result.ty) {
                         self.struct_load_sources.insert(instr.id, address.clone());
                     }
                 }
@@ -814,7 +814,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
                 let dummy = LirInstruction {
                     id: 0,
                     kind: LirInstructionKind::Unreachable,
-                    type_hint: None,
+                    result: None,
                     debug_info: None,
                 };
                 self.emit_call(func, function, args, &dummy)?;
@@ -921,7 +921,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         instr: &LirInstruction,
         op: BinOp,
     ) -> Result<()> {
-        let ty = instr.type_hint.clone().unwrap_or(LirType::I64);
+        let ty = instr.result.as_ref().map(|result| result.ty.clone()).ok_or_else(|| Error::from("missing binary result type"))?;
         self.emit_value(func, lhs)?;
         self.emit_value(func, rhs)?;
         match lower_val_type(&ty) {
@@ -941,7 +941,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         value: &LirValue,
         instr: &LirInstruction,
     ) -> Result<()> {
-        let ty = instr.type_hint.clone().unwrap_or(LirType::I1);
+        let ty = instr.result.as_ref().map(|result| result.ty.clone()).ok_or_else(|| Error::from("missing not result type"))?;
         self.emit_value(func, value)?;
         match lower_val_type(&ty) {
             ValType::I32 => {
@@ -995,7 +995,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         address: &LirValue,
         instr: &LirInstruction,
     ) -> Result<()> {
-        let ty = instr.type_hint.clone().unwrap_or(LirType::I64);
+        let ty = instr.result.as_ref().map(|result| result.ty.clone()).ok_or_else(|| Error::from("missing comparison result type"))?;
         self.emit_value(func, address)?;
         func.instruction(&Instruction::I32WrapI64);
         emit_load_for_type(func, &ty);
@@ -1050,9 +1050,10 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         instr: &LirInstruction,
     ) -> Result<()> {
         let ty = instr
-            .type_hint
-            .clone()
-            .unwrap_or(LirType::Ptr(Box::new(LirType::I8)));
+            .result
+            .as_ref()
+            .map(|result| result.ty.clone())
+            .ok_or_else(|| Error::from("missing gep result type"))?;
         let LirType::Ptr(inner) = ty.clone() else {
             return Err(Error::from("gep expects pointer type hint"));
         };
@@ -1076,7 +1077,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         value: &LirValue,
         instr: &LirInstruction,
     ) -> Result<()> {
-        let target = instr.type_hint.clone().unwrap_or(LirType::I64);
+        let target = instr.result.as_ref().map(|result| result.ty.clone()).ok_or_else(|| Error::from("missing cast result type"))?;
         let source = self.value_type(value);
         self.emit_value(func, value)?;
         match (lower_val_type(&source), lower_val_type(&target)) {
@@ -1104,7 +1105,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         let agg_ty = self.value_type(aggregate);
         let offset = offset_for_indices(&agg_ty, indices);
         if let LirType::Struct { .. } = agg_ty {
-            if let LirValue::Register(reg) = aggregate {
+            if let LirValueKind::Register(reg) = &aggregate.kind {
                 if let Some(addr) = self.struct_load_sources.get(reg).cloned() {
                     self.emit_value(func, &addr)?;
                 } else {
@@ -1141,9 +1142,10 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         instr: &LirInstruction,
     ) -> Result<()> {
         let agg_ty = instr
-            .type_hint
-            .clone()
-            .unwrap_or(LirType::Ptr(Box::new(LirType::I8)));
+            .result
+            .as_ref()
+            .map(|result| result.ty.clone())
+            .ok_or_else(|| Error::from("missing insert-value result type"))?;
         self.emit_value(func, aggregate)?;
         func.instruction(&Instruction::LocalTee(self.tmp_i64_local));
         let offset = offset_for_indices(&agg_ty, indices);
@@ -1172,15 +1174,15 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         func.instruction(&Instruction::LocalGet(self.sp_local));
         func.instruction(&Instruction::GlobalSet(self.stack_ptr_global));
 
-        let name = match function {
-            LirValue::Function(name) => name.clone(),
-            LirValue::FunctionInPackage(package_id, name) => {
+        let name = match &function.kind {
+            LirValueKind::Function(LirFunctionRef::Name(name)) => name.as_str().to_owned(),
+            LirValueKind::Function(LirFunctionRef::Package { package_id, name }) => {
                 return Err(fp_core::error::Error::from(format!(
                     "package-qualified function `{:?}::{name}` is not supported by WASM lowering",
                     package_id
                 )));
             }
-            LirValue::FunctionDef(def_id) => {
+            LirValueKind::Function(LirFunctionRef::Definition(def_id)) => {
                 return Err(fp_core::error::Error::from(format!(
                     "function definition `{def_id}` is not supported by WASM lowering"
                 )));
@@ -1196,7 +1198,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         })?;
         func.instruction(&Instruction::Call(idx));
 
-        if let Some(ty) = instr.type_hint.clone() {
+        if let Some(ty) = instr.result.as_ref().map(|result| result.ty.clone()) {
             if !matches!(ty, LirType::Void) {
                 self.store_result(func, instr.id, &ty);
             }
@@ -1227,7 +1229,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
                 self.emit_printf_like(func, format, args)?;
             }
             _ => {
-                if let Some(ty) = instr.type_hint.clone() {
+                if let Some(ty) = instr.result.as_ref().map(|result| result.ty.clone()) {
                     if !matches!(ty, LirType::Void) {
                         emit_zero_for_type(func, &ty);
                         self.store_result(func, instr.id, &ty);
@@ -1246,7 +1248,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         if_false: &LirValue,
         instr: &LirInstruction,
     ) -> Result<()> {
-        let ty = instr.type_hint.clone().unwrap_or(LirType::I64);
+        let ty = instr.result.as_ref().map(|result| result.ty.clone()).ok_or_else(|| Error::from("missing select result type"))?;
         self.emit_value(func, condition)?;
         func.instruction(&Instruction::If(block_type_for(&ty)));
         self.emit_value(func, if_true)?;
@@ -1651,64 +1653,66 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
     }
 
     fn emit_value(&mut self, func: &mut Function, value: &LirValue) -> Result<()> {
-        match value {
-            LirValue::Register(reg) => {
+        match &value.kind {
+            LirValueKind::Register(reg) => {
                 let local = self.register_map.get(reg).copied().unwrap_or(0);
                 func.instruction(&Instruction::LocalGet(local));
             }
-            LirValue::Constant(constant) => self.emit_constant(func, constant)?,
-            LirValue::Global(name, _) => {
-                let addr = self.emitter.global_addr.get(name).copied().unwrap_or(0);
+            LirValueKind::Constant(_) => self.emit_constant(func, value)?,
+            LirValueKind::Global(name) => {
+                let addr = self.emitter.global_addr.get(name.as_str()).copied().unwrap_or(0);
                 func.instruction(&Instruction::I64Const(addr as i64));
             }
-            LirValue::Function(name) => {
-                let idx = self.emitter.func_index.get(name).copied().unwrap_or(0);
+            LirValueKind::Function(LirFunctionRef::Name(name)) => {
+                let idx = self.emitter.func_index.get(name.as_str()).copied().ok_or_else(|| Error::from("unknown WASM function"))?;
                 func.instruction(&Instruction::I64Const(idx as i64));
             }
-            LirValue::FunctionInPackage(package_id, name) => {
+            LirValueKind::Function(LirFunctionRef::Package { package_id, name }) => {
                 return Err(fp_core::error::Error::from(format!(
                     "package-qualified function `{:?}::{name}` is not supported by WASM lowering",
                     package_id
                 )));
             }
-            LirValue::FunctionDef(def_id) => {
+            LirValueKind::Function(LirFunctionRef::Definition(def_id)) => {
                 return Err(fp_core::error::Error::from(format!(
                     "function definition `{def_id}` is not supported by WASM lowering"
                 )));
             }
-            LirValue::Local(id) => {
+            LirValueKind::Local(id) => {
                 let local = self.locals_map.get(id).copied().unwrap_or(0);
                 func.instruction(&Instruction::LocalGet(local));
             }
-            LirValue::StackSlot(id) => {
+            LirValueKind::StackSlot(id) => {
                 let offset = self.stack_slots.get(id).copied().unwrap_or(0);
                 func.instruction(&Instruction::LocalGet(self.sp_base_local));
                 func.instruction(&Instruction::I64Const(offset as i64));
                 func.instruction(&Instruction::I64Add);
             }
-            LirValue::Undef(ty) | LirValue::Null(ty) => {
-                emit_zero_for_type(func, ty);
-            }
         }
         Ok(())
     }
 
-    fn emit_constant(&mut self, func: &mut Function, constant: &LirConstant) -> Result<()> {
-        match constant {
-            LirConstant::Int(value, ty) => emit_int_constant(func, *value, ty),
-            LirConstant::UInt(value, ty) => emit_int_constant(func, *value as i64, ty),
-            LirConstant::Float(value, ty) => emit_float_constant(func, *value, ty),
-            LirConstant::Bool(value) => {
-                func.instruction(&Instruction::I32Const(*value as i32));
-            }
-            LirConstant::String(value) => {
-                let ptr = self.emitter.write_string_data(value) as i64;
-                func.instruction(&Instruction::I64Const(ptr));
-            }
-            LirConstant::Bytes(_) | LirConstant::Array(_, _) | LirConstant::Struct(_, _) => {
+    fn emit_constant(&mut self, func: &mut Function, value: &LirValue) -> Result<()> {
+        let LirValueKind::Constant(kind) = &value.kind else { return Err(Error::from("expected constant")); };
+        match kind {
+            LirConstantKind::Data(LirConstantData::Integer(integer)) => match integer {
+                LirInteger::I1(v) => {
+                    func.instruction(&Instruction::I32Const(*v as i32));
+                }
+                LirInteger::I8(v) => emit_int_constant(func, i64::from(*v), &value.ty),
+                LirInteger::I16(v) => emit_int_constant(func, i64::from(*v), &value.ty),
+                LirInteger::I32(v) => emit_int_constant(func, i64::from(*v), &value.ty),
+                LirInteger::I64(v) => emit_int_constant(func, *v as i64, &value.ty),
+                LirInteger::I128(_) | LirInteger::Arbitrary(_) => return Err(Error::from("wide integer WASM constant unsupported")),
+            },
+            LirConstantKind::Data(LirConstantData::Float(float)) => match float {
+                LirFloat::F32(v) => emit_float_constant(func, f32::from_bits(*v) as f64, &value.ty),
+                LirFloat::F64(v) => emit_float_constant(func, f64::from_bits(*v), &value.ty),
+            },
+            LirConstantKind::Data(LirConstantData::Bytes(_)) | LirConstantKind::Aggregate(_) => {
                 func.instruction(&Instruction::I64Const(0));
             }
-            LirConstant::GlobalRef(name, _, indices) => {
+            LirConstantKind::GlobalAddress { global: name } => {
                 let base = self
                     .emitter
                     .global_addr
@@ -1716,40 +1720,25 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
                     .copied()
                     .unwrap_or(0);
                 let offset = offset_for_indices(
-                    &self.value_type(&LirValue::Global(
-                        name.to_string(),
+                    &self.value_type(&LirValue::global(
+                        name.clone(),
                         LirType::Ptr(Box::new(LirType::I8)),
                     )),
-                    &indices.iter().map(|v| *v as u32).collect::<Vec<_>>(),
+                    &[],
                 );
                 func.instruction(&Instruction::I64Const((base + offset) as i64));
             }
-            LirConstant::FunctionRef(_, _) => {
+            LirConstantKind::FunctionAddress(_) => {
                 func.instruction(&Instruction::I64Const(0));
             }
-            LirConstant::Null(ty) | LirConstant::Undef(ty) => emit_zero_for_type(func, ty),
+            LirConstantKind::Null | LirConstantKind::Undef => emit_zero_for_type(func, &value.ty),
+            _ => return Err(Error::from("unsupported WASM constant")),
         }
         Ok(())
     }
 
     fn value_type(&self, value: &LirValue) -> LirType {
-        match value {
-            LirValue::Register(id) => self.register_types.get(id).cloned().unwrap_or(LirType::I64),
-            LirValue::Constant(constant) => constant_type(constant),
-            LirValue::Global(_, ty) => ty.clone(),
-            LirValue::Function(_) | LirValue::FunctionInPackage(_, _) | LirValue::FunctionDef(_) => {
-                LirType::Ptr(Box::new(LirType::I8))
-            }
-            LirValue::Local(id) => self
-                .func
-                .locals
-                .iter()
-                .find(|local| local.id == *id)
-                .map(|local| local.ty.clone())
-                .unwrap_or(LirType::I64),
-            LirValue::StackSlot(_) => LirType::Ptr(Box::new(LirType::I8)),
-            LirValue::Undef(ty) | LirValue::Null(ty) => ty.clone(),
-        }
+        value.ty.clone()
     }
 
     fn store_result(&mut self, func: &mut Function, reg: RegisterId, ty: &LirType) {
@@ -2063,7 +2052,10 @@ fn emit_float_constant(func: &mut Function, value: f64, ty: &LirType) {
 }
 
 fn size_of_type(ty: &LirType) -> u64 {
-    layout::size_of(ty)
+    LirDataLayout::new(64, 8, vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)])
+        .expect("valid WASM data layout")
+        .size_of(ty)
+        .expect("WASM type must have a layout")
 }
 
 fn offset_for_indices(ty: &LirType, indices: &[u32]) -> u64 {
@@ -2073,7 +2065,10 @@ fn offset_for_indices(ty: &LirType, indices: &[u32]) -> u64 {
         let index = *raw_index as usize;
         match &current {
             LirType::Struct { fields, .. } => {
-                if let Some(layout) = layout::struct_layout(&current) {
+                if let Ok(Some(layout)) = LirDataLayout::new(64, 8, vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)])
+                    .expect("valid WASM data layout")
+                    .struct_layout(&current)
+                {
                     if let Some(field_offset) = layout.field_offsets.get(index) {
                         offset += *field_offset;
                     }
@@ -2121,43 +2116,11 @@ fn float_to_bytes(value: f64, ty: &LirType) -> Vec<u8> {
     }
 }
 
-fn constant_type(constant: &LirConstant) -> LirType {
-    match constant {
-        LirConstant::Int(_, ty) => ty.clone(),
-        LirConstant::UInt(_, ty) => ty.clone(),
-        LirConstant::Float(_, ty) => ty.clone(),
-        LirConstant::Bool(_) => LirType::I1,
-        LirConstant::String(_) => LirType::Ptr(Box::new(LirType::I8)),
-        LirConstant::Bytes(bytes) => LirType::Array(Box::new(LirType::I8), bytes.len() as u64),
-        LirConstant::Array(elements, ty) => {
-            LirType::Array(Box::new(ty.clone()), elements.len() as u64)
-        }
-        LirConstant::Struct(_, ty) => ty.clone(),
-        LirConstant::GlobalRef(_, ty, _) => ty.clone(),
-        LirConstant::FunctionRef(_, ty) => ty.clone(),
-        LirConstant::Null(ty) | LirConstant::Undef(ty) => ty.clone(),
-    }
-}
-
 fn value_type_for(
     func: &LirFunction,
     reg_types: &HashMap<RegisterId, LirType>,
     value: &LirValue,
 ) -> LirType {
-    match value {
-        LirValue::Register(id) => reg_types.get(id).cloned().unwrap_or(LirType::I64),
-        LirValue::Constant(constant) => constant_type(constant),
-        LirValue::Global(_, ty) => ty.clone(),
-        LirValue::Function(_) | LirValue::FunctionInPackage(_, _) | LirValue::FunctionDef(_) => {
-            LirType::Ptr(Box::new(LirType::I8))
-        }
-        LirValue::Local(id) => func
-            .locals
-            .iter()
-            .find(|local| local.id == *id)
-            .map(|local| local.ty.clone())
-            .unwrap_or(LirType::I64),
-        LirValue::StackSlot(_) => LirType::Ptr(Box::new(LirType::I8)),
-        LirValue::Undef(ty) | LirValue::Null(ty) => ty.clone(),
-    }
+    let _ = (func, reg_types);
+    value.ty.clone()
 }

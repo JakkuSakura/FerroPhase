@@ -1,4 +1,4 @@
-use crate::binary::{DataRegion, RipSymbol, RipSymbolKind, TextRelocation, aarch64, x86_64};
+use crate::binary::{aarch64, x86_64, DataRegion, RipSymbol, RipSymbolKind, TextRelocation};
 use crate::container::container_kind_for_object_kind;
 use fp_core::asmir::{
     AsmArchitecture, AsmConstant, AsmEndianness, AsmFunction, AsmFunctionSignature, AsmGlobal,
@@ -90,7 +90,10 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
     for section in file.sections() {
         let name = section
             .name()
-            .map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e })
+            .map_err(|e| {
+                eprintln!("[fp-native] object lift error: {e}");
+                e
+            })
             .ok()
             .filter(|value| !value.is_empty())
             .unwrap_or("<anon>");
@@ -132,7 +135,12 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
             .section_index()
             .and_then(|idx| section_ids.get(&idx).copied());
         let value = if let Some(idx) = symbol.section_index() {
-            file.section_by_index(idx).map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e }).ok()
+            file.section_by_index(idx)
+                .map_err(|e| {
+                    eprintln!("[fp-native] object lift error: {e}");
+                    e
+                })
+                .ok()
                 .map(|section| symbol.address().saturating_sub(section.address()))
                 .unwrap_or(symbol.address())
         } else {
@@ -160,14 +168,34 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                         Err(_) => continue,
                     };
                     let name = symbol
-                        .name().map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e }).ok()
+                        .name()
+                        .map_err(|e| {
+                            eprintln!("[fp-native] object lift error: {e}");
+                            e
+                        })
+                        .ok()
                         .filter(|value| !value.is_empty())
                         .map(|value| value.to_string())
                         .or_else(|| {
                             symbol
                                 .section_index()
-                                .and_then(|idx| file.section_by_index(idx).map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e }).ok())
-                                .and_then(|section| section.name().map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e }).ok())
+                                .and_then(|idx| {
+                                    file.section_by_index(idx)
+                                        .map_err(|e| {
+                                            eprintln!("[fp-native] object lift error: {e}");
+                                            e
+                                        })
+                                        .ok()
+                                })
+                                .and_then(|section| {
+                                    section
+                                        .name()
+                                        .map_err(|e| {
+                                            eprintln!("[fp-native] object lift error: {e}");
+                                            e
+                                        })
+                                        .ok()
+                                })
                                 .filter(|value| !value.is_empty())
                                 .map(|value| value.to_string())
                         })
@@ -245,15 +273,45 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         let is_import = symbol.section_index().is_none()
             || symbol
                 .section_index()
-                .and_then(|index| file.section_by_index(index).map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e }).ok())
-                .and_then(|section| section.name().map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e }).ok())
+                .and_then(|index| {
+                    file.section_by_index(index)
+                        .map_err(|e| {
+                            eprintln!("[fp-native] object lift error: {e}");
+                            e
+                        })
+                        .ok()
+                })
+                .and_then(|section| {
+                    section
+                        .name()
+                        .map_err(|e| {
+                            eprintln!("[fp-native] object lift error: {e}");
+                            e
+                        })
+                        .ok()
+                })
                 .is_some_and(|name| name.contains(".plt") || name.contains("__stubs"));
         let name = match symbol.name() {
             Ok(name) if !name.is_empty() => name.to_string(),
             _ => symbol
                 .section_index()
-                .and_then(|index| file.section_by_index(index).map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e }).ok())
-                .and_then(|section| section.name().map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e }).ok())
+                .and_then(|index| {
+                    file.section_by_index(index)
+                        .map_err(|e| {
+                            eprintln!("[fp-native] object lift error: {e}");
+                            e
+                        })
+                        .ok()
+                })
+                .and_then(|section| {
+                    section
+                        .name()
+                        .map_err(|e| {
+                            eprintln!("[fp-native] object lift error: {e}");
+                            e
+                        })
+                        .ok()
+                })
                 .filter(|name| !name.is_empty())
                 .map(|name| name.to_string())
                 .unwrap_or_default(),
@@ -295,13 +353,14 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         });
     }
 
-    let mut program = AsmProgram::new(AsmTarget {
+    let target = AsmTarget {
         architecture: architecture.clone(),
         object_format: object_format.clone(),
         endianness: AsmEndianness::Little,
         pointer_width: 64,
         default_calling_convention: None,
-    });
+    };
+    let mut program = AsmProgram::new(target.clone(), target.data_layout());
     program.lifted_from = Some(program.target.clone());
 
     if !elf_weak_imports.is_empty() {
@@ -354,9 +413,20 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
     let mut rodata_cstrings_by_addr: HashMap<u64, String> = HashMap::new();
     let mut rodata_section_symbol: HashMap<object::SectionIndex, (String, u64)> = HashMap::new();
     for section in file.sections() {
-        let section_name = section.name().map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e }).ok();
+        let section_name = section
+            .name()
+            .map_err(|e| {
+                eprintln!("[fp-native] object lift error: {e}");
+                e
+            })
+            .ok();
         let is_relro = section
-            .name().map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e }).ok()
+            .name()
+            .map_err(|e| {
+                eprintln!("[fp-native] object lift error: {e}");
+                e
+            })
+            .ok()
             .is_some_and(|name| name.starts_with(".data.rel.ro"));
         if section.kind() != object::SectionKind::ReadOnlyData
             && !(is_relro && section.kind() == object::SectionKind::Data)
@@ -449,7 +519,12 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                             continue;
                         };
                         let target_name = target
-                            .name().map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e }).ok()
+                            .name()
+                            .map_err(|e| {
+                                eprintln!("[fp-native] object lift error: {e}");
+                                e
+                            })
+                            .ok()
                             .filter(|value| !value.is_empty())
                             .map(|value| normalize_symbol_name(&object_format, value).to_string());
 
@@ -535,7 +610,10 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                     return None;
                 }
                 std::str::from_utf8(payload)
-                    .map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e })
+                    .map_err(|e| {
+                        eprintln!("[fp-native] object lift error: {e}");
+                        e
+                    })
                     .ok()
                     .map(|value| value.to_string())
             }) {
@@ -683,7 +761,12 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         .filter(|symbol| symbol.section_index() == Some(text_index))
         .filter_map(|symbol| {
             let name = symbol
-                .name().map_err(|e| { eprintln!("[fp-native] object lift error: {e}"); e }).ok()
+                .name()
+                .map_err(|e| {
+                    eprintln!("[fp-native] object lift error: {e}");
+                    e
+                })
+                .ok()
                 .map(|raw| Name::new(normalize_symbol_name(&object_format, raw)))
                 .unwrap_or_else(|| Name::new("lifted"));
             let section_addr = text_section.address();

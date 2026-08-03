@@ -658,13 +658,24 @@ fn collect_external_call_symbols(plan: &EmitPlan) -> Vec<String> {
 mod tests {
     use super::{HostScalar, JitEngine, validate_native_program};
     use fp_core::lir::{
-        CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature,
-        LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, Name,
+        CallingConvention, Linkage, LirBasicBlock, LirDataLayout, LirFunction, LirFunctionSignature,
+        LirInstruction, LirInstructionKind, LirProgram, LirRegister, LirTerminator, LirType,
+        LirValue, Name,
     };
     use std::ffi::c_void;
 
+    fn data_layout() -> LirDataLayout {
+        LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .unwrap()
+    }
+
     fn minimal_program() -> LirProgram {
         let func = LirFunction {
+            def_id: None,
             name: Name::new("main"),
             signature: LirFunctionSignature {
                 params: Vec::new(),
@@ -687,9 +698,11 @@ mod tests {
         };
 
         LirProgram {
+            data_layout: data_layout(),
             functions: vec![func],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            comptime_entries: Vec::new(),
             queries: Vec::new(),
         }
     }
@@ -724,7 +737,7 @@ mod tests {
                     ir: fp_core::query::QueryIrDocument::default(),
                     span: fp_core::span::Span::default(),
                 }),
-                type_hint: None,
+                result: None,
                 debug_info: None,
             });
         let err = validate_native_program(&program).expect_err("exec query must be rejected");
@@ -740,6 +753,7 @@ mod tests {
 
     fn external_call_program() -> LirProgram {
         let callee = LirFunction {
+            def_id: None,
             name: Name::new("jit_test_add1"),
             signature: LirFunctionSignature {
                 params: Vec::new(),
@@ -754,6 +768,7 @@ mod tests {
             is_declaration: true,
         };
         let caller = LirFunction {
+            def_id: None,
             name: Name::new("main"),
             signature: LirFunctionSignature {
                 params: Vec::new(),
@@ -766,15 +781,18 @@ mod tests {
                 instructions: vec![LirInstruction {
                     id: 1,
                     kind: LirInstructionKind::Call {
-                        function: LirValue::Function("jit_test_add1".to_string()),
+                        function: LirValue::function(
+                            fp_core::lir::LirFunctionRef::Name(Name::new("jit_test_add1")),
+                            LirType::Ptr(Box::new(LirType::I8)),
+                        ),
                         args: Vec::new(),
                         calling_convention: CallingConvention::C,
                         tail_call: false,
                     },
-                    type_hint: Some(LirType::I64),
+                    result: Some(LirRegister { id: 1, ty: LirType::I64 }),
                     debug_info: None,
                 }],
-                terminator: LirTerminator::Return(Some(LirValue::Register(1))),
+                terminator: LirTerminator::Return(Some(LirValue::register(1, LirType::I64))),
                 predecessors: Vec::new(),
                 successors: Vec::new(),
             }],
@@ -785,9 +803,11 @@ mod tests {
             is_declaration: false,
         };
         LirProgram {
+            data_layout: data_layout(),
             functions: vec![callee, caller],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            comptime_entries: Vec::new(),
             queries: Vec::new(),
         }
     }

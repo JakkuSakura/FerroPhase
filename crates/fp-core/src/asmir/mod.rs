@@ -2,7 +2,9 @@ pub mod pretty;
 pub mod sysop;
 
 use crate::container::ContainerFile;
-use crate::lir::{CallingConvention, DebugInfo, Linkage, Name, StackSlot, Ty, Visibility};
+use crate::lir::{
+    CallingConvention, DebugInfo, Linkage, LirDataLayout, Name, StackSlot, Ty, Visibility,
+};
 pub use sysop::{AsmSysOp, PosixDirentStyle, PosixFlagStyle};
 
 pub type AsmBlockId = u32;
@@ -13,6 +15,7 @@ pub type AsmType = Ty;
 #[derive(Debug, Clone, PartialEq)]
 pub struct AsmProgram {
     pub target: AsmTarget,
+    pub data_layout: LirDataLayout,
     /// If this program was lifted from an existing container / assembly stream,
     /// this records the original target so emitters can decide whether it is
     /// safe to reuse preserved machine encodings.
@@ -700,9 +703,10 @@ pub enum AsmLandingPadClause {
 }
 
 impl AsmProgram {
-    pub fn new(target: AsmTarget) -> Self {
+    pub fn new(target: AsmTarget, data_layout: LirDataLayout) -> Self {
         Self {
             target,
+            data_layout,
             lifted_from: None,
             container: None,
             sections: Vec::new(),
@@ -710,6 +714,18 @@ impl AsmProgram {
             functions: Vec::new(),
             type_definitions: Vec::new(),
         }
+    }
+}
+
+impl AsmTarget {
+    pub fn data_layout(&self) -> LirDataLayout {
+        let pointer_size = u32::from(self.pointer_width / 8);
+        LirDataLayout::new(
+            u32::from(self.pointer_width),
+            pointer_size,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .expect("AsmTarget must define a valid data layout")
     }
 }
 
@@ -726,13 +742,14 @@ mod tests {
 
     #[test]
     fn asmir_program_construction_is_stable() {
-        let mut program = AsmProgram::new(AsmTarget {
+        let target = AsmTarget {
             architecture: AsmArchitecture::X86_64,
             object_format: AsmObjectFormat::Elf,
             endianness: AsmEndianness::Little,
             pointer_width: 64,
             default_calling_convention: Some(CallingConvention::X86_64SysV),
-        });
+        };
+        let mut program = AsmProgram::new(target.clone(), target.data_layout());
         program.sections.push(AsmSection {
             name: ".text".to_string(),
             kind: AsmSectionKind::Text,

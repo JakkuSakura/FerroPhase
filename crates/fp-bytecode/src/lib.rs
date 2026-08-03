@@ -1812,19 +1812,19 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
         mir::ConstantKind::Float(value) => Ok(BytecodeConst::Float(*value)),
         mir::ConstantKind::Bool(value) => Ok(BytecodeConst::Bool(*value)),
         mir::ConstantKind::Str(value) => Ok(BytecodeConst::Str(value.clone())),
-        mir::ConstantKind::Fn(symbol, _) => {
+        mir::ConstantKind::Fn(symbol) => {
             Ok(BytecodeConst::Function(symbol.as_str().to_string()))
         }
-        mir::ConstantKind::FnDef(def_id, _) => Err(BytecodeError::Lowering {
+        mir::ConstantKind::FnDef(def_id) => Err(BytecodeError::Lowering {
             message: format!(
                 "function definition reference {:?} cannot be represented in bytecode",
                 def_id
             ),
         }),
-        mir::ConstantKind::Global(symbol, _) => {
+        mir::ConstantKind::Global(symbol) => {
             Ok(BytecodeConst::Function(symbol.as_str().to_string()))
         }
-        mir::ConstantKind::Val(value, _) => lower_const_value(value),
+        mir::ConstantKind::Val(value) => lower_const_value(value),
         mir::ConstantKind::Ty(_) => {
             emit_lowering_warning(format!(
                 "unsupported constant: {:?}; using unit dummy",
@@ -1917,16 +1917,16 @@ fn lower_place(place: &mir::Place) -> Result<BytecodePlace, BytecodeError> {
 fn lower_callee(operand: &mir::Operand) -> Result<BytecodeCallee, BytecodeError> {
     match operand {
         mir::Operand::Constant(constant) => match &constant.literal {
-            mir::ConstantKind::Fn(symbol, _) => {
+            mir::ConstantKind::Fn(symbol) => {
                 Ok(BytecodeCallee::Function(symbol.as_str().to_string()))
             }
-            mir::ConstantKind::FnDef(def_id, _) => Err(BytecodeError::Lowering {
+            mir::ConstantKind::FnDef(def_id) => Err(BytecodeError::Lowering {
                 message: format!(
                     "function definition reference {:?} cannot be called from bytecode",
                     def_id
                 ),
             }),
-            mir::ConstantKind::Global(symbol, _) => {
+            mir::ConstantKind::Global(symbol) => {
                 Ok(BytecodeCallee::Function(symbol.as_str().to_string()))
             }
             _ => {

@@ -1488,10 +1488,11 @@ impl CompilerDriver {
                 mir::ConstantKind::Str(s)
             }
             Value::Null(_) => mir::ConstantKind::Null,
-            _ => mir::ConstantKind::Val(self.value_to_const_value(value, ty)?, ty.clone()),
+            _ => mir::ConstantKind::Val(self.value_to_const_value(value, ty)?),
         };
         Some(mir::Constant {
             span: Span::null(),
+            ty: ty.clone(),
             user_ty: None,
             literal,
         })

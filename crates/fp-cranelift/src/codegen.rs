@@ -7,9 +7,10 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch, Variab
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use fp_core::error::Result;
-use fp_core::lir::layout::{size_of, struct_layout};
 use fp_core::lir::{
     BasicBlockId, CallingConvention, Linkage as LirLinkage, LirBasicBlock, LirConstant,
+    LirConstantAggregate, LirConstantData, LirConstantKind, LirDataLayout, LirFloat, LirFunctionRef, LirInteger,
+    LirValueKind,
     LirFunction, LirFunctionSignature, LirGlobalRelocation, LirInstruction, LirInstructionKind,
     LirIntrinsicKind, LirProgram, LirRelocationTarget, LirTerminator, LirType, LirValue,
 };
@@ -19,6 +20,19 @@ use target_lexicon::Triple;
 const FPVALUE_SIZE: i32 = 16;
 const FPVALUE_TAG_OFFSET: i32 = 0;
 const FPVALUE_DATA_OFFSET: i32 = 8;
+
+fn target_data_layout() -> LirDataLayout {
+    LirDataLayout::new(64, 8, vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)])
+        .expect("valid Cranelift target data layout")
+}
+
+fn size_of(ty: &LirType) -> u64 {
+    target_data_layout().size_of(ty).expect("Cranelift type must have a layout")
+}
+
+fn struct_layout(ty: &LirType) -> Option<fp_core::lir::layout::StructLayout> {
+    target_data_layout().struct_layout(ty).ok().flatten()
+}
 
 #[derive(Clone, Copy)]
 enum FpValueTag {
@@ -145,7 +159,10 @@ impl CraneliftBackend {
                     (bytes, relocations)
                 } else {
                     let bytes = match initializer {
-                        LirConstant::Bytes(bytes) => bytes.clone(),
+                        LirConstant {
+                            kind: LirConstantKind::Data(LirConstantData::Bytes(bytes)),
+                            ..
+                        } => bytes.clone(),
                         _ => {
                             return Err(fp_core::error::Error::from(
                                 "LIR global relocations require a byte initializer",
@@ -359,7 +376,11 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
             let mut phis = Vec::new();
             for instr in &block.instructions {
                 if let LirInstructionKind::Phi { incoming } = &instr.kind {
-                    let ty = instr.type_hint.clone().unwrap_or(LirType::I32);
+                    let ty = instr
+                        .result
+                        .as_ref()
+                        .map(|result| result.ty.clone())
+                        .ok_or_else(|| fp_core::error::Error::from("phi has no result type"))?;
                     phis.push(PhiNode {
                         instr_id: instr.id,
                         ty,
@@ -476,7 +497,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 address, alignment, ..
             } => {
                 let addr = self.value_for(address)?;
-                let ty = instr.type_hint.clone().unwrap_or(LirType::I64);
+                let ty = instr.result.as_ref().map(|result| result.ty.clone()).ok_or_else(|| fp_core::error::Error::from("load has no result type"))?;
                 let mem_ty = clif_type_for_lir(&ty, self.pointer_type);
                 let mut flags = MemFlags::new();
                 if alignment.is_some() {
@@ -500,10 +521,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 self.builder.ins().store(flags, stored, addr, 0);
             }
             LirInstructionKind::Alloca { size, .. } => {
-                let ptr_ty = instr
-                    .type_hint
-                    .clone()
-                    .unwrap_or(LirType::Ptr(Box::new(LirType::I8)));
+                let ptr_ty = instr.result.as_ref().map(|result| result.ty.clone()).ok_or_else(|| fp_core::error::Error::from("alloca has no result type"))?;
                 let LirType::Ptr(inner) = ptr_ty.clone() else {
                     return Err(fp_core::error::Error::from("alloca expects pointer type"));
                 };
@@ -532,7 +550,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
             }
             LirInstructionKind::PtrToInt(value) => {
                 let val = self.value_for(value)?;
-                let target_ty = instr.type_hint.clone().unwrap_or(LirType::I64);
+                let target_ty = instr.result.as_ref().map(|result| result.ty.clone()).ok_or_else(|| fp_core::error::Error::from("ptrtoint has no result type"))?;
                 let ty = clif_type_for_lir(&target_ty, self.pointer_type);
                 let casted = self.bitcast_value(ty, val);
                 self.record_result(instr, casted);
@@ -629,7 +647,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 self.record_result(instr, base);
             }
             LirInstructionKind::Call { function, args, .. } => {
-                let call = self.lower_call(function, args, instr.type_hint.clone())?;
+                let call = self.lower_call(function, args, instr.result.as_ref().map(|result| result.ty.clone()))?;
                 if let Some(ret) = call {
                     self.record_result(instr, ret);
                 }
@@ -640,7 +658,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 ));
             }
             LirInstructionKind::IntrinsicCall { kind, format, args } => {
-                let value = self.lower_intrinsic(kind, format, args, instr.type_hint.clone())?;
+                let value = self.lower_intrinsic(kind, format, args, instr.result.as_ref().map(|result| result.ty.clone()))?;
                 if let Some(val) = value {
                     self.record_result(instr, val);
                 }
@@ -673,7 +691,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 self.builder
                     .ins()
                     .trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);
-                if let Some(ty) = instr.type_hint.clone() {
+                if let Some(ty) = instr.result.as_ref().map(|result| result.ty.clone()) {
                     let val = self.zero_value(clif_type_for_lir(&ty, self.pointer_type));
                     self.record_result(instr, val);
                 }
@@ -869,16 +887,16 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
             call_args.push(val);
         }
 
-        let call = match target {
-            LirValue::Function(name) => {
-                let func_id = *self.func_ids.get(name).ok_or_else(|| {
+        let call = match &target.kind {
+            LirValueKind::Function(LirFunctionRef::Name(name)) => {
+                let func_id = *self.func_ids.get(name.as_str()).ok_or_else(|| {
                     fp_core::error::Error::from(format!("unknown function {}", name))
                 })?;
                 let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
                 self.builder.ins().call(func_ref, &call_args)
             }
-            other => {
-                let callee = self.value_for(other)?;
+            _ => {
+                let callee = self.value_for(target)?;
                 let sig_ref = self.builder.import_signature(sig);
                 self.builder
                     .ins()
@@ -1049,8 +1067,8 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
     ) -> Result<(FpValueTag, cranelift_codegen::ir::Value)> {
         let val = self.value_for(arg)?;
         let ty = self.type_for_value(arg)?;
-        let tag = match (arg, ty.clone()) {
-            (LirValue::Constant(LirConstant::UInt(_, _)), _) => FpValueTag::U64,
+        let tag = match (&arg.kind, ty.clone()) {
+            (LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(LirInteger::I64(_)))), _) => FpValueTag::U64,
             (_, LirType::F32 | LirType::F64) => FpValueTag::F64,
             (_, LirType::I1) => FpValueTag::Bool,
             (_, LirType::I8) => FpValueTag::Char,
@@ -1125,142 +1143,96 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
     }
 
     fn value_for(&mut self, value: &LirValue) -> Result<cranelift_codegen::ir::Value> {
-        match value {
-            LirValue::Register(id) => self
+        match &value.kind {
+            LirValueKind::Register(id) => self
                 .reg_values
                 .get(id)
                 .copied()
                 .ok_or_else(|| fp_core::error::Error::from(format!("unknown register {}", id))),
-            LirValue::Constant(constant) => self.constant_value(constant),
-            LirValue::Global(name, _) => {
-                let data_id = *self.data_ids.get(name).ok_or_else(|| {
+            LirValueKind::Constant(_) => self.constant_value(value),
+            LirValueKind::Global(name) => {
+                let data_id = *self.data_ids.get(name.as_str()).ok_or_else(|| {
                     fp_core::error::Error::from(format!("unknown global {}", name))
                 })?;
                 let gv = self.module.declare_data_in_func(data_id, self.builder.func);
                 Ok(self.builder.ins().global_value(self.pointer_type, gv))
             }
-            LirValue::Function(name) => {
-                let func_id = *self.func_ids.get(name).ok_or_else(|| {
-                    fp_core::error::Error::from(format!("unknown function {}", name))
-                })?;
-                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
-                Ok(self.builder.ins().func_addr(self.pointer_type, func_ref))
-            }
-            LirValue::FunctionInPackage(package_id, name) => {
-                Err(fp_core::error::Error::from(format!(
-                    "package-qualified function `{:?}::{name}` is not supported by Cranelift lowering",
-                    package_id
-                )))
-            }
-            LirValue::FunctionDef(def_id) => Err(fp_core::error::Error::from(format!(
-                "function definition `{def_id}` is not supported by Cranelift lowering"
-            ))),
-            LirValue::Local(id) => self
-                .local_values
-                .get(id)
-                .copied()
-                .ok_or_else(|| fp_core::error::Error::from(format!("unknown local {}", id))),
-            LirValue::StackSlot(id) => {
-                let slot = *self.stack_slots.get(id).ok_or_else(|| {
-                    fp_core::error::Error::from(format!("unknown stack slot {}", id))
-                })?;
-                Ok(self.builder.ins().stack_addr(self.pointer_type, slot, 0))
-            }
-            LirValue::Undef(ty) | LirValue::Null(ty) => {
-                let clif_ty = clif_type_for_lir(ty, self.pointer_type);
-                Ok(self.zero_value(clif_ty))
-            }
-        }
-    }
-
-    fn constant_value(&mut self, constant: &LirConstant) -> Result<cranelift_codegen::ir::Value> {
-        match constant {
-            LirConstant::Int(val, ty) => {
-                let ty = clif_type_for_lir(ty, self.pointer_type);
-                Ok(self.builder.ins().iconst(ty, *val))
-            }
-            LirConstant::UInt(val, ty) => {
-                let ty = clif_type_for_lir(ty, self.pointer_type);
-                Ok(self.builder.ins().iconst(ty, *val as i64))
-            }
-            LirConstant::F32(val) => Ok(self.builder.ins().f32const(*val)),
-            LirConstant::Float(val, ty) => {
-                let ty = clif_type_for_lir(ty, self.pointer_type);
-                if ty == types::F32 {
-                    Ok(self.builder.ins().f32const(*val as f32))
-                } else {
-                    Ok(self.builder.ins().f64const(*val))
-                }
-            }
-            LirConstant::Bool(val) => Ok(self
-                .builder
-                .ins()
-                .iconst(types::I8, if *val { 1 } else { 0 })),
-            LirConstant::String(text) => self.intern_cstring(text),
-            LirConstant::Null(ty) | LirConstant::Undef(ty) => {
-                let clif_ty = clif_type_for_lir(ty, self.pointer_type);
-                Ok(self.zero_value(clif_ty))
-            }
-            LirConstant::GlobalRef(name, _ty, indices) => {
-                let base = LirValue::Global(name.to_string(), LirType::Ptr(Box::new(LirType::I8)));
-                let base_val = self.value_for(&base)?;
-                let offset = gep_offset_const(&LirType::Ptr(Box::new(LirType::I8)), indices)?;
-                Ok(self.builder.ins().iadd_imm(base_val, offset as i64))
-            }
-            LirConstant::FunctionRef(name, _ty) => {
+            LirValueKind::Function(LirFunctionRef::Name(name)) => {
                 let func_id = *self.func_ids.get(name.as_str()).ok_or_else(|| {
                     fp_core::error::Error::from(format!("unknown function {}", name))
                 })?;
                 let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
                 Ok(self.builder.ins().func_addr(self.pointer_type, func_ref))
             }
-            LirConstant::Bytes(_) | LirConstant::Array(_, _) | LirConstant::Struct(_, _) => Err(
+            LirValueKind::Function(LirFunctionRef::Package { package_id, name }) => {
+                Err(fp_core::error::Error::from(format!(
+                    "package-qualified function `{:?}::{name}` is not supported by Cranelift lowering",
+                    package_id
+                )))
+            }
+            LirValueKind::Function(LirFunctionRef::Definition(def_id)) => Err(fp_core::error::Error::from(format!(
+                "function definition `{def_id}` is not supported by Cranelift lowering"
+            ))),
+            LirValueKind::Local(id) => self
+                .local_values
+                .get(id)
+                .copied()
+                .ok_or_else(|| fp_core::error::Error::from(format!("unknown local {}", id))),
+            LirValueKind::StackSlot(id) => {
+                let slot = *self.stack_slots.get(id).ok_or_else(|| {
+                    fp_core::error::Error::from(format!("unknown stack slot {}", id))
+                })?;
+                Ok(self.builder.ins().stack_addr(self.pointer_type, slot, 0))
+            }
+        }
+    }
+
+    fn constant_value(&mut self, value: &LirValue) -> Result<cranelift_codegen::ir::Value> {
+        let LirValueKind::Constant(kind) = &value.kind else { return Err(fp_core::error::Error::from("expected constant")); };
+        match kind {
+            LirConstantKind::Data(LirConstantData::Integer(integer)) => {
+                let ty = clif_type_for_lir(&value.ty, self.pointer_type);
+                let raw = match integer {
+                    LirInteger::I1(v) => i64::from(*v), LirInteger::I8(v) => i64::from(*v),
+                    LirInteger::I16(v) => i64::from(*v), LirInteger::I32(v) => i64::from(*v),
+                    LirInteger::I64(v) => *v as i64, LirInteger::I128(_) | LirInteger::Arbitrary(_) => return Err(fp_core::error::Error::from("wide integer Cranelift constant unsupported")),
+                };
+                Ok(self.builder.ins().iconst(ty, raw))
+            }
+            LirConstantKind::Data(LirConstantData::Float(float)) => {
+                Ok(match float { LirFloat::F32(v) => self.builder.ins().f32const(f32::from_bits(*v)), LirFloat::F64(v) => self.builder.ins().f64const(f64::from_bits(*v)) })
+            }
+            LirConstantKind::Null | LirConstantKind::Undef => {
+                let clif_ty = clif_type_for_lir(&value.ty, self.pointer_type);
+                Ok(self.zero_value(clif_ty))
+            }
+            LirConstantKind::GlobalAddress { global: name } => {
+                let base = LirValue::global(name.clone(), LirType::Ptr(Box::new(LirType::I8)));
+                let base_val = self.value_for(&base)?;
+                let offset = 0;
+                Ok(self.builder.ins().iadd_imm(base_val, offset as i64))
+            }
+            LirConstantKind::FunctionAddress(LirFunctionRef::Name(name)) => {
+                let func_id = *self.func_ids.get(name.as_str()).ok_or_else(|| {
+                    fp_core::error::Error::from(format!("unknown function {}", name))
+                })?;
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                Ok(self.builder.ins().func_addr(self.pointer_type, func_ref))
+            }
+            LirConstantKind::Data(LirConstantData::Bytes(_)) | LirConstantKind::Aggregate(_) => Err(
                 fp_core::error::Error::from("aggregate constants must be lowered via globals"),
             ),
+            _ => Err(fp_core::error::Error::from("unsupported Cranelift constant")),
         }
     }
 
     fn type_for_value(&self, value: &LirValue) -> Result<LirType> {
-        match value {
-            LirValue::Register(id) => self
-                .reg_types
-                .get(id)
-                .cloned()
-                .ok_or_else(|| fp_core::error::Error::from("missing register type")),
-            LirValue::Local(id) => self
-                .local_types
-                .get(id)
-                .cloned()
-                .ok_or_else(|| fp_core::error::Error::from("missing local type")),
-            LirValue::StackSlot(_) => Ok(LirType::Ptr(Box::new(LirType::I8))),
-            LirValue::Constant(constant) => Ok(match constant {
-                LirConstant::Int(_, ty) => ty.clone(),
-                LirConstant::UInt(_, ty) => ty.clone(),
-                LirConstant::F32(_) => LirType::F32,
-                LirConstant::Float(_, ty) => ty.clone(),
-                LirConstant::Bool(_) => LirType::I1,
-                LirConstant::String(_) => LirType::Ptr(Box::new(LirType::I8)),
-                LirConstant::Bytes(bytes) => {
-                    LirType::Array(Box::new(LirType::I8), bytes.len() as u64)
-                }
-                LirConstant::Array(_, ty) => ty.clone(),
-                LirConstant::Struct(_, ty) => ty.clone(),
-                LirConstant::GlobalRef(_, ty, _) => ty.clone(),
-                LirConstant::FunctionRef(_, ty) => ty.clone(),
-                LirConstant::Null(ty) => ty.clone(),
-                LirConstant::Undef(ty) => ty.clone(),
-            }),
-            LirValue::Global(_, ty) => Ok(ty.clone()),
-            LirValue::Function(_)
-            | LirValue::FunctionInPackage(_, _)
-            | LirValue::FunctionDef(_) => Ok(LirType::Ptr(Box::new(LirType::I8))),
-            LirValue::Undef(ty) | LirValue::Null(ty) => Ok(ty.clone()),
-        }
+        Ok(value.ty.clone())
     }
 
     fn record_result(&mut self, instr: &LirInstruction, value: cranelift_codegen::ir::Value) {
         self.reg_values.insert(instr.id, value);
-        if let Some(ty) = instr.type_hint.clone() {
+        if let Some(ty) = instr.result.as_ref().map(|result| result.ty.clone()) {
             self.reg_types.insert(instr.id, ty);
         }
     }
@@ -1284,10 +1256,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
     ) -> Result<cranelift_codegen::ir::Value> {
         let lhs_val = self.value_for(lhs)?;
         let rhs_val = self.value_for(rhs)?;
-        let ty = instr
-            .type_hint
-            .clone()
-            .unwrap_or_else(|| self.type_for_value(lhs).unwrap_or(LirType::I64));
+        let ty = instr.result.as_ref().map(|result| result.ty.clone()).ok_or_else(|| fp_core::error::Error::from("arithmetic has no result type"))?;
         let clif_ty = clif_type_for_lir(&ty, self.pointer_type);
         let (l, r) = self.coerce_values(lhs_val, rhs_val, clif_ty);
         let value = match op {
@@ -1346,10 +1315,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
     ) -> Result<cranelift_codegen::ir::Value> {
         let lhs_val = self.value_for(lhs)?;
         let rhs_val = self.value_for(rhs)?;
-        let ty = instr
-            .type_hint
-            .clone()
-            .unwrap_or_else(|| self.type_for_value(lhs).unwrap_or(LirType::I64));
+        let ty = instr.result.as_ref().map(|result| result.ty.clone()).ok_or_else(|| fp_core::error::Error::from("integer operation has no result type"))?;
         let clif_ty = clif_type_for_lir(&ty, self.pointer_type);
         let (l, r) = self.coerce_values(lhs_val, rhs_val, clif_ty);
         let value = match op {
@@ -1372,10 +1338,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
     ) -> Result<()> {
         let lhs_val = self.value_for(lhs)?;
         let rhs_val = self.value_for(rhs)?;
-        let ty = instr
-            .type_hint
-            .clone()
-            .unwrap_or_else(|| self.type_for_value(lhs).unwrap_or(LirType::I64));
+        let ty = instr.result.as_ref().map(|result| result.ty.clone()).ok_or_else(|| fp_core::error::Error::from("comparison has no result type"))?;
         let clif_ty = clif_type_for_lir(&ty, self.pointer_type);
         let (l, r) = self.coerce_values(lhs_val, rhs_val, clif_ty);
         let value = if clif_ty.is_float() {
@@ -1408,8 +1371,12 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
             match &current {
                 LirType::Struct { fields, .. } => {
                     let index = match idx {
-                        LirValue::Constant(LirConstant::Int(v, _)) => *v as usize,
-                        LirValue::Constant(LirConstant::UInt(v, _)) => *v as usize,
+                        LirValue {
+                            kind: LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(
+                                LirInteger::I64(v),
+                            ))),
+                            ..
+                        } => *v as usize,
                         _ => {
                             return Err(fp_core::error::Error::from(
                                 "struct GEP requires constant index",
@@ -1523,6 +1490,13 @@ fn clif_type_for_lir(
     pointer: cranelift_codegen::ir::Type,
 ) -> cranelift_codegen::ir::Type {
     match ty {
+        LirType::Integer(width) => match width {
+            1..=8 => types::I8,
+            9..=16 => types::I16,
+            17..=32 => types::I32,
+            33..=64 => types::I64,
+            _ => types::I128,
+        },
         LirType::I1 => types::I8,
         LirType::I8 => types::I8,
         LirType::I16 => types::I16,
@@ -1580,54 +1554,52 @@ fn encode_constant(
     ty: &LirType,
     base: usize,
 ) -> Result<()> {
-    match constant {
-        LirConstant::Int(val, _) => write_int(buf, base, *val as u128, size_of(ty) as usize, true),
-        LirConstant::UInt(val, _) => {
-            write_int(buf, base, *val as u128, size_of(ty) as usize, false)
+    match &constant.kind {
+        LirConstantKind::Data(LirConstantData::Integer(integer)) => {
+            let value = match integer {
+                LirInteger::I1(v) => u128::from(*v), LirInteger::I8(v) => u128::from(*v),
+                LirInteger::I16(v) => u128::from(*v), LirInteger::I32(v) => u128::from(*v),
+                LirInteger::I64(v) => u128::from(*v), LirInteger::I128(v) => *v,
+                LirInteger::Arbitrary(_) => return Err(fp_core::error::Error::from("wide integer data encoding unsupported")),
+            };
+            write_int(buf, base, value, size_of(ty) as usize, false);
         }
-        LirConstant::F32(val) => write_float(buf, base, f64::from(*val), size_of(ty) as usize),
-        LirConstant::Float(val, _) => write_float(buf, base, *val, size_of(ty) as usize),
-        LirConstant::Bool(val) => write_int(buf, base, if *val { 1 } else { 0 }, 1, false),
-        LirConstant::String(text) => {
-            let bytes = text.as_bytes();
+        LirConstantKind::Data(LirConstantData::Float(float)) => match float {
+            LirFloat::F32(value) => write_float(buf, base, f32::from_bits(*value) as f64, size_of(ty) as usize),
+            LirFloat::F64(value) => write_float(buf, base, f64::from_bits(*value), size_of(ty) as usize),
+        },
+        LirConstantKind::Data(LirConstantData::Bytes(bytes)) => {
             buf[base..base + bytes.len()].copy_from_slice(bytes);
         }
-        LirConstant::Bytes(bytes) => {
-            buf[base..base + bytes.len()].copy_from_slice(bytes);
-        }
-        LirConstant::Array(elements, elem_ty) => {
+        LirConstantKind::Aggregate(LirConstantAggregate::Array(elements))
+        | LirConstantKind::Aggregate(LirConstantAggregate::Vector(elements)) => {
+            let LirType::Array(elem_ty, _) = ty else { return Err(fp_core::error::Error::from("array constant type mismatch")); };
             let elem_size = size_of(elem_ty) as usize;
             for (idx, element) in elements.iter().enumerate() {
                 encode_constant(buf, relocs, element, elem_ty, base + idx * elem_size)?;
             }
         }
-        LirConstant::Struct(fields, struct_ty) => {
-            let LirType::Struct {
-                fields: field_tys, ..
-            } = struct_ty
-            else {
-                return Err(fp_core::error::Error::from("struct constant type mismatch"));
-            };
-            let layout = struct_layout(struct_ty)
-                .ok_or_else(|| fp_core::error::Error::from("missing struct layout"))?;
+        LirConstantKind::Aggregate(LirConstantAggregate::Struct(fields)) => {
+            let LirType::Struct { fields: field_tys, .. } = ty else { return Err(fp_core::error::Error::from("struct constant type mismatch")); };
+            let layout = struct_layout(ty).ok_or_else(|| fp_core::error::Error::from("missing struct layout"))?;
             for (idx, field) in fields.iter().enumerate() {
-                let offset = layout.field_offsets[idx] as usize;
-                encode_constant(buf, relocs, field, &field_tys[idx], base + offset)?;
+                encode_constant(buf, relocs, field, &field_tys[idx], base + layout.field_offsets[idx] as usize)?;
             }
         }
-        LirConstant::GlobalRef(name, _, _) => {
+        LirConstantKind::GlobalAddress { global: name } => {
             relocs.push(DataReloc::Data {
                 offset: base,
                 name: name.to_string(),
             });
         }
-        LirConstant::FunctionRef(name, _) => {
+        LirConstantKind::FunctionAddress(LirFunctionRef::Name(name)) => {
             relocs.push(DataReloc::Func {
                 offset: base,
                 name: name.to_string(),
             });
         }
-        LirConstant::Null(_) | LirConstant::Undef(_) => {}
+        LirConstantKind::Null | LirConstantKind::Undef => {}
+        _ => return Err(fp_core::error::Error::from("unsupported constant encoding")),
     }
     Ok(())
 }
@@ -1654,38 +1626,6 @@ fn write_float(buf: &mut [u8], offset: usize, val: f64, size: usize) {
             write_int(buf, offset, bits as u128, 8, false);
         }
     }
-}
-
-fn gep_offset_const(base_ty: &LirType, indices: &[u64]) -> Result<i64> {
-    let LirType::Ptr(inner) = base_ty else {
-        return Err(fp_core::error::Error::from("GEP expects pointer base"));
-    };
-    let mut offset = 0i64;
-    let mut current = inner.as_ref().clone();
-    for idx in indices {
-        let idx_val = *idx as i64;
-        match &current {
-            LirType::Array(elem, _) => {
-                let elem_size = size_of(elem) as i64;
-                offset += idx_val * elem_size;
-                current = *elem.clone();
-            }
-            LirType::Struct { fields, .. } => {
-                let layout = struct_layout(&current)
-                    .ok_or_else(|| fp_core::error::Error::from("missing struct layout"))?;
-                let index = idx_val as usize;
-                if index < layout.field_offsets.len() {
-                    offset += layout.field_offsets[index] as i64;
-                    current = fields[index].clone();
-                }
-            }
-            _ => {
-                let elem_size = size_of(&current) as i64;
-                offset += idx_val * elem_size;
-            }
-        }
-    }
-    Ok(offset)
 }
 
 fn aggregate_offset(agg_ty: &LirType, indices: &[u32]) -> Result<usize> {
@@ -1728,9 +1668,15 @@ fn aggregate_element_type(agg_ty: &LirType, indices: &[u32]) -> Result<LirType> 
 }
 
 fn const_i64(value: &LirValue) -> Result<i64> {
-    match value {
-        LirValue::Constant(LirConstant::Int(val, _)) => Ok(*val),
-        LirValue::Constant(LirConstant::UInt(val, _)) => Ok(*val as i64),
+    match &value.kind {
+        LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(integer))) => match integer {
+            LirInteger::I8(value) => Ok(i64::from(*value)),
+            LirInteger::I16(value) => Ok(i64::from(*value)),
+            LirInteger::I32(value) => Ok(i64::from(*value)),
+            LirInteger::I64(value) => Ok(*value as i64),
+            LirInteger::I1(value) => Ok(i64::from(*value)),
+            LirInteger::I128(_) | LirInteger::Arbitrary(_) => Err(fp_core::error::Error::from("wide integer alloca size unsupported")),
+        },
         _ => Err(fp_core::error::Error::from("alloca size must be constant")),
     }
 }

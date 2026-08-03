@@ -617,7 +617,7 @@ impl ValueEscaped {
         self.ptr.as_mut_ptr()
     }
     pub unsafe fn drop_in_place<T>(&mut self) {
-        std::ptr::drop_in_place(self.as_mut_ptr() as *mut T);
+        unsafe { std::ptr::drop_in_place(self.as_mut_ptr() as *mut T) };
     }
 }
 impl Drop for ValueEscaped {

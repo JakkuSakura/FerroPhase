@@ -1,19 +1,27 @@
 use fp_core::lir::{
     CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-    LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, Name,
+    LirInstruction, LirInstructionKind, LirInteger, LirProgram, LirRegister, LirTerminator,
+    LirType, LirValue, Name,
 };
+
+fn i64_value(value: u64) -> LirValue {
+    LirValue::constant(
+        LirConstant::integer(LirType::I64, LirInteger::I64(value)).unwrap(),
+    )
+}
 
 fn sample_program() -> LirProgram {
     let add_inst = LirInstruction {
         id: 1,
         kind: LirInstructionKind::Add(
-            LirValue::Constant(LirConstant::Int(40, LirType::I64)),
-            LirValue::Constant(LirConstant::Int(2, LirType::I64)),
+            i64_value(40),
+            i64_value(2),
         ),
-        type_hint: Some(LirType::I64),
+        result: Some(LirRegister { id: 1, ty: LirType::I64 }),
         debug_info: None,
     };
     let main = LirFunction {
+        def_id: None,
         name: Name::new("main"),
         signature: LirFunctionSignature {
             params: Vec::new(),
@@ -24,7 +32,7 @@ fn sample_program() -> LirProgram {
             id: 0,
             label: Some(Name::new("entry")),
             instructions: vec![add_inst],
-            terminator: LirTerminator::Return(Some(LirValue::Register(1))),
+            terminator: LirTerminator::Return(Some(LirValue::register(1, LirType::I64))),
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -38,6 +46,13 @@ fn sample_program() -> LirProgram {
         functions: vec![main],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        data_layout: fp_core::lir::LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .unwrap(),
+        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }
@@ -46,13 +61,14 @@ fn compare_program() -> LirProgram {
     let cmp_inst = LirInstruction {
         id: 1,
         kind: LirInstructionKind::Eq(
-            LirValue::Constant(LirConstant::Int(1, LirType::I64)),
-            LirValue::Constant(LirConstant::Int(1, LirType::I64)),
+            i64_value(1),
+            i64_value(1),
         ),
-        type_hint: Some(LirType::I1),
+        result: Some(LirRegister { id: 1, ty: LirType::I1 }),
         debug_info: None,
     };
     let main = LirFunction {
+        def_id: None,
         name: Name::new("main"),
         signature: LirFunctionSignature {
             params: Vec::new(),
@@ -65,7 +81,7 @@ fn compare_program() -> LirProgram {
                 label: Some(Name::new("entry")),
                 instructions: vec![cmp_inst],
                 terminator: LirTerminator::CondBr {
-                    condition: LirValue::Register(1),
+                    condition: LirValue::register(1, LirType::I1),
                     if_true: 1,
                     if_false: 2,
                 },
@@ -76,10 +92,7 @@ fn compare_program() -> LirProgram {
                 id: 1,
                 label: Some(Name::new("then")),
                 instructions: Vec::new(),
-                terminator: LirTerminator::Return(Some(LirValue::Constant(LirConstant::Int(
-                    1,
-                    LirType::I64,
-                )))),
+                terminator: LirTerminator::Return(Some(i64_value(1))),
                 predecessors: vec![0],
                 successors: Vec::new(),
             },
@@ -87,10 +100,7 @@ fn compare_program() -> LirProgram {
                 id: 2,
                 label: Some(Name::new("else")),
                 instructions: Vec::new(),
-                terminator: LirTerminator::Return(Some(LirValue::Constant(LirConstant::Int(
-                    0,
-                    LirType::I64,
-                )))),
+                terminator: LirTerminator::Return(Some(i64_value(0))),
                 predecessors: vec![0],
                 successors: Vec::new(),
             },
@@ -105,6 +115,13 @@ fn compare_program() -> LirProgram {
         functions: vec![main],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        data_layout: fp_core::lir::LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .unwrap(),
+        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }

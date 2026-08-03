@@ -6,7 +6,16 @@ use fp_core::asmir::{
 use fp_core::container::{
     ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerKind,
 };
-use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
+use fp_core::lir::{CallingConvention, Linkage, LirDataLayout, Name, Visibility};
+
+fn layout() -> LirDataLayout {
+    LirDataLayout::new(
+        64,
+        8,
+        vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+    )
+    .expect("valid test data layout")
+}
 
 #[test]
 fn materialize_maps_stderr_to_darwin_global() {
@@ -16,7 +25,7 @@ fn materialize_maps_stderr_to_darwin_global() {
         endianness: fp_core::asmir::AsmEndianness::Little,
         pointer_width: 64,
         default_calling_convention: Some(CallingConvention::C),
-    });
+    }, layout());
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -109,7 +118,7 @@ fn materialize_removes_elf_copy_reloc_getopt_globals_for_darwin() {
         endianness: fp_core::asmir::AsmEndianness::Little,
         pointer_width: 64,
         default_calling_convention: Some(CallingConvention::C),
-    });
+    }, layout());
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -155,7 +164,7 @@ fn materialize_rewrites_indirect_exit_calls_to_exit_on_darwin_cross_materializat
         endianness: fp_core::asmir::AsmEndianness::Little,
         pointer_width: 64,
         default_calling_convention: Some(CallingConvention::C),
-    });
+    }, layout());
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -255,7 +264,7 @@ fn materialize_rewrites_exit_to_exit_on_darwin_cross_materialization() {
         endianness: fp_core::asmir::AsmEndianness::Little,
         pointer_width: 64,
         default_calling_convention: Some(CallingConvention::C),
-    });
+    }, layout());
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -335,7 +344,7 @@ fn materialize_rewrites_indirect_cxa_atexit_calls_to_noop_stub() {
         endianness: fp_core::asmir::AsmEndianness::Little,
         pointer_width: 64,
         default_calling_convention: Some(CallingConvention::C),
-    });
+    }, layout());
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -454,7 +463,7 @@ fn materialize_inserts_getprogname_for_try_help_diagnostics() {
         endianness: fp_core::asmir::AsmEndianness::Little,
         pointer_width: 64,
         default_calling_convention: Some(CallingConvention::C),
-    });
+    }, layout());
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -596,7 +605,7 @@ fn materialize_rewrites_globalref_constants_for_stdio_got_slots() {
         endianness: fp_core::asmir::AsmEndianness::Little,
         pointer_width: 64,
         default_calling_convention: Some(CallingConvention::C),
-    });
+    }, layout());
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -673,7 +682,7 @@ fn materialize_dereferences_stdio_got_slot_on_darwin() {
         endianness: fp_core::asmir::AsmEndianness::Little,
         pointer_width: 64,
         default_calling_convention: Some(CallingConvention::C),
-    });
+    }, layout());
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,

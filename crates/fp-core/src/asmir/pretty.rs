@@ -179,13 +179,14 @@ mod tests {
 
     #[test]
     fn pretty_print_includes_target_and_opcode() {
-        let mut program = AsmProgram::new(AsmTarget {
+        let target = AsmTarget {
             architecture: AsmArchitecture::Aarch64,
             object_format: AsmObjectFormat::MachO,
             endianness: AsmEndianness::Little,
             pointer_width: 64,
             default_calling_convention: None,
-        });
+        };
+        let mut program = AsmProgram::new(target.clone(), target.data_layout());
         program.sections.push(AsmSection {
             name: ".text".to_string(),
             kind: AsmSectionKind::Text,

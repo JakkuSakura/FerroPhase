@@ -5172,6 +5172,7 @@ impl MirLowering {
                 }
                 let constant = mir::Constant {
                     span,
+                    ty: enum_ty.clone(),
                     user_ty: None,
                     literal: mir::ConstantKind::Int(variant.discriminant),
                 };
@@ -5788,15 +5789,13 @@ impl MirLowering {
         expected_ty: Option<&Ty>,
         container_args: Option<&ConstContainerArgs>,
     ) -> Option<mir::Constant> {
-        let constant_ty = || {
-            expected_ty
-                .cloned()
-                .or_else(|| self.typeck_exprs.get(&expr.hir_id).cloned())
-        };
+        let constant_ty = expected_ty
+            .cloned()
+            .or_else(|| self.typeck_exprs.get(&expr.hir_id).cloned());
         match &expr.kind {
             hir::ExprKind::Literal(lit) => Some(mir::Constant {
                 span: expr.span,
-                ty: constant_ty()?,
+                ty: constant_ty.clone()?,
                 user_ty: None,
                 literal: self.lower_literal(lit),
             }),
@@ -5804,7 +5803,7 @@ impl MirLowering {
                 if let Some(inner) = &block.expr {
                     return self.lower_const_expr(program, inner, expected_ty, container_args);
                 }
-                let ty = constant_ty()?;
+                let ty = constant_ty.clone()?;
                 Some(mir::Constant {
                     span: expr.span,
                     ty: ty.clone(),
@@ -5832,7 +5831,7 @@ impl MirLowering {
                         Some(elem_ty.as_ref()),
                     )?);
                 }
-                let ty = constant_ty()?;
+                let ty = constant_ty.clone()?;
                 Some(mir::Constant {
                     span: expr.span,
                     ty: ty.clone(),
@@ -5857,7 +5856,7 @@ impl MirLowering {
                 let value = self.lower_const_value(program, elem, Some(elem_ty.as_ref()))?;
                 let mut lowered = Vec::with_capacity(repeat_len as usize);
                 lowered.resize(repeat_len as usize, value);
-                let ty = constant_ty()?;
+                let ty = constant_ty.clone()?;
                 Some(mir::Constant {
                     span: expr.span,
                     ty: ty.clone(),
@@ -5867,7 +5866,7 @@ impl MirLowering {
             }
             hir::ExprKind::Struct(_, _) => {
                 let value = self.lower_const_value(program, expr, expected_ty)?;
-                let ty = constant_ty()?;
+                let ty = constant_ty.clone()?;
                 Some(mir::Constant {
                     span: expr.span,
                     ty: ty.clone(),
@@ -5910,7 +5909,7 @@ impl MirLowering {
                 let value = self.lower_const_string_slice(program, slice)?;
                 Some(mir::Constant {
                     span: expr.span,
-                    ty: constant_ty()?,
+                    ty: constant_ty.clone()?,
                     user_ty: None,
                     literal: mir::ConstantKind::Str(value),
                 })
@@ -5950,7 +5949,7 @@ impl MirLowering {
                 self.lower_const_expr(program, branch, expected_ty, container_args)
             }
             hir::ExprKind::MethodCall(receiver, method_name, args) => {
-                let ty = constant_ty()?;
+                let ty = constant_ty.clone()?;
                 let value = self.lower_const_method_value(
                     program,
                     receiver,
@@ -5978,7 +5977,7 @@ impl MirLowering {
                 }?;
                 Some(mir::Constant {
                     span: expr.span,
-                    ty: constant_ty()?,
+                    ty: constant_ty.clone()?,
                     user_ty: None,
                     literal: kind,
                 })
@@ -6165,7 +6164,7 @@ impl MirLowering {
                         mir::ConstantKind::Bool(v) => Some(mir::ConstValue::Bool(*v)),
                         mir::ConstantKind::Float(v) => Some(mir::ConstValue::Float(*v)),
                         mir::ConstantKind::Str(v) => Some(mir::ConstValue::Str(v.clone())),
-                        mir::ConstantKind::Val(v, _) => Some(v.clone()),
+                        mir::ConstantKind::Val(v) => Some(v.clone()),
                         _ => None,
                     };
                 }
@@ -6190,7 +6189,7 @@ impl MirLowering {
                             mir::ConstantKind::Bool(v) => Some(mir::ConstValue::Bool(*v)),
                             mir::ConstantKind::Float(v) => Some(mir::ConstValue::Float(*v)),
                             mir::ConstantKind::Str(v) => Some(mir::ConstValue::Str(v.clone())),
-                            mir::ConstantKind::Val(v, _) => Some(v.clone()),
+                            mir::ConstantKind::Val(v) => Some(v.clone()),
                             _ => None,
                         }
                     }
@@ -6350,7 +6349,7 @@ impl MirLowering {
         span: Span,
     ) -> Option<mir::Constant> {
         let (values, ty) = match &constant.literal {
-            mir::ConstantKind::Val(mir::ConstValue::Struct(values), ty) => (values, ty),
+            mir::ConstantKind::Val(mir::ConstValue::Struct(values)) => (values, &constant.ty),
             _ => return None,
         };
 
@@ -6396,8 +6395,9 @@ impl MirLowering {
         let elements = items.into_iter().map(mir::ConstValue::Str).collect();
         mir::Constant {
             span,
+            ty: ty.clone(),
             user_ty: None,
-            literal: mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }, ty),
+            literal: mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }),
         }
     }
 
@@ -6408,7 +6408,7 @@ impl MirLowering {
             mir::ConstantKind::Bool(v) => Some(mir::ConstValue::Bool(*v)),
             mir::ConstantKind::Float(v) => Some(mir::ConstValue::Float(*v)),
             mir::ConstantKind::Str(v) => Some(mir::ConstValue::Str(v.clone())),
-            mir::ConstantKind::Val(v, _) => Some(v.clone()),
+            mir::ConstantKind::Val(v) => Some(v.clone()),
             _ => None,
         }
     }
@@ -6477,14 +6477,12 @@ impl MirLowering {
                 };
                 Some(mir::Constant {
                     span,
+                    ty: ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::Val(
-                        mir::ConstValue::List {
-                            elements: lowered,
-                            elem_ty: elem_ty.clone(),
-                        },
-                        ty,
-                    ),
+                    literal: mir::ConstantKind::Val(mir::ConstValue::List {
+                        elements: lowered,
+                        elem_ty: elem_ty.clone(),
+                    }),
                 })
             }
             ConstContainerArgs::Map { key_ty, value_ty } => {
@@ -6512,15 +6510,13 @@ impl MirLowering {
                 };
                 Some(mir::Constant {
                     span,
+                    ty: ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::Val(
-                        mir::ConstValue::Map {
-                            entries,
-                            key_ty: key_ty.clone(),
-                            value_ty: value_ty.clone(),
-                        },
-                        ty,
-                    ),
+                    literal: mir::ConstantKind::Val(mir::ConstValue::Map {
+                        entries,
+                        key_ty: key_ty.clone(),
+                        value_ty: value_ty.clone(),
+                    }),
                 })
             }
         }
@@ -6545,14 +6541,12 @@ impl MirLowering {
                 };
                 Some(mir::Constant {
                     span,
+                    ty: ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::Val(
-                        mir::ConstValue::List {
-                            elements,
-                            elem_ty: elem_ty.clone(),
-                        },
-                        ty,
-                    ),
+                    literal: mir::ConstantKind::Val(mir::ConstValue::List {
+                        elements,
+                        elem_ty: elem_ty.clone(),
+                    }),
                 })
             }
             ConstContainerArgs::Map { .. } => None,
@@ -6691,16 +6685,14 @@ impl MirLowering {
     fn const_len_from_constant(&self, constant: &mir::Constant) -> Option<u64> {
         match &constant.literal {
             mir::ConstantKind::Str(value) => Some(value.len() as u64),
-            mir::ConstantKind::Val(mir::ConstValue::List { elements, .. }, _) => {
+            mir::ConstantKind::Val(mir::ConstValue::List { elements, .. }) => {
                 Some(elements.len() as u64)
             }
-            mir::ConstantKind::Val(mir::ConstValue::Array(elements), _) => {
-                Some(elements.len() as u64)
-            }
-            mir::ConstantKind::Val(mir::ConstValue::Map { entries, .. }, _) => {
+            mir::ConstantKind::Val(mir::ConstValue::Array(elements)) => Some(elements.len() as u64),
+            mir::ConstantKind::Val(mir::ConstValue::Map { entries, .. }) => {
                 Some(entries.len() as u64)
             }
-            mir::ConstantKind::Val(mir::ConstValue::Tuple(fields), _) => Some(fields.len() as u64),
+            mir::ConstantKind::Val(mir::ConstValue::Tuple(fields)) => Some(fields.len() as u64),
             _ => None,
         }
     }
@@ -6714,7 +6706,7 @@ impl MirLowering {
     ) -> Option<(mir::Constant, Ty)> {
         let key = self.lower_const_value(program, index, None)?;
         match &constant.literal {
-            mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }, _) => {
+            mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }) => {
                 let idx = match key {
                     mir::ConstValue::Int(value) if value >= 0 => value as usize,
                     mir::ConstValue::UInt(value) => value as usize,
@@ -6727,7 +6719,7 @@ impl MirLowering {
                 let constant = self.const_value_to_constant(span, value, elem_ty);
                 Some((constant, elem_ty.clone()))
             }
-            mir::ConstantKind::Val(mir::ConstValue::Array(elements), ty) => {
+            mir::ConstantKind::Val(mir::ConstValue::Array(elements)) => {
                 let idx = match key {
                     mir::ConstValue::Int(value) if value >= 0 => value as usize,
                     mir::ConstValue::UInt(value) => value as usize,
@@ -6736,21 +6728,18 @@ impl MirLowering {
                         return None;
                     }
                 };
-                let TyKind::Array(elem_ty, _) = &ty.kind else {
+                let TyKind::Array(elem_ty, _) = &constant.ty.kind else {
                     return None;
                 };
                 let value = elements.get(idx)?;
                 let constant = self.const_value_to_constant(span, value, elem_ty);
                 Some((constant, (*elem_ty.clone()).clone()))
             }
-            mir::ConstantKind::Val(
-                mir::ConstValue::Map {
-                    entries,
-                    key_ty: _,
-                    value_ty,
-                },
-                _,
-            ) => {
+            mir::ConstantKind::Val(mir::ConstValue::Map {
+                entries,
+                key_ty: _,
+                value_ty,
+            }) => {
                 let (_, value) = entries
                     .iter()
                     .find(|(entry_key, _)| self.const_value_matches(entry_key, &key))?;
@@ -7206,6 +7195,7 @@ impl OperandInfo {
         Self {
             operand: mir::Operand::Constant(mir::Constant {
                 span,
+                ty: ty.clone(),
                 user_ty: None,
                 literal,
             }),
@@ -7269,8 +7259,9 @@ impl<'a> BodyBuilder<'a> {
         let fn_ty = self.lowering.c_function_pointer_ty(&sig);
         let func_operand = mir::Operand::Constant(mir::Constant {
             span,
+            ty: fn_ty.clone(),
             user_ty: None,
-            literal: mir::ConstantKind::Fn(mir::Symbol::from(name.to_string()), fn_ty),
+            literal: mir::ConstantKind::Fn(mir::Symbol::from(name.to_string())),
         });
 
         self.blocks[self.current_block as usize].terminator = Some(mir::Terminator {
@@ -7419,6 +7410,7 @@ impl<'a> BodyBuilder<'a> {
         let is_null_place = mir::Place::from_local(is_null_local);
         let null_const = mir::Operand::Constant(mir::Constant {
             span: expr.span,
+            ty: getenv_ret_ty,
             user_ty: None,
             literal: mir::ConstantKind::Null,
         });
@@ -7574,6 +7566,7 @@ impl<'a> BodyBuilder<'a> {
                         place.clone(),
                         mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                             span: expr.span,
+                            ty: self.lowering.raw_string_ptr_ty(),
                             user_ty: None,
                             literal: mir::ConstantKind::Null,
                         })),
@@ -7589,6 +7582,7 @@ impl<'a> BodyBuilder<'a> {
         let access_place = mir::Place::from_local(access_local);
         let f_ok = mir::Operand::Constant(mir::Constant {
             span: expr.span,
+            ty: ret_ty.clone(),
             user_ty: None,
             literal: mir::ConstantKind::Int(0),
         });
@@ -7612,6 +7606,7 @@ impl<'a> BodyBuilder<'a> {
                     mir::Operand::copy(access_place),
                     mir::Operand::Constant(mir::Constant {
                         span: expr.span,
+                        ty: ret_ty.clone(),
                         user_ty: None,
                         literal: mir::ConstantKind::Int(0),
                     }),
@@ -7650,6 +7645,7 @@ impl<'a> BodyBuilder<'a> {
                         place.clone(),
                         mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                             span: expr.span,
+                            ty: self.lowering.raw_string_ptr_ty(),
                             user_ty: None,
                             literal: mir::ConstantKind::Null,
                         })),
@@ -7705,6 +7701,7 @@ impl<'a> BodyBuilder<'a> {
                         place.clone(),
                         mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                             span: expr.span,
+                            ty: self.lowering.raw_string_ptr_ty(),
                             user_ty: None,
                             literal: mir::ConstantKind::Null,
                         })),
@@ -7719,6 +7716,7 @@ impl<'a> BodyBuilder<'a> {
         // mode = "rb"
         let mode_const = mir::Operand::Constant(mir::Constant {
             span: expr.span,
+            ty: self.lowering.raw_string_ptr_ty(),
             user_ty: None,
             literal: mir::ConstantKind::Str("rb".to_string()),
         });
@@ -7753,6 +7751,7 @@ impl<'a> BodyBuilder<'a> {
                     mir::Operand::copy(file_place.clone()),
                     mir::Operand::Constant(mir::Constant {
                         span: expr.span,
+                        ty: file_ty.clone(),
                         user_ty: None,
                         literal: mir::ConstantKind::Null,
                     }),
@@ -7783,6 +7782,7 @@ impl<'a> BodyBuilder<'a> {
                 ptr_field,
                 mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                     span: expr.span,
+                    ty: self.lowering.raw_string_ptr_ty(),
                     user_ty: None,
                     literal: mir::ConstantKind::Str("".to_string()),
                 })),
@@ -7794,6 +7794,9 @@ impl<'a> BodyBuilder<'a> {
                 len_field,
                 mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                     span: expr.span,
+                    ty: Ty {
+                        kind: TyKind::Int(IntTy::I64),
+                    },
                     user_ty: None,
                     literal: mir::ConstantKind::Int(0),
                 })),
@@ -7827,11 +7830,13 @@ impl<'a> BodyBuilder<'a> {
                 mir::Operand::copy(file_place.clone()),
                 mir::Operand::Constant(mir::Constant {
                     span: expr.span,
+                    ty: long_ty.clone(),
                     user_ty: None,
                     literal: mir::ConstantKind::Int(0),
                 }),
                 mir::Operand::Constant(mir::Constant {
                     span: expr.span,
+                    ty: int_ty.clone(),
                     user_ty: None,
                     literal: mir::ConstantKind::Int(2), // SEEK_END
                 }),
@@ -7864,11 +7869,13 @@ impl<'a> BodyBuilder<'a> {
                 mir::Operand::copy(file_place.clone()),
                 mir::Operand::Constant(mir::Constant {
                     span: expr.span,
+                    ty: long_ty.clone(),
                     user_ty: None,
                     literal: mir::ConstantKind::Int(0),
                 }),
                 mir::Operand::Constant(mir::Constant {
                     span: expr.span,
+                    ty: int_ty.clone(),
                     user_ty: None,
                     literal: mir::ConstantKind::Int(0), // SEEK_SET
                 }),
@@ -7933,6 +7940,7 @@ impl<'a> BodyBuilder<'a> {
                 mir::Operand::copy(buf_place.clone()),
                 mir::Operand::Constant(mir::Constant {
                     span: expr.span,
+                    ty: size_ty.clone(),
                     user_ty: None,
                     literal: mir::ConstantKind::UInt(1),
                 }),
@@ -8703,6 +8711,7 @@ impl<'a> BodyBuilder<'a> {
                         mir::Place::from_local(panic_value_local),
                         mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                             span: catch.body.span,
+                            ty: self.lowering.raw_string_ptr_ty(),
                             user_ty: None,
                             literal: mir::ConstantKind::Str(
                                 "<panic payload unavailable>".to_string(),
@@ -9351,11 +9360,7 @@ impl<'a> BodyBuilder<'a> {
                     span,
                     "tuple pattern match requires tuple scrutinee; treating as non-matching",
                 );
-                return Ok(mir::Operand::Constant(mir::Constant {
-                    span,
-                    user_ty: None,
-                    literal: mir::ConstantKind::Bool(false),
-                }));
+                return Ok(self.constant_bool_operand(false, span).operand);
             };
 
             if items.len() != elem_tys.len() {
@@ -9363,18 +9368,14 @@ impl<'a> BodyBuilder<'a> {
                     span,
                     "tuple pattern length mismatch; treating as non-matching",
                 );
-                return Ok(mir::Operand::Constant(mir::Constant {
-                    span,
-                    user_ty: None,
-                    literal: mir::ConstantKind::Bool(false),
-                }));
+                return Ok(self.constant_bool_operand(false, span).operand);
             }
 
             let mut combined: Option<mir::Operand> = None;
             for (index, item) in items.iter().enumerate() {
                 match &item.kind {
                     hir::PatKind::Lit(lit) => {
-                        let (literal, _) = self.lower_literal(lit, None);
+                        let (literal, ty) = self.lower_literal(lit, None);
                         let mut field_place = tuple_place.clone();
                         field_place
                             .projection
@@ -9390,6 +9391,7 @@ impl<'a> BodyBuilder<'a> {
                                     mir::Operand::Copy(field_place),
                                     mir::Operand::Constant(mir::Constant {
                                         span,
+                                        ty,
                                         user_ty: None,
                                         literal,
                                     }),
@@ -9423,22 +9425,12 @@ impl<'a> BodyBuilder<'a> {
                             span,
                             "tuple pattern element not supported; treating as non-matching",
                         );
-                        return Ok(mir::Operand::Constant(mir::Constant {
-                            span,
-                            user_ty: None,
-                            literal: mir::ConstantKind::Bool(false),
-                        }));
+                        return Ok(self.constant_bool_operand(false, span).operand);
                     }
                 }
             }
 
-            return Ok(combined.unwrap_or_else(|| {
-                mir::Operand::Constant(mir::Constant {
-                    span,
-                    user_ty: None,
-                    literal: mir::ConstantKind::Bool(true),
-                })
-            }));
+            return Ok(combined.unwrap_or_else(|| self.constant_bool_operand(true, span).operand));
         }
         if let hir::PatKind::Struct(path, fields, _) = &pat.kind {
             if let Some(variant) = self.enum_variant_info_from_path(path) {
@@ -9466,6 +9458,7 @@ impl<'a> BodyBuilder<'a> {
                                 mir::Operand::Copy(tag_place),
                                 mir::Operand::Constant(mir::Constant {
                                     span,
+                                    ty: layout.tag_ty.clone(),
                                     user_ty: None,
                                     literal: mir::ConstantKind::Int(variant.discriminant),
                                 }),
@@ -9486,7 +9479,7 @@ impl<'a> BodyBuilder<'a> {
                         }
                         match &field.pat.kind {
                             hir::PatKind::Lit(lit) => {
-                                let (literal, _) = self.lower_literal(lit, None);
+                                let (literal, ty) = self.lower_literal(lit, None);
                                 let field_ty = payload_tys[idx].clone();
                                 let mut field_place = base_place.clone();
                                 field_place
@@ -9503,6 +9496,7 @@ impl<'a> BodyBuilder<'a> {
                                             mir::Operand::Copy(field_place),
                                             mir::Operand::Constant(mir::Constant {
                                                 span,
+                                                ty,
                                                 user_ty: None,
                                                 literal,
                                             }),
@@ -9566,13 +9560,9 @@ impl<'a> BodyBuilder<'a> {
                                         field.name
                                     ),
                                 );
-                                return Ok(mir::Operand::Constant(mir::Constant {
-                                    span,
-                                    user_ty: None,
-                                    literal: mir::ConstantKind::Bool(false),
-                                }));
+                                return Ok(self.constant_bool_operand(false, span).operand);
                             };
-                            let (literal, _) = self.lower_literal(lit, None);
+                            let (literal, ty) = self.lower_literal(lit, None);
                             let mut field_place = base_place.clone();
                             field_place
                                 .projection
@@ -9588,6 +9578,7 @@ impl<'a> BodyBuilder<'a> {
                                         mir::Operand::Copy(field_place),
                                         mir::Operand::Constant(mir::Constant {
                                             span,
+                                            ty,
                                             user_ty: None,
                                             literal,
                                         }),
@@ -9622,22 +9613,14 @@ impl<'a> BodyBuilder<'a> {
                                 span,
                                 "struct pattern field not supported; treating as non-matching",
                             );
-                            return Ok(mir::Operand::Constant(mir::Constant {
-                                span,
-                                user_ty: None,
-                                literal: mir::ConstantKind::Bool(false),
-                            }));
+                            return Ok(self.constant_bool_operand(false, span).operand);
                         }
                     }
                 }
 
-                return Ok(combined.unwrap_or_else(|| {
-                    mir::Operand::Constant(mir::Constant {
-                        span,
-                        user_ty: None,
-                        literal: mir::ConstantKind::Bool(true),
-                    })
-                }));
+                return Ok(
+                    combined.unwrap_or_else(|| self.constant_bool_operand(true, span).operand)
+                );
             }
         }
 
@@ -9667,6 +9650,7 @@ impl<'a> BodyBuilder<'a> {
                                 mir::Operand::Copy(tag_place),
                                 mir::Operand::Constant(mir::Constant {
                                     span,
+                                    ty: layout.tag_ty.clone(),
                                     user_ty: None,
                                     literal: mir::ConstantKind::Int(variant.discriminant),
                                 }),
@@ -9687,7 +9671,7 @@ impl<'a> BodyBuilder<'a> {
                         }
                         match &part.kind {
                             hir::PatKind::Lit(lit) => {
-                                let (literal, _) = self.lower_literal(lit, None);
+                                let (literal, ty) = self.lower_literal(lit, None);
                                 let field_ty = payload_tys[idx].clone();
                                 let mut field_place = base_place.clone();
                                 field_place
@@ -9704,6 +9688,7 @@ impl<'a> BodyBuilder<'a> {
                                             mir::Operand::Copy(field_place),
                                             mir::Operand::Constant(mir::Constant {
                                                 span,
+                                                ty,
                                                 user_ty: None,
                                                 literal,
                                             }),
@@ -9742,9 +9727,10 @@ impl<'a> BodyBuilder<'a> {
 
         let literal = match &pat.kind {
             hir::PatKind::Lit(lit) => {
-                let (literal, _) = self.lower_literal(lit, None);
+                let (literal, ty) = self.lower_literal(lit, None);
                 mir::Operand::Constant(mir::Constant {
                     span,
+                    ty,
                     user_ty: None,
                     literal,
                 })
@@ -9753,8 +9739,18 @@ impl<'a> BodyBuilder<'a> {
             | hir::PatKind::Struct(path, _, _)
             | hir::PatKind::TupleStruct(path, _) => {
                 if let Some(variant) = self.enum_variant_info_from_path(path) {
+                    let tag_ty = self
+                        .enum_layout_for_variant(&variant, Some(scrutinee_ty), span)
+                        .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span))
+                        .ok_or_else(|| {
+                            crate::error::optimization_error(
+                                "enum pattern has no concrete MIR layout",
+                            )
+                        })?
+                        .tag_ty;
                     mir::Operand::Constant(mir::Constant {
                         span,
+                        ty: tag_ty,
                         user_ty: None,
                         literal: mir::ConstantKind::Int(variant.discriminant),
                     })
@@ -9773,11 +9769,7 @@ impl<'a> BodyBuilder<'a> {
                     span,
                     "unsupported pattern in match condition; treating as non-matching",
                 );
-                mir::Operand::Constant(mir::Constant {
-                    span,
-                    user_ty: None,
-                    literal: mir::ConstantKind::Bool(false),
-                })
+                self.constant_bool_operand(false, span).operand
             }
         };
 
@@ -10974,32 +10966,24 @@ impl<'a> BodyBuilder<'a> {
         let mut operands = Vec::with_capacity(1 + layout.payload_tys.len());
         operands.push(mir::Operand::Constant(mir::Constant {
             span,
+            ty: layout.tag_ty.clone(),
             user_ty: None,
             literal: mir::ConstantKind::Int(variant.discriminant),
         }));
 
-        for (idx, slot_ty) in layout.payload_tys.iter().enumerate() {
-            let storage_ty = match scrutinee_ty.map(|ty| &ty.kind) {
-                Some(TyKind::Tuple(fields)) => fields
-                    .get(idx + 1)
-                    .map(|field| field.as_ref())
-                    .unwrap_or(slot_ty),
-                _ => slot_ty,
-            };
-            if let Some(arg) = args.get(idx) {
-                let expected_ty = payload_tys.get(idx).unwrap_or(storage_ty);
-                let operand = self.lower_operand(&arg.value, Some(expected_ty))?;
-                operands.push(operand.operand);
-            } else {
-                let literal = self
-                    .lowering
-                    .catch_unwind_default_constant_for_ty(storage_ty)?;
-                operands.push(mir::Operand::Constant(mir::Constant {
-                    span,
-                    user_ty: None,
-                    literal,
-                }));
-            }
+        for idx in 0..layout.payload_tys.len() {
+            let arg = args.get(idx).ok_or_else(|| {
+                fp_core::error::Error::from(format!(
+                    "enum variant payload {idx} is missing after arity validation"
+                ))
+            })?;
+            let expected_ty = payload_tys.get(idx).ok_or_else(|| {
+                fp_core::error::Error::from(format!(
+                    "enum variant payload type {idx} is missing after layout validation"
+                ))
+            })?;
+            let operand = self.lower_operand(&arg.value, Some(expected_ty))?;
+            operands.push(operand.operand);
         }
 
         self.push_statement(mir::Statement {
@@ -11041,6 +11025,7 @@ impl<'a> BodyBuilder<'a> {
         let mut operands = Vec::with_capacity(1 + layout.payload_tys.len());
         operands.push(mir::Operand::Constant(mir::Constant {
             span,
+            ty: layout.tag_ty.clone(),
             user_ty: None,
             literal: mir::ConstantKind::Int(variant.discriminant),
         }));
@@ -11316,6 +11301,7 @@ impl<'a> BodyBuilder<'a> {
                         let mut operands = Vec::with_capacity(1 + layout.payload_tys.len());
                         operands.push(mir::Operand::Constant(mir::Constant {
                             span,
+                            ty: layout.tag_ty.clone(),
                             user_ty: None,
                             literal: mir::ConstantKind::Int(variant_def.discriminant),
                         }));
@@ -11855,7 +11841,7 @@ impl<'a> BodyBuilder<'a> {
                     }
 
                     if let Some(const_info) = const_info {
-                        if let mir::ConstantKind::Val(value, _) = &const_info.value.literal {
+                        if let mir::ConstantKind::Val(value) = &const_info.value.literal {
                             if let Some((constant, ty)) = self.lowering.const_index_value(
                                 self.program,
                                 expr.span,
@@ -11960,7 +11946,7 @@ impl<'a> BodyBuilder<'a> {
                 let mut map_value_ty: Option<Ty> = None;
 
                 if let mir::Operand::Constant(constant) = &container_info.operand {
-                    if let mir::ConstantKind::Val(value, _) = &constant.literal {
+                    if let mir::ConstantKind::Val(value) = &constant.literal {
                         match value {
                             mir::ConstValue::Map {
                                 entries,
@@ -12260,8 +12246,9 @@ impl<'a> BodyBuilder<'a> {
             let name = function.sig.name.as_str().to_string();
             let operand = mir::Operand::Constant(mir::Constant {
                 span: callee.span,
+                ty: fn_ty.clone(),
                 user_ty: None,
-                literal: mir::ConstantKind::Fn(Symbol::new(name.clone()), fn_ty),
+                literal: mir::ConstantKind::Fn(Symbol::new(name.clone())),
             });
             (operand, sig, Some(name))
         } else if let Some(def) = generic_method_def.as_ref() {
@@ -12273,8 +12260,9 @@ impl<'a> BodyBuilder<'a> {
             let name = def.method_name.clone();
             let operand = mir::Operand::Constant(mir::Constant {
                 span: callee.span,
+                ty: fn_ty.clone(),
                 user_ty: None,
-                literal: mir::ConstantKind::Fn(Symbol::new(name.clone()), fn_ty),
+                literal: mir::ConstantKind::Fn(Symbol::new(name.clone())),
             });
             (operand, sig, Some(name))
         } else {
@@ -13075,11 +13063,9 @@ impl<'a> BodyBuilder<'a> {
                 )?;
                 func_operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
+                    ty: info.fn_ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::Fn(
-                        Symbol::new(info.name.clone()),
-                        info.fn_ty.clone(),
-                    ),
+                    literal: mir::ConstantKind::Fn(Symbol::new(info.name.clone())),
                 });
                 sig = info.sig.clone();
                 callee_name = Some(info.name.clone());
@@ -13109,11 +13095,9 @@ impl<'a> BodyBuilder<'a> {
             )?;
             func_operand = mir::Operand::Constant(mir::Constant {
                 span: callee.span,
+                ty: info.fn_ty.clone(),
                 user_ty: None,
-                literal: mir::ConstantKind::Fn(
-                    Symbol::new(info.fn_name.clone()),
-                    info.fn_ty.clone(),
-                ),
+                literal: mir::ConstantKind::Fn(Symbol::new(info.fn_name.clone())),
             });
             sig = info.sig.clone();
             callee_name = Some(info.fn_name.clone());
@@ -13134,22 +13118,22 @@ impl<'a> BodyBuilder<'a> {
                     let symbol = Symbol::new(name.clone());
                     let literal = match &func_operand {
                         mir::Operand::Constant(constant) => match &constant.literal {
-                            mir::ConstantKind::Global(_, _) => mir::ConstantKind::Global(
-                                symbol.clone(),
-                                self.lowering.c_function_pointer_ty(&updated_sig),
-                            ),
-                            _ => mir::ConstantKind::Fn(
-                                symbol.clone(),
-                                self.lowering.function_pointer_ty(&updated_sig),
-                            ),
+                            mir::ConstantKind::Global(_) => {
+                                mir::ConstantKind::Global(symbol.clone())
+                            }
+                            _ => mir::ConstantKind::Fn(symbol.clone()),
                         },
-                        _ => mir::ConstantKind::Fn(
-                            symbol.clone(),
-                            self.lowering.function_pointer_ty(&updated_sig),
-                        ),
+                        _ => mir::ConstantKind::Fn(symbol.clone()),
+                    };
+                    let function_ty = match &literal {
+                        mir::ConstantKind::Global(_) => {
+                            self.lowering.c_function_pointer_ty(&updated_sig)
+                        }
+                        _ => self.lowering.function_pointer_ty(&updated_sig),
                     };
                     func_operand = mir::Operand::Constant(mir::Constant {
                         span: callee.span,
+                        ty: function_ty,
                         user_ty: None,
                         literal,
                     });
@@ -13165,6 +13149,7 @@ impl<'a> BodyBuilder<'a> {
                             {
                                 lowered_args[idx] = mir::Operand::Constant(mir::Constant {
                                     span: callee.span,
+                                    ty: expected_input.clone(),
                                     user_ty: None,
                                     literal: mir::ConstantKind::UInt(0),
                                 });
@@ -13559,8 +13544,9 @@ impl<'a> BodyBuilder<'a> {
                 let ty = self.lowering.function_pointer_ty(&sig);
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
+                    ty: ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::FnDef(*def_id, ty),
+                    literal: mir::ConstantKind::FnDef(*def_id),
                 });
                 return Ok((operand, sig, Some(String::from(name))));
             }
@@ -13572,8 +13558,9 @@ impl<'a> BodyBuilder<'a> {
                     let ty = self.lowering.function_pointer_ty(&sig);
                     let operand = mir::Operand::Constant(mir::Constant {
                         span: callee.span,
+                        ty: ty.clone(),
                         user_ty: None,
-                        literal: mir::ConstantKind::FnDef(*def_id, ty),
+                        literal: mir::ConstantKind::FnDef(*def_id),
                     });
                     return Ok((operand, sig, Some(String::from(name))));
                 }
@@ -13600,14 +13587,12 @@ impl<'a> BodyBuilder<'a> {
                 .and_then(|methods| methods.get(&String::from(method_name.clone())))
             {
                 let literal = match info.def_id {
-                    Some(def_id) => mir::ConstantKind::FnDef(def_id, info.fn_ty.clone()),
-                    None => mir::ConstantKind::Fn(
-                        mir::Symbol::new(info.fn_name.clone()),
-                        info.fn_ty.clone(),
-                    ),
+                    Some(def_id) => mir::ConstantKind::FnDef(def_id),
+                    None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
                 };
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
+                    ty: info.fn_ty.clone(),
                     user_ty: None,
                     literal,
                 });
@@ -13622,8 +13607,9 @@ impl<'a> BodyBuilder<'a> {
             let ty = self.lowering.c_function_pointer_ty(&sig);
             let operand = mir::Operand::Constant(mir::Constant {
                 span: callee.span,
+                ty: ty.clone(),
                 user_ty: None,
-                literal: mir::ConstantKind::Global(mir::Symbol::new(name.clone()), ty),
+                literal: mir::ConstantKind::Global(mir::Symbol::new(name.clone())),
             });
             return Ok((operand, sig, Some(name)));
         }
@@ -13631,14 +13617,12 @@ impl<'a> BodyBuilder<'a> {
         if let Some(hir::Res::Def(def_id)) = resolved_path.res.as_ref() {
             if let Some(info) = self.lowering.method_lookup_by_def.get(def_id) {
                 let literal = match info.def_id {
-                    Some(def_id) => mir::ConstantKind::FnDef(def_id, info.fn_ty.clone()),
-                    None => mir::ConstantKind::Fn(
-                        mir::Symbol::new(info.fn_name.clone()),
-                        info.fn_ty.clone(),
-                    ),
+                    Some(def_id) => mir::ConstantKind::FnDef(def_id),
+                    None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
                 };
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
+                    ty: info.fn_ty.clone(),
                     user_ty: None,
                     literal,
                 });
@@ -13654,8 +13638,9 @@ impl<'a> BodyBuilder<'a> {
         let fn_ty = self.lowering.function_pointer_ty(&sig);
         let operand = mir::Operand::Constant(mir::Constant {
             span: callee.span,
+            ty: fn_ty.clone(),
             user_ty: None,
-            literal: mir::ConstantKind::Fn(Symbol::new(name.clone()), fn_ty.clone()),
+            literal: mir::ConstantKind::Fn(Symbol::new(name.clone())),
         });
         Ok((operand, sig, Some(name)))
     }
@@ -13810,7 +13795,7 @@ impl<'a> BodyBuilder<'a> {
                 Ok(OperandInfo::constant(
                     expr.span,
                     unit_ty.clone(),
-                    mir::ConstantKind::Val(mir::ConstValue::Unit, unit_ty),
+                    mir::ConstantKind::Val(mir::ConstValue::Unit),
                 ))
             }
             hir::ExprKind::Literal(lit) => {
@@ -13818,6 +13803,7 @@ impl<'a> BodyBuilder<'a> {
                 Ok(OperandInfo {
                     operand: mir::Operand::Constant(mir::Constant {
                         span: expr.span,
+                        ty: ty.clone(),
                         user_ty: None,
                         literal,
                     }),
@@ -13862,11 +13848,11 @@ impl<'a> BodyBuilder<'a> {
                             return Ok(OperandInfo {
                                 operand: mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
+                                    ty: info.fn_ty.clone(),
                                     user_ty: None,
-                                    literal: mir::ConstantKind::Fn(
-                                        mir::Symbol::new(info.name.clone()),
-                                        info.fn_ty.clone(),
-                                    ),
+                                    literal: mir::ConstantKind::Fn(mir::Symbol::new(
+                                        info.name.clone(),
+                                    )),
                                 }),
                                 ty: info.fn_ty,
                             });
@@ -13886,13 +13872,11 @@ impl<'a> BodyBuilder<'a> {
                                 return Ok(OperandInfo {
                                     operand: mir::Operand::Constant(mir::Constant {
                                         span: expr.span,
+                                        ty: fn_ty.clone(),
                                         user_ty: None,
-                                        literal: mir::ConstantKind::Fn(
-                                            mir::Symbol::new(
-                                                function.sig.name.as_str().to_string(),
-                                            ),
-                                            fn_ty.clone(),
-                                        ),
+                                        literal: mir::ConstantKind::Fn(mir::Symbol::new(
+                                            function.sig.name.as_str().to_string(),
+                                        )),
                                     }),
                                     ty: fn_ty,
                                 });
@@ -13909,11 +13893,11 @@ impl<'a> BodyBuilder<'a> {
                             return Ok(OperandInfo {
                                 operand: mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
+                                    ty: info.fn_ty.clone(),
                                     user_ty: None,
-                                    literal: mir::ConstantKind::Fn(
-                                        mir::Symbol::new(info.name.clone()),
-                                        info.fn_ty.clone(),
-                                    ),
+                                    literal: mir::ConstantKind::Fn(mir::Symbol::new(
+                                        info.name.clone(),
+                                    )),
                                 }),
                                 ty: info.fn_ty,
                             });
@@ -13929,8 +13913,9 @@ impl<'a> BodyBuilder<'a> {
                         return Ok(OperandInfo {
                             operand: mir::Operand::Constant(mir::Constant {
                                 span: expr.span,
+                                ty: ty.clone(),
                                 user_ty: None,
-                                literal: mir::ConstantKind::Global(name.clone(), ty.clone()),
+                                literal: mir::ConstantKind::Global(name.clone()),
                             }),
                             ty: ty.clone(),
                         });
@@ -14016,11 +14001,9 @@ impl<'a> BodyBuilder<'a> {
                             return Ok(OperandInfo {
                                 operand: mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
+                                    ty: fn_ty.clone(),
                                     user_ty: None,
-                                    literal: mir::ConstantKind::Fn(
-                                        mir::Symbol::from(fn_name),
-                                        fn_ty.clone(),
-                                    ),
+                                    literal: mir::ConstantKind::Fn(mir::Symbol::from(fn_name)),
                                 }),
                                 ty: fn_ty,
                             });
@@ -14087,11 +14070,11 @@ impl<'a> BodyBuilder<'a> {
                         return Ok(OperandInfo {
                             operand: mir::Operand::Constant(mir::Constant {
                                 span: expr.span,
+                                ty: info.fn_ty.clone(),
                                 user_ty: None,
-                                literal: mir::ConstantKind::Fn(
-                                    mir::Symbol::new(info.fn_name.clone()),
-                                    info.fn_ty.clone(),
-                                ),
+                                literal: mir::ConstantKind::Fn(mir::Symbol::new(
+                                    info.fn_name.clone(),
+                                )),
                             }),
                             ty: info.fn_ty,
                         });
@@ -14111,8 +14094,9 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(OperandInfo {
                         operand: mir::Operand::Constant(mir::Constant {
                             span: expr.span,
+                            ty: ty.clone(),
                             user_ty: None,
-                            literal: mir::ConstantKind::Val(mir::ConstValue::Unit, ty.clone()),
+                            literal: mir::ConstantKind::Val(mir::ConstValue::Unit),
                         }),
                         ty,
                     });
@@ -14131,6 +14115,7 @@ impl<'a> BodyBuilder<'a> {
                         return Ok(OperandInfo {
                             operand: mir::Operand::Constant(mir::Constant {
                                 span: expr.span,
+                                ty: ty.clone(),
                                 user_ty: None,
                                 literal,
                             }),
@@ -14279,7 +14264,7 @@ impl<'a> BodyBuilder<'a> {
                     {
                         if *len == 0 {
                             if let mir::Operand::Constant(constant) = &base_info.operand {
-                                if let mir::ConstantKind::Val(value, _) = &constant.literal {
+                                if let mir::ConstantKind::Val(value) = &constant.literal {
                                     match value {
                                         mir::ConstValue::Map {
                                             entries,
@@ -14482,8 +14467,9 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(OperandInfo {
                         operand: mir::Operand::Constant(mir::Constant {
                             span: expr.span,
+                            ty: unit_ty.clone(),
                             user_ty: None,
-                            literal: mir::ConstantKind::Val(mir::ConstValue::Unit, unit_ty.clone()),
+                            literal: mir::ConstantKind::Val(mir::ConstValue::Unit),
                         }),
                         ty: unit_ty,
                     });
@@ -14552,8 +14538,9 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(OperandInfo {
                         operand: mir::Operand::Constant(mir::Constant {
                             span: expr.span,
+                            ty: unit_ty.clone(),
                             user_ty: None,
-                            literal: mir::ConstantKind::Val(mir::ConstValue::Unit, unit_ty.clone()),
+                            literal: mir::ConstantKind::Val(mir::ConstValue::Unit),
                         }),
                         ty: unit_ty,
                     });
@@ -14668,6 +14655,9 @@ impl<'a> BodyBuilder<'a> {
                         return Ok(OperandInfo {
                             operand: mir::Operand::Constant(mir::Constant {
                                 span: expr.span,
+                                ty: Ty {
+                                    kind: TyKind::Uint(UintTy::U64),
+                                },
                                 user_ty: None,
                                 literal: mir::ConstantKind::UInt(0),
                             }),
@@ -14874,6 +14864,7 @@ impl<'a> BodyBuilder<'a> {
                 if let Some((literal, ty)) = self.lower_intrinsic_constant(call, expr.span) {
                     let operand = mir::Operand::Constant(mir::Constant {
                         span: expr.span,
+                        ty: ty.clone(),
                         user_ty: None,
                         literal,
                     });
@@ -15132,33 +15123,7 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn constant_ty_from_constant(&self, constant: &mir::Constant) -> Option<Ty> {
-        match &constant.literal {
-            mir::ConstantKind::Bool(_) => Some(Ty { kind: TyKind::Bool }),
-            mir::ConstantKind::Int(_) => Some(Ty {
-                kind: TyKind::Int(IntTy::I64),
-            }),
-            mir::ConstantKind::UInt(_) => Some(Ty {
-                kind: TyKind::Uint(UintTy::U64),
-            }),
-            mir::ConstantKind::Float(_) => Some(Ty {
-                kind: TyKind::Float(FloatTy::F64),
-            }),
-            mir::ConstantKind::Str(_) => Some(self.lowering.string_slice_ty()),
-            mir::ConstantKind::Val(_, ty)
-            | mir::ConstantKind::Fn(_, ty)
-            | mir::ConstantKind::FnDef(_, ty)
-            | mir::ConstantKind::Global(_, ty)
-            | mir::ConstantKind::TokenStream { ty, .. } => Some(ty.clone()),
-            mir::ConstantKind::Ty(_) => None,
-            mir::ConstantKind::Null => Some(Ty {
-                kind: TyKind::RawPtr(TypeAndMut {
-                    ty: Box::new(Ty {
-                        kind: TyKind::Int(IntTy::I8),
-                    }),
-                    mutbl: Mutability::Not,
-                }),
-            }),
-        }
+        Some(constant.ty.clone())
     }
 
     fn lower_condition_operand(&mut self, expr: &hir::Expr) -> Result<mir::Operand> {
@@ -15729,11 +15694,11 @@ impl<'a> BodyBuilder<'a> {
                             let fn_ty = self.lowering.function_pointer_ty(&sig);
                             let func = mir::Operand::Constant(mir::Constant {
                                 span,
+                                ty: fn_ty.clone(),
                                 user_ty: None,
-                                literal: mir::ConstantKind::Fn(
-                                    mir::Symbol::new("fp_panic".to_string()),
-                                    fn_ty,
-                                ),
+                                literal: mir::ConstantKind::Fn(mir::Symbol::new(
+                                    "fp_panic".to_string(),
+                                )),
                             });
                             let args = vec![mir::Operand::Copy(local_place)];
 
@@ -15795,11 +15760,13 @@ impl<'a> BodyBuilder<'a> {
         let fn_ty = self.lowering.function_pointer_ty(&sig);
         let func = mir::Operand::Constant(mir::Constant {
             span,
+            ty: fn_ty.clone(),
             user_ty: None,
-            literal: mir::ConstantKind::Fn(mir::Symbol::new("fp_panic".to_string()), fn_ty),
+            literal: mir::ConstantKind::Fn(mir::Symbol::new("fp_panic".to_string())),
         });
         let args = vec![mir::Operand::Constant(mir::Constant {
             span,
+            ty: self.lowering.raw_string_ptr_ty(),
             user_ty: None,
             literal: mir::ConstantKind::Str(message),
         })];
@@ -15850,11 +15817,13 @@ impl<'a> BodyBuilder<'a> {
         let fn_ty = self.lowering.function_pointer_ty(&sig);
         let func = mir::Operand::Constant(mir::Constant {
             span,
+            ty: fn_ty.clone(),
             user_ty: None,
-            literal: mir::ConstantKind::Fn(mir::Symbol::new("fp_panic".to_string()), fn_ty),
+            literal: mir::ConstantKind::Fn(mir::Symbol::new("fp_panic".to_string())),
         });
         let args = vec![mir::Operand::Constant(mir::Constant {
             span,
+            ty: self.lowering.raw_string_ptr_ty(),
             user_ty: None,
             literal: mir::ConstantKind::Str(message),
         })];
@@ -15988,6 +15957,7 @@ impl<'a> BodyBuilder<'a> {
                 result_place.clone(),
                 mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                     span: expr.span,
+                    ty: Ty { kind: TyKind::Bool },
                     user_ty: None,
                     literal: mir::ConstantKind::Bool(true),
                 })),
@@ -16005,6 +15975,7 @@ impl<'a> BodyBuilder<'a> {
                 result_place.clone(),
                 mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                     span: expr.span,
+                    ty: Ty { kind: TyKind::Bool },
                     user_ty: None,
                     literal: mir::ConstantKind::Bool(false),
                 })),
@@ -16131,6 +16102,7 @@ impl<'a> BodyBuilder<'a> {
                     vec![
                         mir::Operand::Constant(mir::Constant {
                             span: expr.span,
+                            ty: Ty { kind: TyKind::Bool },
                             user_ty: None,
                             literal: mir::ConstantKind::Bool(true),
                         }),
@@ -16157,11 +16129,13 @@ impl<'a> BodyBuilder<'a> {
                     vec![
                         mir::Operand::Constant(mir::Constant {
                             span: expr.span,
+                            ty: sig.output.clone(),
                             user_ty: None,
                             literal: mir::ConstantKind::Bool(false),
                         }),
                         mir::Operand::Constant(mir::Constant {
                             span: expr.span,
+                            ty: sig.output.clone(),
                             user_ty: None,
                             literal: unwind_default,
                         }),
@@ -16192,6 +16166,7 @@ impl<'a> BodyBuilder<'a> {
                 return Ok((
                     mir::Operand::Constant(mir::Constant {
                         span,
+                        ty: self.lowering.raw_string_ptr_ty(),
                         user_ty: None,
                         literal: mir::ConstantKind::Str("null".to_string()),
                     }),
@@ -16205,6 +16180,7 @@ impl<'a> BodyBuilder<'a> {
                 return Ok((
                     mir::Operand::Constant(mir::Constant {
                         span,
+                        ty: self.lowering.raw_string_ptr_ty(),
                         user_ty: None,
                         literal: mir::ConstantKind::Str("null".to_string()),
                     }),
@@ -16294,6 +16270,7 @@ impl<'a> BodyBuilder<'a> {
             TyKind::Tuple(elements) if elements.is_empty() => Ok((
                 mir::Operand::Constant(mir::Constant {
                     span,
+                    ty: self.lowering.raw_string_ptr_ty(),
                     user_ty: None,
                     literal: mir::ConstantKind::Str("()".to_string()),
                 }),
@@ -16394,7 +16371,7 @@ impl<'a> BodyBuilder<'a> {
         let mir::Operand::Constant(constant) = operand else {
             return None;
         };
-        let mir::ConstantKind::Val(value, _) = &constant.literal else {
+        let mir::ConstantKind::Val(value) = &constant.literal else {
             return None;
         };
         let ast_value = self.const_value_to_ast_value(value)?;
@@ -16418,6 +16395,7 @@ impl<'a> BodyBuilder<'a> {
         };
         let constant = mir::Constant {
             span,
+            ty: ty.clone(),
             user_ty: None,
             literal: mir::ConstantKind::Str(formatted),
         };
@@ -16436,7 +16414,7 @@ impl<'a> BodyBuilder<'a> {
             return None;
         };
         let const_info = self.lowering.const_values.get(def_id)?;
-        let mir::ConstantKind::Val(value, _) = &const_info.value.literal else {
+        let mir::ConstantKind::Val(value) = &const_info.value.literal else {
             return None;
         };
         let value = value.clone();
@@ -17080,20 +17058,17 @@ impl<'a> BodyBuilder<'a> {
         let place = mir::Place::from_local(local_id);
         let container_kind = match &value.operand {
             mir::Operand::Constant(constant) => match &constant.literal {
-                mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }, _) => {
+                mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }) => {
                     Some(mir::ContainerKind::List {
                         elem_ty: elem_ty.clone(),
                         len: elements.len() as u64,
                     })
                 }
-                mir::ConstantKind::Val(
-                    mir::ConstValue::Map {
-                        entries,
-                        key_ty,
-                        value_ty,
-                    },
-                    _,
-                ) => Some(mir::ContainerKind::Map {
+                mir::ConstantKind::Val(mir::ConstValue::Map {
+                    entries,
+                    key_ty,
+                    value_ty,
+                }) => Some(mir::ContainerKind::Map {
                     key_ty: key_ty.clone(),
                     value_ty: value_ty.clone(),
                     len: entries.len() as u64,
@@ -17162,20 +17137,17 @@ impl<'a> BodyBuilder<'a> {
                 let value = self.lower_operand(expr, Some(expected_ty))?;
                 let container_kind = match &value.operand {
                     mir::Operand::Constant(constant) => match &constant.literal {
-                        mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }, _) => {
+                        mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }) => {
                             Some(mir::ContainerKind::List {
                                 elem_ty: elem_ty.clone(),
                                 len: elements.len() as u64,
                             })
                         }
-                        mir::ConstantKind::Val(
-                            mir::ConstValue::Map {
-                                entries,
-                                key_ty,
-                                value_ty,
-                            },
-                            _,
-                        ) => Some(mir::ContainerKind::Map {
+                        mir::ConstantKind::Val(mir::ConstValue::Map {
+                            entries,
+                            key_ty,
+                            value_ty,
+                        }) => Some(mir::ContainerKind::Map {
                             key_ty: key_ty.clone(),
                             value_ty: value_ty.clone(),
                             len: entries.len() as u64,
@@ -17622,13 +17594,14 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(());
                 }
                 _ => {
-                    if let Some((literal, _ty)) = self.lower_intrinsic_constant(call, expr.span) {
+                    if let Some((literal, ty)) = self.lower_intrinsic_constant(call, expr.span) {
                         let statement = mir::Statement {
                             source_info: expr.span,
                             kind: mir::StatementKind::Assign(
                                 place.clone(),
                                 mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
+                                    ty,
                                     user_ty: None,
                                     literal,
                                 })),
@@ -17730,7 +17703,7 @@ impl<'a> BodyBuilder<'a> {
                         }
 
                         if let Some(const_info) = const_info {
-                            if let mir::ConstantKind::Val(value, _) = &const_info.value.literal {
+                            if let mir::ConstantKind::Val(value) = &const_info.value.literal {
                                 if let Some((constant, ty)) = self.lowering.const_index_value(
                                     self.program,
                                     expr.span,
@@ -17832,14 +17805,11 @@ impl<'a> BodyBuilder<'a> {
 
                     if let Ok(receiver_info) = self.lower_operand(receiver, None) {
                         if let mir::Operand::Constant(constant) = &receiver_info.operand {
-                            if let mir::ConstantKind::Val(
-                                mir::ConstValue::Map {
-                                    entries,
-                                    key_ty,
-                                    value_ty,
-                                },
-                                _,
-                            ) = &constant.literal
+                            if let mir::ConstantKind::Val(mir::ConstValue::Map {
+                                entries,
+                                key_ty,
+                                value_ty,
+                            }) = &constant.literal
                             {
                                 let key_operand =
                                     self.lower_operand(arg_values[0], Some(key_ty))?;
@@ -18008,7 +17978,7 @@ impl<'a> BodyBuilder<'a> {
 
                         if map_len.is_none() {
                             if let mir::Operand::Constant(constant) = &receiver_info.operand {
-                                if let mir::ConstantKind::Val(value, _) = &constant.literal {
+                                if let mir::ConstantKind::Val(value) = &constant.literal {
                                     match value {
                                         mir::ConstValue::Map {
                                             entries,
@@ -18077,14 +18047,12 @@ impl<'a> BodyBuilder<'a> {
                     }
 
                     let literal = match info.def_id {
-                        Some(def_id) => mir::ConstantKind::FnDef(def_id, info.fn_ty.clone()),
-                        None => mir::ConstantKind::Fn(
-                            mir::Symbol::new(info.fn_name.clone()),
-                            info.fn_ty.clone(),
-                        ),
+                        Some(def_id) => mir::ConstantKind::FnDef(def_id),
+                        None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
                     };
                     let func_operand = mir::Operand::Constant(mir::Constant {
                         span: expr.span,
+                        ty: info.fn_ty.clone(),
                         user_ty: None,
                         literal,
                     });
@@ -18184,11 +18152,11 @@ impl<'a> BodyBuilder<'a> {
 
                                 let func_operand = mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
+                                    ty: info.fn_ty.clone(),
                                     user_ty: None,
-                                    literal: mir::ConstantKind::Fn(
-                                        mir::Symbol::new(info.fn_name.clone()),
-                                        info.fn_ty.clone(),
-                                    ),
+                                    literal: mir::ConstantKind::Fn(mir::Symbol::new(
+                                        info.fn_name.clone(),
+                                    )),
                                 });
 
                                 let continue_block = self.new_block();
@@ -18283,11 +18251,11 @@ impl<'a> BodyBuilder<'a> {
 
                                 let func_operand = mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
+                                    ty: info.fn_ty.clone(),
                                     user_ty: None,
-                                    literal: mir::ConstantKind::Fn(
-                                        mir::Symbol::new(info.fn_name.clone()),
-                                        info.fn_ty.clone(),
-                                    ),
+                                    literal: mir::ConstantKind::Fn(mir::Symbol::new(
+                                        info.fn_name.clone(),
+                                    )),
                                 });
 
                                 let continue_block = self.new_block();
@@ -18340,6 +18308,7 @@ impl<'a> BodyBuilder<'a> {
                                     place,
                                     mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                                         span: expr.span,
+                                        ty: len_ty.clone(),
                                         user_ty: None,
                                         literal: mir::ConstantKind::UInt(len),
                                     })),
@@ -18432,6 +18401,7 @@ impl<'a> BodyBuilder<'a> {
                                         place,
                                         mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                                             span: expr.span,
+                                            ty: len_ty.clone(),
                                             user_ty: None,
                                             literal: mir::ConstantKind::UInt(len),
                                         })),
@@ -18461,6 +18431,7 @@ impl<'a> BodyBuilder<'a> {
                                             mir::Rvalue::Use(mir::Operand::Constant(
                                                 mir::Constant {
                                                     span: expr.span,
+                                                    ty: len_ty.clone(),
                                                     user_ty: None,
                                                     literal: mir::ConstantKind::UInt(len),
                                                 },
@@ -18488,6 +18459,7 @@ impl<'a> BodyBuilder<'a> {
                                             mir::Rvalue::Use(mir::Operand::Constant(
                                                 mir::Constant {
                                                     span: expr.span,
+                                                    ty: len_ty.clone(),
                                                     user_ty: None,
                                                     literal: mir::ConstantKind::UInt(
                                                         len.data as u64,
@@ -18524,6 +18496,7 @@ impl<'a> BodyBuilder<'a> {
                                                 mir::Rvalue::Use(mir::Operand::Constant(
                                                     mir::Constant {
                                                         span: expr.span,
+                                                        ty: len_ty.clone(),
                                                         user_ty: None,
                                                         literal: mir::ConstantKind::UInt(len),
                                                     },
@@ -18552,6 +18525,7 @@ impl<'a> BodyBuilder<'a> {
                                             mir::Rvalue::Use(mir::Operand::Constant(
                                                 mir::Constant {
                                                     span: expr.span,
+                                                    ty: len_ty.clone(),
                                                     user_ty: None,
                                                     literal: mir::ConstantKind::UInt(
                                                         len.data as u64,
@@ -18640,8 +18614,9 @@ impl<'a> BodyBuilder<'a> {
                         {
                             lowered_args[idx] = mir::Operand::Constant(mir::Constant {
                                 span: expr.span,
+                                ty: expected_input.clone(),
                                 user_ty: None,
-                                literal: mir::ConstantKind::UInt(0),
+                                literal: mir::ConstantKind::Null,
                             });
                         }
                     }
@@ -18669,11 +18644,9 @@ impl<'a> BodyBuilder<'a> {
 
                 let func_operand = mir::Operand::Constant(mir::Constant {
                     span: expr.span,
+                    ty: self.lowering.function_pointer_ty(&sanitized_sig),
                     user_ty: None,
-                    literal: mir::ConstantKind::Fn(
-                        Symbol::new(fn_name.clone()),
-                        self.lowering.function_pointer_ty(&sanitized_sig),
-                    ),
+                    literal: mir::ConstantKind::Fn(Symbol::new(fn_name.clone())),
                 });
 
                 let continue_block = self.new_block();

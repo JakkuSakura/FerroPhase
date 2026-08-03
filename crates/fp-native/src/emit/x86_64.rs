@@ -5,7 +5,7 @@ use fp_core::asmir::{
 };
 use fp_core::container::ContainerKind;
 use fp_core::error::{Error, Result};
-use fp_core::lir::layout::{align_of, size_of, struct_layout};
+use fp_core::lir::{LirDataLayout, LirType};
 use std::collections::{BTreeSet, HashMap};
 
 use crate::emit::{CodegenOutput, RelocKind, Relocation, TargetFormat};
@@ -99,87 +99,26 @@ fn encode_x86_addsub_imm(
     let modrm = (0b11 << 6) | ((subopcode & 0b111) << 3) | rm;
     match imm_width_bits {
         8 => {
-            let imm8 = i8::try_from(imm).map_err(|e| { eprintln!("[fp-native] preserved-instruction immediate error: {e}"); e }).ok()?;
+            let imm8 = i8::try_from(imm)
+                .map_err(|e| {
+                    eprintln!("[fp-native] preserved-instruction immediate error: {e}");
+                    e
+                })
+                .ok()?;
             Some(vec![rex, 0x83, modrm, imm8 as u8])
         }
         32 => {
-            let imm32 = i32::try_from(imm).map_err(|e| { eprintln!("[fp-native] preserved-instruction immediate error: {e}"); e }).ok()?;
+            let imm32 = i32::try_from(imm)
+                .map_err(|e| {
+                    eprintln!("[fp-native] preserved-instruction immediate error: {e}");
+                    e
+                })
+                .ok()?;
             let mut out = vec![rex, 0x81, modrm];
             out.extend_from_slice(&imm32.to_le_bytes());
             Some(out)
         }
         _ => None,
-    }
-}
-
-fn first_opcode_after_prefixes(encoding: &[u8]) -> Option<(usize, u8)> {
-    let mut idx = 0usize;
-    while idx < encoding.len() {
-        let byte = encoding[idx];
-        let is_prefix = matches!(
-            byte,
-            0x66 | 0x67 | 0xF2 | 0xF3 | 0x2E | 0x36 | 0x3E | 0x26 | 0x64 | 0x65
-        ) || (0x40..=0x4F).contains(&byte);
-        if !is_prefix {
-            break;
-        }
-        idx += 1;
-    }
-
-    let opcode = *encoding.get(idx)?;
-    Some((idx, opcode))
-}
-
-fn instruction_encoding_matches_kind(inst: &fp_core::asmir::AsmInstruction) -> bool {
-    let Some(encoding) = inst.encoding.as_deref() else {
-        return false;
-    };
-    let Some((idx, opcode)) = first_opcode_after_prefixes(encoding) else {
-        return false;
-    };
-
-    match inst.kind {
-        AsmInstructionKind::Nop => !encoding.is_empty(),
-        AsmInstructionKind::Syscall { .. } => encoding == X86_CANON_SYSCALL,
-        AsmInstructionKind::Add(_, _) => {
-            if opcode == 0x05 {
-                // add rax, imm32
-                return true;
-            }
-            if opcode == 0x01 || opcode == 0x03 {
-                // add r/m64, r64 OR add r64, r/m64
-                return true;
-            }
-            if opcode == 0x81 || opcode == 0x83 {
-                // group 1 immediate
-                let Some(modrm) = encoding.get(idx + 1) else {
-                    return false;
-                };
-                let subopcode = (modrm >> 3) & 0b111;
-                return subopcode == 0;
-            }
-            false
-        }
-        AsmInstructionKind::Sub(_, _) => {
-            if opcode == 0x2D {
-                // sub rax, imm32
-                return true;
-            }
-            if opcode == 0x29 || opcode == 0x2B {
-                // sub r/m64, r64 OR sub r64, r/m64
-                return true;
-            }
-            if opcode == 0x81 || opcode == 0x83 {
-                // group 1 immediate
-                let Some(modrm) = encoding.get(idx + 1) else {
-                    return false;
-                };
-                let subopcode = (modrm >> 3) & 0b111;
-                return subopcode == 5;
-            }
-            false
-        }
-        _ => false,
     }
 }
 
@@ -222,10 +161,19 @@ fn collect_preserved_single_block_bytes(
 
         match inst.kind {
             AsmInstructionKind::Nop => {
-                let len = annotation_value(&inst.annotations, "fp.preserve.x86_64.nop_len")
-                    .and_then(|value| value.parse().map_err(|e| { eprintln!("[fp-native] preserved-instruction parse error: {e}"); e }).ok())
-                    .or_else(|| inst.encoding.as_ref().map(|encoding| encoding.len()))
-                    .unwrap_or(1);
+                let Some(len) = annotation_value(&inst.annotations, "fp.preserve.x86_64.nop_len")
+                    .and_then(|value| {
+                        value
+                            .parse()
+                            .map_err(|e| {
+                                eprintln!("[fp-native] preserved-instruction parse error: {e}");
+                                e
+                            })
+                            .ok()
+                    })
+                else {
+                    return None;
+                };
                 out.extend_from_slice(&encode_x86_nop_sequence(len));
             }
             AsmInstructionKind::Syscall { .. } => {
@@ -233,10 +181,26 @@ fn collect_preserved_single_block_bytes(
             }
             AsmInstructionKind::Add(_, _) | AsmInstructionKind::Sub(_, _) => {
                 let dst = annotation_value(&inst.annotations, "fp.preserve.x86_64.dst_gpr")
-                    .and_then(|value| value.parse().map_err(|e| { eprintln!("[fp-native] preserved-instruction parse error: {e}"); e }).ok());
+                    .and_then(|value| {
+                        value
+                            .parse()
+                            .map_err(|e| {
+                                eprintln!("[fp-native] preserved-instruction parse error: {e}");
+                                e
+                            })
+                            .ok()
+                    });
                 let imm_width_bits =
                     annotation_value(&inst.annotations, "fp.preserve.x86_64.imm_width_bits")
-                        .and_then(|value| value.parse().map_err(|e| { eprintln!("[fp-native] preserved-instruction parse error: {e}"); e }).ok());
+                        .and_then(|value| {
+                            value
+                                .parse()
+                                .map_err(|e| {
+                                    eprintln!("[fp-native] preserved-instruction parse error: {e}");
+                                    e
+                                })
+                                .ok()
+                        });
 
                 if let (Some(dst), Some(imm_width_bits)) = (dst, imm_width_bits) {
                     let (subopcode, imm) = match &inst.kind {
@@ -253,11 +217,6 @@ fn collect_preserved_single_block_bytes(
                     continue;
                 }
 
-                // Backward compatible fallback for older lifters.
-                if instruction_encoding_matches_kind(inst) {
-                    out.extend_from_slice(inst.encoding.as_deref()?);
-                    continue;
-                }
                 return None;
             }
             _ => return None,
@@ -377,6 +336,7 @@ impl Reg {
 }
 
 struct FrameLayout {
+    data_layout: LirDataLayout,
     vreg_offsets: HashMap<u32, i32>,
     slot_offsets: HashMap<u32, i32>,
     local_offsets: HashMap<u32, i32>,
@@ -392,6 +352,7 @@ fn build_frame_layout(
     func: &AsmFunction,
     format: TargetFormat,
     reg_types: &HashMap<u32, AsmType>,
+    data_layout: &LirDataLayout,
 ) -> Result<FrameLayout> {
     let mut vreg_ids = BTreeSet::new();
     let mut max_call_args = 0usize;
@@ -406,7 +367,7 @@ fn build_frame_layout(
                 has_calls = true;
                 let mut count = 0usize;
                 for arg in args {
-                    count += call_arg_units(arg, reg_types, &local_types);
+                    count += call_arg_units(arg, reg_types, &local_types)?;
                 }
                 max_call_args = max_call_args.max(count);
             } else if let AsmInstructionKind::IntrinsicCall { kind, args, .. } = &inst.kind {
@@ -418,7 +379,7 @@ fn build_frame_layout(
                 };
                 let mut count = fixed;
                 for arg in args {
-                    count += call_arg_units(arg, reg_types, &local_types);
+                    count += call_arg_units(arg, reg_types, &local_types)?;
                 }
                 max_call_args = max_call_args.max(count);
             } else if matches!(
@@ -446,18 +407,21 @@ fn build_frame_layout(
                     return Err(Error::from("alloca expects pointer type"));
                 };
                 let count = match size {
-                    AsmValue::Constant(constant) => constant_to_i64(constant)?,
+                    AsmValue::Constant(constant) => constant_to_i64(constant, data_layout)?,
                     _ => return Err(Error::from("alloca size must be constant")),
                 };
                 if count < 0 {
                     return Err(Error::from("alloca size must be non-negative"));
                 }
-                let elem_size = size_of(&inner) as i64;
+                let elem_size = data_layout
+                    .size_of(&inner)
+                    .map_err(|error| Error::from(error.to_string()))?
+                    as i64;
                 let bytes = elem_size
                     .checked_mul(count)
                     .ok_or_else(|| Error::from("alloca size overflow"))?;
-                let bytes =
-                    i32::try_from(bytes).map_err(|_| Error::from(format!("alloca size too large: {bytes}")))?;
+                let bytes = i32::try_from(bytes)
+                    .map_err(|_| Error::from(format!("alloca size too large: {bytes}")))?;
                 let align = (*alignment).max(1) as i32;
                 alloca_info.push((inst.id, bytes, align));
             }
@@ -473,7 +437,7 @@ fn build_frame_layout(
     let mut offset = 0i32;
 
     for id in &vreg_ids {
-        let (size, align) = vreg_slot_spec(*id, reg_types);
+        let (size, align) = vreg_slot_spec(*id, reg_types, data_layout);
         offset = align_to(offset, align);
         offset += size;
         vreg_offsets.insert(*id, -offset);
@@ -489,21 +453,31 @@ fn build_frame_layout(
     }
 
     for local in &func.locals {
-        let size = align8(size_of(&local.ty) as i32).max(8);
+        let size = align8(
+            data_layout
+                .size_of(&local.ty)
+                .map_err(|error| Error::from(error.to_string()))? as i32,
+        )
+        .max(8);
         offset = align_to(offset, 8);
         offset += size;
         local_offsets.insert(local.id, -offset);
     }
 
-    if returns_aggregate(&func.signature.return_type) {
+    if returns_aggregate(&func.signature.return_type, data_layout) {
         offset += 8;
         sret_offset = Some(-offset);
     }
 
     for id in &vreg_ids {
         if let Some(ty) = reg_types.get(id) {
-            if is_large_aggregate(ty) {
-                let size = align8(size_of(ty) as i32);
+            if is_large_aggregate(ty, data_layout) {
+                let size = align8(
+                    data_layout
+                        .size_of(ty)
+                        .map_err(|error| Error::from(error.to_string()))?
+                        as i32,
+                );
                 if size > 0 {
                     offset += size;
                     agg_offsets.insert(*id, -offset);
@@ -534,12 +508,17 @@ fn build_frame_layout(
     let outgoing_size = shadow_space + (extra_stack_args as i32) * 8;
     let base = local_size + outgoing_size;
     let frame_size = if base == 0 {
-        if has_calls { 8 } else { 0 }
+        if has_calls {
+            8
+        } else {
+            0
+        }
     } else {
         align16(base + 8) - 8
     };
 
     Ok(FrameLayout {
+        data_layout: data_layout.clone(),
         vreg_offsets,
         slot_offsets,
         local_offsets,
@@ -564,20 +543,30 @@ fn call_arg_units(
     arg: &AsmValue,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
-) -> usize {
-    let ty = value_type(arg, reg_types, local_types).unwrap_or(AsmType::I64);
-    if matches!(ty, AsmType::I128) { 2 } else { 1 }
+) -> Result<usize> {
+    let ty = value_type(arg, reg_types, local_types)?;
+    if matches!(ty, AsmType::I128) {
+        Ok(2)
+    } else {
+        Ok(1)
+    }
 }
 
-fn vreg_slot_spec(id: u32, reg_types: &HashMap<u32, AsmType>) -> (i32, i32) {
+fn vreg_slot_spec(
+    id: u32,
+    reg_types: &HashMap<u32, AsmType>,
+    data_layout: &LirDataLayout,
+) -> (i32, i32) {
     let Some(ty) = reg_types.get(&id) else {
         return (8, 8);
     };
-    if is_large_aggregate(ty) {
+    if is_large_aggregate(ty, data_layout) {
         return (8, 8);
     }
     if matches!(ty, AsmType::I128) {
-        let align = align_of(ty) as i32;
+        let align = data_layout
+            .align_of(ty)
+            .expect("integer type must have alignment") as i32;
         return (16, align.max(16));
     }
     (8, 8)
@@ -668,6 +657,7 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
 
     emit_const_globals(
         program,
+        &program.data_layout,
         &mut rodata,
         &mut rodata_symbols,
         &mut data,
@@ -695,7 +685,7 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
         }
 
         let reg_types = build_reg_types(func);
-        let layout = build_frame_layout(func, format, &reg_types)?;
+        let layout = build_frame_layout(func, format, &reg_types, &program.data_layout)?;
         let local_types = build_local_types(func);
         asm.needs_frame = layout.frame_size > 0;
         if layout.frame_size > 0 {
@@ -723,7 +713,8 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
         emit_panic_stub(&mut asm, id);
     }
 
-    let entry_offset = entry_offset.unwrap_or(0);
+    let entry_offset = entry_offset
+        .ok_or_else(|| Error::from("native emitter requires an explicit main entrypoint"))?;
     let func_offsets = asm.function_offsets();
     let mut symbols = HashMap::new();
     for (idx, func) in program.functions.iter().enumerate() {
@@ -752,12 +743,14 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
 
 fn emit_const_globals(
     program: &AsmProgram,
+    data_layout: &LirDataLayout,
     rodata: &mut Vec<u8>,
     rodata_symbols: &mut HashMap<String, u64>,
     data: &mut Vec<u8>,
     data_symbols: &mut HashMap<String, u64>,
     relocs_out: &mut Vec<crate::emit::Relocation>,
 ) -> Result<()> {
+    let align_of = |ty: &LirType| data_layout.align_of(ty).expect("layout query failed");
     fn global_section_kind(
         program: &AsmProgram,
         global: &fp_core::asmir::AsmGlobal,
@@ -809,7 +802,7 @@ fn emit_const_globals(
         let Some(initializer) = initializer else {
             return Ok(());
         };
-        let bytes = encode_const_bytes(initializer, &global.ty)?;
+        let bytes = encode_const_bytes(initializer, &global.ty, data_layout)?;
         bytes_out.extend_from_slice(&bytes);
         symbols_out.insert(global.name.to_string(), offset as u64);
 
@@ -860,7 +853,13 @@ fn emit_const_globals(
     Ok(())
 }
 
-fn encode_const_bytes(constant: &AsmConstant, ty: &AsmType) -> Result<Vec<u8>> {
+fn encode_const_bytes(
+    constant: &AsmConstant,
+    ty: &AsmType,
+    data_layout: &LirDataLayout,
+) -> Result<Vec<u8>> {
+    let _size_of = |ty: &LirType| data_layout.size_of(ty).expect("layout query failed");
+    let _struct_layout = |ty: &LirType| data_layout.struct_layout(ty).expect("layout query failed");
     match (constant, ty) {
         (AsmConstant::UInt(value, _), AsmType::I8) => Ok(vec![*value as u8]),
         (AsmConstant::Int(value, _), AsmType::I8) => Ok(vec![*value as u8]),
@@ -920,6 +919,19 @@ fn spill_arguments(
     format: TargetFormat,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| {
+        layout
+            .data_layout
+            .align_of(ty)
+            .expect("layout query failed")
+    };
+    let _struct_layout = |ty: &LirType| {
+        layout
+            .data_layout
+            .struct_layout(ty)
+            .expect("layout query failed")
+    };
     let (arg_regs, float_regs, _) = call_abi(format);
     let mut int_idx = 0usize;
     let mut float_idx = 0usize;
@@ -943,7 +955,7 @@ fn spill_arguments(
             continue;
         }
         let offset = local_offset(layout, local.id)?;
-        if is_large_aggregate(ty) {
+        if is_large_aggregate(ty, &layout.data_layout) {
             let size = size_of(ty) as i32;
             if int_idx < arg_regs.len() {
                 copy_reg_to_sp(asm, arg_regs[int_idx], offset, size)?;
@@ -1189,7 +1201,7 @@ fn emit_shift(
 
     match rhs {
         AsmValue::Constant(constant) => {
-            let imm = constant_to_i64(constant)?;
+            let imm = constant_to_i64(constant, &layout.data_layout)?;
             if imm < 0 {
                 return Err(Error::from("shift amount must be non-negative"));
             }
@@ -1372,11 +1384,10 @@ fn emit_freeze(
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
-    let value_ty =
-        reg_types
-            .get(&dst_id)
-            .cloned()
-            .unwrap_or(value_type(value, reg_types, local_types)?);
+    let value_ty = reg_types
+        .get(&dst_id)
+        .cloned()
+        .ok_or_else(|| Error::from("missing result type for freeze"))?;
     if is_float_type(&value_ty) {
         load_value_float(
             asm,
@@ -1403,7 +1414,7 @@ fn emit_freeze(
         store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
         return Ok(());
     }
-    if is_large_aggregate(&value_ty) {
+    if is_large_aggregate(&value_ty, &layout.data_layout) {
         return Err(Error::from("freeze does not support large aggregates"));
     }
     load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
@@ -1431,7 +1442,9 @@ fn emit_inline_asm(
             store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
             Ok(())
         }
-        ty if is_large_aggregate(ty) => Err(Error::from("inline asm output too large")),
+        ty if is_large_aggregate(ty, &layout.data_layout) => {
+            Err(Error::from("inline asm output too large"))
+        }
         _ => {
             emit_mov_imm64(asm, Reg::R10, 0);
             store_vreg(asm, layout, dst_id, Reg::R10)?;
@@ -1491,7 +1504,7 @@ fn emit_binop(
             }
         }
         AsmValue::Constant(constant) => {
-            let imm = constant_to_i64(constant)?;
+            let imm = constant_to_i64(constant, &layout.data_layout)?;
             if let Ok(imm32) = i32::try_from(imm) {
                 match op {
                     BinOp::Add => emit_add_ri32(asm, Reg::R10, imm32),
@@ -1524,6 +1537,19 @@ fn load_value(
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| {
+        layout
+            .data_layout
+            .align_of(ty)
+            .expect("layout query failed")
+    };
+    let _struct_layout = |ty: &LirType| {
+        layout
+            .data_layout
+            .struct_layout(ty)
+            .expect("layout query failed")
+    };
     match value {
         AsmValue::Register(id) => {
             let offset = vreg_offset(layout, *id)?;
@@ -1599,7 +1625,7 @@ fn load_value(
                 emit_mov_symbol_addr(asm, dst, name.as_str(), addend)?;
                 return Ok(());
             }
-            let imm = constant_to_i64(constant)?;
+            let imm = constant_to_i64(constant, &layout.data_layout)?;
             emit_mov_imm64(asm, dst, imm as u64);
             Ok(())
         }
@@ -1855,6 +1881,19 @@ fn load_value_float(
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| {
+        layout
+            .data_layout
+            .align_of(ty)
+            .expect("layout query failed")
+    };
+    let _struct_layout = |ty: &LirType| {
+        layout
+            .data_layout
+            .struct_layout(ty)
+            .expect("layout query failed")
+    };
     match value {
         AsmValue::Register(id) => {
             let offset = vreg_offset(layout, *id)?;
@@ -1974,6 +2013,19 @@ fn store_vreg_float(
     src: FReg,
     ty: &AsmType,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| {
+        layout
+            .data_layout
+            .align_of(ty)
+            .expect("layout query failed")
+    };
+    let _struct_layout = |ty: &LirType| {
+        layout
+            .data_layout
+            .struct_layout(ty)
+            .expect("layout query failed")
+    };
     let offset = vreg_offset(layout, id)?;
     if matches!(ty, AsmType::Vector(_, _) if size_of(ty) == 16) {
         emit_movdqu_m128x(asm, Reg::Rbp, offset, src);
@@ -1996,12 +2048,12 @@ fn is_vector_type(ty: &AsmType) -> bool {
     matches!(ty, AsmType::Vector(_, _))
 }
 
-fn is_large_aggregate(ty: &AsmType) -> bool {
-    is_aggregate_type(ty) && size_of(ty) > 8
+fn is_large_aggregate(ty: &AsmType, data_layout: &LirDataLayout) -> bool {
+    is_aggregate_type(ty) && data_layout.size_of(ty).expect("layout query failed") > 8
 }
 
-fn returns_aggregate(ty: &AsmType) -> bool {
-    is_large_aggregate(ty)
+fn returns_aggregate(ty: &AsmType, data_layout: &LirDataLayout) -> bool {
+    is_large_aggregate(ty, data_layout)
 }
 
 fn is_integer_type(ty: &AsmType) -> bool {
@@ -2073,7 +2125,8 @@ fn value_type(
     }
 }
 
-fn constant_to_i64(constant: &AsmConstant) -> Result<i64> {
+fn constant_to_i64(constant: &AsmConstant, data_layout: &LirDataLayout) -> Result<i64> {
+    let size_of = |ty: &LirType| data_layout.size_of(ty).expect("layout query failed");
     match constant {
         AsmConstant::Int(value, _) => Ok(*value),
         AsmConstant::UInt(value, _) => Ok(i64::try_from(*value).unwrap_or(i64::MAX)),
@@ -2105,7 +2158,13 @@ fn constant_to_u64_bits(constant: &AsmConstant) -> Result<u64> {
     }
 }
 
-fn pack_small_aggregate(constant: &AsmConstant, ty: &AsmType) -> Result<u64> {
+fn pack_small_aggregate(
+    constant: &AsmConstant,
+    ty: &AsmType,
+    data_layout: &LirDataLayout,
+) -> Result<u64> {
+    let size_of = |ty: &LirType| data_layout.size_of(ty).expect("layout query failed");
+    let struct_layout = |ty: &LirType| data_layout.struct_layout(ty).expect("layout query failed");
     if size_of(ty) > 8 {
         return Err(Error::from("aggregate too large to pack"));
     }
@@ -2467,6 +2526,19 @@ fn emit_block(
     rodata: &mut Vec<u8>,
     rodata_pool: &mut HashMap<String, u64>,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| {
+        layout
+            .data_layout
+            .align_of(ty)
+            .expect("layout query failed")
+    };
+    let _struct_layout = |ty: &LirType| {
+        layout
+            .data_layout
+            .struct_layout(ty)
+            .expect("layout query failed")
+    };
     for inst in &block.instructions {
         match &inst.kind {
             AsmInstructionKind::Nop => {
@@ -2875,7 +2947,11 @@ fn emit_block(
                 store_vreg(asm, layout, inst.id, Reg::R10)?;
             }
             AsmInstructionKind::Call { function, args, .. } => {
-                let ty = inst.type_hint.as_ref().cloned().unwrap_or(AsmType::Void);
+                let ty = inst
+                    .type_hint
+                    .as_ref()
+                    .cloned()
+                    .ok_or_else(|| Error::from("call instruction is missing a result type"))?;
                 emit_call(
                     asm,
                     layout,
@@ -2896,7 +2972,10 @@ fn emit_block(
                 number,
                 args,
             } => {
-                let ty = inst.type_hint.as_ref().cloned().unwrap_or(AsmType::I64);
+                let ty =
+                    inst.type_hint.as_ref().cloned().ok_or_else(|| {
+                        Error::from("syscall instruction is missing a result type")
+                    })?;
                 emit_syscall(
                     asm,
                     layout,
@@ -2915,7 +2994,7 @@ fn emit_block(
                 format: format_str,
                 args,
             } => {
-                let ty = inst.type_hint.as_ref().cloned().unwrap_or(AsmType::Void);
+                let ty = inst.type_hint.clone().unwrap_or(AsmType::Void);
                 emit_intrinsic_call(
                     asm,
                     layout,
@@ -3085,7 +3164,7 @@ fn emit_block(
         }
         AsmTerminator::Return(Some(value)) => {
             let mut exit_reg = None;
-            if returns_aggregate(return_ty) {
+            if returns_aggregate(return_ty, &layout.data_layout) {
                 let sret_offset = layout
                     .sret_offset
                     .ok_or_else(|| Error::from("missing sret pointer for aggregate return"))?;
@@ -3102,6 +3181,7 @@ fn emit_block(
                     AsmValue::Constant(constant) => {
                         store_constant_aggregate_to_reg(
                             asm,
+                            &layout.data_layout,
                             Reg::R11,
                             constant,
                             return_ty,
@@ -3263,9 +3343,9 @@ fn emit_cmp(
             emit_cmp_rr(asm, Reg::R10, Reg::R11);
         }
         AsmValue::Constant(constant) => {
-            let imm = constant_to_i64(constant)?;
-            let imm32 =
-                i32::try_from(imm).map_err(|_| Error::from(format!("cmp immediate out of range: {imm}")))?;
+            let imm = constant_to_i64(constant, &layout.data_layout)?;
+            let imm32 = i32::try_from(imm)
+                .map_err(|_| Error::from(format!("cmp immediate out of range: {imm}")))?;
             emit_cmp_imm32(asm, Reg::R10, imm32);
         }
         _ => {}
@@ -3355,11 +3435,10 @@ fn emit_select(
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
-    let result_ty =
-        reg_types
-            .get(&dst_id)
-            .cloned()
-            .unwrap_or(value_type(if_true, reg_types, local_types)?);
+    let result_ty = reg_types
+        .get(&dst_id)
+        .cloned()
+        .ok_or_else(|| Error::from("missing result type for select"))?;
     if is_float_type(&result_ty) {
         return Err(Error::from(
             "Select does not support float values on x86_64",
@@ -3576,7 +3655,8 @@ impl Assembler {
                 .ok_or_else(|| Error::from("unknown jump target"))?;
             let origin = fixup.pos;
             let rel = (*target as i64) - (origin as i64 + 4);
-            let rel32 = i32::try_from(rel).map_err(|_| Error::from(format!("jump out of range: {rel}")))?;
+            let rel32 =
+                i32::try_from(rel).map_err(|_| Error::from(format!("jump out of range: {rel}")))?;
             self.buf[origin..origin + 4].copy_from_slice(&rel32.to_le_bytes());
         }
         Ok((self.buf, self.relocs))
@@ -3625,6 +3705,19 @@ fn emit_load(
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| {
+        layout
+            .data_layout
+            .align_of(ty)
+            .expect("layout query failed")
+    };
+    let _struct_layout = |ty: &LirType| {
+        layout
+            .data_layout
+            .struct_layout(ty)
+            .expect("layout query failed")
+    };
     if matches!(ty, AsmType::I128) {
         match address {
             AsmValue::StackSlot(id) => {
@@ -3649,7 +3742,7 @@ fn emit_load(
         store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
         return Ok(());
     }
-    if is_large_aggregate(ty) {
+    if is_large_aggregate(ty, &layout.data_layout) {
         let size = size_of(ty) as i32;
         if size == 0 {
             return Ok(());
@@ -3908,7 +4001,7 @@ fn emit_call(
 
     let (arg_regs, float_regs, use_al) = call_abi(format);
 
-    let needs_sret = returns_aggregate(ret_ty);
+    let needs_sret = returns_aggregate(ret_ty, &layout.data_layout);
     let mut int_idx = 0usize;
     let mut float_idx = 0usize;
     let mut stack_idx = 0usize;
@@ -4372,6 +4465,19 @@ fn emit_store(
     rodata: &mut Vec<u8>,
     rodata_pool: &mut HashMap<String, u64>,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| {
+        layout
+            .data_layout
+            .align_of(ty)
+            .expect("layout query failed")
+    };
+    let struct_layout = |ty: &LirType| {
+        layout
+            .data_layout
+            .struct_layout(ty)
+            .expect("layout query failed")
+    };
     if let AsmValue::Constant(AsmConstant::String(text)) = value {
         let offset = intern_cstring(rodata, rodata_pool, text);
         match address {
@@ -4556,7 +4662,7 @@ fn emit_store(
             AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)
         ) && size_of(&value_ty) <= 8
         {
-            let bits = pack_small_aggregate(constant, &value_ty)?;
+            let bits = pack_small_aggregate(constant, &value_ty, &layout.data_layout)?;
             emit_mov_imm64(asm, Reg::R10, bits);
             match address {
                 AsmValue::StackSlot(id) => {
@@ -4578,7 +4684,7 @@ fn emit_store(
             return Ok(());
         }
     }
-    if is_large_aggregate(&value_ty) {
+    if is_large_aggregate(&value_ty, &layout.data_layout) {
         let size = size_of(&value_ty) as i32;
         if let AsmValue::Constant(AsmConstant::Struct(values, ty)) = value {
             let fields = match ty {
@@ -5222,6 +5328,19 @@ fn emit_gep(
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| {
+        layout
+            .data_layout
+            .align_of(ty)
+            .expect("layout query failed")
+    };
+    let struct_layout = |ty: &LirType| {
+        layout
+            .data_layout
+            .struct_layout(ty)
+            .expect("layout query failed")
+    };
     let ptr_ty = value_type(ptr, reg_types, local_types)?;
     let mut current_ty = match ptr_ty {
         AsmType::Ptr(inner) => *inner,
@@ -5234,7 +5353,7 @@ fn emit_gep(
             AsmType::Struct { fields, .. } => {
                 let idx = match index {
                     AsmValue::Constant(constant) => {
-                        let raw = constant_to_i64(constant)?;
+                        let raw = constant_to_i64(constant, &layout.data_layout)?;
                         usize::try_from(raw)
                             .map_err(|_| Error::from("GEP struct index out of range"))?
                     }
@@ -5304,7 +5423,8 @@ fn add_immediate_offset(asm: &mut Assembler, base: Reg, offset: i64) -> Result<(
     if offset == 0 {
         return Ok(());
     }
-    let imm = i32::try_from(offset).map_err(|_| Error::from(format!("GEP offset too large for x86_64: {offset}")))?;
+    let imm = i32::try_from(offset)
+        .map_err(|_| Error::from(format!("GEP offset too large for x86_64: {offset}")))?;
     emit_add_ri32(asm, base, imm);
     Ok(())
 }
@@ -5328,7 +5448,13 @@ fn extract_value_type(ty: &AsmType, indices: &[u32]) -> Result<AsmType> {
     Ok(current_ty)
 }
 
-fn aggregate_field_offset(ty: &AsmType, indices: &[u32]) -> Result<(i64, AsmType)> {
+fn aggregate_field_offset(
+    ty: &AsmType,
+    indices: &[u32],
+    data_layout: &LirDataLayout,
+) -> Result<(i64, AsmType)> {
+    let size_of = |ty: &LirType| data_layout.size_of(ty).expect("layout query failed");
+    let struct_layout = |ty: &LirType| data_layout.struct_layout(ty).expect("layout query failed");
     let mut offset = 0i64;
     let mut current_ty = ty.clone();
     for idx in indices {
@@ -5574,12 +5700,16 @@ fn zero_reg_range(asm: &mut Assembler, dst: Reg, size: i32) -> Result<()> {
 
 fn store_constant_aggregate_to_reg(
     asm: &mut Assembler,
+    data_layout: &LirDataLayout,
     base: Reg,
     constant: &AsmConstant,
     agg_ty: &AsmType,
     rodata: &mut Vec<u8>,
     rodata_pool: &mut HashMap<String, u64>,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| data_layout.align_of(ty).expect("layout query failed");
+    let struct_layout = |ty: &LirType| data_layout.struct_layout(ty).expect("layout query failed");
     let size = size_of(agg_ty) as i32;
     if size == 0 {
         return Ok(());
@@ -5691,6 +5821,19 @@ fn emit_bitcast(
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| {
+        layout
+            .data_layout
+            .align_of(ty)
+            .expect("layout query failed")
+    };
+    let _struct_layout = |ty: &LirType| {
+        layout
+            .data_layout
+            .struct_layout(ty)
+            .expect("layout query failed")
+    };
     let src_ty = value_type(value, reg_types, local_types)?;
     let src_size = size_of(&src_ty);
     let dst_size = size_of(dst_ty);
@@ -5717,8 +5860,21 @@ fn emit_insert_value(
     rodata: &mut Vec<u8>,
     rodata_pool: &mut HashMap<String, u64>,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| {
+        layout
+            .data_layout
+            .align_of(ty)
+            .expect("layout query failed")
+    };
+    let struct_layout = |ty: &LirType| {
+        layout
+            .data_layout
+            .struct_layout(ty)
+            .expect("layout query failed")
+    };
     let agg_ty = value_type(aggregate, reg_types, local_types)?;
-    if !is_large_aggregate(&agg_ty) {
+    if !is_large_aggregate(&agg_ty, &layout.data_layout) {
         return Err(Error::from("InsertValue expects aggregate"));
     }
     let size = size_of(&agg_ty) as i32;
@@ -5738,9 +5894,9 @@ fn emit_insert_value(
         _ => return Err(Error::from("unsupported InsertValue aggregate source")),
     }
 
-    let (field_offset, field_ty) = aggregate_field_offset(&agg_ty, indices)?;
+    let (field_offset, field_ty) = aggregate_field_offset(&agg_ty, indices, &layout.data_layout)?;
     let store_offset = dst_offset + field_offset as i32;
-    if is_large_aggregate(&field_ty) {
+    if is_large_aggregate(&field_ty, &layout.data_layout) {
         let field_size = size_of(&field_ty) as i32;
         if field_size == 0 {
             return Ok(());
@@ -5876,8 +6032,21 @@ fn emit_extract_value(
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| {
+        layout
+            .data_layout
+            .align_of(ty)
+            .expect("layout query failed")
+    };
+    let _struct_layout = |ty: &LirType| {
+        layout
+            .data_layout
+            .struct_layout(ty)
+            .expect("layout query failed")
+    };
     let agg_ty = value_type(aggregate, reg_types, local_types)?;
-    if !is_large_aggregate(&agg_ty) {
+    if !is_large_aggregate(&agg_ty, &layout.data_layout) {
         return Err(Error::from("ExtractValue expects aggregate"));
     }
     let size = size_of(&agg_ty) as i32;
@@ -5888,10 +6057,13 @@ fn emit_extract_value(
         AsmValue::Register(id) => agg_offset(layout, *id)?,
         _ => return Err(Error::from("unsupported ExtractValue aggregate source")),
     };
-    let (field_offset, field_ty) = aggregate_field_offset(&agg_ty, indices)?;
+    let (field_offset, _field_ty) = aggregate_field_offset(&agg_ty, indices, &layout.data_layout)?;
     let load_offset = src_offset + field_offset as i32;
-    let result_ty = reg_types.get(&dst_id).cloned().unwrap_or(field_ty.clone());
-    if is_large_aggregate(&result_ty) {
+    let result_ty = reg_types
+        .get(&dst_id)
+        .cloned()
+        .ok_or_else(|| Error::from("missing result type for extractvalue"))?;
+    if is_large_aggregate(&result_ty, &layout.data_layout) {
         let field_size = size_of(&result_ty) as i32;
         if field_size == 0 {
             return Ok(());
@@ -5941,11 +6113,24 @@ fn emit_landingpad(
     dst_id: u32,
     result_ty: &AsmType,
 ) -> Result<()> {
+    let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
+    let _align_of = |ty: &LirType| {
+        layout
+            .data_layout
+            .align_of(ty)
+            .expect("layout query failed")
+    };
+    let _struct_layout = |ty: &LirType| {
+        layout
+            .data_layout
+            .struct_layout(ty)
+            .expect("layout query failed")
+    };
     let size = size_of(result_ty) as i32;
     if size == 0 {
         return Ok(());
     }
-    if is_large_aggregate(result_ty) {
+    if is_large_aggregate(result_ty, &layout.data_layout) {
         let dst_offset = agg_offset(layout, dst_id)?;
         zero_sp_range(asm, dst_offset, size)?;
         emit_mov_rr(asm, Reg::R10, Reg::Rbp);
@@ -5995,18 +6180,30 @@ mod tests {
         AsmArchitecture, AsmBlock, AsmEndianness, AsmFunction, AsmFunctionSignature,
         AsmObjectFormat, AsmProgram, AsmTarget, AsmTerminator, AsmType,
     };
-    use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
+    use fp_core::lir::{CallingConvention, Linkage, LirDataLayout, Name, Visibility};
+
+    fn layout() -> LirDataLayout {
+        LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .expect("valid test data layout")
+    }
 
     #[test]
     fn x86_64_emitter_rejects_mismatched_asmir_architecture() {
         let error = emit_text_from_asmir(
-            &AsmProgram::new(AsmTarget {
-                architecture: AsmArchitecture::Aarch64,
-                object_format: AsmObjectFormat::Elf,
-                endianness: AsmEndianness::Little,
-                pointer_width: 64,
-                default_calling_convention: None,
-            }),
+            &AsmProgram::new(
+                AsmTarget {
+                    architecture: AsmArchitecture::Aarch64,
+                    object_format: AsmObjectFormat::Elf,
+                    endianness: AsmEndianness::Little,
+                    pointer_width: 64,
+                    default_calling_convention: None,
+                },
+                layout(),
+            ),
             TargetFormat::Elf,
         )
         .err()
@@ -6033,6 +6230,7 @@ mod tests {
                 pointer_width: 64,
                 default_calling_convention: None,
             },
+            data_layout: layout(),
             lifted_from: None,
             container: None,
             sections: Vec::new(),

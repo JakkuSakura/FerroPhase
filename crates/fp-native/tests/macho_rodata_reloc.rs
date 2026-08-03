@@ -3,7 +3,16 @@ use fp_core::asmir::{
     AsmGenericOpcode, AsmInstruction, AsmInstructionKind, AsmObjectFormat, AsmOpcode, AsmProgram,
     AsmSection, AsmSectionFlag, AsmSectionKind, AsmTarget, AsmTerminator, AsmType, AsmValue,
 };
-use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
+use fp_core::lir::{CallingConvention, Linkage, LirDataLayout, Name, Visibility};
+
+fn layout() -> LirDataLayout {
+    LirDataLayout::new(
+        64,
+        8,
+        vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+    )
+    .expect("valid test data layout")
+}
 use object::{Object, ObjectSection, RelocationFlags, SectionKind, macho};
 
 #[test]
@@ -14,7 +23,7 @@ fn macho_aarch64_rodata_addresses_use_adrp_add_relocations() {
         endianness: AsmEndianness::Little,
         pointer_width: 64,
         default_calling_convention: Some(CallingConvention::C),
-    });
+    }, layout());
     program.sections.push(AsmSection {
         name: ".text".to_string(),
         kind: AsmSectionKind::Text,

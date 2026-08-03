@@ -3,14 +3,16 @@ mod vm;
 use std::collections::HashMap;
 
 use fp_core::ast::{
-    Ty, TypeStruct, TypeType, TypeUnknown, Value, ValueList, ValueMapEntry, ValueString, ValueTuple,
+    Ty, TypeStruct, TypeType, TypeUnknown, Value, ValueList, ValueMapEntry, ValueTuple,
 };
 use fp_core::hir::PackageId;
-use fp_core::lir::layout;
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirCompileUnit, LirConstant,
-    LirFunction, LirInstruction, LirInstructionKind, LirLocal, LirProgram, LirTerminator, LirType,
-    LirValue, RegisterId,
+    BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirCompileUnit,
+    LirConstantAggregate, LirConstantData, LirConstantKind, LirFloat, LirFunction,
+    LirFunctionRef, LirInstruction,
+    LirInteger,
+    LirInstructionKind, LirLocal, LirProgram, LirTerminator, LirType, LirValue,
+    LirValueKind, LirDataLayout, RegisterId,
 };
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
@@ -24,6 +26,7 @@ type LirResult<T> = Result<T, VmError>;
 
 pub struct LirInterpreter {
     state: ThreadState,
+    data_layout: LirDataLayout,
     register_types: HashMap<RegisterId, LirType>,
     register_values: HashMap<RegisterId, Value>,
     /// Global object handles keyed by name, populated from the LIR
@@ -48,6 +51,12 @@ impl LirInterpreter {
     pub fn new() -> Self {
         Self {
             state: ThreadState::new(),
+            data_layout: LirDataLayout::new(
+                64,
+                8,
+                vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+            )
+            .expect("valid default LIR data layout"),
             register_types: HashMap::new(),
             register_values: HashMap::new(),
             global_values: HashMap::new(),
@@ -152,10 +161,11 @@ impl LirInterpreter {
 
     pub fn run_function(
         &mut self,
-        _program: &LirProgram,
+        program: &LirProgram,
         func: &LirFunction,
         args: &[Value],
     ) -> LirResult<Value> {
+        self.data_layout = program.data_layout.clone();
         let saved_registers = self.state.regs.gpr;
         let saved_register_types = self.register_types.clone();
         let saved_register_values = self.register_values.clone();
@@ -163,12 +173,22 @@ impl LirInterpreter {
         self.register_types.clear();
         self.register_values.clear();
         for local in &func.locals {
-            let size = layout::size_of(&local.ty).max(8);
+            let size = self
+                .data_layout
+                .size_of(&local.ty)
+                .map_err(|error| VmError::Runtime(error.to_string()))?
+                .max(8);
             let sp = self.state.regs.sp();
             let addr = self
                 .state
                 .mem
-                .stack_alloc(sp, size, layout::align_of(&local.ty))?;
+                .stack_alloc(
+                    sp,
+                    size,
+                    self.data_layout
+                        .align_of(&local.ty)
+                        .map_err(|error| VmError::Runtime(error.to_string()))?,
+                )?;
             self.state.regs.set_sp(addr);
             self.state.set_local_addr(local.id, addr);
         }
@@ -206,7 +226,7 @@ impl LirInterpreter {
                     let ret_ty = &func.signature.return_type;
                     let v = match val {
                         Some(v) => self.resolve_typed(v, ret_ty)?,
-                        None => self.resolve_typed(&LirValue::Local(0), ret_ty)?,
+                        None => self.resolve_typed(&LirValue::local(0, ret_ty.clone()), ret_ty)?,
                     };
                     break Ok(v);
                 }
@@ -243,8 +263,8 @@ impl LirInterpreter {
             LirInstructionKind::Add(a, b) => self.binop(dst, a, b, |x, y| x.wrapping_add(y)),
             LirInstructionKind::Sub(a, b) => self.binop(dst, a, b, |x, y| x.wrapping_sub(y)),
             LirInstructionKind::Mul(a, b) => self.binop(dst, a, b, |x, y| x.wrapping_mul(y)),
-            LirInstructionKind::Div(a, b) => self.binop_div(dst, a, b, instr.type_hint.as_ref()),
-            LirInstructionKind::Rem(a, b) => self.binop_rem(dst, a, b, instr.type_hint.as_ref()),
+            LirInstructionKind::Div(a, b) => self.binop_div(dst, a, b, instr.result.as_ref().map(|r| &r.ty)),
+            LirInstructionKind::Rem(a, b) => self.binop_rem(dst, a, b, instr.result.as_ref().map(|r| &r.ty)),
             LirInstructionKind::Eq(a, b) => self.cmp_raw(dst, a, b, |x, y| (x == y) as u64),
             LirInstructionKind::Ne(a, b) => self.cmp_raw(dst, a, b, |x, y| (x != y) as u64),
             LirInstructionKind::Lt(a, b) => self.cmp_signed(dst, a, b, |x, y| x < y),
@@ -298,7 +318,11 @@ impl LirInterpreter {
             }
             LirInstructionKind::Load { address, .. } => {
                 let addr = self.resolve_addr(address)?;
-                let ty = instr.type_hint.as_ref().unwrap_or(&LirType::I64);
+                let ty = &instr
+                    .result
+                    .as_ref()
+                    .ok_or_else(|| VmError::Runtime("load instruction has no result type".into()))?
+                    .ty;
                 if Self::is_aggregate_runtime_type(ty) {
                     let value = self.load_value_at(addr, ty)?;
                     let handle = self.state.objects.len() as u64;
@@ -390,13 +414,13 @@ impl LirInterpreter {
                 Ok(())
             }
             LirInstructionKind::ExtractValue { aggregate, indices } => {
-                self.extract_value(dst, aggregate, indices, instr.type_hint.as_ref())
+                self.extract_value(dst, aggregate, indices, instr.result.as_ref().map(|r| &r.ty))
             }
             LirInstructionKind::InsertValue {
                 aggregate,
                 element,
                 indices,
-            } => self.insert_value(dst, aggregate, element, indices, instr.type_hint.as_ref()),
+            } => self.insert_value(dst, aggregate, element, indices, instr.result.as_ref().map(|r| &r.ty)),
             LirInstructionKind::Call { function, args, .. } => {
                 self.handle_call(dst, function, args)
             }
@@ -447,7 +471,7 @@ impl LirInterpreter {
                     };
                     let mut new_val = struct_val.clone();
                     if let Value::Type(ref mut ty) = new_val {
-                        if let Ty::Struct(ref mut s) = ty {
+                        if let Ty::Struct(s) = ty {
                             if !s.fields.iter().any(|f| f.name.as_str() == &field_name_str) {
                                 s.fields.push(fp_core::ast::StructuralField::new(
                                     fp_core::ast::Ident::new(field_name_str),
@@ -490,7 +514,7 @@ impl LirInterpreter {
             _ => Err(VmError::Runtime("unimplemented".into())),
         };
         if result.is_ok() {
-            if let Some(ty) = instr.type_hint.as_ref() {
+            if let Some(ty) = instr.result.as_ref().map(|r| &r.ty) {
                 self.register_types.insert(dst, ty.clone());
                 self.capture_typed_register(dst, ty)?;
             }
@@ -540,10 +564,6 @@ impl LirInterpreter {
     }
 
     fn resolve_string_value(&self, val: &LirValue) -> String {
-        // Try string constant first
-        if let LirValue::Constant(LirConstant::String(s)) = val {
-            return s.clone();
-        }
         // Try as ptr type resolution
         let ptr_ty = LirType::Ptr(Box::new(LirType::I8));
         if let Ok(v) = self.resolve_runtime_value(val, &ptr_ty) {
@@ -563,33 +583,36 @@ impl LirInterpreter {
     }
 
     fn resolve_raw(&self, val: &LirValue) -> LirResult<u64> {
-        match val {
-            LirValue::Register(id) => Ok(self.read_register(*id)),
-            LirValue::Constant(LirConstant::GlobalRef(name, _, _)) => self
+        match &val.kind {
+            LirValueKind::Register(id) => Ok(self.read_register(*id)),
+            LirValueKind::Constant(LirConstantKind::GlobalAddress { global }) => self
                 .global_values
-                .get(name.as_str())
+                .get(global.as_str())
                 .copied()
-                .ok_or_else(|| VmError::Runtime(format!("missing global {name}"))),
-            LirValue::Constant(c) => match c {
-                LirConstant::String(_)
-                | LirConstant::Array(..)
-                | LirConstant::Struct(..)
-                | LirConstant::Bytes(_) => Err(VmError::Runtime(format!(
-                    "resolve_raw called on non-scalar constant: {c:?}"
+                .ok_or_else(|| VmError::Runtime(format!("missing global {global}"))),
+            LirValueKind::Constant(LirConstantKind::Data(data)) => match data {
+                LirConstantData::Integer(_) | LirConstantData::Float(_) => Ok(const_raw(val)),
+                LirConstantData::Bytes(_) => Err(VmError::Runtime(format!(
+                    "resolve_raw called on byte constant: {val:?}"
                 ))),
-                _ => Ok(const_raw(c)),
             },
-            LirValue::Local(id) => self.state.mem.load_u64(self.state.local_addr(*id)),
-            LirValue::StackSlot(id) => self.state.mem.load_u64(self.state.local_addr(*id)),
-            LirValue::Global(name, _) => self
+            LirValueKind::Constant(LirConstantKind::Null)
+            | LirValueKind::Constant(LirConstantKind::Undef)
+            | LirValueKind::Constant(LirConstantKind::Poison)
+            | LirValueKind::Function(_) => Ok(0),
+            LirValueKind::Local(id) | LirValueKind::StackSlot(id) => {
+                self.state.mem.load_u64(self.state.local_addr(*id))
+            }
+            LirValueKind::Global(name) => self
                 .global_values
                 .get(name.as_str())
                 .copied()
                 .ok_or_else(|| VmError::Runtime(format!("missing global {name}"))),
-            LirValue::Function(_)
-            | LirValue::FunctionInPackage(_, _)
-            | LirValue::FunctionDef(_) => Ok(0),
-            LirValue::Undef(_) | LirValue::Null(_) => Ok(0),
+            LirValueKind::Constant(LirConstantKind::Aggregate(_))
+            | LirValueKind::Constant(LirConstantKind::FunctionAddress(_))
+            | LirValueKind::Constant(LirConstantKind::Expr(_)) => Err(VmError::Runtime(
+                format!("resolve_raw called on non-scalar value: {val:?}"),
+            )),
         }
     }
 
@@ -597,7 +620,7 @@ impl LirInterpreter {
         for global in &program.globals {
             if let Some(init) = &global.initializer {
                 // Push the value into the object heap and store the handle.
-                if let Ok(value) = self.constant_to_value(init) {
+                if let Ok(value) = self.constant_to_value(&LirValue::constant(init.clone())) {
                     let handle = self.state.objects.len() as u64;
                     self.state.objects.push(value);
                     self.global_values.insert(global.name.to_string(), handle);
@@ -626,9 +649,9 @@ impl LirInterpreter {
     /// Resolve an address operand — for `LirValue::Local`, returns
     /// the pre-allocated stack address rather than the value at it.
     fn resolve_addr(&self, val: &LirValue) -> LirResult<u64> {
-        match val {
-            LirValue::Local(id) => Ok(self.state.local_addr(*id)),
-            other => self.resolve_raw(other),
+        match &val.kind {
+            LirValueKind::Local(id) => Ok(self.state.local_addr(*id)),
+            _ => self.resolve_raw(val),
         }
     }
 
@@ -655,12 +678,7 @@ impl LirInterpreter {
     }
 
     fn infer_type(&self, val: &LirValue) -> LirType {
-        match val {
-            LirValue::Constant(c) => const_ty(c),
-            LirValue::Global(_, ty) => ty.clone(),
-            LirValue::Register(id) => self.register_types.get(id).cloned().unwrap_or(LirType::I64),
-            _ => LirType::I64,
-        }
+        val.ty.clone()
     }
 
     fn insert_value(
@@ -677,8 +695,8 @@ impl LirInterpreter {
         let element_ty = self.aggregate_element_type(&aggregate_ty, indices)?;
         // If the aggregate is Undef (initial state from handle_aggregate),
         // resolve it to a default aggregate value based on the type.
-        let mut aggregate_value = match aggregate {
-            LirValue::Constant(LirConstant::Undef(_)) => {
+        let mut aggregate_value = match &aggregate.kind {
+            LirValueKind::Constant(LirConstantKind::Undef) => {
                 Self::default_value_for_type(&aggregate_ty)
             }
             _ => self.resolve_aggregate_value(aggregate, &aggregate_ty)?,
@@ -721,7 +739,7 @@ impl LirInterpreter {
         if let Some(value) = self.try_resolve_i8_slice(val, ty)? {
             return Ok(value);
         }
-        if let LirValue::Register(register) = val {
+        if let LirValueKind::Register(register) = &val.kind {
             if let Some(value) = self.register_values.get(register) {
                 if Self::is_aggregate_runtime_type(ty) || matches!(ty, LirType::Ptr(_)) {
                     return Ok(value.clone());
@@ -732,11 +750,8 @@ impl LirInterpreter {
             return self.resolve_aggregate_value(val, ty);
         }
         if matches!(ty, LirType::Ptr(_)) {
-            return match val {
-                LirValue::Constant(LirConstant::String(text)) => {
-                    Ok(Value::String(ValueString::new_ref(text.clone())))
-                }
-                LirValue::Constant(LirConstant::Null(_)) | LirValue::Null(_) => Ok(Value::null()),
+            return match &val.kind {
+                LirValueKind::Constant(LirConstantKind::Null) => Ok(Value::null()),
                 _ => {
                     let raw = self.resolve_raw(val)?;
                     Ok(self
@@ -753,8 +768,8 @@ impl LirInterpreter {
     }
 
     fn resolve_aggregate_value(&self, val: &LirValue, ty: &LirType) -> LirResult<Value> {
-        match val {
-            LirValue::Register(id) => {
+        match &val.kind {
+            LirValueKind::Register(id) => {
                 if let Some(value) = self.register_values.get(id) {
                     if Self::is_aggregate_runtime_type(ty) {
                         return Ok(value.clone());
@@ -773,50 +788,70 @@ impl LirInterpreter {
                     Ok(value)
                 }
             }
-            LirValue::Constant(LirConstant::Undef(_))
-            | LirValue::Constant(LirConstant::Null(_))
-            | LirValue::Undef(_)
-            | LirValue::Null(_) => Ok(Self::default_value_for_type(ty)),
-            LirValue::Constant(constant) => self.constant_to_value(constant),
+            LirValueKind::Constant(LirConstantKind::Undef)
+            | LirValueKind::Constant(LirConstantKind::Null) => {
+                Ok(Self::default_value_for_type(ty))
+            }
+            LirValueKind::Constant(_) => self.constant_to_value(val),
             _ => Err(VmError::Runtime(format!(
                 "expected aggregate value for {ty:?}, found {val:?}"
             ))),
         }
     }
 
-    fn constant_to_value(&self, constant: &LirConstant) -> LirResult<Value> {
-        Ok(match constant {
-            LirConstant::Int(v, _) => Value::int(*v),
-            LirConstant::UInt(v, _) => Value::uint(*v),
-            LirConstant::F32(v) => Value::decimal(f64::from(*v)),
-            LirConstant::Float(v, _) => Value::decimal(*v),
-            LirConstant::Bool(v) => Value::bool(*v),
-            LirConstant::String(text) => Value::String(ValueString::new_ref(text.clone())),
-            LirConstant::Array(values, _) => Value::List(ValueList::new(
-                values
-                    .iter()
-                    .map(|value| self.constant_to_value(value))
-                    .collect::<LirResult<Vec<_>>>()?,
-            )),
-            LirConstant::Struct(values, _) => Value::Tuple(ValueTuple::new(
-                values
-                    .iter()
-                    .map(|value| self.constant_to_value(value))
-                    .collect::<LirResult<Vec<_>>>()?,
-            )),
-            LirConstant::Null(_) => Value::null(),
-            LirConstant::Undef(ty) => Self::default_value_for_type(ty),
-            LirConstant::GlobalRef(name, _, _) => Value::uint(
-                self.global_values
-                    .get(name.as_str())
-                    .copied()
-                    .ok_or_else(|| VmError::Runtime(format!("missing global {name}")))?,
-            ),
-            LirConstant::FunctionRef(_, _) => Value::uint(0),
-            LirConstant::Bytes(bytes) => {
+    fn constant_to_value(&self, constant: &LirValue) -> LirResult<Value> {
+        let value = match &constant.kind {
+            LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(integer))) => {
+                match integer {
+                    LirInteger::I1(value) => Value::bool(*value),
+                    LirInteger::I8(value) => Value::uint(u64::from(*value)),
+                    LirInteger::I16(value) => Value::uint(u64::from(*value)),
+                    LirInteger::I32(value) => Value::uint(u64::from(*value)),
+                    LirInteger::I64(value) => Value::uint(*value),
+                    LirInteger::I128(_) | LirInteger::Arbitrary(_) => {
+                        todo!("interpreter conversion for wide integer constants")
+                    }
+                }
+            }
+            LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Float(float))) => {
+                match float {
+                    LirFloat::F32(value) => Value::decimal(f32::from_bits(*value) as f64),
+                    LirFloat::F64(value) => Value::decimal(f64::from_bits(*value)),
+                }
+            }
+            LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Bytes(bytes))) => {
                 Value::Bytes(fp_core::ast::ValueBytes::from(bytes.as_slice()))
             }
-        })
+            LirValueKind::Constant(LirConstantKind::Aggregate(aggregate)) => match aggregate {
+                LirConstantAggregate::Array(values) | LirConstantAggregate::Vector(values) => {
+                    Value::List(ValueList::new(
+                        values
+                            .iter()
+                            .map(|value| self.constant_to_value(&LirValue::constant(value.clone())))
+                            .collect::<LirResult<Vec<_>>>()?,
+                    ))
+                }
+                LirConstantAggregate::Struct(values) => Value::Tuple(ValueTuple::new(
+                    values
+                        .iter()
+                        .map(|value| self.constant_to_value(&LirValue::constant(value.clone())))
+                        .collect::<LirResult<Vec<_>>>()?,
+                )),
+            },
+            LirValueKind::Constant(LirConstantKind::Null) => Value::null(),
+            LirValueKind::Constant(LirConstantKind::Undef) => {
+                Self::default_value_for_type(&constant.ty)
+            }
+            LirValueKind::Constant(LirConstantKind::GlobalAddress { global }) => Value::uint(
+                self.global_values
+                    .get(global.as_str())
+                    .copied()
+                    .ok_or_else(|| VmError::Runtime(format!("missing global {global}")))?,
+            ),
+            LirValueKind::Constant(LirConstantKind::FunctionAddress(_)) => Value::uint(0),
+            _ => return Err(VmError::Runtime(format!("not a constant: {constant:?}"))),
+        };
+        Ok(value)
     }
 
     fn try_resolve_i8_slice(&self, val: &LirValue, ty: &LirType) -> LirResult<Option<Value>> {
@@ -1198,12 +1233,21 @@ impl LirInterpreter {
     }
 
     fn handle_call(&mut self, dst: u32, function: &LirValue, args: &[LirValue]) -> LirResult<()> {
-        match function {
-            LirValue::Function(name) => self.handle_call_named(dst, name, args, None, None),
-            LirValue::FunctionInPackage(package_id, name) => {
-                self.handle_call_named(dst, name, args, Some(*package_id), None)
+        let LirValueKind::Function(function_ref) = &function.kind else {
+            return Err(VmError::Runtime("indirect call".into()));
+        };
+        match function_ref {
+            LirFunctionRef::Name(name) => {
+                self.handle_call_named(dst, name.as_str(), args, None, None)
             }
-            LirValue::FunctionDef(def_id) => {
+            LirFunctionRef::Package { package_id, name } => self.handle_call_named(
+                dst,
+                name.as_str(),
+                args,
+                Some(*package_id),
+                None,
+            ),
+            LirFunctionRef::Definition(def_id) => {
                 let function =
                     self.definition_functions
                         .get(def_id)
@@ -1215,21 +1259,18 @@ impl LirInterpreter {
                     .iter()
                     .enumerate()
                     .map(|(index, arg)| {
-                        let ty = function
-                            .signature
-                            .params
-                            .get(index)
-                            .unwrap_or(&LirType::Void);
+                        let ty = function.signature.params.get(index).ok_or_else(|| {
+                            VmError::Runtime(format!("too many arguments for {}", function.name))
+                        })?;
                         self.resolve_runtime_value(arg, ty)
                     })
                     .collect::<LirResult<Vec<_>>>()?;
-                let program = LirProgram::new();
+                let program = LirProgram::new(self.data_layout.clone());
                 let value = self.run_function(&program, &function, &resolved_args)?;
                 let raw = self.value_to_slot_raw(value, &function.signature.return_type);
                 self.wr(dst, raw);
                 Ok(())
             }
-            _ => Err(VmError::Runtime("indirect call".into())),
         }
     }
 
@@ -1288,11 +1329,13 @@ impl LirInterpreter {
                     .iter()
                     .enumerate()
                     .map(|(index, arg)| {
-                        let ty = func.signature.params.get(index).unwrap_or(&LirType::Void);
+                        let ty = func.signature.params.get(index).ok_or_else(|| {
+                            VmError::Runtime(format!("too many arguments for {}", func.name))
+                        })?;
                         self.resolve_runtime_value(arg, ty)
                     })
                     .collect::<LirResult<Vec<_>>>()?;
-                let prog = LirProgram::new();
+                let prog = LirProgram::new(self.data_layout.clone());
                 if let Ok(v) = self.run_function(&prog, &func, &resolved_args) {
                     let raw = self.value_to_slot_raw(v, &func.signature.return_type);
                     self.wr(dst, raw);
@@ -1534,7 +1577,10 @@ impl LirInterpreter {
     fn store_value_at(&mut self, addr: u64, ty: &LirType, value: &Value) -> LirResult<()> {
         match ty {
             LirType::Struct { fields, .. } => {
-                let layout = layout::struct_layout(ty)
+                let layout = self
+                    .data_layout
+                    .struct_layout(ty)
+                    .map_err(|error| VmError::Runtime(error.to_string()))?
                     .ok_or_else(|| VmError::Runtime(format!("missing layout for {ty:?}")))?;
                 for (index, field_ty) in fields.iter().enumerate() {
                     let field = Self::aggregate_field(value, index)?;
@@ -1543,7 +1589,10 @@ impl LirInterpreter {
                 Ok(())
             }
             LirType::Array(elem_ty, count) => {
-                let stride = layout::size_of(elem_ty);
+                let stride = self
+                    .data_layout
+                    .size_of(elem_ty)
+                    .map_err(|error| VmError::Runtime(error.to_string()))?;
                 for index in 0..*count as usize {
                     let element = Self::aggregate_field(value, index)?;
                     self.store_value_at(addr + stride * index as u64, elem_ty, element)?;
@@ -1551,7 +1600,10 @@ impl LirInterpreter {
                 Ok(())
             }
             LirType::Vector(elem_ty, count) => {
-                let stride = layout::size_of(elem_ty);
+                let stride = self
+                    .data_layout
+                    .size_of(elem_ty)
+                    .map_err(|error| VmError::Runtime(error.to_string()))?;
                 for index in 0..*count as usize {
                     let element = Self::aggregate_field(value, index)?;
                     self.store_value_at(addr + stride * index as u64, elem_ty, element)?;
@@ -1568,7 +1620,10 @@ impl LirInterpreter {
     fn load_value_at(&self, addr: u64, ty: &LirType) -> LirResult<Value> {
         match ty {
             LirType::Struct { fields, .. } => {
-                let layout = layout::struct_layout(ty)
+                let layout = self
+                    .data_layout
+                    .struct_layout(ty)
+                    .map_err(|error| VmError::Runtime(error.to_string()))?
                     .ok_or_else(|| VmError::Runtime(format!("missing layout for {ty:?}")))?;
                 let mut values = Vec::with_capacity(fields.len());
                 for (index, field_ty) in fields.iter().enumerate() {
@@ -1577,7 +1632,10 @@ impl LirInterpreter {
                 Ok(Value::Tuple(ValueTuple::new(values)))
             }
             LirType::Array(elem_ty, count) => {
-                let stride = layout::size_of(elem_ty);
+                let stride = self
+                    .data_layout
+                    .size_of(elem_ty)
+                    .map_err(|error| VmError::Runtime(error.to_string()))?;
                 let mut values = Vec::with_capacity(*count as usize);
                 for index in 0..*count as usize {
                     values.push(self.load_value_at(addr + stride * index as u64, elem_ty)?);
@@ -1585,7 +1643,10 @@ impl LirInterpreter {
                 Ok(Value::List(ValueList::new(values)))
             }
             LirType::Vector(elem_ty, count) => {
-                let stride = layout::size_of(elem_ty);
+                let stride = self
+                    .data_layout
+                    .size_of(elem_ty)
+                    .map_err(|error| VmError::Runtime(error.to_string()))?;
                 let mut values = Vec::with_capacity(*count as usize);
                 for index in 0..*count as usize {
                     values.push(self.load_value_at(addr + stride * index as u64, elem_ty)?);
@@ -1707,38 +1768,25 @@ impl LirInterpreter {
     }
 }
 
-fn const_raw(c: &LirConstant) -> u64 {
-    match c {
-        LirConstant::Int(v, _) => *v as u64,
-        LirConstant::UInt(v, _) => *v,
-        LirConstant::F32(v) => u64::from(v.to_bits()),
-        LirConstant::Float(v, _) => v.to_bits(),
-        LirConstant::Bool(v) => {
-            if *v {
-                1
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    }
-}
-
-fn const_ty(c: &LirConstant) -> LirType {
-    match c {
-        LirConstant::Int(_, ty)
-        | LirConstant::UInt(_, ty)
-        | LirConstant::Float(_, ty)
-        | LirConstant::Null(ty)
-        | LirConstant::Undef(ty)
-        | LirConstant::Array(_, ty)
-        | LirConstant::Struct(_, ty)
-        | LirConstant::GlobalRef(_, ty, _)
-        | LirConstant::FunctionRef(_, ty) => ty.clone(),
-        LirConstant::Bool(_) => LirType::I1,
-        LirConstant::F32(_) => LirType::F32,
-        LirConstant::String(_) => LirType::Ptr(Box::new(LirType::I8)),
-        LirConstant::Bytes(bytes) => LirType::Array(Box::new(LirType::I8), bytes.len() as u64),
+fn const_raw(value: &LirValue) -> u64 {
+    let LirValueKind::Constant(LirConstantKind::Data(data)) = &value.kind else {
+        return 0;
+    };
+    match data {
+        LirConstantData::Integer(integer) => match integer {
+            LirInteger::I1(value) => u64::from(*value),
+            LirInteger::I8(value) => u64::from(*value),
+            LirInteger::I16(value) => u64::from(*value),
+            LirInteger::I32(value) => u64::from(*value),
+            LirInteger::I64(value) => *value,
+            LirInteger::I128(value) => *value as u64,
+            LirInteger::Arbitrary(_) => todo!("interpreter conversion for arbitrary integer constants"),
+        },
+        LirConstantData::Float(float) => match float {
+            LirFloat::F32(value) => u64::from(*value),
+            LirFloat::F64(value) => *value,
+        },
+        LirConstantData::Bytes(_) => 0,
     }
 }
 
@@ -1769,11 +1817,18 @@ mod tests {
     use super::*;
     use fp_core::lir::{
         CallingConvention, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-        LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, Name,
+        LirGlobal, LirInstruction, LirInstructionKind, LirInteger, LirProgram, LirRegister,
+        LirTerminator, LirType, LirValue, Name,
     };
 
     fn make(f: LirFunction) -> LirProgram {
         LirProgram {
+            data_layout: LirDataLayout::new(
+                64,
+                8,
+                vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+            )
+            .expect("valid test data layout"),
             functions: vec![f],
             globals: vec![],
             type_definitions: vec![],
@@ -1782,19 +1837,31 @@ mod tests {
         }
     }
 
+    fn make_with_globals(f: LirFunction, globals: Vec<LirGlobal>) -> LirProgram {
+        let mut program = make(f);
+        program.globals = globals;
+        program
+    }
+
     fn int(v: i64) -> LirValue {
-        LirValue::Constant(LirConstant::Int(v, LirType::I64))
+        LirValue::constant(
+            LirConstant::integer(LirType::I64, LirInteger::I64(v as u64))
+                .expect("valid i64 constant"),
+        )
     }
 
     fn reg(id: u32) -> LirValue {
-        LirValue::Register(id)
+        LirValue::register(id, LirType::I64)
     }
 
     fn ins(k: LirInstructionKind) -> LirInstruction {
         LirInstruction {
             id: 0,
             kind: k,
-            type_hint: Some(LirType::I64),
+            result: Some(LirRegister {
+                id: 0,
+                ty: LirType::I64,
+            }),
             debug_info: None,
         }
     }
@@ -1826,7 +1893,10 @@ mod tests {
         LirInstruction {
             id,
             kind: k,
-            type_hint: Some(LirType::I64),
+            result: Some(LirRegister {
+                id,
+                ty: LirType::I64,
+            }),
             debug_info: None,
         }
     }
@@ -1944,33 +2014,35 @@ mod tests {
             basic_blocks: vec![bb(
                 0,
                 vec![
-                    LirInstruction {
-                        id: 10,
-                        kind: LirInstructionKind::InsertValue {
-                            aggregate: LirValue::Constant(LirConstant::Undef(slice_ty.clone())),
-                            element: LirValue::Constant(LirConstant::UInt(0x1234, LirType::I64)),
+                    LirInstruction::new(
+                        10,
+                        LirInstructionKind::InsertValue {
+                            aggregate: LirValue::constant(LirConstant::undef(slice_ty.clone())),
+                            element: LirValue::constant(
+                                LirConstant::integer(LirType::I64, LirInteger::I64(0x1234))
+                                    .expect("valid i64 constant"),
+                            ),
                             indices: vec![0],
                         },
-                        type_hint: Some(slice_ty.clone()),
-                        debug_info: None,
-                    },
-                    LirInstruction {
-                        id: 11,
-                        kind: LirInstructionKind::InsertValue {
+                    )
+                    .with_result(slice_ty.clone()),
+                    LirInstruction::new(
+                        11,
+                        LirInstructionKind::InsertValue {
                             aggregate: reg(10),
                             element: int(5),
                             indices: vec![1],
                         },
-                        type_hint: Some(slice_ty),
-                        debug_info: None,
-                    },
-                    i(
+                    )
+                    .with_result(slice_ty),
+                    LirInstruction::new(
                         12,
                         LirInstructionKind::ExtractValue {
                             aggregate: reg(11),
                             indices: vec![1],
                         },
-                    ),
+                    )
+                    .with_result(LirType::I64),
                 ],
                 ret(reg(12)),
             )],
@@ -1997,25 +2069,26 @@ mod tests {
             basic_blocks: vec![bb(
                 0,
                 vec![
-                    LirInstruction {
-                        id: 10,
-                        kind: LirInstructionKind::InsertValue {
-                            aggregate: LirValue::Constant(LirConstant::Undef(array_ty.clone())),
-                            element: LirValue::Constant(LirConstant::String("abc".into())),
+                    LirInstruction::new(
+                        10,
+                        LirInstructionKind::InsertValue {
+                            aggregate: LirValue::constant(LirConstant::undef(array_ty.clone())),
+                            element: LirValue::constant(LirConstant::global_address(
+                                LirType::Ptr(Box::new(LirType::I8)),
+                                Name::new("abc"),
+                            )),
                             indices: vec![0],
                         },
-                        type_hint: Some(array_ty),
-                        debug_info: None,
-                    },
-                    LirInstruction {
-                        id: 11,
-                        kind: LirInstructionKind::ExtractValue {
+                    )
+                    .with_result(array_ty),
+                    LirInstruction::new(
+                        11,
+                        LirInstructionKind::ExtractValue {
                             aggregate: reg(10),
                             indices: vec![0],
                         },
-                        type_hint: Some(LirType::Ptr(Box::new(LirType::I8))),
-                        debug_info: None,
-                    },
+                    )
+                    .with_result(LirType::Ptr(Box::new(LirType::I8))),
                 ],
                 ret(reg(11)),
             )],
@@ -2027,8 +2100,26 @@ mod tests {
         };
 
         assert_eq!(
-            LirInterpreter::new().run_main(&make(f)).unwrap(),
-            Value::String(ValueString::new_ref("abc"))
+            LirInterpreter::new()
+                .run_main(&make_with_globals(
+                    f,
+                    vec![LirGlobal {
+                        name: Name::new("abc"),
+                        ty: LirType::Array(Box::new(LirType::I8), 3),
+                        initializer: Some(LirConstant::bytes(
+                            LirType::Array(Box::new(LirType::I8), 3),
+                            b"abc".to_vec(),
+                        )),
+                        relocations: vec![],
+                        linkage: fp_core::lir::Linkage::Internal,
+                        visibility: fp_core::lir::Visibility::Default,
+                        is_constant: true,
+                        alignment: None,
+                        section: None,
+                    }],
+                ))
+                .unwrap(),
+            Value::Bytes(fp_core::ast::ValueBytes::from(b"abc".as_slice()))
         );
     }
 }

@@ -8,12 +8,32 @@ use fp_bytecode::{
     BytecodeBinOp, BytecodeConst, BytecodePlace, BytecodePlaceElem, BytecodeUnOp, IntrinsicCallKind,
 };
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, LirConstant, LirInstructionKind, LirType, LirValue, RegisterId,
+    BasicBlockId, CallingConvention, LirConstant, LirFloat, LirInstructionKind, LirInteger,
+    LirType, LirValue, RegisterId,
 };
 
 use super::constants;
 use super::function::FunctionLowering;
 use super::{LowerError, LowerResult};
+
+fn i64_value(value: u64) -> LirValue {
+    LirValue::constant(
+        LirConstant::integer(LirType::I64, LirInteger::I64(value)).expect("valid i64 constant"),
+    )
+}
+
+fn i1_value(value: u64) -> LirValue {
+    LirValue::constant(
+        LirConstant::integer(LirType::I1, LirInteger::I1(value != 0)).expect("valid i1 constant"),
+    )
+}
+
+fn f64_value(value: f64) -> LirValue {
+    LirValue::constant(
+        LirConstant::float(LirType::F64, LirFloat::F64(value.to_bits()))
+            .expect("valid f64 constant"),
+    )
+}
 
 // -----------------------------------------------------------------
 // Constants
@@ -34,8 +54,8 @@ pub(crate) fn lower_load_const(
         BytecodeConst::Unit => fl.emit_in_block(
             block_id,
             LirInstructionKind::Add(
-                LirValue::Constant(LirConstant::Int(0, LirType::I64)),
-                LirValue::Constant(LirConstant::Int(0, LirType::I64)),
+                i64_value(0),
+                i64_value(0),
             ),
         ),
         BytecodeConst::Bool(b) => {
@@ -43,30 +63,30 @@ pub(crate) fn lower_load_const(
             fl.emit_in_block(
                 block_id,
                 LirInstructionKind::Add(
-                    LirValue::Constant(LirConstant::UInt(val, LirType::I1)),
-                    LirValue::Constant(LirConstant::UInt(0, LirType::I1)),
+                    i1_value(val),
+                    i1_value(0),
                 ),
             )
         }
         BytecodeConst::Int(i) => fl.emit_in_block(
             block_id,
             LirInstructionKind::Add(
-                LirValue::Constant(LirConstant::Int(*i, LirType::I64)),
-                LirValue::Constant(LirConstant::Int(0, LirType::I64)),
+                i64_value(*i as u64),
+                i64_value(0),
             ),
         ),
         BytecodeConst::UInt(u) => fl.emit_in_block(
             block_id,
             LirInstructionKind::Add(
-                LirValue::Constant(LirConstant::UInt(*u, LirType::I64)),
-                LirValue::Constant(LirConstant::UInt(0, LirType::I64)),
+                i64_value(*u),
+                i64_value(0),
             ),
         ),
         BytecodeConst::Float(f) => fl.emit_in_block(
             block_id,
             LirInstructionKind::Add(
-                LirValue::Constant(LirConstant::Float(*f, LirType::F64)),
-                LirValue::Constant(LirConstant::Float(0.0, LirType::F64)),
+                f64_value(*f),
+                f64_value(0.0),
             ),
         ),
         BytecodeConst::Str(_s) => {
@@ -78,8 +98,8 @@ pub(crate) fn lower_load_const(
             let len_reg = fl.emit_in_block(
                 block_id,
                 LirInstructionKind::Add(
-                    LirValue::Constant(LirConstant::UInt(0, LirType::I64)),
-                    LirValue::Constant(LirConstant::UInt(0, LirType::I64)),
+                    i64_value(0),
+                    i64_value(0),
                 ),
             )?;
             lower_call_intrinsic(
@@ -94,8 +114,8 @@ pub(crate) fn lower_load_const(
             let len_reg = fl.emit_in_block(
                 block_id,
                 LirInstructionKind::Add(
-                    LirValue::Constant(LirConstant::UInt(0, LirType::I64)),
-                    LirValue::Constant(LirConstant::UInt(0, LirType::I64)),
+                    i64_value(0),
+                    i64_value(0),
                 ),
             )?;
             lower_call_intrinsic(
@@ -108,8 +128,8 @@ pub(crate) fn lower_load_const(
         BytecodeConst::Null => fl.emit_in_block(
             block_id,
             LirInstructionKind::Add(
-                LirValue::Constant(LirConstant::Null(LirType::Ptr(Box::new(LirType::I64)))),
-                LirValue::Constant(LirConstant::UInt(0, LirType::I64)),
+                LirValue::constant(LirConstant::null(LirType::Ptr(Box::new(LirType::I64)))),
+                i64_value(0),
             ),
         ),
         BytecodeConst::Tuple(items) => {
@@ -118,10 +138,7 @@ pub(crate) fn lower_load_const(
                 let reg = lower_load_const(fl, block_id, item)?;
                 element_regs.push(FunctionLowering::reg_val(reg));
             }
-            let mut args = vec![LirValue::Constant(LirConstant::UInt(
-                element_regs.len() as u64,
-                LirType::I64,
-            ))];
+            let mut args = vec![i64_value(element_regs.len() as u64)];
             args.extend(element_regs);
             lower_call_intrinsic(fl, block_id, constants::INTRINSIC_MAKE_TUPLE, &args)
         }
@@ -131,10 +148,7 @@ pub(crate) fn lower_load_const(
                 let reg = lower_load_const(fl, block_id, item)?;
                 element_regs.push(FunctionLowering::reg_val(reg));
             }
-            let mut args = vec![LirValue::Constant(LirConstant::UInt(
-                element_regs.len() as u64,
-                LirType::I64,
-            ))];
+            let mut args = vec![i64_value(element_regs.len() as u64)];
             args.extend(element_regs);
             lower_call_intrinsic(fl, block_id, constants::INTRINSIC_MAKE_ARRAY, &args)
         }
@@ -144,10 +158,7 @@ pub(crate) fn lower_load_const(
                 let reg = lower_load_const(fl, block_id, item)?;
                 element_regs.push(FunctionLowering::reg_val(reg));
             }
-            let mut args = vec![LirValue::Constant(LirConstant::UInt(
-                element_regs.len() as u64,
-                LirType::I64,
-            ))];
+            let mut args = vec![i64_value(element_regs.len() as u64)];
             args.extend(element_regs);
             lower_call_intrinsic(fl, block_id, constants::INTRINSIC_MAKE_LIST, &args)
         }
@@ -159,10 +170,7 @@ pub(crate) fn lower_load_const(
                 arg_regs.push(FunctionLowering::reg_val(k));
                 arg_regs.push(FunctionLowering::reg_val(v));
             }
-            let mut args = vec![LirValue::Constant(LirConstant::UInt(
-                entries.len() as u64,
-                LirType::I64,
-            ))];
+            let mut args = vec![i64_value(entries.len() as u64)];
             args.extend(arg_regs);
             lower_call_intrinsic(fl, block_id, constants::INTRINSIC_MAKE_MAP, &args)
         }
@@ -271,7 +279,7 @@ pub(crate) fn lower_unop(
     let kind = match op {
         BytecodeUnOp::Not => LirInstructionKind::Not(FunctionLowering::reg_val(operand)),
         BytecodeUnOp::Neg => LirInstructionKind::Sub(
-            LirValue::Constant(LirConstant::Int(0, LirType::I64)),
+            i64_value(0),
             FunctionLowering::reg_val(operand),
         ),
     };
@@ -336,10 +344,7 @@ pub(crate) fn lower_make_compound(
         element_regs.push(FunctionLowering::reg_val(fl.pop_reg()?));
     }
     element_regs.reverse();
-    let mut args = vec![LirValue::Constant(LirConstant::UInt(
-        count as u64,
-        LirType::I64,
-    ))];
+    let mut args = vec![i64_value(count as u64)];
     args.extend(element_regs);
     lower_call_intrinsic(fl, block_id, intrinsic_name, &args)
 }
@@ -386,7 +391,7 @@ pub(crate) fn lower_load_place(
     let mut current_val = fl.emit_in_block(
         block_id,
         LirInstructionKind::Load {
-            address: LirValue::Local(place.local),
+            address: LirValue::local(place.local, LirType::I64),
             alignment: Some(8),
             volatile: false,
         },
@@ -426,7 +431,7 @@ pub(crate) fn lower_store_place(
             block_id,
             LirInstructionKind::Store {
                 value: FunctionLowering::reg_val(value_reg),
-                address: LirValue::Local(place.local),
+                address: LirValue::local(place.local, LirType::I64),
                 alignment: Some(8),
                 volatile: false,
             },
@@ -437,7 +442,7 @@ pub(crate) fn lower_store_place(
     let mut base_val_reg = fl.emit_in_block(
         block_id,
         LirInstructionKind::Load {
-            address: LirValue::Local(place.local),
+            address: LirValue::local(place.local, LirType::I64),
             alignment: Some(8),
             volatile: false,
         },
@@ -466,7 +471,7 @@ pub(crate) fn lower_store_place(
                 block_id,
                 LirInstructionKind::Store {
                     value: FunctionLowering::reg_val(new_handle),
-                    address: LirValue::Local(place.local),
+                    address: LirValue::local(place.local, LirType::I64),
                     alignment: Some(8),
                     volatile: false,
                 },
@@ -503,7 +508,10 @@ pub(crate) fn lower_call_intrinsic(
     fl.emit_in_block(
         block_id,
         LirInstructionKind::Call {
-            function: LirValue::Function(name.to_string()),
+            function: LirValue::function(
+                fp_core::lir::LirFunctionRef::Name(fp_core::lir::Name::new(name)),
+                LirType::Ptr(Box::new(LirType::I8)),
+            ),
             args: args.to_vec(),
             calling_convention: CallingConvention::C,
             tail_call: false,
@@ -524,14 +532,14 @@ fn lower_projection_index(
         BytecodePlaceElem::Field(idx) => fl.emit_in_block(
             block_id,
             LirInstructionKind::Add(
-                LirValue::Constant(LirConstant::UInt(*idx as u64, LirType::I64)),
-                LirValue::Constant(LirConstant::UInt(0, LirType::I64)),
+                i64_value(*idx as u64),
+                i64_value(0),
             ),
         ),
         BytecodePlaceElem::Index(local_idx) => fl.emit_in_block(
             block_id,
             LirInstructionKind::Load {
-                address: LirValue::Local(*local_idx),
+                address: LirValue::local(*local_idx, LirType::I64),
                 alignment: Some(8),
                 volatile: false,
             },

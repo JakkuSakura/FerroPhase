@@ -1,7 +1,8 @@
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature, LirInstruction,
-    LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue, Name,
+    BasicBlockId, LirBasicBlock, LirConstant, LirConstantData, LirConstantKind, LirDataLayout,
+    LirFunction, LirFunctionSignature, LirInstruction, LirInstructionKind, LirInteger,
+    LirProgram, LirRegister, LirTerminator, LirType, LirValue, LirValueKind, Name,
 };
 use std::collections::HashMap;
 
@@ -22,7 +23,10 @@ struct ParsedBlock {
 /// Scope: this is intentionally conservative and primarily targets the
 /// SSA-ish URCL subset emitted by FerroPhase itself.
 pub fn parse_program(text: &str) -> Result<LirProgram> {
-    let mut program = LirProgram::new();
+    let mut program = LirProgram::new(
+        LirDataLayout::new(64, 8, vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)])
+            .expect("valid URCL LIR data layout"),
+    );
     for function in parse_functions(text)? {
         program.add_function(lower_function(function)?);
     }
@@ -267,7 +271,7 @@ fn parse_instruction(line: &str) -> Result<LirInstruction> {
     Ok(LirInstruction {
         id,
         kind,
-        type_hint: Some(ty),
+        result: Some(LirRegister { id, ty }),
         debug_info: None,
     })
 }
@@ -404,7 +408,7 @@ fn parse_select_pattern(lines: &[String]) -> Result<Option<(LirInstruction, usiz
                 if_true,
                 if_false,
             },
-            type_hint: Some(LirType::I64),
+            result: Some(LirRegister { id, ty: LirType::I64 }),
             debug_info: None,
         },
         6,
@@ -420,7 +424,8 @@ fn parse_compare_pattern(lines: &[String]) -> Result<Option<(LirInstruction, usi
     };
     if !matches!(
         zero,
-        LirValue::Constant(LirConstant::Int(0, _)) | LirValue::Constant(LirConstant::UInt(0, _))
+        LirValue { kind: LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(integer))), .. }
+            if integer.is_zero()
     ) {
         return Ok(None);
     }
@@ -455,7 +460,8 @@ fn parse_compare_pattern(lines: &[String]) -> Result<Option<(LirInstruction, usi
     }
     if !matches!(
         one,
-        LirValue::Constant(LirConstant::Int(1, _)) | LirValue::Constant(LirConstant::UInt(1, _))
+        LirValue { kind: LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(integer))), .. }
+            if matches!(integer, LirInteger::I64(1) | LirInteger::I32(1))
     ) {
         return Ok(None);
     }
@@ -470,7 +476,7 @@ fn parse_compare_pattern(lines: &[String]) -> Result<Option<(LirInstruction, usi
         LirInstruction {
             id,
             kind: constructor(lhs, rhs),
-            type_hint: Some(LirType::I1),
+            result: Some(LirRegister { id, ty: LirType::I1 }),
             debug_info: None,
         },
         6,
@@ -505,27 +511,24 @@ fn parse_value(token: Option<&str>, line: &str) -> Result<LirValue> {
         token.ok_or_else(|| Error::from(format!("urcl parse: missing operand in `{line}`")))?;
     if let Some(reg) = parse_register(token) {
         if reg == 1 {
-            return Ok(LirValue::Register(0));
+            return Ok(LirValue::register(0, LirType::I64));
         }
         let id = reg
             .checked_sub(2)
             .ok_or_else(|| Error::from("urcl parse: invalid register operand"))?;
-        return Ok(LirValue::Register(id));
+        return Ok(LirValue::register(id, LirType::I64));
     }
     if let Some(global) = token.strip_prefix('@') {
-        return Ok(LirValue::Global(
-            global.to_string(),
-            LirType::Ptr(Box::new(LirType::I8)),
-        ));
+        return Ok(LirValue::global(Name::new(global), LirType::Ptr(Box::new(LirType::I8))));
     }
     if token == "undef" {
-        return Ok(LirValue::Undef(LirType::I64));
+        return Ok(LirValue::constant(LirConstant::undef(LirType::I64)));
     }
     if token == "0" {
-        return Ok(LirValue::Null(LirType::Ptr(Box::new(LirType::I8))));
+        return Ok(LirValue::constant(LirConstant::null(LirType::Ptr(Box::new(LirType::I8)))));
     }
     if let Ok(value) = token.parse::<i64>() {
-        return Ok(LirValue::Constant(LirConstant::Int(value, LirType::I64)));
+        return Ok(LirValue::constant(LirConstant::integer(LirType::I64, LirInteger::I64(value as u64)).expect("valid URCL integer")));
     }
     Err(Error::from(format!(
         "urcl parse: unsupported operand `{token}`"

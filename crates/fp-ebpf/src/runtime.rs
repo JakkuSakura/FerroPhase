@@ -597,12 +597,29 @@ mod tests {
     use super::run_object;
     use fp_core::lir::{
         CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-        LirInstruction, LirInstructionKind, LirLocal, LirProgram, LirTerminator, LirType, LirValue,
+        LirInstruction, LirInstructionKind, LirInteger, LirLocal, LirProgram, LirRegister,
+        LirTerminator, LirType, LirValue,
     };
+
+    fn i64_value(value: u64) -> LirValue {
+        LirValue::constant(
+            LirConstant::integer(LirType::I64, LirInteger::I64(value)).unwrap(),
+        )
+    }
+
+    fn layout() -> fp_core::lir::LirDataLayout {
+        fp_core::lir::LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .unwrap()
+    }
 
     fn base_program(instructions: Vec<LirInstruction>, terminator: LirTerminator) -> LirProgram {
         LirProgram {
             functions: vec![LirFunction {
+                def_id: None,
                 name: fp_core::lir::Name::new("main"),
                 signature: LirFunctionSignature {
                     params: Vec::new(),
@@ -625,6 +642,8 @@ mod tests {
             }],
             globals: Vec::new(),
             type_definitions: Vec::new(),
+            data_layout: layout(),
+            comptime_entries: Vec::new(),
             queries: Vec::new(),
         }
     }
@@ -637,12 +656,12 @@ mod tests {
                 kind: LirInstructionKind::IntrinsicCall {
                     kind: fp_core::lir::LirIntrinsicKind::Println,
                     format: "value={}".to_string(),
-                    args: vec![LirValue::Constant(LirConstant::Int(7, LirType::I64))],
+                    args: vec![i64_value(7)],
                 },
-                type_hint: Some(LirType::Void),
+                result: None,
                 debug_info: None,
             }],
-            LirTerminator::Return(Some(LirValue::Constant(LirConstant::Int(0, LirType::I64)))),
+            LirTerminator::Return(Some(i64_value(0))),
         );
         let bytes = crate::emit_object(&program).unwrap();
         let mut stdout = Vec::new();
@@ -657,13 +676,13 @@ mod tests {
             vec![LirInstruction {
                 id: 1,
                 kind: LirInstructionKind::Add(
-                    LirValue::Constant(LirConstant::Int(2, LirType::I64)),
-                    LirValue::Constant(LirConstant::Int(3, LirType::I64)),
+                    i64_value(2),
+                    i64_value(3),
                 ),
-                type_hint: Some(LirType::I64),
+                result: Some(LirRegister { id: 1, ty: LirType::I64 }),
                 debug_info: None,
             }],
-            LirTerminator::Return(Some(LirValue::Register(1))),
+            LirTerminator::Return(Some(LirValue::register(1, LirType::I64))),
         );
         let bytes = crate::emit_object(&program).unwrap();
         let mut stdout = Vec::new();
