@@ -1,22 +1,18 @@
 //! Expression evaluation command implementation
 
 use crate::{CliError, Result, cli::CliConfig, commands::format_value_brief, compiler};
-use clap::{ArgAction, Args};
+use clap::Args;
+use fp_core::frontend::LanguageFrontend;
+use fp_core::intrinsics::IntrinsicNormalizationMode;
+use fp_lang::FerroFrontend;
 use tracing::info;
 
 /// Arguments for the eval command
 #[derive(Debug, Clone, Args)]
 pub struct EvalArgs {
-    /// Package name used to qualify source identities
-    #[arg(long = "package")]
-    pub package: Option<String>,
-    /// Expression to evaluate
-    #[arg(short, long, conflicts_with = "file")]
-    pub expr: Option<String>,
-
-    /// File(s) containing code to evaluate
-    #[arg(short, long, action = ArgAction::Append)]
-    pub file: Vec<std::path::PathBuf>,
+    /// Source text parsed as one top-level ScriptBlock
+    #[arg(value_name = "SCRIPT")]
+    pub script: String,
 
     /// Print the AST representation
     #[arg(long)]
@@ -40,35 +36,14 @@ pub async fn eval_command(mut args: EvalArgs, _config: &CliConfig) -> Result<()>
     args.print_result = true;
     ensure_compiler_eval_supported(&args)?;
 
-    if let Some(expr) = &args.expr {
-        let description = format!("expression: {}", expr);
-        info!("Evaluating {}", description);
-        let value = compiler::eval_expr(expr)?;
-        return print_eval_value(&value, &args, None);
-    }
-
-    if !args.file.is_empty() {
-        crate::commands::validate_paths_exist(&args.file, true, "eval")?;
-        for file in &args.file {
-            let description = format!("file '{}'", file.display());
-            info!("Evaluating {}", description);
-            let package = args.package.as_deref().ok_or_else(|| {
-                CliError::InvalidInput("eval --file requires --package".to_string())
-            })?;
-            let value = compiler::eval_file(file, package, None)?;
-            let label = if args.file.len() > 1 {
-                Some(file.as_path())
-            } else {
-                None
-            };
-            print_eval_value(&value, &args, label)?;
-        }
-        return Ok(());
-    }
-
-    Err(CliError::InvalidInput(
-        "Either --expr or --file must be provided".to_string(),
-    ))
+    info!("Evaluating ScriptBlock");
+    let frontend = FerroFrontend::new();
+    frontend.set_intrinsic_normalization_mode(IntrinsicNormalizationMode::Compile);
+    let script = frontend
+        .parse_script(&args.script)
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
+    let value = compiler::eval_script(script)?;
+    print_eval_value(&value, &args, None)
 }
 
 fn ensure_compiler_eval_supported(args: &EvalArgs) -> Result<()> {
@@ -114,40 +89,33 @@ fn print_eval_value(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
 
     #[tokio::test]
     async fn test_eval_simple_expression() {
         let config = CliConfig::default();
         let args = EvalArgs {
-            expr: Some("1 + 2 * 3".to_string()),
-            file: Vec::new(),
+            script: "1 + 2 * 3".to_string(),
             print_ast: false,
             print_passes: false,
             print_result: true,
             runtime: None,
         };
 
-        let _result = eval_command(args, &config).await;
+        eval_command(args, &config).await.unwrap();
     }
 
     #[tokio::test]
-    async fn test_eval_from_file() {
+    async fn test_eval_script_block_with_statements() {
         let config = CliConfig::default();
-
-        let mut temp_file = NamedTempFile::new().unwrap();
-        writeln!(temp_file, "fn main() {{ 1 + 2 }}").unwrap();
-
         let args = EvalArgs {
-            expr: None,
-            file: vec![temp_file.path().to_path_buf()],
+            script: "let value = 2; value + 3".to_string(),
             print_ast: false,
             print_passes: false,
             print_result: true,
             runtime: None,
         };
 
-        let _result = eval_command(args, &config).await;
+        eval_command(args, &config).await.unwrap();
     }
+
 }

@@ -33,7 +33,7 @@ Most compiler commands require a package identity:
 ```bash
 fp check --package demo src/main.fp
 fp interpret --package demo src/main.fp
-fp eval --expr "1 + 2 * 3"
+fp eval "1 + 2 * 3"
 fp parse src/main.fp
 ```
 

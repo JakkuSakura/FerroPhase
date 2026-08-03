@@ -9,7 +9,10 @@ use fp_compiler::{
 };
 use fp_core::{
     ast::register_threadlocal_serializer,
-    ast::{File, Value},
+    ast::{
+        BExpr, Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction, ItemKind,
+        ScriptBlock, Value, Visibility,
+    },
     diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager},
     frontend::{FrontendParseMode, FrontendResult, FrontendSnapshot, LanguageFrontend},
     lir::LirDataLayout,
@@ -86,37 +89,48 @@ pub fn check_path(
     drain_driver(&mut driver, lossy)
 }
 
-pub fn eval_expr(source: &str) -> Result<Value> {
-    let ast = parse_expr_with_mode(source, FrontendParseMode::Strict)?;
-    execute_ast(
+pub fn eval_script(script: ScriptBlock) -> Result<Value> {
+    let body = ExprBlock::new_stmts(script.stmts);
+    let eval_const = ItemDefConst {
+        attrs: Vec::new(),
+        mutable: None,
+        ty_annotation: None,
+        visibility: Visibility::Private,
+        name: Ident::new("__eval_result"),
+        ty: None,
+        value: Expr::block(body.clone()).into(),
+    };
+    let main = ItemDefFunction::new_simple(
+        Ident::new("main"),
+        ExprBlock::new_expr(Expr::unit()),
+    );
+    let ast = File {
+        path: PathBuf::from("<eval>"),
+        attrs: Vec::new(),
+        collected_items: Vec::new(),
+        items: vec![
+            Item::new(ItemKind::DefFunction(main)),
+            Item::new(ItemKind::DefConst(eval_const)),
+        ],
+    };
+    let identity = CompilerIdentity::for_script();
+    let mut driver = lower_ast(
         ast,
-        CompilerIdentity::for_expr(),
-        fp_core::context::ExecutionMode::CompileTime,
+        &identity,
         Path::new("<eval>"),
         None,
         LossyCompileOptions::default(),
-    )
-}
-
-pub fn eval_file(
-    path: &Path,
-    package: &str,
-    resolver: Option<Arc<dyn CompilerModuleResolver>>,
-) -> Result<Value> {
-    let ast = parse_file_with_mode(
-        path,
-        None,
-        FrontendParseMode::Strict,
-        LossyCompileOptions::default(),
     )?;
-    execute_ast(
-        ast,
-        CompilerIdentity::for_file(package, path),
-        fp_core::context::ExecutionMode::Runtime,
-        path,
-        resolver,
-        LossyCompileOptions::default(),
-    )
+    drain_driver(&mut driver, LossyCompileOptions::default())?;
+    driver
+        .state
+        .typing_ctx
+        .resolved_consts
+        .borrow()
+        .iter()
+        .find(|(key, _)| key.ends_with("::__eval_result") || key.as_str() == "__eval_result")
+        .map(|(_, value)| value.clone())
+        .ok_or_else(|| CliError::Compilation("eval script did not produce a value".to_string()))
 }
 
 pub fn interpret_file(
@@ -1181,8 +1195,8 @@ impl LoweredProgram {
 }
 
 impl CompilerIdentity {
-    fn for_expr() -> Self {
-        Self::new(vec!["cli".to_string(), "eval_expr".to_string()])
+    fn for_script() -> Self {
+        Self::new(vec!["cli".to_string(), "eval_script".to_string()])
     }
 
     fn for_file(package: &str, path: &Path) -> Self {

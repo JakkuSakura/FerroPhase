@@ -10,7 +10,7 @@ mod serializer;
 use crate::macro_parser::FerroMacroExpansionParser;
 use crate::normalization::FerroIntrinsicNormalizer;
 use fp_core::Result as CoreResult;
-use fp_core::ast::{AstSerializer, File, ScriptBlock};
+use fp_core::ast::{AstSerializer, ExprBlock, ExprKind, File, Item, ItemKind, ScriptBlock};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::{IntrinsicNormalizationMode, IntrinsicNormalizer};
@@ -151,9 +151,39 @@ impl FerroFrontend {
         let cleaned = self.clean_source(source);
         let file_id = register_source(PathBuf::from("<script>"), &cleaned);
         self.ferro.clear_diagnostics();
-        self.ferro
+        let mut script = self
+            .ferro
             .parse_script_ast_with_file(cleaned.as_str(), file_id)
-            .map_err(|err| self.diagnostic_err(format!("failed to parse script: {err}")))
+            .map_err(|err| self.diagnostic_err(format!("failed to parse script: {err}")))?;
+
+        // Reuse the normal AST normalizer for script input. ScriptBlock is the
+        // public representation, but normalization already operates on File,
+        // so use a temporary expression item and return its block afterward.
+        let mut file = File {
+            path: PathBuf::from("<script>"),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::Expr(
+                ExprKind::Block(ExprBlock::new_stmts(std::mem::take(&mut script.stmts))).into(),
+            ))],
+        };
+        let (_, intrinsic_normalizer, _) = self.setup();
+        fp_core::intrinsics::normalize_intrinsics_with(
+            &mut file,
+            intrinsic_normalizer.as_ref(),
+        )
+        .map_err(|err| self.diagnostic_err(format!("failed to normalize script: {err}")))?;
+        let item = file.items.remove(0);
+        let ItemKind::Expr(expr) = item.kind().clone() else {
+            unreachable!("script normalization expression wrapper changed kind");
+        };
+        let ExprKind::Block(block) = expr.kind() else {
+            return Err(self.diagnostic_err(
+                "script normalization expression wrapper changed shape".to_string(),
+            ));
+        };
+        script.stmts = block.stmts.clone();
+        Ok(script)
     }
 }
 

@@ -13,7 +13,7 @@
 //! fp compile hello.fp --emitter binary --target x86_64-unknown-linux-gnu
 //!
 //! # Run const evaluation with interpretation
-//! fp eval --expr "1 + 2 * 3"
+//! fp eval "1 + 2 * 3"
 //!
 //! # Initialize a new FerroPhase project
 //! magnet init my-project --template basic
@@ -49,7 +49,7 @@ while supporting multi-language interoperability and advanced compile-time compu
 
 EXAMPLES:
     fp interpret hello.fp                 # Interpret a FerroPhase file
-    fp eval --expr "1 + 2 * 3"           # Evaluate expression
+    fp eval "1 + 2 * 3"                  # Evaluate a ScriptBlock
     fp compile hello.fp --emitter rust    # Compile to Rust
     magnet init my-project                # Create new project
     "#
