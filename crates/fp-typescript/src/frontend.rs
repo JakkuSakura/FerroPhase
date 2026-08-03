@@ -7,14 +7,14 @@ use fp_core::ast::{
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclConst, ItemDefConst, ItemDefEnum,
     ItemDefFunction, ItemDefStruct, ItemDefType, ItemImport, ItemImportGroup, ItemImportPath,
     ItemImportRename, ItemImportStyle, ItemImportTree, ItemKind, Module as AstModule, Name,
-    ReprOptions, StructuralField, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct,
-    TypeStructural, TypeTuple, TypeVec, Value, Visibility,
+    ReprOptions, StructuralField, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct, TypeStructural,
+    TypeTuple, TypeVec, Value, Visibility,
 };
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::error::{Error as CoreError, Result as CoreResult};
 use fp_core::frontend::{FrontendParseMode, FrontendResult, LanguageFrontend};
 use swc_common::input::StringInput;
-use swc_common::{sync::Lrc, FileName, SourceMap, DUMMY_SP};
+use swc_common::{DUMMY_SP, FileName, SourceMap, sync::Lrc};
 use swc_ecma_ast::EsVersion;
 use swc_ecma_ast::{
     ArrayPat, BlockStmt, ClassDecl, ClassExpr, ClassMember, Constructor, Decl, ExportAll,
@@ -1785,18 +1785,26 @@ mod tests {
             .collect();
         assert_eq!(runtime_refs.len(), 4);
 
-        assert!(runtime_refs
-            .iter()
-            .any(|reference| reference.spec == "./foo"));
-        assert!(runtime_refs
-            .iter()
-            .any(|reference| reference.spec == "./baz"));
-        assert!(runtime_refs
-            .iter()
-            .any(|reference| reference.spec == "../qux/index.ts"));
-        assert!(runtime_refs
-            .iter()
-            .any(|reference| reference.spec == "./all"));
+        assert!(
+            runtime_refs
+                .iter()
+                .any(|reference| reference.spec == "./foo")
+        );
+        assert!(
+            runtime_refs
+                .iter()
+                .any(|reference| reference.spec == "./baz")
+        );
+        assert!(
+            runtime_refs
+                .iter()
+                .any(|reference| reference.spec == "../qux/index.ts")
+        );
+        assert!(
+            runtime_refs
+                .iter()
+                .any(|reference| reference.spec == "./all")
+        );
 
         let type_only_refs: Vec<_> = references
             .into_iter()

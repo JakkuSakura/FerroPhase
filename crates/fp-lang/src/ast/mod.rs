@@ -163,11 +163,7 @@ impl FerroPhaseParser {
     /// no item wrapping. Mirrors `parse_file_ast_with_file` but calls
     /// `parse_script_tokens` (ordered item/let/defer/expr dispatch) instead
     /// of `parse_file_tokens` (item-or-bare-expr-only).
-    pub fn parse_script_ast_with_file(
-        &self,
-        source: &str,
-        file: FileId,
-    ) -> Result<ScriptBlock> {
+    pub fn parse_script_ast_with_file(&self, source: &str, file: FileId) -> Result<ScriptBlock> {
         let file_id = resolve_file_id(file, source, None);
         let tokens = crate::lexer::tokenizer::lex(source).map_err(|err| {
             if let Some(span) = err.span() {
@@ -178,14 +174,15 @@ impl FerroPhaseParser {
             }
             eyre::eyre!(err)
         })?;
-        let (_attrs, script) = crate::ast::parse_script_tokens(&tokens, file_id).map_err(|err| {
-            if let Some(span) = err.span() {
-                self.record_error_with_span(format!("failed to parse script: {err}"), span);
-            } else {
-                self.record_error(format!("failed to parse script: {err}"));
-            }
-            eyre::eyre!(err)
-        })?;
+        let (_attrs, script) =
+            crate::ast::parse_script_tokens(&tokens, file_id).map_err(|err| {
+                if let Some(span) = err.span() {
+                    self.record_error_with_span(format!("failed to parse script: {err}"), span);
+                } else {
+                    self.record_error(format!("failed to parse script: {err}"));
+                }
+                eyre::eyre!(err)
+            })?;
         Ok(script)
     }
 }
@@ -206,9 +203,9 @@ use fp_core::ast::{
     MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Module, Name, ParameterPath,
     ParameterPathSegment, Path, Pattern, PatternIdent, PatternKind, PatternQuote, PatternTuple,
     PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind,
-    QuoteItemKind, ReprOptions, ScriptBlock, StmtDefer, StmtLet, StructuralField, Ty,
-    TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeFunction, TypeInt, TypePrimitive,
-    TypeQuote, TypeReference, TypeSlice, TypeStruct, Value, ValueNone, Visibility,
+    QuoteItemKind, ReprOptions, ScriptBlock, StmtDefer, StmtLet, StructuralField, Ty, TypeBinaryOp,
+    TypeBinaryOpKind, TypeBounds, TypeEnum, TypeFunction, TypeInt, TypePrimitive, TypeQuote,
+    TypeReference, TypeSlice, TypeStruct, Value, ValueNone, Visibility,
 };
 use fp_core::intrinsics::CallKind;
 use fp_core::module::path::PathPrefix;
@@ -219,8 +216,10 @@ use winnow::combinator::{alt, opt, repeat};
 use winnow::error::{ContextError, ErrMode};
 use winnow::{ModalResult, Parser};
 
-use crate::ast::lower_common::{decode_string_literal, split_parameter_path_prefix, split_path_prefix};
-use crate::lexer::tokenizer::{strip_number_suffix, Keyword, Token, TokenKind};
+use crate::ast::lower_common::{
+    decode_string_literal, split_parameter_path_prefix, split_path_prefix,
+};
+use crate::lexer::tokenizer::{Keyword, Token, TokenKind, strip_number_suffix};
 
 mod expr;
 mod items;
@@ -394,10 +393,8 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
     if has_args {
         Ok(Name::parameter_path(ParameterPath::new(prefix, segments)))
     } else {
-        let plain_segments: Vec<Ident> = segments
-            .into_iter()
-            .map(|segment| segment.ident)
-            .collect();
+        let plain_segments: Vec<Ident> =
+            segments.into_iter().map(|segment| segment.ident).collect();
         Ok(Name::path(Path::new(prefix, plain_segments)))
     }
 }

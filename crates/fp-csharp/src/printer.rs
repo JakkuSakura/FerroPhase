@@ -2,7 +2,7 @@
 
 use fp_core::ast::{AstSerializer, Ty, TypeEnum, TypeStruct};
 use fp_core::printer::AstSerializerConfig;
-use fp_core::{bail, Result};
+use fp_core::{Result, bail};
 
 #[derive(Debug, Clone)]
 pub struct CSharpPrinter {

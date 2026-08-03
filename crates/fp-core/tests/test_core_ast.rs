@@ -2,11 +2,11 @@
 // Tests pure fp-core capabilities without optimization infrastructure
 // Focus: AST manipulation, context management, basic language constructs
 
+use fp_core::Result;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::ops::BinOpKind;
-use fp_core::pretty::{pretty, PrettyOptions};
-use fp_core::Result;
+use fp_core::pretty::{PrettyOptions, pretty};
 use pretty_assertions::assert_eq;
 
 fn int_expr(value: i64) -> Expr {

@@ -13,8 +13,12 @@ use std::collections::HashMap;
 /// - Supports `ldc.i4`, `ldloc`, `stloc`, `add/sub/mul/div`, `ret`, `br`, `brtrue`, labels.
 pub fn parse_cil_program(text: &str) -> Result<LirProgram> {
     let mut program = LirProgram::new(
-        LirDataLayout::new(64, 8, vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)])
-            .expect("valid .NET LIR data layout"),
+        LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .expect("valid .NET LIR data layout"),
     );
     for method in parse_methods(text)? {
         program.add_function(lower_method(method)?);
@@ -280,7 +284,10 @@ fn parse_stack_instruction(
             .trim()
             .parse::<i64>()
             .map_err(|_| Error::from("cil parse: invalid ldc.i4"))?;
-        stack.push(LirValue::constant(LirConstant::integer(LirType::I64, LirInteger::I64(value as u64)).expect("valid .NET integer")));
+        stack.push(LirValue::constant(
+            LirConstant::integer(LirType::I64, LirInteger::I64(value as u64))
+                .expect("valid .NET integer"),
+        ));
         return Ok(None);
     }
     if let Some(rest) = line.strip_prefix("ldloc.") {
@@ -304,7 +311,10 @@ fn parse_stack_instruction(
         return Ok(Some(LirInstruction {
             id: id_inst,
             kind: LirInstructionKind::Freeze(value),
-            result: Some(LirRegister { id: id_inst, ty: LirType::I64 }),
+            result: Some(LirRegister {
+                id: id_inst,
+                ty: LirType::I64,
+            }),
             debug_info: None,
         }));
     }
@@ -330,7 +340,10 @@ fn parse_stack_instruction(
         return Ok(Some(LirInstruction {
             id,
             kind,
-            result: Some(LirRegister { id, ty: LirType::I64 }),
+            result: Some(LirRegister {
+                id,
+                ty: LirType::I64,
+            }),
             debug_info: None,
         }));
     }

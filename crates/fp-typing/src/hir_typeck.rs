@@ -1,7 +1,7 @@
+use fp_core::ast::{DecimalType, TypeInt, TypePrimitive};
 use fp_core::error::{Error, Result};
 use fp_core::hir;
 use fp_core::hir::ty::{self, AdtDef, AdtFlags, GenericArg, ReprFlags, ReprOptions, Ty, TyKind};
-use fp_core::ast::{DecimalType, TypeInt, TypePrimitive};
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
@@ -120,11 +120,16 @@ impl HirTypeChecker {
     fn check_function(&mut self, function: &hir::Function) -> Result<()> {
         let mut scope = self.generic_scope(&function.sig.generics);
         (|| {
-            scope.check_signature(&function.sig)
-                .map_err(|error| Error::from(format!("in function `{}` signature: {error}", function.sig.name)))?;
+            scope.check_signature(&function.sig).map_err(|error| {
+                Error::from(format!(
+                    "in function `{}` signature: {error}",
+                    function.sig.name
+                ))
+            })?;
             if let Some(body) = &function.body {
-                scope.check_body(body)
-                    .map_err(|error| Error::from(format!("in function `{}` body: {error}", function.sig.name)))?;
+                scope.check_body(body).map_err(|error| {
+                    Error::from(format!("in function `{}` body: {error}", function.sig.name))
+                })?;
             }
             Ok(())
         })()
@@ -235,7 +240,9 @@ impl HirTypeChecker {
                     .iter()
                     .map(|arg| self.check_expr(&arg.value))
                     .collect::<Result<Vec<_>>>()?;
-                let Some((substitutions, output)) = self.instantiate_call(&callee_ty, &arg_types)? else {
+                let Some((substitutions, output)) =
+                    self.instantiate_call(&callee_ty, &arg_types)?
+                else {
                     return Err(Error::from("called expression is not a function"));
                 };
                 if let hir::ExprKind::Path(path) = &callee.kind {
@@ -246,7 +253,10 @@ impl HirTypeChecker {
                         if let Some(args) = args {
                             self.results.generic_call_args.insert(
                                 expr.hir_id,
-                                GenericCallResolution { def_id: *def_id, args },
+                                GenericCallResolution {
+                                    def_id: *def_id,
+                                    args,
+                                },
                             );
                         }
                     }
@@ -332,9 +342,7 @@ impl HirTypeChecker {
                 }
                 result.ok_or_else(|| Error::from("match expression requires at least one arm"))?
             }
-            hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => {
-                self.check_block(block)?
-            }
+            hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => self.check_block(block)?,
             hir::ExprKind::While(condition, block) => {
                 let condition_ty = self.check_expr(condition)?;
                 self.require_same(&condition_ty, &Ty::bool())?;
@@ -349,12 +357,22 @@ impl HirTypeChecker {
                     let value_ty = self.check_expr(value)?;
                     self.require_same(&element, &value_ty)?;
                 }
-                Ty { kind: TyKind::Array(Box::new(element), ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id))) }
+                Ty {
+                    kind: TyKind::Array(
+                        Box::new(element),
+                        ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                    ),
+                }
             }
             hir::ExprKind::ArrayRepeat { elem, len } => {
                 let element = self.check_expr(elem)?;
                 self.check_expr(len)?;
-                Ty { kind: TyKind::Array(Box::new(element), ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id))) }
+                Ty {
+                    kind: TyKind::Array(
+                        Box::new(element),
+                        ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                    ),
+                }
             }
             hir::ExprKind::Assign(lhs, rhs) => {
                 let lhs = self.check_expr(lhs)?;
@@ -381,7 +399,12 @@ impl HirTypeChecker {
                 let result_ty = input_ty.clone();
                 for catch in &value.catches {
                     if let Some(pattern) = &catch.pat {
-                        self.bind_pattern(pattern, Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) })?;
+                        self.bind_pattern(
+                            pattern,
+                            Ty {
+                                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                            },
+                        )?;
                     }
                     let catch_ty = self.check_expr(&catch.body)?;
                     self.require_same(&result_ty, &catch_ty)?;
@@ -401,11 +424,19 @@ impl HirTypeChecker {
             }
             hir::ExprKind::Slice(slice) => {
                 let base_ty = self.check_expr(&slice.base)?;
-                if let Some(start) = &slice.start { self.check_expr(start)?; }
-                if let Some(end) = &slice.end { self.check_expr(end)?; }
+                if let Some(start) = &slice.start {
+                    self.check_expr(start)?;
+                }
+                if let Some(end) = &slice.end {
+                    self.check_expr(end)?;
+                }
                 match base_ty.kind {
-                    TyKind::Array(inner, _) => Ty { kind: TyKind::Slice(inner) },
-                    TyKind::Slice(inner) => Ty { kind: TyKind::Slice(inner) },
+                    TyKind::Array(inner, _) => Ty {
+                        kind: TyKind::Slice(inner),
+                    },
+                    TyKind::Slice(inner) => Ty {
+                        kind: TyKind::Slice(inner),
+                    },
                     _ => return Err(Error::from("slicing requires an array or slice")),
                 }
             }
@@ -417,7 +448,9 @@ impl HirTypeChecker {
                         let _ = placeholder;
                     }
                 }
-                Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) }
+                Ty {
+                    kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                }
             }
         };
         self.results.record_expr_type(expr.hir_id, ty.clone());
@@ -442,12 +475,16 @@ impl HirTypeChecker {
                         }
                         (Some(annotation), None) => self.check_type_expr(annotation)?,
                         (None, Some(init)) => self.check_expr(init)?,
-                        (None, None) => return Err(Error::from("local binding needs a type or initializer")),
+                        (None, None) => {
+                            return Err(Error::from("local binding needs a type or initializer"));
+                        }
                     };
                     self.bind_pattern(&local.pat, ty)?;
                 }
                 hir::StmtKind::Item(item) => self.check_item(item)?,
-                hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => { self.check_expr(expr)?; }
+                hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
+                    self.check_expr(expr)?;
+                }
             }
         }
         let ty = match block.expr.as_ref() {
@@ -498,22 +535,70 @@ impl HirTypeChecker {
         let ty = match &expr.kind {
             hir::TypeExprKind::Primitive(primitive) => primitive_ty(*primitive),
             hir::TypeExprKind::Path(path) => self.path_ty(path)?,
-            hir::TypeExprKind::Tuple(items) => Ty { kind: TyKind::Tuple(items.iter().map(|item| self.check_type_expr(item).map(Box::new)).collect::<Result<_>>()?) },
-            hir::TypeExprKind::Slice(item) => Ty { kind: TyKind::Slice(Box::new(self.check_type_expr(item)?)) },
-            hir::TypeExprKind::Ptr(item) => Ty { kind: TyKind::RawPtr(ty::TypeAndMut { ty: Box::new(self.check_type_expr(item)?), mutbl: ty::Mutability::Not }) },
-            hir::TypeExprKind::Ref(item) => Ty { kind: TyKind::Ref(ty::Region::ReErased, Box::new(self.check_type_expr(item)?), ty::Mutability::Not) },
-            hir::TypeExprKind::FnPtr(function) => Ty { kind: TyKind::FnPtr(ty::PolyFnSig { binder: ty::Binder { value: ty::FnSig { inputs: function.inputs.iter().map(|input| self.check_type_expr(input).map(Box::new)).collect::<Result<_>>()?, output: Box::new(self.check_type_expr(&function.output)?), c_variadic: false, unsafety: ty::Unsafety::Normal, abi: ty::Abi::Rust }, bound_vars: Vec::new() } }) },
+            hir::TypeExprKind::Tuple(items) => Ty {
+                kind: TyKind::Tuple(
+                    items
+                        .iter()
+                        .map(|item| self.check_type_expr(item).map(Box::new))
+                        .collect::<Result<_>>()?,
+                ),
+            },
+            hir::TypeExprKind::Slice(item) => Ty {
+                kind: TyKind::Slice(Box::new(self.check_type_expr(item)?)),
+            },
+            hir::TypeExprKind::Ptr(item) => Ty {
+                kind: TyKind::RawPtr(ty::TypeAndMut {
+                    ty: Box::new(self.check_type_expr(item)?),
+                    mutbl: ty::Mutability::Not,
+                }),
+            },
+            hir::TypeExprKind::Ref(item) => Ty {
+                kind: TyKind::Ref(
+                    ty::Region::ReErased,
+                    Box::new(self.check_type_expr(item)?),
+                    ty::Mutability::Not,
+                ),
+            },
+            hir::TypeExprKind::FnPtr(function) => Ty {
+                kind: TyKind::FnPtr(ty::PolyFnSig {
+                    binder: ty::Binder {
+                        value: ty::FnSig {
+                            inputs: function
+                                .inputs
+                                .iter()
+                                .map(|input| self.check_type_expr(input).map(Box::new))
+                                .collect::<Result<_>>()?,
+                            output: Box::new(self.check_type_expr(&function.output)?),
+                            c_variadic: false,
+                            unsafety: ty::Unsafety::Normal,
+                            abi: ty::Abi::Rust,
+                        },
+                        bound_vars: Vec::new(),
+                    },
+                }),
+            },
             hir::TypeExprKind::Never => Ty::never(),
-            hir::TypeExprKind::Array(item, _) => Ty { kind: TyKind::Array(Box::new(self.check_type_expr(item)?), ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id))) },
-            hir::TypeExprKind::Infer => Ty { kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id)) },
+            hir::TypeExprKind::Array(item, _) => Ty {
+                kind: TyKind::Array(
+                    Box::new(self.check_type_expr(item)?),
+                    ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                ),
+            },
+            hir::TypeExprKind::Infer => Ty {
+                kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id)),
+            },
             hir::TypeExprKind::Error => {
                 return Err(Error::from("invalid type expression"));
             }
             hir::TypeExprKind::Structural(_) => {
-                return Err(Error::from("structural types are not supported by HIR typing"));
+                return Err(Error::from(
+                    "structural types are not supported by HIR typing",
+                ));
             }
             hir::TypeExprKind::TypeBinaryOp(_) => {
-                return Err(Error::from("type expressions cannot be combined with a type operator"));
+                return Err(Error::from(
+                    "type expressions cannot be combined with a type operator",
+                ));
             }
         };
         self.results.record_type_expr_type(expr.hir_id, ty.clone());
@@ -542,22 +627,43 @@ impl HirTypeChecker {
             return Ok(generic);
         }
         let Some(item) = self.program.def_map.get(&def_id).cloned() else {
-            return Err(Error::from(format!("type definition `{def_id}` was not found")));
+            return Err(Error::from(format!(
+                "type definition `{def_id}` was not found"
+            )));
         };
         let (flags, variants) = match &item.kind {
             hir::ItemKind::Struct(_) => (AdtFlags::IS_STRUCT, Vec::new()),
-            hir::ItemKind::Enum(def) => (AdtFlags::IS_ENUM, def.variants.iter().enumerate().map(|(index, variant)| ty::VariantDef { def_id: variant.def_id, ctor_def_id: Some(variant.def_id), ident: variant.name.clone(), discr: ty::VariantDiscr::Relative(index as u32), fields: Vec::new(), ctor_kind: ty::CtorKind::Fn, is_recovered: false }).collect()),
-            _ => {
-                return Err(Error::from(format!("definition `{def_id}` is not a type")))
-            }
+            hir::ItemKind::Enum(def) => (
+                AdtFlags::IS_ENUM,
+                def.variants
+                    .iter()
+                    .enumerate()
+                    .map(|(index, variant)| ty::VariantDef {
+                        def_id: variant.def_id,
+                        ctor_def_id: Some(variant.def_id),
+                        ident: variant.name.clone(),
+                        discr: ty::VariantDiscr::Relative(index as u32),
+                        fields: Vec::new(),
+                        ctor_kind: ty::CtorKind::Fn,
+                        is_recovered: false,
+                    })
+                    .collect(),
+            ),
+            _ => return Err(Error::from(format!("definition `{def_id}` is not a type"))),
         };
-        let args = match path.segments.iter().find_map(|segment| segment.args.as_ref()) {
+        let args = match path
+            .segments
+            .iter()
+            .find_map(|segment| segment.args.as_ref())
+        {
             Some(args) => args
                 .args
                 .iter()
                 .map(|arg| match arg {
                     hir::GenericArg::Type(ty) => self.check_type_expr(ty).map(GenericArg::Type),
-                    hir::GenericArg::Const(_) => Err(Error::from("const generic arguments are not supported")),
+                    hir::GenericArg::Const(_) => {
+                        Err(Error::from("const generic arguments are not supported"))
+                    }
                 })
                 .collect::<Result<Vec<_>>>()?,
             None => match &item.kind {
@@ -592,7 +698,23 @@ impl HirTypeChecker {
                 _ => Vec::new(),
             },
         };
-        Ok(Ty { kind: TyKind::Adt(AdtDef { did: def_id, variants, flags, repr: ReprOptions { int: None, align: None, pack: None, flags: ReprFlags::empty(), field_shuffle_seed: 0 } }, args) })
+        Ok(Ty {
+            kind: TyKind::Adt(
+                AdtDef {
+                    did: def_id,
+                    variants,
+                    flags,
+                    repr: ReprOptions {
+                        int: None,
+                        align: None,
+                        pack: None,
+                        flags: ReprFlags::empty(),
+                        field_shuffle_seed: 0,
+                    },
+                },
+                args,
+            ),
+        })
     }
 
     fn expr_path_ty(&mut self, path: &hir::Path) -> Result<Ty> {
@@ -648,7 +770,11 @@ impl HirTypeChecker {
                 let hir::ItemKind::Enum(enum_def) = &enum_item.kind else {
                     continue;
                 };
-                let Some(variant) = enum_def.variants.iter().find(|variant| variant.def_id == def_id) else {
+                let Some(variant) = enum_def
+                    .variants
+                    .iter()
+                    .find(|variant| variant.def_id == def_id)
+                else {
                     continue;
                 };
                 let enum_ty = self.enum_item_ty(&enum_item, path)?;
@@ -673,7 +799,9 @@ impl HirTypeChecker {
                 }
                 return Ok(enum_ty);
             }
-            return Err(Error::from(format!("value definition `{def_id}` was not found")));
+            return Err(Error::from(format!(
+                "value definition `{def_id}` was not found"
+            )));
         };
         match &item.kind {
             hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => self.path_ty(path),
@@ -710,7 +838,9 @@ impl HirTypeChecker {
                     .iter()
                     .map(|arg| match arg {
                         hir::GenericArg::Type(ty) => self.check_type_expr(ty).map(GenericArg::Type),
-                        hir::GenericArg::Const(_) => Err(Error::from("const generic arguments are not supported")),
+                        hir::GenericArg::Const(_) => {
+                            Err(Error::from("const generic arguments are not supported"))
+                        }
                     })
                     .collect::<Result<Vec<_>>>()
             })
@@ -781,9 +911,13 @@ impl HirTypeChecker {
         callable: &Ty,
         actuals: &[Ty],
     ) -> Result<Option<(HashMap<ty::ParamTy, Ty>, Ty)>> {
-        let TyKind::FnPtr(signature) = &callable.kind else { return Ok(None) };
+        let TyKind::FnPtr(signature) = &callable.kind else {
+            return Ok(None);
+        };
         if signature.binder.value.inputs.len() != actuals.len() {
-            return Err(Error::from("call argument count does not match function signature"));
+            return Err(Error::from(
+                "call argument count does not match function signature",
+            ));
         }
         let mut substitutions: HashMap<ty::ParamTy, Ty> = HashMap::new();
         for (expected, actual) in signature.binder.value.inputs.iter().zip(actuals) {
@@ -824,7 +958,12 @@ impl HirTypeChecker {
         Ok(Some(args))
     }
 
-    fn unify_call_types(&self, expected: &Ty, actual: &Ty, substitutions: &mut HashMap<ty::ParamTy, Ty>) -> Result<()> {
+    fn unify_call_types(
+        &self,
+        expected: &Ty,
+        actual: &Ty,
+        substitutions: &mut HashMap<ty::ParamTy, Ty>,
+    ) -> Result<()> {
         match (&expected.kind, &actual.kind) {
             (TyKind::Param(param), _) => {
                 if let Some(previous) = substitutions.get(param) {
@@ -858,17 +997,25 @@ impl HirTypeChecker {
                     substitutions,
                 )
             }
-            (TyKind::Tuple(expected), TyKind::Tuple(actual)) if expected.len() == actual.len() => expected
-                .iter()
-                .zip(actual)
-                .try_for_each(|(expected, actual)| self.unify_call_types(expected, actual, substitutions)),
+            (TyKind::Tuple(expected), TyKind::Tuple(actual)) if expected.len() == actual.len() => {
+                expected
+                    .iter()
+                    .zip(actual)
+                    .try_for_each(|(expected, actual)| {
+                        self.unify_call_types(expected, actual, substitutions)
+                    })
+            }
             (TyKind::Array(expected, _), TyKind::Array(actual, _))
-            | (TyKind::Slice(expected), TyKind::Slice(actual)) => self.unify_call_types(expected, actual, substitutions),
+            | (TyKind::Slice(expected), TyKind::Slice(actual)) => {
+                self.unify_call_types(expected, actual, substitutions)
+            }
             (TyKind::Adt(expected, expected_args), TyKind::Adt(actual, actual_args))
                 if expected.did == actual.did && expected_args.len() == actual_args.len() =>
             {
                 for (expected, actual) in expected_args.iter().zip(actual_args) {
-                    if let (GenericArg::Type(expected), GenericArg::Type(actual)) = (expected, actual) {
+                    if let (GenericArg::Type(expected), GenericArg::Type(actual)) =
+                        (expected, actual)
+                    {
                         self.unify_call_types(expected, actual, substitutions)?;
                     }
                 }
@@ -884,15 +1031,49 @@ impl HirTypeChecker {
                 Some(ty) => ty.clone(),
                 None => ty.clone(),
             },
-            TyKind::Ref(region, inner, mutable) => Ty { kind: TyKind::Ref(region.clone(), Box::new(self.substitute_param_map(inner, substitutions)), *mutable) },
-            TyKind::RawPtr(value) => Ty { kind: TyKind::RawPtr(ty::TypeAndMut { ty: Box::new(self.substitute_param_map(&value.ty, substitutions)), mutbl: value.mutbl }) },
-            TyKind::Tuple(fields) => Ty { kind: TyKind::Tuple(fields.iter().map(|field| Box::new(self.substitute_param_map(field, substitutions))).collect()) },
-            TyKind::Array(inner, length) => Ty { kind: TyKind::Array(Box::new(self.substitute_param_map(inner, substitutions)), length.clone()) },
-            TyKind::Slice(inner) => Ty { kind: TyKind::Slice(Box::new(self.substitute_param_map(inner, substitutions))) },
-            TyKind::Adt(def, args) => Ty { kind: TyKind::Adt(def.clone(), args.iter().map(|arg| match arg {
-                GenericArg::Type(ty) => GenericArg::Type(self.substitute_param_map(ty, substitutions)),
-                other => other.clone(),
-            }).collect()) },
+            TyKind::Ref(region, inner, mutable) => Ty {
+                kind: TyKind::Ref(
+                    region.clone(),
+                    Box::new(self.substitute_param_map(inner, substitutions)),
+                    *mutable,
+                ),
+            },
+            TyKind::RawPtr(value) => Ty {
+                kind: TyKind::RawPtr(ty::TypeAndMut {
+                    ty: Box::new(self.substitute_param_map(&value.ty, substitutions)),
+                    mutbl: value.mutbl,
+                }),
+            },
+            TyKind::Tuple(fields) => Ty {
+                kind: TyKind::Tuple(
+                    fields
+                        .iter()
+                        .map(|field| Box::new(self.substitute_param_map(field, substitutions)))
+                        .collect(),
+                ),
+            },
+            TyKind::Array(inner, length) => Ty {
+                kind: TyKind::Array(
+                    Box::new(self.substitute_param_map(inner, substitutions)),
+                    length.clone(),
+                ),
+            },
+            TyKind::Slice(inner) => Ty {
+                kind: TyKind::Slice(Box::new(self.substitute_param_map(inner, substitutions))),
+            },
+            TyKind::Adt(def, args) => Ty {
+                kind: TyKind::Adt(
+                    def.clone(),
+                    args.iter()
+                        .map(|arg| match arg {
+                            GenericArg::Type(ty) => {
+                                GenericArg::Type(self.substitute_param_map(ty, substitutions))
+                            }
+                            other => other.clone(),
+                        })
+                        .collect(),
+                ),
+            },
             _ => ty.clone(),
         }
     }
@@ -929,7 +1110,9 @@ impl HirTypeChecker {
                 };
                 if impl_item.name == *method {
                     let signature = scope.function_signature(&function)?;
-                    let Some((substitutions, result)) = scope.instantiate_call(&signature, actuals)? else {
+                    let Some((substitutions, result)) =
+                        scope.instantiate_call(&signature, actuals)?
+                    else {
                         return Err(Error::from("method arguments do not match its signature"));
                     };
                     let args = scope.method_generic_args(
@@ -1006,7 +1189,11 @@ impl HirTypeChecker {
                 }
             }
             hir::PatKind::Struct(path, fields, _) => {
-                let struct_ty = if path.segments.is_empty() { ty.clone() } else { self.path_ty(path)? };
+                let struct_ty = if path.segments.is_empty() {
+                    ty.clone()
+                } else {
+                    self.path_ty(path)?
+                };
                 self.require_same_adt(&ty, &struct_ty, "struct pattern")?;
                 for field in fields {
                     let field_ty = self.field_ty(&struct_ty, &field.name)?;
@@ -1017,7 +1204,9 @@ impl HirTypeChecker {
                 let (enum_ty, payloads) = self.variant_payload_types(path)?;
                 self.require_same_adt(&ty, &enum_ty, "tuple struct pattern")?;
                 if patterns.len() != payloads.len() {
-                    return Err(Error::from("tuple struct pattern arity does not match variant"));
+                    return Err(Error::from(
+                        "tuple struct pattern arity does not match variant",
+                    ));
                 }
                 for (pattern, payload) in patterns.iter().zip(payloads) {
                     self.bind_pattern(pattern, payload)?;
@@ -1027,7 +1216,9 @@ impl HirTypeChecker {
                 let (enum_ty, payloads) = self.variant_payload_types(path)?;
                 self.require_same_adt(&ty, &enum_ty, "variant pattern")?;
                 if !payloads.is_empty() {
-                    return Err(Error::from("payload variant requires a tuple or struct pattern"));
+                    return Err(Error::from(
+                        "payload variant requires a tuple or struct pattern",
+                    ));
                 }
             }
         }
@@ -1060,11 +1251,24 @@ impl HirTypeChecker {
             return Err(Error::from("variant pattern is unresolved"));
         };
         for item in self.program.items.clone() {
-            let hir::ItemKind::Enum(def) = &item.kind else { continue };
-            let Some(variant) = def.variants.iter().find(|variant| variant.def_id == variant_id) else { continue };
+            let hir::ItemKind::Enum(def) = &item.kind else {
+                continue;
+            };
+            let Some(variant) = def
+                .variants
+                .iter()
+                .find(|variant| variant.def_id == variant_id)
+            else {
+                continue;
+            };
             let enum_ty = self.enum_item_ty(&item, path)?;
-            let args = match &enum_ty.kind { TyKind::Adt(_, args) => args.clone(), _ => Vec::new() };
-            let Some(payload) = &variant.payload else { return Ok((enum_ty, Vec::new())) };
+            let args = match &enum_ty.kind {
+                TyKind::Adt(_, args) => args.clone(),
+                _ => Vec::new(),
+            };
+            let Some(payload) = &variant.payload else {
+                return Ok((enum_ty, Vec::new()));
+            };
             let mut scope = self.generic_scope(&def.generics);
             let payload_result = scope.check_type_expr(payload);
             let payload = payload_result?;
@@ -1083,15 +1287,37 @@ impl HirTypeChecker {
         match ty.kind {
             TyKind::Param(param) => match args.get(param.index as usize) {
                 Some(GenericArg::Type(ty)) => ty.clone(),
-                Some(GenericArg::Const(_) | GenericArg::Lifetime(_)) | None => {
-                    Ty { kind: TyKind::Param(param) }
-                }
+                Some(GenericArg::Const(_) | GenericArg::Lifetime(_)) | None => Ty {
+                    kind: TyKind::Param(param),
+                },
             },
-            TyKind::Tuple(fields) => Ty { kind: TyKind::Tuple(fields.into_iter().map(|field| Box::new(self.substitute_params(*field, args))).collect()) },
-            TyKind::Array(inner, length) => Ty { kind: TyKind::Array(Box::new(self.substitute_params(*inner, args)), length) },
-            TyKind::Slice(inner) => Ty { kind: TyKind::Slice(Box::new(self.substitute_params(*inner, args))) },
-            TyKind::Ref(region, inner, mutable) => Ty { kind: TyKind::Ref(region, Box::new(self.substitute_params(*inner, args)), mutable) },
-            TyKind::RawPtr(mutability) => Ty { kind: TyKind::RawPtr(ty::TypeAndMut { ty: Box::new(self.substitute_params(*mutability.ty, args)), mutbl: mutability.mutbl }) },
+            TyKind::Tuple(fields) => Ty {
+                kind: TyKind::Tuple(
+                    fields
+                        .into_iter()
+                        .map(|field| Box::new(self.substitute_params(*field, args)))
+                        .collect(),
+                ),
+            },
+            TyKind::Array(inner, length) => Ty {
+                kind: TyKind::Array(Box::new(self.substitute_params(*inner, args)), length),
+            },
+            TyKind::Slice(inner) => Ty {
+                kind: TyKind::Slice(Box::new(self.substitute_params(*inner, args))),
+            },
+            TyKind::Ref(region, inner, mutable) => Ty {
+                kind: TyKind::Ref(
+                    region,
+                    Box::new(self.substitute_params(*inner, args)),
+                    mutable,
+                ),
+            },
+            TyKind::RawPtr(mutability) => Ty {
+                kind: TyKind::RawPtr(ty::TypeAndMut {
+                    ty: Box::new(self.substitute_params(*mutability.ty, args)),
+                    mutbl: mutability.mutbl,
+                }),
+            },
             kind => Ty { kind },
         }
     }
@@ -1104,16 +1330,26 @@ impl HirTypeChecker {
             .collect::<Result<Vec<_>>>()?;
         use fp_core::intrinsics::IntrinsicKind;
         Ok(match call.kind {
-            IntrinsicKind::Print | IntrinsicKind::Println | IntrinsicKind::Panic => Ty { kind: TyKind::Tuple(Vec::new()) },
-            IntrinsicKind::Format => Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) },
+            IntrinsicKind::Print | IntrinsicKind::Println | IntrinsicKind::Panic => Ty {
+                kind: TyKind::Tuple(Vec::new()),
+            },
+            IntrinsicKind::Format => Ty {
+                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+            },
             IntrinsicKind::Len => Ty::uint(ty::UintTy::U64),
             IntrinsicKind::Slice => {
                 let Some(base) = arg_types.first() else {
                     return Err(Error::from("slice intrinsic requires a base expression"));
                 };
                 match &base.kind {
-                    TyKind::Array(inner, _) | TyKind::Slice(inner) => Ty { kind: TyKind::Slice(inner.clone()) },
-                    _ => return Err(Error::from("slice intrinsic base must be an array or slice")),
+                    TyKind::Array(inner, _) | TyKind::Slice(inner) => Ty {
+                        kind: TyKind::Slice(inner.clone()),
+                    },
+                    _ => {
+                        return Err(Error::from(
+                            "slice intrinsic base must be an array or slice",
+                        ));
+                    }
                 }
             }
             IntrinsicKind::DebugAssertions
@@ -1141,19 +1377,28 @@ impl HirTypeChecker {
             | IntrinsicKind::IoReadStdinToString
             | IntrinsicKind::YamlToJson
             | IntrinsicKind::JsonParse
-            | IntrinsicKind::ProcMacroTokenStreamToString => Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) },
+            | IntrinsicKind::ProcMacroTokenStreamToString => Ty {
+                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+            },
             IntrinsicKind::PathIsAbsolute => Ty::bool(),
             IntrinsicKind::TimeNow => Ty::float(ty::FloatTy::F64),
             IntrinsicKind::CatchUnwind => Ty::bool(),
             IntrinsicKind::CatchUnwindResult => {
                 let Some(value) = arg_types.first().cloned() else {
-                    return Err(Error::from("catch_unwind_result requires a callable argument"));
+                    return Err(Error::from(
+                        "catch_unwind_result requires a callable argument",
+                    ));
                 };
-                Ty { kind: TyKind::Tuple(vec![Box::new(Ty::bool()), Box::new(value)]) }
+                Ty {
+                    kind: TyKind::Tuple(vec![Box::new(Ty::bool()), Box::new(value)]),
+                }
             }
             IntrinsicKind::Spawn | IntrinsicKind::Select => {
                 let Some(value) = arg_types.first() else {
-                    return Err(Error::from(format!("{:?} intrinsic requires an argument", call.kind)));
+                    return Err(Error::from(format!(
+                        "{:?} intrinsic requires an argument",
+                        call.kind
+                    )));
                 };
                 value.clone()
             }
@@ -1163,14 +1408,31 @@ impl HirTypeChecker {
                 } else if arg_types.is_empty() {
                     return Err(Error::from("join intrinsic requires an argument"));
                 } else {
-                    Ty { kind: TyKind::Tuple(arg_types.into_iter().map(Box::new).collect()) }
+                    Ty {
+                        kind: TyKind::Tuple(arg_types.into_iter().map(Box::new).collect()),
+                    }
                 }
             }
-            IntrinsicKind::SizeOf | IntrinsicKind::FieldCount | IntrinsicKind::MethodCount => Ty::uint(ty::UintTy::U64),
-            IntrinsicKind::FieldNameAt | IntrinsicKind::TypeName | IntrinsicKind::ProcMacroTokenStreamFromStr => Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) },
-            IntrinsicKind::FieldType | IntrinsicKind::VecType => return Err(Error::from("type-valued intrinsic has no HIR type representation")),
-            IntrinsicKind::TypeOf | IntrinsicKind::CreateStruct | IntrinsicKind::AddField | IntrinsicKind::BuildType => {
-                return Err(Error::from("type-valued intrinsic typing is not implemented"));
+            IntrinsicKind::SizeOf | IntrinsicKind::FieldCount | IntrinsicKind::MethodCount => {
+                Ty::uint(ty::UintTy::U64)
+            }
+            IntrinsicKind::FieldNameAt
+            | IntrinsicKind::TypeName
+            | IntrinsicKind::ProcMacroTokenStreamFromStr => Ty {
+                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+            },
+            IntrinsicKind::FieldType | IntrinsicKind::VecType => {
+                return Err(Error::from(
+                    "type-valued intrinsic has no HIR type representation",
+                ));
+            }
+            IntrinsicKind::TypeOf
+            | IntrinsicKind::CreateStruct
+            | IntrinsicKind::AddField
+            | IntrinsicKind::BuildType => {
+                return Err(Error::from(
+                    "type-valued intrinsic typing is not implemented",
+                ));
             }
             IntrinsicKind::FsWriteString
             | IntrinsicKind::FsAppendString
@@ -1185,16 +1447,20 @@ impl HirTypeChecker {
             | IntrinsicKind::Sleep
             | IntrinsicKind::Yield
             | IntrinsicKind::CompileWarning => self.unit_ty(),
-            IntrinsicKind::CompileError => return Err(Error::from("compile_error intrinsic requested an error")),
-            _ => return Err(Error::from(format!("intrinsic `{:?}` has no HIR type rule", call.kind))),
+            IntrinsicKind::CompileError => {
+                return Err(Error::from("compile_error intrinsic requested an error"));
+            }
+            _ => {
+                return Err(Error::from(format!(
+                    "intrinsic `{:?}` has no HIR type rule",
+                    call.kind
+                )));
+            }
         })
     }
 
     fn require_same(&self, lhs: &Ty, rhs: &Ty) -> Result<()> {
-        if lhs == rhs
-            || matches!(lhs.kind, TyKind::Never)
-            || matches!(rhs.kind, TyKind::Never)
-        {
+        if lhs == rhs || matches!(lhs.kind, TyKind::Never) || matches!(rhs.kind, TyKind::Never) {
             Ok(())
         } else {
             Err(Error::from(format!("HIR type mismatch: {lhs} and {rhs}")))
@@ -1208,7 +1474,9 @@ impl HirTypeChecker {
             return Err(Error::from(format!("{context} requires an ADT scrutinee")));
         };
         if actual_def.did != expected_def.did || actual_args.len() != expected_args.len() {
-            return Err(Error::from(format!("{context} does not match scrutinee type")));
+            return Err(Error::from(format!(
+                "{context} does not match scrutinee type"
+            )));
         }
         let mut substitutions = HashMap::new();
         for (actual, expected) in actual_args.iter().zip(expected_args) {
@@ -1217,18 +1485,33 @@ impl HirTypeChecker {
                     self.unify_call_types(expected, actual, &mut substitutions)?;
                 }
                 (actual, expected) if actual == expected => {}
-                _ => return Err(Error::from(format!("{context} does not match scrutinee type"))),
+                _ => {
+                    return Err(Error::from(format!(
+                        "{context} does not match scrutinee type"
+                    )));
+                }
             }
         }
         Ok(())
     }
 
     fn unit_ty(&self) -> Ty {
-        Ty { kind: TyKind::Tuple(Vec::new()) }
+        Ty {
+            kind: TyKind::Tuple(Vec::new()),
+        }
     }
 
     fn literal_ty(&self, literal: &hir::Lit) -> Ty {
-        match literal { hir::Lit::Bool(_) => Ty::bool(), hir::Lit::Char(_) => Ty::char(), hir::Lit::Integer(_) => Ty::int(ty::IntTy::I64), hir::Lit::Float(_) => Ty::float(ty::FloatTy::F64), hir::Lit::Str(_) => Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) }, hir::Lit::Null => Ty::never() }
+        match literal {
+            hir::Lit::Bool(_) => Ty::bool(),
+            hir::Lit::Char(_) => Ty::char(),
+            hir::Lit::Integer(_) => Ty::int(ty::IntTy::I64),
+            hir::Lit::Float(_) => Ty::float(ty::FloatTy::F64),
+            hir::Lit::Str(_) => Ty {
+                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+            },
+            hir::Lit::Null => Ty::never(),
+        }
     }
 }
 
@@ -1250,7 +1533,9 @@ fn primitive_path_ty(name: &str) -> Option<Ty> {
         "usize" => Ty::uint(ty::UintTy::Usize),
         "f32" => Ty::float(ty::FloatTy::F32),
         "f64" => Ty::float(ty::FloatTy::F64),
-        "str" | "string" => Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) },
+        "str" | "string" => Ty {
+            kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+        },
         _ => return None,
     })
 }
@@ -1259,10 +1544,29 @@ fn primitive_ty(primitive: TypePrimitive) -> Ty {
     match primitive {
         TypePrimitive::Bool => Ty::bool(),
         TypePrimitive::Char => Ty::char(),
-        TypePrimitive::Int(int) => match int { TypeInt::I8 => Ty::int(ty::IntTy::I8), TypeInt::I16 => Ty::int(ty::IntTy::I16), TypeInt::I32 => Ty::int(ty::IntTy::I32), TypeInt::I64 => Ty::int(ty::IntTy::I64), TypeInt::I128 => Ty::int(ty::IntTy::I128), TypeInt::U8 => Ty::uint(ty::UintTy::U8), TypeInt::U16 => Ty::uint(ty::UintTy::U16), TypeInt::U32 => Ty::uint(ty::UintTy::U32), TypeInt::U64 => Ty::uint(ty::UintTy::U64), TypeInt::U128 => Ty::uint(ty::UintTy::U128), TypeInt::BigInt => Ty::int(ty::IntTy::I128) },
-        TypePrimitive::Decimal(decimal) => Ty::float(match decimal { DecimalType::F32 => ty::FloatTy::F32, _ => ty::FloatTy::F64 }),
-        TypePrimitive::String => Ty { kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))) },
-        TypePrimitive::List => Ty { kind: TyKind::Slice(Box::new(Ty::never())) },
+        TypePrimitive::Int(int) => match int {
+            TypeInt::I8 => Ty::int(ty::IntTy::I8),
+            TypeInt::I16 => Ty::int(ty::IntTy::I16),
+            TypeInt::I32 => Ty::int(ty::IntTy::I32),
+            TypeInt::I64 => Ty::int(ty::IntTy::I64),
+            TypeInt::I128 => Ty::int(ty::IntTy::I128),
+            TypeInt::U8 => Ty::uint(ty::UintTy::U8),
+            TypeInt::U16 => Ty::uint(ty::UintTy::U16),
+            TypeInt::U32 => Ty::uint(ty::UintTy::U32),
+            TypeInt::U64 => Ty::uint(ty::UintTy::U64),
+            TypeInt::U128 => Ty::uint(ty::UintTy::U128),
+            TypeInt::BigInt => Ty::int(ty::IntTy::I128),
+        },
+        TypePrimitive::Decimal(decimal) => Ty::float(match decimal {
+            DecimalType::F32 => ty::FloatTy::F32,
+            _ => ty::FloatTy::F64,
+        }),
+        TypePrimitive::String => Ty {
+            kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+        },
+        TypePrimitive::List => Ty {
+            kind: TyKind::Slice(Box::new(Ty::never())),
+        },
     }
 }
 
@@ -1286,8 +1590,8 @@ mod tests {
             span: fp_core::span::Span::null(),
         });
 
-        let (_, results) = crate::block_on(HirTypeChecker::new(program).check())
-            .expect("HIR type check");
+        let (_, results) =
+            crate::block_on(HirTypeChecker::new(program).check()).expect("HIR type check");
         assert_eq!(results.expr_types.get(&7), Some(&Ty::int(ty::IntTy::I64)));
     }
 
@@ -1322,8 +1626,8 @@ mod tests {
             span: fp_core::span::Span::null(),
         });
 
-        let (_, results) = crate::block_on(HirTypeChecker::new(program).check())
-            .expect("HIR type check");
+        let (_, results) =
+            crate::block_on(HirTypeChecker::new(program).check()).expect("HIR type check");
         assert_eq!(results.pat_types.get(&8), Some(&Ty::int(ty::IntTy::I64)));
     }
 }

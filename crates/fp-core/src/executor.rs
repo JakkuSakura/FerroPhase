@@ -73,7 +73,9 @@ impl<O> Executor<O> {
     /// needs another) -- see `poll_one`'s doc comment for why that's sound.
     pub fn spawn(&self, key: impl Into<String>, future: impl Future<Output = O> + 'static) {
         let key = key.into();
-        self.tasks.borrow_mut().insert(key.clone(), Box::pin(future));
+        self.tasks
+            .borrow_mut()
+            .insert(key.clone(), Box::pin(future));
         self.ready.borrow_mut().push_back(key);
     }
 
@@ -198,7 +200,9 @@ unsafe fn drop_raw(data: *const ()) {
 /// vtable a single ordinary `static` — no per-instantiation statics or
 /// generic `unsafe fn`s to reason about.
 fn make_waker(wake: impl Fn() + 'static) -> Waker {
-    let data = Rc::into_raw(Rc::new(WakeData { wake: Box::new(wake) })) as *const ();
+    let data = Rc::into_raw(Rc::new(WakeData {
+        wake: Box::new(wake),
+    })) as *const ();
     unsafe { Waker::from_raw(RawWaker::new(data, &VTABLE)) }
 }
 
@@ -293,7 +297,10 @@ mod tests {
         let (key, out) = exec.tick().expect("fresh attempt should resolve");
         assert_eq!(key, "unit");
         assert_eq!(out, 3);
-        assert!(exec.is_idle(), "stale parked attempt must be gone, not just superseded");
+        assert!(
+            exec.is_idle(),
+            "stale parked attempt must be gone, not just superseded"
+        );
     }
 
     struct FlagGateInt {

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::module::path::{ParsedPath, PathPrefix, QualifiedPath};
 use crate::module::resolver::ResolverRegistry;
 use crate::module::{ModuleDescriptor, ModuleId};
-use crate::package::graph::PackageGraph;
 use crate::package::PackageId;
+use crate::package::graph::PackageGraph;
 
 #[derive(Debug, Clone)]
 pub struct ModuleResolutionContext {

@@ -6,7 +6,7 @@ use fp_core::ast::{
 use fp_core::ast::{Ident, Name};
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;
-use fp_core::intrinsics::{ensure_function_decl, make_function_decl, IntrinsicMaterializer};
+use fp_core::intrinsics::{IntrinsicMaterializer, ensure_function_decl, make_function_decl};
 use fp_core::span::Span;
 
 /// Backend strategy that lowers FerroPhase print intrinsics to `printf` calls for LLVM.
@@ -31,10 +31,7 @@ impl IntrinsicMaterializer for LlvmRuntimeIntrinsicMaterializer {
         call: &mut ExprIntrinsicCall,
         expr_ty: &TySlot,
     ) -> Result<Option<Expr>> {
-        if matches!(
-            call.kind,
-            CallKind::Print | CallKind::Println
-        ) {
+        if matches!(call.kind, CallKind::Print | CallKind::Println) {
             let Some((_template, args, kwargs)) = extract_format_call(call) else {
                 return Ok(None);
             };
@@ -310,7 +307,7 @@ fn infer_printf_spec_for_value(value: &Value) -> Result<(String, Option<Expr>)> 
         _ => {
             return Err(fp_core::error::Error::from(
                 "printf argument type could not be inferred from literal".to_string(),
-            ))
+            ));
         }
     };
     infer_printf_spec_with_replacement(Some(&ty))

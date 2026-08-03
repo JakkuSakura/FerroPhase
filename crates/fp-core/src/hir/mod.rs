@@ -1,8 +1,8 @@
 use crate::ast::{TypeBinaryOpKind, TypePrimitive};
 use crate::intrinsics::IntrinsicKind;
 use crate::query::{QueryIrDocument, QueryOrigin};
-use std::fmt;
 use std::collections::HashMap;
+use std::fmt;
 
 pub mod ident;
 pub mod pretty;

@@ -27,9 +27,7 @@ pub enum CompilerWork {
     /// compile unit's typing pass reports a `Package` pending request; the
     /// scheduler's usual dependency/retry mechanism blocks that compile
     /// unit until this completes, then retries it.
-    LoadPackage {
-        name: String,
-    },
+    LoadPackage { name: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,15 +47,9 @@ pub enum InvalidatedObjectId {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CompilerAnswer {
     CompileUnitCompileNative,
-    CompileUnitAnswerComptime {
-        value: ConstValueId,
-    },
+    CompileUnitAnswerComptime { value: ConstValueId },
     CompileUnitCompileBytecode,
-    AstUpdated {
-        ast: AstId,
-    },
+    AstUpdated { ast: AstId },
     Revalidated,
-    PackageLoaded {
-        name: String,
-    },
+    PackageLoaded { name: String },
 }

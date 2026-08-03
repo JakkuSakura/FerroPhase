@@ -3,7 +3,7 @@
 //! This parser maps a small subset of Go syntax into FerroPhase AST so the
 //! Go backend can provide basic parsing support.
 
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprKind, ExprReturn, File, Ident, Item,
     ItemDefConst, ItemDefFunction, ItemDefStruct, ItemDefType, ItemImport, ItemImportPath,

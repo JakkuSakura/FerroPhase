@@ -1,6 +1,6 @@
 use super::context::LlvmContext;
-use inkwell::types::{FloatType, IntType, PointerType, VoidType};
 use inkwell::AddressSpace;
+use inkwell::types::{FloatType, IntType, PointerType, VoidType};
 
 impl LlvmContext {
     /// Create basic LLVM types.

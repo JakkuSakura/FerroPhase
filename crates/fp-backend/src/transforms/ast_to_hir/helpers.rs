@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::module::path::{parse_path, resolve_item_path, ParsedPath, PathPrefix, QualifiedPath};
+use fp_core::module::path::{ParsedPath, PathPrefix, QualifiedPath, parse_path, resolve_item_path};
 use fp_core::module::resolution::resolve_symbol_path;
 
 impl HirGenerator {
@@ -121,7 +121,8 @@ impl HirGenerator {
             if first == "crate" {
                 path_prefix = PathPrefix::Crate;
                 segments.remove(0);
-            } else if first == "self" && (scope == PathResolutionScope::Type || segments.len() > 1) {
+            } else if first == "self" && (scope == PathResolutionScope::Type || segments.len() > 1)
+            {
                 path_prefix = PathPrefix::SelfMod;
                 segments.remove(0);
             } else if first == "super" {
@@ -469,7 +470,7 @@ impl HirGenerator {
                 if let Some(resolved_name) = self.resolved_names.get(&expr.id()).cloned() {
                     if !resolved_name.path.segments.is_empty() {
                         if let Some(path) =
-                        self.resolved_name_to_hir_path(&resolved_name, name, scope)?
+                            self.resolved_name_to_hir_path(&resolved_name, name, scope)?
                         {
                             return Ok(path);
                         }

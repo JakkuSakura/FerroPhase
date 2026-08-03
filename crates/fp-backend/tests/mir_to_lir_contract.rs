@@ -1,7 +1,7 @@
 use fp_backend::transformations::LirGenerator;
 use fp_core::lir::{
-    LirDataLayout, LirInstructionKind, LirRelocationKind, LirRelocationTarget,
-    LirTerminator, LirType, LirValue,
+    LirDataLayout, LirInstructionKind, LirRelocationKind, LirRelocationTarget, LirTerminator,
+    LirType, LirValue,
 };
 use fp_core::mir::LocalInfo;
 use fp_core::mir::ty::{IntTy, Ty, TyKind, UintTy};
@@ -138,9 +138,9 @@ fn lowers_static_integer_initializer_into_global_constant() {
             assert_eq!(constant.ty, LirType::I32);
             assert!(matches!(
                 constant.kind,
-                fp_core::lir::LirConstantKind::Data(
-                    fp_core::lir::LirConstantData::Integer(fp_core::lir::LirInteger::I32(7))
-                )
+                fp_core::lir::LirConstantKind::Data(fp_core::lir::LirConstantData::Integer(
+                    fp_core::lir::LirInteger::I32(7)
+                ))
             ));
         }
         other => panic!("expected integer initializer, got {:?}", other),
@@ -182,9 +182,7 @@ fn rejects_tuple_constant_with_non_tuple_type_hint() {
         span: Span::new(0, 0, 0),
         ty: ty.clone(),
         user_ty: None,
-        literal: mir::ConstantKind::Val(
-            mir::ConstValue::Tuple(vec![mir::ConstValue::Int(7)]),
-        ),
+        literal: mir::ConstantKind::Val(mir::ConstValue::Tuple(vec![mir::ConstValue::Int(7)])),
     };
 
     let static_item = mir::Static {
@@ -248,8 +246,17 @@ fn lowers_slice_static_into_bytes_with_relocation() {
     let data_global = &lir_program.globals[1];
 
     match &slice_global.initializer {
-        Some(constant) if matches!(&constant.kind, fp_core::lir::LirConstantKind::Data(fp_core::lir::LirConstantData::Bytes(_))) => {
-            let fp_core::lir::LirConstantKind::Data(fp_core::lir::LirConstantData::Bytes(bytes)) = &constant.kind else { unreachable!() };
+        Some(constant)
+            if matches!(
+                &constant.kind,
+                fp_core::lir::LirConstantKind::Data(fp_core::lir::LirConstantData::Bytes(_))
+            ) =>
+        {
+            let fp_core::lir::LirConstantKind::Data(fp_core::lir::LirConstantData::Bytes(bytes)) =
+                &constant.kind
+            else {
+                unreachable!()
+            };
             assert_eq!(bytes.len(), 16);
             assert_eq!(&bytes[8..16], &(2u64).to_le_bytes());
         }
@@ -270,7 +277,11 @@ fn lowers_slice_static_into_bytes_with_relocation() {
 
     match &data_global.initializer {
         Some(constant) => {
-            let fp_core::lir::LirConstantKind::Data(fp_core::lir::LirConstantData::Bytes(bytes)) = &constant.kind else { panic!("expected bytes") };
+            let fp_core::lir::LirConstantKind::Data(fp_core::lir::LirConstantData::Bytes(bytes)) =
+                &constant.kind
+            else {
+                panic!("expected bytes")
+            };
             assert_eq!(bytes, b"hi\0")
         }
         other => panic!(

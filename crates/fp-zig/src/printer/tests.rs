@@ -103,9 +103,11 @@ pub fn main() void {
         .expect("second item should be function");
     assert_eq!(function_item.name.name, "main");
     assert_eq!(function_item.sig.params.len(), 0);
-    assert!(function_item
-        .sig
-        .ret_ty
-        .as_ref()
-        .is_some_and(|ty| ty == &Ty::unit()));
+    assert!(
+        function_item
+            .sig
+            .ret_ty
+            .as_ref()
+            .is_some_and(|ty| ty == &Ty::unit())
+    );
 }

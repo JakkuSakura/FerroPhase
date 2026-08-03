@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::ast::{
-    get_threadlocal_serializer, BExpr, BlockStmt, Expr, Ident, Item, MacroTokenTree,
-    QuoteFragmentKind, Ty, TySlot, TypeBounds, TypeStruct, Value,
+    BExpr, BlockStmt, Expr, Ident, Item, MacroTokenTree, QuoteFragmentKind, Ty, TySlot, TypeBounds,
+    TypeStruct, Value, get_threadlocal_serializer,
 };
 use crate::span::Span;
 use crate::utils::to_json::ToJson;

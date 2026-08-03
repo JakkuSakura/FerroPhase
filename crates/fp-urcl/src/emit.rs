@@ -325,7 +325,10 @@ fn block_label(function: &LirFunction, block_id: BasicBlockId) -> String {
 fn format_value(value: &LirValue) -> String {
     match &value.kind {
         LirValueKind::Register(id) => reg(*id),
-        LirValueKind::Constant(kind) => format_constant(&LirConstant { ty: value.ty.clone(), kind: kind.clone() }),
+        LirValueKind::Constant(kind) => format_constant(&LirConstant {
+            ty: value.ty.clone(),
+            kind: kind.clone(),
+        }),
         LirValueKind::Global(name) => format!("@{}", name),
         LirValueKind::Function(LirFunctionRef::Name(name)) => name.to_string(),
         LirValueKind::Function(LirFunctionRef::Package { name, .. }) => name.to_string(),
@@ -341,16 +344,20 @@ fn format_constant(constant: &LirConstant) -> String {
     match &constant.kind {
         LirConstantKind::Data(LirConstantData::Integer(value)) => format!("{:?}", value),
         LirConstantKind::Data(LirConstantData::Float(value)) => format!("{:?}", value),
-        LirConstantKind::Data(LirConstantData::Bytes(bytes)) => format!("bytes(len={})", bytes.len()),
+        LirConstantKind::Data(LirConstantData::Bytes(bytes)) => {
+            format!("bytes(len={})", bytes.len())
+        }
         LirConstantKind::Aggregate(fp_core::lir::LirConstantAggregate::Array(values))
-        | LirConstantKind::Aggregate(fp_core::lir::LirConstantAggregate::Vector(values)) => format!(
-            "[{}]",
-            values
-                .iter()
-                .map(format_constant)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        | LirConstantKind::Aggregate(fp_core::lir::LirConstantAggregate::Vector(values)) => {
+            format!(
+                "[{}]",
+                values
+                    .iter()
+                    .map(format_constant)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
         LirConstantKind::Aggregate(fp_core::lir::LirConstantAggregate::Struct(values)) => format!(
             "{{{}}}",
             values

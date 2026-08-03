@@ -1,6 +1,6 @@
 use super::*;
-use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::LanguageFrontend;
+use fp_core::diagnostics::DiagnosticLevel;
 
 #[test]
 fn parses_pipeline_and_compiles_select() {
@@ -16,17 +16,21 @@ from employees
         .expect("prql frontend should parse");
 
     let snapshot = result.snapshot.as_ref().expect("snapshot");
-    assert!(snapshot
-        .serialized
-        .as_ref()
-        .map(|s| s.contains("SELECT"))
-        .unwrap_or(false));
+    assert!(
+        snapshot
+            .serialized
+            .as_ref()
+            .map(|s| s.contains("SELECT"))
+            .unwrap_or(false)
+    );
 
-    assert!(result
-        .diagnostics
-        .get_diagnostics()
-        .iter()
-        .all(|d| d.level != DiagnosticLevel::Error));
+    assert!(
+        result
+            .diagnostics
+            .get_diagnostics()
+            .iter()
+            .all(|d| d.level != DiagnosticLevel::Error)
+    );
 }
 
 #[test]
@@ -45,11 +49,13 @@ from sales
 
     let file_path = result.ast.path;
     assert!(file_path.to_string_lossy().contains("query.prql"));
-    assert!(result
-        .diagnostics
-        .get_diagnostics()
-        .iter()
-        .all(|d| d.level != DiagnosticLevel::Error));
+    assert!(
+        result
+            .diagnostics
+            .get_diagnostics()
+            .iter()
+            .all(|d| d.level != DiagnosticLevel::Error)
+    );
 }
 
 #[test]
@@ -64,9 +70,11 @@ from ticks
     let result = frontend.parse(pipeline, None).expect("parse");
 
     let snapshot = result.snapshot.as_ref().expect("snapshot");
-    assert!(snapshot
-        .serialized
-        .as_ref()
-        .map(|s| s.contains("ORDER BY"))
-        .unwrap_or(false));
+    assert!(
+        snapshot
+            .serialized
+            .as_ref()
+            .map(|s| s.contains("ORDER BY"))
+            .unwrap_or(false)
+    );
 }

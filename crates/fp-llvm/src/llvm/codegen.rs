@@ -7,11 +7,9 @@ use fp_core::{
     lir,
 };
 use inkwell::builder::BuilderError;
-use inkwell::llvm_sys::core::LLVMConstArray2;
 use inkwell::llvm_sys::LLVMCallConv;
-use inkwell::types::{
-    AsTypeRef, BasicType, BasicTypeEnum, FloatType, FunctionType, IntType,
-};
+use inkwell::llvm_sys::core::LLVMConstArray2;
+use inkwell::types::{AsTypeRef, BasicType, BasicTypeEnum, FloatType, FunctionType, IntType};
 use inkwell::values::{
     AggregateValueEnum, AsValueRef, BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue,
     FunctionValue, IntValue, PointerValue, ValueKind,
@@ -253,13 +251,12 @@ impl<'a> LirCodegen<'a> {
                 lir::LirConstant {
                     kind: lir::LirConstantKind::Data(lir::LirConstantData::Bytes(bytes)),
                     ..
-                } if !global.relocations.is_empty() => self
-                    .convert_global_bytes_to_typed_value(
-                        &bytes,
-                        &global.relocations,
-                        &global.ty,
-                        0,
-                    )?,
+                } if !global.relocations.is_empty() => self.convert_global_bytes_to_typed_value(
+                    &bytes,
+                    &global.relocations,
+                    &global.ty,
+                    0,
+                )?,
                 other => self.convert_lir_constant_to_value(other)?,
             };
             gvar.set_initializer(&value);
@@ -857,7 +854,7 @@ impl<'a> LirCodegen<'a> {
                         return Err(report_error_with_context(
                             LOG_AREA,
                             "InsertValue requires aggregate operand",
-                        ))
+                        ));
                     }
                 };
 
@@ -889,7 +886,7 @@ impl<'a> LirCodegen<'a> {
                         return Err(report_error_with_context(
                             LOG_AREA,
                             "ExtractValue requires aggregate operand",
-                        ))
+                        ));
                     }
                 };
 
@@ -1032,7 +1029,7 @@ impl<'a> LirCodegen<'a> {
                             None => {
                                 return Err(fp_core::error::Error::from(
                                     "time() did not return a value".to_string(),
-                                ))
+                                ));
                             }
                         };
                         let f64_ty = self.llvm_ctx.context.f64_type();
@@ -1310,7 +1307,8 @@ impl<'a> LirCodegen<'a> {
                     return Ok(Callee::Direct(func));
                 }
 
-                if let Some(signature) = CRuntimeIntrinsics::get_intrinsic_signature(name.as_str()) {
+                if let Some(signature) = CRuntimeIntrinsics::get_intrinsic_signature(name.as_str())
+                {
                     let IntrinsicSignature {
                         name,
                         params,
@@ -1610,7 +1608,12 @@ impl<'a> LirCodegen<'a> {
                         )
                     })
             }
-            lir::LirValueKind::Constant(constant) => self.convert_lir_constant_to_value(lir::LirConstant { ty: value_ty, kind: constant }),
+            lir::LirValueKind::Constant(constant) => {
+                self.convert_lir_constant_to_value(lir::LirConstant {
+                    ty: value_ty,
+                    kind: constant,
+                })
+            }
             lir::LirValueKind::Global(name) => {
                 let llvm_name = self.llvm_symbol_for(name.as_str());
                 if let Some(signature) = self.function_signatures.get(name.as_str()) {
@@ -1652,7 +1655,10 @@ impl<'a> LirCodegen<'a> {
 
                 Err(report_error_with_context(
                     LOG_AREA,
-                    format!("Global variable '{}' of type {:?} not found", name, value_ty),
+                    format!(
+                        "Global variable '{}' of type {:?} not found",
+                        name, value_ty
+                    ),
                 ))
             }
             lir::LirValueKind::Function(lir::LirFunctionRef::Name(name)) => {
@@ -1710,19 +1716,21 @@ impl<'a> LirCodegen<'a> {
 
                 Ok(function.as_global_value().as_pointer_value().into())
             }
-            lir::LirValueKind::Function(lir::LirFunctionRef::Package { package_id, name }) => Err(
-                report_error_with_context(
+            lir::LirValueKind::Function(lir::LirFunctionRef::Package { package_id, name }) => {
+                Err(report_error_with_context(
                     LOG_AREA,
                     format!(
                         "Package-qualified function `{:?}::{}` is not supported by LLVM lowering",
                         package_id, name
                     ),
-                ),
-            ),
-            lir::LirValueKind::Function(lir::LirFunctionRef::Definition(def_id)) => Err(report_error_with_context(
-                LOG_AREA,
-                format!("Function definition `{def_id}` is not supported by LLVM lowering"),
-            )),
+                ))
+            }
+            lir::LirValueKind::Function(lir::LirFunctionRef::Definition(def_id)) => {
+                Err(report_error_with_context(
+                    LOG_AREA,
+                    format!("Function definition `{def_id}` is not supported by LLVM lowering"),
+                ))
+            }
             lir::LirValueKind::Local(local_id) => self
                 .argument_operands
                 .get(&local_id)
@@ -1756,7 +1764,9 @@ impl<'a> LirCodegen<'a> {
                     lir::LirInteger::I64(value) => value,
                     lir::LirInteger::I128(value) => value as u64,
                     lir::LirInteger::Arbitrary(_) => {
-                        return Err(Error::from("LLVM arbitrary integer constant lowering is unsupported"))
+                        return Err(Error::from(
+                            "LLVM arbitrary integer constant lowering is unsupported",
+                        ));
                     }
                 };
                 Ok(int_ty.const_int(value, false).into())
@@ -1791,7 +1801,10 @@ impl<'a> LirCodegen<'a> {
                         Ok(struct_ty.const_named_struct(&converted).into())
                     }
                     BasicTypeEnum::ArrayType(array_ty) => {
-                        let mut raw_values = converted.iter().map(|value| value.as_value_ref()).collect::<Vec<_>>();
+                        let mut raw_values = converted
+                            .iter()
+                            .map(|value| value.as_value_ref())
+                            .collect::<Vec<_>>();
                         let value_ref = unsafe {
                             LLVMConstArray2(
                                 array_ty.get_element_type().as_type_ref(),
@@ -1806,11 +1819,10 @@ impl<'a> LirCodegen<'a> {
             }
             lir::LirConstantKind::GlobalAddress { global } => {
                 let llvm_name = self.llvm_symbol_for(global.as_str());
-                let global = self
-                    .llvm_ctx
-                    .module
-                    .get_global(&llvm_name)
-                    .ok_or_else(|| Error::from(format!("unknown global constant `{global}`")))?;
+                let global =
+                    self.llvm_ctx.module.get_global(&llvm_name).ok_or_else(|| {
+                        Error::from(format!("unknown global constant `{global}`"))
+                    })?;
                 Ok(global.as_pointer_value().into())
             }
             lir::LirConstantKind::FunctionAddress(function) => {
@@ -2001,7 +2013,12 @@ impl<'a> LirCodegen<'a> {
         match ty {
             lir::LirType::Integer(width) => {
                 let int_ty = self.llvm_ctx.context.custom_width_int_type(*width);
-                Ok(int_ty.const_int(Self::read_le_u128(bytes, base, (*width).div_ceil(8) as usize)? as u64, false).into())
+                Ok(int_ty
+                    .const_int(
+                        Self::read_le_u128(bytes, base, (*width).div_ceil(8) as usize)? as u64,
+                        false,
+                    )
+                    .into())
             }
             lir::LirType::I1 => Ok(self
                 .llvm_ctx
@@ -2062,7 +2079,8 @@ impl<'a> LirCodegen<'a> {
                     .as_ref()
                     .ok_or_else(|| Error::from("LLVM data layout is not initialized"))?
                     .size_of(element_ty)
-                    .map_err(|error| Error::from(error.to_string()))? as usize;
+                    .map_err(|error| Error::from(error.to_string()))?
+                    as usize;
                 let mut values = Vec::with_capacity(*size as usize);
                 for index in 0..(*size as usize) {
                     values.push(self.convert_global_bytes_to_typed_value(
@@ -2099,8 +2117,8 @@ impl<'a> LirCodegen<'a> {
                     .struct_layout(ty)
                     .map_err(|error| Error::from(error.to_string()))?
                     .ok_or_else(|| {
-                    report_error_with_context(LOG_AREA, "missing LIR struct layout")
-                })?;
+                        report_error_with_context(LOG_AREA, "missing LIR struct layout")
+                    })?;
                 let mut values = Vec::with_capacity(fields.len());
                 for (index, field_ty) in fields.iter().enumerate() {
                     values.push(self.convert_global_bytes_to_typed_value(
@@ -2140,7 +2158,7 @@ impl<'a> LirCodegen<'a> {
                 return Err(report_error_with_context(
                     LOG_AREA,
                     "expected pointer type for global relocation decoding",
-                ))
+                ));
             }
         };
 
@@ -2641,5 +2659,4 @@ impl<'a> LirCodegen<'a> {
 
         result
     }
-
 }

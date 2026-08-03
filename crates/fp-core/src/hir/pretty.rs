@@ -1,5 +1,5 @@
 use crate::intrinsics::IntrinsicKind;
-use crate::pretty::{escape_char, escape_string, PrettyCtx, PrettyPrintable};
+use crate::pretty::{PrettyCtx, PrettyPrintable, escape_char, escape_string};
 use std::fmt::{self, Formatter};
 
 use super::{

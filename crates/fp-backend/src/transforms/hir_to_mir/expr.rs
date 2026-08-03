@@ -10,7 +10,7 @@ use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result;
 use fp_core::hir;
 use fp_core::hir_place::{
-    project_hir_assign_target, HirAssignTargetBase, HirAssignTargetProjection,
+    HirAssignTargetBase, HirAssignTargetProjection, project_hir_assign_target,
 };
 
 fn call_arg_values(args: &[hir::CallArg]) -> Vec<&hir::Expr> {
@@ -26,7 +26,7 @@ use fp_core::mir::{self, Symbol};
 use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
 use fp_typing::TypeckResults;
-use std::collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
 const DIAGNOSTIC_CONTEXT: &str = "hir→mir";
@@ -234,7 +234,7 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
         hir::ty::TyKind::Infer(_) => {
             return Err(fp_core::error::Error::from(
                 "unsupported HIR inference variable in MIR type bridge",
-            ))
+            ));
         }
         hir::ty::TyKind::Error(_) => {
             return Err(fp_core::error::Error::from(
@@ -244,7 +244,7 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
         _ => {
             return Err(fp_core::error::Error::from(
                 "unsupported HIR type in MIR type bridge",
-            ))
+            ));
         }
     };
     Ok(Ty { kind })
@@ -14416,10 +14416,7 @@ impl<'a> BodyBuilder<'a> {
                 });
             }
             hir::ExprKind::IntrinsicCall(call) => {
-                if matches!(
-                    call.kind,
-                    IntrinsicKind::Print | IntrinsicKind::Println
-                ) {
+                if matches!(call.kind, IntrinsicKind::Print | IntrinsicKind::Println) {
                     self.emit_printf_call(call, expr.span)?;
                     let unit_ty = MirLowering::unit_ty();
                     let local_id = self.allocate_temp(unit_ty.clone(), expr.span);

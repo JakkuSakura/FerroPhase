@@ -6,7 +6,7 @@ pub use runtime::*;
 pub use ty::*;
 pub use value::*;
 
-use crate::ast::{get_threadlocal_serializer, BExpr, BlockStmt, Expr, ExprKind, Item};
+use crate::ast::{BExpr, BlockStmt, Expr, ExprKind, Item, get_threadlocal_serializer};
 use crate::common_enum;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::span::Span;

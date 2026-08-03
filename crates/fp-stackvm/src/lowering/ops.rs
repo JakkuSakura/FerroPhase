@@ -53,41 +53,26 @@ pub(crate) fn lower_load_const(
     match value {
         BytecodeConst::Unit => fl.emit_in_block(
             block_id,
-            LirInstructionKind::Add(
-                i64_value(0),
-                i64_value(0),
-            ),
+            LirInstructionKind::Add(i64_value(0), i64_value(0)),
         ),
         BytecodeConst::Bool(b) => {
             let val = if *b { 1u64 } else { 0u64 };
             fl.emit_in_block(
                 block_id,
-                LirInstructionKind::Add(
-                    i1_value(val),
-                    i1_value(0),
-                ),
+                LirInstructionKind::Add(i1_value(val), i1_value(0)),
             )
         }
         BytecodeConst::Int(i) => fl.emit_in_block(
             block_id,
-            LirInstructionKind::Add(
-                i64_value(*i as u64),
-                i64_value(0),
-            ),
+            LirInstructionKind::Add(i64_value(*i as u64), i64_value(0)),
         ),
         BytecodeConst::UInt(u) => fl.emit_in_block(
             block_id,
-            LirInstructionKind::Add(
-                i64_value(*u),
-                i64_value(0),
-            ),
+            LirInstructionKind::Add(i64_value(*u), i64_value(0)),
         ),
         BytecodeConst::Float(f) => fl.emit_in_block(
             block_id,
-            LirInstructionKind::Add(
-                f64_value(*f),
-                f64_value(0.0),
-            ),
+            LirInstructionKind::Add(f64_value(*f), f64_value(0.0)),
         ),
         BytecodeConst::Str(_s) => {
             // String bodies are stored in the const pool but their
@@ -97,10 +82,7 @@ pub(crate) fn lower_load_const(
             // inline data or a global initialiser.
             let len_reg = fl.emit_in_block(
                 block_id,
-                LirInstructionKind::Add(
-                    i64_value(0),
-                    i64_value(0),
-                ),
+                LirInstructionKind::Add(i64_value(0), i64_value(0)),
             )?;
             lower_call_intrinsic(
                 fl,
@@ -113,10 +95,7 @@ pub(crate) fn lower_load_const(
             // Function references are lowered identically to strings.
             let len_reg = fl.emit_in_block(
                 block_id,
-                LirInstructionKind::Add(
-                    i64_value(0),
-                    i64_value(0),
-                ),
+                LirInstructionKind::Add(i64_value(0), i64_value(0)),
             )?;
             lower_call_intrinsic(
                 fl,
@@ -285,10 +264,9 @@ pub(crate) fn lower_unop(
 ) -> LowerResult<RegisterId> {
     let kind = match op {
         BytecodeUnOp::Not => LirInstructionKind::Not(FunctionLowering::reg_val(operand)),
-        BytecodeUnOp::Neg => LirInstructionKind::Sub(
-            i64_value(0),
-            FunctionLowering::reg_val(operand),
-        ),
+        BytecodeUnOp::Neg => {
+            LirInstructionKind::Sub(i64_value(0), FunctionLowering::reg_val(operand))
+        }
     };
     fl.emit_in_block(block_id, kind)
 }
@@ -538,10 +516,7 @@ fn lower_projection_index(
     match elem {
         BytecodePlaceElem::Field(idx) => fl.emit_in_block(
             block_id,
-            LirInstructionKind::Add(
-                i64_value(*idx as u64),
-                i64_value(0),
-            ),
+            LirInstructionKind::Add(i64_value(*idx as u64), i64_value(0)),
         ),
         BytecodePlaceElem::Index(local_idx) => fl.emit_in_block(
             block_id,

@@ -110,7 +110,8 @@ pub fn compile_source_with_options(
         .map_err(|err| ShellError::Lower(err.to_string()))?;
 
     // Re-insert pre-HIR items (HIR strips #[command] attrs, const-evaluates fn bodies)
-    lowered.items
+    lowered
+        .items
         .extend(shell_materializer::flatten_keep_externs(pre_hir_items));
     validate_extern_decls(&lowered, target).map_err(ShellError::Lower)?;
 

@@ -3,7 +3,7 @@ use fp_core::ast::{
     ExprKind, ExprStruct, ExprUnOp, FormatTemplatePart, Name, Value,
 };
 
-use super::{utils::escape_zig_string, ZigEmitter};
+use super::{ZigEmitter, utils::escape_zig_string};
 
 impl ZigEmitter {
     pub(crate) fn render_expr(&self, expr: &Expr) -> Option<String> {

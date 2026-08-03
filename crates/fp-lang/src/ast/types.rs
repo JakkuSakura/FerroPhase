@@ -236,9 +236,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                     }
                     ExprKind::Invoke(invoke) => {
                         let target_name = match &invoke.target {
-                            ExprInvokeTarget::Function(name) => {
-                                name.as_ident().map(Ident::as_str)
-                            }
+                            ExprInvokeTarget::Function(name) => name.as_ident().map(Ident::as_str),
                             _ => None,
                         };
                         let k = match target_name {
@@ -317,11 +315,17 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                 } else {
                     Some(Box::new(args[0].clone()))
                 };
-                return Ok(Ty::Type(TypeType { span: Span::null(), inner }));
+                return Ok(Ty::Type(TypeType {
+                    span: Span::null(),
+                    inner,
+                }));
             }
         }
         // bare `type` keyword (no type args) — meta-type
-        return Ok(Ty::Type(TypeType { span: Span::null(), inner: None }));
+        return Ok(Ty::Type(TypeType {
+            span: Span::null(),
+            inner: None,
+        }));
     }
     if let Some(path) = bare_path {
         if path.prefix == PathPrefix::Plain && path.segments.len() == 1 {

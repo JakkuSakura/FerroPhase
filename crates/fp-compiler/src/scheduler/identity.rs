@@ -61,7 +61,6 @@ impl Display for FullyQualifiedPath {
     }
 }
 
-
 macro_rules! define_storage_id {
     ($name:ident, $doc:literal) => {
         #[doc = $doc]

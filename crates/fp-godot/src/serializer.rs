@@ -4,8 +4,8 @@ use fp_core::ast::{
     ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch,
     ExprRange, ExprRangeLimit, ExprReturn, ExprSelect, ExprStruct, ExprUnOp, ExprWhile, File,
     FunctionParam, Item, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemImpl, ItemKind, Name,
-    Pattern, PatternKind, PatternTupleStruct, Ty, TypeStruct, Value, ValueList,
-    ValueMap, ValueMapEntry, ValueStruct, ValueTuple,
+    Pattern, PatternKind, PatternTupleStruct, Ty, TypeStruct, Value, ValueList, ValueMap,
+    ValueMapEntry, ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;

@@ -508,11 +508,7 @@ fn build_frame_layout(
     let outgoing_size = shadow_space + (extra_stack_args as i32) * 8;
     let base = local_size + outgoing_size;
     let frame_size = if base == 0 {
-        if has_calls {
-            8
-        } else {
-            0
-        }
+        if has_calls { 8 } else { 0 }
     } else {
         align16(base + 8) - 8
     };

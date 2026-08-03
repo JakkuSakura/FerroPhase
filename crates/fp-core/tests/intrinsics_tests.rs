@@ -3,9 +3,9 @@ use fp_core::ast::{
     TypePrimitive, Visibility,
 };
 use fp_core::intrinsics::{
-    ensure_function_decl, lang_instrinstic_call_kind, lang_instrinstic_capability,
-    lang_instrinstic_for_lang_item, lang_instrinstic_lang_item, make_function_decl,
-    CallKind, LangInstrinstic, LangInstrinsticCapability, StdIntrinsic,
+    CallKind, LangInstrinstic, LangInstrinsticCapability, StdIntrinsic, ensure_function_decl,
+    lang_instrinstic_call_kind, lang_instrinstic_capability, lang_instrinstic_for_lang_item,
+    lang_instrinstic_lang_item, make_function_decl,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -188,21 +188,9 @@ fn lang_instrinstic_maps_core_fs_lang_items_to_call_kinds() {
             LangInstrinstic::FsAppendString,
             CallKind::FsAppendString,
         ),
-        (
-            "fs_exists",
-            LangInstrinstic::FsExists,
-            CallKind::FsExists,
-        ),
-        (
-            "fs_is_dir",
-            LangInstrinstic::FsIsDir,
-            CallKind::FsIsDir,
-        ),
-        (
-            "fs_is_file",
-            LangInstrinstic::FsIsFile,
-            CallKind::FsIsFile,
-        ),
+        ("fs_exists", LangInstrinstic::FsExists, CallKind::FsExists),
+        ("fs_is_dir", LangInstrinstic::FsIsDir, CallKind::FsIsDir),
+        ("fs_is_file", LangInstrinstic::FsIsFile, CallKind::FsIsFile),
     ];
 
     for (lang_item, expected_intrinsic, expected_call_kind) in cases {

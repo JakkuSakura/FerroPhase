@@ -2,9 +2,8 @@ use super::*;
 use fp_core::{
     lir,
     mir::{
-        self,
+        self, Symbol as MirSymbol,
         ty::{IntTy, Ty},
-        Symbol as MirSymbol,
     },
     span::Span,
 };
@@ -210,10 +209,7 @@ fn lowers_general_call_and_branches() {
                 ..
             }
             | lir::LirValue {
-                kind: lir::LirValueKind::Function(lir::LirFunctionRef::Package {
-                    name,
-                    ..
-                }),
+                kind: lir::LirValueKind::Function(lir::LirFunctionRef::Package { name, .. }),
                 ..
             }
             | lir::LirValue {

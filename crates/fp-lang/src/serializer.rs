@@ -2,7 +2,7 @@ use fp_core::ast::{
     AstSerializer, BlockStmt, Expr, ExprBlock, File, Item, ItemDefFunction, Ty, Value,
     ValueFunction,
 };
-use fp_core::pretty::{pretty, PrettyOptions};
+use fp_core::pretty::{PrettyOptions, pretty};
 
 #[derive(Debug, Clone)]
 pub struct PrettyAstSerializer {

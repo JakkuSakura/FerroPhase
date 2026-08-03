@@ -1,6 +1,6 @@
 use fp_core::error::Result as CoreResult;
 use fp_core::query::{
-    statement_to_query_ir, QueryDocument, QueryIrDocument, QueryKind, SqlDialect,
+    QueryDocument, QueryIrDocument, QueryKind, SqlDialect, statement_to_query_ir,
 };
 
 use crate::dialect::detect_target_dialect;

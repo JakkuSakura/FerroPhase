@@ -1,8 +1,8 @@
 //! Integration tests for fp-clang
 
 use fp_clang::{
-    ast::{Declaration, Type},
     ClangCodegen, ClangParser, CompileOptions, Standard,
+    ast::{Declaration, Type},
 };
 use std::fs;
 use tempfile::TempDir;

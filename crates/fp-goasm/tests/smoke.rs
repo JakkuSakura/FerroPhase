@@ -5,19 +5,17 @@ use fp_core::lir::{
 };
 
 fn i64_value(value: u64) -> LirValue {
-    LirValue::constant(
-        LirConstant::integer(LirType::I64, LirInteger::I64(value)).unwrap(),
-    )
+    LirValue::constant(LirConstant::integer(LirType::I64, LirInteger::I64(value)).unwrap())
 }
 
 fn sample_program() -> LirProgram {
     let add_inst = LirInstruction {
         id: 1,
-        kind: LirInstructionKind::Add(
-            i64_value(40),
-            i64_value(2),
-        ),
-        result: Some(LirRegister { id: 1, ty: LirType::I64 }),
+        kind: LirInstructionKind::Add(i64_value(40), i64_value(2)),
+        result: Some(LirRegister {
+            id: 1,
+            ty: LirType::I64,
+        }),
         debug_info: None,
     };
     let main = LirFunction {

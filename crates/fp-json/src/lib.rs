@@ -3,7 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_core::ast::{AstSerializer, Expr, ExprKind, File, Item, ItemKind, Value, ValueList, ValueMap};
+use fp_core::ast::{
+    AstSerializer, Expr, ExprKind, File, Item, ItemKind, Value, ValueList, ValueMap,
+};
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};

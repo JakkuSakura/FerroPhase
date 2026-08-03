@@ -16,13 +16,16 @@ fn layout() -> LirDataLayout {
 
 #[test]
 fn normalize_materializes_printf_format_strings_from_elf_rodata() {
-    let mut program = AsmProgram::new(AsmTarget {
-        architecture: AsmArchitecture::Aarch64,
-        object_format: AsmObjectFormat::MachO,
-        endianness: fp_core::asmir::AsmEndianness::Little,
-        pointer_width: 64,
-        default_calling_convention: Some(CallingConvention::C),
-    }, layout());
+    let mut program = AsmProgram::new(
+        AsmTarget {
+            architecture: AsmArchitecture::Aarch64,
+            object_format: AsmObjectFormat::MachO,
+            endianness: fp_core::asmir::AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: Some(CallingConvention::C),
+        },
+        layout(),
+    );
     program.sections.push(AsmSection {
         name: ".text".to_string(),
         kind: AsmSectionKind::Text,

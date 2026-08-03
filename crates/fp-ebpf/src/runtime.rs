@@ -602,9 +602,7 @@ mod tests {
     };
 
     fn i64_value(value: u64) -> LirValue {
-        LirValue::constant(
-            LirConstant::integer(LirType::I64, LirInteger::I64(value)).unwrap(),
-        )
+        LirValue::constant(LirConstant::integer(LirType::I64, LirInteger::I64(value)).unwrap())
     }
 
     fn layout() -> fp_core::lir::LirDataLayout {
@@ -675,11 +673,11 @@ mod tests {
         let program = base_program(
             vec![LirInstruction {
                 id: 1,
-                kind: LirInstructionKind::Add(
-                    i64_value(2),
-                    i64_value(3),
-                ),
-                result: Some(LirRegister { id: 1, ty: LirType::I64 }),
+                kind: LirInstructionKind::Add(i64_value(2), i64_value(3)),
+                result: Some(LirRegister {
+                    id: 1,
+                    ty: LirType::I64,
+                }),
                 debug_info: None,
             }],
             LirTerminator::Return(Some(LirValue::register(1, LirType::I64))),

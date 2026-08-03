@@ -2343,8 +2343,11 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
     for inst in instructions.iter() {
         let offset = inst.address();
         let len = inst.bytes().len();
-        let offset_usize = usize::try_from(offset)
-            .map_err(|_| Error::from(format!("x86_64 instruction offset overflow: offset={offset}")))?;
+        let offset_usize = usize::try_from(offset).map_err(|_| {
+            Error::from(format!(
+                "x86_64 instruction offset overflow: offset={offset}"
+            ))
+        })?;
         let end = offset_usize
             .checked_add(len)
             .ok_or_else(|| Error::from("x86_64 instruction length overflow"))?;
@@ -3138,8 +3141,8 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
                         .unwrap_or(false)
                 {
                     let imm = parse_capstone_immediate(rhs)?;
-                    let imm =
-                        u8::try_from(imm).map_err(|_| Error::from(format!("unsupported bt immediate: {imm}")))?;
+                    let imm = u8::try_from(imm)
+                        .map_err(|_| Error::from(format!("unsupported bt immediate: {imm}")))?;
                     (Decoded::BtImm { value, imm }, len)
                 } else {
                     let bit = parse_gpr_register(rhs)?;
@@ -3154,8 +3157,8 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
                     RmOperand::Reg(parse_gpr_register(lhs)?)
                 };
                 let imm = parse_capstone_immediate(rhs)?;
-                let imm =
-                    u8::try_from(imm).map_err(|_| Error::from(format!("unsupported btc immediate: {imm}")))?;
+                let imm = u8::try_from(imm)
+                    .map_err(|_| Error::from(format!("unsupported btc immediate: {imm}")))?;
                 (
                     Decoded::BtcImm {
                         dst,
@@ -3293,8 +3296,8 @@ fn decode_stream(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
                     RmOperand::Reg(parse_gpr_register(parts[1])?)
                 };
                 let imm = parse_capstone_immediate(parts[2])?;
-                let imm =
-                    u16::try_from(imm).map_err(|_| Error::from(format!("unsupported rorx immediate: {imm}")))?;
+                let imm = u16::try_from(imm)
+                    .map_err(|_| Error::from(format!("unsupported rorx immediate: {imm}")))?;
                 (
                     Decoded::Rorx {
                         dst,

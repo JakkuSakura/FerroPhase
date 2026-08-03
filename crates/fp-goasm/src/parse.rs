@@ -274,7 +274,10 @@ fn parse_freeze(line: &str, target: GoAsmTarget) -> Result<Option<LirInstruction
     Ok(Some(LirInstruction {
         id,
         kind: LirInstructionKind::Freeze(value),
-        result: Some(LirRegister { id, ty: LirType::I64 }),
+        result: Some(LirRegister {
+            id,
+            ty: LirType::I64,
+        }),
         debug_info: None,
     }))
 }
@@ -312,7 +315,10 @@ fn parse_binop_pattern(
         LirInstruction {
             id,
             kind,
-            result: Some(LirRegister { id, ty: LirType::I64 }),
+            result: Some(LirRegister {
+                id,
+                ty: LirType::I64,
+            }),
             debug_info: None,
         },
         2,
@@ -342,7 +348,10 @@ fn parse_not_pattern(
         LirInstruction {
             id,
             kind: LirInstructionKind::Not(mov.src),
-            result: Some(LirRegister { id, ty: LirType::I64 }),
+            result: Some(LirRegister {
+                id,
+                ty: LirType::I64,
+            }),
             debug_info: None,
         },
         2,
@@ -561,7 +570,10 @@ fn parse_conditional_jump(line: &str, target: GoAsmTarget) -> Result<Option<(Lir
     // Condition is always the last compare result register in the emitted form.
     // We recover it via the register that was written by the comparison pattern.
     // Here we just pass through a dummy; the compare peephole replaces it.
-    Ok(Some((LirValue::register(0, LirType::I64), label.to_string())))
+    Ok(Some((
+        LirValue::register(0, LirType::I64),
+        label.to_string(),
+    )))
 }
 
 fn parse_jmp(line: &str) -> Result<Option<String>> {
@@ -688,7 +700,10 @@ fn parse_compare_pattern(
         LirInstruction {
             id,
             kind,
-            result: Some(LirRegister { id, ty: LirType::I1 }),
+            result: Some(LirRegister {
+                id,
+                ty: LirType::I1,
+            }),
             debug_info: None,
         },
         7,

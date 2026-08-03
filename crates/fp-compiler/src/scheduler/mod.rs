@@ -11,6 +11,4 @@ pub use identity::{
 };
 pub use request::{CompilerRequest, CompletedRequest, ScheduledAnswer};
 pub use stack::CompilerScheduler;
-pub use work::{
-    CompilerAnswer, CompilerWork, InvalidatedObjectId,
-};
+pub use work::{CompilerAnswer, CompilerWork, InvalidatedObjectId};

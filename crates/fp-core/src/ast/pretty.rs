@@ -11,7 +11,7 @@ use crate::ast::{
     Pattern, PatternKind, PatternStructField, SchemaDocument, SchemaKind, SchemaNode,
 };
 use crate::intrinsics::CallKind;
-use crate::pretty::{escape_char, escape_string, PrettyCtx, PrettyPrintable};
+use crate::pretty::{PrettyCtx, PrettyPrintable, escape_char, escape_string};
 use crate::query;
 
 impl PrettyPrintable for ast::Expr {
@@ -20,9 +20,7 @@ impl PrettyPrintable for ast::Expr {
 
         match &self.kind {
             ast::ExprKind::Id(id) => ctx.writeln(f, format!("id({}){}", id, suffix)),
-            ast::ExprKind::Name(name) => {
-                ctx.writeln(f, format!("name {}{}", name, suffix))
-            }
+            ast::ExprKind::Name(name) => ctx.writeln(f, format!("name {}{}", name, suffix)),
             ast::ExprKind::Value(value) => ctx.writeln(
                 f,
                 format!("value {}{}", summarize_value(value.as_ref()), suffix),

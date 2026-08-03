@@ -5,7 +5,7 @@
 //! (native codegen / JIT).
 
 use std::collections::HashMap;
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 
 // ── error type ────────────────────────────────────────────────────
 
@@ -299,141 +299,152 @@ unsafe fn dlclose(handle: *mut c_void) {
 
 // ── transmute call helpers ────────────────────────────────────────
 
-unsafe fn call_void(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<()> { unsafe {
-    match args.len() {
-        0 => {
-            let f: extern "C" fn() = std::mem::transmute(fn_ptr);
-            f();
+unsafe fn call_void(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<()> {
+    unsafe {
+        match args.len() {
+            0 => {
+                let f: extern "C" fn() = std::mem::transmute(fn_ptr);
+                f();
+            }
+            1 => {
+                let f: extern "C" fn(u64) = std::mem::transmute(fn_ptr);
+                f(args[0]);
+            }
+            2 => {
+                let f: extern "C" fn(u64, u64) = std::mem::transmute(fn_ptr);
+                f(args[0], args[1]);
+            }
+            3 => {
+                let f: extern "C" fn(u64, u64, u64) = std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2]);
+            }
+            4 => {
+                let f: extern "C" fn(u64, u64, u64, u64) = std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2], args[3]);
+            }
+            5 => {
+                let f: extern "C" fn(u64, u64, u64, u64, u64) = std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2], args[3], args[4]);
+            }
+            6 => {
+                let f: extern "C" fn(u64, u64, u64, u64, u64, u64) = std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2], args[3], args[4], args[5]);
+            }
+            _ => return Err(FfiError::Message("ffi supports up to 6 arguments".into())),
         }
-        1 => {
-            let f: extern "C" fn(u64) = std::mem::transmute(fn_ptr);
-            f(args[0]);
-        }
-        2 => {
-            let f: extern "C" fn(u64, u64) = std::mem::transmute(fn_ptr);
-            f(args[0], args[1]);
-        }
-        3 => {
-            let f: extern "C" fn(u64, u64, u64) = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2]);
-        }
-        4 => {
-            let f: extern "C" fn(u64, u64, u64, u64) = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2], args[3]);
-        }
-        5 => {
-            let f: extern "C" fn(u64, u64, u64, u64, u64) = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2], args[3], args[4]);
-        }
-        6 => {
-            let f: extern "C" fn(u64, u64, u64, u64, u64, u64) = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2], args[3], args[4], args[5]);
-        }
-        _ => return Err(FfiError::Message("ffi supports up to 6 arguments".into())),
+        Ok(())
     }
-    Ok(())
-}}
+}
 
-unsafe fn call_i64(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<i64> { unsafe {
-    Ok(match args.len() {
-        0 => {
-            let f: extern "C" fn() -> i64 = std::mem::transmute(fn_ptr);
-            f()
-        }
-        1 => {
-            let f: extern "C" fn(u64) -> i64 = std::mem::transmute(fn_ptr);
-            f(args[0])
-        }
-        2 => {
-            let f: extern "C" fn(u64, u64) -> i64 = std::mem::transmute(fn_ptr);
-            f(args[0], args[1])
-        }
-        3 => {
-            let f: extern "C" fn(u64, u64, u64) -> i64 = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2])
-        }
-        4 => {
-            let f: extern "C" fn(u64, u64, u64, u64) -> i64 = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2], args[3])
-        }
-        5 => {
-            let f: extern "C" fn(u64, u64, u64, u64, u64) -> i64 = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2], args[3], args[4])
-        }
-        6 => {
-            let f: extern "C" fn(u64, u64, u64, u64, u64, u64) -> i64 = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2], args[3], args[4], args[5])
-        }
-        _ => return Err(FfiError::Message("ffi supports up to 6 arguments".into())),
-    })
-}}
+unsafe fn call_i64(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<i64> {
+    unsafe {
+        Ok(match args.len() {
+            0 => {
+                let f: extern "C" fn() -> i64 = std::mem::transmute(fn_ptr);
+                f()
+            }
+            1 => {
+                let f: extern "C" fn(u64) -> i64 = std::mem::transmute(fn_ptr);
+                f(args[0])
+            }
+            2 => {
+                let f: extern "C" fn(u64, u64) -> i64 = std::mem::transmute(fn_ptr);
+                f(args[0], args[1])
+            }
+            3 => {
+                let f: extern "C" fn(u64, u64, u64) -> i64 = std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2])
+            }
+            4 => {
+                let f: extern "C" fn(u64, u64, u64, u64) -> i64 = std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2], args[3])
+            }
+            5 => {
+                let f: extern "C" fn(u64, u64, u64, u64, u64) -> i64 = std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2], args[3], args[4])
+            }
+            6 => {
+                let f: extern "C" fn(u64, u64, u64, u64, u64, u64) -> i64 =
+                    std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2], args[3], args[4], args[5])
+            }
+            _ => return Err(FfiError::Message("ffi supports up to 6 arguments".into())),
+        })
+    }
+}
 
-unsafe fn call_u64(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<u64> { unsafe {
-    Ok(match args.len() {
-        0 => {
-            let f: extern "C" fn() -> u64 = std::mem::transmute(fn_ptr);
-            f()
-        }
-        1 => {
-            let f: extern "C" fn(u64) -> u64 = std::mem::transmute(fn_ptr);
-            f(args[0])
-        }
-        2 => {
-            let f: extern "C" fn(u64, u64) -> u64 = std::mem::transmute(fn_ptr);
-            f(args[0], args[1])
-        }
-        3 => {
-            let f: extern "C" fn(u64, u64, u64) -> u64 = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2])
-        }
-        4 => {
-            let f: extern "C" fn(u64, u64, u64, u64) -> u64 = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2], args[3])
-        }
-        5 => {
-            let f: extern "C" fn(u64, u64, u64, u64, u64) -> u64 = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2], args[3], args[4])
-        }
-        6 => {
-            let f: extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2], args[3], args[4], args[5])
-        }
-        _ => return Err(FfiError::Message("ffi supports up to 6 arguments".into())),
-    })
-}}
+unsafe fn call_u64(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<u64> {
+    unsafe {
+        Ok(match args.len() {
+            0 => {
+                let f: extern "C" fn() -> u64 = std::mem::transmute(fn_ptr);
+                f()
+            }
+            1 => {
+                let f: extern "C" fn(u64) -> u64 = std::mem::transmute(fn_ptr);
+                f(args[0])
+            }
+            2 => {
+                let f: extern "C" fn(u64, u64) -> u64 = std::mem::transmute(fn_ptr);
+                f(args[0], args[1])
+            }
+            3 => {
+                let f: extern "C" fn(u64, u64, u64) -> u64 = std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2])
+            }
+            4 => {
+                let f: extern "C" fn(u64, u64, u64, u64) -> u64 = std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2], args[3])
+            }
+            5 => {
+                let f: extern "C" fn(u64, u64, u64, u64, u64) -> u64 = std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2], args[3], args[4])
+            }
+            6 => {
+                let f: extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 =
+                    std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2], args[3], args[4], args[5])
+            }
+            _ => return Err(FfiError::Message("ffi supports up to 6 arguments".into())),
+        })
+    }
+}
 
-unsafe fn call_ptr(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<*mut c_void> { unsafe {
-    Ok(match args.len() {
-        0 => {
-            let f: extern "C" fn() -> *mut c_void = std::mem::transmute(fn_ptr);
-            f()
-        }
-        1 => {
-            let f: extern "C" fn(u64) -> *mut c_void = std::mem::transmute(fn_ptr);
-            f(args[0])
-        }
-        2 => {
-            let f: extern "C" fn(u64, u64) -> *mut c_void = std::mem::transmute(fn_ptr);
-            f(args[0], args[1])
-        }
-        3 => {
-            let f: extern "C" fn(u64, u64, u64) -> *mut c_void = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2])
-        }
-        4 => {
-            let f: extern "C" fn(u64, u64, u64, u64) -> *mut c_void = std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2], args[3])
-        }
-        5 => {
-            let f: extern "C" fn(u64, u64, u64, u64, u64) -> *mut c_void =
-                std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2], args[3], args[4])
-        }
-        6 => {
-            let f: extern "C" fn(u64, u64, u64, u64, u64, u64) -> *mut c_void =
-                std::mem::transmute(fn_ptr);
-            f(args[0], args[1], args[2], args[3], args[4], args[5])
-        }
-        _ => return Err(FfiError::Message("ffi supports up to 6 arguments".into())),
-    })
-}}
+unsafe fn call_ptr(fn_ptr: *const c_void, args: &[u64]) -> FfiResult<*mut c_void> {
+    unsafe {
+        Ok(match args.len() {
+            0 => {
+                let f: extern "C" fn() -> *mut c_void = std::mem::transmute(fn_ptr);
+                f()
+            }
+            1 => {
+                let f: extern "C" fn(u64) -> *mut c_void = std::mem::transmute(fn_ptr);
+                f(args[0])
+            }
+            2 => {
+                let f: extern "C" fn(u64, u64) -> *mut c_void = std::mem::transmute(fn_ptr);
+                f(args[0], args[1])
+            }
+            3 => {
+                let f: extern "C" fn(u64, u64, u64) -> *mut c_void = std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2])
+            }
+            4 => {
+                let f: extern "C" fn(u64, u64, u64, u64) -> *mut c_void =
+                    std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2], args[3])
+            }
+            5 => {
+                let f: extern "C" fn(u64, u64, u64, u64, u64) -> *mut c_void =
+                    std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2], args[3], args[4])
+            }
+            6 => {
+                let f: extern "C" fn(u64, u64, u64, u64, u64, u64) -> *mut c_void =
+                    std::mem::transmute(fn_ptr);
+                f(args[0], args[1], args[2], args[3], args[4], args[5])
+            }
+            _ => return Err(FfiError::Message("ffi supports up to 6 arguments".into())),
+        })
+    }
+}

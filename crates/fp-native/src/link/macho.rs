@@ -162,7 +162,8 @@ fn build_strtab(externs: &[ExternSymbol]) -> (Vec<u8>, HashMap<String, u32>) {
 
 fn emit_x86_stub(buf: &mut [u8], stub_addr: u64, ptr_addr: u64) -> Result<()> {
     let disp = ptr_addr as i64 - (stub_addr as i64 + 6);
-    let disp32 = i32::try_from(disp).map_err(|e| Error::from(format!("stub target out of range: {disp}: {e}")))?;
+    let disp32 = i32::try_from(disp)
+        .map_err(|e| Error::from(format!("stub target out of range: {disp}: {e}")))?;
     buf.copy_from_slice(&[
         0xFF,
         0x25,

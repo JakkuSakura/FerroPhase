@@ -13,9 +13,7 @@ pub mod semantic;
 pub use convert::{
     query_ir_to_query, query_ir_to_statement, query_to_query_ir, statement_to_query_ir,
 };
-pub use fp_feature::{
-    lower_fp_expr_to_query, lower_fp_file_to_query,
-};
+pub use fp_feature::{lower_fp_expr_to_query, lower_fp_file_to_query};
 pub use semantic::*;
 
 use crate::ast::AstSerializer;

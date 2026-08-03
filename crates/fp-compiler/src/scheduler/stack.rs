@@ -32,10 +32,7 @@ impl CompilerScheduler {
     pub fn submit(&mut self, work: CompilerWork) -> RequestId {
         let id = self.allocate_id();
         if let Some(current) = self.current_processing {
-            self.dependencies
-                .entry(current)
-                .or_default()
-                .push(id);
+            self.dependencies.entry(current).or_default().push(id);
         }
         self.stack.push(CompilerRequest { id, work });
         id
@@ -187,7 +184,11 @@ impl CompilerScheduler {
         self.submit_followups(followup_work)
     }
 
-    fn followup_from_answer(&self, answer: &CompilerAnswer, request: &CompilerRequest) -> Vec<CompilerWork> {
+    fn followup_from_answer(
+        &self,
+        answer: &CompilerAnswer,
+        request: &CompilerRequest,
+    ) -> Vec<CompilerWork> {
         match answer {
             CompilerAnswer::CompileUnitCompileNative => match &request.work {
                 CompilerWork::CompileUnitCompileNative { ast, path } => {
@@ -206,9 +207,7 @@ impl CompilerScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scheduler::{
-        AstId, ConstValueId, FullyQualifiedPath, SchedulerError,
-    };
+    use crate::scheduler::{AstId, ConstValueId, FullyQualifiedPath, SchedulerError};
 
     fn path(segments: &[&str]) -> FullyQualifiedPath {
         FullyQualifiedPath::from_segments(segments.iter().map(|seg| (*seg).to_string()).collect())
@@ -232,13 +231,19 @@ mod tests {
 
         let next = scheduler.next_request().expect("last-submitted request");
         assert_eq!(next.id, second);
-        assert!(matches!(next.work, CompilerWork::CompileUnitCompileNative { .. }));
+        assert!(matches!(
+            next.work,
+            CompilerWork::CompileUnitCompileNative { .. }
+        ));
         assert_eq!(scheduler.pending_len(), 1);
         assert_eq!(scheduler.active_len(), 1);
 
         let next = scheduler.next_request().expect("first-submitted request");
         assert_eq!(next.id, first);
-        assert!(matches!(next.work, CompilerWork::CompileUnitCompileNative { .. }));
+        assert!(matches!(
+            next.work,
+            CompilerWork::CompileUnitCompileNative { .. }
+        ));
     }
 
     #[test]
@@ -314,7 +319,10 @@ mod tests {
         let scheduled = scheduler
             .answer_and_schedule(native_id, CompilerAnswer::CompileUnitCompileNative)
             .expect("auto-blocked on comptime dependency");
-        assert!(scheduled.followups.is_empty(), "should have no followups when auto-blocked");
+        assert!(
+            scheduled.followups.is_empty(),
+            "should have no followups when auto-blocked"
+        );
 
         // Verify the blocked relationship
         assert_eq!(
@@ -370,7 +378,10 @@ mod tests {
         let scheduled = scheduler
             .answer_and_schedule(native_id, CompilerAnswer::CompileUnitCompileNative)
             .expect("auto-blocked on package dependency");
-        assert!(scheduled.followups.is_empty(), "should have no followups when auto-blocked");
+        assert!(
+            scheduled.followups.is_empty(),
+            "should have no followups when auto-blocked"
+        );
 
         assert_eq!(
             scheduler.blocked.get(&load_id).map(|v| v.len()),
@@ -422,7 +433,12 @@ mod tests {
         // Drain the bytecode followup
         assert!(!scheduler.is_idle(), "bytecode work pending");
         scheduler.next_request();
-        scheduler.answer(scheduled.followups[0], CompilerAnswer::CompileUnitCompileBytecode).ok();
+        scheduler
+            .answer(
+                scheduled.followups[0],
+                CompilerAnswer::CompileUnitCompileBytecode,
+            )
+            .ok();
         assert!(scheduler.is_idle());
     }
 }

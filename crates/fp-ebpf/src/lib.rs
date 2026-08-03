@@ -1,7 +1,7 @@
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    LirConstantData, LirConstantKind, LirFunction, LirInstruction, LirInstructionKind,
-    LirInteger, LirProgram, LirTerminator, LirType, LirValue, LirValueKind,
+    LirConstantData, LirConstantKind, LirFunction, LirInstruction, LirInstructionKind, LirInteger,
+    LirProgram, LirTerminator, LirType, LirValue, LirValueKind,
 };
 use fp_core::pretty::{PrettyOptions, pretty};
 use object::write::{Object, Relocation, Symbol, SymbolSection};
@@ -100,7 +100,8 @@ pub fn emit_object(program: &LirProgram) -> Result<Vec<u8>> {
     let mut callsites = Vec::new();
 
     for function in selected_functions(program) {
-        let mut emitter = MachineFunctionEmitter::new(function, &runtime_abi, &program.data_layout)?;
+        let mut emitter =
+            MachineFunctionEmitter::new(function, &runtime_abi, &program.data_layout)?;
         let emitted = emitter.emit()?;
         let section = object.add_section(
             Vec::new(),
@@ -539,7 +540,13 @@ impl<'a> TextFunctionEmitter<'a> {
                 let mut offset = i32::from(self.resolve_stack_address(ptr)?);
                 for index in indices {
                     match index {
-                        LirValue { kind: LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(value))), .. } => {
+                        LirValue {
+                            kind:
+                                LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(
+                                    value,
+                                ))),
+                            ..
+                        } => {
                             offset += integer_to_i32(value)?;
                         }
                         _ => unreachable!("validated earlier"),
@@ -731,24 +738,37 @@ impl<'a> TextFunctionEmitter<'a> {
         lines: &mut Vec<String>,
     ) -> Result<()> {
         match value {
-            LirValue { kind: LirValueKind::Constant(LirConstantKind::Null | LirConstantKind::Undef), .. } => lines.push(format!("{} = 0", register)),
-            LirValue { kind: LirValueKind::Constant(constant), .. } => {
-                lines.push(format!("{} = {}", register, constant_scalar(constant)?))
-            }
-            LirValue { kind: LirValueKind::Register(id), .. } => {
+            LirValue {
+                kind: LirValueKind::Constant(LirConstantKind::Null | LirConstantKind::Undef),
+                ..
+            } => lines.push(format!("{} = 0", register)),
+            LirValue {
+                kind: LirValueKind::Constant(constant),
+                ..
+            } => lines.push(format!("{} = {}", register, constant_scalar(constant)?)),
+            LirValue {
+                kind: LirValueKind::Register(id),
+                ..
+            } => {
                 let slot = self.frame.register_slots.get(id).ok_or_else(|| {
                     Error::from(format!("missing frame slot for register {}", id))
                 })?;
                 lines.push(load_from_stack(register, slot.offset, &slot.ty));
             }
-            LirValue { kind: LirValueKind::Local(id), .. } => {
+            LirValue {
+                kind: LirValueKind::Local(id),
+                ..
+            } => {
                 let slot =
                     self.frame.local_slots.get(id).ok_or_else(|| {
                         Error::from(format!("missing frame slot for local {}", id))
                     })?;
                 lines.push(load_from_stack(register, slot.offset, &slot.ty));
             }
-            LirValue { kind: LirValueKind::StackSlot(id), .. } => {
+            LirValue {
+                kind: LirValueKind::StackSlot(id),
+                ..
+            } => {
                 let slot = self.frame.stack_slots.get(id).ok_or_else(|| {
                     Error::from(format!("missing frame slot for stack slot {}", id))
                 })?;
@@ -765,19 +785,28 @@ impl<'a> TextFunctionEmitter<'a> {
 
     fn resolve_stack_address(&self, value: &LirValue) -> Result<i16> {
         match value {
-            LirValue { kind: LirValueKind::StackSlot(id), .. } => self
+            LirValue {
+                kind: LirValueKind::StackSlot(id),
+                ..
+            } => self
                 .frame
                 .stack_slots
                 .get(id)
                 .map(|slot| slot.offset)
                 .ok_or_else(|| Error::from(format!("missing frame slot for stack slot {}", id))),
-            LirValue { kind: LirValueKind::Register(id), .. } => self.pointer_offsets.get(id).copied().ok_or_else(|| {
+            LirValue {
+                kind: LirValueKind::Register(id),
+                ..
+            } => self.pointer_offsets.get(id).copied().ok_or_else(|| {
                 Error::from(format!(
                     "register {} is not known to carry a stack-backed pointer in fp-ebpf",
                     id
                 ))
             }),
-            LirValue { kind: LirValueKind::Local(id), .. } => self
+            LirValue {
+                kind: LirValueKind::Local(id),
+                ..
+            } => self
                 .frame
                 .local_slots
                 .get(id)
@@ -943,7 +972,13 @@ impl<'a> MachineFunctionEmitter<'a> {
                 let mut offset = i32::from(self.resolve_stack_address(ptr)?);
                 for index in indices {
                     match index {
-                        LirValue { kind: LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(value))), .. } => {
+                        LirValue {
+                            kind:
+                                LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(
+                                    value,
+                                ))),
+                            ..
+                        } => {
                             offset += integer_to_i32(value)?;
                         }
                         _ => unreachable!("validated earlier"),
@@ -1130,24 +1165,37 @@ impl<'a> MachineFunctionEmitter<'a> {
 
     fn load_scalar(&mut self, register: u8, value: &LirValue) -> Result<()> {
         match value {
-            LirValue { kind: LirValueKind::Constant(LirConstantKind::Null | LirConstantKind::Undef), .. } => self.asm.mov_imm64(register, 0),
-            LirValue { kind: LirValueKind::Constant(constant), .. } => {
-                self.asm.mov_imm64(register, constant_scalar(constant)?)
-            }
-            LirValue { kind: LirValueKind::Register(id), .. } => {
+            LirValue {
+                kind: LirValueKind::Constant(LirConstantKind::Null | LirConstantKind::Undef),
+                ..
+            } => self.asm.mov_imm64(register, 0),
+            LirValue {
+                kind: LirValueKind::Constant(constant),
+                ..
+            } => self.asm.mov_imm64(register, constant_scalar(constant)?),
+            LirValue {
+                kind: LirValueKind::Register(id),
+                ..
+            } => {
                 let slot = self.frame.register_slots.get(id).ok_or_else(|| {
                     Error::from(format!("missing frame slot for register {}", id))
                 })?;
                 self.asm.load_stack(register, slot.offset, &slot.ty);
             }
-            LirValue { kind: LirValueKind::Local(id), .. } => {
+            LirValue {
+                kind: LirValueKind::Local(id),
+                ..
+            } => {
                 let slot =
                     self.frame.local_slots.get(id).ok_or_else(|| {
                         Error::from(format!("missing frame slot for local {}", id))
                     })?;
                 self.asm.load_stack(register, slot.offset, &slot.ty);
             }
-            LirValue { kind: LirValueKind::StackSlot(id), .. } => {
+            LirValue {
+                kind: LirValueKind::StackSlot(id),
+                ..
+            } => {
                 let slot = self.frame.stack_slots.get(id).ok_or_else(|| {
                     Error::from(format!("missing frame slot for stack slot {}", id))
                 })?;
@@ -1161,19 +1209,28 @@ impl<'a> MachineFunctionEmitter<'a> {
 
     fn resolve_stack_address(&self, value: &LirValue) -> Result<i16> {
         match value {
-            LirValue { kind: LirValueKind::StackSlot(id), .. } => self
+            LirValue {
+                kind: LirValueKind::StackSlot(id),
+                ..
+            } => self
                 .frame
                 .stack_slots
                 .get(id)
                 .map(|slot| slot.offset)
                 .ok_or_else(|| Error::from(format!("missing frame slot for stack slot {}", id))),
-            LirValue { kind: LirValueKind::Register(id), .. } => self.pointer_offsets.get(id).copied().ok_or_else(|| {
+            LirValue {
+                kind: LirValueKind::Register(id),
+                ..
+            } => self.pointer_offsets.get(id).copied().ok_or_else(|| {
                 Error::from(format!(
                     "register {} is not known to carry a stack-backed pointer in fp-ebpf",
                     id
                 ))
             }),
-            LirValue { kind: LirValueKind::Local(id), .. } => self
+            LirValue {
+                kind: LirValueKind::Local(id),
+                ..
+            } => self
                 .frame
                 .local_slots
                 .get(id)
@@ -1431,7 +1488,10 @@ fn validate_instruction(
         Alloca { size, .. } => constant_non_negative_u32(size).map(|_| ()),
         GetElementPtr { ptr, indices, .. } => validate_address_value(ptr).and_then(|_| {
             if indices.iter().all(|index| {
-                matches!(&index.kind, LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(_))))
+                matches!(
+                    &index.kind,
+                    LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(_)))
+                )
             }) {
                 Ok(())
             } else {
@@ -1608,11 +1668,14 @@ fn integer_to_i64(value: &LirInteger) -> Result<i64> {
 }
 
 fn integer_to_i32(value: &LirInteger) -> Result<i32> {
-    i32::try_from(integer_to_i64(value)?).map_err(|_| Error::from("integer index exceeds i32 range"))
+    i32::try_from(integer_to_i64(value)?)
+        .map_err(|_| Error::from("integer index exceeds i32 range"))
 }
 
 fn constant_non_negative_u32(value: &LirValue) -> Result<u32> {
-    let LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(integer))) = &value.kind else {
+    let LirValueKind::Constant(LirConstantKind::Data(LirConstantData::Integer(integer))) =
+        &value.kind
+    else {
         return Err(Error::from(
             "eBPF alloca currently requires a constant non-negative integer size",
         ));
@@ -1621,18 +1684,17 @@ fn constant_non_negative_u32(value: &LirValue) -> Result<u32> {
         .map_err(|_| Error::from("eBPF alloca size must be non-negative and fit u32"))
 }
 
-fn typed_storage_size(
-    data_layout: &fp_core::lir::LirDataLayout,
-    ty: &LirType,
-) -> Result<u32> {
-    u32::try_from(data_layout.size_of(ty).map_err(|err| Error::from(err.to_string()))?.max(8))
-        .map_err(|_| Error::from("eBPF storage size exceeds u32 range"))
+fn typed_storage_size(data_layout: &fp_core::lir::LirDataLayout, ty: &LirType) -> Result<u32> {
+    u32::try_from(
+        data_layout
+            .size_of(ty)
+            .map_err(|err| Error::from(err.to_string()))?
+            .max(8),
+    )
+    .map_err(|_| Error::from("eBPF storage size exceeds u32 range"))
 }
 
-fn typed_storage_align(
-    data_layout: &fp_core::lir::LirDataLayout,
-    ty: &LirType,
-) -> Result<u32> {
+fn typed_storage_align(data_layout: &fp_core::lir::LirDataLayout, ty: &LirType) -> Result<u32> {
     Ok(data_layout
         .align_of(ty)
         .map_err(|err| Error::from(err.to_string()))?
@@ -2108,9 +2170,7 @@ mod tests {
     };
 
     fn i64_value(value: u64) -> LirValue {
-        LirValue::constant(
-            LirConstant::integer(LirType::I64, LirInteger::I64(value)).unwrap(),
-        )
+        LirValue::constant(LirConstant::integer(LirType::I64, LirInteger::I64(value)).unwrap())
     }
 
     fn local(id: u32) -> LirValue {
@@ -2172,7 +2232,10 @@ mod tests {
             instructions: vec![LirInstruction {
                 id: 1,
                 kind: LirInstructionKind::Add(local(0), local(1)),
-                result: Some(LirRegister { id: 1, ty: LirType::I64 }),
+                result: Some(LirRegister {
+                    id: 1,
+                    ty: LirType::I64,
+                }),
                 debug_info: None,
             }],
             terminator: LirTerminator::Return(Some(register(1))),
@@ -2211,11 +2274,11 @@ mod tests {
                 label: Some(fp_core::lir::Name::new("entry")),
                 instructions: vec![LirInstruction {
                     id: 1,
-                    kind: LirInstructionKind::Eq(
-                        local(0),
-                        i64_value(0),
-                    ),
-                    result: Some(LirRegister { id: 1, ty: LirType::I1 }),
+                    kind: LirInstructionKind::Eq(local(0), i64_value(0)),
+                    result: Some(LirRegister {
+                        id: 1,
+                        ty: LirType::I1,
+                    }),
                     debug_info: None,
                 }],
                 terminator: LirTerminator::CondBr {
@@ -2277,7 +2340,10 @@ mod tests {
                     calling_convention: CallingConvention::C,
                     tail_call: false,
                 },
-                result: Some(LirRegister { id: 1, ty: LirType::I64 }),
+                result: Some(LirRegister {
+                    id: 1,
+                    ty: LirType::I64,
+                }),
                 debug_info: None,
             }],
             terminator: LirTerminator::Return(None),
@@ -2311,7 +2377,10 @@ mod tests {
                     format: "value={}".to_string(),
                     args: vec![i64_value(1)],
                 },
-                result: Some(LirRegister { id: 1, ty: LirType::I64 }),
+                result: Some(LirRegister {
+                    id: 1,
+                    ty: LirType::I64,
+                }),
                 debug_info: None,
             }],
             terminator: LirTerminator::Return(None),
@@ -2435,7 +2504,10 @@ mod tests {
                     format: String::new(),
                     args: Vec::new(),
                 },
-                result: Some(LirRegister { id: 1, ty: LirType::I64 }),
+                result: Some(LirRegister {
+                    id: 1,
+                    ty: LirType::I64,
+                }),
                 debug_info: None,
             }],
             terminator: LirTerminator::Return(Some(register(1))),

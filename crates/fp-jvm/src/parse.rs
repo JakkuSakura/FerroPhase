@@ -1,8 +1,8 @@
 use crate::error::JvmError;
 use fp_core::lir::{
-    LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature, LirInstruction,
-    LirDataLayout, LirInstructionKind, LirInteger, LirProgram, LirRegister, LirTerminator,
-    LirType, LirValue, Name,
+    LirBasicBlock, LirConstant, LirDataLayout, LirFunction, LirFunctionSignature, LirInstruction,
+    LirInstructionKind, LirInteger, LirProgram, LirRegister, LirTerminator, LirType, LirValue,
+    Name,
 };
 
 fn invalid(message: impl std::fmt::Display) -> JvmError {
@@ -19,8 +19,12 @@ pub fn parse_class_to_lir(bytes: &[u8]) -> Result<LirProgram, JvmError> {
     let methods = class.read_methods()?;
 
     let mut program = LirProgram::new(
-        LirDataLayout::new(64, 8, vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)])
-            .expect("valid JVM LIR data layout"),
+        LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .expect("valid JVM LIR data layout"),
     );
     for method in methods {
         if method.name == "<init>" {
@@ -56,13 +60,18 @@ fn lower_method_to_lir(method: &ParsedMethod) -> Result<Option<LirFunction>, Jvm
         match op {
             0x01 => {
                 // aconst_null
-                stack.push(LirValue::constant(LirConstant::null(LirType::Ptr(Box::new(LirType::I8)))));
+                stack.push(LirValue::constant(LirConstant::null(LirType::Ptr(
+                    Box::new(LirType::I8),
+                ))));
                 pc += 1;
             }
             0x03..=0x08 => {
                 // iconst_0..iconst_5
                 let value = (op - 0x03) as i64;
-                stack.push(LirValue::constant(LirConstant::integer(LirType::I64, LirInteger::I64(value as u64)).expect("valid JVM integer")));
+                stack.push(LirValue::constant(
+                    LirConstant::integer(LirType::I64, LirInteger::I64(value as u64))
+                        .expect("valid JVM integer"),
+                ));
                 pc += 1;
             }
             0x10 => {
@@ -73,7 +82,10 @@ fn lower_method_to_lir(method: &ParsedMethod) -> Result<Option<LirFunction>, Jvm
                     .copied()
                     .ok_or_else(|| invalid(format!("{}: truncated bipush", method.name)))?
                     as i8;
-                stack.push(LirValue::constant(LirConstant::integer(LirType::I64, LirInteger::I64(imm as i64 as u64)).expect("valid JVM integer")));
+                stack.push(LirValue::constant(
+                    LirConstant::integer(LirType::I64, LirInteger::I64(imm as i64 as u64))
+                        .expect("valid JVM integer"),
+                ));
                 pc += 2;
             }
             0x15 => {
@@ -101,7 +113,10 @@ fn lower_method_to_lir(method: &ParsedMethod) -> Result<Option<LirFunction>, Jvm
                 instructions.push(LirInstruction {
                     id,
                     kind: LirInstructionKind::Freeze(value),
-                    result: Some(LirRegister { id, ty: LirType::I64 }),
+                    result: Some(LirRegister {
+                        id,
+                        ty: LirType::I64,
+                    }),
                     debug_info: None,
                 });
                 // We don't model local assignment yet; keep local reads as LirValue::Local.
@@ -127,7 +142,10 @@ fn lower_method_to_lir(method: &ParsedMethod) -> Result<Option<LirFunction>, Jvm
                 instructions.push(LirInstruction {
                     id,
                     kind,
-                    result: Some(LirRegister { id, ty: LirType::I64 }),
+                    result: Some(LirRegister {
+                        id,
+                        ty: LirType::I64,
+                    }),
                     debug_info: None,
                 });
                 stack.push(LirValue::register(id, LirType::I64));

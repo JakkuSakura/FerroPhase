@@ -4,11 +4,11 @@ use fp_core::ast::{ExprResolution, ExprResolutionTable};
 use fp_core::error::Result;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::query::{
-    lower_fp_expr_to_query, lower_fp_file_to_query, statement_to_query_ir, QueryDocument,
-    QueryIrDocument, QueryKind, QueryOrigin,
+    QueryDocument, QueryIrDocument, QueryKind, QueryOrigin, lower_fp_expr_to_query,
+    lower_fp_file_to_query, statement_to_query_ir,
 };
 use fp_core::span::{FileId, Span};
-use fp_core::{ast, ast::attrs_repr, ast::ItemKind, cfg::TargetEnv, hir};
+use fp_core::{ast, ast::ItemKind, ast::attrs_repr, cfg::TargetEnv, hir};
 use fp_sql::sql_ast::parse_sql_ast;
 use fp_typing::ResolvedNameTable;
 use std::collections::{HashMap, HashSet};
@@ -22,7 +22,7 @@ mod patterns; // pattern lowering // shared path/name helpers
 #[cfg(test)]
 mod tests;
 
-use fp_core::diagnostics::{diagnostic_manager, Diagnostic};
+use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
 
 const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
 
@@ -700,10 +700,8 @@ impl HirGenerator {
                         unreachable!();
                     };
                     self.allocate_def_id_for_item(item);
-                    let self_path = self.ast_expr_to_hir_path(
-                        &impl_block.self_ty,
-                        PathResolutionScope::Type,
-                    )?;
+                    let self_path =
+                        self.ast_expr_to_hir_path(&impl_block.self_ty, PathResolutionScope::Type)?;
                     let mut method_path = self.module_path.segments.clone();
                     method_path.extend(
                         self_path
@@ -1802,24 +1800,20 @@ impl HirGenerator {
                 };
                 Ok(expr)
             }
-            ast::Ty::Quote(_) => {
-                Ok(hir::TypeExpr::new(
-                    self.next_id(),
-                    hir::TypeExprKind::Never,
-                    self.normalize_span(ty.span()),
-                ))
-            }
+            ast::Ty::Quote(_) => Ok(hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Never,
+                self.normalize_span(ty.span()),
+            )),
             // FIXME: Ty::Type lowered as I64 is a pragmatic hack — the
             // comptime type handle is stored as u64, so I64 allows struct
             // construction without tripping over Never/Infer→error_ty().
             // Should be a dedicated HIR/MIR variant for comp time type values.
-            ast::Ty::Type(_) => {
-                Ok(hir::TypeExpr::new(
-                    self.next_id(),
-                    hir::TypeExprKind::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I64)),
-                    ty.span(),
-                ))
-            }
+            ast::Ty::Type(_) => Ok(hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I64)),
+                ty.span(),
+            )),
             ast::Ty::ConstBlock(block) => {
                 if let ast::ExprKind::Value(value) = block.expr.kind() {
                     match value.as_ref() {
@@ -1827,7 +1821,9 @@ impl HirGenerator {
                         _ => {}
                     }
                 }
-                if let Ok(path) = self.ast_expr_to_hir_path(block.expr.as_ref(), PathResolutionScope::Type) {
+                if let Ok(path) =
+                    self.ast_expr_to_hir_path(block.expr.as_ref(), PathResolutionScope::Type)
+                {
                     return Ok(hir::TypeExpr::new(
                         self.next_id(),
                         hir::TypeExprKind::Path(path),
@@ -2025,11 +2021,7 @@ impl HirGenerator {
             ast::Ty::TypeBinaryOp(op) if matches!(op.kind, ast::TypeBinaryOpKind::Union) => {
                 let lhs = self.literal_type_kind(&op.lhs)?;
                 let rhs = self.literal_type_kind(&op.rhs)?;
-                if lhs == rhs {
-                    Some(lhs)
-                } else {
-                    None
-                }
+                if lhs == rhs { Some(lhs) } else { None }
             }
             _ => None,
         }
@@ -2659,15 +2651,22 @@ impl HirGenerator {
                     let hir_const = hir::Const {
                         name: hir::Symbol::new(format!("__fp_type_{}", def_type.name.as_str())),
                         ty,
-                        body: hir::Body { hir_id: self.next_id(), params: Vec::new(), value: body_expr },
+                        body: hir::Body {
+                            hir_id: self.next_id(),
+                            params: Vec::new(),
+                            value: body_expr,
+                        },
                     };
-                    self.program_def_map.insert(const_def_id, hir::Item {
-                        hir_id: hir_item_id,
-                        def_id: const_def_id,
-                        kind: hir::ItemKind::Const(hir_const.clone()),
-                        visibility: vis.clone(),
-                        span,
-                    });
+                    self.program_def_map.insert(
+                        const_def_id,
+                        hir::Item {
+                            hir_id: hir_item_id,
+                            def_id: const_def_id,
+                            kind: hir::ItemKind::Const(hir_const.clone()),
+                            visibility: vis.clone(),
+                            span,
+                        },
+                    );
                     return Ok(Some(hir::Item {
                         hir_id,
                         def_id,
@@ -2677,7 +2676,7 @@ impl HirGenerator {
                     }));
                 }
                 return Ok(None);
-            },
+            }
         };
 
         Ok(Some(hir::Item {
@@ -3574,8 +3573,7 @@ impl ClosureLowering {
                 .and_then(|ident| self.struct_infos.get(ident.as_str()).cloned()),
             ast::ExprKind::Invoke(invoke) => {
                 if let ast::ExprInvokeTarget::Function(name) = &invoke.target {
-                    name
-                        .as_ident()
+                    name.as_ident()
                         .and_then(|ident| self.function_infos.get(ident.as_str()).cloned())
                 } else {
                     None

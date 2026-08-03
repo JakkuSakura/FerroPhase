@@ -86,7 +86,6 @@ mod tests {
         let lowered = roundtrip_ast_file_via_hir_dce(&file).expect("roundtrip should succeed");
         let file = lowered;
 
-
         assert!(file.items.iter().any(|item| matches!(
             item.kind(),
             ItemKind::DefFunction(function) if function.name.as_str() == "used_helper"
@@ -95,9 +94,10 @@ mod tests {
             item.kind(),
             ItemKind::DefFunction(function) if function.name.as_str() == "unused_helper"
         )));
-        assert!(file
-            .items
-            .iter()
-            .any(|item| matches!(item.kind(), ItemKind::Expr(_))));
+        assert!(
+            file.items
+                .iter()
+                .any(|item| matches!(item.kind(), ItemKind::Expr(_)))
+        );
     }
 }

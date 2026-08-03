@@ -4,12 +4,12 @@
 //! Zig backend can provide symmetrical parsing + printing similar to other
 //! language crates.
 
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
 use fp_core::ast::{DecimalType, TypeInt};
 use fp_core::ast::{
     EnumTypeVariant, Expr, File, FunctionParam, Ident, Item, ItemDefConst, ItemDefEnum,
-    ItemDefFunction, ItemDefStruct, ItemKind, StructuralField, Ty, TypePrimitive,
-    TypeVec, Visibility,
+    ItemDefFunction, ItemDefStruct, ItemKind, StructuralField, Ty, TypePrimitive, TypeVec,
+    Visibility,
 };
 use tree_sitter::{Node as TsNode, Parser as TsParser};
 

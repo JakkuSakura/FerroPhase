@@ -193,9 +193,7 @@ fn program_with_many_call_args() -> LirProgram {
     };
 
     let call_id = 1;
-    let args = (0..10)
-        .map(|idx| int_value(idx, LirType::I64))
-        .collect();
+    let args = (0..10).map(|idx| int_value(idx, LirType::I64)).collect();
     let call_inst = LirInstruction {
         id: call_id,
         kind: LirInstructionKind::Call {
@@ -207,7 +205,10 @@ fn program_with_many_call_args() -> LirProgram {
             calling_convention: CallingConvention::C,
             tail_call: false,
         },
-        result: Some(LirRegister { id: call_id, ty: LirType::I64 }),
+        result: Some(LirRegister {
+            id: call_id,
+            ty: LirType::I64,
+        }),
         debug_info: None,
     };
 
@@ -292,32 +293,38 @@ fn program_with_print() -> LirProgram {
 fn program_with_shifts_and_casts() -> LirProgram {
     let shift_left = LirInstruction {
         id: 1,
-        kind: LirInstructionKind::Shl(
-            int_value(1, LirType::I8),
-            int_value(2, LirType::I8),
-        ),
-        result: Some(LirRegister { id: 1, ty: LirType::I8 }),
+        kind: LirInstructionKind::Shl(int_value(1, LirType::I8), int_value(2, LirType::I8)),
+        result: Some(LirRegister {
+            id: 1,
+            ty: LirType::I8,
+        }),
         debug_info: None,
     };
     let shift_right = LirInstruction {
         id: 2,
-        kind: LirInstructionKind::Shr(
-            register(1, LirType::I8),
-            int_value(1, LirType::I8),
-        ),
-        result: Some(LirRegister { id: 2, ty: LirType::I8 }),
+        kind: LirInstructionKind::Shr(register(1, LirType::I8), int_value(1, LirType::I8)),
+        result: Some(LirRegister {
+            id: 2,
+            ty: LirType::I8,
+        }),
         debug_info: None,
     };
     let sext = LirInstruction {
         id: 3,
         kind: LirInstructionKind::SExt(register(2, LirType::I8), LirType::I32),
-        result: Some(LirRegister { id: 3, ty: LirType::I32 }),
+        result: Some(LirRegister {
+            id: 3,
+            ty: LirType::I32,
+        }),
         debug_info: None,
     };
     let sext_or_trunc = LirInstruction {
         id: 4,
         kind: LirInstructionKind::SextOrTrunc(register(3, LirType::I32), LirType::I16),
-        result: Some(LirRegister { id: 4, ty: LirType::I16 }),
+        result: Some(LirRegister {
+            id: 4,
+            ty: LirType::I16,
+        }),
         debug_info: None,
     };
     let ptr_to_int = LirInstruction {
@@ -325,19 +332,28 @@ fn program_with_shifts_and_casts() -> LirProgram {
         kind: LirInstructionKind::PtrToInt(LirValue::constant(LirConstant::null(LirType::Ptr(
             Box::new(LirType::I8),
         )))),
-        result: Some(LirRegister { id: 5, ty: LirType::I64 }),
+        result: Some(LirRegister {
+            id: 5,
+            ty: LirType::I64,
+        }),
         debug_info: None,
     };
     let int_to_ptr = LirInstruction {
         id: 6,
         kind: LirInstructionKind::IntToPtr(int_value(8, LirType::I64)),
-        result: Some(LirRegister { id: 6, ty: LirType::Ptr(Box::new(LirType::I8)) }),
+        result: Some(LirRegister {
+            id: 6,
+            ty: LirType::Ptr(Box::new(LirType::I8)),
+        }),
         debug_info: None,
     };
     let freeze = LirInstruction {
         id: 7,
         kind: LirInstructionKind::Freeze(register(3, LirType::I32)),
-        result: Some(LirRegister { id: 7, ty: LirType::I32 }),
+        result: Some(LirRegister {
+            id: 7,
+            ty: LirType::I32,
+        }),
         debug_info: None,
     };
 
@@ -446,7 +462,10 @@ fn program_with_format_intrinsic() -> LirProgram {
             format: "hello %d\n".to_string(),
             args: vec![int_value(42, LirType::I32)],
         },
-        result: Some(LirRegister { id: 1, ty: LirType::Ptr(Box::new(LirType::I8)) }),
+        result: Some(LirRegister {
+            id: 1,
+            ty: LirType::Ptr(Box::new(LirType::I8)),
+        }),
         debug_info: None,
     };
 
@@ -462,7 +481,10 @@ fn program_with_format_intrinsic() -> LirProgram {
             id: 0,
             label: Some(Name::new("entry")),
             instructions: vec![format_inst],
-            terminator: LirTerminator::Return(Some(register(1, LirType::Ptr(Box::new(LirType::I8))))),
+            terminator: LirTerminator::Return(Some(register(
+                1,
+                LirType::Ptr(Box::new(LirType::I8)),
+            ))),
             predecessors: Vec::new(),
             successors: Vec::new(),
         }],
@@ -769,13 +791,16 @@ fn pe_executable_emits_rdata_base_relocs() {
     let arch = host_arch();
     let mut symbols = HashMap::new();
     symbols.insert("main".to_string(), 0);
-    let asmir = fp_core::asmir::AsmProgram::new(fp_core::asmir::AsmTarget {
-        architecture: fp_core::asmir::AsmArchitecture::X86_64,
-        object_format: fp_core::asmir::AsmObjectFormat::Coff,
-        endianness: fp_core::asmir::AsmEndianness::Little,
-        pointer_width: 64,
-        default_calling_convention: None,
-    }, data_layout());
+    let asmir = fp_core::asmir::AsmProgram::new(
+        fp_core::asmir::AsmTarget {
+            architecture: fp_core::asmir::AsmArchitecture::X86_64,
+            object_format: fp_core::asmir::AsmObjectFormat::Coff,
+            endianness: fp_core::asmir::AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: None,
+        },
+        data_layout(),
+    );
     let plan = emit::EmitPlan {
         format: TargetFormat::Coff,
         arch,

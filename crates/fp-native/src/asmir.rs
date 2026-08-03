@@ -5392,10 +5392,13 @@ mod tests {
             operands: mov_operands,
             ..
         } = &instructions[0];
-        let [X86Operand::Register {
-            reg: X86Register::Virtual { id: dst_id, .. },
-            ..
-        }, X86Operand::Memory(mem)] = mov_operands.as_slice()
+        let [
+            X86Operand::Register {
+                reg: X86Register::Virtual { id: dst_id, .. },
+                ..
+            },
+            X86Operand::Memory(mem),
+        ] = mov_operands.as_slice()
         else {
             panic!("unexpected x86 mov operands: {mov_operands:?}");
         };
@@ -5410,10 +5413,12 @@ mod tests {
             call_target,
             ..
         } = &instructions[1];
-        let [X86Operand::Register {
-            reg: X86Register::Virtual { id: call_id, .. },
-            ..
-        }] = call_operands.as_slice()
+        let [
+            X86Operand::Register {
+                reg: X86Register::Virtual { id: call_id, .. },
+                ..
+            },
+        ] = call_operands.as_slice()
         else {
             panic!("unexpected x86 call operands: {call_operands:?}");
         };
@@ -5496,10 +5501,13 @@ mod tests {
             operands: store_operands,
             ..
         } = &instructions[0];
-        let [Aarch64Operand::Register {
-            reg: Aarch64Register::Virtual { .. },
-            ..
-        }, Aarch64Operand::Memory(mem)] = store_operands.as_slice()
+        let [
+            Aarch64Operand::Register {
+                reg: Aarch64Register::Virtual { .. },
+                ..
+            },
+            Aarch64Operand::Memory(mem),
+        ] = store_operands.as_slice()
         else {
             panic!("unexpected aarch64 store operands: {store_operands:?}");
         };
@@ -5514,10 +5522,12 @@ mod tests {
             call_target,
             ..
         } = &instructions[1];
-        let [Aarch64Operand::Register {
-            reg: Aarch64Register::Virtual { id: call_id, .. },
-            ..
-        }] = call_operands.as_slice()
+        let [
+            Aarch64Operand::Register {
+                reg: Aarch64Register::Virtual { id: call_id, .. },
+                ..
+            },
+        ] = call_operands.as_slice()
         else {
             panic!("unexpected aarch64 call operands: {call_operands:?}");
         };

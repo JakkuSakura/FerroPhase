@@ -1,13 +1,13 @@
 use std::io::{Cursor, Write};
 use std::sync::{Arc, Mutex};
 
-use fp_core::{bail, Result};
+use fp_core::{Result, bail};
 use itertools::Itertools;
 use swc_ecma_ast::{Script, TsEnumDecl, TsEnumMemberId};
-use swc_ecma_codegen::text_writer::JsWriter;
 use swc_ecma_codegen::Emitter;
+use swc_ecma_codegen::text_writer::JsWriter;
 use swc_ecma_quote::swc_common::sync::Lrc;
-use swc_ecma_quote::swc_common::{SourceMap, SyntaxContext, DUMMY_SP};
+use swc_ecma_quote::swc_common::{DUMMY_SP, SourceMap, SyntaxContext};
 
 use fp_core::ast::Ident;
 use fp_core::ast::{AstSerializer, EnumTypeVariant, Ty, TypeEnum, TypeStruct};

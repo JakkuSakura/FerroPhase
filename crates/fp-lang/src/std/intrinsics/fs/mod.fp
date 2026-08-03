@@ -13,9 +13,6 @@ pub fn write_string(path: &std::fs::Path, content: &str) { compile_error!("compi
 #[intrinsic = "fs_append_string"]
 pub fn append_string(path: &std::fs::Path, content: &str) { compile_error!("compiler intrinsic") }
 
-#[intrinsic = "fs_exists"]
-pub fn exists(path: &std::fs::Path) -> bool { compile_error!("compiler intrinsic") }
-
 #[intrinsic = "fs_is_dir"]
 pub fn is_dir(path: &std::fs::Path) -> bool { compile_error!("compiler intrinsic") }
 

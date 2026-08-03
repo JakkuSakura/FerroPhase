@@ -6,8 +6,8 @@ use std::sync::Arc;
 use fp_core::ast::{
     AstSerializer, Expr, ExprArray, ExprBinOp, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, ExprParen, ExprSelect, ExprSelectType, ExprStringTemplate,
-    ExprUnOp, File, FormatArgRef, FormatPlaceholder, FormatTemplatePart, Ident, Item, ItemKind, Name,
-    Path as AstPath, Value, ValueList, ValueMap,
+    ExprUnOp, File, FormatArgRef, FormatPlaceholder, FormatTemplatePart, Ident, Item, ItemKind,
+    Name, Path as AstPath, Value, ValueList, ValueMap,
 };
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};

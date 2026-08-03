@@ -2,8 +2,8 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
 use crate::ast::{
-    get_threadlocal_serializer, BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident,
-    ItemChunk, Name, Pattern, Ty, Value, ValueFunction,
+    BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident, ItemChunk, Name, Pattern, Ty, Value,
+    ValueFunction, get_threadlocal_serializer,
 };
 use crate::intrinsics::CallKind;
 use crate::ops::{BinOpKind, UnOpKind};
@@ -298,11 +298,7 @@ where
 }
 
 fn span_or(span: Span, fallback: Span) -> Span {
-    if span.is_null() {
-        fallback
-    } else {
-        span
-    }
+    if span.is_null() { fallback } else { span }
 }
 
 impl ExprInvokeTarget {
@@ -1123,14 +1119,9 @@ fn detect_intrinsic_call(name: &Name) -> Option<CallKind> {
             match names.as_slice() {
                 ["std", "print"] | ["std", "io", "print"] => Some(CallKind::Print),
                 ["std", "println"] | ["std", "io", "println"] => Some(CallKind::Println),
-                ["std", "len"] | ["std", "builtins", "len"] | ["len"] => {
-                    Some(CallKind::Len)
-                }
-                ["type"] | ["std", "type"] | ["std", "builtins", "type"] => {
-                    Some(CallKind::TypeOf)
-                }
+                ["std", "len"] | ["std", "builtins", "len"] | ["len"] => Some(CallKind::Len),
+                ["type"] | ["std", "type"] | ["std", "builtins", "type"] => Some(CallKind::TypeOf),
                 ["std", "time", "now"] => Some(CallKind::TimeNow),
-                ["std", "time", "sleep"] => Some(CallKind::Sleep),
                 ["std", "task", "spawn"] => Some(CallKind::Spawn),
                 ["std", "task", "join"] => Some(CallKind::Join),
                 ["std", "task", "select"] => Some(CallKind::Select),

@@ -10,9 +10,9 @@ use fp_core::ast::{
     ExprInvokeTarget, ExprKind, ExprKwArg, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect,
     ExprSelectType, ExprStringTemplate, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile,
     ExprWith, File, FormatTemplatePart, FunctionParam, FunctionSignature, Ident, Item,
-    ItemDefFunction, ItemDefStruct, ItemKind, Name, Pattern, PatternIdent,
-    PatternKind, PatternTuple, ReprOptions, StructuralField, Ty, TypeStruct, Value, ValueBytes,
-    ValueMap, ValueTuple,
+    ItemDefFunction, ItemDefStruct, ItemKind, Name, Pattern, PatternIdent, PatternKind,
+    PatternTuple, ReprOptions, StructuralField, Ty, TypeStruct, Value, ValueBytes, ValueMap,
+    ValueTuple,
 };
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
@@ -22,9 +22,9 @@ use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 use num_bigint::BigInt as NumBigInt;
 use num_traits::ToPrimitive;
+use rustpython_parser::Parse;
 use rustpython_parser::ast as py_ast;
 use rustpython_parser::text_size::TextRange;
-use rustpython_parser::Parse;
 
 use crate::PythonSerializer;
 
@@ -784,7 +784,7 @@ fn lower_call(call: &py_ast::ExprCall<TextRange>) -> CoreResult<Expr> {
             PyExpr::Starred(_) => {
                 return Err(CoreError::from(
                     "python starred arguments are not supported",
-                ))
+                ));
             }
             _ => args.push(lower_expr(arg)?),
         }

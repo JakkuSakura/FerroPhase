@@ -1,6 +1,6 @@
 use super::context::LlvmContext;
-use inkwell::values::{FloatValue, IntValue, PointerValue};
 use inkwell::AddressSpace;
+use inkwell::values::{FloatValue, IntValue, PointerValue};
 
 impl LlvmContext {
     /// Create constant values.

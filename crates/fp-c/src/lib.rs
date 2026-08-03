@@ -14,7 +14,6 @@ use fp_core::ast::{
 };
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
-use fp_core::module::path::PathPrefix;
 
 pub use fp_clang::ast;
 pub use fp_clang::{ClangError, CompileOptions};
@@ -119,6 +118,7 @@ impl CParser {
         mut options: CompileOptions,
     ) -> Result<TranslationUnit> {
         options.flags.push("-D_POSIX_C_SOURCE=200809L".to_string());
+        append_environment_flags(&mut options);
         let file = tempfile::Builder::new()
             .prefix("fp-c-libc-")
             .suffix(".c")
@@ -146,9 +146,25 @@ impl CParser {
     }
 }
 
+fn append_environment_flags(options: &mut CompileOptions) {
+    if let Ok(flags) = std::env::var("FP_CLANG_FLAGS") {
+        options.flags.extend(flags.split_whitespace().map(str::to_owned));
+    }
+}
+
 fn shared_ast_from_translation_unit(unit: &TranslationUnit, path: &Path) -> File {
     let mut items = Vec::new();
     let mut aliases = std::collections::HashSet::new();
+    for (name, value) in [("void", Ty::unit()), ("char", Ty::Primitive(TypePrimitive::Int(TypeInt::U8)))] {
+        aliases.insert(name.to_string());
+        items.push(Item::new(ItemKind::DefType(ItemDefType {
+            attrs: Vec::new(),
+            visibility: Visibility::Public,
+            name: Ident::new(name),
+            generics_params: Vec::new(),
+            value,
+        })));
+    }
     for declaration in &unit.declarations {
         let ast::Declaration::Typedef(typedef) = declaration else {
             continue;
@@ -204,7 +220,7 @@ fn shared_ast_from_translation_unit(unit: &TranslationUnit, path: &Path) -> File
         signature.name = Some(Ident::new(function.name.clone()));
         signature.abi = Abi::Named("C".to_string());
         signature.params = params;
-        signature.ret_ty = (ret != Ty::unit()).then_some(ret);
+        signature.ret_ty = Some(ret);
         items.push(Item::new(ItemKind::DeclFunction(ItemDeclFunction {
             attrs: Vec::new(),
             ty_annotation: None,
@@ -220,11 +236,11 @@ fn shared_ast_from_translation_unit(unit: &TranslationUnit, path: &Path) -> File
     }
 }
 
-fn shared_type(ty: &ast::Type, parameter: bool) -> Option<Ty> {
+fn shared_type(ty: &ast::Type, _parameter: bool) -> Option<Ty> {
     match ty {
-        ast::Type::Void => Some(Ty::unit()),
+        ast::Type::Void => Some(Ty::ident(Ident::new("void"))),
         ast::Type::Bool => Some(Ty::bool()),
-        ast::Type::Char => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I8))),
+        ast::Type::Char => Some(Ty::ident(Ident::new("char"))),
         ast::Type::UChar => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U8))),
         ast::Type::Short => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I16))),
         ast::Type::UShort => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U16))),
@@ -237,16 +253,22 @@ fn shared_type(ty: &ast::Type, parameter: bool) -> Option<Ty> {
             Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U64)))
         }
         ast::Type::Float | ast::Type::Double | ast::Type::LongDouble => None,
-        ast::Type::Pointer(inner) => {
-            if parameter && is_const_char(inner) {
-                return Some(Ty::reference(Ty::path(fp_core::ast::Path::new(
-                    PathPrefix::Plain,
-                    vec![Ident::new("std"), Ident::new("ffi"), Ident::new("CStr")],
-                ))));
+        ast::Type::Pointer(inner) => Some(Ty::raw_ptr(
+            shared_pointer_target(inner)?,
+            Some(!is_const_qualified(inner)),
+        )),
+        ast::Type::Qualified {
+            base, is_const, ..
+        } => {
+            let ty = shared_type(base, _parameter)?;
+            if *is_const {
+                if let Ty::RawPtr(mut pointer) = ty {
+                    pointer.mutability = Some(false);
+                    return Some(Ty::RawPtr(pointer));
+                }
             }
-            Some(Ty::raw_ptr(shared_type(inner, false)?, Some(true)))
+            Some(ty)
         }
-        ast::Type::Qualified { base, .. } => shared_type(base, parameter),
         ast::Type::Typedef(name) | ast::Type::Struct(name) | ast::Type::Union(name) => Some(
             Ty::path(fp_core::ast::Path::from_ident(Ident::new(name.clone()))),
         ),
@@ -258,15 +280,22 @@ fn shared_type(ty: &ast::Type, parameter: bool) -> Option<Ty> {
     }
 }
 
-fn is_const_char(ty: &ast::Type) -> bool {
-    match ty {
-        ast::Type::Qualified { base, is_const, .. } => *is_const && is_char(base),
-        _ => is_char(ty),
+fn shared_pointer_target(ty: &ast::Type) -> Option<Ty> {
+    let base = match ty {
+        ast::Type::Qualified { base, .. } => base.as_ref(),
+        ty => ty,
+    };
+    if matches!(base, ast::Type::Char | ast::Type::UChar) {
+        return Some(Ty::ident(Ident::new("char")));
     }
+    shared_type(ty, false)
 }
 
-fn is_char(ty: &ast::Type) -> bool {
-    matches!(ty, ast::Type::Char | ast::Type::UChar)
+fn is_const_qualified(ty: &ast::Type) -> bool {
+    match ty {
+        ast::Type::Qualified { is_const, .. } => *is_const,
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -328,7 +357,11 @@ impl AstSerializer for CSerializer {
             Ty::Primitive(TypePrimitive::Bool) => Ok("bool".to_string()),
             Ty::Primitive(TypePrimitive::Int(int)) => Ok(int.to_string()),
             Ty::Reference(reference) => Ok(format!("&{}", self.serialize_type(&reference.ty)?)),
-            Ty::RawPtr(pointer) => Ok(format!("*mut {}", self.serialize_type(&pointer.ty)?)),
+            Ty::RawPtr(pointer) => Ok(format!(
+                "*{} {}",
+                if pointer.mutability == Some(true) { "mut" } else { "const" },
+                self.serialize_type(&pointer.ty)?
+            )),
             Ty::Expr(expr) => match &expr.kind {
                 ExprKind::Name(Name::Ident(ident)) => Ok(ident.to_string()),
                 ExprKind::Name(Name::Path(path)) => Ok(path.join("::")),
@@ -386,5 +419,23 @@ mod tests {
             .expect("C declarations should enter the normal frontend pipeline");
         assert!(!result.ast.items.is_empty());
         assert_eq!(frontend.language(), "c");
+    }
+
+    #[test]
+    fn lowers_void_and_const_char_pointers_to_ffi_types() {
+        let frontend = CFrontend::new().expect("clang is required for the C frontend test");
+        let result = frontend
+            .parse_file(
+                "void consume(const char *name);",
+                Path::new("ffi.c"),
+            )
+            .expect("C declarations should enter the normal frontend pipeline");
+        let output = result
+            .serializer
+            .serialize_file(&result.ast)
+            .expect("C AST should serialize");
+        assert!(output.contains("pub type void = ();"));
+        assert!(output.contains("pub type char = u8;"));
+        assert!(output.contains("consume(name: *const char) -> void;"));
     }
 }

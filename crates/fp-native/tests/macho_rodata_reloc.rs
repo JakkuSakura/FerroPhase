@@ -17,13 +17,16 @@ use object::{Object, ObjectSection, RelocationFlags, SectionKind, macho};
 
 #[test]
 fn macho_aarch64_rodata_addresses_use_adrp_add_relocations() {
-    let mut program = AsmProgram::new(AsmTarget {
-        architecture: AsmArchitecture::Aarch64,
-        object_format: AsmObjectFormat::MachO,
-        endianness: AsmEndianness::Little,
-        pointer_width: 64,
-        default_calling_convention: Some(CallingConvention::C),
-    }, layout());
+    let mut program = AsmProgram::new(
+        AsmTarget {
+            architecture: AsmArchitecture::Aarch64,
+            object_format: AsmObjectFormat::MachO,
+            endianness: AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: Some(CallingConvention::C),
+        },
+        layout(),
+    );
     program.sections.push(AsmSection {
         name: ".text".to_string(),
         kind: AsmSectionKind::Text,

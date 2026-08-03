@@ -1,6 +1,6 @@
 use crate::ast::{
-    get_threadlocal_serializer, BItem, BValue, ExprMacro, Ident, MacroInvocation, Name, Path, Ty,
-    TySlot, Value, ValueUnit,
+    BItem, BValue, ExprMacro, Ident, MacroInvocation, Name, Path, Ty, TySlot, Value, ValueUnit,
+    get_threadlocal_serializer,
 };
 use crate::span::Span;
 use crate::utils::anybox::{AnyBox, AnyBoxable};

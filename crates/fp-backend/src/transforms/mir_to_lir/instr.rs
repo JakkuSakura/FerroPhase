@@ -1,4 +1,4 @@
-use fp_core::diagnostics::{diagnostic_manager, Diagnostic};
+use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicKind;
 use fp_core::mir::ty::{
@@ -542,12 +542,12 @@ impl LirGenerator {
             mir::ConstantKind::Ty(_) => {
                 return Err(fp_core::error::Error::from(
                     "type-only constant is not a valid static initializer",
-                ))
+                ));
             }
             mir::ConstantKind::TokenStream { .. } => {
                 return Err(fp_core::error::Error::from(
                     "token stream is not a valid LIR constant",
-                ))
+                ));
             }
         };
 
@@ -581,7 +581,7 @@ impl LirGenerator {
                 _ => {
                     return Err(fp_core::error::Error::from(
                         "integer constant requires integer type",
-                    ))
+                    ));
                 }
             };
         lir::LirConstant::integer(ty.clone(), integer)
@@ -614,7 +614,7 @@ impl LirGenerator {
                 _ => {
                     return Err(fp_core::error::Error::from(
                         "integer constant requires integer type",
-                    ))
+                    ));
                 }
             };
         lir::LirConstant::integer(ty.clone(), integer)
@@ -628,7 +628,7 @@ impl LirGenerator {
             _ => {
                 return Err(fp_core::error::Error::from(
                     "floating constant requires float type",
-                ))
+                ));
             }
         };
         lir::LirConstant::float(ty.clone(), float)
@@ -1295,7 +1295,7 @@ impl LirGenerator {
                     IntrinsicKind::Format => {
                         return Err(fp_core::error::Error::from(
                             "format intrinsic must be assigned to a place".to_string(),
-                        ))
+                        ));
                     }
                     _ => {
                         return Err(fp_core::error::Error::from(format!(
@@ -1516,7 +1516,7 @@ impl LirGenerator {
                     IntrinsicKind::Print | IntrinsicKind::Println => {
                         return Err(fp_core::error::Error::from(
                             "print/println must be emitted as statements".to_string(),
-                        ))
+                        ));
                     }
                     IntrinsicKind::Slice => {
                         if args.len() != 3 {
@@ -1964,7 +1964,7 @@ impl LirGenerator {
                     _ => {
                         return Err(fp_core::error::Error::from(
                             "map entry type must be a struct",
-                        ))
+                        ));
                     }
                 };
                 let key_ty = entry_fields
@@ -2780,7 +2780,7 @@ impl LirGenerator {
                 _ => {
                     return Err(crate::error::optimization_error(
                         "Unsupported constant kind for MIR→LIR",
-                    ))
+                    ));
                 }
             },
         }
@@ -3112,7 +3112,7 @@ impl LirGenerator {
                     _ => {
                         return Err(crate::error::optimization_error(
                             "MIR→LIR: subslice requires array or slice type",
-                        ))
+                        ));
                     }
                 };
 
@@ -3128,7 +3128,7 @@ impl LirGenerator {
                     PlaceAccess::Value { .. } => {
                         return Err(crate::error::optimization_error(
                             "MIR→LIR: subslice base did not resolve to address",
-                        ))
+                        ));
                     }
                 };
 
@@ -3514,7 +3514,7 @@ impl LirGenerator {
             _ => {
                 return Err(crate::error::optimization_error(
                     "MIR→LIR: index projection requires array or slice type",
-                ))
+                ));
             }
         };
 
@@ -5711,7 +5711,7 @@ impl LirGenerator {
             _ => {
                 return Err(fp_core::error::Error::from(
                     "switch value is not integer-like",
-                ))
+                ));
             }
         };
         Ok(self.require_constant_type(constant, lir_ty))

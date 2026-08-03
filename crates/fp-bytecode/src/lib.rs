@@ -967,7 +967,8 @@ fn parse_intrinsic_kind(raw: &str) -> Result<IntrinsicKind, BytecodeError> {
         "ReflectFields" => Ok(IntrinsicKind::ReflectFields),
         "HasMethod" => Ok(IntrinsicKind::HasMethod),
         "TypeName" => Ok(IntrinsicKind::TypeName),
-        "TypeOf" => Ok(IntrinsicKind::TypeOf),        "HasField" => Ok(IntrinsicKind::HasField),
+        "TypeOf" => Ok(IntrinsicKind::TypeOf),
+        "HasField" => Ok(IntrinsicKind::HasField),
         "FieldCount" => Ok(IntrinsicKind::FieldCount),
         "MethodCount" => Ok(IntrinsicKind::MethodCount),
         "FieldType" => Ok(IntrinsicKind::FieldType),
@@ -1814,9 +1815,7 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
         mir::ConstantKind::Float(value) => Ok(BytecodeConst::Float(*value)),
         mir::ConstantKind::Bool(value) => Ok(BytecodeConst::Bool(*value)),
         mir::ConstantKind::Str(value) => Ok(BytecodeConst::Str(value.clone())),
-        mir::ConstantKind::Fn(symbol) => {
-            Ok(BytecodeConst::Function(symbol.as_str().to_string()))
-        }
+        mir::ConstantKind::Fn(symbol) => Ok(BytecodeConst::Function(symbol.as_str().to_string())),
         mir::ConstantKind::FnDef(def_id) => Err(BytecodeError::Lowering {
             message: format!(
                 "function definition reference {:?} cannot be represented in bytecode",

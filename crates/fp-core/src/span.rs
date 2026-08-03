@@ -54,11 +54,7 @@ impl Span {
     }
 
     pub fn or(self, other: Span) -> Span {
-        if self.is_null() {
-            other
-        } else {
-            self
-        }
+        if self.is_null() { other } else { self }
     }
 }
 

@@ -6,8 +6,8 @@ use fp_core::ast::{
     AstSerializer, BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, File, Item, ItemDefConst, ItemDefEnum, ItemDefFunction,
     ItemDefStruct, ItemDefType, ItemImport, ItemImportPath, ItemImportRename, ItemImportTree,
-    ItemKind, PatternKind, Ty, TypeArray, TypePrimitive, TypeTuple, TypeVec, Value,
-    ValueStruct, ValueTuple,
+    ItemKind, PatternKind, Ty, TypeArray, TypePrimitive, TypeTuple, TypeVec, Value, ValueStruct,
+    ValueTuple,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;

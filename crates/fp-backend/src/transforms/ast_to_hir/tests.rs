@@ -881,7 +881,9 @@ fn transform_expr_rejects_for_loop_non_binding_pattern() {
         ast::ExprRangeLimit::Exclusive,
         Some(ast::Expr::value(ast::Value::int(4))),
     );
-    let body = ast::Expr::block(ast::ExprBlock::new_expr(ast::Expr::value(ast::Value::unit())));
+    let body = ast::Expr::block(ast::ExprBlock::new_expr(ast::Expr::value(
+        ast::Value::unit(),
+    )));
     let expr = ast::Expr::from(ast::ExprKind::For(ast::ExprFor {
         span: Span::null(),
         pat: Box::new(pat),

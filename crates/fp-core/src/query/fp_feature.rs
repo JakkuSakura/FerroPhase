@@ -303,22 +303,26 @@ fn insert_rows(expr: &Expr) -> Option<Vec<Vec<SqlExpr>>> {
                     .map(|row| structural_row(row, &columns))
                     .collect()
             } else {
-                Some(vec![array
-                    .values
-                    .iter()
-                    .map(sql_expr)
-                    .collect::<Option<Vec<_>>>()?])
+                Some(vec![
+                    array
+                        .values
+                        .iter()
+                        .map(sql_expr)
+                        .collect::<Option<Vec<_>>>()?,
+                ])
             }
         }
         ExprKind::Structural(_) => {
             let columns = structural_columns(expr)?;
             Some(vec![structural_row(expr, &columns)?])
         }
-        ExprKind::Tuple(tuple) => Some(vec![tuple
-            .values
-            .iter()
-            .map(sql_expr)
-            .collect::<Option<Vec<_>>>()?]),
+        ExprKind::Tuple(tuple) => Some(vec![
+            tuple
+                .values
+                .iter()
+                .map(sql_expr)
+                .collect::<Option<Vec<_>>>()?,
+        ]),
         _ => Some(vec![vec![sql_expr(expr)?]]),
     }
 }

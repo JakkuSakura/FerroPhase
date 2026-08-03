@@ -607,20 +607,27 @@ pub struct TypeRequested {
 }
 
 impl PartialEq for TypeRequested {
-    fn eq(&self, _other: &Self) -> bool { true }
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
 }
 
 impl Eq for TypeRequested {}
 
 impl std::hash::Hash for TypeRequested {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) { 0u8.hash(state); }
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        0u8.hash(state);
+    }
 }
 
 impl TypeRequested {
-    pub fn new(id: u64) -> Self { Self { id } }
-    pub fn span(&self) -> Span { Span::null() }
+    pub fn new(id: u64) -> Self {
+        Self { id }
+    }
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
 }
-
 
 common_struct! {
 pub struct TypeReference {

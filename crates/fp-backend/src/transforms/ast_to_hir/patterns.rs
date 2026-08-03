@@ -67,10 +67,8 @@ impl HirGenerator {
                 ))
             }
             PatternKind::TupleStruct(tuple_struct) => {
-                let path = self.name_to_hir_path_with_scope(
-                    &tuple_struct.name,
-                    PathResolutionScope::Value,
-                )?;
+                let path = self
+                    .name_to_hir_path_with_scope(&tuple_struct.name, PathResolutionScope::Value)?;
                 let parts = tuple_struct
                     .patterns
                     .iter()

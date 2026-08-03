@@ -35,14 +35,16 @@ impl JitEntry {
         Self { fn_ptr }
     }
 
-    pub unsafe fn call(&self, ctx: &mut FpJitContext, args: &[Value]) -> Result<Value, JitError> { unsafe {
-        let len = u32::try_from(args.len()).map_err(|_| JitError::new("too many arguments"))?;
-        let args = FpJitArgs {
-            args: args.as_ptr(),
-            len,
-        };
-        Ok((self.fn_ptr)(ctx as *mut FpJitContext, args))
-    }}
+    pub unsafe fn call(&self, ctx: &mut FpJitContext, args: &[Value]) -> Result<Value, JitError> {
+        unsafe {
+            let len = u32::try_from(args.len()).map_err(|_| JitError::new("too many arguments"))?;
+            let args = FpJitArgs {
+                args: args.as_ptr(),
+                len,
+            };
+            Ok((self.fn_ptr)(ctx as *mut FpJitContext, args))
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

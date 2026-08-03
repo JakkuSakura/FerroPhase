@@ -150,7 +150,11 @@ pub struct PackageCrate {
 }
 
 impl PackageCrate {
-    pub fn new(package_id: HirPackageId, name: impl Into<String>, graph: graph::PackageGraph) -> Self {
+    pub fn new(
+        package_id: HirPackageId,
+        name: impl Into<String>,
+        graph: graph::PackageGraph,
+    ) -> Self {
         let module_paths: HashSet<QualifiedPath> = graph
             .modules()
             .filter(|m| !m.module_path.is_empty())

@@ -104,7 +104,7 @@ fn lift_item(item: &hir::Item) -> Result<Item> {
             return Err(fp_core::error::Error::Generic(eyre::eyre!(
                 "HIR->AST lifting for query item '{}' requires lift_program root handling",
                 query.ir.name.as_deref().unwrap_or("<query>")
-            )))
+            )));
         }
         hir::ItemKind::Expr(expr) => Item::from(ItemKind::Expr(lift_expr(expr)?)),
     };

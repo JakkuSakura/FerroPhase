@@ -9,7 +9,7 @@ use fp_core::ast::{
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::Result as CoreResult;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
-use fp_core::pretty::{pretty, PrettyOptions};
+use fp_core::pretty::{PrettyOptions, pretty};
 use regex::Regex;
 
 /// Canonical identifier for FlatBuffers IDL files.
@@ -136,9 +136,10 @@ enum Color: byte { Red, Green, Blue }
         assert!(file.items.iter().any(
             |item| matches!(item.kind(), ItemKind::DefStruct(def) if def.name.name == "Vec3")
         ));
-        assert!(file
-            .items
-            .iter()
-            .any(|item| matches!(item.kind(), ItemKind::DefEnum(def) if def.name.name == "Color")));
+        assert!(
+            file.items.iter().any(
+                |item| matches!(item.kind(), ItemKind::DefEnum(def) if def.name.name == "Color")
+            )
+        );
     }
 }

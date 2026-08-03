@@ -14,17 +14,21 @@ fn parses_basic_select() {
     // SQL frontend now uses File as the AST carrier; queries go through
     // the serialization snapshot instead.
     let snapshot = result.snapshot.as_ref().expect("snapshot");
-    assert!(snapshot
-        .serialized
-        .as_ref()
-        .map(|s| !s.is_empty())
-        .unwrap_or(false));
+    assert!(
+        snapshot
+            .serialized
+            .as_ref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+    );
 
-    assert!(!result
-        .diagnostics
-        .get_diagnostics()
-        .iter()
-        .any(|d| d.level == DiagnosticLevel::Error));
+    assert!(
+        !result
+            .diagnostics
+            .get_diagnostics()
+            .iter()
+            .any(|d| d.level == DiagnosticLevel::Error)
+    );
 }
 
 #[test]
@@ -39,11 +43,13 @@ fn parses_multiple_statements_and_attaches_name() {
 
     let file_path = result.ast.path;
     assert!(file_path.to_string_lossy().contains("schema.sql"));
-    assert!(!result
-        .diagnostics
-        .get_diagnostics()
-        .iter()
-        .any(|d| d.level == DiagnosticLevel::Error));
+    assert!(
+        !result
+            .diagnostics
+            .get_diagnostics()
+            .iter()
+            .any(|d| d.level == DiagnosticLevel::Error)
+    );
 }
 
 #[test]
@@ -56,9 +62,11 @@ fn parses_update_into_semantic_mutation() {
         )
         .expect("sql frontend should parse update");
 
-    assert!(!result
-        .diagnostics
-        .get_diagnostics()
-        .iter()
-        .any(|d| d.level == DiagnosticLevel::Error));
+    assert!(
+        !result
+            .diagnostics
+            .get_diagnostics()
+            .iter()
+            .any(|d| d.level == DiagnosticLevel::Error)
+    );
 }

@@ -1,8 +1,8 @@
 mod serializer;
 
 use fp_core::ast::{
-    File, FunctionParam, Item, ItemKind, Module, StructuralField, Ty, TypeEnum,
-    TypeInt, TypePrimitive, TypeStruct, TypeTuple, TypeVec, Value, Visibility,
+    File, FunctionParam, Item, ItemKind, Module, StructuralField, Ty, TypeEnum, TypeInt,
+    TypePrimitive, TypeStruct, TypeTuple, TypeVec, Value, Visibility,
 };
 use fp_core::error::Result;
 

@@ -206,7 +206,9 @@ impl CallKind {
             Self::Intrinsic(IntrinsicKind::EnvHomeDir) => Some(OpKind::EnvHomeDir),
             Self::Intrinsic(IntrinsicKind::EnvVar) => Some(OpKind::EnvVar),
             Self::Intrinsic(IntrinsicKind::EnvVarExists) => Some(OpKind::EnvVarExists),
-            Self::Intrinsic(IntrinsicKind::IoReadStdinToString) => Some(OpKind::IoReadStdinToString),
+            Self::Intrinsic(IntrinsicKind::IoReadStdinToString) => {
+                Some(OpKind::IoReadStdinToString)
+            }
             Self::Intrinsic(IntrinsicKind::IoWriteStdout) => Some(OpKind::IoWriteStdout),
             Self::Intrinsic(IntrinsicKind::IoWriteStderr) => Some(OpKind::IoWriteStderr),
             Self::Intrinsic(IntrinsicKind::YamlToJson) => Some(OpKind::YamlToJson),
@@ -236,23 +238,47 @@ impl CallKind {
             Self::Intrinsic(IntrinsicKind::CatchUnwind) => "catch_unwind",
             Self::Intrinsic(IntrinsicKind::CatchUnwindResult) => "catch_unwind_result",
             Self::Op(OpKind::TimeNow) | Self::Intrinsic(IntrinsicKind::TimeNow) => "time_now",
-            Self::Op(OpKind::FsReadDir) | Self::Intrinsic(IntrinsicKind::FsReadDir) => "fs_read_dir",
-            Self::Op(OpKind::FsWalkDir) | Self::Intrinsic(IntrinsicKind::FsWalkDir) => "fs_walk_dir",
-            Self::Op(OpKind::FsReadToString) | Self::Intrinsic(IntrinsicKind::FsReadToString) => "fs_read_to_string",
-            Self::Op(OpKind::FsWriteString) | Self::Intrinsic(IntrinsicKind::FsWriteString) => "fs_write_string",
-            Self::Op(OpKind::FsAppendString) | Self::Intrinsic(IntrinsicKind::FsAppendString) => "fs_append_string",
+            Self::Op(OpKind::FsReadDir) | Self::Intrinsic(IntrinsicKind::FsReadDir) => {
+                "fs_read_dir"
+            }
+            Self::Op(OpKind::FsWalkDir) | Self::Intrinsic(IntrinsicKind::FsWalkDir) => {
+                "fs_walk_dir"
+            }
+            Self::Op(OpKind::FsReadToString) | Self::Intrinsic(IntrinsicKind::FsReadToString) => {
+                "fs_read_to_string"
+            }
+            Self::Op(OpKind::FsWriteString) | Self::Intrinsic(IntrinsicKind::FsWriteString) => {
+                "fs_write_string"
+            }
+            Self::Op(OpKind::FsAppendString) | Self::Intrinsic(IntrinsicKind::FsAppendString) => {
+                "fs_append_string"
+            }
             Self::Op(OpKind::FsExists) | Self::Intrinsic(IntrinsicKind::FsExists) => "fs_exists",
             Self::Op(OpKind::FsIsDir) | Self::Intrinsic(IntrinsicKind::FsIsDir) => "fs_is_dir",
             Self::Op(OpKind::FsIsFile) | Self::Intrinsic(IntrinsicKind::FsIsFile) => "fs_is_file",
-            Self::Op(OpKind::FsCreateDirAll) | Self::Intrinsic(IntrinsicKind::FsCreateDirAll) => "fs_create_dir_all",
-            Self::Op(OpKind::FsRemoveFile) | Self::Intrinsic(IntrinsicKind::FsRemoveFile) => "fs_remove_file",
-            Self::Op(OpKind::FsRemoveDirAll) | Self::Intrinsic(IntrinsicKind::FsRemoveDirAll) => "fs_remove_dir_all",
+            Self::Op(OpKind::FsCreateDirAll) | Self::Intrinsic(IntrinsicKind::FsCreateDirAll) => {
+                "fs_create_dir_all"
+            }
+            Self::Op(OpKind::FsRemoveFile) | Self::Intrinsic(IntrinsicKind::FsRemoveFile) => {
+                "fs_remove_file"
+            }
+            Self::Op(OpKind::FsRemoveDirAll) | Self::Intrinsic(IntrinsicKind::FsRemoveDirAll) => {
+                "fs_remove_dir_all"
+            }
             Self::Op(OpKind::FsGlob) | Self::Intrinsic(IntrinsicKind::FsGlob) => "fs_glob",
-            Self::Op(OpKind::EnvCurrentDir) | Self::Intrinsic(IntrinsicKind::EnvCurrentDir) => "env_current_dir",
-            Self::Op(OpKind::EnvTempDir) | Self::Intrinsic(IntrinsicKind::EnvTempDir) => "env_temp_dir",
-            Self::Op(OpKind::EnvHomeDir) | Self::Intrinsic(IntrinsicKind::EnvHomeDir) => "env_home_dir",
+            Self::Op(OpKind::EnvCurrentDir) | Self::Intrinsic(IntrinsicKind::EnvCurrentDir) => {
+                "env_current_dir"
+            }
+            Self::Op(OpKind::EnvTempDir) | Self::Intrinsic(IntrinsicKind::EnvTempDir) => {
+                "env_temp_dir"
+            }
+            Self::Op(OpKind::EnvHomeDir) | Self::Intrinsic(IntrinsicKind::EnvHomeDir) => {
+                "env_home_dir"
+            }
             Self::Op(OpKind::EnvVar) | Self::Intrinsic(IntrinsicKind::EnvVar) => "env_var",
-            Self::Op(OpKind::EnvVarExists) | Self::Intrinsic(IntrinsicKind::EnvVarExists) => "env_var_exists",
+            Self::Op(OpKind::EnvVarExists) | Self::Intrinsic(IntrinsicKind::EnvVarExists) => {
+                "env_var_exists"
+            }
             Self::Intrinsic(IntrinsicKind::PathJoin) => "path_join",
             Self::Intrinsic(IntrinsicKind::PathParent) => "path_parent",
             Self::Intrinsic(IntrinsicKind::PathFileName) => "path_file_name",
@@ -260,14 +286,23 @@ impl CallKind {
             Self::Intrinsic(IntrinsicKind::PathStem) => "path_stem",
             Self::Intrinsic(IntrinsicKind::PathIsAbsolute) => "path_is_absolute",
             Self::Intrinsic(IntrinsicKind::PathNormalize) => "path_normalize",
-            Self::Op(OpKind::IoReadStdinToString) | Self::Intrinsic(IntrinsicKind::IoReadStdinToString) => "io_read_stdin_to_string",
-            Self::Op(OpKind::IoWriteStdout) | Self::Intrinsic(IntrinsicKind::IoWriteStdout) => "io_write_stdout",
-            Self::Op(OpKind::IoWriteStderr) | Self::Intrinsic(IntrinsicKind::IoWriteStderr) => "io_write_stderr",
-            Self::Op(OpKind::YamlToJson) | Self::Intrinsic(IntrinsicKind::YamlToJson) => "yaml_to_json",
+            Self::Op(OpKind::IoReadStdinToString)
+            | Self::Intrinsic(IntrinsicKind::IoReadStdinToString) => "io_read_stdin_to_string",
+            Self::Op(OpKind::IoWriteStdout) | Self::Intrinsic(IntrinsicKind::IoWriteStdout) => {
+                "io_write_stdout"
+            }
+            Self::Op(OpKind::IoWriteStderr) | Self::Intrinsic(IntrinsicKind::IoWriteStderr) => {
+                "io_write_stderr"
+            }
+            Self::Op(OpKind::YamlToJson) | Self::Intrinsic(IntrinsicKind::YamlToJson) => {
+                "yaml_to_json"
+            }
             Self::Op(OpKind::JsonParse) | Self::Intrinsic(IntrinsicKind::JsonParse) => "json_parse",
             Self::Intrinsic(IntrinsicKind::TestCommandMockReset) => "test_command_mock_reset",
             Self::Intrinsic(IntrinsicKind::TestCommandMockPush) => "test_command_mock_push",
-            Self::Intrinsic(IntrinsicKind::TestCommandMockTakeCalls) => "test_command_mock_take_calls",
+            Self::Intrinsic(IntrinsicKind::TestCommandMockTakeCalls) => {
+                "test_command_mock_take_calls"
+            }
             Self::Intrinsic(IntrinsicKind::TestCommandMockApply) => "test_command_mock_apply",
             Self::Op(OpKind::Sleep) | Self::Intrinsic(IntrinsicKind::Sleep) => "sleep",
             Self::Op(OpKind::Spawn) | Self::Intrinsic(IntrinsicKind::Spawn) => "spawn",
@@ -294,11 +329,18 @@ impl CallKind {
             Self::Intrinsic(IntrinsicKind::CompileError) => "compile_error",
             Self::Intrinsic(IntrinsicKind::CompileWarning) => "compile_warning",
             Self::Intrinsic(IntrinsicKind::ProcMacroTokenStreamFromStr) => "token_stream_from_str",
-            Self::Intrinsic(IntrinsicKind::ProcMacroTokenStreamToString) => "token_stream_to_string",
+            Self::Intrinsic(IntrinsicKind::ProcMacroTokenStreamToString) => {
+                "token_stream_to_string"
+            }
             Self::Op(OpKind::ShellExec) | Self::Intrinsic(IntrinsicKind::ShellExec) => "shell_exec",
-            Self::Op(OpKind::ShellFileCopy) | Self::Intrinsic(IntrinsicKind::ShellFileCopy) => "shell_file_copy",
-            Self::Op(OpKind::ShellFileTemplate) | Self::Intrinsic(IntrinsicKind::ShellFileTemplate) => "shell_file_template",
-            Self::Op(OpKind::ShellFileRsync) | Self::Intrinsic(IntrinsicKind::ShellFileRsync) => "shell_file_rsync",
+            Self::Op(OpKind::ShellFileCopy) | Self::Intrinsic(IntrinsicKind::ShellFileCopy) => {
+                "shell_file_copy"
+            }
+            Self::Op(OpKind::ShellFileTemplate)
+            | Self::Intrinsic(IntrinsicKind::ShellFileTemplate) => "shell_file_template",
+            Self::Op(OpKind::ShellFileRsync) | Self::Intrinsic(IntrinsicKind::ShellFileRsync) => {
+                "shell_file_rsync"
+            }
         }
     }
 

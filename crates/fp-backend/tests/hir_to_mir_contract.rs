@@ -5,9 +5,8 @@ use fp_core::hir::{
     PathSegment, Program, Res, Symbol, TypeExpr, TypeExprKind, Visibility,
 };
 use fp_core::mir::{
-    self,
+    self, ConstantKind, ItemKind as MirItemKind, Operand, Rvalue, StatementKind, TerminatorKind,
     ty::{IntTy as MirIntTy, TyKind as MirTyKind},
-    ConstantKind, ItemKind as MirItemKind, Operand, Rvalue, StatementKind, TerminatorKind,
 };
 use fp_core::span::Span;
 
@@ -614,7 +613,11 @@ fn stubs_bodyless_functions_as_unreachable() {
         .expect("function body present");
     assert_eq!(body.basic_blocks.len(), 1);
     let block = &body.basic_blocks[0];
-    assert!(block.statements.is_empty(), "unexpected stub statements: {:?}", block.statements);
+    assert!(
+        block.statements.is_empty(),
+        "unexpected stub statements: {:?}",
+        block.statements
+    );
     assert!(matches!(
         block.terminator.as_ref().expect("terminator").kind,
         TerminatorKind::Unreachable

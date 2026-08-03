@@ -73,5 +73,4 @@ pub trait LanguageFrontend: Send + Sync {
     fn set_parse_mode(&self, _mode: FrontendParseMode) {}
 
     fn set_intrinsic_normalization_mode(&self, _mode: IntrinsicNormalizationMode) {}
-
 }

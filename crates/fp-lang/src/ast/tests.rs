@@ -1374,9 +1374,11 @@ fn parse_items_ast_handles_unsafe_impl() {
         )
         .unwrap();
     assert_eq!(items.len(), 2);
-    assert!(items
-        .iter()
-        .all(|item| matches!(item.kind(), ItemKind::Impl(_))));
+    assert!(
+        items
+            .iter()
+            .all(|item| matches!(item.kind(), ItemKind::Impl(_)))
+    );
 }
 
 #[test]
@@ -1492,7 +1494,10 @@ fn parse_expr_ast_bare_self_is_a_plain_identifier() {
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("self").unwrap();
     let ExprKind::Name(Name::Ident(ident)) = expr.kind() else {
-        panic!("expected bare `self` to parse as Name::Ident, got {:?}", expr.kind());
+        panic!(
+            "expected bare `self` to parse as Name::Ident, got {:?}",
+            expr.kind()
+        );
     };
     assert_eq!(ident.as_str(), "self");
 }
@@ -1506,7 +1511,10 @@ fn parse_expr_ast_self_field_access_targets_self_ident() {
         panic!("expected field access, got {:?}", expr.kind());
     };
     let ExprKind::Name(Name::Ident(ident)) = select.obj.kind() else {
-        panic!("expected receiver to be Name::Ident(\"self\"), got {:?}", select.obj.kind());
+        panic!(
+            "expected receiver to be Name::Ident(\"self\"), got {:?}",
+            select.obj.kind()
+        );
     };
     assert_eq!(ident.as_str(), "self");
 }

@@ -236,6 +236,7 @@ fn read_fixed_str(bytes: &[u8], offset: usize, len: usize) -> Result<String> {
         return Err(Error::from("unexpected EOF while reading string"));
     }
     let raw = &bytes[offset..end];
-    let s = std::str::from_utf8(raw).map_err(|e| Error::from(format!("invalid UTF-8 in string: {e}")))?;
+    let s = std::str::from_utf8(raw)
+        .map_err(|e| Error::from(format!("invalid UTF-8 in string: {e}")))?;
     Ok(s.trim_matches('\0').to_string())
 }

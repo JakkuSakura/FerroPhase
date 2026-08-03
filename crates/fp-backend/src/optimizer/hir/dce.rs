@@ -673,10 +673,12 @@ mod tests {
             &item.kind,
             ItemKind::Function(function) if function.sig.name.as_str() == "copy"
         )));
-        assert!(program
-            .items
-            .iter()
-            .any(|item| matches!(&item.kind, ItemKind::Expr(_))));
+        assert!(
+            program
+                .items
+                .iter()
+                .any(|item| matches!(&item.kind, ItemKind::Expr(_)))
+        );
     }
 
     #[test]

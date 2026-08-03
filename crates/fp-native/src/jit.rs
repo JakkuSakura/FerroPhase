@@ -349,8 +349,9 @@ impl JitEngine {
                     .checked_add(4)
                     .ok_or_else(|| Error::from("relocation overflow"))?;
                 let disp = target as i64 - next as i64;
-                let disp32 =
-                    i32::try_from(disp).map_err(|e| Error::from(format!("call relocation out of range: {disp}: {e}")))?;
+                let disp32 = i32::try_from(disp).map_err(|e| {
+                    Error::from(format!("call relocation out of range: {disp}: {e}"))
+                })?;
                 unsafe {
                     section.write_i32(offset, disp32)?;
                 }
@@ -658,9 +659,9 @@ fn collect_external_call_symbols(plan: &EmitPlan) -> Vec<String> {
 mod tests {
     use super::{HostScalar, JitEngine, validate_native_program};
     use fp_core::lir::{
-        CallingConvention, Linkage, LirBasicBlock, LirDataLayout, LirFunction, LirFunctionSignature,
-        LirInstruction, LirInstructionKind, LirProgram, LirRegister, LirTerminator, LirType,
-        LirValue, Name,
+        CallingConvention, Linkage, LirBasicBlock, LirDataLayout, LirFunction,
+        LirFunctionSignature, LirInstruction, LirInstructionKind, LirProgram, LirRegister,
+        LirTerminator, LirType, LirValue, Name,
     };
     use std::ffi::c_void;
 
@@ -789,7 +790,10 @@ mod tests {
                         calling_convention: CallingConvention::C,
                         tail_call: false,
                     },
-                    result: Some(LirRegister { id: 1, ty: LirType::I64 }),
+                    result: Some(LirRegister {
+                        id: 1,
+                        ty: LirType::I64,
+                    }),
                     debug_info: None,
                 }],
                 terminator: LirTerminator::Return(Some(LirValue::register(1, LirType::I64))),

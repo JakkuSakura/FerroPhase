@@ -290,7 +290,8 @@ fn parse_cast(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
                 CallKind::BuildType,
                 vec![expr.clone()],
                 Vec::new(),
-            )).into();
+            ))
+            .into();
         } else {
             let span = span_from_expr(&expr);
             expr = ExprKind::Cast(ExprCast {
@@ -318,7 +319,8 @@ fn parse_cast_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr>
                 CallKind::BuildType,
                 vec![expr.clone()],
                 Vec::new(),
-            )).into();
+            ))
+            .into();
         } else {
             let span = span_from_expr(&expr);
             expr = ExprKind::Cast(ExprCast {

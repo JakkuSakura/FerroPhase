@@ -45,6 +45,8 @@ pub enum CompilerDriverError {
     UnsupportedWork(String),
     #[error("unresolvable comptime cycle: {0}")]
     UnresolvableComptime(String),
-    #[error("package {0} could not be loaded (no provider registered, or the provider failed repeatedly)")]
+    #[error(
+        "package {0} could not be loaded (no provider registered, or the provider failed repeatedly)"
+    )]
     UnresolvablePackage(String),
 }

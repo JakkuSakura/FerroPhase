@@ -207,8 +207,6 @@ mod tests {
         // Schema document data was previously stored in Node::Schema; now
         // the schema info lives in the frontend snapshot / side channel.
         let snapshot = result.snapshot.as_ref().expect("snapshot");
-        assert!(snapshot
-            .description
-            .contains("JSON Schema"));
+        assert!(snapshot.description.contains("JSON Schema"));
     }
 }

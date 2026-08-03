@@ -542,8 +542,7 @@ impl HirGenerator {
                     ast::Ident::new("__fp_error".to_string())
                 });
                 let name = Name::Ident(name);
-                let path =
-                    self.name_to_hir_path_with_scope(&name, PathResolutionScope::Value)?;
+                let path = self.name_to_hir_path_with_scope(&name, PathResolutionScope::Value)?;
                 Ok(hir::ExprKind::Path(path))
             }
             _ => Err(fp_core::error::Error::from(format!(
@@ -2008,9 +2007,10 @@ impl HirGenerator {
             }
         }
 
-        let kind = call.kind.intrinsic_kind().ok_or_else(|| {
-            fp_core::error::Error::from("high-level op reached the compiler HIR")
-        })?;
+        let kind = call
+            .kind
+            .intrinsic_kind()
+            .ok_or_else(|| fp_core::error::Error::from("high-level op reached the compiler HIR"))?;
         Ok(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
             kind,
             callargs,

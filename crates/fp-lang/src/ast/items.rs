@@ -70,17 +70,24 @@ pub(crate) fn parse_script_tokens(
         if looks_like_extern_block(input) {
             let parsed =
                 parse_extern_block_items(&mut input, file).map_err(|err| map_err(err, input))?;
-            stmts.extend(parsed.into_iter().map(|item| BlockStmt::Item(Box::new(item))));
+            stmts.extend(
+                parsed
+                    .into_iter()
+                    .map(|item| BlockStmt::Item(Box::new(item))),
+            );
             continue;
         }
         if starts_unsafe_extern_block(input) {
             let parsed = parse_prefixed_unsafe_extern_block_items(&mut input, file)
                 .map_err(|err| map_err(err, input))?;
-            stmts.extend(parsed.into_iter().map(|item| BlockStmt::Item(Box::new(item))));
+            stmts.extend(
+                parsed
+                    .into_iter()
+                    .map(|item| BlockStmt::Item(Box::new(item))),
+            );
             continue;
         }
-        let stmt =
-            parse_block_stmt_entry(&mut input, file).map_err(|err| map_err(err, input))?;
+        let stmt = parse_block_stmt_entry(&mut input, file).map_err(|err| map_err(err, input))?;
         stmts.push(stmt);
     }
     Ok((

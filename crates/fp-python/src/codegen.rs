@@ -5,9 +5,9 @@ use fp_core::ast::{
     self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprBreak, ExprContinue, ExprFor, ExprIf,
     ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprReturn,
     ExprStringTemplate, ExprStruct, ExprUnOp, ExprWhile, File, FormatArgRef, FormatTemplatePart,
-    FunctionParam, Item, ItemImport, ItemImportTree, ItemKind, Pattern,
-    PatternKind, Ty, TypeEnum, TypePrimitive, TypeStruct, TypeTuple, TypeVec, Value, ValueList,
-    ValueMap, ValueMapEntry, ValueStruct, ValueTuple,
+    FunctionParam, Item, ItemImport, ItemImportTree, ItemKind, Pattern, PatternKind, Ty, TypeEnum,
+    TypePrimitive, TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry,
+    ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;
@@ -682,8 +682,7 @@ impl PythonEmitter {
     }
 
     fn render_name(&self, name: &ast::Name) -> String {
-        name
-            .to_string()
+        name.to_string()
             .split("::")
             .map(|segment| segment.to_string())
             .collect::<Vec<_>>()

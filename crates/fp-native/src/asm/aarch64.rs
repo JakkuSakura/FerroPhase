@@ -294,9 +294,9 @@ impl Parser {
         }
         if let Some(label) = line.strip_suffix(':') {
             if let Some(id) = label.strip_prefix("bb") {
-                let block_id = id
-                    .parse::<u32>()
-                    .map_err(|e| Error::from(format!("invalid aarch64 block label: {label}: {e}")))?;
+                let block_id = id.parse::<u32>().map_err(|e| {
+                    Error::from(format!("invalid aarch64 block label: {label}: {e}"))
+                })?;
                 self.start_block(block_id)?;
             } else {
                 self.start_function(Name::new(label.trim()))?;
@@ -496,9 +496,9 @@ fn parse_register(token: &str) -> Result<Aarch64Register> {
         .and_then(|rest| rest.split_once(':'))
     {
         return Ok(Aarch64Register::Virtual {
-            id: id
-                .parse::<u32>()
-                .map_err(|e| Error::from(format!("invalid aarch64 virtual register: {token}: {e}")))?,
+            id: id.parse::<u32>().map_err(|e| {
+                Error::from(format!("invalid aarch64 virtual register: {token}: {e}"))
+            })?,
             size_bits: parse_u16(size_bits, "aarch64 register size")?,
         });
     }

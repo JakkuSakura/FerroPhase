@@ -1,6 +1,6 @@
 //! Code generation utilities for integrating C/C++ with FerroPhase
 
-use crate::{ast, ClangError, ClangModule, ClangParser, CompileOptions, Result};
+use crate::{ClangError, ClangModule, ClangParser, CompileOptions, Result, ast};
 use fp_core::lir;
 use inkwell::types::BasicTypeEnum;
 use std::{collections::HashMap, path::Path};

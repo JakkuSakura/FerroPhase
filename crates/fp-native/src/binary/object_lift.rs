@@ -1,4 +1,4 @@
-use crate::binary::{aarch64, x86_64, DataRegion, RipSymbol, RipSymbolKind, TextRelocation};
+use crate::binary::{DataRegion, RipSymbol, RipSymbolKind, TextRelocation, aarch64, x86_64};
 use crate::container::container_kind_for_object_kind;
 use fp_core::asmir::{
     AsmArchitecture, AsmConstant, AsmEndianness, AsmFunction, AsmFunctionSignature, AsmGlobal,

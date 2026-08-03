@@ -1,6 +1,6 @@
 use fp_core::ast::{Value, ValueBool, ValueDecimal, ValueInt, ValueString};
 
-use super::{utils::render_float, ZigEmitter};
+use super::{ZigEmitter, utils::render_float};
 
 impl ZigEmitter {
     pub(super) fn render_value(&self, value: &Value) -> Option<String> {

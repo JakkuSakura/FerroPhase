@@ -267,10 +267,9 @@ impl HirGenerator {
             let trait_ty = if let Some(trait_name) = &impl_block.trait_ty {
                 Some(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TypeExprKind::Path(self.name_to_hir_path_with_scope(
-                        trait_name,
-                        PathResolutionScope::Type,
-                    )?),
+                    hir::TypeExprKind::Path(
+                        self.name_to_hir_path_with_scope(trait_name, PathResolutionScope::Type)?,
+                    ),
                     Span::new(self.current_file, 0, 0),
                 ))
             } else {

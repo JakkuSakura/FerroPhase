@@ -1,9 +1,8 @@
 use fp_core::ast::{
     AstSerializer, BlockStmt, EnumTypeVariant, Expr, ExprBlock, ExprField, ExprKind, ExprMatch,
     ExprMatchCase, ExprStruct, File, Ident, Item, ItemDefConst, ItemDefEnum, ItemDefFunction,
-    ItemDefStruct, ItemImpl, ItemKind, Name, Path, Pattern, PatternKind,
-    PatternVariant, StmtLet, StructuralField, Ty, TypeEnum, TypePrimitive, TypeStructural, Value,
-    Visibility,
+    ItemDefStruct, ItemImpl, ItemKind, Name, Path, Pattern, PatternKind, PatternVariant, StmtLet,
+    StructuralField, Ty, TypeEnum, TypePrimitive, TypeStructural, Value, Visibility,
 };
 
 use fp_core::module::path::PathPrefix;

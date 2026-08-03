@@ -19,13 +19,16 @@ fn layout() -> LirDataLayout {
 
 #[test]
 fn materialize_maps_stderr_to_darwin_global() {
-    let mut program = AsmProgram::new(AsmTarget {
-        architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-        object_format: AsmObjectFormat::MachO,
-        endianness: fp_core::asmir::AsmEndianness::Little,
-        pointer_width: 64,
-        default_calling_convention: Some(CallingConvention::C),
-    }, layout());
+    let mut program = AsmProgram::new(
+        AsmTarget {
+            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
+            object_format: AsmObjectFormat::MachO,
+            endianness: fp_core::asmir::AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: Some(CallingConvention::C),
+        },
+        layout(),
+    );
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -112,13 +115,16 @@ fn materialize_maps_stderr_to_darwin_global() {
 
 #[test]
 fn materialize_removes_elf_copy_reloc_getopt_globals_for_darwin() {
-    let mut program = AsmProgram::new(AsmTarget {
-        architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-        object_format: AsmObjectFormat::MachO,
-        endianness: fp_core::asmir::AsmEndianness::Little,
-        pointer_width: 64,
-        default_calling_convention: Some(CallingConvention::C),
-    }, layout());
+    let mut program = AsmProgram::new(
+        AsmTarget {
+            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
+            object_format: AsmObjectFormat::MachO,
+            endianness: fp_core::asmir::AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: Some(CallingConvention::C),
+        },
+        layout(),
+    );
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -158,13 +164,16 @@ fn materialize_removes_elf_copy_reloc_getopt_globals_for_darwin() {
 
 #[test]
 fn materialize_rewrites_indirect_exit_calls_to_exit_on_darwin_cross_materialization() {
-    let mut program = AsmProgram::new(AsmTarget {
-        architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-        object_format: AsmObjectFormat::MachO,
-        endianness: fp_core::asmir::AsmEndianness::Little,
-        pointer_width: 64,
-        default_calling_convention: Some(CallingConvention::C),
-    }, layout());
+    let mut program = AsmProgram::new(
+        AsmTarget {
+            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
+            object_format: AsmObjectFormat::MachO,
+            endianness: fp_core::asmir::AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: Some(CallingConvention::C),
+        },
+        layout(),
+    );
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -258,13 +267,16 @@ fn materialize_rewrites_indirect_exit_calls_to_exit_on_darwin_cross_materializat
 
 #[test]
 fn materialize_rewrites_exit_to_exit_on_darwin_cross_materialization() {
-    let mut program = AsmProgram::new(AsmTarget {
-        architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-        object_format: AsmObjectFormat::MachO,
-        endianness: fp_core::asmir::AsmEndianness::Little,
-        pointer_width: 64,
-        default_calling_convention: Some(CallingConvention::C),
-    }, layout());
+    let mut program = AsmProgram::new(
+        AsmTarget {
+            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
+            object_format: AsmObjectFormat::MachO,
+            endianness: fp_core::asmir::AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: Some(CallingConvention::C),
+        },
+        layout(),
+    );
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -338,13 +350,16 @@ fn materialize_rewrites_exit_to_exit_on_darwin_cross_materialization() {
 
 #[test]
 fn materialize_rewrites_indirect_cxa_atexit_calls_to_noop_stub() {
-    let mut program = AsmProgram::new(AsmTarget {
-        architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-        object_format: AsmObjectFormat::MachO,
-        endianness: fp_core::asmir::AsmEndianness::Little,
-        pointer_width: 64,
-        default_calling_convention: Some(CallingConvention::C),
-    }, layout());
+    let mut program = AsmProgram::new(
+        AsmTarget {
+            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
+            object_format: AsmObjectFormat::MachO,
+            endianness: fp_core::asmir::AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: Some(CallingConvention::C),
+        },
+        layout(),
+    );
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -457,13 +472,16 @@ fn materialize_rewrites_indirect_cxa_atexit_calls_to_noop_stub() {
 
 #[test]
 fn materialize_inserts_getprogname_for_try_help_diagnostics() {
-    let mut program = AsmProgram::new(AsmTarget {
-        architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-        object_format: AsmObjectFormat::MachO,
-        endianness: fp_core::asmir::AsmEndianness::Little,
-        pointer_width: 64,
-        default_calling_convention: Some(CallingConvention::C),
-    }, layout());
+    let mut program = AsmProgram::new(
+        AsmTarget {
+            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
+            object_format: AsmObjectFormat::MachO,
+            endianness: fp_core::asmir::AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: Some(CallingConvention::C),
+        },
+        layout(),
+    );
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -599,13 +617,16 @@ fn materialize_inserts_getprogname_for_try_help_diagnostics() {
 
 #[test]
 fn materialize_rewrites_globalref_constants_for_stdio_got_slots() {
-    let mut program = AsmProgram::new(AsmTarget {
-        architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-        object_format: AsmObjectFormat::MachO,
-        endianness: fp_core::asmir::AsmEndianness::Little,
-        pointer_width: 64,
-        default_calling_convention: Some(CallingConvention::C),
-    }, layout());
+    let mut program = AsmProgram::new(
+        AsmTarget {
+            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
+            object_format: AsmObjectFormat::MachO,
+            endianness: fp_core::asmir::AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: Some(CallingConvention::C),
+        },
+        layout(),
+    );
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,
@@ -676,13 +697,16 @@ fn materialize_rewrites_globalref_constants_for_stdio_got_slots() {
 
 #[test]
 fn materialize_dereferences_stdio_got_slot_on_darwin() {
-    let mut program = AsmProgram::new(AsmTarget {
-        architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-        object_format: AsmObjectFormat::MachO,
-        endianness: fp_core::asmir::AsmEndianness::Little,
-        pointer_width: 64,
-        default_calling_convention: Some(CallingConvention::C),
-    }, layout());
+    let mut program = AsmProgram::new(
+        AsmTarget {
+            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
+            object_format: AsmObjectFormat::MachO,
+            endianness: fp_core::asmir::AsmEndianness::Little,
+            pointer_width: 64,
+            default_calling_convention: Some(CallingConvention::C),
+        },
+        layout(),
+    );
     program.container = Some(ContainerFile::new(
         ContainerKind::Executable,
         AsmObjectFormat::Elf,

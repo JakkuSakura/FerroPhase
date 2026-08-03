@@ -5,8 +5,8 @@ use std::sync::RwLock;
 use eyre::eyre;
 use fp_core::ast::{
     self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprConstBlock, ExprIntrinsicCall, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprStruct, File, FormatArgRef, FormatTemplatePart,
-    FunctionParam, Ident, Item, Name, Pattern, Ty, TypeEnum, TypePrimitive,
+    ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprStruct, File, FormatArgRef,
+    FormatTemplatePart, FunctionParam, Ident, Item, Name, Pattern, Ty, TypeEnum, TypePrimitive,
     TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry, ValueStruct,
     ValueTuple,
 };
@@ -936,8 +936,7 @@ impl ScriptEmitter {
     }
 
     fn render_name(&self, name: &Name) -> String {
-        name
-            .to_string()
+        name.to_string()
             .split("::")
             .map(|segment| segment.to_string())
             .collect::<Vec<_>>()

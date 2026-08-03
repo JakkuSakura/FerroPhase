@@ -80,7 +80,8 @@ fn write_member_header(out: &mut Vec<u8>, name: &[u8], size: usize) -> Result<()
         return Err(Error::from("archive member name is empty"));
     }
 
-    let size = u64::try_from(size).map_err(|_| Error::from(format!("archive member too large: {size}")))?;
+    let size = u64::try_from(size)
+        .map_err(|_| Error::from(format!("archive member too large: {size}")))?;
 
     write_fixed_ascii(out, name, 16, b' ')?;
     write_fixed_decimal(out, 0, 12)?; // date

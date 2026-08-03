@@ -1,6 +1,7 @@
 mod vm;
 
 use std::collections::HashMap;
+use std::ffi::CString;
 
 use fp_core::ast::{
     Ty, TypeStruct, TypeType, TypeUnknown, Value, ValueList, ValueMapEntry, ValueTuple,
@@ -8,16 +9,14 @@ use fp_core::ast::{
 use fp_core::hir::PackageId;
 use fp_core::lir::{
     BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirCompileUnit,
-    LirConstantAggregate, LirConstantData, LirConstantKind, LirFloat, LirFunction,
-    LirFunctionRef, LirInstruction,
-    LirInteger,
-    LirInstructionKind, LirLocal, LirProgram, LirTerminator, LirType, LirValue,
-    LirValueKind, LirDataLayout, RegisterId,
+    LirConstantAggregate, LirConstantData, LirConstantKind, LirDataLayout, LirFloat, LirFunction,
+    LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger, LirLocal, LirProgram,
+    LirTerminator, LirType, LirValue, LirValueKind, RegisterId,
 };
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
 use crate::vm::{
-    is_object_type, lir_type_info, mem_load, mem_store, raw_to_value, value_to_raw, ThreadState,
+    ThreadState, is_object_type, lir_type_info, mem_load, mem_store, raw_to_value, value_to_raw,
 };
 
 pub use crate::vm::VmError;
@@ -179,16 +178,13 @@ impl LirInterpreter {
                 .map_err(|error| VmError::Runtime(error.to_string()))?
                 .max(8);
             let sp = self.state.regs.sp();
-            let addr = self
-                .state
-                .mem
-                .stack_alloc(
-                    sp,
-                    size,
-                    self.data_layout
-                        .align_of(&local.ty)
-                        .map_err(|error| VmError::Runtime(error.to_string()))?,
-                )?;
+            let addr = self.state.mem.stack_alloc(
+                sp,
+                size,
+                self.data_layout
+                    .align_of(&local.ty)
+                    .map_err(|error| VmError::Runtime(error.to_string()))?,
+            )?;
             self.state.regs.set_sp(addr);
             self.state.set_local_addr(local.id, addr);
         }
@@ -263,8 +259,12 @@ impl LirInterpreter {
             LirInstructionKind::Add(a, b) => self.binop(dst, a, b, |x, y| x.wrapping_add(y)),
             LirInstructionKind::Sub(a, b) => self.binop(dst, a, b, |x, y| x.wrapping_sub(y)),
             LirInstructionKind::Mul(a, b) => self.binop(dst, a, b, |x, y| x.wrapping_mul(y)),
-            LirInstructionKind::Div(a, b) => self.binop_div(dst, a, b, instr.result.as_ref().map(|r| &r.ty)),
-            LirInstructionKind::Rem(a, b) => self.binop_rem(dst, a, b, instr.result.as_ref().map(|r| &r.ty)),
+            LirInstructionKind::Div(a, b) => {
+                self.binop_div(dst, a, b, instr.result.as_ref().map(|r| &r.ty))
+            }
+            LirInstructionKind::Rem(a, b) => {
+                self.binop_rem(dst, a, b, instr.result.as_ref().map(|r| &r.ty))
+            }
             LirInstructionKind::Eq(a, b) => self.cmp_raw(dst, a, b, |x, y| (x == y) as u64),
             LirInstructionKind::Ne(a, b) => self.cmp_raw(dst, a, b, |x, y| (x != y) as u64),
             LirInstructionKind::Lt(a, b) => self.cmp_signed(dst, a, b, |x, y| x < y),
@@ -413,14 +413,23 @@ impl LirInterpreter {
                 self.wr(dst, ((raw as i64) as f64).to_bits());
                 Ok(())
             }
-            LirInstructionKind::ExtractValue { aggregate, indices } => {
-                self.extract_value(dst, aggregate, indices, instr.result.as_ref().map(|r| &r.ty))
-            }
+            LirInstructionKind::ExtractValue { aggregate, indices } => self.extract_value(
+                dst,
+                aggregate,
+                indices,
+                instr.result.as_ref().map(|r| &r.ty),
+            ),
             LirInstructionKind::InsertValue {
                 aggregate,
                 element,
                 indices,
-            } => self.insert_value(dst, aggregate, element, indices, instr.result.as_ref().map(|r| &r.ty)),
+            } => self.insert_value(
+                dst,
+                aggregate,
+                element,
+                indices,
+                instr.result.as_ref().map(|r| &r.ty),
+            ),
             LirInstructionKind::Call { function, args, .. } => {
                 self.handle_call(dst, function, args)
             }
@@ -494,7 +503,7 @@ impl LirInterpreter {
                     let struct_ty = match struct_val {
                         Value::Type(Ty::Struct(s)) => s.clone(),
                         _ => {
-                            return Err(VmError::Runtime("expected struct type in IntoType".into()))
+                            return Err(VmError::Runtime("expected struct type in IntoType".into()));
                         }
                     };
                     let wrapped = Value::Type(Ty::Type(TypeType {
@@ -610,9 +619,9 @@ impl LirInterpreter {
                 .ok_or_else(|| VmError::Runtime(format!("missing global {name}"))),
             LirValueKind::Constant(LirConstantKind::Aggregate(_))
             | LirValueKind::Constant(LirConstantKind::FunctionAddress(_))
-            | LirValueKind::Constant(LirConstantKind::Expr(_)) => Err(VmError::Runtime(
-                format!("resolve_raw called on non-scalar value: {val:?}"),
-            )),
+            | LirValueKind::Constant(LirConstantKind::Expr(_)) => Err(VmError::Runtime(format!(
+                "resolve_raw called on non-scalar value: {val:?}"
+            ))),
         }
     }
 
@@ -789,9 +798,7 @@ impl LirInterpreter {
                 }
             }
             LirValueKind::Constant(LirConstantKind::Undef)
-            | LirValueKind::Constant(LirConstantKind::Null) => {
-                Ok(Self::default_value_for_type(ty))
-            }
+            | LirValueKind::Constant(LirConstantKind::Null) => Ok(Self::default_value_for_type(ty)),
             LirValueKind::Constant(_) => self.constant_to_value(val),
             _ => Err(VmError::Runtime(format!(
                 "expected aggregate value for {ty:?}, found {val:?}"
@@ -882,7 +889,7 @@ impl LirInterpreter {
             Value::Null(_) => {
                 return Ok(Some(Value::Bytes(fp_core::ast::ValueBytes::from(
                     &b"\0"[..],
-                ))))
+                ))));
             }
             _ => return Ok(None),
         };
@@ -1240,13 +1247,9 @@ impl LirInterpreter {
             LirFunctionRef::Name(name) => {
                 self.handle_call_named(dst, name.as_str(), args, None, None)
             }
-            LirFunctionRef::Package { package_id, name } => self.handle_call_named(
-                dst,
-                name.as_str(),
-                args,
-                Some(*package_id),
-                None,
-            ),
+            LirFunctionRef::Package { package_id, name } => {
+                self.handle_call_named(dst, name.as_str(), args, Some(*package_id), None)
+            }
             LirFunctionRef::Definition(def_id) => {
                 let function =
                     self.definition_functions
@@ -1284,13 +1287,15 @@ impl LirInterpreter {
     ) -> LirResult<()> {
         let raws: Vec<u64> = args
             .iter()
-            .map(|a| self.resolve_raw(a))
+            .map(|arg| self.resolve_raw(arg))
             .collect::<LirResult<Vec<_>>>()?;
+        let ffi_call = self.extern_sigs.get(name).cloned();
 
         // Try FFI dispatch for extern C functions.
-        if let Some(sig) = self.extern_sigs.get(name) {
+        if let Some(sig) = ffi_call {
+            let (raws, _cstrings) = self.prepare_ffi_args(args, &sig)?;
             if let Some(ref mut ffi) = self.ffi {
-                match ffi.call(name, sig, &raws) {
+                match ffi.call(name, &sig, &raws) {
                     Ok(Some(ret)) => {
                         self.wr(dst, ret);
                         return Ok(());
@@ -1345,6 +1350,66 @@ impl LirInterpreter {
         }
         self.wr(dst, r);
         Ok(())
+    }
+
+    fn prepare_ffi_args(
+        &self,
+        args: &[LirValue],
+        sig: &FfiSignature,
+    ) -> LirResult<(Vec<u64>, Vec<CString>)> {
+        let mut raws = Vec::with_capacity(args.len());
+        let mut cstrings = Vec::new();
+        for (arg, ty) in args.iter().zip(&sig.args) {
+            let raw = self.resolve_raw(arg)?;
+            if *ty == FfiType::Ptr {
+                if let Some(bytes) = self.object_bytes_for_ffi(raw) {
+                    let bytes = bytes.strip_suffix(&[0]).unwrap_or(&bytes);
+                    let cstring = CString::new(bytes).map_err(|error| {
+                        VmError::Runtime(format!("invalid C string argument: {error}"))
+                    })?;
+                    raws.push(cstring.as_ptr() as u64);
+                    cstrings.push(cstring);
+                    continue;
+                }
+            }
+            raws.push(raw);
+        }
+        if args.len() != sig.args.len() {
+            return Err(VmError::Runtime(format!(
+                "ffi expects {} args, got {}",
+                sig.args.len(),
+                args.len()
+            )));
+        }
+        Ok((raws, cstrings))
+    }
+
+    fn object_bytes_for_ffi(&self, raw: u64) -> Option<Vec<u8>> {
+        let value = self.state.objects.get(raw as usize)?;
+        match value {
+            Value::String(value) => Some(value.value.as_bytes().to_vec()),
+            Value::Bytes(value) => Some(value.value.to_vec()),
+            Value::Tuple(tuple) if tuple.values.len() == 2 => {
+                let ptr_handle = match &tuple.values[0] {
+                    Value::UInt(value) => value.value,
+                    Value::Int(value) if value.value >= 0 => value.value as u64,
+                    _ => return None,
+                };
+                let len = match &tuple.values[1] {
+                    Value::UInt(value) => value.value as usize,
+                    Value::Int(value) if value.value >= 0 => value.value as usize,
+                    _ => return None,
+                };
+                let backing = self.state.objects.get(ptr_handle as usize)?;
+                let bytes = match backing {
+                    Value::String(value) => value.value.as_bytes(),
+                    Value::Bytes(value) => value.value.as_ref(),
+                    _ => return None,
+                };
+                Some(bytes[..len.min(bytes.len())].to_vec())
+            }
+            _ => None,
+        }
     }
 
     fn call_intrinsic(&mut self, name: &str, args: &[u64]) -> LirResult<u64> {
@@ -1780,7 +1845,9 @@ fn const_raw(value: &LirValue) -> u64 {
             LirInteger::I32(value) => u64::from(*value),
             LirInteger::I64(value) => *value,
             LirInteger::I128(value) => *value as u64,
-            LirInteger::Arbitrary(_) => todo!("interpreter conversion for arbitrary integer constants"),
+            LirInteger::Arbitrary(_) => {
+                todo!("interpreter conversion for arbitrary integer constants")
+            }
         },
         LirConstantData::Float(float) => match float {
             LirFloat::F32(value) => u64::from(*value),
@@ -1839,6 +1906,16 @@ mod tests {
 
     fn make_with_globals(f: LirFunction, globals: Vec<LirGlobal>) -> LirProgram {
         let mut program = make(f);
+        program.globals = globals;
+        program
+    }
+
+    fn make_with_functions_and_globals(
+        functions: Vec<LirFunction>,
+        globals: Vec<LirGlobal>,
+    ) -> LirProgram {
+        let mut program = make(functions.first().cloned().expect("entry function"));
+        program.functions = functions;
         program.globals = globals;
         program
     }
@@ -1921,6 +1998,141 @@ mod tests {
         assert_eq!(
             LirInterpreter::new().run_main(&make(f)).unwrap(),
             Value::int(42)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn calls_libc_function_through_extern_c_declaration() {
+        let getpid = LirFunction {
+            def_id: None,
+            name: Name::new("getpid"),
+            signature: sig(&[], LirType::I32),
+            basic_blocks: vec![],
+            locals: vec![],
+            stack_slots: vec![],
+            calling_convention: CallingConvention::C,
+            linkage: fp_core::lir::Linkage::External,
+            is_declaration: true,
+        };
+        let main = LirFunction {
+            def_id: None,
+            name: Name::new("main"),
+            signature: sig(&[], LirType::I64),
+            basic_blocks: vec![bb(
+                0,
+                vec![i(
+                    0,
+                    LirInstructionKind::Call {
+                        function: LirValue::function(
+                            LirFunctionRef::Name(Name::new("getpid")),
+                            LirType::Function {
+                                return_type: Box::new(LirType::I32),
+                                param_types: vec![],
+                                is_variadic: false,
+                            },
+                        ),
+                        args: vec![],
+                        calling_convention: CallingConvention::C,
+                        tail_call: false,
+                    },
+                )],
+                ret(reg(0)),
+            )],
+            locals: vec![],
+            stack_slots: vec![],
+            calling_convention: CallingConvention::C,
+            linkage: fp_core::lir::Linkage::Internal,
+            is_declaration: false,
+        };
+
+        let value = LirInterpreter::new().run_main(&LirProgram {
+            data_layout: LirDataLayout::new(
+                64,
+                8,
+                vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+            )
+            .expect("valid test data layout"),
+            functions: vec![main, getpid],
+            globals: vec![],
+            type_definitions: vec![],
+            queries: vec![],
+            comptime_entries: vec![],
+        });
+
+        assert_eq!(value.unwrap(), Value::int(i64::from(std::process::id())));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn passes_interpreter_string_data_to_libc() {
+        let strlen = LirFunction {
+            def_id: None,
+            name: Name::new("strlen"),
+            signature: sig(&[LirType::Ptr(Box::new(LirType::I8))], LirType::I64),
+            basic_blocks: vec![],
+            locals: vec![],
+            stack_slots: vec![],
+            calling_convention: CallingConvention::C,
+            linkage: fp_core::lir::Linkage::External,
+            is_declaration: true,
+        };
+        let main = LirFunction {
+            def_id: None,
+            name: Name::new("main"),
+            signature: sig(&[], LirType::I64),
+            basic_blocks: vec![bb(
+                0,
+                vec![i(
+                    0,
+                    LirInstructionKind::Call {
+                        function: LirValue::function(
+                            LirFunctionRef::Name(Name::new("strlen")),
+                            LirType::Function {
+                                return_type: Box::new(LirType::I64),
+                                param_types: vec![LirType::Ptr(Box::new(LirType::I8))],
+                                is_variadic: false,
+                            },
+                        ),
+                        args: vec![LirValue::constant(LirConstant::global_address(
+                            LirType::Ptr(Box::new(LirType::I8)),
+                            Name::new("hello"),
+                        ))],
+                        calling_convention: CallingConvention::C,
+                        tail_call: false,
+                    },
+                )],
+                ret(reg(0)),
+            )],
+            locals: vec![],
+            stack_slots: vec![],
+            calling_convention: CallingConvention::C,
+            linkage: fp_core::lir::Linkage::Internal,
+            is_declaration: false,
+        };
+        let global = LirGlobal {
+            name: Name::new("hello"),
+            ty: LirType::Array(Box::new(LirType::I8), 6),
+            initializer: Some(LirConstant::bytes(
+                LirType::Array(Box::new(LirType::I8), 6),
+                b"hello\0".to_vec(),
+            )),
+            relocations: vec![],
+            linkage: fp_core::lir::Linkage::Internal,
+            visibility: fp_core::lir::Visibility::Default,
+            is_constant: true,
+            alignment: None,
+            section: None,
+        };
+
+        assert_eq!(
+            LirInterpreter::new()
+                .run_main(&make_with_functions_and_globals(
+                    vec![main, strlen],
+                    vec![global]
+                ))
+                .unwrap(),
+            Value::int(5)
         );
     }
 

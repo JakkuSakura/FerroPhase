@@ -1014,10 +1014,14 @@ fn match_closehandle_sequence_to_syscall(
         else {
             return Ok(None);
         };
-        let Some(handle_code) = getstd_args
-            .first()
-            .and_then(|value| resolve_i64(value, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok())
-        else {
+        let Some(handle_code) = getstd_args.first().and_then(|value| {
+            resolve_i64(value, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+        }) else {
             return Ok(None);
         };
         let fd = match handle_code {
@@ -3936,8 +3940,20 @@ fn detect_system_api_from_windows_import(
                 return None;
             }
             let path = args[0].clone();
-            let desired_access = resolve_i64(&args[1], &[]).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
-            let disposition = resolve_i64(&args[4], &[]).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let desired_access = resolve_i64(&args[1], &[])
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
+            let disposition = resolve_i64(&args[4], &[])
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             let flags = posix_flags_from_createfile(convention, desired_access, disposition);
             Some(SystemApiOp::Open {
                 path,
@@ -4016,7 +4032,14 @@ fn detect_system_api_from_windows_import(
                 }
                 _ => PosixFlagStyle::Linux,
             };
-            let page_prot = resolve_i64(&args[3], &[]).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten().unwrap_or(0x04);
+            let page_prot = resolve_i64(&args[3], &[])
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()
+                .unwrap_or(0x04);
             let prot = match page_prot {
                 0x40 | 0x20 => 0x1 | 0x4,
                 0x04 => 0x1 | 0x2,
@@ -4221,7 +4244,13 @@ fn detect_system_api_from_syscall(
         AsmSyscallConvention::LinuxX86_64 if num == 257 => {
             // openat(dirfd, path, flags, mode)
             let dirfd = args.get(0)?.clone();
-            let dirfd = resolve_i64(&dirfd, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let dirfd = resolve_i64(&dirfd, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             // AT_FDCWD=-100
             if dirfd != -100 {
                 return None;
@@ -4236,7 +4265,13 @@ fn detect_system_api_from_syscall(
         AsmSyscallConvention::LinuxAarch64 if num == 56 => {
             // openat(dirfd, path, flags, mode)
             let dirfd = args.get(0)?.clone();
-            let dirfd = resolve_i64(&dirfd, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let dirfd = resolve_i64(&dirfd, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             if dirfd != -100 {
                 return None;
             }
@@ -4282,12 +4317,24 @@ fn detect_system_api_from_syscall(
         AsmSyscallConvention::LinuxX86_64 if num == 263 => {
             // unlinkat(dirfd, path, flags)
             let dirfd = args.get(0)?.clone();
-            let dirfd = resolve_i64(&dirfd, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let dirfd = resolve_i64(&dirfd, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             if dirfd != -100 {
                 return None;
             }
             let flags = args.get(2)?.clone();
-            let flags = resolve_i64(&flags, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let flags = resolve_i64(&flags, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             // AT_REMOVEDIR=0x200
             if (flags & 0x200) != 0 {
                 return Some(SystemApiOp::Rmdir {
@@ -4301,12 +4348,24 @@ fn detect_system_api_from_syscall(
         AsmSyscallConvention::LinuxAarch64 if num == 35 => {
             // unlinkat(dirfd, path, flags)
             let dirfd = args.get(0)?.clone();
-            let dirfd = resolve_i64(&dirfd, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let dirfd = resolve_i64(&dirfd, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             if dirfd != -100 {
                 return None;
             }
             let flags = args.get(2)?.clone();
-            let flags = resolve_i64(&flags, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let flags = resolve_i64(&flags, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             if (flags & 0x200) != 0 {
                 return Some(SystemApiOp::Rmdir {
                     path: args.get(1)?.clone(),
@@ -4330,7 +4389,13 @@ fn detect_system_api_from_syscall(
         AsmSyscallConvention::LinuxX86_64 if num == 258 => {
             // mkdirat(dirfd, path, mode)
             let dirfd = args.get(0)?.clone();
-            let dirfd = resolve_i64(&dirfd, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let dirfd = resolve_i64(&dirfd, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             if dirfd != -100 {
                 return None;
             }
@@ -4342,7 +4407,13 @@ fn detect_system_api_from_syscall(
         AsmSyscallConvention::LinuxAarch64 if num == 34 => {
             // mkdirat(dirfd, path, mode)
             let dirfd = args.get(0)?.clone();
-            let dirfd = resolve_i64(&dirfd, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let dirfd = resolve_i64(&dirfd, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             if dirfd != -100 {
                 return None;
             }
@@ -4375,8 +4446,20 @@ fn detect_system_api_from_syscall(
         }),
         AsmSyscallConvention::LinuxX86_64 if num == 264 => {
             // renameat(olddirfd, oldpath, newdirfd, newpath)
-            let olddirfd = resolve_i64(args.get(0)?, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
-            let newdirfd = resolve_i64(args.get(2)?, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let olddirfd = resolve_i64(args.get(0)?, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
+            let newdirfd = resolve_i64(args.get(2)?, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             if olddirfd != -100 || newdirfd != -100 {
                 return None;
             }
@@ -4386,8 +4469,20 @@ fn detect_system_api_from_syscall(
             })
         }
         AsmSyscallConvention::LinuxAarch64 if num == 38 => {
-            let olddirfd = resolve_i64(args.get(0)?, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
-            let newdirfd = resolve_i64(args.get(2)?, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let olddirfd = resolve_i64(args.get(0)?, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
+            let newdirfd = resolve_i64(args.get(2)?, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             if olddirfd != -100 || newdirfd != -100 {
                 return None;
             }
@@ -4410,7 +4505,13 @@ fn detect_system_api_from_syscall(
         }),
         AsmSyscallConvention::LinuxX86_64 if num == 269 => {
             // faccessat(dirfd, path, mode, flags)
-            let dirfd = resolve_i64(args.get(0)?, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let dirfd = resolve_i64(args.get(0)?, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             if dirfd != -100 {
                 return None;
             }
@@ -4421,7 +4522,13 @@ fn detect_system_api_from_syscall(
         }
         AsmSyscallConvention::LinuxAarch64 if num == 48 => {
             // faccessat(dirfd, path, mode, flags)
-            let dirfd = resolve_i64(args.get(0)?, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten()?;
+            let dirfd = resolve_i64(args.get(0)?, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()?;
             if dirfd != -100 {
                 return None;
             }
@@ -4941,19 +5048,25 @@ fn lower_system_api_to_windows_import(
             Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
         }
         SystemApiOp::Write { fd, buffer, len } => {
-            let (handle_value, std_handle_code) =
-                match resolve_i64(&fd, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten() {
-                    Some(fd) => {
-                        if fd == 0 {
-                            return Ok(LoweredWindows::Unchanged);
-                        }
-                        let Some(code) = fd_to_std_handle_code(fd) else {
-                            return Ok(LoweredWindows::Unchanged);
-                        };
-                        (None, Some(code))
+            let (handle_value, std_handle_code) = match resolve_i64(&fd, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()
+            {
+                Some(fd) => {
+                    if fd == 0 {
+                        return Ok(LoweredWindows::Unchanged);
                     }
-                    None => (Some(fd), None),
-                };
+                    let Some(code) = fd_to_std_handle_code(fd) else {
+                        return Ok(LoweredWindows::Unchanged);
+                    };
+                    (None, Some(code))
+                }
+                None => (Some(fd), None),
+            };
 
             let getstd_id = *next_id;
             *next_id = next_id.saturating_add(1);
@@ -5094,7 +5207,14 @@ fn lower_system_api_to_windows_import(
             Ok(LoweredWindows::Sequence(seq))
         }
         SystemApiOp::Read { fd, buffer, len } => {
-            let (handle_value, use_stdio) = match resolve_i64(&fd, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten() {
+            let (handle_value, use_stdio) = match resolve_i64(&fd, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()
+            {
                 Some(0) => (None, true),
                 Some(_) => return Ok(LoweredWindows::Unchanged),
                 None => (Some(fd), false),
@@ -5236,16 +5356,22 @@ fn lower_system_api_to_windows_import(
             Ok(LoweredWindows::Sequence(seq))
         }
         SystemApiOp::Close { fd } => {
-            let (handle_value, std_handle_code) =
-                match resolve_i64(&fd, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten() {
-                    Some(fd) => {
-                        let Some(code) = fd_to_std_handle_code(fd) else {
-                            return Ok(LoweredWindows::Unchanged);
-                        };
-                        (None, Some(code))
-                    }
-                    None => (Some(fd), None),
-                };
+            let (handle_value, std_handle_code) = match resolve_i64(&fd, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()
+            {
+                Some(fd) => {
+                    let Some(code) = fd_to_std_handle_code(fd) else {
+                        return Ok(LoweredWindows::Unchanged);
+                    };
+                    (None, Some(code))
+                }
+                None => (Some(fd), None),
+            };
 
             let getstd_id = *next_id;
             *next_id = next_id.saturating_add(1);
@@ -5391,16 +5517,22 @@ fn lower_system_api_to_windows_import(
             }))
         }
         SystemApiOp::Seek { fd, offset, whence } => {
-            let (handle_value, std_handle_code) =
-                match resolve_i64(&fd, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten() {
-                    Some(fd) => {
-                        let Some(code) = fd_to_std_handle_code(fd) else {
-                            return Ok(LoweredWindows::Unchanged);
-                        };
-                        (None, Some(code))
-                    }
-                    None => (Some(fd), None),
-                };
+            let (handle_value, std_handle_code) = match resolve_i64(&fd, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()
+            {
+                Some(fd) => {
+                    let Some(code) = fd_to_std_handle_code(fd) else {
+                        return Ok(LoweredWindows::Unchanged);
+                    };
+                    (None, Some(code))
+                }
+                None => (Some(fd), None),
+            };
 
             let getstd_id = *next_id;
             *next_id = next_id.saturating_add(1);
@@ -5542,12 +5674,31 @@ fn lower_system_api_to_windows_import(
             fd,
             offset,
         } => {
-            let fd_value = resolve_i64(&fd, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten();
-            let offset_value = resolve_i64(&offset, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten();
+            let fd_value = resolve_i64(&fd, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten();
+            let offset_value = resolve_i64(&offset, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten();
             if fd_value != Some(-1) || offset_value != Some(0) {
                 return Ok(LoweredWindows::Unchanged);
             }
-            let Some(prot) = resolve_i64(&prot, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok().flatten() else {
+            let Some(prot) = resolve_i64(&prot, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+                .flatten()
+            else {
                 return Ok(LoweredWindows::Unchanged);
             };
 
@@ -5715,10 +5866,14 @@ fn match_writefile_sequence_to_syscall(
         let AsmInstructionKind::Call { args, .. } = &getstd.kind else {
             return Ok(None);
         };
-        let Some(handle_code) = args
-            .first()
-            .and_then(|value| resolve_i64(value, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok())
-        else {
+        let Some(handle_code) = args.first().and_then(|value| {
+            resolve_i64(value, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+        }) else {
             return Ok(None);
         };
         let fd = match handle_code {
@@ -5825,10 +5980,14 @@ fn match_readfile_sequence_to_syscall(
         let AsmInstructionKind::Call { args, .. } = &getstd.kind else {
             return Ok(None);
         };
-        let Some(handle_code) = args
-            .first()
-            .and_then(|value| resolve_i64(value, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok())
-        else {
+        let Some(handle_code) = args.first().and_then(|value| {
+            resolve_i64(value, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+        }) else {
             return Ok(None);
         };
         match handle_code {
@@ -5933,10 +6092,14 @@ fn match_setfilepointerex_sequence_to_syscall(
         let AsmInstructionKind::Call { args, .. } = &getstd.kind else {
             return Ok(None);
         };
-        let Some(handle_code) = args
-            .first()
-            .and_then(|value| resolve_i64(value, instructions).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e }).ok())
-        else {
+        let Some(handle_code) = args.first().and_then(|value| {
+            resolve_i64(value, instructions)
+                .map_err(|e| {
+                    eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+                    e
+                })
+                .ok()
+        }) else {
             return Ok(None);
         };
         let fd = match handle_code {
@@ -6066,7 +6229,10 @@ fn match_virtualalloc_sequence_to_syscall(
     };
 
     let page_prot = resolve_i64(&args[3], instructions)
-        .map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}"); e })
+        .map_err(|e| {
+            eprintln!("[fp-native] Win32-to-POSIX arg resolution error: {e}");
+            e
+        })
         .ok()
         .flatten()
         .unwrap_or(0x04);
@@ -6653,7 +6819,13 @@ fn lower_system_api_to_syscall(
 fn resolve_u64(value: &AsmValue, instructions: &[AsmInstruction]) -> Option<u64> {
     match value {
         AsmValue::Constant(AsmConstant::UInt(x, _)) => Some(*x),
-        AsmValue::Constant(AsmConstant::Int(x, _)) => (*x).try_into().map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX value conversion error: {e}"); e }).ok(),
+        AsmValue::Constant(AsmConstant::Int(x, _)) => (*x)
+            .try_into()
+            .map_err(|e| {
+                eprintln!("[fp-native] Win32-to-POSIX value conversion error: {e}");
+                e
+            })
+            .ok(),
         AsmValue::Register(id) => {
             let inst = instructions.iter().find(|inst| inst.id == *id)?;
             match &inst.kind {
@@ -6668,7 +6840,12 @@ fn resolve_u64(value: &AsmValue, instructions: &[AsmInstruction]) -> Option<u64>
 fn resolve_i64(value: &AsmValue, instructions: &[AsmInstruction]) -> Result<Option<i64>> {
     Ok(match value {
         AsmValue::Constant(AsmConstant::Int(x, _)) => Some(*x),
-        AsmValue::Constant(AsmConstant::UInt(x, _)) => i64::try_from(*x).map_err(|e| { eprintln!("[fp-native] Win32-to-POSIX value conversion error: {e}"); e }).ok(),
+        AsmValue::Constant(AsmConstant::UInt(x, _)) => i64::try_from(*x)
+            .map_err(|e| {
+                eprintln!("[fp-native] Win32-to-POSIX value conversion error: {e}");
+                e
+            })
+            .ok(),
         AsmValue::Register(id) => {
             let Some(inst) = instructions.iter().find(|inst| inst.id == *id) else {
                 return Ok(None);

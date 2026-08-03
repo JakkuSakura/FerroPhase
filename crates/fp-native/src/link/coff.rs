@@ -254,13 +254,14 @@ fn build_base_relocs(text_rva: u32, relocs: &[Relocation], extra_rvas: &[u32]) -
         .filter(|reloc| {
             reloc.kind == RelocKind::Abs64 && reloc.section == crate::emit::RelocSection::Text
         })
-        .filter_map(|reloc| {
-            match u32::try_from(reloc.offset) {
-                Ok(offset) => Some(offset),
-                Err(_) => {
-                    eprintln!("[fp-native] COFF base relocation offset out of u32 range: {}", reloc.offset);
-                    None
-                }
+        .filter_map(|reloc| match u32::try_from(reloc.offset) {
+            Ok(offset) => Some(offset),
+            Err(_) => {
+                eprintln!(
+                    "[fp-native] COFF base relocation offset out of u32 range: {}",
+                    reloc.offset
+                );
+                None
             }
         })
         .map(|offset| text_rva + offset)
@@ -664,7 +665,8 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
         );
     }
     let entry_rva = text_rva
-        + u32::try_from(plan.entry_offset).map_err(|e| Error::from(format!("entry offset out of range: {e}")))?;
+        + u32::try_from(plan.entry_offset)
+            .map_err(|e| Error::from(format!("entry offset out of range: {e}")))?;
 
     let (import_table_rva, import_table_size, iat_rvas) =
         if let Some(layout) = import_layout.as_mut() {
@@ -693,8 +695,9 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
             match arch {
                 TargetArch::X86_64 => {
                     let rel = stub_rva as i64 - (call_site as i64 + 4);
-                    let rel32 =
-                        i32::try_from(rel).map_err(|e| Error::from(format!("call target out of range: {rel}: {e}")))?;
+                    let rel32 = i32::try_from(rel).map_err(|e| {
+                        Error::from(format!("call target out of range: {rel}: {e}"))
+                    })?;
                     text[offset..offset + 4].copy_from_slice(&rel32.to_le_bytes());
                 }
                 TargetArch::Aarch64 => {
@@ -718,8 +721,8 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
             match arch {
                 TargetArch::X86_64 => {
                     let disp = iat_entry_rva as i64 - (stub_rva as i64 + 6);
-                    let disp32 =
-                        i32::try_from(disp).map_err(|e| Error::from(format!("IAT out of range: {disp}: {e}")))?;
+                    let disp32 = i32::try_from(disp)
+                        .map_err(|e| Error::from(format!("IAT out of range: {disp}: {e}")))?;
                     text[stub_offset..stub_offset + 6].copy_from_slice(&[
                         0xFF,
                         0x25,

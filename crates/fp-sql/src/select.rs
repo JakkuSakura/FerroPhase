@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 pub fn extract_select_projection(statement: &str) -> Result<&str> {
     let trimmed = statement.trim().trim_end_matches(';').trim();

@@ -44,7 +44,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
 
         let (id, ty_slot, span, kind) = expr.into_parts();
         let ExprKind::IntrinsicCall(call) = kind else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, kind)));
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                id, ty_slot, span, kind,
+            )));
         };
         let CallKind::Op(op) = call.kind else {
             return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
@@ -288,21 +290,32 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     fn normalize_invoke(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         let (id, ty_slot, span, kind) = expr.into_parts();
         let ExprKind::Invoke(invoke) = kind else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, kind)));
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                id, ty_slot, span, kind,
+            )));
         };
 
         if let Some(intrinsic_kind) = resolve_lang_intrinsic(&invoke) {
             let replacement = Expr::from_parts(
-                id, ty_slot, span,
+                id,
+                ty_slot,
+                span,
                 ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                    intrinsic_kind, invoke.args, Vec::new())),
+                    intrinsic_kind,
+                    invoke.args,
+                    Vec::new(),
+                )),
             );
             return Ok(NormalizeOutcome::Normalized(replacement));
         }
 
-        Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, ExprKind::Invoke(invoke))))
+        Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+            id,
+            ty_slot,
+            span,
+            ExprKind::Invoke(invoke),
+        )))
     }
-
 }
 
 fn compile_mode_std_path(kind: OpKind) -> Option<Vec<Ident>> {
@@ -330,9 +343,7 @@ fn compile_mode_std_path(kind: OpKind) -> Option<Vec<Ident>> {
         OpKind::EnvHomeDir => &["std", "env", "home_dir"][..],
         OpKind::EnvVar => &["std", "env", "var"][..],
         OpKind::EnvVarExists => &["std", "env", "exists"][..],
-        OpKind::IoReadStdinToString => {
-            &["std", "io", "read_stdin_to_string"][..]
-        }
+        OpKind::IoReadStdinToString => &["std", "io", "read_stdin_to_string"][..],
         OpKind::IoWriteStdout => &["std", "io", "write_stdout"][..],
         OpKind::IoWriteStderr => &["std", "io", "write_stderr"][..],
         OpKind::YamlToJson => &["std", "yaml", "to_json"][..],

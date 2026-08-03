@@ -2,7 +2,7 @@ use fp_backend::transforms::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::hir;
 use fp_core::mir;
 use fp_core::query::{
-    statement_to_query_ir, QueryDocument, QueryIrDocument, QueryIrStmt, SqlDialect,
+    QueryDocument, QueryIrDocument, QueryIrStmt, SqlDialect, statement_to_query_ir,
 };
 use fp_lang::FerroFrontend;
 use fp_sql::sql_ast::parse_sql_ast;

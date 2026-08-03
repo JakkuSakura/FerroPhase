@@ -1,8 +1,8 @@
 use super::lexeme::Lexeme;
 use super::winnow::{
-    backtrack_err, block_comment, is_ident_continue, is_ident_start, line_comment,
-    parse_byte_char_literal, parse_char_literal, parse_cooked_string_literal, parse_lifetime,
-    parse_raw_identifier, parse_raw_string_literal, whitespace, ws, MULTI_PUNCT, SINGLE_PUNCT,
+    MULTI_PUNCT, SINGLE_PUNCT, backtrack_err, block_comment, is_ident_continue, is_ident_start,
+    line_comment, parse_byte_char_literal, parse_char_literal, parse_cooked_string_literal,
+    parse_lifetime, parse_raw_identifier, parse_raw_string_literal, whitespace, ws,
 };
 use thiserror::Error;
 use unicode_normalization::UnicodeNormalization;
@@ -224,11 +224,7 @@ pub(crate) fn strip_number_suffix(lexeme: &str) -> &str {
 pub(crate) fn classify_lexeme(lexeme: &str) -> Option<TokenKind> {
     let mut input = lexeme;
     let kind = token_parser().parse_next(&mut input).ok()?;
-    if input.is_empty() {
-        Some(kind)
-    } else {
-        None
-    }
+    if input.is_empty() { Some(kind) } else { None }
 }
 
 pub(crate) fn classify_and_normalize_lexeme(lexeme: &str) -> Option<(TokenKind, String)> {

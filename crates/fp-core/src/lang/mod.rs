@@ -2,9 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::ast::{AttrMeta, Attribute, ExprKind, File, Ident, Item, ItemKind, Name, Path, Value};
-use crate::intrinsics::{
-    lang_instrinstic_call_kind, lang_instrinstic_for_lang_item, CallKind,
-};
+use crate::intrinsics::{CallKind, lang_instrinstic_call_kind, lang_instrinstic_for_lang_item};
 
 #[derive(Clone, Default)]
 pub struct LangItemRegistry {
