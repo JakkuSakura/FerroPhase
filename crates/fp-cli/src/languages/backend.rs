@@ -3,6 +3,7 @@ use crate::{CliError, Result};
 /// Supported AST output targets for the CLI.
 #[derive(Debug, Clone, Copy)]
 pub enum AstLanguageTarget {
+    FerroPhase,
     TypeScript,
     JavaScript,
     CSharp,
@@ -19,6 +20,7 @@ pub enum AstLanguageTarget {
 pub fn parse_ast_target(s: &str) -> Result<AstLanguageTarget> {
     let normalized = s.to_lowercase();
     let target = match normalized.as_str() {
+        "fp" | "ferro" | "ferrophase" => AstLanguageTarget::FerroPhase,
         "typescript" | "ts" => AstLanguageTarget::TypeScript,
         "javascript" | "js" => AstLanguageTarget::JavaScript,
         "csharp" | "cs" | "c#" => AstLanguageTarget::CSharp,
@@ -39,6 +41,7 @@ pub fn parse_ast_target(s: &str) -> Result<AstLanguageTarget> {
 /// File extension to use when emitting code for a target.
 pub fn ast_output_extension_for(target: AstLanguageTarget) -> &'static str {
     match target {
+        AstLanguageTarget::FerroPhase => "fp",
         AstLanguageTarget::TypeScript => "ts",
         AstLanguageTarget::JavaScript => "js",
         AstLanguageTarget::CSharp => "cs",

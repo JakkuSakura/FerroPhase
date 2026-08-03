@@ -68,7 +68,7 @@ pub struct CompileArgs {
     #[arg(short = 'b', long = "backend", default_value = "binary")]
     pub backend: BackendKind,
 
-    /// Explicit output target (typescript, javascript, python, go, gdscript, zig, sycl, rust, wit)
+    /// Explicit output target (fp, typescript, javascript, python, go, gdscript, zig, sycl, rust, wit)
     #[arg(short = 't', long = "target")]
     pub target: Option<String>,
 
@@ -964,6 +964,16 @@ fn emit_ast_target(
     single_world: bool,
 ) -> Result<AstTargetOutput> {
     match target {
+        crate::languages::backend::AstLanguageTarget::FerroPhase => {
+            let serializer = fp_c::CSerializer;
+            let code = serializer
+                .serialize_file(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+            Ok(fp_core::ast::AstTargetOutput {
+                code,
+                side_files: Vec::new(),
+            })
+        }
         crate::languages::backend::AstLanguageTarget::TypeScript => {
             #[cfg(feature = "lang-typescript")]
             {

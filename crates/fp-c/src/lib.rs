@@ -6,7 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_core::ast::{Abi, FunctionParam, FunctionSignature, Ident, Ty, TypeInt, TypePrimitive};
+use fp_core::ast::{
+    Abi, ExprKind, FunctionParam, FunctionSignature, Ident, Name, Ty, TypeInt, TypePrimitive,
+};
 use fp_core::ast::{
     AstSerializer, File, Item, ItemDeclFunction, ItemDefType, ItemKind, Visibility,
 };
@@ -76,24 +78,6 @@ impl LanguageFrontend for CFrontend {
     }
 }
 
-/// A generated C package containing the requested libc headers.
-#[derive(Debug, Clone)]
-pub struct GeneratedPackage {
-    pub manifest: String,
-    pub headers: Vec<String>,
-    pub source: String,
-    pub translation_unit: TranslationUnit,
-}
-
-impl GeneratedPackage {
-    /// Write the package to `root`, creating the conventional `src/libc.c`.
-    pub fn write_to(&self, root: &Path) -> std::io::Result<()> {
-        std::fs::create_dir_all(root.join("src"))?;
-        std::fs::write(root.join("Magnet.toml"), &self.manifest)?;
-        std::fs::write(root.join("src/libc.c"), &self.source)
-    }
-}
-
 pub struct CParser {
     inner: fp_clang::ClangParser,
 }
@@ -159,58 +143,6 @@ impl CParser {
             .map_err(ClangError::IoError)?;
         std::fs::write(file.path(), source).map_err(ClangError::IoError)?;
         self.parse_file(file.path(), options)
-    }
-}
-
-/// Generates a standalone C package from libc-facing C headers.
-pub struct LibcCodegen {
-    parser: CParser,
-}
-
-impl LibcCodegen {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            parser: CParser::new()?,
-        })
-    }
-
-    /// Generate a package from headers such as `unistd.h` and `fcntl.h`.
-    ///
-    /// Header names are included with angle brackets, so the platform's libc
-    /// include search path remains responsible for selecting the ABI.
-    pub fn generate_package(
-        &self,
-        package_name: &str,
-        headers: &[&str],
-        options: CompileOptions,
-    ) -> Result<GeneratedPackage> {
-        if package_name.is_empty()
-            || !package_name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-        {
-            return Err(ClangError::Other("invalid package name".to_string()));
-        }
-        if headers.is_empty() {
-            return Err(ClangError::Other(
-                "at least one libc header is required".to_string(),
-            ));
-        }
-
-        let includes = headers
-            .iter()
-            .map(|header| format!("#include <{header}>"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let unit = self.parser.parse_libc_bindings(&includes, options)?;
-        Ok(GeneratedPackage {
-            manifest: format!(
-                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"
-            ),
-            headers: headers.iter().map(|header| (*header).to_string()).collect(),
-            source: format!("{includes}\n"),
-            translation_unit: unit,
-        })
     }
 }
 
@@ -338,17 +270,78 @@ fn is_char(ty: &ast::Type) -> bool {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct CSerializer;
+pub struct CSerializer;
 
 impl AstSerializer for CSerializer {
     fn serialize_file(&self, file: &File) -> fp_core::Result<String> {
-        Ok(format!("{file:?}"))
+        file.items
+            .iter()
+            .map(|item| self.serialize_item(item))
+            .collect::<fp_core::Result<Vec<_>>>()
+            .map(|items| items.join("\n"))
+    }
+
+    fn serialize_item(&self, item: &Item) -> fp_core::Result<String> {
+        match &item.kind {
+            ItemKind::DefType(def) => Ok(format!(
+                "pub type {} = {};",
+                def.name,
+                self.serialize_type(&def.value)?
+            )),
+            ItemKind::DeclFunction(decl) => {
+                let params = decl
+                    .sig
+                    .params
+                    .iter()
+                    .map(|param| {
+                        Ok(format!(
+                            "{}: {}",
+                            param.name,
+                            self.serialize_type(&param.ty)?
+                        ))
+                    })
+                    .collect::<fp_core::Result<Vec<_>>>()?;
+                let ret = decl
+                    .sig
+                    .ret_ty
+                    .as_ref()
+                    .map(|ty| self.serialize_type(ty))
+                    .transpose()?
+                    .map(|ty| format!(" -> {ty}"))
+                    .unwrap_or_default();
+                Ok(format!(
+                    "pub extern \"C\" fn {}({}){};",
+                    decl.name,
+                    params.join(", "),
+                    ret
+                ))
+            }
+            _ => Err(fp_core::Error::from(
+                "C serializer received unsupported item",
+            )),
+        }
+    }
+
+    fn serialize_type(&self, ty: &Ty) -> fp_core::Result<String> {
+        match ty {
+            Ty::Unit(_) => Ok("()".to_string()),
+            Ty::Primitive(TypePrimitive::Bool) => Ok("bool".to_string()),
+            Ty::Primitive(TypePrimitive::Int(int)) => Ok(int.to_string()),
+            Ty::Reference(reference) => Ok(format!("&{}", self.serialize_type(&reference.ty)?)),
+            Ty::RawPtr(pointer) => Ok(format!("*mut {}", self.serialize_type(&pointer.ty)?)),
+            Ty::Expr(expr) => match &expr.kind {
+                ExprKind::Name(Name::Ident(ident)) => Ok(ident.to_string()),
+                ExprKind::Name(Name::Path(path)) => Ok(path.join("::")),
+                _ => Err(fp_core::Error::from("unsupported C type expression")),
+            },
+            _ => Err(fp_core::Error::from("unsupported C type")),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CFrontend, CParser, CompileOptions, LibcCodegen, ast::Declaration};
+    use super::{CFrontend, CParser, CompileOptions, ast::Declaration};
     use fp_core::frontend::LanguageFrontend;
     use std::path::Path;
 
@@ -380,27 +373,6 @@ mod tests {
             decl,
             Declaration::Function(function) if function.name == "current_pid"
         )));
-    }
-
-    #[test]
-    fn codegens_libc_package() {
-        let codegen = LibcCodegen::new().expect("clang is required for libc codegen");
-        let package = codegen
-            .generate_package("libc", &["unistd.h"], CompileOptions::default())
-            .expect("libc package should generate");
-        assert!(package.manifest.contains("name = \"libc\""));
-        assert_eq!(package.headers, vec!["unistd.h"]);
-        assert_eq!(package.source, "#include <unistd.h>\n");
-        assert!(
-            package
-                .translation_unit
-                .declarations
-                .iter()
-                .any(|decl| matches!(
-                    decl,
-                    Declaration::Function(function) if function.name == "getpid"
-                ))
-        );
     }
 
     #[test]
