@@ -377,6 +377,7 @@ fn lift_expr(expr: &hir::Expr) -> Result<Expr> {
             Expr::new(ast::ExprKind::IntrinsicCall(ExprIntrinsicCall {
                 span: expr.span,
                 kind: call.kind,
+                origin: fp_core::intrinsics::IntrinsicCallOrigin::Intrinsic,
                 args: lift_positional_args(&call.callargs)?,
                 kwargs: lift_keyword_args(&call.callargs)?,
             }))

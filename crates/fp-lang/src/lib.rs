@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::ast::FerroPhaseParser;
 mod macro_parser;
@@ -11,7 +11,7 @@ use crate::normalization::FerroIntrinsicNormalizer;
 use fp_core::ast::{AstSerializer, File, ScriptBlock};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
-use fp_core::intrinsics::IntrinsicNormalizer;
+use fp_core::intrinsics::{IntrinsicNormalizationMode, IntrinsicNormalizer};
 use fp_core::span::FileId;
 use fp_core::Result as CoreResult;
 pub use serializer::PrettyAstSerializer;
@@ -22,6 +22,7 @@ pub const FERROPHASE: &str = "ferrophase";
 /// Frontend that parses FerroPhase sources using the existing Rust infrastructure.
 pub struct FerroFrontend {
     ferro: FerroPhaseParser,
+    intrinsic_mode: RwLock<IntrinsicNormalizationMode>,
 }
 
 fn register_source(path: PathBuf, source: &str) -> FileId {
@@ -32,6 +33,7 @@ impl FerroFrontend {
     pub fn new() -> Self {
         Self {
             ferro: FerroPhaseParser::new(),
+            intrinsic_mode: RwLock::new(IntrinsicNormalizationMode::Transpile),
         }
     }
 
@@ -89,7 +91,9 @@ impl FerroFrontend {
     ) {
         (
             Arc::new(PrettyAstSerializer::new()),
-            Arc::new(FerroIntrinsicNormalizer::default()),
+            Arc::new(FerroIntrinsicNormalizer::new(
+                *self.intrinsic_mode.read().expect("intrinsic mode lock"),
+            )),
             Arc::new(FerroMacroExpansionParser::new()),
         )
     }
@@ -159,6 +163,10 @@ impl LanguageFrontend for FerroFrontend {
 
     fn extensions(&self) -> &'static [&'static str] {
         &["fp", "ferro", "rs", "rust", "ferrophase"]
+    }
+
+    fn set_intrinsic_normalization_mode(&self, mode: IntrinsicNormalizationMode) {
+        *self.intrinsic_mode.write().expect("intrinsic mode lock") = mode;
     }
 
     fn parse_expr(&self, source: &str) -> CoreResult<FrontendResult> {

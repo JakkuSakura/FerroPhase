@@ -2898,7 +2898,7 @@ fn parse_items_supports_fn_attributes() {
 fn parse_items_supports_lang_name_value_attributes() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
-    let src = "#[lang = \"time_now\"] fn f() {}";
+    let src = "#[intrinsic = \"time_now\"] fn f() {}";
     let items = parser.parse_items_ast(src).unwrap();
     let ItemKind::DefFunction(function) = items[0].kind() else {
         panic!("expected function");

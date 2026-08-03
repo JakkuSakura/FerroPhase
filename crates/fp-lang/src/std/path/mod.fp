@@ -137,23 +137,23 @@ fn option_path_buf(value: str) -> Option<PathBuf> {
     }
 }
 
-#[lang = "path_join"]
+#[intrinsic = "path_join"]
 fn intrinsic_join(lhs: &str, rhs: &str) -> str { compile_error!("compiler intrinsic") }
 
-#[lang = "path_parent"]
+#[intrinsic = "path_parent"]
 fn intrinsic_parent(path: &str) -> str { compile_error!("compiler intrinsic") }
 
-#[lang = "path_file_name"]
+#[intrinsic = "path_file_name"]
 fn intrinsic_file_name(path: &str) -> str { compile_error!("compiler intrinsic") }
 
-#[lang = "path_extension"]
+#[intrinsic = "path_extension"]
 fn intrinsic_extension(path: &str) -> str { compile_error!("compiler intrinsic") }
 
-#[lang = "path_stem"]
+#[intrinsic = "path_stem"]
 fn intrinsic_stem(path: &str) -> str { compile_error!("compiler intrinsic") }
 
-#[lang = "path_is_absolute"]
+#[intrinsic = "path_is_absolute"]
 fn intrinsic_is_absolute(path: &str) -> bool { compile_error!("compiler intrinsic") }
 
-#[lang = "path_normalize"]
+#[intrinsic = "path_normalize"]
 fn intrinsic_normalize(path: &str) -> str { compile_error!("compiler intrinsic") }

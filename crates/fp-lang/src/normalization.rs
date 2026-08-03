@@ -4,7 +4,10 @@ use fp_core::ast::{
     FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name, Path, StmtLet, Ty, Value,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer, NormalizeOutcome};
+use fp_core::intrinsics::{
+    IntrinsicCallKind, IntrinsicCallOrigin, IntrinsicNormalizationMode, IntrinsicNormalizer,
+    NormalizeOutcome,
+};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
@@ -16,10 +19,63 @@ use crate::macro_parser::{
 
 /// FerroPhase intrinsic normalizer that adds `t!` macro lowering for type expressions,
 /// delegating all other macros to the Rust normalizer.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct FerroIntrinsicNormalizer;
+#[derive(Debug, Clone, Copy)]
+pub struct FerroIntrinsicNormalizer {
+    mode: IntrinsicNormalizationMode,
+}
+
+impl Default for FerroIntrinsicNormalizer {
+    fn default() -> Self {
+        Self::new(IntrinsicNormalizationMode::Transpile)
+    }
+}
+
+impl FerroIntrinsicNormalizer {
+    pub const fn new(mode: IntrinsicNormalizationMode) -> Self {
+        Self { mode }
+    }
+}
 
 impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
+    fn normalize_call(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        if self.mode != IntrinsicNormalizationMode::Compile {
+            return Ok(NormalizeOutcome::Ignored(expr));
+        }
+
+        let (id, ty_slot, span, kind) = expr.into_parts();
+        let ExprKind::IntrinsicCall(call) = kind else {
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, kind)));
+        };
+        if call.origin != IntrinsicCallOrigin::Op {
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                id,
+                ty_slot,
+                span,
+                ExprKind::IntrinsicCall(call),
+            )));
+        }
+        let Some(path) = compile_mode_std_path(call.kind) else {
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                id,
+                ty_slot,
+                span,
+                ExprKind::IntrinsicCall(call),
+            )));
+        };
+
+        Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+            id,
+            ty_slot,
+            span,
+            ExprKind::Invoke(ExprInvoke {
+                span: call.span,
+                target: ExprInvokeTarget::Function(Name::path(Path::plain(path))),
+                args: call.args,
+                kwargs: call.kwargs,
+            }),
+        )))
+    }
+
     fn normalize_macro(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         let (id, ty_slot, span, kind) = expr.into_parts();
         let ExprKind::Macro(macro_expr) = kind else {
@@ -247,6 +303,54 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, ExprKind::Invoke(invoke))))
     }
 
+}
+
+fn compile_mode_std_path(kind: IntrinsicCallKind) -> Option<Vec<Ident>> {
+    let path = match kind {
+        IntrinsicCallKind::TimeNow => &["std", "time", "now"][..],
+        IntrinsicCallKind::Sleep => &["std", "time", "sleep"][..],
+        IntrinsicCallKind::Spawn => &["std", "task", "spawn"][..],
+        IntrinsicCallKind::Join => &["std", "task", "join"][..],
+        IntrinsicCallKind::Select => &["std", "task", "select"][..],
+        IntrinsicCallKind::FsReadDir => &["std", "fs", "read_dir"][..],
+        IntrinsicCallKind::FsWalkDir => &["std", "fs", "walk_dir"][..],
+        IntrinsicCallKind::FsReadToString => &["std", "fs", "read_to_string"][..],
+        IntrinsicCallKind::FsWriteString => &["std", "fs", "write_string"][..],
+        IntrinsicCallKind::FsAppendString => &["std", "fs", "append_string"][..],
+        IntrinsicCallKind::FsExists => &["std", "fs", "exists"][..],
+        IntrinsicCallKind::FsIsDir => &["std", "fs", "is_dir"][..],
+        IntrinsicCallKind::FsIsFile => &["std", "fs", "is_file"][..],
+        IntrinsicCallKind::FsCreateDirAll => &["std", "fs", "create_dir_all"][..],
+        IntrinsicCallKind::FsRemoveFile => &["std", "fs", "remove_file"][..],
+        IntrinsicCallKind::FsRemoveDirAll => &["std", "fs", "remove_dir_all"][..],
+        IntrinsicCallKind::FsGlob => &["std", "fs", "glob"][..],
+        IntrinsicCallKind::EnvCurrentDir => &["std", "env", "current_dir"][..],
+        IntrinsicCallKind::EnvTempDir => &["std", "env", "temp_dir"][..],
+        IntrinsicCallKind::EnvHomeDir => &["std", "env", "home_dir"][..],
+        IntrinsicCallKind::EnvVar => &["std", "env", "var"][..],
+        IntrinsicCallKind::EnvVarExists => &["std", "env", "exists"][..],
+        IntrinsicCallKind::IoReadStdinToString => {
+            &["std", "io", "read_stdin_to_string"][..]
+        }
+        IntrinsicCallKind::IoWriteStdout => &["std", "io", "write_stdout"][..],
+        IntrinsicCallKind::IoWriteStderr => &["std", "io", "write_stderr"][..],
+        IntrinsicCallKind::YamlToJson => &["std", "yaml", "to_json"][..],
+        IntrinsicCallKind::JsonParse => &["std", "json", "parse"][..],
+        IntrinsicCallKind::TestCommandMockReset => {
+            &["std", "test", "intrinsic_command_mock_reset"][..]
+        }
+        IntrinsicCallKind::TestCommandMockPush => {
+            &["std", "test", "intrinsic_command_mock_push"][..]
+        }
+        IntrinsicCallKind::TestCommandMockTakeCalls => {
+            &["std", "test", "intrinsic_command_mock_take_calls"][..]
+        }
+        IntrinsicCallKind::TestCommandMockApply => {
+            &["std", "test", "intrinsic_command_mock_apply"][..]
+        }
+        _ => return None,
+    };
+    Some(path.iter().map(|segment| Ident::new(*segment)).collect())
 }
 
 fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<IntrinsicCallKind> {
@@ -740,3 +844,110 @@ fn panic_call_with_message(message: &str) -> Expr {
     )))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fp_core::frontend::LanguageFrontend;
+    use fp_core::intrinsics::IntrinsicCallOrigin;
+
+    fn call(kind: IntrinsicCallKind, origin: IntrinsicCallOrigin) -> Expr {
+        Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::with_origin(
+            kind,
+            origin,
+            Vec::new(),
+            Vec::new(),
+        )))
+    }
+
+    #[test]
+    fn compile_mode_preserves_intrinsics_but_restores_ops() {
+        let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
+
+        let op = normalizer
+            .normalize_call(call(
+                IntrinsicCallKind::FsReadToString,
+                IntrinsicCallOrigin::Op,
+            ))
+            .expect("normalize op call")
+            .into_inner();
+        assert!(matches!(op.kind(), ExprKind::Invoke(_)));
+
+        let intrinsic = normalizer
+            .normalize_call(call(
+                IntrinsicCallKind::FsReadToString,
+                IntrinsicCallOrigin::Intrinsic,
+            ))
+            .expect("normalize intrinsic call")
+            .into_inner();
+        assert!(matches!(intrinsic.kind(), ExprKind::IntrinsicCall(_)));
+    }
+
+    #[test]
+    fn transpile_mode_keeps_ops_canonical() {
+        let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Transpile);
+        let normalized = normalizer
+            .normalize_call(call(
+                IntrinsicCallKind::FsReadToString,
+                IntrinsicCallOrigin::Op,
+            ))
+            .expect("normalize op call")
+            .into_inner();
+        assert!(matches!(normalized.kind(), ExprKind::IntrinsicCall(_)));
+    }
+
+    #[test]
+    fn compile_mode_restores_representative_std_paths() {
+        let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
+        let cases = [
+            (IntrinsicCallKind::FsWriteString, "std::fs::write_string"),
+            (IntrinsicCallKind::EnvVar, "std::env::var"),
+            (IntrinsicCallKind::IoWriteStdout, "std::io::write_stdout"),
+            (IntrinsicCallKind::TimeNow, "std::time::now"),
+            (IntrinsicCallKind::YamlToJson, "std::yaml::to_json"),
+            (IntrinsicCallKind::JsonParse, "std::json::parse"),
+        ];
+
+        for (kind, expected_path) in cases {
+            let normalized = normalizer
+                .normalize_call(call(kind, IntrinsicCallOrigin::Op))
+                .expect("normalize lang call")
+                .into_inner();
+            let ExprKind::Invoke(invoke) = normalized.kind() else {
+                panic!("expected ordinary invoke for {kind:?}");
+            };
+            let ExprInvokeTarget::Function(name) = &invoke.target else {
+                panic!("expected function target for {kind:?}");
+            };
+            assert_eq!(name.to_string(), expected_path);
+        }
+    }
+
+    #[test]
+    fn std_registry_keeps_intrinsic_and_op_marks_distinct() {
+        let frontend = crate::FerroFrontend::new();
+        let result = frontend
+            .parse(
+                "#[intrinsic = \"test_intrinsic\"] fn public_api() {}\n#[op = \"test_op\"] fn compiler_op() {}",
+                None,
+            )
+            .expect("parse marked declarations");
+        let registry = fp_core::lang::collect_lang_items(&result.last);
+
+        assert_eq!(
+            registry
+                .get_path("test_intrinsic")
+                .expect("intrinsic declaration")
+                .to_string(),
+            "public_api"
+        );
+        assert_eq!(
+            registry
+                .get_op_path("test_op")
+                .expect("op declaration")
+                .to_string(),
+            "compiler_op"
+        );
+        assert!(registry.get_path("test_op").is_none());
+        assert!(registry.get_op_path("test_intrinsic").is_none());
+    }
+}

@@ -1,7 +1,7 @@
 use crate::ast::{AstSerializer, File, MacroExpansionParser};
 use crate::diagnostics::DiagnosticManager;
 use crate::error::Result;
-use crate::intrinsics::IntrinsicNormalizer;
+use crate::intrinsics::{IntrinsicNormalizationMode, IntrinsicNormalizer};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -71,4 +71,7 @@ pub trait LanguageFrontend: Send + Sync {
     }
 
     fn set_parse_mode(&self, _mode: FrontendParseMode) {}
+
+    fn set_intrinsic_normalization_mode(&self, _mode: IntrinsicNormalizationMode) {}
+
 }

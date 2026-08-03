@@ -1,3 +1,15 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum IntrinsicCallOrigin {
+    Intrinsic,
+    Op,
+}
+
+impl Default for IntrinsicCallOrigin {
+    fn default() -> Self {
+        Self::Intrinsic
+    }
+}
+
 /// Symbolic identifier for intrinsic calls recognised by the front-end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum IntrinsicCallKind {

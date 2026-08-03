@@ -948,6 +948,7 @@ fn lower_joined_str(joined: &py_ast::ExprJoinedStr<TextRange>) -> CoreResult<Exp
     Ok(Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall {
         span: Span::null(),
         kind: IntrinsicCallKind::Format,
+        origin: fp_core::intrinsics::IntrinsicCallOrigin::Intrinsic,
         args: call_args,
         kwargs: Vec::new(),
     })))

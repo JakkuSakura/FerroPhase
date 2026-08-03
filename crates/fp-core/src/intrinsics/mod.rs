@@ -12,6 +12,18 @@ use crate::ast::{
 };
 use crate::error::Result;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IntrinsicNormalizationMode {
+    Compile,
+    Transpile,
+}
+
+impl Default for IntrinsicNormalizationMode {
+    fn default() -> Self {
+        Self::Transpile
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NormalizeOutcome<T> {
     /// The strategy chose not to handle this node; the shared framework should
@@ -234,7 +246,7 @@ pub mod calls;
 mod lang_instrinstic;
 pub mod normalize;
 
-pub use calls::IntrinsicCallKind;
+pub use calls::{IntrinsicCallKind, IntrinsicCallOrigin};
 pub use lang_instrinstic::{
     lang_instrinstic_call_kind, lang_instrinstic_capability, lang_instrinstic_for_lang_item,
     lang_instrinstic_lang_item, lang_instrinstic_spec, LangInstrinstic, LangInstrinsticCapability,

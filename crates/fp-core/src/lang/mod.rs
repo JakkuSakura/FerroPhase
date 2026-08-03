@@ -9,6 +9,7 @@ use crate::intrinsics::{
 #[derive(Clone, Default)]
 pub struct LangItemRegistry {
     items: HashMap<String, Path>,
+    ops: HashMap<String, Path>,
 }
 
 impl LangItemRegistry {
@@ -16,14 +17,25 @@ impl LangItemRegistry {
         self.items.insert(name.into(), path);
     }
 
+    pub fn insert_op(&mut self, name: impl Into<String>, path: Path) {
+        self.ops.insert(name.into(), path);
+    }
+
     pub fn extend(&mut self, other: LangItemRegistry) {
         for (name, path) in other.items {
             self.items.insert(name, path);
+        }
+        for (name, path) in other.ops {
+            self.ops.insert(name, path);
         }
     }
 
     pub fn get_path(&self, name: &str) -> Option<&Path> {
         self.items.get(name)
+    }
+
+    pub fn get_op_path(&self, name: &str) -> Option<&Path> {
+        self.ops.get(name)
     }
 }
 
@@ -48,12 +60,17 @@ pub fn collect_lang_items(file: &File) -> LangItemRegistry {
     registry
 }
 
-pub fn lookup_lang_item_intrinsic(name: &Name) -> Option<IntrinsicCallKind> {
-    let name = lookup_lang_item_name(name)?;
+pub fn lookup_intrinsic(name: &Name) -> Option<IntrinsicCallKind> {
+    let name = lookup_intrinsic_name(name)?;
     lang_instrinstic_for_lang_item(&name).and_then(lang_instrinstic_call_kind)
 }
 
-pub fn lookup_lang_item_name(name: &Name) -> Option<String> {
+pub fn lookup_op_intrinsic(name: &Name) -> Option<IntrinsicCallKind> {
+    let name = lookup_op_name(name)?;
+    lang_instrinstic_for_lang_item(&name).and_then(lang_instrinstic_call_kind)
+}
+
+pub fn lookup_intrinsic_name(name: &Name) -> Option<String> {
     let registry = try_get_threadlocal_lang_items()?;
     let name_segments: Vec<&str> = match name {
         Name::Ident(ident) => vec![ident.name.as_str()],
@@ -70,8 +87,25 @@ pub fn lookup_lang_item_name(name: &Name) -> Option<String> {
     None
 }
 
-pub fn extract_lang_item(attrs: &[Attribute]) -> Option<String> {
-    extract_lang_attribute(attrs)
+pub fn lookup_op_name(name: &Name) -> Option<String> {
+    let registry = try_get_threadlocal_lang_items()?;
+    let name_segments: Vec<&str> = match name {
+        Name::Ident(ident) => vec![ident.name.as_str()],
+        Name::Path(path) => path.segments.iter().map(|seg| seg.name.as_str()).collect(),
+        _ => return None,
+    };
+
+    for (op, path) in registry.ops {
+        let path_segments: Vec<&str> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
+        if path_segments == name_segments {
+            return Some(op);
+        }
+    }
+    None
+}
+
+pub fn extract_intrinsic_item(attrs: &[Attribute]) -> Option<String> {
+    extract_intrinsic_attribute(attrs)
 }
 
 fn collect_lang_items_from_items(
@@ -87,10 +121,15 @@ fn collect_lang_items_from_items(
                 module_path.pop();
             }
             ItemKind::DefFunction(function) => {
-                if let Some(lang_name) = extract_lang_attribute(&function.attrs) {
+                if let Some(lang_name) = extract_intrinsic_attribute(&function.attrs) {
                     let mut segments = module_path.clone();
                     segments.push(function.name.clone());
                     registry.insert(lang_name, Path::plain(segments));
+                }
+                if let Some(op_name) = extract_op_attribute(&function.attrs) {
+                    let mut segments = module_path.clone();
+                    segments.push(function.name.clone());
+                    registry.insert_op(op_name, Path::plain(segments));
                 }
             }
             _ => {}
@@ -98,12 +137,20 @@ fn collect_lang_items_from_items(
     }
 }
 
-fn extract_lang_attribute(attrs: &[Attribute]) -> Option<String> {
+fn extract_intrinsic_attribute(attrs: &[Attribute]) -> Option<String> {
+    extract_named_attribute(attrs, "intrinsic")
+}
+
+fn extract_op_attribute(attrs: &[Attribute]) -> Option<String> {
+    extract_named_attribute(attrs, "op")
+}
+
+fn extract_named_attribute(attrs: &[Attribute], name: &str) -> Option<String> {
     for attr in attrs {
         let AttrMeta::NameValue(meta) = &attr.meta else {
             continue;
         };
-        if meta.name.last().as_str() != "lang" {
+        if meta.name.last().as_str() != name {
             continue;
         }
         if let ExprKind::Value(value) = meta.value.kind() {

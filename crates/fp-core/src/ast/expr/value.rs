@@ -5,7 +5,7 @@ use crate::ast::{
     get_threadlocal_serializer, BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident,
     ItemChunk, Name, Pattern, Ty, Value, ValueFunction,
 };
-use crate::intrinsics::IntrinsicCallKind;
+use crate::intrinsics::{IntrinsicCallKind, IntrinsicCallOrigin};
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::span::Span;
 use crate::{common_enum, common_struct};
@@ -162,6 +162,8 @@ common_struct! {
         #[serde(default)]
         pub span: Span,
         pub kind: IntrinsicCallKind,
+        #[serde(default)]
+        pub origin: IntrinsicCallOrigin,
         pub args: Vec<Expr>,
         pub kwargs: Vec<ExprKwArg>,
     }
@@ -172,6 +174,22 @@ impl ExprIntrinsicCall {
         Self {
             span: Span::null(),
             kind,
+            origin: IntrinsicCallOrigin::Intrinsic,
+            args,
+            kwargs,
+        }
+    }
+
+    pub fn with_origin(
+        kind: IntrinsicCallKind,
+        origin: IntrinsicCallOrigin,
+        args: Vec<Expr>,
+        kwargs: Vec<ExprKwArg>,
+    ) -> Self {
+        Self {
+            span: Span::null(),
+            kind,
+            origin,
             args,
             kwargs,
         }
@@ -876,12 +894,23 @@ fn parse_decimal(bytes: &[u8], mut idx: usize) -> Result<(Option<usize>, usize),
 
 /// Attempt to recognise canonical intrinsic calls inside a generic invoke expression.
 pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCall> {
-    let (kind, _name) = match &invoke.target {
-        ExprInvokeTarget::Function(name) => (detect_intrinsic_call(name)?, name),
+    let (kind, origin, _name) = match &invoke.target {
+        ExprInvokeTarget::Function(name) => {
+            let (kind, origin) = crate::lang::lookup_op_intrinsic(name)
+                .map(|kind| (kind, IntrinsicCallOrigin::Op))
+                .or_else(|| {
+                    crate::lang::lookup_intrinsic(name)
+                        .map(|kind| (kind, IntrinsicCallOrigin::Intrinsic))
+                })
+                .or_else(|| {
+                    detect_intrinsic_call(name).map(|kind| (kind, IntrinsicCallOrigin::Intrinsic))
+                })?;
+            (kind, origin, name)
+        }
         _ => return None,
     };
 
-    match kind {
+    let call = match kind {
         IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
             let (template, skip) =
                 build_string_template_from_args(&invoke.args, invoke.kwargs.len())?;
@@ -1093,11 +1122,14 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         | IntrinsicCallKind::ShellFileCopy
         | IntrinsicCallKind::ShellFileTemplate
         | IntrinsicCallKind::ShellFileRsync => None,
-    }
+    }?;
+    let mut call = call;
+    call.origin = origin;
+    Some(call)
 }
 
 fn detect_intrinsic_call(name: &Name) -> Option<IntrinsicCallKind> {
-    if let Some(kind) = crate::lang::lookup_lang_item_intrinsic(name) {
+    if let Some(kind) = crate::lang::lookup_intrinsic(name) {
         return Some(kind);
     }
 

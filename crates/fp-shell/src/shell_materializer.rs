@@ -269,6 +269,7 @@ fn try_rewrite_to_intrinsic(invoke: &mut ExprInvoke) -> Option<Expr> {
     Some(Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall {
         span: invoke.span,
         kind,
+        origin: fp_core::intrinsics::IntrinsicCallOrigin::Intrinsic,
         args: std::mem::take(&mut invoke.args),
         kwargs: std::mem::take(&mut invoke.kwargs),
     })))

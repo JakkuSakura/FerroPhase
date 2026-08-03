@@ -883,7 +883,14 @@ fn parse_file(
 }
 
 pub fn parse_ast_target_file(path: &Path, source_language: Option<&str>) -> Result<File> {
-    parse_file(path, source_language, LossyCompileOptions::default())
+    parse_file_with_context(
+        path,
+        source_language,
+        FrontendParseMode::Strict,
+        LossyCompileOptions::default(),
+        fp_core::intrinsics::IntrinsicNormalizationMode::Transpile,
+    )
+    .map(|parsed| parsed.ast)
 }
 
 pub fn compile_file_to_lir_bundle(
@@ -892,7 +899,13 @@ pub fn compile_file_to_lir_bundle(
     source_language: Option<&str>,
     lossy: LossyCompileOptions,
 ) -> Result<LirBundle> {
-    let parsed = parse_file_with_context(path, source_language, FrontendParseMode::Strict, lossy)?;
+    let parsed = parse_file_with_context(
+        path,
+        source_language,
+        FrontendParseMode::Strict,
+        lossy,
+        fp_core::intrinsics::IntrinsicNormalizationMode::Compile,
+    )?;
     let frontend = FrontendBundle {
         source_language: parsed.source_language.clone(),
         ast: parsed.ast.clone(),
@@ -917,7 +930,14 @@ pub fn parse_file_with_mode(
     parse_mode: FrontendParseMode,
     lossy: LossyCompileOptions,
 ) -> Result<File> {
-    parse_file_with_context(path, source_language, parse_mode, lossy).map(|parsed| parsed.ast)
+    parse_file_with_context(
+        path,
+        source_language,
+        parse_mode,
+        lossy,
+        fp_core::intrinsics::IntrinsicNormalizationMode::Compile,
+    )
+    .map(|parsed| parsed.ast)
 }
 
 pub fn prepare_ast_target(
@@ -931,6 +951,7 @@ pub fn prepare_ast_target(
         source_language,
         FrontendParseMode::Strict,
         LossyCompileOptions::default(),
+        fp_core::intrinsics::IntrinsicNormalizationMode::Transpile,
     )?;
     register_threadlocal_serializer(parsed.serializer.clone());
 
@@ -951,9 +972,11 @@ fn parse_file_with_context(
     source_language: Option<&str>,
     parse_mode: FrontendParseMode,
     lossy: LossyCompileOptions,
+    intrinsic_mode: fp_core::intrinsics::IntrinsicNormalizationMode,
 ) -> Result<ParsedAst> {
     let frontend = select_frontend(path, source_language)?;
     frontend.set_parse_mode(parse_mode);
+    frontend.set_intrinsic_normalization_mode(intrinsic_mode);
     let source = std::fs::read_to_string(path).map_err(CliError::Io)?;
     let FrontendResult {
         mut ast,

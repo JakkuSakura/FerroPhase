@@ -67,18 +67,18 @@ fn run() -> TestReport {
     run_tests()
 }
 
-#[lang = "test_command_mock_reset"]
+#[intrinsic = "test_command_mock_reset"]
 fn intrinsic_command_mock_reset() { compile_error!("compiler intrinsic") }
 
-#[lang = "test_command_mock_push"]
+#[intrinsic = "test_command_mock_push"]
 fn intrinsic_command_mock_push(pattern: &str, stdout: &str, stderr: &str, status: i64) {
     compile_error!("compiler intrinsic")
 }
 
-#[lang = "test_command_mock_take_calls"]
+#[intrinsic = "test_command_mock_take_calls"]
 fn intrinsic_command_mock_take_calls() -> Vec<&str> { compile_error!("compiler intrinsic") }
 
-#[lang = "test_command_mock_apply"]
+#[intrinsic = "test_command_mock_apply"]
 fn intrinsic_command_mock_apply(command: &str) -> Option<CommandMockMatch> {
     compile_error!("compiler intrinsic")
 }
